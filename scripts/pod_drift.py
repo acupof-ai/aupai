@@ -1,26 +1,37 @@
 #!/usr/bin/env python
 """The pod is not a git repo and code arrives by hand-push, so drift between HEAD and
 the pod is invisible without a reference. data/pod_head_manifest.txt is that reference:
-sha256 of every file that executes on the pod, committed with the code.
+sha256 of every file that executes on the pod, SHIPPED with the code.
 
-Two gates read it:
+NOT TRACKED (shape A, 6e ruling 2026-09-04). scripts/pod_push.sh generates it from the HEAD
+it is pushing and ships it LAST, so a push interrupted between the files and the manifest
+leaves an OLD manifest that --check correctly calls drift, rather than a new one vouching for
+files that never landed. Tracking it was the top friction cause -- the pre-commit hook
+regenerated it on every commit, so any two branches that both committed collided on it, and
+in a merge commit the regen ran after git had built the tree and could only reach the index,
+leaving the file permanently dirty and aborting the next merge.
+
+One gate reads it:
   - the pod (no .git): every file the manifest names must exist and match. harness
     check runs this, and train.py's startup raises on it, so drift shouts before any
     training instead of waiting for someone to remember pod_sync_check.sh.
-  - CI (has .git, CI=1): the committed manifest must match HEAD, so a scoped change
-    cannot land without regenerating it.
+
+There is no CI gate any more and it is not missing: --check-head asked "does the committed
+manifest describe HEAD", and with the manifest generated FROM HEAD the question has no
+subject. The loss is real but unrepresentable -- it used to catch a manifest that stopped
+describing HEAD for any reason, which is exactly the 81f091af defect where a clean merge left
+main asserting d07a474f for a roadmap whose tree held 8dc68958.
 
 The pod gate also scans in reverse: a .py file under the repo root that no manifest
 entry names is reported (scripts/_audit_anchor.py arrived by bare podput and ran
 unregistered for a day before anything noticed). Reported, not failed -- the pod
 legitimately holds throwaway probes -- but it must appear in the output.
 
-A dev checkout (has .git, no CI) skips both: uncommitted changes are normal there.
+A dev checkout has nothing to check: there is no committed manifest to be stale.
 
 Usage:
   python scripts/pod_drift.py --write        # regenerate the manifest from HEAD
   python scripts/pod_drift.py --check        # pod gate: files here vs the manifest
-  python scripts/pod_drift.py --check-head   # CI gate: manifest vs HEAD
   python scripts/pod_drift.py --list-scoped  # the file set, one per line
   python scripts/pod_drift.py --selftest     # reverse scan on a real-shaped world
 """
@@ -483,45 +494,6 @@ def plan_sync(new_path, old_path, pod_path):
     return plan
 
 
-def check_head(root=ROOT):
-    """The committed manifest must describe HEAD. CI runs this."""
-    if not os.path.exists(MANIFEST):
-        return False, "no manifest; run scripts/pod_drift.py --write"
-    have = read_manifest()
-    want = {}
-    for p in scoped_paths(root):
-        sha = sha_head(root, p)
-        if sha:
-            want[p] = sha
-    stale = [p for p in want if have.get(p, (None,))[0] != want[p]]
-    # A `chmod +x` commit changes NO sha, so the sha comparison above is blind to it and
-    # the manifest would keep a stale mode until some unrelated edit rewrote the row.
-    # Then the pod gate compares against a mode HEAD no longer records. Listed
-    # separately from `stale` because the fix is the same (--write) but the cause is not
-    # visible in any content diff (b0-19).
-    hmodes = git_modes(root, "HEAD")
-    mode_stale = [p for p in want
-                  if have.get(p) and have[p][2] != hmodes.get(p, "644")]
-    gone = [p for p in have if p not in want]
-    if stale or gone or mode_stale:
-        # Name them. A bare count makes two consecutive "1 changed" indistinguishable:
-        # the same file still unfixed, or a second file that arrived with a merge. The
-        # operator has to remember which, and on 2026-09-01 de read the second case as
-        # the first. This list is COMPLETE, not truncated -- the counts above are its
-        # length, so a reader can trust it as the whole set (fb's correction: the second
-        # entry that night was new drift, not a truncated line).
-        named = "; ".join(f"changed {p}" for p in sorted(stale))
-        if gone:
-            named += ("; " if named else "") + "; ".join(f"removed {p}" for p in sorted(gone))
-        if mode_stale:
-            named += ("; " if named else "") + "; ".join(
-                f"mode {p} (HEAD {hmodes.get(p, '644')}, manifest {have[p][2]})"
-                for p in sorted(mode_stale))
-        return False, (f"manifest stale: {len(stale)} changed, {len(gone)} removed, "
-                       f"{len(mode_stale)} mode; run --write -- {named}")
-    return True, f"manifest matches HEAD ({len(want)} files, sha and mode)"
-
-
 def is_pod(root=ROOT):
     """A git checkout has .git -- a directory in a normal clone, a FILE in a
     linked worktree. The pod's hand-pushed tree has neither. Checking isdir
@@ -710,43 +682,6 @@ def selftest():
     ok, ev = check_pod(k)
     assert not ok and "gone.py" in ev, f"a missing code file must still fail: {ok} {ev}"
 
-    # check_head names the files, because a bare count cannot distinguish "the same file
-    # is still unfixed" from "a merge brought a second one". de hit exactly that on
-    # 2026-09-01: two consecutive "1 changed" lines, and the second was new drift.
-    #
-    # Built from HEAD's REAL manifest with one entry's sha corrupted, and it reads the
-    # real repo directly -- check_head only needs MANIFEST and `git show HEAD:path`, so
-    # no copy is required. My first version copied .git with copytree and skipped the
-    # whole block under `if m`, because in a WORKTREE .git is a FILE, not a directory:
-    # NotADirectoryError, silently swallowed, assertion never evaluated. It passed on the
-    # count-only code it exists to catch -- the same vacuous shape, in the test written to
-    # prevent it (de, 2026-09-01).
-    m = tempfile.mkdtemp()
-    _orig_manifest = MANIFEST
-    try:
-        rows = open(_orig_manifest, encoding="utf-8").read().splitlines()
-        victim, out = None, []
-        for r in rows:
-            parts = r.split()
-            if victim is None and len(parts) >= 2 and parts[1].endswith(".py"):
-                victim = parts[1]
-                out.append(f"{'0' * 64}  {'  '.join(parts[1:])}")
-            else:
-                out.append(r)
-        assert victim, "HEAD's manifest names no .py -- this fixture cannot corrupt one"
-        broken = os.path.join(m, "pod_head_manifest.txt")
-        with open(broken, "w") as f:
-            f.write("\n".join(out) + "\n")
-        globals()["MANIFEST"] = broken
-        ok, ev = check_head(ROOT)
-        assert not ok, f"a corrupted manifest entry must fail check_head: {ev}"
-        assert victim in ev, (
-            f"check_head must NAME the stale file, not only count it -- an operator "
-            f"seeing two '1 changed' lines cannot tell a new file from an unfixed one. "
-            f"Expected {victim} in: {ev}")
-    finally:
-        globals()["MANIFEST"] = _orig_manifest
-        shutil.rmtree(m, ignore_errors=True)
 
     # ---- THE MODE COLUMN (b0-19). Content identical, exec bit dropped: the case that
     # was invisible until 2026-09-03, when 16 tracked .sh sat on the pod as 644 and this
@@ -803,14 +738,76 @@ def selftest():
         assert old["runner.sh"] == (sha, "training", "644"), (
             f"an old three-column row must default to 644, got {old['runner.sh']}")
 
-        # 5. A mode-only change in HEAD must make check_head refuse. This is the one no
-        #    sha comparison can see: `git update-index --chmod=+x` alters no content.
+        # 5. git_modes must not raise outside a repo. It used to back check_head's
+        #    mode-only comparison (a `git update-index --chmod=+x` changes no sha, so no
+        #    content comparison can see it); check_head is gone with the manifest's
+        #    tracking, but read_manifest still calls this on the pod, where there is no
+        #    repo, and a throw here would take the whole gate down.
         assert git_modes(d, ref="HEAD") == {}, (
             "git_modes must return {} outside a repo rather than raising -- the pod "
             "calls read_manifest, and a throw here would take the whole gate down")
     finally:
         globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
         shutil.rmtree(d, ignore_errors=True)
+
+    # THE PUSH ORDER PROPERTY (shape A, 6e ruling 2026-09-04). pod_push.sh generates the
+    # manifest from HEAD, pushes the files, then pushes the manifest LAST. The order is the
+    # safety: a push that dies between the files and the manifest leaves the pod holding an
+    # OLD manifest, which --check must call DRIFT. The other order would leave a NEW manifest
+    # vouching for files that never landed, and --check would say OK -- a gate that certifies
+    # exactly the state it exists to catch.
+    #
+    # Simulated on a pod-shaped world (no .git, so is_pod is true), because pod_push.sh needs
+    # the real pod and this property is about which bytes sit beside which.
+    pod = tempfile.mkdtemp()
+    _saved_manifest, _saved_root = MANIFEST, ROOT
+    try:
+        os.makedirs(os.path.join(pod, "data"))
+        os.makedirs(os.path.join(pod, "scripts"))
+        globals()["ROOT"] = pod
+        globals()["MANIFEST"] = os.path.join(pod, "data", "pod_head_manifest.txt")
+        assert is_pod(pod), "the fixture must look like the pod, or --check takes another path"
+
+        old_code = b"# v1\n"
+        new_code = b"# v2\n"
+        sha_old = hashlib.sha256(old_code).hexdigest()
+        sha_new = hashlib.sha256(new_code).hexdigest()
+        assert sha_old != sha_new
+
+        code = os.path.join(pod, "scripts", "shipped.py")
+        with open(code, "wb") as fh:
+            fh.write(old_code)
+        with open(MANIFEST, "w") as fh:
+            fh.write(f"{sha_old}  scripts/shipped.py  training  644\n")
+        ok, ev = check_pod(pod)
+        assert ok, f"a consistent pod must pass before anything is pushed: {ev}"
+
+        # INTERRUPTED PUSH: the new file landed, the manifest did not. --check must refuse.
+        with open(code, "wb") as fh:
+            fh.write(new_code)
+        ok, ev = check_pod(pod)
+        assert not ok and "shipped.py" in ev, (
+            f"a file pushed without its manifest must read as DRIFT and name the file: {ok} {ev}")
+
+        # The manifest arrives last: consistent again.
+        with open(MANIFEST, "w") as fh:
+            fh.write(f"{sha_new}  scripts/shipped.py  training  644\n")
+        ok, ev = check_pod(pod)
+        assert ok, f"once the manifest lands the pod must read clean: {ev}"
+
+        # THE ORDER MATTERS, ASSERTED IN THE OTHER DIRECTION: had the manifest been pushed
+        # FIRST, the same interrupted push would have read OK -- the manifest describing a
+        # file the pod does not hold yet. Without this the test above passes under either
+        # order and says nothing about which one pod_push.sh must use.
+        with open(code, "wb") as fh:
+            fh.write(old_code)
+        ok, ev = check_pod(pod)
+        assert not ok, (
+            "manifest-first would have to fail here too, or the order is not what makes the "
+            f"gate safe: {ev}")
+    finally:
+        globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
+        shutil.rmtree(pod, ignore_errors=True)
 
     print("pod_drift selftest OK:", evidence)
 
@@ -833,10 +830,12 @@ def main():
             scope = sys.argv[sys.argv.index("--scope") + 1]
         if is_pod(ROOT):
             ok, evidence = check_pod(ROOT, scope=scope)
-        elif os.environ.get("CI") == "true":
-            ok, evidence = check_head(ROOT)
         else:
-            print("dev checkout: nothing to check (CI gates manifest freshness, the pod gates file drift)")
+            # CI used to route here to check_head. With the manifest generated from HEAD
+            # there is nothing for CI to gate: the file does not exist in a fresh checkout,
+            # and if it did it could not disagree with the HEAD it was generated from.
+            print("dev checkout: nothing to check (the pod gates file drift; the manifest is "
+                  "generated by scripts/pod_push.sh from the HEAD it ships)")
             sys.exit(0)
         print(("OK: " if ok else "DRIFT: ") + evidence)
         sys.exit(0 if ok else 1)
@@ -846,9 +845,16 @@ def main():
         for op, p in plan_sync(MANIFEST, sys.argv[2], sys.argv[3]):
             print(f"{op} {p}")
     elif mode == "--check-head":
-        ok, evidence = check_head(ROOT)
-        print(("OK: " if ok else "STALE: ") + evidence)
-        sys.exit(0 if ok else 1)
+        # DELETED with the manifest's tracking (shape A, 2026-09-04). The manifest is now
+        # generated from HEAD by pod_push.sh, so "does the committed manifest describe HEAD"
+        # has no subject: there is no committed manifest. Kept as an explicit refusal rather
+        # than falling through to the usage text, because every caller that used to run it
+        # should learn that the question is gone, not that it mistyped a flag.
+        print("--check-head was removed: the manifest is generated from HEAD by "
+              "scripts/pod_push.sh and is no longer tracked, so it cannot be stale against "
+              "HEAD. Use --check to compare the POD against the manifest it was shipped.",
+              file=sys.stderr)
+        sys.exit(2)
     else:
         print(__doc__)
         sys.exit(2)

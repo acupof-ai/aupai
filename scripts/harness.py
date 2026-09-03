@@ -183,7 +183,7 @@ _RULE_CHECKS = {
     "Outbound network: curl -4, always": "curl_ipv4",
     "runs/.jsonl ledgers merge by union": "no_ghost_running",
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
-    "A commit that touches a file in data/pod_head_manifest.txt": "pod_drift",
+    "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
     "Corpus directories named by any ladder mix": "ladder_config_frozen",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
@@ -270,9 +270,14 @@ _MANUAL_RULES = {
     "Only a refusing: line means nothing shipped":
         "how a human reads pod_push's stdout. The transcript is not an artifact, so nothing "
         "records whether the reader's filter could see a refusal at all",
-    "pod_drift.py --write regenerates from HEAD, --write-index from the index":
-        "which flag a session typed is not recoverable from the manifest it produced -- both "
-        "write the same file, and a manifest built from the wrong side is well-formed",
+    "data/pod_head_manifest.txt is NOT tracked. scripts/pod_push.sh generates it":
+        "pod_drift gates the pod side and .gitignore stops the file being committed by "
+        "accident, so the tracking half IS enforced. What stays manual is the push ORDER -- "
+        "that the manifest ships AFTER the files, so an interrupted push leaves an old "
+        "manifest that reads as drift rather than a new one vouching for files that never "
+        "landed. pod_drift's selftest asserts that property against a pod-shaped fixture in "
+        "both directions, but whether the real pod_push.sh ran in that order is not "
+        "recoverable from any artifact it leaves behind",
     "The index must equal HEAD before you merge: commit your paths, or `git reset`":
         "which order a session ran merge and add in is not recoverable from the repo. What "
         "IS checked is the consequence: a wip commit lands on the branch where dirty_aged "
@@ -3604,7 +3609,19 @@ def check_merge_complete(root):
     n_both = len(set(subprocess.run(
         ["git", "-C", root, "diff", "--name-only", "HEAD^1", "HEAD"],
         capture_output=True, text=True).stdout.split()))
-    return PASS, f"{n_both} file(s) changed by the merge, {contested} contested file(s) taken whole"
+    # BOTH SIDES' COUNTS, because one of them is legitimately zero. `HEAD^1..HEAD` is what
+    # the merge brought into OURS, and it is 0 whenever ours already contained everything
+    # the other side had that survived -- a fast-forward-shaped merge, or one whose only
+    # contested path resolved to a DELETION on our side (a0e401e0: 0 against parent 1, 6
+    # against parent 2). The selftest's own vacuity rule then reads "0 file(s) changed,
+    # 0 contested" as a scan that examined nothing, and refuses a correct PASS. Reporting
+    # the second parent's count as well makes the difference visible: 0 and 0 is a merge
+    # with no content anywhere, 0 and N is a merge whose changes all came from ours.
+    n_theirs = len(set(subprocess.run(
+        ["git", "-C", root, "diff", "--name-only", "HEAD^2", "HEAD"],
+        capture_output=True, text=True).stdout.split()))
+    return PASS, (f"{n_both} file(s) changed by the merge into ours, {n_theirs} vs the other "
+                  f"parent, {contested} contested file(s) taken whole")
 
 
 def _broken_merge_complete():
@@ -6708,15 +6725,13 @@ def check_corpus_fp(root):
 
 
 def check_pod_drift(root):
-    # The pod is not a git repo: its files must match the committed manifest. CI gates the
-    # manifest against HEAD. A dev checkout skips both -- uncommitted changes are normal there.
+    # The pod is not a git repo: its files must match the manifest pod_push.sh shipped with
+    # them. A dev checkout has nothing to check -- the manifest is generated at push time and
+    # is not tracked, so there is no committed copy that could be stale (shape A, 2026-09-04).
     if pod_drift.is_pod(root):
         ok, evidence = pod_drift.check_pod(root)
         return (PASS if ok else FAIL), evidence
-    if os.environ.get("CI") == "true":
-        ok, evidence = pod_drift.check_head(root)
-        return (PASS if ok else FAIL), evidence
-    return SKIP, "dev checkout; CI gates manifest freshness, the pod gates file drift"
+    return SKIP, "dev checkout; the pod gates file drift against the manifest shipped with it"
 
 
 def _broken_ghost_running():
@@ -6986,26 +7001,14 @@ def cmd_friction(argv):
         # sitting dirty (6e, 2026-09-03; second row of that shape today). A ledger whose
         # own writer leaves the tree dirty manufactures the toll it exists to record.
         #
-        # NOTHING IS OWED WHEN THIS RETURNS, and that is the point of doing it here rather
-        # than printing a reminder. The first version used --no-verify and printed an
-        # "OWED: pod_drift --write" line: print-and-continue, and the thing owed was a
-        # refix of data/pod_head_manifest.txt, which is the TOP CAUSE in this very ledger
-        # at 4 of 15 rows. A writer that leaves the top cause behind manufactures the shape
-        # it was built to remove (6e's ruling, 2026-09-03).
-        #
-        # So: regenerate the manifest first, then commit BOTH paths path-scoped WITH the
-        # hook. runs/friction.jsonl is a manifest-listed path, so its commit changes the
-        # manifest by the standing rule; regenerating before the commit means the hook's own
-        # regen finds nothing to change and the tree is clean afterwards.
+        # NOTHING IS OWED WHEN THIS RETURNS. The first version used --no-verify and printed
+        # an "OWED: pod_drift --write" line -- print-and-continue, and what it owed was a
+        # manifest refix, then the top cause in this very ledger (6e's ruling, 2026-09-03).
+        # The second version regenerated the manifest here and committed both paths. Both are
+        # gone with the manifest's tracking (shape A, 2026-09-04): there is nothing derived
+        # left to keep in step, so one ledger path is the whole commit.
         rel = os.path.relpath(FRICTION_PATH, ROOT)
-        man = os.path.join("data", "pod_head_manifest.txt")
-        dr = subprocess.run([sys.executable, os.path.join(ROOT, "scripts", "pod_drift.py"),
-                             "--write"], cwd=ROOT, capture_output=True, text=True)
-        if dr.returncode != 0:
-            print(f"  row appended but NOT committed: pod_drift.py --write failed: "
-                  f"{(dr.stderr or dr.stdout).strip()[:200]}")
-            return 1
-        paths = [rel] + ([man] if os.path.exists(os.path.join(ROOT, man)) else [])
+        paths = [rel]
         msg = f"friction: {args.kind} -- {args.cause[:60]}"
         r = subprocess.run(["git", "-C", ROOT, "commit", "-m", msg, "--", *paths],
                            capture_output=True, text=True)
@@ -11393,15 +11396,28 @@ def _demo():
     _old_manifest = pod_drift.MANIFEST
     pod_drift.MANIFEST = os.path.join(d, "data", "pod_head_manifest.txt")
     try:
+        # check_head is gone with the manifest's tracking (shape A, 2026-09-04): "is the
+        # committed manifest stale against HEAD" has no subject once the file is generated
+        # from HEAD at push time. What survives, and is the property pod_push.sh depends on:
+        # write_manifest describes the HEAD it ran against, and describes the NEW HEAD after
+        # a commit changes a scoped file. Both directions, since a generator that returned
+        # the same bytes regardless would pass the first assertion alone.
         n = pod_drift.write_manifest(d)
         assert n == 1, f"expected 1 scoped file, got {n}"
-        ok, _ = pod_drift.check_head(d)
-        assert ok, "fresh manifest should pass check_head"
+        first = pod_drift.read_manifest(pod_drift.MANIFEST)
+        assert first["scripts/real.py"][0] == pod_drift.sha_head(d, "scripts/real.py"), (
+            f"a freshly generated manifest must describe HEAD: {first}")
         open(os.path.join(d, "scripts", "real.py"), "w").write("# v2\n")
         subprocess.run(["git", "add", "."], cwd=d, capture_output=True)
         subprocess.run(["git", "commit", "-qm", "v2"], cwd=d, capture_output=True)
-        ok, evidence = pod_drift.check_head(d)
-        assert not ok, f"stale manifest should fail check_head: {evidence}"
+        stale = pod_drift.read_manifest(pod_drift.MANIFEST)
+        assert stale["scripts/real.py"][0] != pod_drift.sha_head(d, "scripts/real.py"), (
+            "the pre-existing manifest must NOT describe the new HEAD -- if it did, this "
+            "fixture could not tell a regenerating generator from one that does nothing")
+        pod_drift.write_manifest(d)
+        after = pod_drift.read_manifest(pod_drift.MANIFEST)
+        assert after["scripts/real.py"][0] == pod_drift.sha_head(d, "scripts/real.py"), (
+            f"regeneration must pick up the new HEAD: {after}")
     finally:
         pod_drift.MANIFEST = _old_manifest
 
@@ -11475,7 +11491,6 @@ def _demo():
     os.makedirs(os.path.join(d2, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "scripts", "pod_drift.py"), os.path.join(d2, "scripts", "pod_drift.py"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d2, "AGENTS.md"))
-    shutil.copy(os.path.join(ROOT, "data", "pod_head_manifest.txt"), os.path.join(d2, "data", "pod_head_manifest.txt"))
     subprocess.run(["git", "add", "-A"], cwd=d2, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=d2, capture_output=True)
     # Stage a scoped edit
@@ -11484,18 +11499,28 @@ def _demo():
     subprocess.run(["git", "add", "AGENTS.md"], cwd=d2, capture_output=True)
     r = subprocess.run([hook_dst2], cwd=d2, capture_output=True)
     assert r.returncode == 0, f"hook must pass on scoped edit: {r.stdout} {r.stderr}"
-    # The manifest must be staged (regenerated from the index)
+    # THE HOOK MUST LEAVE THE MANIFEST ALONE (shape A, 2026-09-04). This world used to assert
+    # the opposite -- that the hook staged a regenerated manifest and --check-head then passed
+    # -- and both halves are now the defect: regenerating a derived file on every commit made
+    # it the top friction cause, and in a merge commit the regen could only reach the index.
+    # Asserting the absence rather than deleting the world, because "the hook no longer touches
+    # this file" is a property worth a failing test if anyone puts it back.
     staged_files = subprocess.run(
         ["git", "diff", "--cached", "--name-only"], cwd=d2, capture_output=True, text=True
     ).stdout
-    assert "data/pod_head_manifest.txt" in staged_files, f"manifest not staged: {staged_files}"
-    # Commit and verify check-head passes
+    assert "data/pod_head_manifest.txt" not in staged_files, (
+        f"the hook staged the manifest -- it is untracked and generated by pod_push.sh from "
+        f"the HEAD it ships: {staged_files}")
     subprocess.run(["git", "commit", "-m", "scoped edit"], cwd=d2, capture_output=True)
+    # And the removed flag must REFUSE rather than silently succeed, so a caller still
+    # running it is told the question is gone instead of reading exit 0 as an answer.
     r = subprocess.run(
         [sys.executable, os.path.join(d2, "scripts", "pod_drift.py"), "--check-head"],
         cwd=d2, capture_output=True, text=True,
     )
-    assert r.returncode == 0, f"check-head must pass after hook-mediated commit: {r.stdout} {r.stderr}"
+    assert r.returncode != 0 and "was removed" in (r.stderr + r.stdout), (
+        f"--check-head must refuse loudly now that it is gone: {r.returncode} "
+        f"{r.stdout} {r.stderr}")
     shutil.rmtree(d2, ignore_errors=True)
 
     # launch gate selftest: a log without the fa/doc_mask lines must time out;
