@@ -226,7 +226,42 @@ def main():
         fails.append("gap_dispersion is never computed -- en-only alone cannot separate 'the "
                      "confound is small' from 'English dominates the denominator'")
 
-    # 6e. THE PER-CLASS SPLIT MUST RECONSTRUCT THE SCORED PASS, and the control's model dir must be
+    # 6f. THE DISPERSION RANGE NEEDS A NOISE BASELINE, and the baseline must preserve class SIZES.
+    #     1.049 across four classes says nothing on its own: the classes differ ~21x in byte mass
+    #     (zh-code 227,984 B against zh-prose 4,829,642 B), so an unweighted range is structurally
+    #     dominated by the smallest, noisiest class. A permutation that split the items into four
+    #     EQUAL groups would understate the noise in a 227,984-byte class and flatter the observed
+    #     range -- so the sizes come from the real classes and only the labels are shuffled.
+    if fn is not None:
+        if "[gap_dispersion]" in assigns and "noise_baseline" not in src:
+            fails.append("gap_dispersion has no noise baseline -- a range of 1.049 across four "
+                         "classes of ~21x different byte mass is not yet distinguishable from the "
+                         "spread a meaningless four-way split would produce")
+        if "noise_baseline" in src:
+            if "sizes = [gaps[c][\"n\"] for c in sorted(gaps)]" not in src:
+                fails.append("the permutation does not take its group sizes from the real classes; "
+                             "equal-sized groups understate the noise in the smallest class")
+            if "rng = random.Random(" not in src:
+                fails.append("the permutation is unseeded -- the p-value would not be reproducible")
+        # The per-item rows must be PERSISTED, not merely collected: the first run held 10,421 rows
+        # in memory, wrote only class sums, and left both the baseline and the case table needing a
+        # full rescore. Same shape as a config that omits the field needed to resume it.
+        if "peritem[arm] = " not in src or "a.per_item_out" not in src:
+            fails.append("per-item nll is collected but never written -- the artifact omits the "
+                         "inputs to its own recomputation, so any later question costs a rescore")
+
+    # 6g. COMPARISONS AGAINST THE HEADLINE USE RATIO-OF-SUMS, NOT THE MEAN OF PER-CLASS GAPS.
+    #     gap_shared_population (2.0041) reconstructs the population; byte_weighted_mean (1.9858) is
+    #     a mean of RATIOS and reconstructs nothing. They differ by 0.92%, so substituting one for
+    #     the other is the same defect section 5 guards against for english_only, one order smaller.
+    if "byte_weighted_mean" in src:
+        bad = [ln for ln in src.splitlines()
+               if "byte_weighted_mean" in ln and ("2.004" in ln or "gap_shared_population" in ln)
+               and "not this mean" not in ln and "DIFFERENT STATISTIC" not in ln]
+        if bad:
+            fails.append(f"byte_weighted_mean appears where the headline gap is compared: "
+                         f"{bad[0].strip()[:90]!r} -- use gap_shared_population (ratio of sums)")
+
     #     the one behind the published number.
     #
     #     Checked structurally. The grep version looked for "the split is not a split of this
