@@ -7458,6 +7458,102 @@ def _busy_training_cards(train_cards):
     return busy, None
 
 
+CARD_HELD_MIB = 1000
+
+
+def check_card_held_without_claim(root):
+    """A card holding real memory that no live claim names.
+
+    e1's Stage A held card 5 for 15 minutes with the claim written in its LAPTOP tree, so
+    nothing on the pod said the card was held: claims live where the job runs
+    (scripts/card_claim.py reads runs/claims/ in the tree it is invoked from), and a claim on
+    the wrong side of the boundary is invisible to everyone who looks.
+
+    THE SPEC'S MECHANISM DOES NOT WORK HERE AND THIS IS WHY THE CHECK IS SHAPED DIFFERENTLY.
+    It asked to report a pid that is "not in our namespace" as foreign. Measured on the pod
+    2026-09-03: container nvidia-smi reports HOST pids (2274285, 2274286, ...) and container
+    `ps` resolves NONE of them -- not even our own live training ranks, whose claim sits right
+    there in runs/claims/ naming container pid 3818363. `--query-compute-apps=process_name`
+    returns `[Not Found]` for every one. So "unresolvable pid" is the normal case for every
+    process on the machine, ours included, and a foreign/ours split built on it would mark
+    every card foreign. AGENTS.md already states the general form: a PID is only meaningful
+    in the namespace that read it, and GPU UUID plus cmdline are the only cross-boundary
+    identities.
+
+    What the check can therefore say, and does: this card holds N MiB and no live claim in
+    THIS tree names it. It cannot say whose process it is. That is still the whole content of
+    the incident -- e1's card 5 had memory and no claim here -- and it is honest about the
+    limit instead of inventing an attribution. Foreign containers are named as a possible
+    cause in the message, not decided between.
+
+    WARN, never FAIL: an unclaimed card is a real state needing a person, but it is also what
+    a legitimate job looks like in the seconds between allocating memory and writing its
+    claim, and what another team's container looks like permanently."""
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    try:
+        import card_claim
+    except Exception as e:
+        return SKIP, f"scripts/card_claim.py not importable: {type(e).__name__}: {e}"
+    # The claim dir of the tree being checked, not this process's default: on the pod the
+    # harness runs from /work/aupai and must read /work/aupai/runs/claims.
+    claim_dir = os.path.join(root, "runs", "claims")
+    saved = card_claim.CLAIM_DIR
+    try:
+        card_claim.CLAIM_DIR = claim_dir
+        live, _stale = card_claim.claims()
+        held = card_claim.held_cards(live)
+        mem = card_claim.card_memory()
+    finally:
+        card_claim.CLAIM_DIR = saved
+    if mem is None:
+        return SKIP, "no nvidia-smi here -- this check is pod-side"
+    unclaimed = [(c, m) for c, m in sorted(mem.items(), key=lambda kv: int(kv[0]))
+                 if m > CARD_HELD_MIB and c not in held]
+    if unclaimed:
+        detail = ", ".join(f"card {c} {m} MiB" for c, m in unclaimed)
+        return WARN, (
+            f"{len(unclaimed)} card(s) hold memory no live claim in {os.path.relpath(claim_dir, root)} "
+            f"names: {detail} -- either a claim written in another tree (claims live where the "
+            f"job runs), a job that has not claimed yet, or another container. Whose it is cannot "
+            f"be read here: nvidia-smi gives host pids that this namespace cannot resolve, so "
+            f"identify it by GPU UUID plus cmdline "
+            f"(nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory)")
+    n_busy = sum(1 for m in mem.values() if m > CARD_HELD_MIB)
+    return PASS, (f"{len(mem)} card(s), {n_busy} above {CARD_HELD_MIB} MiB, every one named by a "
+                  f"live claim ({len(live)} claim(s))")
+
+
+def _broken_card_held_without_claim():
+    """The REAL claim dir with one live claim's cards emptied, so its card holds memory that
+    no claim names -- exactly e1's state, produced by mutation rather than by hand.
+
+    SKIPs where there is no nvidia-smi, because the check SKIPs there too: a world that
+    cannot reach the instrument certifies nothing about it. On a cardless box this is the
+    honest outcome, and the pod is where the world has teeth."""
+    import shutil as _sh
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+    if card_claim.card_memory() is None:
+        raise SelftestSkip("no nvidia-smi: card_held_without_claim SKIPs here, so its world can "
+                           "only be built on the pod")
+    real = os.path.join(ROOT, "runs", "claims")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs", "claims"), exist_ok=True)
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    _sh.copy(os.path.join(ROOT, "scripts", "card_claim.py"), os.path.join(d, "scripts", "card_claim.py"))
+    names = sorted(os.listdir(real)) if os.path.isdir(real) else []
+    if not names:
+        raise SelftestSkip("no live claim to mutate: the world needs a real claim whose cards "
+                           "can be emptied")
+    for nm in names:
+        src = os.path.join(real, nm)
+        obj = json.load(open(src, encoding="utf-8"))
+        obj["cards"] = []          # the claim stays live; it just names no card
+        with open(os.path.join(d, "runs", "claims", nm), "w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+    return d
+
+
 def check_lane_respected(root):
     """Training cards must not be partially occupied by non-training work.
 
@@ -8815,6 +8911,13 @@ CHECKS = [
         _broken_tasks_stale,
     ),
     (
+        "card_held_without_claim",
+        "every card holding real memory is named by a live claim in this tree",
+        "e1's Stage A held card 5 for 15 minutes with the claim written in its laptop tree, so nothing on the pod said the card was held (2026-09-03)",
+        check_card_held_without_claim,
+        _broken_card_held_without_claim,
+    ),
+    (
         "lane_respected",
         "non-training processes do not occupy training cards",
         "a 10-min eval on one training card blocks a 55-min 7-card run; the lane rule was announced in docs but nothing enforced it",
@@ -8896,7 +8999,7 @@ EVIDENCE = {
     "eval_sft_template_contamination": "pod", "corpus_fp_matches": "pod", "pod_drift": "pod",
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
-    "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
+    "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
@@ -10197,15 +10300,30 @@ def _selftest_batched_git_probes():
             "data/deep/nested/x.pt",
         }
     )
-    # data/synthetic/ is the ONE known exception and it is git's behaviour, not a defect
-    # here: git consults the index, so a directory holding a tracked file reads as
-    # not-ignored, while this reader answers only what .gitignore says.
-    # `check-ignore --no-index` agrees with the reader. Named, so a NEW divergence
-    # cannot hide behind it.
-    INDEX_EXCEPTIONS = {"data/synthetic/", "data/synthetic"}
+    # THE EXCEPTION IS DERIVED FROM THE INDEX, NOT A LIST OF NAMES. git consults the index,
+    # so a directory that HOLDS A TRACKED FILE reads as not-ignored even when .gitignore
+    # covers it, while this reader answers only what .gitignore says; `check-ignore
+    # --no-index` agrees with the reader on exactly those paths.
+    #
+    # The first version hard-coded {"data/synthetic/", "data/synthetic"} -- the one path that
+    # diverged the day it was written. Adding a fact source that names data/corpus/sample/
+    # (148 tracked files under it) turned the selftest red on a divergence of the SAME KIND,
+    # and a two-name allow-list has to be edited every time. Asking the index instead means
+    # the exception is the property, so a NEW divergence of a DIFFERENT kind still fails.
     git_says = _gitignored_set(sorted(probe), ROOT)
+    tracked_under = set(
+        subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout.split()
+    )
+
+    def _holds_tracked(p):
+        pre = p.rstrip("/") + "/"
+        return any(t == p.rstrip("/") or t.startswith(pre) for t in tracked_under)
+
     disagree = [
-        p for p in sorted(probe) if p not in INDEX_EXCEPTIONS and git_says[p] != _gitignore_reader(p, ROOT)
+        p for p in sorted(probe)
+        if git_says[p] != _gitignore_reader(p, ROOT)
+        # git says not-ignored, reader says ignored, and the index explains exactly that gap.
+        and not (git_says[p] is False and _holds_tracked(p))
     ]
     assert not disagree, (
         f"the .gitignore reader disagrees with git on {len(disagree)} of {len(probe)} "
@@ -10850,7 +10968,7 @@ def _demo():
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
-                 "peer_stalled"}
+                 "peer_stalled", "card_held_without_claim"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
