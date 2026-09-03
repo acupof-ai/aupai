@@ -644,6 +644,111 @@ def _broken_milestone_ckpt_pinned():
     return d
 
 
+def check_cache_readers_set_vocab_id(root):
+    """Every module that imports a token-cache reader also sets train.VOCAB_ID.
+
+    val_seqs and domain_loss_seqs reach train._domain_seqs, whose freshness guard compares
+    each cache stamp against train.VOCAB_ID. That global starts at None and only
+    train.build_tokenizer sets it, which no eval calls. A module that reads a cache without
+    setting it does not get a warning: every stamp reads as a mismatch against an empty
+    right side, and the guard reports "cache dirty" when the process simply has no
+    fingerprint. Before the guard existed, the same None retokenized nine live domains and
+    re-stamped them with an empty vocabulary (fb 2026-09-02, caught on ppl.py two minutes
+    in).
+
+    MEASURED 2026-09-03: eval/domain_bpb.py imported val_seqs at :219 and never set it, so
+    domain_bpb has never produced a value -- while score_matrix.py:1186 and
+    domain_loss.py:624 each carry the call with a comment explaining why. Two of three
+    callers remembered. This is the check for the one that did not.
+
+    Accepts any of the three real routes, because they are all correct: set_vocab_id(cfg),
+    an assignment to train.VOCAB_ID (scripts/test_domain_loss_val.py:103 does this from a
+    fingerprint it computes), or build_tokenizer. Requiring set_vocab_id by name would
+    fail a file that does the right thing another way -- and a check that fires on correct
+    input is looser than none, because the next author silences it.
+    """
+    import ast
+
+    READERS = ("val_seqs", "domain_loss_seqs", "_domain_seqs")
+    SETTERS = ("set_vocab_id", "build_tokenizer")
+    scan = []
+    for sub in ("eval", "scripts", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        scan += [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith(".py")]
+    if not scan:
+        return SKIP, "no eval/scripts/probes directory"
+
+    bad, checked = [], 0
+    for path in scan:
+        try:
+            src = open(path, encoding="utf-8").read()
+            tree = ast.parse(src)
+        except (OSError, SyntaxError):
+            continue
+        # IMPORTS a reader, not merely mentions one: a comment or a string naming val_seqs
+        # is not a call into the cache. eval_load_cost.py holds the names in a tuple and
+        # test_cache_dir_knob.py in an error message; neither reads a cache.
+        imports = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom):
+                imports |= {a.name for a in n.names}
+            elif isinstance(n, ast.Import):
+                imports |= {a.name.split(".")[-1] for a in n.names}
+        if not (imports & set(READERS)):
+            continue
+        checked += 1
+        # The file DEFINING a reader is where the guard lives, not a caller of it.
+        defines = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        if imports & set(READERS) & defines:
+            continue
+        called = {n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                  for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        assigns_global = any(
+            isinstance(t, ast.Attribute) and t.attr == "VOCAB_ID"
+            for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets
+        )
+        if not (called & set(SETTERS)) and not assigns_global:
+            rel = os.path.relpath(path, root)
+            names = ", ".join(sorted(imports & set(READERS)))
+            bad.append(f"{rel} imports {names} but never sets train.VOCAB_ID")
+    if bad:
+        return FAIL, ("; ".join(bad) + " -- every cache stamp will read as a mismatch against "
+                      "an empty fingerprint, and the guard will say 'cache dirty' when the "
+                      "process simply has none. Call cache_guard.set_vocab_id(cfg) before the "
+                      "first read (see eval/domain_loss.py:624)")
+    return PASS, f"{checked} cache-reading module(s) set train.VOCAB_ID"
+
+
+def _broken_cache_readers_set_vocab_id():
+    """The REAL eval/ with domain_bpb.py's set_vocab_id call removed -- the state this
+    file was actually in until 2026-09-03, not a synthetic one.
+
+    Mutating the live file rather than writing a fixture, for the reason de-7.3 records:
+    a fixture encodes the author's assumption twice. It also proves the check would have
+    caught the real defect, which is the only claim worth making about a new check.
+    """
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "eval", "domain_bpb.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    if "set_vocab_id(m.cfg)" not in text:
+        return None  # the call is gone or renamed: this world cannot be built
+    import shutil as _sh
+    link = os.path.join(d, "eval")
+    if os.path.islink(link):
+        os.unlink(link)
+    _sh.copytree(os.path.join(ROOT, "eval"), link, ignore=_sh.ignore_patterns("__pycache__"))
+    # Drop BOTH the import and the call: leaving the import would still satisfy the
+    # predicate through `called`, and the world would go green for the wrong reason.
+    open(os.path.join(d, "eval", "domain_bpb.py"), "w", encoding="utf-8").write(
+        text.replace("    from cache_guard import set_vocab_id  # noqa: PLC0415\n", "")
+            .replace("    if not a.hf:\n        set_vocab_id(m.cfg)\n", ""))
+    return d
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -8038,6 +8143,13 @@ CHECKS = [
         _broken_milestone_ckpt_pinned,
     ),
     (
+        "cache_readers_set_vocab_id",
+        "every module importing a token-cache reader also sets train.VOCAB_ID",
+        "eval/domain_bpb.py imported val_seqs and never set the fingerprint, so it has never produced a value: the global stayed None, every cache stamp read as a mismatch against an empty right side, and the guard reported 'cache dirty' when the process simply had none -- while score_matrix.py:1186 and domain_loss.py:624 both carry the call with a comment saying why",
+        check_cache_readers_set_vocab_id,
+        _broken_cache_readers_set_vocab_id,
+    ),
+    (
         "selftests_are_gated",
         "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
         "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
@@ -8223,6 +8335,8 @@ EVIDENCE = {
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    # repo: the readers and their callers are all tracked source; an AST parse needs no pod
+    "cache_readers_set_vocab_id": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
