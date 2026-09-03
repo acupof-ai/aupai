@@ -2700,13 +2700,56 @@
     "estimator": "e = ln(A(d1536)/A(d1024)) / ln(1.5), P subtracted from each reading first",
     "why_subtract_P": "P is additive, not a common factor. The naive ratio of raw readings gives 1.0299; subtracting P gives 0.9795. The correction is worth 0.050 and it moves the answer from just above 1 to just below.",
     "control": "the d1024 probe read 24.08 against 25.435 predicted from the leg's A16/2, 5.3% low. The two hypotheses the control separates (forward-batch is the axis: predict 25.435; accum counted into the axis: predict 13.387) are 10.69 GiB apart, so the 1.36 residual does not confuse them.",
-    "both_probes_same_accum": "accum 1 on both, so accum cancels in the ratio even though the leg runs accum 2"
+    "both_probes_same_accum": "accum 1 on both, so accum cancels in the ratio even though the leg runs accum 2",
+    "measured_b16_world1": {
+     "peak_alloc_GiB": 71.5,
+     "peak_reserved_GiB": 72.12,
+     "startup_alloc_GiB": 71.48,
+     "startup_reserved_GiB": 71.95,
+     "tok_s_gpu": 23300,
+     "A_GiB": 69.388,
+     "nvidia_smi_peak_GiB": 73.31,
+     "batch_ratio_b8_to_b16": 2.0512,
+     "note": "Batch is SLIGHTLY SUPERLINEAR: 2.0512, not 2.000. The b8-based extrapolation predicted 70.388 and the measurement is 72.12 -- underestimated by 1.73 GiB, i.e. 2.6% in the UNSAFE direction. The boundary field previously said batch linearity 'would have to be 33% wrong to flip the answer', which is still true, but the sign was not predicted and the transfer was called 'the hardest of these assumptions'. It is the hardest and it is not exact."
+    },
+    "no_compile_spike_at_b16": {
+     "b8_gap_GiB": 34.31,
+     "b16_gap_GiB": 1.19,
+     "reading": "The 72.5 GiB seen on nvidia-smi during the b8 probe was NOT a compile transient that scales with the shape. Doubling the shape shrank the nvidia-smi-minus-torch gap from 34.31 to 1.19, which no scaling transient does. It was the caching allocator holding freed blocks: torch reserved counts the pool, nvidia-smi counts the whole process, and at b8 most of the pool was free while at b16 nearly all of it is live. STARTUP measured 71.95 against a steady 72.12 -- BELOW it, so there is no compile peak above steady state at this shape. This does not generalise: the launch gate's startup number stays required, it simply did not bite here."
+    }
    },
    "uncertainty": "+-0.1 GiB per reading maps to +-0.027 in e; the observed 0.02 deviation from 1.00 is inside that. The architectural argument (every nameable activation term scales as d or as heads, both 1.5x here, and no b x heads x s x s is materialised) predicted e near 1 and was CONFIRMED by this measurement, in that order -- the measurement was not interpreted to fit the argument.",
-   "boundary": "Measured at world 1, batch 8. Extrapolating to the params leg's world 4 batch 16 gives 2.732 + 33.828*2 + overhead = 73.10 GiB (overhead constant) or 76.15 (overhead scaled by the 2.128 param ratio), against 95.22 usable -- the two treatments differ by 3.05 and neither is near the card, so the ambiguity does not need resolving here. TWO TRANSFERS ARE UNVERIFIED AT d1536 AND BOTH HAVE LARGE MARGIN: batch linearity was measured at d1024 and would have to be 33% wrong to flip the answer, and the 2.710 'world 4 overhead' is a RESIDUAL of leg minus 2x probe, so it contains the accum difference and anything else unaccounted, and would have to be 9.2x larger to flip it. This does NOT replace the full-batch world 4 --peak-only launch gate: these probes fix the d scaling, the gate fixes the absolute value, and the gate must also report the STARTUP transient (abe9419a) because compile peaked at 72.5 GiB on nvidia-smi during the d1536 probe while its steady state was 36.56.",
+   "boundary": "Extrapolation to the params leg now rests on a MEASURED b16 world-1 basis, 72.12 GiB, not on a b8 doubling: 72.12 + 2.710 = 74.83 GiB (residual constant) or 72.12 + 5.767 = 77.89 (residual scaled by the 2.128 param ratio), against 95.22 usable, headroom 17-20 GiB. ONE UNMEASURED TERM REMAINS: the 2.710 is a RESIDUAL of leg minus twice probe, so it carries the world-4 effect, the accum difference and anything else unaccounted, and it would have to be 17 GiB larger to flip the answer. The full-batch world-4 --peak-only launch gate is still required and its reading, minus this one, isolates that residual at no extra card cost: every term except world is identical between the two.",
    "guard_phrases": [
     "the params leg needs grad_ckpt",
     "activation memory scales as d squared"
+   ]
+  },
+  {
+   "id": "eff.nvidia_smi_minus_torch_is_not_a_transient",
+   "value": 34.31,
+   "unit": "GiB (nvidia-smi peak minus torch max_memory_reserved, d1536 batch 8 world 1)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's two d1536 --peak-only probes, card 5 then card 6, 2026-09-03",
+   "config": {
+    "b8": {
+     "torch_reserved_GiB": 36.56,
+     "nvidia_smi_GiB": 70.87,
+     "gap": 34.31
+    },
+    "b16": {
+     "torch_reserved_GiB": 72.12,
+     "nvidia_smi_GiB": 73.31,
+     "gap": 1.19
+    },
+    "test": "doubling the shape shrank the gap 29x; a transient that scales with the shape cannot do that"
+   },
+   "uncertainty": "Both readings are single-run peaks; the qualitative conclusion needs no tighter bound because the gap moved by a factor of 29.",
+   "boundary": "Says the gap is free pool, not live demand. Does NOT say a compile transient never exists -- STARTUP stayed below steady state at b16 on this shape only. The operational rule is that nvidia-smi and torch max_memory_reserved answer different questions (can another job share this card / does each step fit) and their RATIO is meaningless: fb computed 70.87/36.56 = 1.94 and predicted the b16 probe would OOM at 105-136 GiB, in the same conversation where fb had told b0 those two numbers must not be compared directly. The prediction was wrong by 33-66 GiB.",
+   "guard_phrases": [
+    "the compile transient is 1.94x the steady state",
+    "the params leg OOMs during compile"
    ]
   }
  ]

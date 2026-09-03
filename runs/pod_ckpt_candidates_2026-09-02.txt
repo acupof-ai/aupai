@@ -225,3 +225,4 @@
 2026-09-02_07:47 2.11 ckpt_p500m_20b_0902.pt.step2000
 2026-09-02_09:21 2.11 ckpt_p500m_20b_0902.pt.step2500
 2026-09-02_10:58 2.11 ckpt_p500m_20b_0902.pt.step3000
+# KEEP (claim fb 2026-09-03 09:0xZ): ckpt_p200m_4b_0902.pt -- the base checkpoint of be.l1_demo_lang_null (the demo-language McNemar control, 497 paired questions) and of the l1_fewshot row in runs/score_matrix.jsonl. Present on the pod at 412,321,768 B, mtime Sep 2 16:02, verified before the claim; it postdates this listing's 13:58Z snapshot, which is why ckpt_facts_sources_present reads [absent] rather than pruned -- the same case e1 and de recorded above. NOT a deletion candidate.
