@@ -91,5 +91,41 @@
    "direction": "OVER by 11.48 GiB (23%). The reuse was conservative, so the fits/does-not-fit call it licensed was not endangered -- but that is luck about the sign, not a property of the method. Had fp8 cost memory instead of saving it, the same procedure would have licensed a launch that OOMs.",
    "rule": "A same-shape peak reuse must enumerate the DTYPE and the LAUNCHER, not only the model and recipe flags. Two launchers for one shape (run_ddp.sh appends --fp8, run_ab_speedrun.sh calls torchrun directly and does not) differ in what reaches argv, and the reused number was measured under the other one. AND THE SAME UNCHECKED FIELD BROKE A SECOND METRIC THE SAME HOUR: MFU. train.py:2242 sets peak_tflops = 296 if fp8 else 148 (H20 FP8 vs bf16), so this leg's 34% and the anchor arm's 48% are ratios against denominators that differ 2x. Actual throughput is 82K vs 56K tok/s/gpu -- 1.46x FASTER at the lower MFU, and 68.5% if scored on the anchor's bf16 peak. MFU IS NOT COMPARABLE ACROSS DTYPES because its denominator is a function of dtype; tok/s is. One unenumerated field, two metrics, wrong both times -- once predicting memory from a non-fp8 run, once comparing an fp8 run's efficiency to a non-fp8 one."
   }
+ },
+ "_probe_b8_d1024_w1": {
+  "peak_GiB": 24.08,
+  "peak_allocated_GiB": 23.95,
+  "config": "b8 accum1 d1024 L12 h8 ffn3072 seq4096 NO grad_ckpt fp8=True world=1 -- CONTROL for the d-scaling probe, not a launch candidate",
+  "params_M": 206.1,
+  "tok_per_step": 32768,
+  "tok_per_s_per_gpu": 68200,
+  "card_usable_GiB": 95.22,
+  "measured": "2026-09-03",
+  "card": "5, granted by 6e 08:24:06Z; read 0 MiB at 08:30:39Z before the claim",
+  "log": "runs/peak_b8_d1024.log (pod)",
+  "role": "CONTROL. Its job was to be able to FAIL: it tests whether activations scale with the FORWARD batch (predict 25.43) or with the effective batch, i.e. accum counted too (predict 13.39). Measured 24.08 -- 1.36 from the first, 10.69 from the second, a factor of 7.9. So forward batch is the axis. A probe that could only confirm would have proved nothing.",
+  "residual_vs_prediction_GiB": 1.36,
+  "residual_explained_by": "the leg is world=4 and this probe is world=1, so the leg's 49.53 carries NCCL buffers and the DDP gradient bucket that a single-GPU probe does not. Direction confirms it: 2 x A8 = 45.48 < A16 = 48.19 from the leg, a gap of 2.71 GiB. Miscounting accum would have given the opposite sign or an order of magnitude, not 5.3%.",
+  "why_the_ratio_and_not_the_absolute": "d-scaling is read from probe/probe (same world, launcher, dtype and accum, so those cancel). The ABSOLUTE peak for the params leg still needs a world=4 full-batch --peak-only: the world=4 overhead is present there and absent here, and no ratio recovers it. The two measurements are not substitutes.",
+  "compile_transient_note": "nvidia-smi read 72,566 MiB on card 5 during the d1536 arm's compile phase. That is NOT in any peak_GiB here: profile_step_cost.py:576 resets the counter under `if st == a.warmup`, so every number in this file is the STEADY-STATE step. A compile transient OOMs just as hard, and it is unmeasured. Do not read a peak here as 'this shape will start'.",
+  "why_the_leading_underscore": "gate_memory_measured (scripts/launch_gate.py:560) reports every key NOT starting with '_' as a world size we have a measured peak for. This is a b8 world=1 PROBE, not a peak for any launch: listing it bare would tell a reader 'world=1 is measured' and, worse, invite the same reuse-by-shape that put 61.01 in this file. The underscore keeps it out of that list while keeping the measurement auditable."
+ },
+ "_probe_b8_d1536_w1": {
+  "peak_GiB": 36.56,
+  "peak_allocated_GiB": 36.35,
+  "config": "b8 accum1 d1536 L12 h12 ffn4608 seq4096 NO grad_ckpt fp8=True world=1 -- the d-scaling probe's TEST arm, paired with _probe_b8_d1024_w1. Not a peak for any launch.",
+  "params_M": 438.4,
+  "shape_confirmed_by": "the log's `built 438.36M params` line: 438,363,756 occurs only at d1536 L12 h12 ffn4608, and it is printed AFTER the model is constructed, so it certifies the shape took effect. A flag is set before construction and can be silently ignored.",
+  "tok_per_step": 32768,
+  "tok_per_s_per_gpu": 36800,
+  "card_usable_GiB": 95.22,
+  "measured": "2026-09-03",
+  "card": "5, granted by 6e 08:24:06Z; read 0 MiB at 08:35:51Z before the claim",
+  "log": "runs/peak_b8_d1536.log (pod)",
+  "d_scaling_exponent": 0.9795,
+  "how_the_exponent_was_solved": "A = reserved - P, where P (params+grads+Muon momentum+AdamW fp32 states) is computed from the instantiated model, NOT fitted: 1.340 GiB at d1024, 2.732 at d1536. Then exponent = ln(A1536/A1024)/ln(1.5) = ln(33.828/22.740)/ln(1.5) = 0.9795. P MUST be subtracted first: it is an ADDITIVE term, not a common factor. Taking the raw ratio of the two readings gives 1.0299, biased +0.050, which reads as 'above 1' when the answer is below it.",
+  "projection_to_the_params_leg": "A(d1536,b16) = 33.828 x 2 = 67.66 (batch linearity is measured, see _model), so b16 world=4 lands at 73.10 GiB if the world=4 overhead (2.710, from 2xA8 vs the leg's A16) is constant, or 76.15 if it scales with params (x2.128). BOTH fit in 95.22 with 19-22 GiB spare, so that ambiguity does not need resolving at this exponent.",
+  "what_this_does_NOT_answer": "the absolute peak of the params leg. This is world=1; the launch is world=4, whose NCCL buffers and DDP bucket are absent here and cannot be recovered from a ratio. A full-batch world=4 --peak-only remains the launch gate. Also unmeasured: the compile transient, which read 72,566 MiB on nvidia-smi during THIS arm's compile phase while the steady-state number above is 36.56 -- profile_step_cost.py:576 resets the counter at `st == a.warmup` by design, so nothing in this file says whether a shape will START.",
+  "cost": "two single-card probes, ~4 minutes each, no block time"
  }
 }
