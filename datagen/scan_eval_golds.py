@@ -39,20 +39,34 @@ DEFAULT_GOLDS = [
 ]
 
 
-def string_leaves(o):
-    """All string values in a record (recursive), as a list. Loose by design: a hit
-    needs an exact 13-gram, and a short numeric answer forms none."""
+QUESTION_KEYS = {"instruction", "problem", "prompt", "question", "query", "source", "input", "task", "statement"}
+ANSWER_KEYS = {"output", "answer", "solution", "canonical_solution", "target", "completion", "gold", "result", "text"}
+
+
+def tagged_leaves(o, key=""):
+    """String values with their source key, so a needle can be typed question/answer.
+    A hit on a problem statement is the strong contamination (the eval's question
+    appears in the corpus); a hit on an answer/working string is weaker. Reporting
+    per needle type scopes the verdict, rather than lumping both under one 'hit'."""
     out = []
     if isinstance(o, str):
         if o.strip():
-            out.append(o)
+            out.append((key.lower(), o))
     elif isinstance(o, dict):
-        for v in o.values():
-            out.extend(string_leaves(v))
+        for k, v in o.items():
+            out.extend(tagged_leaves(v, str(k)))
     elif isinstance(o, (list, tuple)):
         for v in o:
-            out.extend(string_leaves(v))
+            out.extend(tagged_leaves(v, key))
     return out
+
+
+def needle_type(key):
+    if key in QUESTION_KEYS:
+        return "question"
+    if key in ANSWER_KEYS:
+        return "answer"
+    return "other"
 
 
 def load_golds(path):
@@ -71,26 +85,33 @@ def load_golds(path):
     return name, recs
 
 
-def needles(texts, use_char=True):
-    ws, ch = {}, {}
-    for t in texts:
-        for g in E.ws_grams(t):
-            ws[g] = t
-        if use_char:
-            for g in E.char_grams(t):
-                ch[g] = t
-    return ws, ch
+def needles(texts_by_type, use_char=True):
+    """texts_by_type: {needle_type: [text...]} -> {needle_type: (ws_need, ch_need)}."""
+    out = {}
+    for ty, texts in texts_by_type.items():
+        ws, ch = {}, {}
+        for t in texts:
+            for g in E.ws_grams(t):
+                ws[g] = t
+            if use_char:
+                for g in E.char_grams(t):
+                    ch[g] = t
+        out[ty] = (ws, ch)
+    return out
 
 
 def scan(paths, golds, use_char=True):
-    """[(name, ws_need, ch_need)] x corpus shard rows -> {name: [hit records]}."""
+    """[(name, loaded_by_type)] x corpus shard rows -> {name: {type: [hits]}}."""
     loaded = []
     for gp in golds:
         name, recs = load_golds(gp)
-        texts = [t for r in recs for t in string_leaves(r)]
-        w, c = needles(texts, use_char)
-        loaded.append((name, gp, w, c, len(recs)))
-    hits = {n: [] for n, *_ in loaded}
+        by_type = {}
+        for r in recs:
+            for key, t in tagged_leaves(r):
+                ty = needle_type(key)
+                by_type.setdefault(ty, []).append(t)
+        loaded.append((name, gp, needles(by_type, use_char), len(recs)))
+    hits = {n: {ty: [] for ty in ("question", "answer", "other")} for n, *_ in loaded}
     n_shard = 0
     for path in paths:
         n_shard += 1
@@ -105,12 +126,13 @@ def scan(paths, golds, use_char=True):
                 t = d.get("content") or d.get("text")
                 if not t:
                     continue
-                for name, gp, w, c, nrec in loaded:
-                    ws, ch, _ = E.scan_text(t, w, c, use_char)
-                    if ws or ch:
-                        hits[name].append({"gold_file": gp, "gold_records": nrec,
-                                           "corpus_doc": f"{path}:{ln}",
-                                           "hit": t[:300]})
+                for name, gp, by_type, nrec in loaded:
+                    for ty, (w, c) in by_type.items():
+                        ws, ch, _ = E.scan_text(t, w, c, use_char)
+                        if ws or ch:
+                            hits[name][ty].append({"gold_file": gp, "gold_records": nrec,
+                                                   "corpus_doc": f"{path}:{ln}", "needle_type": ty,
+                                                   "hit": t[:300]})
     return hits, n_shard
 
 
@@ -144,11 +166,12 @@ def main():
                 f.write(json.dumps({"solution": gold_text}) + "\n")
             hits, n_shard = scan(sorted(glob.glob(os.path.join(fixture_dir, "*.jsonl"))) + [os.path.join(tmp, "corpus", "fix_shuf.jsonl")], golds)
             name = os.path.basename(golds[0])
-            verbatim_found = len(hits[name]) > 0
-            shuf_found = any("fix_shuf" in h["corpus_doc"] for h in hits[name])
+            verbatim_found = any(hits[name].values())
+            shuf_found = any("fix_shuf" in h["corpus_doc"] for hh in hits[name].values() for h in hh)
+            n_shuf = sum(1 for hh in hits[name].values() for h in hh if "fix_shuf" in h["corpus_doc"])
             assert verbatim_found, "verbatim gold NOT found -- scanner broken"
-            assert not shuf_found, f"shuffled gold matched {len([h for h in hits[name] if 'fix_shuf' in h['corpus_doc']])} docs -- 13-gram survives shuffle, test wrong"
-            print(f"selftest OK: verbatim gold found, shuffled gold {len([h for h in hits[name] if 'fix_shuf' in h['corpus_doc']])} hits (must be 0)")
+            assert not shuf_found, f"shuffled gold matched {n_shuf} docs -- 13-gram survives shuffle, test wrong"
+            print(f"selftest OK: verbatim gold found, shuffled gold {n_shuf} hits (must be 0)")
         finally:
             shutil.rmtree(tmp)
         return
@@ -169,7 +192,8 @@ def main():
         hits, n_shard = scan(shards, a.golds)
         per_eval = {}
         for name, ghits in hits.items():
-            per_eval[name] = {"corpus_docs_hit": len(ghits), "hit_rate": round(len(ghits) / max(1, n_shard), 6)}
+            per_eval[name] = {ty: {"corpus_docs_hit": len(hh), "hit_rate": round(len(hh) / max(1, n_shard), 6)}
+                              for ty, hh in ghits.items() if hh}
         result[dom] = {"shards": n_shard, "evals": per_eval, "hit_list": hits}
         print(f"  {json.dumps(per_eval)}", flush=True)
     with open(a.out, "w", encoding="utf-8") as f:
