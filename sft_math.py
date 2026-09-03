@@ -121,6 +121,22 @@ def main():
              "loop recover that -- so a Stage B arm must never be compared against a Stage A "
              "number, only against its own unlooped arm at the same step.",
     )
+    parser.add_argument(
+        "--prefix",
+        choices=("p3", "p7"),
+        help="N7 Stage C: TRAIN with a prefix-LM attention mask on the MLA layers of the named arm "
+             "(eval/prefix_mask.py PREFIX_ARMS -- p3 = blocks 3,7,11; p7 = block 7 alone). Prompt "
+             "tokens attend bidirectionally among the prompt tokens of their own DOCUMENT; response "
+             "tokens stay causal, so no position ever reads a token that carries loss. Runs on the "
+             "training kernel via flash_attn.cute's mask_mod, not the SDPA fallback. "
+             "BLOCK 11 ALONE IS NOT AN ARM and cannot be: prefix and causal differ only for prompt "
+             "queries, prompt positions are ignore_index, and block 11 is the last block, so a "
+             "changed prompt position has no path to a supervised one -- measured bitwise-identical "
+             "loss, 0 of 3660 changed positions supervised. p7 works because layer 7 has KDA layers "
+             "above it. p3's causal twin is ckpt_n7c_unlooped.pt and p7's is ckpt_n7c_looped.pt, "
+             "same pack, seed and step count, so neither baseline is retrained. Run "
+             "scripts/n7c_gates.py on the pod first; it certifies both arms' layer sets.",
+    )
     args = parser.parse_args()
     if args.stop_after and args.max_steps:
         parser.error("--stop_after and --max_steps together are ambiguous: --max_steps also "
@@ -275,6 +291,71 @@ def main():
             print(f"LOOPED TRAINING: blocks {args.loop[0]}..{args.loop[1]} run twice "
                   f"(AttnRes option 3); grad_ckpt {Cfg.grad_ckpt}", flush=True)
 
+    prefix_state = None
+    if args.prefix:
+        # THE MASK NEEDS PER-STEP DATA, so unlike --loop this cannot be a one-time patch: the
+        # per-document prompt lengths are computed from THIS batch's labels and cu. So the setup
+        # here only builds the callback and installs the layer-scoping wrapper; the aux tensor is
+        # swapped per step inside the loop.
+        # IMPORTED AS model_mod, not `model`: that name is the wrapped (DDP / compiled) model in
+        # this function, and rebinding it here would hand torch.compile a module object.
+        import model as model_mod  # noqa: PLC0415
+        from eval.prefix_mask import PREFIX_ARMS, build_mask_mods, doc_prompt_lengths  # noqa: PLC0415
+
+        if not model_mod.HAS_FA:
+            raise SystemExit(
+                "REFUSING: HAS_FA is False, so GatedMLA takes the SDPA fallback at model.py:196 and "
+                "no mask_mod is ever called. The arm would train a CAUSAL model under a prefix "
+                "flag and its checkpoint would claim an intervention that never ran.")
+        if not Cfg.doc_mask:
+            raise SystemExit(
+                "REFUSING: --prefix needs doc_mask, because model.py:189 reaches "
+                "flash_attn_varlen_func -- the only entry point that takes mask_mod -- only when cu "
+                "is not None. With doc_mask off every forward takes flash_attn_func at :194 and the "
+                "mask is silently absent, which is how this repo's gates once printed three passes "
+                "while testing nothing.")
+        layers = PREFIX_ARMS[args.prefix]
+        targets = []
+        for li in layers:
+            mixer = raw_model.blocks[li].mixer
+            if not isinstance(mixer, model_mod.GatedMLA):
+                raise SystemExit(
+                    f"REFUSING: block {li}'s mixer is {type(mixer).__name__}, not GatedMLA. Arm "
+                    f"{args.prefix} names MLA layers {list(layers)} from cfg (layers "
+                    f"{Cfg.layers}, attn_every {Cfg.attn_every}); this asserts them against the "
+                    "built model rather than trusting the arithmetic.")
+            targets.append(mixer)
+        _causal_mod, prefix_mod = build_mask_mods()
+        orig_varlen = model_mod.flash_attn_varlen_func
+        aux_box = [None]
+
+        # SCOPED BY IDENTITY, not by patching the layer. model.py:191 looks the name up at call
+        # time, so the module global is the only hook -- but it is global, so the wrapper must
+        # decide which layer is calling. Hooks set a flag that is true only during a target's own
+        # forward; every other MLA layer passes through causal and unmasked. Getting this wrong is
+        # not hypothetical: the gates masked all three MLA layers for four commits while claiming
+        # one, and the tell ("3 varlen calls") was printed by every green run.
+        def _prefix_varlen(q, k, v, **kw):
+            if aux_box[0] is None or not any(
+                    getattr(t, "_n7c_active", False) for t in targets):
+                return orig_varlen(q, k, v, **kw)
+            kw.pop("causal", None)  # mask_mod REPLACES causality (interface.py:270)
+            return orig_varlen(q, k, v, mask_mod=prefix_mod, aux_tensors=aux_box[0], **kw)
+
+        for t in targets:
+            t.register_forward_pre_hook(lambda m, _i: setattr(m, "_n7c_active", True))
+            t.register_forward_hook(lambda m, _i, _o: setattr(m, "_n7c_active", False))
+        model_mod.flash_attn_varlen_func = _prefix_varlen
+        # ON Cfg, for the same reason loop_blocks is: the prefix and causal arms write
+        # byte-different checkpoints whose metadata would otherwise be identical, and a checkpoint
+        # that cannot say which mask trained it is a checkpoint whose numbers cannot be attributed.
+        Cfg.prefix_arm = args.prefix
+        Cfg.prefix_layers = list(layers)
+        prefix_state = (aux_box, doc_prompt_lengths)
+        if is_main:
+            print(f"PREFIX TRAINING: arm {args.prefix}, prefix-LM mask on MLA blocks "
+                  f"{list(layers)}; the other MLA layers stay causal", flush=True)
+
     model = raw_model
     if ddp:
         model = DDP(
@@ -328,8 +409,19 @@ def main():
             xb = X[idx].to(device, non_blocking=True)
             yb = Y[idx].to(device, non_blocking=True)
             vb = V[idx].to(device, non_blocking=True) if Cfg.fone else None
+            cub = doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None
+            if prefix_state is not None:
+                # THE AUX TENSOR IS REBUILT EVERY STEP, from THIS batch's labels and cu. The
+                # per-document prompt length is the offset of each document's first supervised
+                # token, and both the document boundaries and the boundary inside them change with
+                # the batch -- a tensor computed once would be read against the wrong documents for
+                # every step after the first, out of bounds whenever the document count grew.
+                # yb is the SHIFTED labels the loss uses, so the boundary read here is the same
+                # boundary the loss enforces.
+                _box, _plens = prefix_state
+                _box[0] = [_plens(yb, cub).to(torch.int32)]
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
-                hidden, _ = model(xb, yb, doc_cu_seqlens(xb, EOS_ID) if Cfg.doc_mask else None, vb)
+                hidden, _ = model(xb, yb, cub, vb)
             B, T, D = hidden.shape
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             if Cfg.fone:

@@ -474,9 +474,13 @@ def main():
               f"means the loss cannot see the mask: prefix and causal differ only for PROMPT queries, "
               f"prompt positions are ignore_index, and the last block has no layer above it to "
               f"carry the change into a supervised position. The two arms would train identically")
-        print(f"       positions moved: {n_sup_moved} supervised, {n_msk_moved} masked, out of "
-              f"{moved.numel()}; max|dlogit| on supervised "
-              f"{float((lg_prefix - lg_causal).abs().amax(dim=-1)[sup].max()):.3e}")
+        print(f"       positions moved: {n_sup_moved} of {int(sup.sum())} supervised, "
+              f"{n_msk_moved} masked, out of {moved.numel()}. THE COUNT IS COVERAGE, NOT "
+              f"MAGNITUDE: both arms move ALL {int(sup.sum())} supervised positions, so this "
+              f"number separates a null from a non-null and says nothing about size. The size is "
+              f"max|dlogit| on supervised "
+              f"{float((lg_prefix - lg_causal).abs().amax(dim=-1)[sup].max()):.3e}, which does "
+              f"differ by arm (3.894 for layer 7 alone, 14.67 for all three).")
 
         check("E: every document carries a nonzero prompt length (full coverage)", nz == ndoc,
               f"{nz} of {ndoc} documents have a nonzero prompt. Each document is one "

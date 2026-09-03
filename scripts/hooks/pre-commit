@@ -546,6 +546,16 @@ def main():
         # which the test cannot tell that it is measuring the argument at all. Imports train.py
         # only, so it needs no liger_kernel and runs here rather than in NEEDS_DATA.
         "scripts/test_sft_save_opt.py",
+        # --prefix's wiring, checked at the SEAM rather than at the flag: which layers the kernel
+        # actually receives a mask_mod for, that the aux tensor is rebuilt per step from the
+        # batch's own labels, and that both refusals exist. Presence of the flag proves nothing
+        # here -- the gate script masked all three MLA layers for four commits while its docstring
+        # claimed one -- so each guarded property was reverse-tested by breaking it and requiring
+        # this test to fail (4 of 4 caught). Three argparse checks need liger_kernel and SKIP off
+        # -pod, printed and counted; the arm-name consistency check reads the source instead, so
+        # the flag stays tied to PREFIX_ARMS even where sft_math.py cannot be imported. Runs here
+        # rather than in NEEDS_DATA because everything it does not skip is source-level.
+        "scripts/test_sft_prefix.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
         # code_fp: five cases over git history, no data and no card. Two of them are the
         # directions that matter -- a range that must report NONE and a commit that must
