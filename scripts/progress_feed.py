@@ -257,7 +257,8 @@ def friction_section():
     ncauses = len({r.get("cause", "") for r in rows})
     return ("<h2>摩擦记录</h2>"
             '<div class=head style="border-top-color:#d97706">'
-            f'<div class=su>{len(rows)} 条、{ncauses} 种原因；最多的是{kind_cn}（{n} 条）：{html.escape(short)}</div>'
+            f'<div class=su>{len(rows)} 条、{ncauses} 种原因；最多的是{kind_cn}（{n} 条）：{html.escape(short)}'
+            ' <a href="file:///Users/bytedance/code/aupai/docs/standards/friction_review.md">复盘全文</a></div>'
             "</div>")
 
 
