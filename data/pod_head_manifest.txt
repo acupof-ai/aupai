@@ -271,7 +271,7 @@ d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/
 906bc88d6cb7a262d8853fe993a50c46eaff6f9d9b461bc774f162e796c33830  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
-122a6dd57eb319eb6e7e4ea5f60ce324a73bcb3765f2f5edac0816272b3f92fa  scripts/launch_gate.py  docs  644
+5984a84c1a52c90a7caba58812ebba12bf7fd20b47e130f9b8a908c202f398ae  scripts/launch_gate.py  docs  644
 81378df8cb3cc05b2404157c85553cdd9a667de0f2380dcec735a33e2550876c  scripts/launch_tests.py  docs  644
 a65d0adddbdab3ef606d670d8cdedc5c69d46556952bb4b99dd34d18ab191442  scripts/ledger_audit.py  training  644
 4aab11a85ab98f4dd619232deeb5e1a3c75fe9147a648fef7619c7a8ebf880e7  scripts/ledger_resolutions.py  training  644
