@@ -25,7 +25,7 @@ ee30cd1ac4645d50b1cfbdc309d7e87ae54f2e98d159cf0536168aaa8b0287df  data/mix_15b_s
 590fe17d138532b8f16e7fe55533ef8b8877892e01e56c4eda3c9237754446b3  data/mix_200m_4b.json  docs  644
 b4b5db1488d958a7d5109b75d3bbc601abe77d6a7102c53eab6c1d2092c7ee67  data/mix_200m_8b.json  docs  644
 47e92ba75e057fc3e2c891215c67c9617392496e6eeb30c6a41dac9399f3e848  data/mix_300m_6b.json  docs  644
-9c364f6ac5a25e9e780ab96faae65efb0d57749a75d622da53a1e38e9250f28d  data/mix_30b.json  docs  644
+dee69db153ad36a039732eddd130099e546e2b093559b4d0271ff9ddb345a7a1  data/mix_30b.json  docs  644
 b799709efdb9561628780c695e63670b702a86d0778a16c499a49b68d65a39c0  data/mix_30b_stage2.json  docs  644
 69fa89c1bb1cee0f0124dd79e7ffc7dccb96ce6b3efee70bcd95b72a596883f1  data/mix_500m.json  docs  644
 2d457aefaa5d637cef27827d1a35126d04b788178522c6b5c1737117f7cdb9ac  data/mix_probe_lr.json  docs  644
@@ -62,6 +62,7 @@ ce94da83c49eae1ea1ba085905bb799974e0024256532dc88fb5788ce35d1b32  datagen/code_d
 db7dc9c6b71308edeffd39b7f48f15662e9b6e402ea60a0573019cf70424bf5d  datagen/code_dedup_handread.py  docs  644
 87b584eb0a8593399102445a02618d55e5677752012466d26e920b9c2a4364be  datagen/code_rp1t_fail_histogram.py  docs  644
 10a7d5432f33fb6481f6882b91d75b12e60ccf368cda216c91fdc7a37fe822d7  datagen/corpus_fingerprint.py  training  644
+dcaef3670499ae36396f1da686cfb8e784734cadc96905fc83f790ff6f7b885d  datagen/corpus_subset_check.py  docs  644
 6dc9fd4ab41a2183a6a8fb8f831ec13fbf15b78b629c1f0b0e3611bb58c03872  datagen/cot_pilot.py  docs  644
 13e07d01c3e11845a02d0356ffc257a91ea0fc1db19fddc294a3efee2e3a9ea9  datagen/count_cleaned_code.py  corpus  644
 ad954a401a022744010743f6eded9cba1cb60807845929c697619522c50b407a  datagen/count_code_dirs.py  docs  644
@@ -179,7 +180,7 @@ ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_
 b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eval.json  docs  644
 9612e6b5d351129d93b09b23143b61c14179b8a942085a42f0140c816b9ccdc3  facts/contamination.json  docs  644
 4530264da4e53a5940959cdea13caefe704d16e13b1b035b7f2938e45f6b9334  facts/corpus_filters_baseline.json  docs  644
-2e05fb8626bc1be1904a9a293dae4f11dcf94936edc33aea64bd086fbd644297  facts/corpus_supply.json  docs  644
+a6e3feb170bce6f32e70455fa2785243c90ffa7b17b3c705565978c05e9721e9  facts/corpus_supply.json  docs  644
 9b1b43b0249be72439d86100d21133fb4efe0212d147bc8150bf47e8a67ef403  facts/data_quality.json  docs  644
 ae60ce856a06b7a85de108c792f5d5064de10c51be17f66a8ff71265a9750516  facts/data_scaling.json  docs  644
 c66f096e981d362ef1fbe2b42d7b975f7e1432e5d26e33ffc06fdbf652532280  facts/efficiency.json  docs  644
