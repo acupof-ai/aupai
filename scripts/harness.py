@@ -4597,6 +4597,24 @@ FACTS_DIR = os.path.join(ROOT, "facts")
 FACT_REQUIRED = {"id", "value", "measured", "source", "config", "uncertainty", "status"}
 FACT_STATUS = {"measured", "recorded", "unmeasured", "retracted"}
 FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
+# A retracted entry must say, as data, WHICH numbers died -- and `[]` is a real answer.
+#
+# THE FIELD EXISTS BECAUSE `value` CANNOT ANSWER IT. On a retracted entry, `value` is rewritten
+# into a narration of the retraction, so one field holds the dead number AND the number that
+# replaced it, separated only by prose: eff.depth_is_not_the_mfu_gap carries retracted 14.2/16.0
+# beside correct 43.5/23.7, and eff.dynamo_recompile_not_a_lever's 54.9/260/72% are ALL from the
+# measurement that superseded it. Any tool that greps a retracted entry's numbers hunts correct
+# values, which is worse than not checking: it spends the reader's trust in everything the tool
+# says (§159's addendum, de and e1, 2026-09-04).
+#
+# WHY A LIST AND NOT A FLAG, from reading all nine retracted entries rather than pattern-matching
+# them: FIVE of the nine retract a CONCLUSION while their numbers stand. be.l1_3shot_retracted's
+# rerun reproduced 0.2/63.6/8.9; cont.sft_all_code_holdout_leak's v2 2.2% and v3 40.0% are
+# restored; ds.second_resume_rereads_one_segment's 8,192 rows was true of every checkpoint written
+# before 52aec31. A field that marked all nine's numbers dead would kill five entries' correct
+# values -- the same defect in a new place. So the list holds only values that are wrong, and an
+# empty list states that no number died, which is the common case.
+FACT_RETRACTED_VALUE = "retracted_value"
 FACT_DATE_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
 FACT_SOURCE_PATH = re.compile(
     # probes/ was absent until 2026-09-02 and its absence was a blind spot, not a scoping
@@ -5367,6 +5385,32 @@ def check_facts_well_formed(root):
                 for k in ("claim", "audit", "refuted_by"):
                     if not e.get(k):
                         errors.append(f"{tag}: {e['status']} fact needs {k}")
+            # RETRACTED ONLY, and `[]` counts as present -- the absence of the KEY is the defect,
+            # not an empty list. Five of nine retracted entries have no dead number (see
+            # FACT_RETRACTED_VALUE), so requiring a non-empty list would force someone to invent
+            # one. `is None` rather than a falsy test for exactly that reason.
+            if e["status"] == "retracted":
+                rv = e.get(FACT_RETRACTED_VALUE)
+                if rv is None:
+                    errors.append(
+                        f"{tag}: retracted fact needs {FACT_RETRACTED_VALUE} -- the list of values "
+                        f"that are WRONG, as data. Use [] when the conclusion was retracted but "
+                        f"its numbers stand (5 of 9 entries), which is a statement, not a gap")
+                elif not isinstance(rv, list) or any(not isinstance(x, str) for x in rv):
+                    errors.append(f"{tag}: {FACT_RETRACTED_VALUE} must be a list of strings, "
+                                  f"got {type(rv).__name__}")
+                else:
+                    # A value listed as dead must appear in the entry, or the two disagree about
+                    # what was retracted and neither can be trusted. Checked against value+claim
+                    # because a retraction rewrites `value` into narration and the original number
+                    # often survives only in `claim`.
+                    hay = f"{e.get('value', '')} {e.get('claim', '')}"
+                    for x in rv:
+                        if x not in hay:
+                            errors.append(
+                                f"{tag}: {FACT_RETRACTED_VALUE} lists {x!r}, which appears in "
+                                f"neither value nor claim -- a dead value nobody can find is not "
+                                f"a retraction anyone can act on")
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
@@ -5452,7 +5496,10 @@ def _broken_facts():
     them. Without docs/, the world FAILed on `docs/lessons/base_eval_at_200m.md does not
     exist` for facts nobody mutated -- so the selftest was green on absence, and would
     have stayed green with both mutations removed. Verified by removing them
-    (de, 2026-09-01)."""
+    (de, 2026-09-01).
+
+    Four mutations now, the last two for retracted_value: one entry's key deleted, and one
+    entry's list naming a value the entry does not contain. See the comments at each."""
     import shutil
 
     d = _tmp_repo_shaped()
@@ -5465,6 +5512,24 @@ def _broken_facts():
     del obj["facts"][0]["config"]
     obj["facts"][0]["source"] = "scripts/no_such_script_xyz.py"
     json.dump(obj, open(os.path.join(d, "facts", "tokenizer.json"), "w"))
+    # THE RETRACTED-VALUE HALF, on the real retracted entries. Two mutations, because the
+    # branch has two ways to be wrong and one world that exercised only the missing key would
+    # leave the disagreement half unguarded:
+    #   1. the key deleted -> "retracted fact needs retracted_value"
+    #   2. a value listed that appears in neither `value` nor `claim` -> the disagreement error.
+    # Mutation 2 is the one that matters in practice: the field is hand-maintained, so the way
+    # it rots is someone editing `value` and leaving the list behind, and a check that only
+    # asserts presence would call that entry well-formed. Both are on REAL entries -- the
+    # entries whose `value` narrates its own retraction are exactly what the field is for.
+    cf = os.path.join(d, "facts", "efficiency.json")
+    obj2 = json.load(open(cf, encoding="utf-8"))
+    hit = [e for e in obj2["facts"] if e.get("status") == "retracted"]
+    if len(hit) < 2:
+        raise SelftestSkip(f"facts/efficiency.json holds {len(hit)} retracted entries; the world "
+                           "needs two to break both halves of the retracted_value branch")
+    hit[0].pop("retracted_value", None)
+    hit[1]["retracted_value"] = ["1234.5678 no such number in this entry"]
+    json.dump(obj2, open(cf, "w"))
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
