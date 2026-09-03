@@ -82,6 +82,18 @@ WALL_SECS = {
                       "a hang: py-spy showed the parent blocked in subprocess.communicate at "
                       "score_matrix.py:269, i.e. working. 5153 items, not the 1000 I assumed "
                       "before reading n_items."),
+    "l1_fewshot.py": (2134.3, 497, "generative, 497 problems x 512 new tokens. THE ONLY EVAL "
+                      "WITH BOTH COLUMNS FILLED, and they disagree 10x: the dip in MEASURED is "
+                      "209.1s of training lost, the wall here is 2134.3s of yours. Neither is "
+                      "the other's estimate. Measured twice on a dedicated card 3 in b0-17's "
+                      "readout, one run per arm (2134.3s untiehead, 2133.6s untieheadlr -- 0.7s "
+                      "apart over 36 minutes, so the number is the eval's shape, not a "
+                      "condition of one run). 4.29 s/item against lambada_en's 0.188 s/item: "
+                      "23x slower per item at a tenth the item count, because 512 new tokens "
+                      "per problem is 512 serial forwards. Both arms read acc 0.0 with "
+                      "answer_present_rate 0.002 (1 of 497), i.e. 36 minutes to learn that a "
+                      "500-step 200M base emits no parseable answer -- the cost is worth "
+                      "recording precisely because the signal was known to be absent."),
 }
 
 # HOST BYTES PER TOKEN CACHE, measured on the pod 2026-09-03:
@@ -220,6 +232,17 @@ def main():
               f"but no throughput dip: {', '.join(wall_only)}.\nThat is not the same measurement: "
               f"wall time says how long you wait, the dip says what it costs a run beside it. An "
               f"eval can be slow and gentle (26% util for 16 min) or quick and disruptive.")
+    # The case that makes the two-table split concrete rather than argued: an eval with BOTH
+    # numbers. Until l1_fewshot had a wall time, every WALL_SECS entry lacked a dip and the
+    # distinction rested on reasoning; one row with both turns it into a measured ratio.
+    both = sorted(n for n, _, s, _ in rows() if s is not None and n in WALL_SECS)
+    for n in both:
+        dip = next(s for m, _, s, _ in rows() if m == n)
+        wall = WALL_SECS[n][0]
+        print(f"\n{n} HAS BOTH: dip {dip:.1f}s of training lost, wall {wall:.1f}s of yours "
+              f"-- {wall / dip:.1f}x apart. Reading either as the other is the error the two "
+              f"tables exist to prevent; the dip does not bound the wait, and the wait does "
+              f"not bound the damage.")
     print("\nThe three measured points do not rank by metric class. score_matrix runs four "
           "likelihood\nmetrics for 46s -- cheaper than the control. l1_fewshot is "
           "generative and costs 209s. ppl\nwas killed at 109s before touching a cache; the "
@@ -319,6 +342,30 @@ def _selftest():
     # collapses, the boolean was adequate after all and this complexity is not earned.
     lo, hi = min(CACHE_BYTES.values()), max(CACHE_BYTES.values())
     assert hi / lo > 1000, f"cache sizes span only {hi / lo:.0f}x -- a boolean would do"
+
+    # THE TWO TABLES MUST NOT BE READ AS ONE. l1_fewshot is the only eval with a dip AND a
+    # wall time, so it is the only place the claim "these are different quantities" can be
+    # checked rather than argued. If they ever came within 2x, keeping two tables would be
+    # unearned complexity -- and if a future edit copies one number into the other table,
+    # this is what catches it (measured 209.1s dip vs 2134.3s wall, 10.2x).
+    both = [n for n, _, s, _ in rows() if s is not None and n in WALL_SECS]
+    assert both, (
+        "no eval has both a dip and a wall time -- the two-table split is then a claim with "
+        "no measurement behind it; l1_fewshot.py was that measurement"
+    )
+    for _n in both:
+        _dip = next(s for m, _, s, _ in rows() if m == _n)
+        _wall = WALL_SECS[_n][0]
+        assert _wall != _dip, (
+            f"{_n}: wall and dip are the same number -- one table was copied into the other")
+        assert _wall / _dip > 2, (
+            f"{_n}: wall {_wall:.1f}s is only {_wall / _dip:.1f}x the dip {_dip:.1f}s. Two "
+            f"tables are earned by that gap; without it, one column would do"
+        )
+    # A WALL_SECS entry must name a real eval, or the column silently describes nothing.
+    _names = {n for n, _, _, _ in rows()}
+    for _n in WALL_SECS:
+        assert _n in _names, f"WALL_SECS names {_n}, which is not an eval in the table"
 
     print(
         f"selftest OK: interval arithmetic on 4 known answers, 4 published costs "
