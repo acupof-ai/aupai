@@ -1,6 +1,6 @@
 ---
 question: What does a fused AttnRes logits+mixing kernel compute, what may it assume, and what proves it correct?
-status: design
+status: measured (kernel 2026-09-03)
 source: trace_p200m_3step.json (measured); model.py:244-253; scripts/attnres_fused_reference.py (b0, commit ccbc089)
 ---
 
@@ -241,6 +241,80 @@ b0 independently reproduced the bf16 rescaling result: no clamp needed.
 - **`n` varies per call** (source `p` is read by calls `p..2L`), so the kernel
   takes `n` as a runtime argument, not a constexpr — or it recompiles 25 times
   per step.
+
+## Measured: the kernel, 2026-09-03
+
+Built (`algorithms/attnres_triton.py`), gated and measured on H20 card 5.
+`B=4 T=4096 D=1024` bf16, the AttnRes stack forward and backward, reps=3:
+
+| L | n | eager ms | triton ms | speedup | eager GiB | triton GiB |
+|---|---|---|---|---|---|---|
+| 4 | 9 | 35.7 | 18.1 | **1.97x** | 0.71 | 0.82 |
+| 8 | 17 | 121.0 | 58.9 | **2.06x** | 1.22 | 1.58 |
+| 12 | 25 | 256.9 | 123.8 | **2.07x** | 1.75 | 2.35 |
+
+The prediction filed before the run was 1.5-3x. This is inside it. Compare the
+torch node, which predicted +2.8% of wall and measured -124%: the two together
+are the record that the design premise -- **the accumulator must stay in fast
+memory** -- was the real variable, not the byte count.
+
+### The memory regression, and what caused it twice
+
+The first two kernels cost **13.3 GiB against eager's 1.75** at L=12. Cause,
+both times: a copy of the sources. First `torch.stack` into `[n,B,T,D]`; then,
+after that was removed, `[x.float() for x in v]` -- **the same O(L^2) bytes,
+differently spelled**. The rule this page states as "no `[n,B,T,D]` stack"
+was being satisfied literally while being violated in substance.
+
+The root error is worth naming because it is not a typo: **fp32 constrains the
+ACCUMULATOR, not the loads.** Read as a constraint on the loads it forces a
+converted copy of every source; read correctly, the kernel reads the sources'
+own bf16 storage through a device array of their data pointers and converts in
+registers. The sources are separate allocations owned by previous layers and
+nothing needs them contiguous.
+
+Split forward from backward and the residual is fully attributed:
+
+```
+L=12  forward only     eager 0.93   triton 0.85 GiB   -0.07   <- BELOW eager
+L=12  fwd + backward   eager 1.78   triton 2.38 GiB   +0.60
+      n * rows * D * 2 bytes at n=25 = 0.78 GiB
+```
+
+All of the excess is backward, and it is the n `dV` tensors that one
+`autograd.Function` must return as a single tuple while eager's chain frees
+each as it accumulates. **That is the fusion's own cost, not a plumbing bug**;
+removing it means accumulating `dV` in place into the downstream gradient,
+which is a different change.
+
+### The bf16 gate had to be rewritten, and the verdict reversed
+
+Comparing the kernel to eager in bf16 read **9.32e-02 against a 3e-2 bar** --
+"FAIL". That number is the distance between two inaccurate things and cannot
+say which one is wrong. Against fp64 truth:
+
+| | fwd | dV | dgq |
+|---|---|---|---|
+| eager | 1.40e-01 | 3.84e-01 | 8.05e-02 |
+| triton | **1.28e-01** | **1.71e-01** | **5.70e-02** |
+
+The kernel is closer to truth than the code that ships today, on all three, and
+`dV` by 2.2x. The bar is now eager's own error rather than a constant, because
+"is it worse than what ships" is the question a gate can answer and "is it
+within 3e-2 of what ships" is not.
+
+**The 14% is a model finding, not a kernel one.** It lives in the softmax
+weights: `model.py:269` accumulates a D=1024 dot product in bf16, putting the
+logits 0.858 off against a 279.8 spread. `--attn_res_fp32_logits` (`169da865`)
+is the arm that prices it; default OFF, pre-registered prediction is reject.
+
+### Answering the open question below
+
+The 6.25x was **launch-bound, and row blocking fixed it as a side effect** --
+the candidate this page named. 632 launches/step became 18 (one per call), and
+the measured 2.07x is roughly double the 10.9 ms the byte saving alone
+predicted. The design's own criterion (18 kernel launches, not 18 CTAs) is met:
+at R=16 each call launches 4096 CTAs.
 
 ## What this design does not address
 

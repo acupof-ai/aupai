@@ -234,6 +234,17 @@ for f in "$@"; do
   push_one "$f"
 done
 
+# VERIFY WHAT WAS PUSHED, PER PATH, before the manifest gate below. That gate compares the
+# pod against data/pod_head_manifest.txt and is silent about every path the manifest does
+# not list -- 398 of 815 tracked files are in it, so docs/lessons/, docs/audits/ and
+# scripts/pod_sync_check.sh (explicitly out of SCOPE) can be pushed by name with nothing
+# afterwards reading their bytes. `pod_sync_check` reported `4 UNREGISTERED .py not in
+# manifest` on 2026-09-03, which is this same gap from the other side.
+podshas=$(mktemp)
+~/bin/pod "cd /work/aupai && sha256sum $* 2>/dev/null" < /dev/null > "$podshas" || true
+python3 scripts/pod_verify_landed.py "$podshas" "$@"
+rm -f "$podshas"
+
 # Always push the manifest: a file can never land on the pod without the reference
 # that describes it. 2026-08-31: a pushed fetch_corpus.py with a stale manifest killed
 # a healthy training launch because the pod-side --check compared fresh file vs old hash.

@@ -489,8 +489,10 @@ print("token cache namespaced by --fone: OK")
 # importable without torch. Nothing asserted they agree except test_e2e, which is
 # GPU-only -- so a divergence would make every checkpoint unloadable and CI would be
 # green. Checkpoints are stamped by train's copy and verified by loader's.
-import train as _train  # noqa: E402
 from loader import vocab_fingerprint as _loader_fp  # noqa: E402
+
+import model as _model  # noqa: E402
+import train as _train  # noqa: E402
 
 _tok_path = os.path.join(
     os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data", "tokenizer.json"
@@ -533,6 +535,7 @@ _dr = _train.DeltaRecurrence(Cfg).to(DEV)
 _xd = torch.randn(2, 16, Cfg.d, device=DEV)
 _Kc = _dr.short_conv.kernel_size[0]
 import torch.nn.functional as _F  # noqa: E402
+
 with torch.no_grad():
     _hc = _F.pad(_xd.transpose(1, 2), (_Kc - 1, 0))
     _ref_h = _F.silu(_dr.short_conv(_hc).transpose(1, 2))  # the plain nn.Conv1d path
@@ -593,11 +596,18 @@ _cu = _torch.tensor([0, 3, 8, 13, 16])  # row 0: docs [0,3) [3,8); row 1: [8,13)
 def _no_flash():
     """This block is about the fallback: on a flash machine the module would take the
     flash path and never exercise the mask being checked (and refuse fp32 besides)."""
-    was, _train.HAS_FA = _train.HAS_FA, False
+    # BOTH modules, for the same reason as chunk_kda at line 33: GatedMLA.forward reads its
+    # OWN module global, and after the b0-8 split `train.HAS_FA` is a re-exported SEPARATE
+    # binding -- rebinding only train's copy leaves model.HAS_FA True, the flash path runs, and
+    # flash_attn asserts on this block's fp32 input. That is exactly how this failed on the pod
+    # (test_arch_compat.py:587 -> model.py:170) while all 14 CPU checks passed: the CPU machine
+    # has no flash_attn, so HAS_FA is already False there and the missed rebinding is invisible.
+    was = _train.HAS_FA
+    _train.HAS_FA = _model.HAS_FA = False
     try:
         yield
     finally:
-        _train.HAS_FA = was
+        _train.HAS_FA = _model.HAS_FA = was
 
 
 def _fallback(x, cu):
@@ -654,10 +664,10 @@ def _gpu_check(cfg, B, T, cu):
         with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
             flash = mg(xg, cug)
             assert n[0] == 1, f"flash branch did not run (called {n[0]}x) -- max diff 0 would be two fallbacks"
-            _train.HAS_FA = False      # same module, same weights, the masked-SDPA branch
+            _train.HAS_FA = _model.HAS_FA = False  # both bindings; see _no_flash
             ref = mg(xg, cug)
             naive = mg(xg, None)       # no cu: plain causal, the mask absent
-            _train.HAS_FA = True
+            _train.HAS_FA = _model.HAS_FA = True
     finally:
         _train.flash_attn_varlen_func = real
     d = (flash.float() - ref.float()).abs().max().item()

@@ -214,12 +214,27 @@ def main():
 
     # OUR tokenizer decodes the held-out ids to text; that text is what BOTH arms score. It is
     # loaded even on the control arm, because it is the only thing that can read the cache.
-    from scripts.loader import load_tokenizer  # noqa: PLC0415
+    from scripts.loader import load_tokenizer, vocab_fingerprint  # noqa: PLC0415
     from domain_loss import val_seqs  # noqa: PLC0415
+    import train  # noqa: PLC0415
 
     ours_tok = load_tokenizer(a.tokenizer, None)
     mix = json.load(open(a.mix, encoding="utf-8"))
     m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
+    # val_seqs -> _domain_seqs compares every cache stamp against train.VOCAB_ID, which starts
+    # None and is set only by train.build_tokenizer -- which no eval calls. Without this the
+    # guard reports "cache dirty" when the process simply has no fingerprint, and that is why
+    # this file had never produced a value: all three of its rows in runs/score_matrix.jsonl
+    # are that error, one of them the --hf control.
+    #
+    # FROM THE TOKENIZER, NOT FROM A CHECKPOINT'S cfg. Both arms score the same decoded rows, so
+    # BOTH must reach val_seqs -- the control has no cfg and no vocab_id, so a cfg-derived
+    # fingerprint (set_vocab_id, which domain_loss.py:624 uses because it has a checkpoint per
+    # arm) can only ever cover our own arm and leaves the control hitting the guard. The rows are
+    # ours_tok's regardless of which model scores them, so ours_tok is the right source for
+    # their fingerprint; scripts/test_domain_loss_val.py:103 does the same for the same reason.
+    # load_tokenizer already refused a tokenizer disagreeing with our checkpoint's vocab_id.
+    train.VOCAB_ID = vocab_fingerprint(ours_tok)
     print(f"Loaded {a.ckpt}: {m.n_params / 1e6:.2f}M params | {len(mix['domains'])} domains",
           flush=True)
 

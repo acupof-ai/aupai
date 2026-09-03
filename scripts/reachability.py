@@ -2,7 +2,8 @@
 """Reachability analysis: which .py/.sh files are reachable from the entry points.
 
 Edge kinds:
-  ENTRY    — cited in AGENTS.md tables, run_ddp.sh, CI, harness, score_matrix
+  ENTRY    — cited in AGENTS.md tables, run_ddp.sh, CI, harness, score_matrix, or run by
+             the pre-commit hook's SELFTEST_FILES map
   import   — Python import or shell command citation (transitive, BFS from ENTRY)
   registry — dynamic dispatch: run_eval._load_module, algorithms lazy-import table
   docs     — cited in docs/**, AGENTS.md, EXPERIMENTS.md
@@ -133,6 +134,22 @@ def ci_entry_points():
 
 def harness_entry_points():
     return _resolve_script(_read("scripts/harness.py"))
+
+
+def hook_entry_points():
+    """Files the pre-commit hook runs. A REAL edge the citation graph could not see.
+
+    scripts/hooks/pre-commit carries a SELFTEST_FILES map: every path in it has its
+    `--selftest` run on every commit that stages it. That is a stronger guarantee of
+    liveness than a doc mention -- it executes -- and this scan reported all 21 of them as
+    unreached, including algorithms/code_reward.py (524 lines), isolate.py (473) and
+    rollout.py (329), all three live.
+
+    Read as an edge SOURCE rather than filtered out downstream: a classifier that sorts the
+    false candidates after the fact has to be re-run and re-read by a person every time, and
+    the 21 come back on every scan. Same fix as the vet_programs.py:37 glob -- tell the
+    static analysis about the edge instead of annotating its output."""
+    return _resolve_script(_read("scripts/hooks/pre-commit"))
 
 
 def score_matrix_entry_points():
@@ -296,7 +313,7 @@ def experiments_edges():
 def main():
     eps = set()
     for fn in (agents_entry_points, run_ddp_entry_points, ci_entry_points,
-               harness_entry_points, score_matrix_entry_points):
+               harness_entry_points, score_matrix_entry_points, hook_entry_points):
         eps |= fn()
 
     bfs_reachable = reachable_from(eps)

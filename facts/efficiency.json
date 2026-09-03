@@ -2631,6 +2631,327 @@
    "uncertainty": "RANK ORDER DISAGREES: observed minimum is step 800, predicted minimum step 500; observed maximum 700, predicted maximum 600. pearson r = 0.724 on FOUR points, not significant. The residual 0.258 nat is UNATTRIBUTED, three candidates untested: (1) within-domain document variance, which a domain-mean model cannot express; (2) step 500 is the checkpoint-write step and carries the largest residual (0.508); (3) THE PREDICTION USED ANOTHER MODEL'S per-domain losses (ckpt_p200m_4b_0902) to explain this leg's behaviour -- the most likely of the three, and the same error class as reusing a peak measured under a different dtype. Closing it needs this leg's own per-domain losses, which needs a card; not spent, because the residual enters no launch or quality criterion (6e's ruling).",
    "boundary": "THE UPPER BOUND HELD; THE INFERENCE FROM IT DID NOT. 0.495 does not exceed what mix wobble can produce -- the nine domains span 2.959 nat (cot 0.9902 to zh_web 3.9489), so 0.495 is 16.7% of that range -- and that bound was and remains correct. What was wrong was reading a bound as an expectation: a bound says the observation is POSSIBLE under the benign explanation, never that the benign explanation PRODUCED it. Corollary for the method: rebuilding the plan is cheap and reusable for any future loss jump, but it yields an UPPER BOUND unless the domain losses come from the same checkpoint being explained.",
    "status": "measured"
+  },
+  {
+   "id": "eff.pa_split_206m_438m",
+   "value": 1.34,
+   "unit": "GiB (params+optimizer resident, data leg)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "scripts/profile_step_cost.py peak 49.53 GiB (runs/data_leg_206m_8b.log) minus the byte account below; b0 instantiated both shapes and counted by build_optimizers' grouping",
+   "config": {
+    "data_leg": {
+     "shape": "206.1M d1024 L12 h8 ffn3072 b16 accum2 seq4096 world4 fp8 no grad_ckpt",
+     "groups": {
+      "muon": 172376064,
+      "embed": 33619968,
+      "scalar": 69704,
+      "arq": 62464,
+      "total": 206128200
+     },
+     "bytes": "bf16 param 2B + bf16 grad 2B + Muon one bf16 state per param (train.py:625 st['mb']) + AdamW two fp32 states on non-muon params; --fp32_master NOT set on this leg",
+     "P_GiB": 1.34,
+     "A_GiB": 48.19,
+     "A_share": 0.973,
+     "measured_peak_GiB": 49.53
+    },
+    "params_leg": {
+     "shape": "438.4M d1536 L12 h12 ffn4608, same batch/seq/world",
+     "groups": {
+      "muon": 387735552,
+      "embed": 50429952,
+      "scalar": 104556,
+      "arq": 93696,
+      "total": 438363756
+     },
+     "P_GiB": 2.732
+    },
+    "cross_check": "runs/memory_peaks.json _model predicts fixed_GiB from 493.6M x 2B x 3 copies = 2.76 against 2.95 measured, the same method on a third shape"
+   },
+   "uncertainty": "P is arithmetic over an instantiated model, not an estimate. What is UNMEASURED is the exponent e in A ∝ d^e, and it is the only quantity that decides the params leg: e=1 gives 75.02 GiB, e=2 gives 111.16 GiB, and the card holds 95.22. A 1 GiB error in P moves the answer 1.13 GiB; e moving 1 to 2 moves it 60.2 GiB.",
+   "boundary": "Does NOT answer whether the params leg fits. memory_peaks.json holds no pair of runs differing only in d, so no recorded point constrains e. The cheap measurement of e is two --peak-only runs at batch 4 differing only in d (13.39 GiB and 20.80-29.84 GiB predicted); activations are linear in batch so the exponent measured at b4 is the exponent at b16. Every activation term nameable from the architecture scales as d or as heads, both 1.5x here, which ARGUES for e near 1 -- an argument, not a measurement, and not a basis for launching.",
+   "guard_phrases": [
+    "P decides whether the params leg fits",
+    "the interval collapses to a point once P is known"
+   ]
+  },
+  {
+   "id": "eff.activation_d_exponent_206m_438m",
+   "value": 0.9795,
+   "unit": "dimensionless (exponent e in activation memory proportional to d^e)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "two scripts/profile_step_cost.py --peak-only probes, card 5, world 1, batch 8 accum 1, b0 2026-09-03",
+   "config": {
+    "probe_d1024": {
+     "peak_alloc_GiB": 23.95,
+     "peak_reserved_GiB": 24.08,
+     "tok_s_gpu": 68200,
+     "P_GiB": 1.34,
+     "A_GiB": 22.74
+    },
+    "probe_d1536": {
+     "peak_alloc_GiB": 36.35,
+     "peak_reserved_GiB": 36.56,
+     "tok_s_gpu": 36800,
+     "P_GiB": 2.732,
+     "A_GiB": 33.828
+    },
+    "estimator": "e = ln(A(d1536)/A(d1024)) / ln(1.5), P subtracted from each reading first",
+    "why_subtract_P": "P is additive, not a common factor. The naive ratio of raw readings gives 1.0299; subtracting P gives 0.9795. The correction is worth 0.050 and it moves the answer from just above 1 to just below.",
+    "control": "the d1024 probe read 24.08 against 25.435 predicted from the leg's A16/2, 5.3% low. The two hypotheses the control separates (forward-batch is the axis: predict 25.435; accum counted into the axis: predict 13.387) are 10.69 GiB apart, so the 1.36 residual does not confuse them.",
+    "both_probes_same_accum": "accum 1 on both, so accum cancels in the ratio even though the leg runs accum 2",
+    "measured_b16_world1": {
+     "peak_alloc_GiB": 71.5,
+     "peak_reserved_GiB": 72.12,
+     "startup_alloc_GiB": 71.48,
+     "startup_reserved_GiB": 71.95,
+     "tok_s_gpu": 23300,
+     "A_GiB": 69.388,
+     "nvidia_smi_peak_GiB": 73.31,
+     "batch_ratio_b8_to_b16": 2.0512,
+     "note": "Batch is SLIGHTLY SUPERLINEAR: 2.0512, not 2.000. The b8-based extrapolation predicted 70.388 and the measurement is 72.12 -- underestimated by 1.73 GiB, i.e. 2.6% in the UNSAFE direction. The boundary field previously said batch linearity 'would have to be 33% wrong to flip the answer', which is still true, but the sign was not predicted and the transfer was called 'the hardest of these assumptions'. It is the hardest and it is not exact."
+    },
+    "no_compile_spike_at_b16": {
+     "b8_gap_GiB": 34.31,
+     "b16_gap_GiB": 1.19,
+     "reading": "The 72.5 GiB seen on nvidia-smi during the b8 probe was NOT a compile transient that scales with the shape. Doubling the shape shrank the nvidia-smi-minus-torch gap from 34.31 to 1.19, which no scaling transient does. It was the caching allocator holding freed blocks: torch reserved counts the pool, nvidia-smi counts the whole process, and at b8 most of the pool was free while at b16 nearly all of it is live. STARTUP measured 71.95 against a steady 72.12 -- BELOW it, so there is no compile peak above steady state at this shape. This does not generalise: the launch gate's startup number stays required, it simply did not bite here."
+    }
+   },
+   "uncertainty": "+-0.1 GiB per reading maps to +-0.027 in e; the observed 0.02 deviation from 1.00 is inside that. The architectural argument (every nameable activation term scales as d or as heads, both 1.5x here, and no b x heads x s x s is materialised) predicted e near 1 and was CONFIRMED by this measurement, in that order -- the measurement was not interpreted to fit the argument.",
+   "boundary": "Extrapolation to the params leg now rests on a MEASURED b16 world-1 basis, 72.12 GiB, not on a b8 doubling: 72.12 + 2.710 = 74.83 GiB (residual constant) or 72.12 + 5.767 = 77.89 (residual scaled by the 2.128 param ratio), against 95.22 usable, headroom 17-20 GiB. ONE UNMEASURED TERM REMAINS: the 2.710 is a RESIDUAL of leg minus twice probe, so it carries the world-4 effect, the accum difference and anything else unaccounted, and it would have to be 17 GiB larger to flip the answer. The full-batch world-4 --peak-only launch gate is still required and its reading, minus this one, isolates that residual at no extra card cost: every term except world is identical between the two.",
+   "guard_phrases": [
+    "the params leg needs grad_ckpt",
+    "activation memory scales as d squared"
+   ]
+  },
+  {
+   "id": "eff.nvidia_smi_minus_torch_is_not_a_transient",
+   "value": 34.31,
+   "unit": "GiB (nvidia-smi peak minus torch max_memory_reserved, d1536 batch 8 world 1)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's two d1536 --peak-only probes, card 5 then card 6, 2026-09-03",
+   "config": {
+    "b8": {
+     "torch_reserved_GiB": 36.56,
+     "nvidia_smi_GiB": 70.87,
+     "gap": 34.31
+    },
+    "b16": {
+     "torch_reserved_GiB": 72.12,
+     "nvidia_smi_GiB": 73.31,
+     "gap": 1.19
+    },
+    "test": "doubling the shape shrank the gap 29x; a transient that scales with the shape cannot do that"
+   },
+   "uncertainty": "Both readings are single-run peaks; the qualitative conclusion needs no tighter bound because the gap moved by a factor of 29.",
+   "boundary": "Says the gap is free pool, not live demand. Does NOT say a compile transient never exists -- STARTUP stayed below steady state at b16 on this shape only. The operational rule is that nvidia-smi and torch max_memory_reserved answer different questions (can another job share this card / does each step fit) and their RATIO is meaningless: fb computed 70.87/36.56 = 1.94 and predicted the b16 probe would OOM at 105-136 GiB, in the same conversation where fb had told b0 those two numbers must not be compared directly. The prediction was wrong by 33-66 GiB.",
+   "guard_phrases": [
+    "the compile transient is 1.94x the steady state",
+    "the params leg OOMs during compile"
+   ]
+  },
+  {
+   "id": "eff.layer9_branch_scale_is_architectural",
+   "value": "RETRACTED: the flag is real, not architectural",
+   "measured": "2026-09-03",
+   "status": "retracted",
+   "source": "b0-10 offline checkpoint health run over data_leg_206m_8b step6000->7000 and e1_27's three lr arms, b0 2026-09-03",
+   "config": {
+    "metric": "branch output-scale, mixer.o / ffn, per layer, compared against the median and MAD OF THE OTHER LAYERS",
+    "data_leg_206m": {
+     "layer": 9,
+     "ratio": 0.439016,
+     "z": -29.93,
+     "window": "step 6000->7000"
+    },
+    "e1_27_lr0.03": {
+     "layer": 9,
+     "ratio": 0.590112,
+     "z": -12.04,
+     "window": "step 800->1000"
+    },
+    "e1_27_lr1.0": {
+     "layer": 9,
+     "ratio": 0.59381,
+     "z": -11.9,
+     "window": "step 800->1000"
+    },
+    "e1_27_lr0.01": {
+     "layer": 9,
+     "ratio": 0.590075,
+     "z": -12.04,
+     "window": "step 800->1000"
+    },
+    "diagnosis": "The criterion compares a layer against the OTHER LAYERS, which assumes the layers are exchangeable. Under attn_every=4 they are not: a layer's position in the attention cycle fixes its mixer.o/ffn ratio, so layer 9 is low by construction. Same layer, same sign, four runs, two run families, four learning rates."
+   },
+   "uncertainty": "Four runs is enough to establish the flag is not run-specific; it does not establish WHICH architectural property fixes layer 9's ratio, and that was not investigated.",
+   "boundary": "The measured part stands: the flag does fire in 4 of 4 runs at z -12 to -30. What was wrong was the inference from that. fb ruled 'the criterion is measuring architecture' from cross-run consistency alone, and b0's grouping fix followed from that ruling; neither of us checked whether the thing being measured is simply sick in every run. It is. See eff.layer9_mixer_o_lags.",
+   "guard_phrases": [
+    "layer 9's ratio is fixed by its position in the attn_every cycle",
+    "group layers by cycle position before taking median and MAD"
+   ],
+   "claim": "layer 9's low mixer.o/ffn ratio is fixed by its position in the attn_every cycle, so the flag carries no information and the criterion should group layers by cycle position",
+   "audit": "b0 implemented the grouping and measured it, 2026-09-03: at cycle position 1 the three layers read L1=0.8491, L5=0.8869, L9=0.4390 -- position does not explain L9. Grouping also dropped n to 3 per group and produced two NEW flags on differences of 0.002 (L8 z-3.13, L2 z+3.59), so it made the criterion noisier, not quieter.",
+   "refuted_by": "eff.layer9_mixer_o_lags"
+  },
+  {
+   "id": "eff.code_fingerprint_gate_unusable",
+   "value": "11 jumps in 57 commits over 3 days; gate abandoned, report-only kept",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0-20 feasibility measurement over train.py and model.py, b0 2026-09-03",
+   "config": {
+    "whole_file_content_hash": {
+     "distinct": 57,
+     "of_commits": 57
+    },
+    "whole_file_ast_hash": {
+     "distinct": 52,
+     "note": "ignoring comments and docstrings merged only 5; adjacent commits differing in raw but identical in AST: 2 pairs"
+    },
+    "function_level_ast_over_training_math": {
+     "distinct": 18,
+     "jumps": 21,
+     "false_alarms": "3 on the range b0-20 claimed manually verified (69d20bab..HEAD): an optimizer name label, a default-off flag pair, a startup refusal branch -- all change source, none change math"
+    },
+    "pure_computation_whitelist": {
+     "units": [
+      "train:Muon",
+      "train:set_schedule",
+      "train:MasterWeights",
+      "train:_fp8_mm",
+      "train:FP8LinearFunction",
+      "model:RMSNorm",
+      "model:rms_scale",
+      "model:DeltaRecurrence",
+      "model:GatedMLA",
+      "model:SwiGLU"
+     ],
+     "property": "pure functions of tensors and config -- no logging, no flag plumbing, no startup validation; the whitelist was derived from this property and THEN tested",
+     "jumps": 11,
+     "false_alarms_on_the_verified_range": 0,
+     "jump_composition": "6 of 11 touch _fp8_mm and 3 are one model.py split landing across three commits; only 2 are independent math changes. NOT used to argue the gate is viable: establishing that the 6 are benign needs 6 manual diff reads, which is the action the gate exists to replace"
+    },
+    "commit_cadence": {
+     "by_day": {
+      "08-31": 4,
+      "09-01": 33,
+      "09-02": 10,
+      "09-03": 10
+     },
+     "adjacent_gap_under_20min": "29 of 56 (52%)",
+     "median_gap_min": 19
+    },
+    "baseline_reuse_rate": "28 of 266 experiments.jsonl rows carry --resume/--init_from/run_sft (10.5%)"
+   },
+   "uncertainty": "The jump count is exact over the 57 commits examined. What decides usability is exemptions PER REUSE, not jumps per window, and that was not measured directly -- it is inferred: 3.7 math jumps per day against baselines that are typically days old means a reuse crosses roughly 3.7N jumps, so the exemption rate approaches 100%.",
+   "boundary": "The threshold (<=5 jumps do the gate, >5 report only) was written by fb and the measurement came back 11, so the ruling is report-only. IT WAS NOT A PRE-REGISTRATION: b0 had already measured 11 and sent it before fb's threshold message arrived; fb had not read it yet, which is not the same thing (shape 149). The threshold was also on the wrong quantity -- jumps per window rather than exemptions per reuse (shape 147, fb's third instance). Recomputing on the right quantity gives the same ruling and a stronger one. What is kept: the fingerprint is computed launcher-side and reported, never enforced; the excluded units AttnRes/Block/HybridLM carry real arithmetic, so a change to Block.forward's residual order would be reported and not refused -- a known and written-down miss, chosen over an alarm nobody reads.",
+   "guard_phrases": [
+    "we pre-registered the threshold",
+    "only 2 real math changes so the gate is viable"
+   ]
+  },
+  {
+   "id": "eff.two_legs_same_pure_compute_code",
+   "value": "identical on all ten pure-computation units",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's launcher-side AST fingerprint over 6925ce02..HEAD, plus a read of the three default sites; verified by fb against the leg's own log header",
+   "config": {
+    "data_leg_baseline": "6925ce0226da239296729411ed50b90c11f7a5d6, the sha runs/data_leg_206m_8b.log's header records as the pod's code at launch (synced 2026-09-03T05:41:43Z, manifest verified)",
+    "pure_compute_differing": "NONE",
+    "reported_layer_differing": [
+     "model:AttnRes",
+     "model:Block",
+     "model:HybridLM",
+     "train:Cfg"
+    ],
+    "the_one_commit": "169da865 feat(train): --attn_res_fp32_logits -- pure: NONE, reported: those four",
+    "default_off_read_not_inferred": {
+     "train.py:230": "attn_res_fp32_logits = False in the Cfg class body",
+     "train.py:1961": "action='store_true', so absent means False",
+     "model.py:300": "_f32 = getattr(cfg, 'attn_res_fp32_logits', False)",
+     "AttnRes.forward": "if self.fp32_logits: <new> else: <the original logits = torch.stack([...])>, the else branch line-for-line unchanged"
+    }
+   },
+   "uncertainty": "Exact over the ten whitelisted units. Says nothing about the four reported units beyond the three default sites read by hand.",
+   "boundary": "This is what lets the params leg launch without rerunning the data leg. The HARD constraint is the ten pure-computation units: a change there means the two legs compute differently and the equal-FLOPs comparison is confounded, so the data leg must be rerun. A wiring-layer change does NOT require a rerun but DOES require this fingerprint check to be re-run before launch and its result recorded -- the wiring layer has already changed once and the legs stayed comparable. fb's freeze order was whole-file, which is stricter than necessary and stays the operational rule because it is cheaper to follow than to adjudicate each time; the distinction is recorded so the next person knows which half is the real constraint. b0's first attempt at this used `git log --before` without TZ=UTC and git read it as +0800, selecting a baseline 8 hours early -- the answer was the same from the wrong baseline, which is why the correction matters and the answer does not.",
+   "guard_phrases": [
+    "train.py changed so the comparison is confounded"
+   ]
+  },
+  {
+   "id": "eff.layer9_mixer_o_lags",
+   "value": 30.92,
+   "unit": "Frobenius norm of layer 9's mixer.o at step 7000 (neighbours 57.78 and 61.59)",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "b0's per-layer norm read over data_leg_206m_8b checkpoints and e1_27's lr arms, plus a seed-42 fresh-init instantiation, 2026-09-03",
+   "config": {
+    "shape": "206.1M d1024 L12 h8 ffn3072, attn_res_blocks=0 (verified by fb: the Cfg default is 0 at train.py:219 and the leg's 'cfg non-default' line does not list it, so n_blocks = n_sub = 24, one block per sublayer)",
+    "at_init_seed42": {
+     "all_twelve_layers": "20.47-20.49",
+     "layer9": 20.4843,
+     "reading": "L9 is NOT born low; 30.92 is trained"
+    },
+    "data_leg": {
+     "step6500": 30.54,
+     "step7000": 30.92,
+     "step7500": 31.24,
+     "L8": "56.3->58.9",
+     "L10": "59.9->62.8"
+    },
+    "e1_27_lr0.03": {
+     "step800": 46.81,
+     "step1000": 46.81,
+     "L8": 66.9,
+     "L10": 64.43,
+     "caveat": "both L9 and its neighbours are static to 0.001 across those two steps, so this run cannot judge GROWTH; what it shows is that L9's absolute level is low there too"
+    },
+    "ffn_is_normal": {
+     "L8": 67.61,
+     "L9": 70.44,
+     "L10": 69.79
+    },
+    "ratio_to_neighbours": {
+     "step6500": 0.5256,
+     "step7000": 0.5134,
+     "step8000": 0.5229,
+     "reading": "fb computed -2.33% per 1000 steps from the first two points and extrapolated it to 0.43 at step 15258. TWO POINTS ALWAYS GIVE A SLOPE -- under the null of no trend they give a nonzero one (shape 148), and fb had corrected b0 for the same class three hours earlier when a sample range was read as a change in the data. The rate claim is withdrawn. BUT THE THIRD POINT DOES NOT REFUTE IT EITHER, and saying it did was the same error a second time (b0's correction): all three are single readings with no noise estimate, so 'non-monotone' and 'a trend with noise' are indistinguishable here. Reading a checkpoint twice is deterministic, so the missing quantity is step-to-step training jitter, which needs checkpoints denser than the 500-step rotation and was not measured. THE ONLY CLAIM THAT DEPENDS ON NO NOISE ASSUMPTION: three readings across 1500 steps all fall in 0.513-0.526, nowhere near zero."
+    },
+    "update_geometry_step8000": {
+     "measured_by": "b0, offline from ck['opt'] and ck['model'], index map verified shape-by-shape across all 63 Muon matrices",
+     "L9": {
+      "W": 31.8,
+      "mb": 0.0294,
+      "cos_orth_mb_W": -0.02587,
+      "mask_rate": 0.4788
+     },
+     "others": {
+      "W": "56-65",
+      "mb": "0.0006-0.0014",
+      "cos_orth_mb_W": "-0.056 to -0.067",
+      "mask_rate": "0.4791-0.4815"
+     },
+     "discriminator": "cos, not mask: L9's anti-alignment is 2.4x weaker, while mask_rate spans 0.56% across all twelve layers and L9 is not even the lowest",
+     "equilibrium_check": {
+      "condition": "-cos*||X|| = wd*mask*||W||, so ||W|| proportional to -cos/(wd*mask)",
+      "predicted_ratio": 0.4097,
+      "measured_ratio": 0.5229,
+      "off_by": "28%",
+      "note": "||X|| assumed equal across layers, which holds here because orthogonalisation fixes the norm by shape and all twelve mixer.o are 1024x1024. The gap was going to be explained by 'not yet at equilibrium', but the non-monotone third point weakens that: a system still moving toward equilibrium should move in one direction."
+     },
+     "mechanism_retracted": "b0 first read the 28x momentum as 'pushed hard in alternating directions'. Muon's mb is an EMA (momentums.lerp_(grads, 1-momentum), momentum 0.95, train.py:578), so alternating gradients make it SMALL; a large mb means gradients are consistently aligned. And ||mb|| does not set the step at all -- the update is the Newton-Schulz orthogonalised X (train.py:592), whose norm depends only on shape, so 28x momentum moves the weight exactly as far as 1x. A card-minutes gradient-sign experiment was planned on that reading and was cancelled: the EMA has already averaged the thing it would have measured."
+    }
+   },
+   "uncertainty": "Norms from single checkpoints, no repeat. The effect is a factor of two against neighbours, far outside any reading noise.",
+   "boundary": "Says layer 9's mixer.o grows but persistently lags its neighbours in two run families, and that it starts level with them. Does NOT say why, and does NOT say it matters. Two hypotheses, neither verified: smaller gradients reaching the KDA o-projection at that depth, or an attn_res block-boundary effect -- the second is CLOSED, because attn_res_blocks=0 gives one block per sublayer and no boundary differs. The discriminator turned out to be cos(orthogonalised mb, W), measured offline: L9's anti-alignment is 2.4x weaker than every other layer's while the cautious-decay mask is flat across all twelve. Why that cosine is weaker is not answered. This does NOT block the params-vs-data comparison: both legs carry the same architecture, so the effect is common to both arms.",
+   "guard_phrases": [
+    "layer 9 is frozen",
+    "layer 9's mixer.o does not train"
+   ]
   }
  ]
 }

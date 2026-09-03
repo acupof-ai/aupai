@@ -1,0 +1,17 @@
+# runs/data_leg_206m_8b.log -- every val line plus the tail, pulled from the pod 2026-09-03T08:0xZ.
+# The full log stays on the pod; this is the part facts/data_scaling.json#ds.beta_data_leg_206m_early cites.
+78:step 500/15258 val 2.718
+129:step 1000/15258 val 2.436
+180:step 1500/15258 val 2.321
+231:step 2000/15258 val 2.269
+282:step 2500/15258 val 2.215
+333:step 3000/15258 val 2.179
+384:step 3500/15258 val 2.153
+435:step 4000/15258 val 2.147
+486:step 4500/15258 val 2.126
+537:step 5000/15258 val 2.111
+588:step 5500/15258 val 2.093
+639:step 6000/15258 val 2.080
+--- tail
+step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
+step 6450/15258 42% [main] | loss 2.084 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02) | gnorm 1.50 | 3.38B tok | 82K tok/s/gpu | MFU 34% | peak 49.52GiB | ETA 3.9h
