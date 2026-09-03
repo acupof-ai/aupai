@@ -91,6 +91,17 @@ mount -t tmpfs -o size=64m tmpfs "$ROOT/tmp"
 # overflow uid, present on every Linux, so it needs no /etc/passwd inside the chroot.
 chown -R 65534:65534 "$ROOT/work" "$ROOT/tmp"
 ulimit -t 5 -v 2097152 -c 0
+# -f caps FILE SIZE in 512-byte blocks: 512 MiB. MEASURED MISSING, not reasoned about --
+# a test writing a 2 GiB file through this sandbox returned rc=0 and `WROTE 2147483648`
+# on 2026-09-03, while the four other axes (network, filesystem, uid, nproc) were all
+# provoked and held. The chroot lives on the container's overlay, which was at 92% with
+# 164 GiB free that day, and tilerl's `cp -a` had filled the same 2.0T six hours earlier;
+# 200 unknown test suites at 2 GiB each is 400 GiB. This is the one axis where the failure
+# mode had already happened once the same day rather than being hypothetical.
+#
+# In blocks because that is ulimit -f's unit, and a limit expressed in the wrong unit is
+# 512x wrong in the permissive direction.
+ulimit -f 1048576 2>/dev/null || true
 # nproc caps the fork bomb, and ONLY WORKS ON A NON-ROOT UID: RLIMIT_NPROC is not
 # enforced for uid 0 (fb, survey A.3). It is set here, in the shell that is about to
 # setuid, because a limit set after the drop cannot be raised back.
