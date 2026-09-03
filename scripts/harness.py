@@ -184,6 +184,10 @@ _MANUAL_RULES = {
         "a fact about how git resolves .git/hooks symlinks across worktrees; no artifact "
         "records which hook BODY executed for a given commit, which is exactly why the "
         "mistake is invisible and has to be written down",
+    "A dropped tn tunnel does not end the command it started":
+        "the surviving process lives in the container and the only record of the dropped tunnel "
+        "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
+        "that produces these orphans, which is the cause, not the post-drop verification",
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
@@ -325,7 +329,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 34
+_MANUAL_BASELINE = 35
 
 
 def _norm_rule(text):
@@ -637,6 +641,168 @@ def _broken_milestone_ckpt_pinned():
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     # a checkpoint must exist or the check SKIPs instead of failing
     open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    return d
+
+
+def check_cache_readers_set_vocab_id(root):
+    """Every module that imports a token-cache reader also sets train.VOCAB_ID.
+
+    val_seqs and domain_loss_seqs reach train._domain_seqs, whose freshness guard compares
+    each cache stamp against train.VOCAB_ID. That global starts at None and only
+    train.build_tokenizer sets it, which no eval calls. A module that reads a cache without
+    setting it does not get a warning: every stamp reads as a mismatch against an empty
+    right side, and the guard reports "cache dirty" when the process simply has no
+    fingerprint. Before the guard existed, the same None retokenized nine live domains and
+    re-stamped them with an empty vocabulary (fb 2026-09-02, caught on ppl.py two minutes
+    in).
+
+    MEASURED 2026-09-03: eval/domain_bpb.py imported val_seqs at :219 and never set it, so
+    domain_bpb has never produced a value -- while score_matrix.py:1186 and
+    domain_loss.py:624 each carry the call with a comment explaining why. Two of three
+    callers remembered. This is the check for the one that did not.
+
+    Accepts any of the three real routes, because they are all correct: set_vocab_id(cfg),
+    an assignment to train.VOCAB_ID (scripts/test_domain_loss_val.py:103 does this from a
+    fingerprint it computes), or build_tokenizer. Requiring set_vocab_id by name would
+    fail a file that does the right thing another way -- and a check that fires on correct
+    input is looser than none, because the next author silences it.
+
+    IT ALSO CHECKS COVERAGE, NOT ONLY EXISTENCE. The first version of this check asked
+    "does a setter appear anywhere in the module" and PASSED eval/domain_bpb.py while that
+    file was still broken: the fix put set_vocab_id under `if not a.hf`, and the val_seqs
+    call at :256 sat outside that branch, so the --hf control arm still walked into the
+    guard. Three rows in runs/score_matrix.jsonl carry that error and one of them is the
+    control. A setter guarded by a condition the reader is NOT guarded by covers only some
+    of the calls.
+
+    The coverage test is WITHIN ONE FUNCTION only. eval/score_matrix.py sets the
+    fingerprint at :1185 inside main's `if` and reads at :232 inside metric_domain_loss,
+    which main calls at :1189 -- correct, but a cross-function depth comparison flags it,
+    and that false positive is what a first version of this coverage rule produced. Branch
+    depth means nothing across function boundaries: the caller decides whether the callee
+    runs. Restricting to one scope still catches the real defect, because domain_bpb's
+    setter and reader were in the same function.
+    """
+    import ast
+
+    READERS = ("val_seqs", "domain_loss_seqs", "_domain_seqs")
+    SETTERS = ("set_vocab_id", "build_tokenizer")
+
+    def _depths_in(fn, targets, kinds):
+        """Every `if`/`try` nesting depth at which a target appears inside ONE function.
+
+        Nested function bodies are not descended into: they are separate scopes whose
+        execution their own caller decides.
+        """
+        found = []
+
+        def walk(node, depth):
+            for child in ast.iter_child_nodes(node):
+                if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+                    continue
+                hit = False
+                if isinstance(child, ast.Call) and "call" in kinds:
+                    name = (child.func.attr if isinstance(child.func, ast.Attribute)
+                            else getattr(child.func, "id", ""))
+                    hit = name in targets
+                elif isinstance(child, ast.Assign) and "assign" in kinds:
+                    hit = any(isinstance(t, ast.Attribute) and t.attr == "VOCAB_ID"
+                              for t in child.targets)
+                if hit:
+                    found.append(depth)
+                walk(child, depth + 1 if isinstance(child, (ast.If, ast.Try, ast.While)) else depth)
+
+        walk(fn, 0)
+        return found
+
+    scan = []
+    for sub in ("eval", "scripts", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        scan += [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith(".py")]
+    if not scan:
+        return SKIP, "no eval/scripts/probes directory"
+
+    bad, checked = [], 0
+    for path in scan:
+        try:
+            src = open(path, encoding="utf-8").read()
+            tree = ast.parse(src)
+        except (OSError, SyntaxError):
+            continue
+        # IMPORTS a reader, not merely mentions one: a comment or a string naming val_seqs
+        # is not a call into the cache. eval_load_cost.py holds the names in a tuple and
+        # test_cache_dir_knob.py in an error message; neither reads a cache.
+        imports = set()
+        for n in ast.walk(tree):
+            if isinstance(n, ast.ImportFrom):
+                imports |= {a.name for a in n.names}
+            elif isinstance(n, ast.Import):
+                imports |= {a.name.split(".")[-1] for a in n.names}
+        if not (imports & set(READERS)):
+            continue
+        checked += 1
+        # The file DEFINING a reader is where the guard lives, not a caller of it.
+        defines = {n.name for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)}
+        if imports & set(READERS) & defines:
+            continue
+        called = {n.func.attr if isinstance(n.func, ast.Attribute) else getattr(n.func, "id", "")
+                  for n in ast.walk(tree) if isinstance(n, ast.Call)}
+        assigns_global = any(
+            isinstance(t, ast.Attribute) and t.attr == "VOCAB_ID"
+            for n in ast.walk(tree) if isinstance(n, ast.Assign) for t in n.targets
+        )
+        rel = os.path.relpath(path, root)
+        names = ", ".join(sorted(imports & set(READERS)))
+        if not (called & set(SETTERS)) and not assigns_global:
+            bad.append(f"{rel} imports {names} but never sets train.VOCAB_ID")
+            continue
+        # COVERAGE, per function: a setter deeper in the branch nesting than a reader in the
+        # SAME function protects only some of that function's paths.
+        for fn in [n for n in ast.walk(tree)
+                   if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))]:
+            rd = _depths_in(fn, set(READERS), {"call"})
+            sd = _depths_in(fn, set(SETTERS), {"call", "assign"})
+            if rd and sd and min(sd) > min(rd):
+                bad.append(f"{rel}:{fn.name} sets train.VOCAB_ID at branch depth {min(sd)} "
+                           f"but reads the cache at depth {min(rd)} in the same function, so "
+                           f"the reader runs on paths the setter does not cover")
+    if bad:
+        return FAIL, ("; ".join(bad) + " -- every cache stamp will read as a mismatch against "
+                      "an empty fingerprint, and the guard will say 'cache dirty' when the "
+                      "process simply has none. Call cache_guard.set_vocab_id(cfg) before the "
+                      "first read (see eval/domain_loss.py:624)")
+    return PASS, f"{checked} cache-reading module(s) set train.VOCAB_ID"
+
+
+def _broken_cache_readers_set_vocab_id():
+    """The REAL eval/ with domain_bpb.py's fingerprint line put back under `if not a.hf` --
+    the state this file was in between the two fixes on 2026-09-03, not a synthetic one.
+
+    That intermediate state is the interesting world, not the original: the original had no
+    setter at all, which the existence half already catches. This one HAS a setter and is
+    still broken, because val_seqs at :256 sits outside the branch, so the --hf control arm
+    walks into the guard anyway. It is what the coverage half exists for.
+
+    Mutating the live file rather than writing a fixture, for the reason de-7.3 records: a
+    fixture encodes the author's assumption twice.
+    """
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "eval", "domain_bpb.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    line = "    train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"
+    if line not in text:
+        return None  # the fix moved or was renamed: this world cannot be built
+    import shutil as _sh
+    link = os.path.join(d, "eval")
+    if os.path.islink(link):
+        os.unlink(link)
+    _sh.copytree(os.path.join(ROOT, "eval"), link, ignore=_sh.ignore_patterns("__pycache__"))
+    open(os.path.join(d, "eval", "domain_bpb.py"), "w", encoding="utf-8").write(
+        text.replace(line, "    if not a.hf:\n        train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"))
     return d
 
 
@@ -1966,7 +2132,13 @@ def _ckpt_names(text):
                                      for n in m.group(2).split(",")),
                   text)
     names = set()
-    for tok in re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", text):
+    # (?<![A-Za-z0-9_.]) -- the token must START a name, not sit inside a longer one.
+    # Without it, preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl mints a checkpoint called
+    # ckpt_p200m_4b_0902.pt.en that has never existed, and the fact citing that prediction
+    # file goes red forever with no action available. The two guards were in direct
+    # tension: cited_artifacts_attested REQUIRES the artifact's basename in the fact, and
+    # that basename embeds a checkpoint name by naming convention (fb, 2026-09-03).
+    for tok in re.findall(r"(?<![A-Za-z0-9_.])ckpt_[\w.]+?\.pt[\w.]*", text):
         for ext in (".jsonl", ".txt", ".md"):
             if tok.endswith(ext):
                 tok = tok[: -len(ext)]
@@ -4816,6 +4988,74 @@ def _entry_exists(root, s):
     if "/" in s:
         return os.path.exists(os.path.join(root, s))
     return any(os.path.exists(os.path.join(root, d, s)) for d in ENTRY_SEARCH_DIRS)
+
+
+def check_unreached_files_ruled(root):
+    """Every file reachability reports as unreached carries a FATE ruling (de-5).
+
+    The listing is not a deletion oracle and never was, so the value of a scan is that
+    somebody RULED on each name it raises: keep and make reachable, or delete. Without a
+    check, the unruled ones accumulate -- 25 of them by 2026-09-03, and 23 were last touched
+    that day or the day before, so this is a live accumulation and not a backlog anyone
+    finishes once.
+
+    WARN, not FAIL: an unruled file is a to-do, and the fix is a person reading it and
+    deciding. A FAIL would go red the moment anyone adds a probe, which trains people to
+    bypass rather than to rule.
+
+    This replaces a one-off classifier script. That script sorted the scan's output AFTER the
+    fact, so its 21 false candidates came back on every run and needed a person to re-read
+    them each time; the real fix was teaching the scan the edge it could not see (the
+    pre-commit hook's SELFTEST_FILES), which took 46 unreached to 25. A check on what remains
+    is the part worth keeping every commit.
+
+    READS THE COMMITTED LISTING, not a fresh scan. Running reachability.py here costs more
+    than the 5 s check budget and timed out on the first attempt. The listing cannot go stale
+    behind this check: scripts/test_reachability_fresh.py asserts runs/reachability.txt
+    matches a live scan, it is in the hook's SELFTEST_FILES, and it fired on exactly that
+    during this change."""
+    listing = os.path.join(root, "runs", "reachability.txt")
+    if not os.path.exists(listing):
+        return SKIP, "runs/reachability.txt not present (run scripts/reachability.py > it)"
+    unruled = []
+    for ln in open(listing, encoding="utf-8"):
+        # A row whose REACHED FROM is `none` and whose FATE column is empty. The fate text
+        # is the last column, so a row with a ruling has something after `none`.
+        if re.search(r"\s+none\s*$", ln.rstrip("\n")):
+            unruled.append(ln.split()[0])
+    if not unruled:
+        return PASS, "every unreached file in runs/reachability.txt carries a FATE ruling"
+    return WARN, (f"{len(unruled)} unreached file(s) with no FATE ruling in "
+                  f"scripts/reachability.py: {', '.join(unruled[:6])}"
+                  f"{' ...' if len(unruled) > 6 else ''} -- run each before judging it "
+                  f"(a hook-registered or glob-loaded file is live and invisible here), then "
+                  f"add KEEP or delete it")
+
+
+def _broken_unreached_files_ruled():
+    """The REAL listing with one ruled file's FATE text removed, so a file that IS ruled today
+    reports unruled. Mutating the real artifact rather than writing a world: a hand-written
+    listing would share this check's own idea of the column format."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "reachability.txt")
+    if not os.path.exists(src):
+        raise SelftestSkip("runs/reachability.txt absent; nothing real to mutate")
+    out, hit = [], False
+    for ln in open(src, encoding="utf-8"):
+        m = re.match(r"^(\S+\.(?:py|sh))(\s+.*?)(KEEP|DELETE)\b.*$", ln.rstrip("\n"))
+        if m and not hit:
+            # Same row, ruling stripped and the REACHED FROM forced to `none`: this is what
+            # an unruled file looks like, built from a real row.
+            out.append(f"{m.group(1):<56} 1  deadbeef 2026-09-03   none\n")
+            hit = True
+        else:
+            out.append(ln)
+    if not hit:
+        raise SelftestSkip("no ruled row in runs/reachability.txt to strip")
+    with open(os.path.join(d, "runs", "reachability.txt"), "w", encoding="utf-8") as fh:
+        fh.writelines(out)
+    return d
 
 
 def check_entrypoints_ran(root):
@@ -7839,6 +8079,13 @@ CHECKS = [
         _broken_facts,
     ),
     (
+        "unreached_files_ruled",
+        "every file reachability reports as unreached carries a FATE ruling",
+        "25 unreached files had accumulated with no ruling, 23 of them touched within two days -- and 21 more were false candidates the scan could not see the hook's edge to",
+        check_unreached_files_ruled,
+        _broken_unreached_files_ruled,
+    ),
+    (
         "entrypoints_ran",
         "every script the entry-point table cites exists (FAIL); every tried one has an ok run (WARN)",
         "run_ablation.sh shipped as the AttnRes A/B entry while its rows read killed and OOM-fail",
@@ -7957,6 +8204,13 @@ CHECKS = [
         "the 3.24B own-mix baseline was lost when step3500 rotated out of train.py's newest-3 window while the rescore waited in the lane queue; the weights are gone and the measurement cannot be repeated",
         check_milestone_ckpt_pinned,
         _broken_milestone_ckpt_pinned,
+    ),
+    (
+        "cache_readers_set_vocab_id",
+        "every module importing a token-cache reader also sets train.VOCAB_ID",
+        "eval/domain_bpb.py imported val_seqs and never set the fingerprint, so it has never produced a value: the global stayed None, every cache stamp read as a mismatch against an empty right side, and the guard reported 'cache dirty' when the process simply had none -- while score_matrix.py:1186 and domain_loss.py:624 both carry the call with a comment saying why",
+        check_cache_readers_set_vocab_id,
+        _broken_cache_readers_set_vocab_id,
     ),
     (
         "selftests_are_gated",
@@ -8140,10 +8394,12 @@ EVIDENCE = {
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
-    "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
+    "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    # repo: the readers and their callers are all tracked source; an AST parse needs no pod
+    "cache_readers_set_vocab_id": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
@@ -9962,7 +10218,7 @@ def _demo():
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
-                 "run_commits_resolve", "pod_stamp_is_main"}
+                 "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:

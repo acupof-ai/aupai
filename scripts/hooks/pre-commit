@@ -456,6 +456,7 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        "scripts/corpus_snapshot.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
@@ -481,6 +482,13 @@ def main():
         "scripts/retract.py",
         "scripts/test_exp_done_started.py",
         "scripts/write_mix_500m.py", "scripts/ckpt_health.py",
+        # code_fp: five cases over git history, no data and no card. Two of them are the
+        # directions that matter -- a range that must report NONE and a commit that must
+        # name train:Muon; a test with only the first is passed by a stub returning NONE.
+        "scripts/code_fp.py",
+        # ckpt_info: its selftest builds 64x8 fixtures in memory and round-trips them
+        # through BytesIO -- no checkpoint, no data, no card.
+        "scripts/ckpt_info.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
@@ -501,9 +509,11 @@ def main():
         "probes/t71_depth_lr_rule.py",
         "probes/a2a_bandwidth.py",
         "scripts/stale_claims.py",
+        "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
         "scripts/test_drop_zombies.py",
         "scripts/test_pod_sync_stamp.py",
+        "scripts/pod_verify_landed.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have

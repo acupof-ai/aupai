@@ -1216,6 +1216,51 @@
    "uncertainty": "se is binomial on 3012 items and ignores seed variance, which at 0.2b is an order larger (sd 3.11pt). No 4-seed replicate exists at 4b, so the 0.13pt spread across the three 4b-scale checkpoints is a 3-point spread of DIFFERENT runs, not a seed estimate: it bounds the metric's movement here, it does not measure this scale's seed sd.",
    "status": "measured",
    "boundary": "APPLIES to >=200M params at >=4B tokens, where headroom < the readable move. DOES NOT apply at 0.2b-0.8b, where the metric still separates (79.05 -> 94.69) and stays in the panel. The claim is about the ladder's TOKEN axis at fixed 206.1M params -- every point cited has the same parameter count, so nothing here says anything about a param sweep. Do not read saturation as 'the model solves this math': it is 2-way discrimination with a 50% floor, and the surviving errors are concentrated, not spread -- floor_gauss 78-82% and number_line_moving 91-95% carry nearly all the residual while 15 of 18 families sit at 100%. A metric can be saturated in aggregate and still have two families with room."
+  },
+  {
+   "id": "be.l1_demo_lang_null",
+   "value": "not significant: chi2(cc) = 2.132 against 3.841",
+   "measured": "2026-09-03",
+   "status": "measured",
+   "source": "runs/artifact_refs.jsonl attests both prediction files; see config.artifacts. Found by de, verified independently by fb",
+   "config": {
+    "ckpt": "ckpt_p200m_4b_0902.pt",
+    "demos": 3,
+    "temperature": 0.0,
+    "n": 497,
+    "questions_identical": true,
+    "scoring": "ok is 0/1, no partial credit",
+    "en_demo": {
+     "correct": 17,
+     "rate": 0.0342
+    },
+    "zh_demo": {
+     "correct": 27,
+     "rate": 0.0543
+    },
+    "mcnemar": {
+     "zh_only": 24,
+     "en_only": 14,
+     "both": 3,
+     "chi2_cc": 2.132,
+     "crit": 3.841
+    },
+    "why_paired": "the same 497 questions in both arms, so McNemar has more resolution than two independent proportions",
+    "artifacts": {
+     "en_demo": "data/eval/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl",
+     "zh_demo": "data/eval/preds_l1_d3_ckpt_p200m_4b_0902.pt.jsonl"
+    }
+   },
+   "uncertainty": "Both arms sit on the floor (3.4% and 5.4%, binomial delta 6.28pt). A paired test on two floor values resolves more than an unpaired one but not much more.",
+   "boundary": "NOT USABLE TO SUPPORT A DECISION. 'Not significant' here means 'invisible on 497 questions in the floor region', not 'no language effect'. This is the neighbour of be.l1_fewshot_p324's floor-unjudgeable ruling. It is recorded because the measurement existed only as a file on the pod that no ledger row referenced -- one restart from gone -- and because l1_fewshot.py:296-302 registered --demo_lang as a testable hypothesis that had never been tested.",
+   "guard_phrases": [
+    "demo language does not matter",
+    "the demo-language confound is ruled out"
+   ],
+   "artifact_sha256": {
+    "preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl": "57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c",
+    "preds_l1_d3_ckpt_p200m_4b_0902.pt.jsonl": "79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866"
+   }
   }
  ]
 }

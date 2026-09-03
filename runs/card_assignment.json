@@ -10,7 +10,7 @@
   "cuts both ways: a card's owner is not the nvidia-smi row, and it is not a superseded",
   "grant either."
  ],
- "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's)",
+ "granted_by": "fb 2026-09-02 (block); 6e 2026-09-03 (this revision, cards 0-3); fb 2026-09-03 05:52Z (lane 7); fb 2026-09-03 06:05Z (lane widened to 6-7); fb 2026-09-03 06:2xZ (two-card exception); fb 2026-09-03 07:0xZ (lane 5,7 -- user's roaming job took 6); fb 2026-09-03 (lane WITHDRAWN, all of 4-7 are the user's); fb 2026-09-03 (lane 4,5 -- grpo sweep ended, user moved to card 7); fb 2026-09-03 08:24Z (lane 5 -> b0's two b8 memory probes, one at a time); fb 2026-09-03 (lane grant SPENT: b0's two probes done, card 5 taken by another container within seconds of release)",
  "granted": "2026-09-03",
  "launch_block_granted": true,
  "block_cards": "0-3",
@@ -20,16 +20,16 @@
  "next_grant": {
   "to": "the params leg (438.4M d1536 L12 h12 ffn4608 x 3.761775B tokens)",
   "for": "the second half of the params-or-data comparison, run SERIALLY after the data leg",
-  "blocked_on": "the data leg finishing, AND a measured peak for the 438M shape -- runs/memory_peaks.json has no entry for it, and d1536 is 1.5x the width every recorded peak was measured at. Same refusal as this leg met."
+  "blocked_on": "the data leg finishing, THEN a full-batch world-4 --peak-only on cards 0-3. The d-scaling half is now MEASURED and clears: e = 0.9795 (eff.activation_d_exponent_206m_438m), extrapolating to 73.10-76.15 GiB against 95.22, margin 19-22. What the probes CANNOT give is the absolute value at world 4, and they cannot give the STARTUP transient at the launch shape -- compile hit 72.5 GiB on nvidia-smi during a d1536 b8 probe whose steady state was 36.56, so a gate reading only the steady-state peak would say GO on a shape that dies before its first step."
  },
  "cards": {
   "0-3": "data leg, 206M x 8.000B, world 4 -- this grant. Free at 2026-09-03 04:59Z (0 MiB / 381 / 569 / 0; the sub-GiB rows on 1 and 2 are context, not a job).",
-  "4": "THE USER'S OWN WORK: tilerl.cli grpo-gsm8k-27b, one lr arm each (1e-6/1e-5/1e-4, --steps 20), host pids 118993/119173/119339, ~38 GB each. NEVER TAKE.",
-  "5": "THE USER'S OWN WORK: tilerl.cli grpo-gsm8k-27b, one lr arm each (1e-6/1e-5/1e-4, --steps 20), host pids 118993/119173/119339, ~38 GB each. NEVER TAKE.",
-  "6": "THE USER'S OWN WORK: tilerl.cli grpo-gsm8k-27b, one lr arm each (1e-6/1e-5/1e-4, --steps 20), host pids 118993/119173/119339, ~38 GB each. NEVER TAKE.",
-  "7": "THE USER'S OWN WORK: scripts/toggle_matrix.py under /work/tl013/bin/python (host pid 161769). NEVER TAKE."
+  "4": "0 MiB at 08:24Z. NOT granted -- headroom for the user's container.",
+  "5": "TAKEN by pid 862745, 38,778 MiB, 0% util, within SECONDS of b0 releasing it. Not ours. The grant is spent.",
+  "6": "0 MiB at 08:24Z. NOT granted -- second headroom card.",
+  "7": "THE USER'S OWN WORK: 37,181 MiB, 0% util. 0% is NOT idle -- held memory at 0% util is torch.compile as often as it is a finished job. NEVER TAKE."
  },
- "lane_note": "NO LANE right now: all four of 4-7 hold the user's work. lane_card is null, which per harness.lane_respected means a lane that comes back non-empty is a FAIL -- that is the intended reading, not a stub. THE STRUCTURE I NAMED BEFORE WAS WRONG AND THIS IS THE THIRD REVISION IN TWO HOURS: I first wrote fixed card numbers (wrong within 20 min), then 'one roaming single-card job, the lane is the two cards it is not on' (wrong: the user's container fans a sweep across THREE cards at once, and a fourth job took the last one). What has been right every single time is the yield rule, so that is now the whole policy: cards 0-3 are ours and are the block; cards 4-7 are the user's by default and a job goes there ONLY when the controller grants it against an nvidia-smi read taken in the same minute, one job, yielding rather than contending. Do not derive a lane from this file -- ask, or read the cards and ask.",
+ "lane_note": "NO LANE as of the probes finishing. Card 5 was reclaimed by another container inside the release window -- b0 observed no measurable gap between his release and pid 862745 holding 38,778 MiB. That is the FOURTH instance that a named lane does not survive, and the shortest: the earlier ones were hours, then six minutes, then seconds, then no observable window at all. The rule is not 'read recently', it is READ AND CLAIM IN ONE ACTION, and when that is impossible, expect to lose the card and design the job to be restartable. Block stays 0-3.",
  "superseded_2026_09_02": {
   "block_cards": "0-7",
   "note": "Granted for the 500M/20B run on ALL EIGHT cards, user ruling 2026-09-02. The lane is gone by that ruling and the cost was stated before it was taken: in-run milestone generation sweeps cannot run, because the scorer needs a whole 95 GiB card and not a gap -- observed, not derived, when the probe's scorer took card 7 alone after training exited. End-of-run scoring is unaffected: run_ddp.sh scores after torchrun exits, when all eight are free. Second cost: the 200M comparison axis loses its free pin at step 17,500 and needs 15,313 plus conversion. Both were on the table before the decision. Resume was PROVEN before this grant, per the user's order of 2026-09-02: six conditions, nine domains character-for-character, plus a reverse test that made the guard fire. --auto-resume is 1 and not more: the cursor is per-segment, so a second resume re-reads 10,240 rows and nothing has ever tested it.",
