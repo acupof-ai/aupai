@@ -160,12 +160,28 @@ def main():
         dropped = tok[arm][1]
         if len(kept) != len(both):
             sys.exit(f"REFUSING: {arm} kept {len(kept)} of the {len(both)} shared ids")
+        # PAD COMES FROM THE TOKENIZER, NOT FROM THE LOADER'S SECOND RETURN VALUE. load_ours
+        # returns (model, ck.get("vocab_id")) -- a vocab identifier string -- and load_control
+        # returns (model, None). I destructured both as `model, pad` and passed the string
+        # straight into score(), which died on `torch.tensor(xs, dtype=torch.long)` with
+        # "'str' object cannot be interpreted as an integer" AFTER loading the model and
+        # tokenizing 10,421 items. A two-tuple's second slot is not labelled by what the caller
+        # needs it to be. This is how eval_heldout's own main() derives it (lines 563-569).
         if arm == "ours":
-            model, pad = E.load_ours(os.path.join(ROOT, ckpt), "cuda")
+            model, _vocab_id = E.load_ours(os.path.join(ROOT, ckpt), "cuda")
+            from tokenizers import Tokenizer
+            tk = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+            pad_id = tk.token_to_id("<eos>") or 0
         else:
-            model, pad = E.load_control(ckpt, "cuda")
+            model, _ = E.load_control(ckpt, "cuda")
+            from transformers import AutoTokenizer
+            pad_id = AutoTokenizer.from_pretrained(ckpt).eos_token_id or 0
+        if not isinstance(pad_id, int):
+            sys.exit(f"REFUSING: {arm} pad_id is {type(pad_id).__name__} {pad_id!r}, not an int -- "
+                     f"score() puts it straight into a long tensor")
         items = []
-        tot, ntok = E.score(model, arm, kept, "cuda", a.batch, pad, per_item=items)
+        tot, ntok = E.score(model, arm, kept, "cuda", a.batch, pad_id, per_item=items)
+
         # PER-ITEM MUST RECONSTRUCT THE PASS, here too and not only in the selftest: the split
         # below is only a split of this number if it adds back up to it.
         s = sum(r["nll"] for r in items)
