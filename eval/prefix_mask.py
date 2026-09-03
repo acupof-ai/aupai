@@ -239,13 +239,15 @@ def _selftest():
     check("prompt queries do see later prompt keys", len(fwd) == P * (P - 1) // 2,
           f"{len(fwd)} of {P * (P - 1) // 2}")
 
-    # 4. LEAK TEST A, as an assertion: prompt_len = full row must make the mask NO WIDER than
-    #    causal on any position that carries loss. With P = T every pair is inside the prompt,
-    #    so the mask is fully bidirectional -- and that is precisely the configuration whose
-    #    LOSS must not fall below causal on the pod, because with P = T the pack supervises
-    #    nothing. Here we assert the shape of it: full-row prompt is bidirectional everywhere.
+    # 4. FULL-ROW PROMPT IS BIDIRECTIONAL EVERYWHERE. This is the premise of the pod's gate B2,
+    #    which is a POSITIVE CONTROL and not a leak test. An earlier version of this comment said
+    #    "with P = T the pack supervises nothing", and that was false: the loss mask lives in
+    #    `labels` and P does not touch it, so at P = T every supervised position is still
+    #    supervised and now attends to its own label. The loss therefore MUST collapse, which is
+    #    why the pod gate requires the collapse rather than forbidding it -- the leak test runs at
+    #    the real prompt lengths instead, where the prompt ends before the first supervised token.
     full = all(reference_mask(q, k, T, prefix=True) for q in range(T) for k in range(T))
-    check("full-row prompt length is bidirectional everywhere (leak test A's premise)", full)
+    check("full-row prompt length is bidirectional everywhere (gate B2's premise)", full)
 
     # 5. LEAK TEST B, as an assertion: prompt_len = 0 must be EXACTLY causal, every pair.
     same = [(q, k) for q in range(T) for k in range(T)
