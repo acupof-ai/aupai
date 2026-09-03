@@ -9,3 +9,15 @@ runs/review.jsonl merge=union
 runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
+runs/friction.jsonl merge=union
+
+# Derived files: regenerate instead of conflicting. Both are produced from a source of
+# truth, so "pick a side" is never the right resolution -- these two blocked six merges on
+# 2026-09-03 (runs/friction.jsonl, top cause by count).
+#
+# THE COMMAND IS NOT HERE. `git config merge.<name>.driver` holds it, per clone, untracked:
+# these two lines alone give a merge that cannot find the driver. `harness install-hooks`
+# writes the config; `python3 scripts/merge_drivers.py --check` says whether both halves
+# are present in THIS clone.
+data/pod_head_manifest.txt merge=aupai-manifest
+EXPERIMENTS.md merge=aupai-experiments
