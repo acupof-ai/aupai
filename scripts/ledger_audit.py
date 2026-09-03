@@ -211,13 +211,26 @@ def by_key(path, text):
     return out
 
 
-def regressions(path, head_lines, index_lines, message=""):
+def regressions(path, head_lines, index_lines, message="", root=None):
     """[(key, row)] the child fails to preserve, via de's predicate for THIS ledger.
 
     de-33's pre-commit hook calls this with HEAD's blob and the index's blob rather than
     reimplementing the comparison: one predicate, one place to be wrong. When `message` carries
     `ledger-rewrite:` the manifest is still returned -- the caller decides whether to allow it,
     so a declared rewrite is never silently exempt here.
+
+    A RULING DOES NOT EXCUSE A LOSS, and this is the whole content of de-39. The obvious fix --
+    skip any key runs/ledger_resolutions.jsonl has ruled -- opens the exact hole the ruling was
+    made to close: the three ruled p200m_4b_0902 rows are the ONLY place val 2.569, MFU 32%,
+    peak 49.5 GiB, 21.8% of 4.00B tok and pids 2312358-2312365 exist (measured). Skipping those
+    keys would let a merge drop them silently, which is data loss authorised by the very record
+    that says the data matters.
+
+    What a ruling settles is the POD/LOCAL disagreement, a different question from "did this
+    commit drop a row". So the exemption is narrow and content-bound: a key is excused only when
+    the row leaving is one the ruling explicitly SUPERSEDED -- the pre-ruling row, whose
+    fingerprint the ruling recorded as its own history -- and the row that replaced it is still
+    present. A merge dropping the CURRENT row is refused exactly as before, ruling or no ruling.
 
     KNOWN BLIND SPOT, score_matrix.jsonl: the .lock at score_matrix.py:581-585 serializes
     interleaved read-modify-write cycles but does NOT stop a STALE process from writing back
@@ -230,8 +243,36 @@ def regressions(path, head_lines, index_lines, message=""):
     """
     pred = PREDICATE.get(path, subsume)
     kf = KEYS[path]
-    return pred([json.dumps(r) for r in _rows(path, head_lines)],
-                [json.dumps(r) for r in _rows(path, index_lines)], kf)
+    bad = pred([json.dumps(r) for r in _rows(path, head_lines)],
+               [json.dumps(r) for r in _rows(path, index_lines)], kf)
+    return [b for b in bad if not _superseded_by_ruling(path, b, index_lines, root)]
+
+
+def _superseded_by_ruling(path, finding, index_lines, root=None):
+    """Is this lost row one a recorded ruling replaced, with its replacement still present?
+
+    Both halves are required. `local_fp` names the row the ruling made CURRENT for the key, so
+    a lost row matching it is the live record leaving -- never excused. A lost row that matches
+    nothing the ruling names is not covered by it at all. The only excused case is the narrow
+    one: the row the ruling superseded is gone AND the row it installed is in the child."""
+    try:
+        from ledger_resolutions import fingerprint, index
+    except ImportError:
+        return False
+    key, row = finding[0], finding[1]
+    ruling = index().get((path, key))
+    if ruling is None:
+        return False
+    try:
+        lost = json.loads(row) if isinstance(row, str) else row
+    except (TypeError, ValueError):
+        return False
+    if fingerprint(lost) == ruling.get("local_fp"):
+        return False        # the ruling's OWN current row is what is leaving
+    kf = KEYS[path]
+    present = [r for r in _rows(path, index_lines) if kf(r) == key]
+    return any(fingerprint(r) == ruling.get("local_fp") for r in present)
+
 
 
 # Ledgers where TWO ROWS UNDER ONE KEY is a fault. The test is the same one that decides the
@@ -494,6 +535,40 @@ def _selftest():
     if duplicates("runs/score_matrix.jsonl", dup_world) != [("c", "full")]:
         fails.append("duplicates() does not flag the one doubled key in a 3-row world")
 
+    # de-39: A RULING EXCUSES A SUPERSEDED ROW AND NOTHING ELSE. Three worlds, because the
+    # obvious fix -- skip any ruled key -- passes the first and silently allows the second,
+    # which is the data loss the ruling exists to prevent.
+    import ledger_resolutions as _lr
+
+    _f = "runs/experiments.jsonl"
+    _old = {"name": "r", "started": "t", "status": "fail", "result": "OOM", "finding": "short"}
+    _new = dict(_old, finding="short (pod row, merged) val 2.569 MFU 32%")
+    _other = {"name": "q", "started": "t", "status": "ok", "result": "3.6%"}
+    _dump = lambda rs: "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rs)  # noqa: E731
+    _parent = _dump([_other, _old, _new])
+    _ruling = {(_f, ("r", "t")): {"winner": "merged", "ruled_by": "fb", "date": "2026-09-03",
+                                  "local_fp": _lr.fingerprint(_new),
+                                  "pod_fp": _lr.fingerprint(_old)}}
+    _real_index = _lr.index
+    _lr.index = lambda *a, **k: _ruling
+    try:
+        # 1. the SUPERSEDED row leaves, the ruling's current row stays -> excused
+        if regressions(_f, _parent, _dump([_other, _new])):
+            fails.append("a ruling did not excuse the row it superseded, so an adjudicated "
+                         "disagreement is refused on every merge and override is the only path")
+        # 2. the ruling's CURRENT row leaves -> still refused. The naive 'skip ruled keys' fix
+        #    passes world 1 and fails here, allowing exactly the loss the ruling documents.
+        if not regressions(_f, _parent, _dump([_other, _old])):
+            fails.append("a ruling excused the loss of the row it made CURRENT -- the three "
+                         "ruled p200m rows are the only place val 2.569 / MFU 32% / peak 49.5 "
+                         "GiB exist, so this is data loss authorised by the record saying the "
+                         "data matters")
+        # 3. an UNRULED key is untouched by any of this
+        if not regressions(_f, _parent, _dump([_old, _new])):
+            fails.append("dropping an unruled row was excused; the exemption must be per-key")
+    finally:
+        _lr.index = _real_index
+
     for f in fails:
         print(f"  FAIL {f}")
     if fails:
@@ -506,8 +581,10 @@ def _selftest():
           "length heuristic, per-file dispatch verified to differ (subsume vs key_present), "
           "score_matrix keyed on the writer's (ckpt, profile) with a missing profile defaulted "
           "to 'full' -- measured 22 duplicates on the pre-fold blob against 0 under a literal "
-          "read, and 0 after 44's fold -- returns declared rewrites as manifests, and the "
-          "second reading sees values leaving the file when no key regresses")
+          "read, and 0 after 44's fold -- returns declared rewrites as manifests, the "
+          "second reading sees values leaving the file when no key regresses, and a ruling "
+          "excuses ONLY the row it superseded (the loss of the row it made current is still "
+          "refused, which is what separates this from skipping ruled keys)")
     return 0
 
 
