@@ -265,7 +265,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 19 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 §106 §131 §139 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 67 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 68 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 §153 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 8 | §7 §13 §25 §27 §51 §59 §101 §136 |
 | State the vision before the number; outside it, label unmeasured, not absent | 12 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 §138 |

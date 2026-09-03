@@ -1,4 +1,4 @@
-a8dbec3646ffd6b1538d875f558f953f9a81b1f8e231cbf1275f04c4beaf621f  AGENTS.md  docs  644
+c82acc6aef443dec077e5465043a1683f4675ba3863e93947ae81170722dc64d  AGENTS.md  docs  644
 b021eb2755734434df1f60a84a043458092b64f9409b72dc81cfdd90d560fa97  algorithms/__init__.py  docs  644
 8ff35228786ec39043bb7c7ba80eaae2b64bf0066851f9f347c0c34982fd7754  algorithms/attnres_fused.py  training  644
 8a62cdebba747d0897025b0795547b8f2df5419f4f1660d59a4b0a73c77193bb  algorithms/attnres_triton.py  docs  644
@@ -143,10 +143,11 @@ b5becafca9f27f85190f14cfa05c42f619048294b5fa86b184c5ca63aaefd15b  eval/domain_bp
 2447ebe89b2f9bf1b07278f2389a748c2020ffdee656df8d5d207f25acc41402  eval/gsm8k.py  training  644
 2b568e3302ef0d33467b9f682ec6c11d972eb1309e032cd5bd9572986364f860  eval/hellaswag.py  docs  644
 bf0ea21505e05a34bf6204d9adfe9735f0df597c1d8277bf05c68683b52c2f47  eval/humaneval_bpb.py  docs  644
-0e0b2763e13e60c00a4a20e4bbf3fa6cdfe6e349b6d223e37a53b1a60ec3ed57  eval/l1_2x2_diagnose.py  docs  644
+be69c1a8a4d3f9508b8a2fe8c7a1409ba876b5447b9e599ba3e26c84d0f6e0d0  eval/l1_2x2_diagnose.py  docs  644
 624403d17e2fe9d9f120260a341f963d1a3615ad0f0e436a9b8a308d7f626b7c  eval/l1_fewshot.py  docs  644
 1854a2521d99e8e5ebc650f58bdeedf8df1d2f3147fcd72f412059a63df5d3d8  eval/lambada_en.py  docs  644
 26606a921da5e00142c99e5589f3dfae96469da54f8dd09efeb1b61e152af031  eval/lambada_zh.py  docs  644
+efcce44a07e65948e4b73aa169dd6250acb7d0ff7f65eb5727038b6709d76e0f  eval/math_bpb.py  docs  644
 0ab6cfa97965305472ea09ded77b97ed2ec01d3167654a81d7efd15351e0f499  eval/math_hard.py  training  644
 cfe89e772c9fdfc87e440ca91db155bccff73654b5c8cc47a417dc9c6e200bf2  eval/math_v2_like.py  docs  644
 50eff28cc6e41b11972e67129e0ee67520efe488bba69167cb46fe1771a78450  eval/math_zh.py  training  644
@@ -162,7 +163,7 @@ fed71110b2ae4afdc1e22f5a480d1a16ea383baa5f22a3c2170a442208601089  eval/run_eval.
 a88d84b163211486f72753eff098a1acd49d8cb0a2be3e0d6f591bc0162c7c9a  eval/score_code_exec.py  docs  644
 ab1a45d1943601f12a7c5c062cb40a14db8a491747495ed464724f75d494f2ce  eval/score_math_formatfree.py  docs  644
 720f4c5cb122ef1bf06eb4f61a30b56949cd719dc6b0d8037cc7c645c5a1eb0d  eval/score_matrix.py  training  644
-2e2f487f856f1ea92e9cd3520f1d6f49328b84319f30f1a99476a48d47f82271  eval/test_l1_fewshot_2x2.py  docs  644
+37c85c79bf080e735e3fba5c1b3b62e5e38f03c251a7040b7cbcc321b9267bd2  eval/test_l1_fewshot_2x2.py  docs  644
 ef45c377f5aef71400ce06dd9e5635caa9de669a252bc0f80d7fc863c20b5db9  eval/validate_lambda_probe.py  docs  644
 9f5d471f5c9b1ae18c2273f20f61ac67faced7fc46b1416d2fef11e261a5819b  eval/winogrande.py  docs  644
 b2b0ad906851b36e2e42e34b10bcb93347d997228a4c746c6e1a5c0ccae29335  facts/base_eval.json  docs  644
@@ -290,7 +291,7 @@ d7aa724994c11363991b17f0f2dbccd56ba61eae89a1a847369761d7e15fe5de  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-94b96737d9fba53dc6b4c9e0470f53d7171313cc3932e8d1219d295113be56c9  scripts/hooks/pre-commit  docs  755
+769c04b8884b03ce08a6a4485d0c53ec831a69a894e2939940f3e56d08f71ec5  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
