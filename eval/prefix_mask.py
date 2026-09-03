@@ -14,14 +14,21 @@ loss collapses by leakage and generation is undefined -- the ShortConv padding=2
 this repo. Prefix-LM is the version that is well defined, and the SFT pack's loss mask already
 draws the prompt/response boundary, so the boundary is read from the data rather than invented.
 
-THE INTERVENTION IS ONE LAYER DEEP AND FEEDS THE HEAD DIRECTLY. cfg says layers 12,
-attn_every 4, and model.py:354 places attention where `i % attn_every == attn_every - 1`, so
-the MLA layers are 3, 7 and 11 (0-based). In the post-loop range 8-11 there is exactly ONE,
-and it is 11 -- the last block in the network. Nothing sits above it but final_ar and the head.
-So a null result here is a null for ONE-LAYER prefix attention immediately below the head, and
-says nothing about prefix-LM in the usual sense where every attention layer over the prompt is
-bidirectional. Layer 7 would give a second one, and it is INSIDE the looped block, so using it
-would confound the two interventions; ruled out deliberately (6e, 2026-09-04).
+WHICH LAYERS, and the first answer was a null by construction. cfg says layers 12, attn_every 4,
+and model.py:354 places attention where `i % attn_every == attn_every - 1`, so the MLA layers are
+3, 7 and 11 (0-based). The original plan masked block 11 alone, the only MLA layer in the post-loop
+range 8-11. That cannot work, and the reason is architectural rather than a bug: prefix and causal
+differ ONLY for prompt queries, prompt positions are exactly the positions the pack masks to -100,
+and block 11 is the last block -- above it sit final_ar and the per-position head, so a changed
+prompt position has no path to any supervised position. Measured on the pod (2026-09-04): block 11
+alone moves 3660 of 16384 logit positions with 0 supervised, and the loss is bitwise identical at
+1.6138908863067627. Two arms would have trained to the same number.
+
+So the arms are PREFIX_ARMS below: "p3" masks all three MLA layers (prefix-LM in the usual sense,
+twin ckpt_n7c_unlooped.pt) and "p7" masks layer 7 alone inside the looped block (twin
+ckpt_n7c_looped.pt, loop held constant across both arms so only the mask differs). Layer 7 works
+where 11 does not because it has KDA layers above it to carry a prompt change into a supervised
+position.
 
 HOW THE MASK REACHES THE KERNEL, and this is the part that had to be read rather than assumed.
 model.py:38's `from flash_attn import ...` FAILS on this pod; HAS_FA is True through the
@@ -59,7 +66,28 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 if ROOT not in sys.path:
     sys.path.insert(0, ROOT)
 
-PREFIX_LAYER = 11  # confirmed from the checkpoint cfg, not assumed; see the module docstring
+PREFIX_LAYER = 11  # kept for the gate's default; see PREFIX_ARMS for what the arms actually use
+
+# THE TWO ARMS, and why layer 11 alone is NOT one of them. cfg is layers 12 / attn_every 4, so
+# MLA sits at blocks 3, 7 and 11. A prefix mask changes attention ONLY for prompt queries -- a
+# response query keeps kv <= q in both arms -- and prompt positions are exactly the positions the
+# pack sets to -100. Block 11 is the last block, with only final_ar and the per-position head
+# above it, so a changed prompt position has no path to a supervised position and the training
+# loss cannot see the mask at all. Measured on the pod 2026-09-04: block 11 alone moves 3660 of
+# 16384 positions and 0 of them are supervised (max|dlogit| 0.000e+00 on supervised, 8.15 on
+# masked), and the loss is bitwise identical at 1.6138908863067627. Two arms at layer 11 would
+# train to the same loss and differ only in wasted compute -- a null by construction.
+#
+#   "p3": all three MLA layers. Prefix-LM in the usual sense on the adopted architecture; its
+#         causal twin is ckpt_n7c_unlooped.pt (same pack, seed and 500 steps), so nothing is
+#         retrained for the baseline.
+#   "p7": layer 7 alone, looped 4-7. The closest well-defined form of the original one-layer
+#         proposal: layer 7 has KDA layers above it to carry a prompt change into a supervised
+#         position. It sits INSIDE the looped block, so prefix and loop would be confounded if the
+#         arms differed in the loop -- they do not. Both arms are looped, the loop is held
+#         constant, and only the mask differs. Its twin is ckpt_n7c_looped.pt.
+PREFIX_ARMS = {"p3": (3, 7, 11), "p7": (7,)}
+
 
 
 def build_mask_mods():
