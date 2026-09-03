@@ -197,7 +197,7 @@ def main():
                 "REFUSING: this is the integration tree on main. Commit in your own "
                 "worktree and merge:\n"
                 "  git -C <your worktree> commit <paths>\n"
-                f"  git -C {top} merge --no-edit <your branch>\n"
+                f"  {top}/scripts/merge_main.sh <your branch>\n"
                 "A file left dirty here blocks every other session's move of it and gets "
                 "swept into their commits. Controller: AUPAI_CONTROLLER=1 git commit ...",
                 file=sys.stderr,
@@ -529,6 +529,14 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # pod_sh_offset: the byte-offset gate behind POD_PUSH_ALLOW_RUNNING_SH. Its selftest
+        # is pure arithmetic over fixture bytes and fixture ps/fdinfo text -- no pod, no card
+        # -- so it runs here. Gated because the file's job is deciding whether overwriting a
+        # RUNNING script is safe, and six mutations of its own logic were each verified red
+        # through a named assertion (first-offset instead of smallest, unreadable shells
+        # ignored, zombies counted as live, inverted comparison, truncation read as
+        # identical, gate always passes).
+        "scripts/pod_sh_offset.py",
         # gen_ckpt_listing: its selftest builds listings from hand-made scans and judges them
         # with harness._parse_ckpt_listing, the real reader -- no pod, no card. It is gated
         # because the file's whole job is protecting five sessions' KEEP claims through a
