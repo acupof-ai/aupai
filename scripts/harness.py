@@ -3723,17 +3723,25 @@ def check_entrypoint_help(root):
 
     checked = 0
     bad = []
+    # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
+    # This loop covered five subdirectories and no root file, so train.py -- the entry point
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 carried
+    # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
+    # with the exact TypeError this check names, and the check passed the whole time. A guard
+    # that skips the most-used file in the repo reports on the files that matter least.
+    roots = sorted(glob.glob(os.path.join(root, "*.py")))
     for d in ("eval", "scripts", "datagen", "probes", "algorithms"):
-        for path in sorted(glob.glob(os.path.join(root, d, "*.py"))):
-            try:
-                src = open(path, encoding="utf-8").read()
-            except OSError:
-                continue
-            if "argparse" not in src:
-                continue
-            checked += 1
-            for text, exc, msg in _bad_help_strings(src):
-                bad.append(f"{os.path.relpath(path, root)}: {exc}: {text!r}")
+        roots += sorted(glob.glob(os.path.join(root, d, "*.py")))
+    for path in roots:
+        try:
+            src = open(path, encoding="utf-8").read()
+        except OSError:
+            continue
+        if "argparse" not in src:
+            continue
+        checked += 1
+        for text, exc, msg in _bad_help_strings(src):
+            bad.append(f"{os.path.relpath(path, root)}: {exc}: {text!r}")
     if not checked:
         return SKIP, "no argparse entrypoints found"
     if bad:
@@ -11910,6 +11918,14 @@ _FROZEN_KEYS = (
     "untie_head",
     "seq", "grad_ckpt", "fone", "doc_mask",  # architecture / training comparability
     "d", "heads", "layers", "ffn_hidden",  # shape: CLI-settable from 2026-09-01 (500M; --dim sets d)
+    # N7 Stage D (b0, 2026-09-03): --loop changes the TOPOLOGY from step 0 -- blocks LO..HI are
+    # visited twice -- so two segments of one run that disagree on it are not comparable, and it
+    # belongs here for zero_init_out's reason rather than in the allow-list for no_attn_res's.
+    # It is an A/B knob, but unlike head_lr the two arms are two SEPARATE RUNS, never two
+    # segments of one: a resume that dropped --loop would continue looped weights with an
+    # unlooped body and the logs would show nothing. Cfg.loop_blocks in the checkpoint is the
+    # other half of that guard -- the flag says what was asked for, the metadata says what ran.
+    "loop",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so

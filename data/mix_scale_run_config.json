@@ -17,6 +17,7 @@
  "muon_shape_lr": false,
  "value_embed": false,
  "untie_head": false,
+ "loop": null,
  "seq": 4096,
  "grad_ckpt": false,
  "fone": false,
