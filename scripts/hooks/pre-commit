@@ -491,6 +491,7 @@ def main():
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
+        "scripts/corpus_snapshot.py",
         "datagen/count_code_dirs.py",
         "algorithms/isolate.py",
         "algorithms/code_reward.py",

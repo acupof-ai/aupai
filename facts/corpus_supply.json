@@ -171,6 +171,24 @@
     "30b supply is exhausted",
     "supply table is settled"
    ]
+  },
+  {
+   "id": "cs.arxiv_landed",
+   "value": 3104378449,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "/work/aupai/data/corpus/rp1t_arxiv_papers (RedPajama-1T arxiv slice via data.together.xyz; exact frozen-tokenizer count, 97 shards, 169,593 docs)",
+   "config": {
+    "note": "role UNATTRIBUTED — 60-doc read: full arXiv papers (avg 57K chars, \\section 98%, proof env 22%, step-markers 2%); this is math-reasoning prose, NOT CoT. The _comment in mix_30b suspended arxiv/stackexchange role attribution until a content read, which did not exist; now it does. cot gap stays OPEN. fetch_stats first-in-repo: /work/aupai/data/raw/rp1t_arxiv/fetch_stats.json, 15 files 13.99GB, all data.together.xyz. filters_fp 88ee503b38941bf4, tier reproducible."
+   },
+   "uncertainty": "exact count 3.104B; the earlier sampled estimate 0.3461 tok/byte overshot the exact 0.329 by +3.74% (sample biased to shard-head longer docs) — next slice-extrapolations on this source should expect that +~3.7% bias",
+   "status": "measured",
+   "role": "unattributed",
+   "boundary": "not a CoT supply; does not fill the cot gap. CoT needs visible intermediate steps; viable paths in order: (1) stackexchange 80GB (same host, sample-read 60 first), (2) extract \\begin{proof} envs from this arxiv (20-22% of docs, order-of-magnitude smaller, no new fetch), (3) true CoT set",
+   "guard_phrases": [
+    "arxiv fills the cot gap",
+    "cot is landed"
+   ]
   }
  ]
 }
