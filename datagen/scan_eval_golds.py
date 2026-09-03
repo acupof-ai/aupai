@@ -1,4 +1,6 @@
 #!/usr/bin/env python3
+# restartable: an interrupt costs only the current run -- it writes one small JSON at
+# the end and no partial file a later run could mistake for complete; re-run from scratch.
 """Generic 13-gram eval-gold contamination scanner (N4 stamp prereq, controller 2026-09-03).
 
 Inputs: one or more corpus directories and the eval gold files. Method (reused from

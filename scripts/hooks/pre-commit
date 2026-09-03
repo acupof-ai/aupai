@@ -544,6 +544,10 @@ def main():
         "scripts/launch_tests.py",
         "scripts/corpus_snapshot.py",
         "datagen/count_code_dirs.py",
+        # N4 eval-gold contamination scanner: no card, no model, no data -- its selftest builds
+        # its own fixture shard and a shuffled-gold control, and the gold extractor is loose by
+        # design (a hit needs an exact 13-gram, so a short answer cannot false-positive).
+        "datagen/scan_eval_golds.py",
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
         "algorithms/rollout.py",
