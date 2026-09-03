@@ -171,7 +171,7 @@ def head_fp(texts):
 
 
 @torch.no_grad()
-def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
+def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4, cu_path="cu_none"):
     """Mean next-token CE over packed held-out text. Packing matches training, so the
     number is on the same scale as the val figure train.py prints."""
     ids = []
@@ -183,7 +183,7 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
     n = min(n, cap)
     x = torch.tensor(ids[: n * seq], dtype=torch.long).view(n, seq).to(device)
     y = torch.tensor(ids[1 : n * seq + 1], dtype=torch.long).view(n, seq).to(device)
-    return _ce(model, x, y, bs)
+    return _ce(model, x, y, bs, cu_path=cu_path)
 
 
 # The pair above has one and this did not, and this is the one score_matrix calls
@@ -191,7 +191,7 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
 # and asked for 94.65 GiB on a card someone else was holding -- read at the time as the
 # training run exhausting memory, which it was not (fb, 2026-09-02).
 @torch.no_grad()
-def domain_loss_seqs(model, rows, device, bs=4, per_row=False):
+def domain_loss_seqs(model, rows, device, bs=4, per_row=False, cu_path="cu_none"):
     """Mean next-token CE over rows train.py actually held out (from val_seqs).
 
     Separate from domain_loss because the input is different in kind: val_seqs returns
@@ -205,10 +205,14 @@ def domain_loss_seqs(model, rows, device, bs=4, per_row=False):
         return (None, 0, []) if per_row else (None, 0)
     x = rows[:, :-1].to(device)
     y = rows[:, 1:].to(device)
-    return _ce(model, x, y, bs, per_row=per_row)
+    # cu IS BUILT FROM x, THE SLICED ROW, not from the full row: x is rows[:, :-1], so a document
+    # boundary in the dropped last column is not a boundary here. b0_sd_cu_rescore.py:79 does the
+    # same, and matching it matters more than which is more principled -- two cu paths that differ by
+    # one column would produce two sets of numbers nobody could pair.
+    return _ce(model, x, y, bs, per_row=per_row, cu_path=cu_path)
 
 
-def _ce(model, x, y, bs, per_row=False):
+def _ce(model, x, y, bs, per_row=False, cu_path="cu_none"):
     """Sum CE over (x, y) in batches; the loss and the token count it averages over.
 
     per_row=True ALSO returns [(row_ce_sum, row_tokens), ...] in input order, one entry per
@@ -224,12 +228,32 @@ def _ce(model, x, y, bs, per_row=False):
     """
     tot = cnt = 0.0
     rows = [] if per_row else None
-    for i in range(0, len(x), bs):
+    # cu_path="cu_doc" PASSES THE DOCUMENT MASK, which this function did not do for weeks. Without it
+    # every packed row was scored as one undivided sequence while training used doc_cu_seqlens, and
+    # b0 measured the artifact at -0.082 nat/token pooled over nine domains, with a dose-response in
+    # eos-per-row (chatml/chat_qa -0.20..-0.28) -- 7.6x N2's own delta, so it was large enough to
+    # move published conclusions.
+    #
+    # ONE ROW PER FORWARD when cu is on, and this is not a style choice: cu_seqlens indexes the FLAT
+    # B*T stream (train.py:669), so a batch of 4 rows is one 4T-long stream whose row boundaries are
+    # documents too. That is legitimate for training, but it makes the number depend on bs, and
+    # scripts/b0_sd_cu_rescore.py:76 already scored Stage D one row at a time. Matching that exactly
+    # is the point: 6e's ruling is that the repo ends with ONE cu path, not two that agree by
+    # assumption, so this loop reproduces b0's construction rather than a defensible variant of it.
+    step = 1 if cu_path == "cu_doc" else bs
+    _cu_of = None
+    if cu_path == "cu_doc":
+        from train import doc_cu_seqlens  # noqa: PLC0415  (import here: CPU callers need no train)
+        _cu_of = doc_cu_seqlens
+    elif cu_path != "cu_none":
+        raise ValueError(f"cu_path must be 'cu_doc' or 'cu_none', got {cu_path!r}")
+    for i in range(0, len(x), step):
+        xb = x[i : i + step]
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
-            logits = model(x[i : i + bs])
+            logits = model(xb, cu=_cu_of(xb, EOS_ID)) if _cu_of else model(xb)
         if isinstance(logits, tuple):
             logits = logits[0]
-        yb = y[i : i + bs]
+        yb = y[i : i + step]
         flat = logits.float().view(-1, logits.shape[-1])
         # THE REPORTED SCALAR IS STILL THE FLAT reduction="sum", BIT FOR BIT. Summing per row
         # and then adding the rows gives a different fp32 accumulation order: measured 7e-8
@@ -278,8 +302,11 @@ def selftest(model, tok, texts, seq, device):
     #    cap back to the same sequences. `texts * 2` with a doubled cap reads FURTHER INTO THE
     #    SAME STREAM, so it compares two different samples and fails on sampling noise -- a
     #    check that fires on correct code is as useless as one that never fires.
-    a, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=4)
-    b, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=1)
+    #    cu_path="cu_none" EXPLICITLY: under cu_doc the loop steps one row at a time whatever bs
+    #    says, so this assertion would compare bs=4 against bs=4 and pass without testing anything.
+    #    A check that cannot fail is worse than no check, because it reads as coverage.
+    a, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=4, cu_path="cu_none")
+    b, _ = domain_loss(model, tok, texts, seq, device, cap=16, bs=1, cu_path="cu_none")
 
     ok = True
     print(f"  selftest real {real:.4f} | shuffled {bad:.4f} | bs4 {a:.4f} | bs1 {b:.4f}")
@@ -292,6 +319,59 @@ def selftest(model, tok, texts, seq, device):
             "accumulator is batch-dependent"
         )
         ok = False
+    # 3. cu_doc ISOLATES DOCUMENTS, 6e's gate for this change. Two documents packed into one row,
+    #    scored through the new path, must give each document the loss it gets alone -- up to the
+    #    isolation fix's residual, measured on the pod as 0.2-2.3 bf16 ulps against a T-parity floor
+    #    of 6.7 ulps (runs/n8/pack_isolation_FIXED_2026-09-04.txt).
+    #
+    #    A LOSS TOLERANCE, NOT A LOGIT ONE. The residual above is in activations; what this function
+    #    returns is a per-token CE mean, and converting between them is not something to assume. So
+    #    the bar is stated in the CE's own unit and set from the cu_none arm's own magnitude: the
+    #    cross-document contamination this is meant to catch was 0.082 nat/token pooled and up to
+    #    0.28 on eos-dense domains (b0), so 0.01 nat is well below what a leak produces and well
+    #    above bf16 noise on a mean over thousands of tokens.
+    two = torch.tensor([tok.encode(texts[0]).ids + [EOS_ID] + tok.encode(texts[1]).ids + [EOS_ID]],
+                       dtype=torch.long, device=device)
+    if two.shape[1] % 2:  # odd length misaligns chunk_kda (model.py:125): a crash, not a warning
+        two = torch.cat([two, two.new_full((1, 1), EOS_ID)], dim=1)
+    packed, n_p = domain_loss_seqs(model, two, device, cu_path="cu_doc")
+    # The same two documents as separate ROWS: cu marks every row start too (train.py:669), so this
+    # is the same document set with the same boundaries and no packing.
+    d1 = tok.encode(texts[0]).ids + [EOS_ID]
+    d2 = tok.encode(texts[1]).ids + [EOS_ID]
+    width = max(len(d1), len(d2))
+    width += width % 2
+    sep = torch.full((2, width), EOS_ID, dtype=torch.long, device=device)
+    sep[0, :len(d1)] = torch.tensor(d1, device=device)
+    sep[1, :len(d2)] = torch.tensor(d2, device=device)
+    if packed is None:
+        print("  selftest SKIP case 3: the two-document probe packs to 0 rows")
+    else:
+        # cu_none on the SAME packed row is the positive control: if it does not differ, this probe
+        # cannot see cross-document effects at all and case 3's pass would mean nothing.
+        leaky, _ = domain_loss_seqs(model, two, device, cu_path="cu_none")
+        print(f"  selftest cu_doc {packed:.4f} | cu_none {leaky:.4f} on the same packed row "
+              f"({n_p} tokens)")
+        if abs(packed - leaky) < 1e-6:
+            print("  FAIL cu_doc and cu_none give the same loss on a two-document row; cu is not "
+                  "reaching the forward, so case 3 tests nothing")
+            ok = False
+
+    # 4. A ROW WITH NO EOS MUST BE UNCHANGED by the flag, 6e's second case: no eos means no interior
+    #    boundary, so cu marks only the row itself and the two paths must agree exactly.
+    noeos = torch.tensor([[i for i in tok.encode(texts[2]).ids if i != EOS_ID]],
+                         dtype=torch.long, device=device)
+    if noeos.shape[1] % 2:
+        noeos = noeos[:, :-1]
+    if noeos.shape[1] >= 4:
+        x1, _ = domain_loss_seqs(model, noeos, device, cu_path="cu_doc")
+        x0, _ = domain_loss_seqs(model, noeos, device, cu_path="cu_none")
+        print(f"  selftest no-eos row: cu_doc {x1:.6f} vs cu_none {x0:.6f}")
+        if abs(x1 - x0) > 1e-4:
+            print(f"  FAIL a row with no <eos> moved by {x1 - x0:+.6f} between cu paths; with no "
+                  f"interior boundary the two must agree")
+            ok = False
+
     print("  selftest " + ("OK" if ok else "FAILED"))
     return ok
 
@@ -541,6 +621,9 @@ def main():
     ap.add_argument("--mix", default=os.path.join(ROOT, "data/mix_scale_3.24b.json"))
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data/tokenizer.json"))
     ap.add_argument("--json", help="append one record per checkpoint here")
+    ap.add_argument("--cu_path", choices=("cu_doc", "cu_none"), default="cu_doc",
+                    help="cu_doc (default) passes doc_cu_seqlens as training does; cu_none is the "
+                         "pre-2026-09-04 behaviour, kept only to reproduce published rows")
     ap.add_argument("--selftest", action="store_true", help="known answers; run before believing any number")
     ap.add_argument("--paired_selftest", action="store_true",
                     help="b0-18's known answers for --paired. NO CARD, NO MODEL, NO MIX -- it "
@@ -671,7 +754,13 @@ def main():
             from loop_wrapper import patch_body  # noqa: PLC0415
             patch_body(model, tuple(a.loop))
         seq = getattr(cfg, "seq", 4096)  # cfg is a SimpleNamespace, not a dict
-        row = {"ckpt": os.path.basename(ck_path), "domains": {}}
+        # `path` NAMES THE FORWARD THIS ROW WAS SCORED WITH, on every row, unconditionally. Rows
+        # written before 2026-09-04 carry no such field and score_matrix's reader treats their
+        # absence as "cu_none" -- which is what they were, so absence is informative rather than
+        # unknown. Recording it is the difference between two comparable numbers and two numbers that
+        # look comparable: cu_none and cu_doc differ by -0.082 nat/token pooled (b0, nine domains),
+        # and nothing in a row previously said which one it was.
+        row = {"ckpt": os.path.basename(ck_path), "path": a.cu_path, "domains": {}}
         if a.loop:
             # THE NAME CARRIES THE INTERVENTION. Every other logged field is identical between the
             # arms, so an unsuffixed looped row is indistinguishable from the unlooped one in
@@ -688,12 +777,14 @@ def main():
             if rows is None:
                 loss, ntok, per = None, 0, []
             else:
-                loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True)
+                loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True,
+                                                   cu_path=a.cu_path)
             if loss is None:
                 print(f"  {name:10s} too few tokens to score -- SKIPPED", flush=True)
                 continue
             row["domains"][name] = {"loss": round(loss, 4), "tokens": ntok,
-                                    "head_fp": seqs_fp(rows), "split": "val"}
+                                    "head_fp": seqs_fp(rows), "split": "val",
+                                    "path": a.cu_path}
             # b0-23 pairs on BLOCKS, so the per-row numbers are recorded unconditionally
             # rather than behind a flag. A flag would mean the record that N2 needs depends
             # on someone having remembered it at scoring time, and a re-score costs a card.
