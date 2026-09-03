@@ -251,6 +251,18 @@ class Cfg:
     # <eos> -> cu_seqlens: KDA state and SWA reset per document instead of leaking across the
     # ~10 docs packed into each 4K row.
     doc_mask = True
+    # doc_mask ALONE DID NOT ISOLATE DOCUMENTS: cu reached chunk_kda and the attention but never the
+    # short_conv, so the first 3 positions of every document convolved with the previous document's
+    # last tokens (eff.kda_document_isolation_violated, measured 48.88 at the block-0 output against
+    # a 0.9253 tolerance). True fixes it; False is the pre-2026-09-04 behaviour, kept because every
+    # existing checkpoint trained that way and must score as it trained.
+    #
+    # DEFAULT False HERE ON PURPOSE, and it is not timidity: scripts/loader.py:57-59 backfills any
+    # cfg key a checkpoint lacks from THIS class, and its own comment restricts that to defaults
+    # that are "numerically neutral at inference". A True default would silently re-topologize every
+    # pre-flag checkpoint at load time -- scoring a model in a mask it never trained in, which is
+    # the exact failure N7 Stage A already paid for. New runs opt in with --conv_doc_isolated.
+    conv_doc_isolated = False
     # Must name a live mix: a retired one here trains the retired recipe in silence.
     mix = "data/mix_500m.json"  # domain mix (weights / epoch caps / anneal)
     # Symlinked shards, or a domain whose live bytes mismatch its build_corpus_stats.json
@@ -1985,6 +1997,10 @@ def main():
         help="resume even if the checkpoint's environment fingerprint differs (container restart, package change)",
     )
     parser.add_argument("--no_attn_res", action="store_true", help="disable AttnRes (A/B measurement)")
+    parser.add_argument("--conv_doc_isolated", action="store_true",
+                        help="mask the KDA short_conv at document boundaries so cu isolates "
+                             "documents in the conv too (eff.kda_document_isolation_violated); "
+                             "off reproduces pre-2026-09-04 behaviour bitwise")
     parser.add_argument("--bucket_cap_mb", type=int, default=50, help="DDP gradient bucket size in MB (50: +14.1%% vs 100, eff.bucket_cap_mb_ab)")
     parser.add_argument("--no_static_graph", action="store_true", help="disable DDP static_graph (A/B: 5K overhead hunt)")
     parser.add_argument(

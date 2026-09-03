@@ -11901,6 +11901,13 @@ _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    # ARCHITECTURE, and frozen for the ordinary reason plus a specific one. It changes what a
+    # document attends to inside the KDA short_conv (eff.kda_document_isolation_violated), so two
+    # segments of one run that disagree on it trained two different models -- the same argument as
+    # attn_res. The specific reason: every checkpoint before 2026-09-04 trained with it effectively
+    # False, and scripts/loader.py pins it False when a checkpoint's cfg lacks the key, so a resume
+    # that flipped it would change the topology mid-run while the log kept one name for both halves.
+    "conv_doc_isolated",
     # Numerics, not init: it changes every step, so a resume DOES honour it -- but two
     # segments of one run that disagree on it are still incomparable, which is what this
     # set is for. bf16 vs fp32 accumulation of the AttnRes logit dot product moves the
