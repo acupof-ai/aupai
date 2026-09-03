@@ -171,6 +171,77 @@
     "30b supply is exhausted",
     "supply table is settled"
    ]
+  },
+  {
+   "id": "cs.chatml_supply",
+   "value": 43500000,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "1000 rows sampled at uniform byte offsets across every data/corpus/chatml shard, tokenized with data/tokenizer.json, scaled by tokens-per-file-byte over 171.1 MB (holdout excluded)",
+   "config": {
+    "sample_rows": 1000,
+    "sampling": "uniform byte offsets across all shards, seed 0, partial line discarded",
+    "tokens_per_file_byte": 0.2542,
+    "shard_bytes": 171134454,
+    "method": "tokens counted directly on the sample; only the scale-up to whole-file is extrapolated",
+    "cross_validation": "same method on cot and zh_web, whose caches exist, lands within 0.93% and 1.15% of the cached int32 token count"
+   },
+   "uncertainty": "~1% by cross-validation. TWO CORRECTIONS BEHIND THIS NUMBER, both caught before it was published. (1) A first pass read every cached ratio 2x high by assuming the cache was uint16 in [N, seq+1] rows; it is a FLAT torch.int32 token tensor (tokens_cot.pt: shape (424056227,), element_size 4). Cross-validation exposed it as a clean 49.62%/50.38% error, and a tidy factor of two on two domains three orders of magnitude apart is a wrong constant, not sampling noise. (2) A second pass sampled the FIRST 1000 rows; uniform sampling moved this domain +38.1% and chat_qa +39.6%, while cot moved +0.2% and zh_web -0.4%. The chat shards are ordered and the head is not the file -- and because the two cross-validation domains are homogeneous, cross-validation could NOT have caught this one. 6e named it before the measurement.",
+   "status": "measured",
+   "boundary": "supply of the landed corpus. Says nothing about whether 0.15B tokens is the right demand, only that supply is 0.294x of it"
+  },
+  {
+   "id": "cs.chat_qa_supply",
+   "value": 43000000,
+   "unit": "tokens",
+   "measured": "2026-09-03",
+   "source": "1000 rows sampled at uniform byte offsets across every data/corpus/chat_qa shard, tokenized with data/tokenizer.json, scaled over 163.3 MB (holdout excluded)",
+   "config": {
+    "sample_rows": 1000,
+    "sampling": "uniform byte offsets across all shards, seed 0",
+    "tokens_per_file_byte": 0.2632,
+    "shard_bytes": 163274168,
+    "cross_validation": "see cs.chatml_supply -- same run, 0.93% and 1.15% against cot and zh_web"
+   },
+   "uncertainty": "~1%, same basis and the same two corrections as cs.chatml_supply",
+   "status": "measured",
+   "boundary": "supply of the landed corpus, not a judgement on the demand"
+  },
+  {
+   "id": "cs.mix500m_supply_vs_demand",
+   "value": "Of the nine domains data/mix_500m.json names, FIVE have less supply than it demands and already run on epoch repetition: chatml 0.294x, chat_qa 0.296x, cot 0.263x, en_c4_stage2 0.738x, textbook_30b 0.792x. FOUR have surplus: zh_web 34.91x, code_py_starcoder 1.332x, code_py_rp1t 1.331x, math_owm_stage2 1.235x. Demand is rows x weight summed over both phases, equal to rows x weight to four decimals here because every domain's anneal weight equals its weight. CONSEQUENCE FOR A CACHE TRUNCATION (de-2): capping a cache at the schedule's own row count binds on the four surplus domains and cannot bind on the five deficit ones, so no domain's distinct-document count changes. Recoverable bytes are 96.9 GB of 165.9 GB, of which zh_web alone is 85 GB. THE EPOCH FIELD IS A CAP, NOT A MULTIPLIER: `want` at train.py:1754 comes from the token budget and never from len(pool), and `epochs` appears only in the cap that binds when len(pool)*epochs < demand.",
+   "measured": "2026-09-03",
+   "source": "data/mix_500m.json weights against /data00/tokens_*.pt sizes (int32, flat) and cs.chatml_supply / cs.chat_qa_supply",
+   "config": {
+    "seq": 4096,
+    "total_tokens": 20000000000.0,
+    "anneal_frac": 0.1,
+    "cache_dtype": "torch.int32 flat token tensor, verified on tokens_cot.pt",
+    "note": "an earlier version of this table read every ratio 2x high (uint16 rows assumed); en_c4_stage2 and textbook_30b flipped from surplus to deficit when that was corrected. That error mattered: truncating a deficit domain WOULD reduce its distinct-document count, so acting on the wrong table would have caused the harm the wrong table was worried about"
+   },
+   "uncertainty": "the seven cached figures are exact from file size and dtype; chatml/chat_qa carry ~1%",
+   "status": "measured",
+   "boundary": "a snapshot of the corpus as it stands, per-mix. Adding shards to a deficit domain moves it, and another mix's weights give another table"
+  },
+  {
+   "id": "cs.chat_domain_fertility",
+   "value": "Text bytes per token under the frozen data/tokenizer.json, from uniform 1000-row samples -- HIGHER IS BETTER COMPRESSION: zh_web 4.216, chatml 3.739, chat_qa 3.607, cot 2.828. So cot is the domain the vocabulary handles WORST, at 2.83 bytes per token, and it is English mathematical chain-of-thought against a vocabulary fitted on Chinese web plus cosmopedia -- which is the direction unfreeze condition 2 predicts. The two chat domains sit between cot and zh_web, 11-14% below Chinese web rather than above it.",
+   "measured": "2026-09-03",
+   "source": "the same uniform sampling run as cs.chatml_supply, through data/tokenizer.json",
+   "config": {
+    "sample_rows": 1000,
+    "sampling": "uniform byte offsets across all shards, seed 0",
+    "denominator": "TEXT bytes, not file bytes -- the json framing is excluded because it never reaches a token. Measured overhead differs sharply by domain and would have contaminated the comparison: zh_web 1.2%, chatml 4.9%, chat_qa 5.1%, cot 8.7%",
+    "tokens_per_char": {
+     "zh_web": 0.6602,
+     "chatml": 0.4935,
+     "chat_qa": 0.5185,
+     "cot": 0.354
+    }
+   },
+   "uncertainty": "one uniform 1000-row sample per domain. A FIRST version of this entry had the sign inverted -- it read high bytes/token as poor handling and called the chat domains 18-21% worse than Chinese web, when they are 11-14% better-compressed than cot and worse than zh_web. It also divided by FILE bytes, which mixes json framing into a fertility number; both were caught in review by 6e before publication",
+   "status": "measured",
+   "boundary": "a fertility comparison across four domains, not a rebuild argument. Unfreeze condition 2 asks whether the corpus distribution changed materially and four domains cannot answer that; this puts a number on one part of it"
   }
  ]
 }
