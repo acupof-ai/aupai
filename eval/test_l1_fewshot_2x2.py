@@ -205,6 +205,37 @@ def main():
         fails.append("a present-rate counter still spells out the disjunction instead of calling "
                      "answer_marker; the resume path and the live path would be able to drift")
 
+    # 10. THE PREDICATE IS EXERCISED WHERE ITS OUTPUT IS LARGE, not only where it is near zero.
+    #     This is the check that would have caught the 0/497 bug, and the reason it is separate from
+    #     group 9: the four mutations in group 9 prove the GUARDS fail on a defect, which is a
+    #     different claim from "the predicate was ever asked a question whose answer is big". The
+    #     broken version ran over real data, wrote a real JSON, and raised nothing -- because the
+    #     control arm is SUPPOSED to be near zero, so a predicate that always returns None is
+    #     indistinguishable from a correct one on those cells. A published 37.0% cell existed, and
+    #     nothing compared against it. Both magnitudes, from a source outside the predicate.
+    HIGH = ("解答：3 个苹果。\\boxed{3}", 267, "our arm: markers come from the boxed branch")
+    LOW = ("题目：小明有", 0, "control arm: a copied demo opener with no marker")
+    if L.answer_marker(HIGH[0]) is None:
+        fails.append(f"answer_marker finds nothing in {HIGH[0]!r} ({HIGH[2]}) -- a predicate "
+                     f"verified only on near-zero cells cannot be distinguished from one that "
+                     f"always returns None; this is the shape that reported 0/497 against a "
+                     f"published 37.0%")
+    if L.answer_marker(LOW[0]) is not None:
+        fails.append(f"answer_marker fires on {LOW[0]!r} ({LOW[2]}) -- the near-zero side must "
+                     f"stay near zero, or the large side proves nothing either")
+    # AND THE PUBLISHED LARGE NUMBER IS THE ANCHOR. runs/l1_2x2_diagnose.json is the artifact whose
+    # marker_rows must agree with the audit's 267/497; a rerun that silently returns to 0 would
+    # otherwise look like a clean run.
+    dj = os.path.join(ROOT, "runs", "l1_2x2_diagnose.json")
+    if os.path.exists(dj):
+        import json
+        cells = json.load(open(dj, encoding="utf-8")).get("cells", {})
+        oz = cells.get("ours-zh", {})
+        if oz.get("marker_rows") in (0, None):
+            fails.append(f"runs/l1_2x2_diagnose.json has ours-zh marker_rows="
+                         f"{oz.get('marker_rows')!r}; the audit publishes 267/497, so the "
+                         f"predicate lost its large side again")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:
