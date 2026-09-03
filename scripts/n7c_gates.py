@@ -115,43 +115,68 @@ def main():
     causal_mod, prefix_mod = build_mask_mods()
 
     def loss_with(mod=None, plens=None):
-        """Cross-entropy over supervised positions only, with GatedMLA's attention call
-        redirected through `mod`. Patched on the INSTANCE for the same reason patch_body is:
-        a class patch would leak into any other model in the process.
+        """Cross-entropy over supervised positions only, with the attention call of block
+        PREFIX_LAYER -- and ONLY that block -- redirected through `mod`.
 
-        RETURNS (loss, n_calls). The call count is not diagnostics -- it is the only thing that
-        distinguishes "my mask ran" from "my mask was never reached", and the first version of
-        this file could not tell those apart: it patched flash_attn_varlen_func while
-        model.py:189 requires `cu is not None` to reach that function, so with cu=None every
-        forward took flash_attn_func at :194 and all three gates compared causal against causal.
-        Three green lines, zero information. No comparison of two losses can detect that; only
-        counting the calls can.
+        ONE LAYER, NOT THREE. cfg says layers 12 / attn_every 4, so MLA sits at blocks 3, 7 and
+        11 (verified against the built model below). The first version of this file patched
+        M.flash_attn_varlen_func, the MODULE GLOBAL, which every GatedMLA looks up at call time --
+        so all three layers got the mask and the counter read 3 calls per forward. Every gate
+        number then described a THREE-layer intervention while PREFIX_LAYER = 11 and the arms
+        apply one. The docstring said "patched on the INSTANCE" the whole time; the code did not,
+        and the 3 in "(3 varlen calls)" was the tell sitting in the output of every run.
+        The patch is now scoped by identity: the wrapper checks whether the call came from the
+        target module and passes everything else through untouched.
+
+        RETURNS (loss, n_calls) where n_calls counts calls ON THE TARGET LAYER. The count is not
+        diagnostics -- it is the only thing that distinguishes "my mask ran" from "my mask was
+        never reached", and an earlier version could not tell those apart: it patched
+        flash_attn_varlen_func while model.py:189 requires `cu is not None` to reach that
+        function, so with cu=None every forward took flash_attn_func at :194 and all three gates
+        compared causal against causal. Three green lines, zero information. No comparison of two
+        losses can detect that; only counting the calls can.
         """
-        blk = mdl.blocks[PREFIX_LAYER]
-        mixer = blk.mixer
+        mixer = mdl.blocks[PREFIX_LAYER].mixer
         if not isinstance(mixer, M.GatedMLA):
             raise SystemExit(
                 f"REFUSING: block {PREFIX_LAYER}'s mixer is {type(mixer).__name__}, not "
                 "GatedMLA. The layer index came from cfg (layers 12, attn_every 4 -> MLA at "
                 "3, 7, 11) and this asserts it against the built model rather than trusting "
                 "the arithmetic.")
+        n_mla = sum(1 for b in mdl.blocks if isinstance(b.mixer, M.GatedMLA))
         orig = M.flash_attn_varlen_func
         aux = [plens.to(torch.int32)] if plens is not None else None
         calls = [0]
+        others = [0]
 
-        # PATCHING THE MODULE GLOBAL WORKS because model.py:191 looks the name up at call time
-        # rather than binding it into the closure. What `orig` holds is already wrapped in
-        # torch._dynamo.disable (model.py:60, for a measured reason: flash's varlen wrapper
-        # validates shapes against a python int, so dynamo's guard set never closes -- 70
-        # recompiles in 110 steps). Calling through orig preserves that wrapper; rebuilding the
-        # call from the raw flash import would silently drop it and reintroduce the recompiles.
+        # PATCHING THE MODULE GLOBAL IS WHAT WORKS AT ALL, because model.py:191 looks the name up
+        # at call time rather than binding it into the closure -- but it is global, so the wrapper
+        # has to decide for itself which layer is calling. `_n7c_target` is set on the target
+        # mixer below and read here; a call with no flag set is another MLA layer and passes
+        # through unmasked.
+        # What `orig` holds is already wrapped in torch._dynamo.disable (model.py:60, for a
+        # measured reason: flash's varlen wrapper validates shapes against a python int, so
+        # dynamo's guard set never closes -- 70 recompiles in 110 steps). Calling through orig
+        # preserves that wrapper; rebuilding the call from the raw flash import would silently
+        # drop it and reintroduce the recompiles.
         def patched(q, k, v, **kw):
+            if not getattr(mixer, "_n7c_active", False):
+                others[0] += 1
+                return orig(q, k, v, **kw)
             calls[0] += 1
             if mod is None:
                 return orig(q, k, v, **kw)
             kw.pop("causal", None)  # mask_mod replaces it (interface.py:270)
             return orig(q, k, v, mask_mod=mod, aux_tensors=aux, **kw)
 
+        # THE FLAG IS SET BY HOOKS ON THE TARGET MODULE, so it is true only while that module's
+        # own forward is running. model.py is frozen, so nothing there can be changed to identify
+        # the caller; a pre/post hook pair is the smallest thing that does it from outside.
+        # Registered inside loss_with and removed in the finally below, so a raised exception
+        # cannot leave the flag or the hooks behind for the next gate.
+        h1 = mixer.register_forward_pre_hook(lambda _m, _i: setattr(mixer, "_n7c_active", True))
+        h2 = mixer.register_forward_hook(
+            lambda _m, _i, _o: setattr(mixer, "_n7c_active", False))
         M.flash_attn_varlen_func = patched
         try:
             # bf16 UNDER AUTOCAST, matching eval/domain_loss.py:613/228 -- it loads the checkpoint
@@ -174,9 +199,22 @@ def main():
                 lv = torch.nn.functional.cross_entropy(
                     logits.float().view(-1, logits.shape[-1]), labels.view(-1),
                     ignore_index=-100)
+            # EXACTLY ONE MASKED CALL, and the other MLA layers must be passed through. n_mla is
+            # read from the built model, so this fails if the model ever has a different number
+            # of attention layers rather than silently masking more of them.
+            if calls[0] != 1 or others[0] != n_mla - 1:
+                raise SystemExit(
+                    f"REFUSING: the target layer took {calls[0]} varlen call(s) and "
+                    f"{others[0]} passed through, expected 1 and {n_mla - 1} for {n_mla} MLA "
+                    "layers. The intervention is one layer deep by design; a different split "
+                    "means the patch is scoped wrong and every gate number would describe a "
+                    "different experiment than the arms run.")
             return lv.item(), calls[0]
         finally:
             M.flash_attn_varlen_func = orig
+            h1.remove()
+            h2.remove()
+            mixer._n7c_active = False
 
     # cu IS REQUIRED, not optional. model.py:189 reads `if HAS_FA and cu is not None:` before
     # reaching flash_attn_varlen_func, so passing cu=None routes every forward to flash_attn_func
@@ -212,7 +250,8 @@ def main():
             "REFUSING: the patched flash_attn_varlen_func was never called, so no gate below "
             "would be testing a mask. Every comparison would pass trivially by comparing the "
             "unmasked path against itself, exactly as it did before cu was passed.")
-    print(f"  causal=True baseline loss {base:.10f}  ({n_base} varlen calls)")
+    print(f"  causal=True baseline loss {base:.10f}  ({n_base} masked varlen call on block "
+          f"{PREFIX_LAYER}; the other MLA layers pass through unmasked)")
 
     # GATE A -- bitwise. Not "close": the two paths compute the same mask, so any difference is
     # a real difference in what was computed, and a tolerance here would hide exactly the bug
