@@ -82,39 +82,58 @@ def main():
         sys.exit(f"REFUSING: {len(missing)} scored ids are absent from {a.text}, e.g. "
                  f"{sorted(missing)[:5]} -- the table would print a loss without its text")
 
-    # PER-BYTE, AND THE BYTES ARE EACH ARM'S OWN COMPLETION. The two arms format the pair
-    # differently (ChatML for the control), so a single byte count for both would be wrong for one
-    # of them -- and the cross-arm ratio would inherit that error.
+    # ONE BYTE COUNT, BECAUSE format_pair USES ONE TEMPLATE FOR BOTH ARMS. Its docstring says so
+    # explicitly -- `arm` is deliberately unused for the template, the shared artifact is TEXT and
+    # the template is part of what is held identical; only the tokenizer differs.
+    #
+    # I first wrote this as two counts with a comment claiming the control formats as ChatML so a
+    # single count "would be wrong for one arm and the cross-arm ratio would inherit the error".
+    # That reasoning was invented from the parameter's NAME. The code was harmless -- both calls
+    # return the same string -- but all 12 rows printed ours_bytes == ctrl_bytes, which is the
+    # evidence that the stated justification was false. A comment that explains a behaviour the
+    # code does not have is worse than no comment: the next reader trusts it instead of the source.
+    # The per-arm difference that DOES exist is token counts, and those are reported per row.
     items = []
     for i in sorted(both):
         q, ans = rows[i]
-        ob = len(E.format_pair("ours", q, ans)[1].encode("utf-8"))
-        cb = len(E.format_pair("control", q, ans)[1].encode("utf-8"))
-        if not ob or not cb:
+        nb = len(E.format_pair("ours", q, ans)[1].encode("utf-8"))
+        if not nb:
             continue
-        onb = per[i]["ours"]["nll"] / ob
-        cnb = per[i]["control"]["nll"] / cb
+        onb = per[i]["ours"]["nll"] / nb
+        cnb = per[i]["control"]["nll"] / nb
         items.append({"id": i, "cls": per[i]["ours"].get("cls"),
                       "ours_nll_per_byte": onb, "ctrl_nll_per_byte": cnb,
-                      "ratio": cnb / onb if onb else None,
-                      "ours_bytes": ob, "ctrl_bytes": cb,
+                      "ratio": cnb / onb if onb else None, "bytes": nb,
                       "ours_tokens": per[i]["ours"]["tokens"],
                       "ctrl_tokens": per[i]["control"]["tokens"],
                       "question": q, "answer": ans})
 
+    # A FLOOR ON LENGTH, BECAUSE THE TOP OF THIS DISTRIBUTION IS DEGENERATE. The first run's four
+    # "largest advantage" rows were all 13-BYTE completions with ratios 91x-114x: a handful of
+    # tokens, where our tokenizer's advantage on a short Chinese string is nearly the whole
+    # measurement. Those rows illustrate tokenization, not capability, and putting them at the top
+    # of a table meant to illustrate 1.51x/2.50x would misrepresent both.
+    #
+    # The floor applies ONLY to the two ranked groups. The random group keeps the full population,
+    # so the table still shows how short items behave -- excluding them everywhere would hide the
+    # very thing this discovered. Both counts are reported.
+    MIN_BYTES = 100
+    ranked = [r for r in items if r["bytes"] >= MIN_BYTES]
+
     # RATIO, NOT DIFFERENCE, because the aggregates being illustrated are ratios. Sorting by
     # difference would rank long items first: a 0.1 nats/byte edge on a 4 KB item and on a 200 B
     # item are the same ratio and very different differences.
-    by_ratio = sorted(items, key=lambda r: r["ratio"])
+    by_ratio = sorted(ranked, key=lambda r: r["ratio"])
     best = by_ratio[-N_PER_GROUP:][::-1]          # our advantage largest
     worst = by_ratio[:N_PER_GROUP]                # our advantage smallest
     picked = {r["id"] for r in best} | {r["id"] for r in worst}
     pool = [r for r in items if r["id"] not in picked]
     rnd = random.Random(SEED).sample(pool, min(N_PER_GROUP, len(pool)))
 
-    groups = [("our advantage largest", best),
-              ("our advantage smallest", worst),
-              (f"uniform random (seed {SEED})", sorted(rnd, key=lambda r: r["id"]))]
+    groups = [(f"our advantage largest (>= {MIN_BYTES} B)", best),
+              (f"our advantage smallest (>= {MIN_BYTES} B)", worst),
+              (f"uniform random, no length floor (seed {SEED})",
+               sorted(rnd, key=lambda r: r["id"]))]
 
     def clip(s):
         s = " ".join(s.split())
@@ -138,8 +157,8 @@ def main():
     for label, rs in groups:
         out["groups"][label] = []
         md += [f"## {label}", "",
-               "| id | class | ours | ctrl | ratio | winner | bytes (ours/ctrl) |",
-               "|---|---|---|---|---|---|---|"]
+               "| id | class | ours | ctrl | ratio | winner | bytes | tokens (ours/ctrl) |",
+               "|---|---|---|---|---|---|---|---|"]
         for r in rs:
             win = "ours" if r["ratio"] > 1 else "control"
             if win == "control":
@@ -149,15 +168,56 @@ def main():
                                            "question_head": clip(r["question"]), "winner": win})
             md.append(f"| {r['id']} | {r['cls']} | {r['ours_nll_per_byte']:.4f} | "
                       f"{r['ctrl_nll_per_byte']:.4f} | {r['ratio']:.3f} | {win} | "
-                      f"{r['ours_bytes']:,} / {r['ctrl_bytes']:,} |")
+                      f"{r['bytes']:,} | {r['ours_tokens']} / {r['ctrl_tokens']} |")
         md.append("")
         for r in rs:
-            md += [f"**{r['id']}** ({r['cls']}, ratio {r['ratio']:.3f}, winner {win})",
+            # `win` recomputed per row. The first version reused the loop variable from the table
+            # loop above, so every detail block printed the LAST row's winner -- a leak that only
+            # shows when the rows disagree, i.e. exactly in the group where it matters.
+            w = "ours" if r["ratio"] > 1 else "control"
+            md += [f"**{r['id']}** ({r['cls']}, ratio {r['ratio']:.3f}, winner {w}, "
+                   f"{r['bytes']:,} B)",
                    "", f"> Q: {clip(r['question'])}", "", f"> A: {clip(r['answer'])}", ""]
 
     out["control_wins_in_table"] = ctrl_wins
     out["control_wins_in_population"] = sum(1 for r in items if r["ratio"] <= 1)
     out["population_share_control_wins"] = out["control_wins_in_population"] / len(items)
+
+    # WHAT THE FIRST RUN OF THIS SCRIPT FOUND, quantified rather than left as an anecdote: the
+    # extreme ratios live entirely among very short completions. Reported for the whole population
+    # so the length floor above is a documented choice with a number behind it.
+    short = [r for r in items if r["bytes"] < MIN_BYTES]
+    long_ = [r for r in items if r["bytes"] >= MIN_BYTES]
+
+    def med(v):
+        v = sorted(v)
+        return v[len(v) // 2] if v else None
+
+    out["length_effect"] = {
+        "min_bytes_floor": MIN_BYTES,
+        "short_n": len(short), "long_n": len(long_),
+        "short_median_ratio": med([r["ratio"] for r in short]),
+        "long_median_ratio": med([r["ratio"] for r in long_]),
+        "short_max_ratio": max((r["ratio"] for r in short), default=None),
+        "long_max_ratio": max((r["ratio"] for r in long_), default=None),
+        "short_bytes_share": sum(r["bytes"] for r in short) / sum(r["bytes"] for r in items),
+        "why": "the first run's four 'largest advantage' rows were all 13-byte completions at "
+               "91x-114x. On a few tokens the tokenizer difference is nearly the whole measurement, "
+               "so those rows illustrate tokenization rather than capability. The ranked groups now "
+               "require >= MIN_BYTES; the random group does not, so short items stay visible. Note "
+               "these items carry a small share of the BYTES, so they barely move the byte-weighted "
+               "aggregates in 5.3c -- the distortion is to the TABLE, not to 1.51x / 2.50x."}
+    md += ["## Length effect (whole population, not just these rows)", "",
+           f"- items under {MIN_BYTES} B: **{len(short):,}**, median ratio "
+           f"**{med([r['ratio'] for r in short]):.2f}**, max "
+           f"**{max((r['ratio'] for r in short), default=0):.1f}**",
+           f"- items at or above {MIN_BYTES} B: **{len(long_):,}**, median ratio "
+           f"**{med([r['ratio'] for r in long_]):.2f}**, max "
+           f"**{max((r['ratio'] for r in long_), default=0):.1f}**",
+           f"- the short items are {100 * out['length_effect']['short_bytes_share']:.1f}% of all "
+           f"bytes, so they barely move the byte-weighted 1.51x / 2.50x -- the distortion they "
+           f"cause is to a RANKED TABLE, which is why the two ranked groups have a floor and the "
+           f"random group does not.", ""]
     md += ["## What the table does not show", "",
            f"The control wins **{out['control_wins_in_population']:,} of {len(items):,}** items "
            f"({100 * out['population_share_control_wins']:.1f}%) in the full population, and "
