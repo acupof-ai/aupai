@@ -184,6 +184,10 @@ _MANUAL_RULES = {
         "a fact about how git resolves .git/hooks symlinks across worktrees; no artifact "
         "records which hook BODY executed for a given commit, which is exactly why the "
         "mistake is invisible and has to be written down",
+    "A dropped tn tunnel does not end the command it started":
+        "the surviving process lives in the container and the only record of the dropped tunnel "
+        "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
+        "that produces these orphans, which is the cause, not the post-drop verification",
     "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
@@ -325,7 +329,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 34
+_MANUAL_BASELINE = 35
 
 
 def _norm_rule(text):
