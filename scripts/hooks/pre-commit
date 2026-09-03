@@ -469,6 +469,39 @@ def main():
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
         # truncate a solution. All four verified red on their broken worlds.
         "eval/humaneval_bpb.py",
+        # b0-23's per-BLOCK paired SE. Pure arithmetic over two JSONL score records -- no
+        # tokenizer, no model, no card -- so it runs on every commit. Its fixture is
+        # deliberately non-uniform (10/90/400 tokens) because row-weighting and
+        # token-weighting coincide on equal-length blocks, and a fixture where they coincide
+        # cannot tell a correct implementation from one using the wrong weighting. Eight
+        # mutations verified red, each through a named assertion rather than a traceback.
+        "eval/block_paired.py",
+        # math gold BPB (N3's second metric): it IMPORTS humaneval_bpb's solution_bpb rather
+        # than re-implementing it, and its selftest runs that file's selftest too -- so the
+        # shared arithmetic is verified against the shared implementation, not against a second
+        # copy of the assertions. What is new here is the dataset contract, which needs no model:
+        # 500 rows, 381,669 gold bytes, zero GSM8K-style `<<...>>` annotations (the measured
+        # reason this dataset was promoted over GSM8K), demos 0-2 excluded by default, and ids
+        # carrying the FILE row so a --keep_demos run names row 4 the same way. Four broken
+        # worlds verified red, including "solution_bpb is not humaneval_bpb's function".
+        "eval/math_bpb.py",
+        # N3's report format: no card, no model, no data -- it reads summary JSONs, and the
+        # selftest injects its own corpus so its synthetic byte totals are not compared against
+        # the real file. Pins bytes-saved arithmetic WITH ITS SIGN (a regression must not read as
+        # an improvement), the refusals (disagreeing byte totals, a wrong-metric summary, a
+        # control that is not --hf or scored other bytes), and that the compression anchors are
+        # computed rather than quoted from the one prose row that held them.
+        "eval/n3_report.py",
+        # N7 Stage A's middle-layer loop: no card, no model, no data -- the selftest runs the real
+        # looped_body against a stub whose ledger arithmetic is hand-derived, so option 3's value
+        # (168) is a number the fixture knows independently. It pins the ruling's three readings
+        # apart, and needs BOTH assertions to do it: the value separates option 3 from option 2
+        # (overwrite gives 146) while the source count separates it from option 1 (append gives
+        # final_ar 5 sources instead of 4) -- either alone passes one wrong implementation. Also
+        # pins that the looped BLOCK replays s0,s1,s0,s1 and not s0,s0,s1,s1, which a one-sublayer
+        # stub cannot see. Six broken worlds verified red, one per reading plus n-double-advance,
+        # a silent no-op loop, and the removed attn_res guard.
+        "eval/loop_wrapper.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.

@@ -191,33 +191,65 @@ def domain_loss(model, tok, texts, seq, device, cap=SEQ_CAP, bs=4):
 # and asked for 94.65 GiB on a card someone else was holding -- read at the time as the
 # training run exhausting memory, which it was not (fb, 2026-09-02).
 @torch.no_grad()
-def domain_loss_seqs(model, rows, device, bs=4):
+def domain_loss_seqs(model, rows, device, bs=4, per_row=False):
     """Mean next-token CE over rows train.py actually held out (from val_seqs).
 
     Separate from domain_loss because the input is different in kind: val_seqs returns
     sequences train.py already packed and shuffled, and re-deriving text from them to
     feed the packing path would reorder exactly what makes them val.
+
+    per_row=True adds a third return value: one (ce_sum, n_tokens) per row, in input order.
+    b0-23 pairs on those rows -- the BLOCK is the pairing unit, not the domain.
     """
     if rows is None or not len(rows):
-        return None, 0
+        return (None, 0, []) if per_row else (None, 0)
     x = rows[:, :-1].to(device)
     y = rows[:, 1:].to(device)
-    return _ce(model, x, y, bs)
+    return _ce(model, x, y, bs, per_row=per_row)
 
 
-def _ce(model, x, y, bs):
-    """Sum CE over (x, y) in batches; the loss and the token count it averages over."""
+def _ce(model, x, y, bs, per_row=False):
+    """Sum CE over (x, y) in batches; the loss and the token count it averages over.
+
+    per_row=True ALSO returns [(row_ce_sum, row_tokens), ...] in input order, one entry per
+    sequence. That list is what a per-block paired statistic needs and what the scalar return
+    destroys: reduction="sum" over the whole batch adds every row's CE together, so two runs
+    scored on the same 512 sequences yield one number each and n=1, while the pairing that is
+    actually available is n=512. Per-DOMAIN pairing (paired_stats) has n=9 and its sd measures
+    cross-domain consistency; neither is the sampling error of the delta.
+
+    The rows are the pairing unit, so they must be comparable across runs: same sequences in
+    the same order. val_seqs is deterministic given a vocabulary and a seed, and head_fp
+    already asserts that -- per_row does not weaken it, it depends on it.
+    """
     tot = cnt = 0.0
+    rows = [] if per_row else None
     for i in range(0, len(x), bs):
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=x.is_cuda):
             logits = model(x[i : i + bs])
         if isinstance(logits, tuple):
             logits = logits[0]
-        loss = torch.nn.functional.cross_entropy(
-            logits.float().view(-1, logits.shape[-1]), y[i : i + bs].reshape(-1), reduction="sum"
-        )
-        tot += loss.item()
-        cnt += y[i : i + bs].numel()
+        yb = y[i : i + bs]
+        flat = logits.float().view(-1, logits.shape[-1])
+        # THE REPORTED SCALAR IS STILL THE FLAT reduction="sum", BIT FOR BIT. Summing per row
+        # and then adding the rows gives a different fp32 accumulation order: measured 7e-8
+        # relative on a 6x9 fixture. That is far below the round(4) the record stores, but the
+        # scalar here is what eff.l9_branch_split_p200m's numbers were taken with, and a
+        # measurement path must not shift because a NEW output was added beside it. So the
+        # per-row pass is an addition, not a replacement.
+        tot += float(torch.nn.functional.cross_entropy(flat, yb.reshape(-1), reduction="sum"))
+        if per_row:
+            # reduction="none" then sum along the token axis: the per-row sum and the per-row
+            # token count, so a caller can form either a per-row mean or a token-weighted one.
+            # Both are needed -- they are different quantities on unequal-length rows, which is
+            # exactly the fixture case that tells a correct implementation from a plausible one.
+            per = torch.nn.functional.cross_entropy(
+                flat, yb.reshape(-1), reduction="none").view(yb.shape).sum(-1)
+            ntok = yb.shape[-1]
+            rows += [(float(v), int(ntok)) for v in per]
+        cnt += yb.numel()
+    if per_row:
+        return tot / cnt, int(cnt), rows
     return tot / cnt, int(cnt)
 
 
@@ -530,6 +562,11 @@ def main():
                     help="which ckpt names from --paired_from to use, as A B [C]. C is a CONTROL "
                          "arm: with it the statistic becomes (B-A)-(C-A), because B-A alone does "
                          "not isolate B when any perturbation of trained weights hurts.")
+    ap.add_argument("--loop", nargs=2, type=int, metavar=("LO", "HI"),
+                    help="N7 Stage A: run blocks LO..HI twice at inference (eval/loop_wrapper.py, "
+                         "AttnRes option 3). The ckpt name in the output gets a #loopLO-HI suffix "
+                         "so a looped row cannot be mistaken for the unlooped one it is compared "
+                         "against -- the two differ in no other logged field.")
     a = ap.parse_args()
 
     if a.paired_selftest:
@@ -627,8 +664,20 @@ def main():
         # per checkpoint rather than once for the batch.
         tok = load_tokenizer(a.tokenizer, cfg)
         model.eval()
+        if a.loop:
+            # N7 Stage A. Patched AFTER .eval() and on this instance, so the looped arm is scored
+            # by this same function, the same val rows and the same head_fp as the unlooped arm --
+            # a second scorer that looped would report two implementations under one metric name.
+            from loop_wrapper import patch_body  # noqa: PLC0415
+            patch_body(model, tuple(a.loop))
         seq = getattr(cfg, "seq", 4096)  # cfg is a SimpleNamespace, not a dict
         row = {"ckpt": os.path.basename(ck_path), "domains": {}}
+        if a.loop:
+            # THE NAME CARRIES THE INTERVENTION. Every other logged field is identical between the
+            # arms, so an unsuffixed looped row is indistinguishable from the unlooped one in
+            # runs/*.jsonl -- and the whole point is comparing them.
+            row["ckpt"] += f"#loop{a.loop[0]}-{a.loop[1]}"
+            row["loop_blocks"] = list(a.loop)
         print(f"\n{os.path.basename(ck_path)}  (vocab {getattr(cfg, 'vocab', '?')}, seq {seq})", flush=True)
         for name in cache:
             # val, not the shard head: the head stopped being val when train.py started
@@ -636,12 +685,22 @@ def main():
             # this CLI and score_matrix's metric go through val_seqs, or the two would
             # disagree while reporting the same metric name.
             rows = val_seqs(name, tok)
-            loss, ntok = domain_loss_seqs(model, rows, device) if rows is not None else (None, 0)
+            if rows is None:
+                loss, ntok, per = None, 0, []
+            else:
+                loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True)
             if loss is None:
                 print(f"  {name:10s} too few tokens to score -- SKIPPED", flush=True)
                 continue
             row["domains"][name] = {"loss": round(loss, 4), "tokens": ntok,
                                     "head_fp": seqs_fp(rows), "split": "val"}
+            # b0-23 pairs on BLOCKS, so the per-row numbers are recorded unconditionally
+            # rather than behind a flag. A flag would mean the record that N2 needs depends
+            # on someone having remembered it at scoring time, and a re-score costs a card.
+            # Full precision, not round(4): these are summed over hundreds of blocks before
+            # anything is reported, and rounding each one first puts noise into the SE that
+            # the measurement does not have.
+            row["domains"][name]["blocks"] = [{"ce_sum": ce, "n_tokens": nt} for ce, nt in per]
             print(f"  {name:10s} {loss:.4f}   ({ntok:,} tok)", flush=True)
         vals = [d["loss"] for d in row["domains"].values()]
         row["unweighted_mean"] = round(sum(vals) / len(vals), 4)

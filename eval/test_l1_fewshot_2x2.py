@@ -259,6 +259,27 @@ def main():
                      "as answer-present -- 'anywhere' must be bounded by model_turn, or the metric "
                      "credits an answer to a question the model invented for itself")
 
+    # 12. A SATURATED PROPORTION REFUSES INSTEAD OF PRINTING TWO NUMBERS. I broke this rule twice in
+    #     three hours -- the copy rate (90.7-97.4%) reached a published claim, then the loop rate
+    #     (98.8% vs 100.0%) did too, one line below the comment warning about the first. Twice that
+    #     fast is a rule in the wrong FORM: knowledge to remember has to become code that refuses.
+    #     Calling saturated_band() itself, not a re-implementation of its two comparisons -- the
+    #     fixture I wrote first did that and proved its own arithmetic (checks 9/11's lesson again).
+    dspec = importlib.util.spec_from_file_location(
+        "diag_for_test", os.path.join(ROOT, "eval", "l1_2x2_diagnose.py"))
+    DG = importlib.util.module_from_spec(dspec)
+    dspec.loader.exec_module(DG)
+    for vals, want, why in (
+            ([0.988, 0.988, 1.0, 1.0], True, "the loop rate that fooled me under a shared decoder"),
+            ([0.006, 0.010, 0.004, 0.008], True, "floored proportions separate nothing either"),
+            ([0.869, 0.777, 0.936, 0.918], False, "spread across 16pt: this one can resolve"),
+            ([0.988, 0.988, 1.0, 0.949], False, "one arm outside the band keeps it usable"),
+            ([], False, "no cells is not saturation")):
+        got = DG.saturated_band(vals) is not None
+        if got != want:
+            fails.append(f"saturated_band({vals}) -> {got}, want {want} ({why}) -- a proportion "
+                         f"pinned at its ceiling must refuse, not print a difference")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:

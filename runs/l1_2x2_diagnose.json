@@ -2,6 +2,7 @@
  "span_chars": 12,
  "repeat_min": 3,
  "demos": 3,
+ "cells_from": "default stop-ON cells",
  "what_answer_present_measures": "RETRACTED AS AN ARM COMPARISON. The two arms generated under DIFFERENT stop rules (our arm had no repetition stop, the control had one), and marker_pos shows why that is fatal rather than cosmetic: our markers sit at character 287 (median) while the control's entire generation is 86 characters. The control was cut off before the position where format appears, so it had no opportunity to produce any -- its 0.6% measures the stop rule. Scoring happening after model_turn does NOT rescue this: truncating later cannot restore characters never generated. Fix, not yet run: --no_rep_stop, both arms, all four cells. Even then the column measures FORMAT ACQUISITION, not accuracy -- accuracy is floored in all four cells (2*delta=12.6%).",
  "cells": {
   "ours-zh": {
@@ -9,6 +10,9 @@
    "copy_rate": 0.9356136820925554,
    "copy_share_median": 0.39655172413793105,
    "loop_rate": 0.9879275653923542,
+   "loop_degree_median": 6,
+   "loop_degree_p90": 15,
+   "loop_degree_per_kchar_median": 7.74,
    "median_chars": 794,
    "p90_chars": 893,
    "max_chars": 1123,
@@ -24,6 +28,9 @@
    "copy_rate": 0.9074446680080482,
    "copy_share_median": 0.25483870967741934,
    "loop_rate": 0.9879275653923542,
+   "loop_degree_median": 8,
+   "loop_degree_p90": 21,
+   "loop_degree_per_kchar_median": 9.54,
    "median_chars": 851,
    "p90_chars": 959,
    "max_chars": 1202,
@@ -39,6 +46,9 @@
    "copy_rate": 0.9738430583501007,
    "copy_share_median": 0.21333333333333335,
    "loop_rate": 0.869215291750503,
+   "loop_degree_median": 3,
+   "loop_degree_p90": 3,
+   "loop_degree_per_kchar_median": 34.88,
    "median_chars": 86,
    "p90_chars": 86,
    "max_chars": 134,
@@ -54,6 +64,9 @@
    "copy_rate": 0.9175050301810865,
    "copy_share_median": 0.16326530612244897,
    "loop_rate": 0.7766599597585513,
+   "loop_degree_median": 3,
+   "loop_degree_p90": 4,
+   "loop_degree_per_kchar_median": 33.71,
    "median_chars": 84,
    "p90_chars": 112,
    "max_chars": 139,
@@ -64,5 +77,9 @@
    "marker_pos_max": 22,
    "preds": "preds_l1_d3_e1_untrained.hf.en.hf.jsonl"
   }
+ },
+ "resolution": {
+  "copy_rate": "usable",
+  "loop_rate": "usable"
  }
 }
