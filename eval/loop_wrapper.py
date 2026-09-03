@@ -68,11 +68,16 @@ def looped_body(model, x, cu=None, loop=(4, 7)):
     between this copy and model.py turns the A/B into two implementations instead of one
     intervention.
 
-    grad_ckpt is deliberately absent: this is inference-only (N7 Stage A scores under no_grad) and
-    _body's checkpoint branch is gated on self.training.
+    grad_ckpt IS HONOURED, and it has to be for Stage B rather than Stage A. Stage A scores under
+    no_grad, where `self.grad_ckpt and self.training` is False and the branch is dead. Stage B
+    TRAINS with the loop, and sft_math.py defaults --grad_ckpt True with the reason recorded at
+    sft_math.py:110 -- FP8 e4m3 backward goes NaN without it. A wrapper that dropped the
+    checkpoint would train an arm with no activation checkpointing under FP8 and report the NaN,
+    or the memory failure, as something the LOOP did.
     """
     from model import Source  # noqa: PLC0415
 
+    ckpt = model.grad_ckpt and model.training
     lo, hi = loop
     if not model.attn_res:
         raise SystemExit(
@@ -80,13 +85,22 @@ def looped_body(model, x, cu=None, loop=(4, 7)):
             "this model has attn_res=False. On a plain residual stack 'run twice' is unambiguous "
             "and needs no ledger decision -- write that path separately rather than letting this "
             "one silently measure something else.")
+
+    def run(norm, f, h):
+        # AttnRes stays OUTSIDE the checkpoint, as in model.py:_body: only [B,T] logits go on the
+        # tape, never an [B,T,D] stack of the values.
+        fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
+        if ckpt:
+            return torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False)
+        return fn(h)
+
     done, partial, n = [Source.of(x)], [], 0
     for i, b in enumerate(model.blocks):
         subs = list(b.sublayers(cu))
         slots = []          # where each first-visit sublayer's output landed, in order
         for ar, norm, f in subs:
             h = ar(done + partial)
-            out = f(norm(h))
+            out = run(norm, f, h)
             partial = [Source.of(partial[0].v + out if partial else out)]
             n += 1
             if n in model.ar_block_ends:
@@ -102,7 +116,7 @@ def looped_body(model, x, cu=None, loop=(4, 7)):
             # option 3's source count (count right, partition changed).
             for (ar, norm, f), slot in zip(subs, slots):
                 h2 = ar(done + partial)
-                out2 = f(norm(h2))
+                out2 = run(norm, f, h2)
                 if slot is None:
                     partial = [Source.of(partial[0].v + out2)]
                 else:
@@ -151,6 +165,8 @@ def _selftest():
 
     class M:
         attn_res = True
+        grad_ckpt = False       # Stage A scores under no_grad; Stage B flips both of these
+        training = False
 
         def __init__(self, blocks):
             self.blocks = [Blk(i, ks) for i, ks in enumerate(blocks)]
@@ -223,6 +239,44 @@ def _selftest():
         assert counts[-1] == base_final, (base_final, counts[-1])
         assert l2 != b2
 
+        # ---- grad_ckpt: STAGE B TRAINS WITH THE LOOP, so the checkpoint branch must be live ----
+        # sft_math.py defaults --grad_ckpt True and records why at :110 (FP8 e4m3 backward goes NaN
+        # without it). A wrapper that dropped the checkpoint would train an arm with no activation
+        # checkpointing and report the NaN, or the OOM, as something the LOOP did. Checked by
+        # COUNTING checkpoint calls, not by reading the flag: the flag says what was intended and
+        # the count says what ran.
+        import torch.utils.checkpoint as tuc
+        real_ckpt = tuc.checkpoint
+        calls = []
+
+        def counting_ckpt(fn, *args, **kw):
+            calls.append(1)
+            return fn(*args)
+
+        tuc.checkpoint = counting_ckpt
+        try:
+            m4 = M([(1,), (10,), (100,)])
+            m4.grad_ckpt, m4.training = True, True
+            calls.clear()
+            v_train = looped_body(m4, 0, loop=(1, 1))
+            n_ckpt = len(calls)
+            # 3 blocks + 1 replayed block = 4 sublayer executions, each one checkpointed.
+            assert n_ckpt == 4, (
+                f"{n_ckpt} checkpoint calls, expected 4 (3 sublayers + the second visit). The "
+                f"second visit must be checkpointed too, or Stage B's looped arm keeps the whole "
+                f"replayed block's activations while the unlooped arm does not.")
+            # THE VALUE IS UNCHANGED by checkpointing -- it is a memory/compute trade, not a
+            # different function. Same 168 as the eval path.
+            assert v_train == 168, (v_train, "checkpointing changed the result")
+            # grad_ckpt True but training False (eval on a train-configured model) checkpoints
+            # NOTHING, matching model.py's `self.grad_ckpt and self.training`.
+            m4.training = False
+            calls.clear()
+            assert looped_body(m4, 0, loop=(1, 1)) == 168
+            assert not calls, f"{len(calls)} checkpoint calls under .eval(); model.py gates on training"
+        finally:
+            tuc.checkpoint = real_ckpt
+
         # attn_res=False REFUSES instead of quietly running an undefined loop.
         plain = M([(1,)])
         plain.attn_res = False
@@ -258,8 +312,10 @@ def _selftest():
           "168 (option 2 gives 146) while final_ar still sees the same 4 sources (option 1 would "
           "give 5); every call after the looped block keeps its source count; the looped BLOCK "
           "replays as s0,s1,s0,s1 and not s0,s0,s1,s1; an out-of-range loop reproduces the "
-          "unlooped value; attn_res=False refuses; and patch_body redirects exactly, refuses to "
-          "nest, and undoes back to the original _body")
+          "unlooped value; grad_ckpt checkpoints all 4 sublayer executions including the second "
+          "visit when training and none under eval, without changing the value; attn_res=False "
+          "refuses; and patch_body redirects exactly, refuses to nest, and undoes back to the "
+          "original _body")
 
 
 def patch_body(model, loop=(4, 7)):
