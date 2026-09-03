@@ -68,20 +68,21 @@
   },
   {
    "id": "cs.en_c4_landed",
-   "value": 2403694865,
+   "value": 4801301820,
    "unit": "tokens",
    "measured": "2026-09-03",
-   "source": "/work/aupai/data/corpus/en_c4_stage2/build_corpus_stats.json",
+   "source": "/work/aupai/data/corpus/en_c4 (166 shards): datagen/count_code_dirs.py en_c4 exact frozen-tokenizer count, 7,767,463 kept_docs",
    "config": {
-    "note": "en_c4_stage2/ dir; filters=light; tokens over 3/83 shard byte-extrapolated"
+    "note": "exact count of the 30B en_c4 domain (data/corpus/en_c4/, 166 shards) resolves the two-dir dispute: stats.tokens 4.809B approx==exact 4.801B (0.2% off); the smaller en_c4_stage2/ (83 shards, ~2.5B) is NOT the 30B domain"
    },
-   "uncertainty": "sample extrapolation; short vs 30b target 5.5B by ~3.1B (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
+   "uncertainty": "exact for data/corpus/en_c4/ as of 2026-09-03; mix gap vs 5.5B = 0.70B",
    "status": "measured",
-   "boundary": "shortfall means a supplement source or a cut to 2.4B",
+   "boundary": "supersedes the previous 2.40B entry, which read en_c4_stage2/ (83 shards, 3/83 byte-extrapolated). RETRACTED to correction: the 30B domain is en_c4/, not stage2. count_code_dirs across both dirs gives en_c4/=4.801B exact; stage2 exact pending",
    "guard_phrases": [
-    "en_c4 is unfetched"
+    "en_c4 is unfetched",
+    "en_c4 supply is 2.40B"
    ],
-   "tokens_status": "extrapolated"
+   "tokens_status": "measured"
   },
   {
    "id": "cs.cot_landed",
