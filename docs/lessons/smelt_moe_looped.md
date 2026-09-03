@@ -30,7 +30,7 @@ source: arXiv 2609.01343 (SMELT, 2026-09-01) + arXiv 2607.13491 (DeepLoop, 2026-
 
 **收益是什么(论文报告值)。** SMELT:等算力下 loss 更低,等 loss 下省 6.8–18.0% FLOPs(10²⁰–10²¹);DCLM Completion 96/96 配对全胜;机制是 attention sink 在第二次访问时近消失、质量重定向到内容 token。DeepLoop:R=3–7 省 0.016–0.028 nats,下游 7/8 任务胜。两者都单 seed(DeepLoop 作者自己声明)。
 
-**成本是什么(我们实测 + 推算)。** 见 §2 五个 repo 专属问题。四个成本项,全部有我们自己的数:AttnRes 跨循环墙钟 L12 26–35%、L32 47–57%(两变体,见 §2-Q1;推算,未在 loop 模型上测);MoE all-to-all 在 H20 上是一步的 1.63–1.86%(L12)/4.35–4.97%(L32)下界,且串行暴露不能像 DDP allreduce 那样叠进 backward(repo.moe_a2a_cost_h20);权重重读可忽略(0.005%),真实代价是 1.22× 激活流量加在已饱和的 30.6% elementwise 上(repo.loop_weight_reread_verdict);KDA 状态跨访问语义论文没答,自测。
+**成本是什么(我们实测 + 推算)。** 见 §2 五个 repo 专属问题。四个成本项,全部有我们自己的数:AttnRes 跨循环墙钟 L12 26–35%、L32 47–57%(两变体,见 §2-Q1;推算,未在 loop 模型上测);MoE all-to-all 已实测——world=2 中位 0.245 ms(223.9 GB/s,额定链路的 49.8%),折成步占比 L12 3.26–3.73% 可接受、L32 8.69–9.94% 否决,否决只因为它串行藏不掉(repo.moe_a2a_cost_h20,实测+外推,限定见 §2-Q4);权重重读可忽略(0.005%),真实代价是 1.22× 激活流量加在已饱和的 30.6% elementwise 上(repo.loop_weight_reread_verdict);KDA 状态跨访问语义论文没答,自测。
 
 ## 2. 五个 repo 专属问题
 
@@ -47,7 +47,7 @@ source: arXiv 2609.01343 (SMELT, 2026-09-01) + arXiv 2607.13491 (DeepLoop, 2026-
 **Q3:MoE 与 KDA + gated MLA 的兼容性?** 结构上部分成立:专家放 FFN 是常规做法,不碰 KDA 状态(KDA 状态在 DeltaRecurrence 内部,从不穿过 block 接口,model.py:6)。但 looping 中间层时同一 KDA 层被访问两次,**状态是接着算还是重置,论文没答**(smelt.stateful_architectures)——这是我们要自己付的成本,且答案影响数值正确性,不只是性能。
 
 **Q4:H20 上的实际成本?** 我们的步:50.8% GEMM、30.6% 逐元素撞带宽屋顶(实测 1.30× 屋顶理想值)、10.6% KDA、2.3% nccl(repo.tpp_and_step_profile)。四项成本,de 2026-09-03 全部从我们自己的 trace/拓扑推完(repo.nv18_topology_measured / repo.moe_a2a_cost_h20 / repo.loop_weight_reread_verdict / repo.attnres_x_loop_corrected):
-1. **MoE all-to-all**:NV18 全互联 450 GB/s/方向(实测拓扑、额定速率,非实测 achieved)。字节/带宽定价:L12 1.63–1.86%、L32 4.35–4.97% 一步(N=4/N=7),按 50% 链路效率 L32 到 8.7–9.9%;permute 项 0.98%(L12)/2.61%(L32)落在 elementwise 类。结构性的点不是数字:DDP allreduce 的 2.3% 已叠在 backward 里,dispatch→expert→combine 串行,同样的百分比是完全暴露的。这是下界——机器上从没跑过 all-to-all,无效率因子。per-collective 成本模型(4.6–12.8%)已被我们自己的 bucket A/B(50 vs 25MB = 75K vs 75K tok/s/gpu)证伪(repo.collective_count_cost_refuted)。
+1. **MoE all-to-all(已实测)**:probes/a2a_bandwidth.py,pod 卡 5+7,world=2,65536×836 bf16,54.8 MB 离卡:中位 **0.245 ms**(min 0.236/max 0.424,20 iters)= 223.9 GB/s = 额定 450 GB/s 的 49.8%(repo.moe_a2a_cost_h20,已升 measured)。主数字是毫秒——450 GB/s 是额定值不是实测可达,49.8% 是"占额定值的比"(可达带宽若是额定的 80%,真实效率是 62%),0.245 ms 不依赖任何分母。折成步占比(1613 ms 步):L12 3.26%(N=4)/3.73%(N=7),L32 8.69%/9.94%。**判决:L12 可接受;L32 否决,而它之所以是否决,只因为它藏不掉**——DDP 那 2.3% 叠在 backward 里,dispatch→expert→combine 是串行;这 9.94% 若可重叠,判决会不一样。permute 项 0.98%(L12)/2.61%(L32)落在 elementwise 类。两条限定:(a) N=4/7 仍是外推,方向已知偏乐观——world=2 是一个 collective,N=7 是不同的通信图(离卡量 1/2→3/4,消息数 1→3,小消息效率通常更低),49.8% 用在 N=7 上是乐观侧,9.94% 更可能偏低;(b) 阶梯:我们两条腿都是 L12(206M、438M),500M 那次是 L32——通信成本从"忽略"跳到"否决",跳变在 L12 和 L32 之间,拐点没测;且 L32 上 AttnRes cross-visit 的 47–52% 和这项叠在同一侧。per-collective 成本模型(4.6–12.8%)已被我们自己的 bucket A/B 证伪(repo.collective_count_cost_refuted)。
 2. **权重重读**:循环层权重不进 L2(L12 1.40×、L32 5.6× 于 60MB L2),第二次访问从 HBM 重读;但只占一步的 0.005%——seq 4096 下权重比激活流量小三个数量级。缓存理由不成立,重读本身确实便宜。
 3. **激活流量(真实代价)**:1.5L 执行 × 0.816 宽度 = 1.22× dense 激活流量,落在 elementwise_cast——实测 497.24ms、30.6% 步、已 1.30× 屋顶,该项推到 ~37.5%。
 4. **AttnRes**:见 Q1,两读法 26–35%/47–57%(区间,方法见 Q1)。
@@ -59,14 +59,14 @@ SMELT 用 GQA ratio 调 KV cache 到 ±4%,我们的 MLA KV 本来就小,这一�
 
 1. **先测 Q1 的数**:L12 上搭一个 loop 2× 模型,实测 AttnRes 跨循环的墙钟成本(fused kernel 3ed56306),同时定掉跨循环/按物理层的语义。推算区间 26–35%(L12)已压在 30% 门线上——测量的任务是定语义 + 定位落在区间哪端,不是探边界;语义定为跨循环且实测 >30% 墙钟,整条线停。
 2. **500M@20B 落地后**:纯 looping A/B——DeepLoop α=(2N)^{1/2}/β=(8N)^{-1/2} 初始化 + 中间半层 loop 2×,不带 MoE。对照 = 500M dense 臂。预登记出口:val NLL 差 ≥ 2.28σ(我们的噪声带)且退化率不降。
-3. **MoE 留到 TPP>40**:即 500M 训过 20B 之后的下一个规模决策点;届时 all-to-all 成本先在 H20 上微基准。
+3. **MoE 留到 TPP>40**:即 500M 训过 20B 之后的下一个规模决策点。all-to-all 微基准已做(§2-Q4):L12 可接受、L32 串行成本 8.69–9.94% 否决级——届时 MoE 决策要先回答 N=7 通信图实测(拐点在 L12/L32 之间没测)和可重叠性两个问题。
 4. DeepLoop 的 α/β 是零成本的默认初始化——只要上 looping 就用它,不需要额外实验。
 
 ## 4. 来源类型声明
 
 - 论文报告值:SMELT 全部数字(arXiv 2609.01343v1,2026-09-03 取),DeepLoop 全部数字(arXiv 2607.13491v2,2026-09-03 取)。两篇都晚于知识截止,先验零,全部从原文取。
-- 我们实测:AttnRes read 律 n(n+1)、n=2L+1(gate_failure_shapes.md:833)、H20 步剖面(facts/efficiency.json:2361)、tok/param(data_scaling_design.md:9)、AttnRes 13.5% 吞吐成本(eff.attnres_internal)、NV18 全互联拓扑(repo.nv18_topology_measured)。
-- 推算(de 2026-09-03,facts/smelt_deeploop.json,全部从我们自己的 trace/拓扑推,无论文数字):all-to-all 步占比下界(repo.moe_a2a_cost_h20)、权重重读 0.005% 与激活 1.22×(repo.loop_weight_reread_verdict)、SMELT 宽度匹配形状(repo.smelt_shape_correction)、per-collective 成本模型已被我们自己的 bucket A/B 证伪(repo.collective_count_cost_refuted)。
+- 我们实测:AttnRes read 律 n(n+1)、n=2L+1(gate_failure_shapes.md:833)、H20 步剖面(facts/efficiency.json:2361)、tok/param(data_scaling_design.md:9)、AttnRes 13.5% 吞吐成本(eff.attnres_internal)、NV18 全互联拓扑(repo.nv18_topology_measured)、all-to-all world=2 中位 0.245 ms = 额定链路 49.8%(probes/a2a_bandwidth.py,de 2026-09-03;repo.moe_a2a_cost_h20 已升 measured)。
+- 推算(de 2026-09-03,facts/smelt_deeploop.json,全部从我们自己的 trace/拓扑推,无论文数字):all-to-all 的 L12/L32 步占比(N=4/7 外推,方向已知偏乐观)、权重重读 0.005% 与激活 1.22×(repo.loop_weight_reread_verdict)、SMELT 宽度匹配形状(repo.smelt_shape_correction)、per-collective 成本模型已被我们自己的 bucket A/B 证伪(repo.collective_count_cost_refuted)。
 - 推算(44):loop 后 read 数 2.16×/2.22×、固定宽度墙钟区间 30–35%/52–57%(repo.attnres_loop_cost_derived,从实测 read 律 + share 公式推,未在 loop 模型上测)。
 - 裁决(6e 2026-09-03):占比不是速率,share' = kA/(kA+R');naive 乘法(42.6%、de 的 34.8%/68.4%)已退订,能写的只有区间。
 - 同行报告未入库:AttnRes 19.7%/37.8% 墙钟(tilerl 2026-09-03)、AttnRes softmax 12% bf16 误差。
