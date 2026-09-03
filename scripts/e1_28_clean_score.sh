@@ -71,7 +71,17 @@ print(f\"  nll/byte {d['nll_per_supervised_byte']:.6f}  n={d.get('n_scored')}  b
 
 rc=0
 run floor_ours    ours    ckpt_p200m_4b_0902.pt      || rc=1
-run floor_control control ""                          || rc=1
+# THE CONTROL FLOOR'S MODEL IS NAMED EXPLICITLY, NOT LEFT TO THE DEFAULT. --model_dir defaults to
+# data/controls/pythia-160m-step2000, but runs/heldout_v2/floor_control.json records ckpt
+# "e1_untrained.hf" -- the published 0.903758 was measured on THAT directory. Taking the default
+# here would score a different model and produce a number that is not comparable to the floor it
+# is meant to sit beside, while looking exactly like a result.
+CTRL_DIR=/tmp/e1_untrained.hf
+[ -d "$CTRL_DIR" ] || { echo "REFUSING: $CTRL_DIR absent -- it is the model behind the published"
+  echo "  control floor 0.903758 (runs/heldout_v2/floor_control.json ckpt=e1_untrained.hf), it lives"
+  echo "  only on the pod's /tmp, and nothing in git can reconstruct it. Re-download before scoring."
+  exit 2; }
+run floor_control control "$CTRL_DIR"                 || rc=1
 run ours_sft      ours    ckpt_control_ours.pt        || rc=1
 echo
 echo "three verdict numbers on $WANT_N ids ($WANT_SHA); the other six points were NOT recomputed"

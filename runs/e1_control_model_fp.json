@@ -1,0 +1,42 @@
+{
+ "why": "The published control floor 0.903758 (runs/heldout_v2/floor_control.json, ckpt \"e1_untrained.hf\") was measured on this directory, which exists ONLY on the pod /tmp and has no counterpart in git. config.json carries NO _name_or_path or revision, so the weight hash below is the ONLY identity it has: a re-download from HF can be CHECKED against this, but nothing here proves which HF checkpoint or revision it came from. Untrained/random-init is asserted by the fact name, not by anything in the directory.",
+ "dir": "/tmp/e1_untrained.hf",
+ "recorded_utc": "2026-09-03T00:06:11Z",
+ "files": {
+  "config.json": {
+   "bytes": 783,
+   "sha256": "43aa5f35e8807d41261c59c931fcd0288a99e58e38032a43bcce049802f80d55"
+  },
+  "generation_config.json": {
+   "bytes": 131,
+   "sha256": "71be2f14861f7ec93fcde19e37a21c61d29ff2f2fdec7f6ab87398f611f20a67"
+  },
+  "model.safetensors": {
+   "bytes": 324662984,
+   "sha256": "9d40a85f967e64b866878f2de87308eb949fd693b96370217c6fe69b4aa1c2b4"
+  },
+  "tokenizer.json": {
+   "bytes": 3564396,
+   "sha256": "e15cfbdeaf805fb40858834e1fc420d2249d36520ee2aa3b9822613138e28acc"
+  },
+  "tokenizer_config.json": {
+   "bytes": 447,
+   "sha256": "10d7e70a9dba5b72b8dfe43084120bfcacfc6c2fdd8bdec56beb8bdd0a2e591e"
+  }
+ },
+ "config_subset": {
+  "architectures": [
+   "GPTNeoXForCausalLM"
+  ],
+  "model_type": "gpt_neox",
+  "num_hidden_layers": 12,
+  "hidden_size": 768,
+  "intermediate_size": 3072,
+  "num_attention_heads": 12,
+  "vocab_size": 50304,
+  "dtype": "bfloat16",
+  "transformers_version": "5.6.0",
+  "tie_word_embeddings": false
+ },
+ "config_has_name_or_path": false
+}
