@@ -100,6 +100,7 @@ cab907f8a07d72f929c4e2871fd6ac2741775a156ba6c6c39c5dd86b1c92ccfe  datagen/rescor
 46241f0d17f6e3fb1365b6927f3b45f4ec08fd7484f35f318470697bd5c9c69d  datagen/sandbox_exec.py  training  644
 463c199e9df4338c1022a219425b68b6a556e33cce9eb0497c43998dd5cabaf2  datagen/scan_contamination.py  docs  644
 d1ae53941c12b7e9fe9b623cd6f9a03fc628a320db3980b8f32d8931dfdd86a2  datagen/scan_delivered_holdout.py  docs  644
+f6939f73263b8ed501bf0dbc185cf338d30e9a6db32fc946bb2c5c88c2cfda78  datagen/scan_eval_golds.py  docs  644
 a662ac4320fc799314934b3df78e15056886d66837260432c0db3300b78b2633  datagen/scan_math_contamination.py  docs  644
 9195442fc5ff2044b5c19fe0394890aa501b6de207f53b91b6bc82261895ee93  datagen/scan_scm_tests.py  docs  644
 8597056aef0ba761f2c51ce889f0b50cb317d74ab3456d99be076988625638bd  datagen/score_corpus.py  docs  644
@@ -307,7 +308,7 @@ b314b1c7d9d83e4969df86ce8040a30fd66919e2c1954de38dd1f84f970d1275  scripts/harnes
 09e54ce7c66ff5b4ee91e64d32d05237e4f175ae4fc75a11eaf916b676292887  scripts/heldout_crossarm.sh  docs  755
 216160f94991d8688acc688e6ba1180e329c479c667e138d0dd6c9863fff6664  scripts/hooks/commit-msg  docs  755
 d582ba4933de03169f2f363d8bba19552c8058e8c1e8d99925e4873dc446b30b  scripts/hooks/post-commit  docs  755
-371150f0767b16a092bd3775c61795303884bd3a1ef82c8c7b8028bef6a4d9d8  scripts/hooks/pre-commit  docs  755
+13fce674c4d2bb176a8a5bbc3a2178bab4ffad7508bab86a52b78f0a99f18964  scripts/hooks/pre-commit  docs  755
 d3ba75e27a5adbfd70f89a9c4fccc3f1eef71deab92e8b58c917047404947e80  scripts/l9_branch_probe.py  docs  644
 e6c431822ef401b45186b1a8f11826cfbd2d5fc15f2175cf360ee40c79eb29e3  scripts/launch_30b.sh  docs  755
 1c3537967edf5952365b2b9a5ca0a4f2960f7dbdb4f4f5d7a69bae098983059e  scripts/launch_gate.py  docs  644
