@@ -106,6 +106,42 @@ def main():
             fails.append(f"the preds path omits {tok} -- two cells of the 2x2 would collide on "
                          f"one file, and --force would silently overwrite the first")
 
+    # 7. THE RESTARTABILITY MARKER MUST BE TRUE OF THE FILE, NOT JUST THE LOOP. open_artifact's
+    #    default mode is "w", so a plain rerun TRUNCATES: "rows are written as they are scored"
+    #    was true of the loop and false of the file. A 497-problem cell is ~15 minutes of
+    #    generation, so the difference is the whole run.
+    if "# restartable:" not in src.split('"""')[0]:
+        fails.append("no restartability marker above the docstring, and this script generates for "
+                     "minutes per cell")
+    if 'mode="a" if args.resume else "w"' not in src:
+        fails.append("--resume does not switch open_artifact to append mode, so a resumed run "
+                     "truncates the rows it claims to continue")
+    if "fout.flush()" not in src:
+        fails.append("rows are not flushed per write; Python buffers ~8 KB against ~1 KB rows, so "
+                     "an interrupt drops several completed rows and the marker overstates what "
+                     "survives")
+    if "seen.add(" not in src or "not in seen" not in src:
+        fails.append("--resume does not skip questions already in the file")
+    for tok in ("correct += int(d[\"ok\"])", "n_box += int"):
+        if tok not in src:
+            fails.append(f"resume does not rebuild {tok!r} from the existing rows -- acc and "
+                         f"answer-present would cover only the tail while carrying the whole "
+                         f"population's label")
+    if "n_target = total + len(evals)" not in src:
+        fails.append("the progress denominator is not fixed before the loop; computed from "
+                     "`total` it grows with the numerator and always prints n/n")
+    # THE RESUME MUST READ THE FILE THE RUN WRITES. With --run, open_artifact writes a versioned
+    # path; reading the unversioned one rebuilds counts from a different run's rows and appends
+    # to a file whose contents were never examined. The harness caught this as "reports
+    # preds_path, not out_path" -- a second reader finding the same class of bug the ledger
+    # already knows about (l1_15b_final attested the file it did not touch).
+    if "out_path = versioned_path(out_path, args.run)" not in src:
+        fails.append("out_path is not versioned before it is used, so --resume would read the "
+                     "unversioned file while open_artifact wrote the versioned one")
+    if "run=args.run" in src:
+        fails.append("open_artifact still gets run=, but out_path is already versioned -- the "
+                     "path would be versioned twice (verified: preds_x.r1.r1.jsonl)")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:

@@ -1,4 +1,9 @@
 #!/usr/bin/env python3
+# restartable: one JSON line per problem is written as it is scored, and a rerun with the same
+# --resume skips the questions already in the file. An interrupt costs the batch in flight, not
+# the run. Without this a 497-problem cell is ~15 minutes of generation that a Ctrl-C throws
+# away entirely -- open_artifact's default mode is "w", so the rerun truncates rather than
+# continues, and "the rows are appended" was true of the loop while being false of the file.
 """L1: few-shot continuation math on a base checkpoint (reasoning_panel.md S2).
 
 Pre-registered 2026-08-30 (before p324 landed): N>=500, exact-match final answer,
@@ -17,7 +22,7 @@ import os as _os
 import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
-from eval_artifacts import attest, open_artifact  # noqa: E402
+from eval_artifacts import attest, open_artifact, versioned_path  # noqa: E402
 import json
 import os
 import re
@@ -95,6 +100,85 @@ def score(gen, gold, demo_lang="zh"):
     if m:
         return reward_fn(f"\\boxed{{{m.group(1).strip()}}}", gold_ans)
     return 0.0
+
+
+def hf_generate_batch(model, prompts, max_new, device, temperature, tokenizer, pad_id,
+                      rep_stop=True):
+    """Greedy/sampled decode for a transformers model, matching train.generate_batch's CONTRACT.
+
+    WHY NOT train.generate_batch. It calls `model(x, num_vals=..., no_head=True)` and reads
+    `model.cfg` / `model.lm_logits` -- our HybridLM's interface. A transformers model has none of
+    those, so the --hf path would die on the first batch. My tokenizer smoke test roundtripped both
+    languages and told me nothing about this, because it never reached generation: a check that
+    exercises the cheap half and reports "the path works" is the same defect as a guard nobody calls.
+
+    WHAT MUST MATCH, or the two arms differ in more than the model:
+      - left-padded batch, greedy at temperature 0, same max_new;
+      - the SAME repetition stop (whitespace 8-gram or CJK 12-gram repeated 3x, checked every 32
+        tokens). facts/base_eval.json #be.degenerate_repetition records that greedy decoding on
+        this family loops at 25-56% and that format-class metrics are meaningless without the
+        decoder pinned -- so an arm without rep_stop would run every degenerate row to max_new and
+        its answer-present rate would be measured under a different decoder.
+    Returns generated ids per row (prompt stripped), like the function it stands in for.
+    """
+    import torch
+    from collections import Counter
+
+    B = len(prompts)
+    lengths = [len(p) for p in prompts]
+    width = max(lengths)
+    # LEFT pad: a decoder-only model's next token comes from the last position, so right padding
+    # would read a pad token as the context to continue from.
+    x = torch.full((B, width), pad_id, dtype=torch.long, device=device)
+    attn = torch.zeros((B, width), dtype=torch.long, device=device)
+    for i, p in enumerate(prompts):
+        x[i, width - lengths[i]:] = torch.tensor(p, device=device)
+        attn[i, width - lengths[i]:] = 1
+    eos = tokenizer.eos_token_id if tokenizer.eos_token_id is not None else pad_id
+    done = torch.zeros(B, dtype=torch.bool, device=device)
+    gen = [[] for _ in range(B)]
+    past = None
+    cur, cur_attn = x, attn
+    with torch.no_grad():
+        for step in range(max_new):
+            out = model(input_ids=cur, attention_mask=cur_attn, past_key_values=past,
+                        use_cache=True)
+            past = out.past_key_values
+            logits = out.logits[:, -1, :]
+            if temperature > 0:
+                nxt = torch.multinomial(
+                    torch.softmax(logits.float() / temperature, dim=-1), 1).squeeze(1)
+            else:
+                nxt = logits.argmax(dim=-1)
+            nxt = torch.where(done, torch.full_like(nxt, eos), nxt)
+            for i in range(B):
+                if not done[i]:
+                    gen[i].append(int(nxt[i]))
+            done |= nxt == eos
+            cur = nxt.unsqueeze(1)
+            cur_attn = torch.cat([cur_attn, torch.ones((B, 1), dtype=torch.long, device=device)],
+                                 dim=1)
+            if rep_stop and step > 0 and step % 32 == 31:
+                for i in range(B):
+                    if done[i] or len(gen[i]) < 64:
+                        continue
+                    text = tokenizer.decode(gen[i], skip_special_tokens=True)
+                    hit = False
+                    words = text.split()
+                    if len(words) >= 24:
+                        grams = [tuple(words[j:j + 8]) for j in range(len(words) - 7)]
+                        hit = any(c >= 3 for c in Counter(grams).values())
+                    if not hit:
+                        cjk = sum(1 for c in text if '一' <= c <= '鿿')
+                        if cjk > len(text) * 0.3 and len(text) >= 36:
+                            chars = list(text)
+                            cg = [tuple(chars[j:j + 12]) for j in range(len(chars) - 11)]
+                            hit = any(c >= 3 for c in Counter(cg).values())
+                    if hit:
+                        done[i] = True
+            if bool(done.all()):
+                break
+    return gen
 
 
 def scaffold(demo_lang):
@@ -196,6 +280,12 @@ def main():
              "magnitude under zh and en demos, language is not the driver; if it appears only "
              "under zh, it is. (6e's ruling -- and the second time tonight that inferring from "
              "a compositional relation instead of measuring it was the error.)")
+    ap.add_argument("--resume", action="store_true",
+        help="append to an existing predictions file and skip the questions already in it. The "
+             "marker at the top of this file promises an interrupt costs one batch; without this "
+             "flag open_artifact's mode=\"w\" truncates on rerun and the promise is false. Counts "
+             "are rebuilt from the existing rows, so acc and answer-present cover the whole set "
+             "and not just the tail.")
     args = ap.parse_args()
 
     if args.hf:
@@ -205,6 +295,13 @@ def main():
         hf_tok = AutoTokenizer.from_pretrained(args.ckpt)
         model = AutoModelForCausalLM.from_pretrained(
             args.ckpt, torch_dtype=torch.bfloat16).to(args.device).eval()
+        # eos as pad: this tokenizer has no pad token, and `or 0` would silently make token 0 the
+        # pad for a model where 0 is a real token. Same trap as eval_heldout's pad_id.
+        hf_pad = (hf_tok.pad_token_id if hf_tok.pad_token_id is not None
+                  else hf_tok.eos_token_id)
+        if hf_pad is None:
+            sys.exit("REFUSING: the control tokenizer has neither a pad nor an eos token, so a "
+                     "padded batch would be indistinguishable from real content")
         cfg, tok = None, None
         fone_on, num_id = False, None
     else:
@@ -233,17 +330,48 @@ def main():
     # refuses the second, or --force silently overwrites the first -- and the 2x2 would end up
     # with two of its four cells pointing at the same rows. This is the retraction in
     # be.l1_3shot_retracted (preds_l1_d3.jsonl overwritten by an unlogged run) in advance.
-    preds_path = os.path.join(ROOT, "data", "eval",
-                              f"preds_l1_d{args.demos}_{os.path.basename(args.ckpt)}"
-                              + f".{args.demo_lang}"
-                              + (".hf" if args.hf else "")
-                              + (f".t{args.temperature}" if args.temperature else "")
-                              + ".jsonl")
+    # BUILT AND VERSIONED IN ONE EXPRESSION, under the name that is then used everywhere. There is
+    # no unversioned `preds_path` left in this function to read, print, or record by mistake --
+    # which is the defect harness.check_reported_path_is_written guards: four runners attested the
+    # versioned path and then printed the unversioned one, and an hour went on 2026-09-01 to a log
+    # naming a file that did not exist. run= is NOT passed to open_artifact below, because that
+    # would version an already-versioned name (verified: preds_x.r1.r1.jsonl).
+    out_path = os.path.join(ROOT, "data", "eval",
+                            f"preds_l1_d{args.demos}_{os.path.basename(args.ckpt)}"
+                            + f".{args.demo_lang}"
+                            + (".hf" if args.hf else "")
+                            + (f".t{args.temperature}" if args.temperature else "")
+                            + ".jsonl")
+    if args.run:
+        out_path = versioned_path(out_path, args.run)
     correct = total = 0
     n_box = 0
-    with open_artifact(preds_path, force=args.force, run=args.run) as fout:
-        # --run versions the path, so the handle's name is the file that exists.
-        out_path = fout.name
+    # RESUME REBUILDS THE COUNTS, not just the skip-set. Counting only the newly generated rows
+    # would report acc over the tail while the file holds the whole set -- a partial-population
+    # number wearing the whole population's label.
+    seen = set()
+    if args.resume and os.path.exists(out_path):
+        with open(out_path, encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if not line:
+                    continue
+                d = json.loads(line)
+                seen.add(d["q"])
+                correct += int(d["ok"])
+                total += 1
+                turn = model_turn(d["gen"], args.demo_lang)
+                n_box += int("\\boxed" in turn or ANS_RE.search(turn) is not None)
+        print(f"  resuming: {total} already scored, {correct} correct", flush=True)
+        evals = [r for r in evals if r["instruction"] not in seen]
+        if not evals:
+            print("nothing left to score; the file already covers the eval set")
+    n_target = total + len(evals)  # resumed rows + rows this process will generate
+    # run= is NOT passed: preds_path is already versioned above, and open_artifact would version
+    # it again -- verified, it yields preds_x.r1.r1.jsonl. The handle's .name is still what gets
+    # attested, so the contract that check exists for is unchanged.
+    with open_artifact(out_path, force=args.force,
+                       mode="a" if args.resume else "w") as fout:
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
             texts_in = [build_prompt(demos, r["instruction"], args.demo_lang) for r in batch]
@@ -254,7 +382,11 @@ def main():
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
-                out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
+                if args.hf:
+                    out = hf_generate_batch(model, prompts, args.max_new, args.device,
+                                            args.temperature, hf_tok, hf_pad)
+                else:
+                    out = generate_batch(model, prompts, args.max_new, args.device, args.temperature, pvals)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
             for r, ids, vs in zip(batch, out_ids, out_vals):
                 if args.hf:
@@ -275,8 +407,20 @@ def main():
                 n_box += int("\\boxed" in turn or ANS_RE.search(turn) is not None)
                 fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
                                       ensure_ascii=False) + "\n")
-            if total % 64 < args.batch or total == len(evals):
-                print(f"  {total}/{len(evals)} acc={correct / total:.1%}", flush=True)
+                # FLUSHED PER ROW, because the restartability marker promises an interrupt costs
+                # one batch. Python buffers ~8 KB and a row here is ~1 KB, so without this a
+                # Ctrl-C drops the last several rows and the resume regenerates them -- the
+                # promise would be true of the loop and false of the file, which is exactly the
+                # distinction that made open_artifact's mode="w" a silent truncation.
+                fout.flush()
+            # THE DENOMINATOR IS THE WHOLE EVAL SET, not the slice this process generated. With
+            # --resume, `evals` is filtered to the unscored remainder while `total` counts the
+            # resumed rows too, so `total/len(evals)` would print 400/97 and the accuracy would
+            # look like it was measured on 97 problems. n_target is fixed BEFORE the loop: my
+            # first version recomputed it from `total` each iteration, which made it grow with
+            # the numerator and always read n/n.
+            if total % 64 < args.batch or total == n_target:
+                print(f"  {total}/{n_target} acc={correct / total:.1%}", flush=True)
 
     # attest what was WRITTEN, not what was requested: --run versions the path, and
     # attesting preds_path recorded a hash for a file this run never touched.
