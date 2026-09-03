@@ -15,7 +15,8 @@
   "fb 2026-09-03 14:3xZ (lane moved 6 -> 5: card 6 holds another container's process, host pids 2278278/2291027; 5 granted to the lane: bench_final_score_matrix done, N7 Stage A e1-31 next, one job at a time, read-and-claim in one command)",
   "fb 2026-09-04 (card 4 -> e1, N7 Stage B fresh 500 steps per arm, user order; card 5 stays lane, de bench scripts; 7 never taken)",
   "fb 2026-09-04 (card 5 identified as the user's spec_ab.sh job via host ps by tilerl; not ours, never taken; lane jobs wait)",
-  "fb 2026-09-04 (card 0 lent from the block to b0 for the params leg final score_matrix, ~50 min, after the run ends and 0-3 read 0 MiB; no 7-card job queued; 6 foreign, 7 the user's)"
+  "fb 2026-09-04 (card 0 lent from the block to b0 for the params leg final score_matrix, ~50 min, after the run ends and 0-3 read 0 MiB; no 7-card job queued; 6 foreign, 7 the user's)",
+  "fb 2026-09-04 (user order: cards go to loop experiments first; 1-3 to e1 when params_leg ends, 0 to b0 for the final score then e1, 4 stays e1)"
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
@@ -34,7 +35,10 @@
   "5": "lane, but HELD by the user's container job since 2026-09-04 00:05Z: bash /work/spec_ab.sh -> timeout 7200 python3 scripts/acc_spec_arms.py (Qwen3.8-27B spec-decode A/B), host pid 3299327, 42.6 GB, not an aupai job, no claim possible. NEVER TAKE while held; lane jobs queue for card 4 after e1 releases",
   "6": "FOREIGN OCCUPANT since ~12:5xZ 2026-09-03: host-namespace pids 2278278/2291027 (not in our container), 0.5-12.7 GB, 92-100%. harness launch refused bench_final_score_matrix twice on it. Lane jobs do not queue behind another container: the lane moved to card 5 for bench_final_score_matrix (read-and-launch in one command, 0 MiB). Card 6 returns to lane duty only when its compute-apps list is empty of foreign pids.",
   "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so.",
-  "0": " | after params_leg ends: lent to b0 for score_matrix final + block_paired, then free"
+  "0": " | after params_leg ends: lent to b0 for score_matrix final + block_paired, then free",
+  "1": " | after params_leg ends: granted to e1 for N7 loop experiments (Stage B arm 2, Stage C arms), user order 2026-09-04 'loop first'",
+  "2": " | after params_leg ends: granted to e1 for N7 loop experiments (Stage B arm 2, Stage C arms), user order 2026-09-04 'loop first'",
+  "3": " | after params_leg ends: granted to e1 for N7 loop experiments (Stage B arm 2, Stage C arms), user order 2026-09-04 'loop first'"
  },
  "lane_note": "LANE = CARD 5 while card 6 holds a foreign container's process (12:5xZ 2026-09-03); previously card 6. One job at a time. Cards 0-3 are the params leg's block (params_leg_438m_3p76b, launched 12:52Z).",
  "superseded_2026_09_02": {
