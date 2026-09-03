@@ -100,19 +100,28 @@ def main():
         wrap(t)
     M.flash_attn_varlen_func = patched
 
-    def logits_for(ids_row, cu, plens):
-        aux[0] = [plens.to(torch.int32)]
+    def logits_for(ids_row, cu, plens, masked=True):
+        # masked=False is THE CONTROL: aux stays None so prefix_two_call is never entered and both
+        # sites run plain causal varlen. Without it this test cannot tell a prefix-wiring difference
+        # from a PACKING difference -- and packing changes more than attention: the KDA layers are
+        # recurrent (chunk_kda), so tokens of task 2 in a packed row may see state carried from task
+        # 1 in a way a single-row eval forward never produces. That would make the two paths differ
+        # for every mask including none, and reading it as a prefix defect would be the same error
+        # as the gradient check's first run, which reported 166 of 175 tensors disagreeing with no
+        # control row to attribute it to.
+        aux[0] = [plens.to(torch.int32)] if masked else None
         with torch.no_grad(), torch.autocast("cuda", dtype=torch.bfloat16):
             return mdl(ids_row, cu=cu)[0].float()
 
     # EVAL PATH: one row per task, cu = [0, T], aux = [prompt_len]. Exactly what
     # eval/humaneval_bpb.py's OursModel.logprobs builds.
-    eval_logits = {}
+    eval_logits, eval_causal = {}, {}
     for tid, p, s in pairs:
         ids = torch.tensor([p + s], device="cuda")
         cu = torch.tensor([0, len(p) + len(s)], dtype=torch.int32, device="cuda")
         pl = torch.tensor([len(p)], device="cuda")
         eval_logits[tid] = (logits_for(ids, cu, pl)[0], len(p), len(s))
+        eval_causal[tid] = logits_for(ids, cu, pl, masked=False)[0]
 
     # TRAINING PATH: the same token sequences packed into ONE row separated by <eos>, with cu from
     # doc_cu_seqlens and aux from doc_prompt_lengths -- the sft_math.py construction. Labels mask the
@@ -135,30 +144,44 @@ def main():
     print(f"training row: {len(flat)} tokens, {cu_t.numel() - 1} documents, "
           f"per-document prompt lengths {pl_t.tolist()}")
     train_logits = logits_for(ids_t, cu_t, pl_t)[0]
+    train_causal = logits_for(ids_t, cu_t, pl_t, masked=False)[0]
 
     M.flash_attn_varlen_func = orig
 
     # COMPARE AT THE SOLUTION POSITIONS ONLY, because those are the positions the BPB number is
     # computed from. A difference outside them cannot explain the eval delta.
-    print("\nper-task max |logit difference| at solution positions "
-          "(eval path vs training path):")
-    worst = 0.0
-    for (tid, _p, _s), (start, plen, slen) in zip([x for x in pairs], spans, strict=True):
+    print("\nper-task max |logit difference| at solution positions, eval path vs training path:")
+    print(f"  {'task':16s} {'prompt':>6s} {'sol':>4s} {'PREFIX':>9s} {'CAUSAL':>9s}   "
+          f"reading")
+    worst = worst_c = 0.0
+    for (tid, _p, _s), (start, plen, slen) in zip(list(pairs), spans, strict=True):
         ev, _pl, _sl = eval_logits[tid]
         a = ev[plen - 1:plen - 1 + slen]
         b = train_logits[start + plen - 1:start + plen - 1 + slen]
         d = (a - b).abs().max().item()
-        worst = max(worst, d)
-        print(f"  {tid:16s} prompt {plen:4d} solution {slen:3d}  max|dlogit| {d:.4f}")
+        ac = eval_causal[tid][plen - 1:plen - 1 + slen]
+        bc = train_causal[start + plen - 1:start + plen - 1 + slen]
+        dc = (ac - bc).abs().max().item()
+        worst, worst_c = max(worst, d), max(worst_c, dc)
+        print(f"  {tid:16s} {plen:6d} {slen:4d} {d:9.4f} {dc:9.4f}   "
+              f"{'packing, not the mask' if dc > 0.5 else 'mask-specific' if d > 0.5 else 'agree'}")
     # bf16 through 12 blocks accumulates; the question is whether the paths AGREE, and a
     # disagreement large enough to move BPB by 0.0228 would be far above numerical noise.
-    print(f"\nworst across tasks: {worst:.4f}")
-    print("VERDICT: " + (
-        "PATHS AGREE to bf16 noise -- the eval-side wiring is not the explanation for P3's "
-        "+0.0228, so that penalty is a real property of the mask at inference."
-        if worst < 0.5 else
-        f"PATHS DISAGREE by {worst:.4f} -- the eval number is measuring a wiring difference "
-        "between the two call sites and the row must not be written from it."))
+    print(f"\nworst across tasks: prefix {worst:.4f}  causal control {worst_c:.4f}")
+    if worst_c > 0.5:
+        print("VERDICT: THE CONTROL ALSO DISAGREES, so this test cannot attribute anything to the "
+              "prefix wiring. Packing several tasks into one row is not equivalent to scoring them "
+              "one at a time in THIS model regardless of mask -- the KDA layers are recurrent, so a "
+              "packed row carries state a single-row forward never has. The comparison is invalid "
+              "as designed and the eval-vs-training question needs a construction where the causal "
+              "control agrees first.")
+    elif worst > 0.5:
+        print(f"VERDICT: PREFIX-SPECIFIC DISAGREEMENT of {worst:.4f} while the causal control "
+              f"agrees at {worst_c:.4f} -- the eval number is measuring a wiring difference between "
+              "the two call sites and the row must not be written from it.")
+    else:
+        print("VERDICT: BOTH PATHS AGREE -- the eval-side wiring is not the explanation for P3's "
+              "+0.0228, so that penalty is a real property of the mask at inference.")
     return 0
 
 
