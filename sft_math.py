@@ -93,6 +93,20 @@ def main():
         help="override the base's vocabulary fingerprint, for a checkpoint saved before "
         "train.py started recording it (print it with scripts/ckpt_info.py)",
     )
+    parser.add_argument(
+        "--loop",
+        nargs=2,
+        type=int,
+        metavar=("LO", "HI"),
+        help="N7 Stage B: TRAIN with blocks LO..HI run twice (eval/loop_wrapper.py, AttnRes "
+             "option 3). Patched on raw_model BEFORE torch.compile and before DDP wraps it, so "
+             "the loop is inside the traced graph rather than around it. Stage A measured this "
+             "same loop applied at inference only to weights trained to be visited once: worse "
+             "on all three rulers (humaneval BPB +0.0273, domain_loss +0.1166 nat, 1.64x "
+             "latency). Stage B asks the different question of whether weights TRAINED under the "
+             "loop recover that -- so a Stage B arm must never be compared against a Stage A "
+             "number, only against its own unlooped arm at the same step.",
+    )
     args = parser.parse_args()
     if args.stop_after and args.max_steps:
         parser.error("--stop_after and --max_steps together are ambiguous: --max_steps also "
@@ -199,6 +213,25 @@ def main():
         )
 
     optimizers = build_optimizers(raw_model, Cfg)
+
+    if args.loop:
+        # BEFORE torch.compile and before DDP: the patch replaces a bound method, and compile
+        # traces whatever _body is at trace time, so patching after would either be traced around
+        # or (under DDP static_graph) change the graph the buckets were built for. Also AFTER
+        # build_optimizers, which walks parameters -- the loop adds no parameters, so the optimizer
+        # groups are identical between the arms and that is the point.
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+        from loop_wrapper import patch_body
+
+        patch_body(raw_model, tuple(args.loop))
+        # ON Cfg, so save_checkpoint carries it into the final ckpt AND every .stepN. Without this
+        # the looped and unlooped arms write byte-different checkpoints whose metadata is
+        # identical, and six weeks later nothing but the filename says which is which -- the
+        # failure this repo has already paid for with .stepN files holding earlier weights.
+        Cfg.loop_blocks = list(args.loop)
+        if is_main:
+            print(f"LOOPED TRAINING: blocks {args.loop[0]}..{args.loop[1]} run twice "
+                  f"(AttnRes option 3); grad_ckpt {Cfg.grad_ckpt}", flush=True)
 
     model = raw_model
     if ddp:
