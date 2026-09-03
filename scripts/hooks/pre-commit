@@ -469,6 +469,15 @@ def main():
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
         # truncate a solution. All four verified red on their broken worlds.
         "eval/humaneval_bpb.py",
+        # math gold BPB (N3's second metric): it IMPORTS humaneval_bpb's solution_bpb rather
+        # than re-implementing it, and its selftest runs that file's selftest too -- so the
+        # shared arithmetic is verified against the shared implementation, not against a second
+        # copy of the assertions. What is new here is the dataset contract, which needs no model:
+        # 500 rows, 381,669 gold bytes, zero GSM8K-style `<<...>>` annotations (the measured
+        # reason this dataset was promoted over GSM8K), demos 0-2 excluded by default, and ids
+        # carrying the FILE row so a --keep_demos run names row 4 the same way. Four broken
+        # worlds verified red, including "solution_bpb is not humaneval_bpb's function".
+        "eval/math_bpb.py",
         # domain BPB: same known answer (log2(V) on a uniform model), and it also pins the
         # first-token exclusion via chunk-invariance and the decode round-trip measure that
         # certifies both arms score the same bytes. Four broken worlds verified red.
