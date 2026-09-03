@@ -148,6 +148,7 @@ def main():
     # doc_cu_seqlens so the gate exercises the same document-masked varlen path the SFT arms train
     # under, rather than a path chosen for the gate's convenience.
     from tokenizers import Tokenizer  # noqa: PLC0415
+
     from train import doc_cu_seqlens  # noqa: PLC0415
 
     # eos_id FROM THE TOKENIZER, as train.py:2102 does, not from cfg (it is not a cfg field --
