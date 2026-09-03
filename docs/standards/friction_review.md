@@ -1,0 +1,26 @@
+# Friction review
+
+Daily summary of `harness friction` (runs/friction.jsonl), ranked by count then minutes lost. Top two causes get a fix commit or a task; one line per cause. Owner: 44. Reviewer: de.
+
+## 2026-09-04 (21 rows, 18 causes; first summary, overdue from 12:00Z, ran 16:5xZ)
+
+| cause | n | min lost | resolution |
+|---|---|---|---|
+| manifest merge conflicts (pod_head_manifest regenerated per commit) | 4 | ~16 | **fix 56fa71b5** — untracked + gitignored, pod_push regenerates from HEAD |
+| lane card serialization (every non-training job routed to one lane) | 1 | ~40 | **task de-44** (opened 2026-09-04) |
+| sft pack accepted with no holdout_fp on a WARNING | 1 | ~40 | fix carried (1/1 rows) |
+| tasks_closed_by_commit / facts_well_formed subprocess-per-row cost | 1 | ~40 | fix carried (1/1 rows) |
+| score_matrix duplicate after cross-branch union merge | 1 | ~25 | fix carried (1/1 rows) |
+| sft_math.py refuses pack whose holdout_fp mismatches live hashes | 1 | ~25 | fix carried (1/1 rows) |
+| ff merge runs no pre-commit hook; wip lands on main unchecked | 1 | ~10 | **unfixed** |
+| setsid zombie child claimed alive by card_claim (kill-0 says alive) | 1 | ~10 | fix carried (1/1 rows) |
+| selftest acquire() caller-dependent (ppid = shell or wrapper) | 1 | ~8 | fix carried (1/1 rows) |
+| hand-written tasks.jsonl id reuse invisible to max+1 allocator | 1 | ~6 | fix carried (1/1 rows) |
+| branch selftest registration gates nothing (hook runs main's copy) | 1 | ~6 | fix carried (1/1 rows) |
+| dirty derived file aborts merge before drivers are consulted | 1 | ~5 | fix carried (1/1 rows) |
+| manifest conflict before this worktree installed the driver | 1 | ~4 | fix carried (1/1 rows) |
+| EXPERIMENTS.md render conflicts between branches | 1 | ~3 | fix: merge driver (regen, not conflict) |
+| friction add --commit used --no-verify, manufactured a manifest refix | 1 | ~3 | fix carried (1/1 rows) |
+| ff merge brings a branch manifest that no longer matches HEAD | 1 | ~2 | fix carried (1/1 rows) |
+| gate_failure_shapes.md N collision on concurrent appends | 1 | n/r | fix carried (1/1 rows) |
+| staged-dirty manifest after b0-ve-rownorms merge aborted the next | 1 | n/r | root-fixed by 56fa71b5 |
