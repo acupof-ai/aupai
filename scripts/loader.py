@@ -57,6 +57,15 @@ def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
     for _k in vars(Cfg):
         if not _k.startswith("_") and not hasattr(cfg, _k):
             setattr(cfg, _k, getattr(Cfg, _k))
+    # conv_doc_isolated is NOT numerically neutral, so it must never be backfilled from a live
+    # default however that default is set. A checkpoint whose cfg lacks the key trained with the
+    # conv reading across document boundaries (eff.kda_document_isolation_violated), and loading it
+    # with isolation ON would score it in a topology it never trained in -- the mistake N7 Stage A
+    # already paid for. Cfg.conv_doc_isolated defaults to False today, which makes the line above
+    # correct by luck; this pins it so flipping that default for new runs cannot silently
+    # re-topologize every existing checkpoint.
+    if "conv_doc_isolated" not in ck["cfg"]:
+        cfg.conv_doc_isolated = False
     cfg.grad_ckpt = False
     cfg.vocab_id = ck.get("vocab_id")  # pre-2026-08-29 ckpts have none -> None
     # A caller without a FoNE encode/decode path reads every number as zero and scores

@@ -557,6 +557,63 @@ _diff = (_cap["h"] - _ref_h).abs().max()
 assert _diff < 1e-4, f"short_conv shifted form != nn.Conv1d (max diff {_diff:.2e})"
 print(f"short_conv: shifted multiply-adds == nn.Conv1d (max diff {_diff:.2e}) OK")
 
+# conv_doc_isolated: the flag that makes cu reach the short_conv too. Without it the conv reads
+# across document boundaries -- measured 2026-09-04 as 48.88 at the block-0 output against a
+# 0.9253 tolerance (eff.kda_document_isolation_violated, runs/n8/). This runs on CPU without
+# chunk_kda by reusing the silu spy: the conv output is the whole question, since the kernel and
+# the attention were both controlled out on random inputs.
+#
+# THREE CASES, and the third is the one that protects existing results:
+#   isolated + cu     a document's conv output must EQUAL that document scored alone
+#   not isolated + cu it must NOT, or the flag does nothing and the gate is vacuous
+#   no cu             both settings must be bitwise identical: a single-document row is
+#                     unaffected, so nothing without packing changes
+def _conv_out(dr, x, cu):
+    """The short_conv output only, via the silu spy, without reaching chunk_kda."""
+    cap, orig = {}, _F.silu
+
+    def spy(t, *a, **k):
+        cap["h"] = orig(t, *a, **k)
+        raise _Stop
+    _F.silu = spy
+    try:
+        with torch.no_grad():
+            dr(x, cu=cu)
+    except _Stop:
+        pass
+    finally:
+        _F.silu = orig
+    return cap["h"]
+
+
+class _CfgIso(Cfg):
+    conv_doc_isolated = True
+
+
+_dr_iso = _train.DeltaRecurrence(_CfgIso).to(DEV)
+_dr_iso.load_state_dict(_dr.state_dict())  # same weights: a topology test, not an init test
+assert _dr_iso.conv_doc_isolated and not _dr.conv_doc_isolated, "the flag did not reach the module"
+
+# ONE ROW, two documents of 10 and 6, cu over the flat B*T stream as doc_cu_seqlens builds it.
+_x2 = torch.randn(1, 16, Cfg.d, device=DEV)
+_cu2 = torch.tensor([0, 10, 16], dtype=torch.int32, device=DEV)
+_solo = [_conv_out(_dr_iso, _x2[:, :10], torch.tensor([0, 10], dtype=torch.int32, device=DEV)),
+         _conv_out(_dr_iso, _x2[:, 10:], torch.tensor([0, 6], dtype=torch.int32, device=DEV))]
+_packed_iso = _conv_out(_dr_iso, _x2, _cu2)
+_packed_leak = _conv_out(_dr, _x2, _cu2)
+_d_iso = max((_packed_iso[0, :10] - _solo[0][0]).abs().max().item(),
+             (_packed_iso[0, 10:] - _solo[1][0]).abs().max().item())
+_d_leak = (_packed_leak[0, 10:] - _solo[1][0]).abs().max().item()
+assert _d_iso < 1e-6, f"conv_doc_isolated ON still leaks across documents (max diff {_d_iso:.2e})"
+assert _d_leak > 1e-3, (
+    f"conv_doc_isolated OFF does NOT leak (max diff {_d_leak:.2e}) -- either the flag is a no-op or "
+    f"this fixture cannot see the defect, and in both cases the ON case above proves nothing")
+# NO cu: the two settings must be bitwise identical, so no existing single-document result moves.
+_d_nocu = (_conv_out(_dr_iso, _xd, None) - _conv_out(_dr, _xd, None)).abs().max().item()
+assert _d_nocu == 0.0, f"cu=None differs between flag settings by {_d_nocu:.2e} (must be bitwise 0)"
+print(f"conv_doc_isolated: ON isolates ({_d_iso:.2e}), OFF leaks ({_d_leak:.2e}), "
+      f"cu=None bitwise identical OK")
+
 # MasterWeights must clear p.grad. The optimizer holds the fp32 copies, so its zero_grad()
 # clears m.grad and nothing clears p.grad: backward() accumulated into the old one and the
 # --fp32_master arm trained on a running sum (2.0, 4.0, 6.0 over three steps) while the

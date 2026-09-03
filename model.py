@@ -98,6 +98,10 @@ class DeltaRecurrence(nn.Module):
         dt = torch.exp(torch.rand(cfg.heads * self.hd) * (math.log(0.1) - math.log(1e-3)) + math.log(1e-3))
         self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
         self.short_conv = nn.Conv1d(cfg.d, cfg.d, kernel_size=4, padding=0, groups=cfg.d)
+        # Document isolation for the conv (eff.kda_document_isolation_violated). Read from cfg so it
+        # travels in the checkpoint; see forward() for what it changes and scripts/loader.py for why
+        # a checkpoint without the key must get False rather than the live default.
+        self.conv_doc_isolated = getattr(cfg, "conv_doc_isolated", False)
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
@@ -108,9 +112,37 @@ class DeltaRecurrence(nn.Module):
         # checkpoints load unchanged. Eager is 0.61x -- this only wins under torch.compile.
         w, K = self.short_conv.weight, self.short_conv.kernel_size[0]
         h = F.pad(x.transpose(1, 2), (K - 1, 0))
-        y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
-        for i in range(1, K):
-            y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
+        if self.conv_doc_isolated and cu is not None:
+            # WITHOUT THIS THE CONV READS ACROSS DOCUMENTS. cu reaches chunk_kda (:131) and the
+            # attention (:191) but never reached the conv, so the first K-1 positions of every
+            # document were convolved with the LAST tokens of the previous one. Measured
+            # 2026-09-04 (runs/n8/): positions 0-2 of q/k/v contaminated, position 3+ exactly
+            # 0.0000, which chunk_kda writes into the recurrent state and decays forward into a
+            # 48.88 difference at the block output against that layer's 0.9253 tolerance. The fla
+            # kernel and flash_attn_varlen_func were both controlled out on random inputs: each
+            # isolates exactly, so this conv was the only site.
+            #
+            # Tap i at output position t reads input t-(K-1-i), legal only when that read lands in
+            # the same document. cu indexes the FLAT B*T stream (train.py:669) while h is
+            # [B, D, T], so the mask is built flat and viewed as [B, 1, T] to broadcast over D.
+            # A multiplier per tap keeps this pure arithmetic, so inductor still fuses it: an fla
+            # ShortConvolution would isolate too, but it is a Triton kernel, opaque to inductor,
+            # and would give back part of the 3.44x on all nine KDA layers.
+            pos = torch.arange(B * T, device=x.device)
+            doc_start = cu[:-1].to(torch.long)[torch.bucketize(pos, cu[1:], right=True)]
+            y = None
+            for i in range(K):
+                tap = ((pos - (K - 1 - i)) >= doc_start).to(x.dtype).view(B, 1, T)
+                term = h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1) * tap
+                y = term if y is None else y + term
+        else:
+            # FLAG OFF IS TODAY'S EXACT OPS, not the masked form with an all-ones tap: the op
+            # sequence must be identical for a pre-flag checkpoint to score bitwise as it trained,
+            # which is what b0 checks on ckpt_b0_sd_unlooped.pt before reusing it as the "current"
+            # arm. An all-ones multiply would change inductor's fusion and so the last bits.
+            y = h[:, :, :T] * w[:, 0, 0].unsqueeze(-1)  # conv1d is cross-correlation: no tap reversal
+            for i in range(1, K):
+                y = y + h[:, :, i : i + T] * w[:, 0, i].unsqueeze(-1)
         h = F.silu((y + self.short_conv.bias.unsqueeze(-1)).transpose(1, 2))
         q, k, v = self.qkv(h).chunk(3, dim=-1)
         q = q.reshape(B, T, self.h, self.hd).contiguous()

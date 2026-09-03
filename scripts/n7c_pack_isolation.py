@@ -62,6 +62,13 @@ if ROOT not in sys.path:
 
 CKPT = "ckpt_n7c_p3.pt"
 N_TASKS = 6
+# --isolated flips cfg.conv_doc_isolated ON for the loaded model, which is the FIX GATE: the same
+# probe that measured 48.88 must read 0.0000 at positions 0-2 of every non-first document, and away
+# from the boundary must be no worse than the T-parity noise this script measures in the same run.
+# A pre-flag checkpoint loads with the flag OFF (scripts/loader.py pins it), so this override is the
+# only way to score old weights under the new topology -- which is a DIAGNOSTIC, not a scoring path:
+# those weights trained with the leak.
+ISOLATED = "--isolated" in sys.argv
 
 
 def main():
@@ -78,6 +85,14 @@ def main():
         raise SystemExit("REFUSING: HAS_FA is False; the varlen path would not run.")
 
     mdl, _cfg = load_checkpoint(CKPT, dtype=torch.bfloat16)
+    if ISOLATED:
+        for b in mdl.blocks:
+            if isinstance(b.mixer, M.DeltaRecurrence):
+                b.mixer.conv_doc_isolated = True
+        n_on = sum(1 for b in mdl.blocks
+                   if getattr(b.mixer, "conv_doc_isolated", False))
+        print(f"--isolated: conv_doc_isolated forced ON for {n_on} KDA mixers "
+              f"(the checkpoint's own cfg says {getattr(_cfg, 'conv_doc_isolated', 'absent')})")
     mdl = mdl.cuda().eval()
     tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
     eos = tok.token_to_id("<eos>")
