@@ -114,7 +114,7 @@ f012667c4472acca03f3d61181bc80a1ae3a9f6fed9197b430b7104fd2f125d6  docs/standards
 4dbb129a8b094dcd44eea07f74e349ea69faeddcdb843fc29523940fc1ea0f91  docs/standards/launch_ready_guards.md  docs  644
 944fa9ab2354df9b7d9b62187b7f17d2032f8c7b1fb0e6546fbae97e93d6f384  docs/standards/model_module_split.md  docs  644
 5587ccb6baedaf232e2ecc7136818535c88b978c81d068887c9ca5f253654119  docs/standards/resume_row_cursor.md  docs  644
-e2058119ec8e2e98739a34cc0e453f534087ee1ba923764924f8b81d9327444d  docs/standards/roadmap_0903.md  docs  644
+29e971dc726a84f5559893ecd9b8f68ce7d2184bb3826f5002991d74d424830d  docs/standards/roadmap_0903.md  docs  644
 d651c7486cb99ba0dbdf5af990af8a4e1bb8a00d62141cc18bc132d4fa3bb62b  docs/standards/sop.md  docs  644
 99bd50b7c2affbf878b3761dad837bd6fe9a0662dd13934bf27f655493ba779e  docs/standards/structure_experiments.md  docs  644
 a8aafb577d77c4dfd3ecae231724bb562ac7d6f6f267f14ce084f3725a0ba88f  docs/standards/synthetic_data_standard.md  docs  644
@@ -232,8 +232,8 @@ c7e5b996e8b6f53a7191449ab491b0b347066897aee4ffcf48800b3b36f08f56  probes/t57_out
 738368d48f0d4455946ecccc0da893cabcca0cecbebad73803f7d245fab42209  run_ddp.sh  training  755
 0e913b75e56153115c55a91ebd52290efb2297ef1b7dbc46f2e2f0940bbd5154  runs/artifact_refs.jsonl  docs  644
 782ee5cc467a6908fe856e6e44df15260aca4eb1afbd9cd0d5c5520e0fe73d9d  runs/board.jsonl  docs  644
-6d5b2532ad51a612510e21a6d226be21ecab340332647c1623a6503a3bd13737  runs/card_assignment.json  docs  644
-a4bcc7947c78d34a69569b07d952c1dfba040c4b9386f5ce8611a7df3abba925  runs/experiments.jsonl  docs  644
+ffd52e74eaf796c0903ab1ca9f108344b52b4a4cd5a39ff62c0c1cd84aa2d4be  runs/card_assignment.json  docs  644
+d206ec9829d8681e6113f115409e16ba337e3e8cd9cee03fd59f355e2eb41403  runs/experiments.jsonl  docs  644
 57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl  docs  644
 79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866  runs/l1_2x2/preds_l1_d3_ckpt_p200m_4b_0902.pt.zh.jsonl  docs  644
 95f931aa5d2991f6782535c0ab1224aa1dfc935df7747eacb9622b76fa4ee2ba  runs/l1_2x2/preds_l1_d3_e1_untrained.hf.en.hf.jsonl  docs  644
@@ -243,10 +243,10 @@ c973fdfafbd537ddcfff5f809ed62d7f312869b1301fcd141610011c58234704  runs/l1_2x2/pr
 162c39105b0b71046b5830e9da39503b75a8090a0b6639f6f9187864aadee1dc  runs/prereg.jsonl  docs  644
 a64ed761a9464f00e88cbe3ded8dab405a1d51ad56f5c2e3a6585ad9cd3eecb0  runs/retro.jsonl  docs  644
 93718b786677a60657e260623453c62ab0f9d849e5b5f9f53f2238f4a4594168  runs/review.jsonl  docs  644
-c3935e6bbaa49fbcfbf1d8e4db33a4ee4ac378d3176cd13147c7152e46ab215d  runs/score_matrix.jsonl  docs  644
+97c9a21e7f8950c8629102b73d945d609b7815accd7b179535d72959bfcb88f8  runs/score_matrix.jsonl  docs  644
 b55e053a40208aed29edf79bc44bd7f5771f78275f9fbbe8a11d335827575f48  runs/self_repeat_dump.jsonl  docs  644
 ec50f204bbe2a6d03241de3f85e9478cff9ea6f33bdd72bb833197b114f81b88  runs/self_repeat_math_dump.jsonl  docs  644
-624ac31796ea7016f00a790cb82e2d1c4d89693c43922c384fe09739e5c44dee  runs/tasks.jsonl  docs  644
+76252dd0b547d4775adc39ede35f94b57fcee4e98f30bc62e8bec56830435604  runs/tasks.jsonl  docs  644
 9362aa38da13d7bb94785ebb39c2ee2ad8783c8c48b2961c78c29e7c80666e62  sampling.py  docs  644
 efce45ac642f5589fc9b0aba9801e72f324946ed0dc4ecfc3dbe6fc8f760ce82  scripts/assert_vocab.sh  training  755
 9bafd597d446110a28dcf2b580a0ea50ef811f43db4c1ca423d4eb296fd3cfce  scripts/attnres_bench.py  docs  644
