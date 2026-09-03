@@ -20,3 +20,6 @@ ckpt_ab_untiehead_untiehead.pt.ep1  type=base  9 metrics
   humaneval_bpb   ... running
   humaneval_bpb   {'ckpt': 'ckpt_ab_untiehead_untiehead.pt.ep1', 'hf': False, 'n_tasks': 164, 'n_tasks_total': 164, 'n_params': 239748168, 'gold_bpb_per_task_mean': 0.9121795503212078, 'gold_bpb_byte_weighted': 0.756153304279858, 'total_solution_bytes': 29662, 'errors': [], 'reading': 'bits per UTF-8 byte of the canonical solution, teacher-forced, prompt carries no loss; cross-tokenizer comparable by construction', 'boundary': 'NOT a pass@k substitute: this says the real solution gets higher likelihood, not that the model would generate it. At 200M pass@k is 0 for both arms (be.gold_bpb_falls_while_generation_scores_zero: code_500 generative 0.0 across a ladder while gold BPB fell 1.087 -> 0.918), so this is the reading with resolution at this scale, and the two numbers must not be read as one.', '_wall_s': 21.0} (21.0s)
   l1_fewshot      ... running
+# END OF SNAPSHOT -- committed excerpt, 5,249B of the pod's 20,992B. NOT the whole log.
+# the last line reads 'l1_fewshot ... running', which was true when this was pulled and is not a live status.
+# Cited by eff.padded_vocab_table_no_pay_200m. Live/full copy: ~/bin/pod "cd /work/aupai && tail -40 runs/b0_17_readout.log".

@@ -231,6 +231,26 @@ def _selftest():
             raise AssertionError("attn_res=False was accepted")
         except SystemExit as e:
             assert "attn_res=False" in str(e), e
+
+        # ---- patch_body: the seam the scorers are driven through ----
+        # It must be an EXACT redirect (same value as calling looped_body directly), it must UNDO
+        # to the original, and a second patch must refuse rather than nest -- a nested patch would
+        # run three visits and report them as two.
+        m3 = M([(1,), (10,), (100,)])
+        m3._body = lambda x, cu=None: looped_body(m3, x, cu, (9, 9))   # stand-in for model._body
+        unlooped_via_body = m3._body(0)
+        assert unlooped_via_body == 124, unlooped_via_body
+        undo = patch_body(m3, loop=(1, 1))
+        assert m3._body(0) == 168, m3._body(0)
+        try:
+            patch_body(m3, loop=(1, 1))
+            raise AssertionError("a second patch was accepted")
+        except SystemExit as e:
+            assert "already patched" in str(e), e
+        undo()
+        assert m3._body(0) == unlooped_via_body, (
+            "undo() did not restore the original _body, so a control arm scored after the looped "
+            "arm in the same process would silently carry the loop")
     finally:
         real_model.Source = saved
 
@@ -238,7 +258,36 @@ def _selftest():
           "168 (option 2 gives 146) while final_ar still sees the same 4 sources (option 1 would "
           "give 5); every call after the looped block keeps its source count; the looped BLOCK "
           "replays as s0,s1,s0,s1 and not s0,s0,s1,s1; an out-of-range loop reproduces the "
-          "unlooped value; and attn_res=False refuses")
+          "unlooped value; attn_res=False refuses; and patch_body redirects exactly, refuses to "
+          "nest, and undoes back to the original _body")
+
+
+def patch_body(model, loop=(4, 7)):
+    """Redirect this model's _body through looped_body, and return an undo callable.
+
+    THE SEAM EXISTS BECAUSE THE SCORERS CALL THE WHOLE MODEL. humaneval_bpb's OursModel.logprobs
+    runs `self.model(x)` (eval/humaneval_bpb.py:88-93), and domain_loss goes through forward too,
+    so there is nowhere to hand a looped hidden state in. Patching _body on the INSTANCE means the
+    looped arm is scored by the very same scorer, the same tokenizer and the same byte divisor as
+    the unlooped arm -- the alternative, a second scorer that loops, would report two
+    implementations under one metric name.
+
+    PER-INSTANCE, not on HybridLM: a class patch would silently apply to any other model an
+    already-imported scorer loads in the same process, and the control arm is exactly such a model.
+    """
+    if getattr(model, "_loop_patched", None) is not None:
+        raise SystemExit("REFUSING: this model's _body is already patched for loop "
+                         f"{model._loop_patched}. Nesting the patch would run the loop twice over "
+                         f"and report the result as one extra visit.")
+    original = model._body
+    model._body = lambda x, cu=None: looped_body(model, x, cu, loop)
+    model._loop_patched = tuple(loop)
+
+    def undo():
+        model._body = original
+        model._loop_patched = None
+
+    return undo
 
 
 def main():
