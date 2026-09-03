@@ -109,8 +109,13 @@ def main():
         zz = r.get("z")
         se_s = "unavailable" if se is None else f"{se:.4f}"
         z_s = "unavailable" if zz is None else f"{zz:+.1f}"
-        print(f"\n{label}: delta {r['delta_bpb']:+.4f}  SE {se_s}  z {z_s}  "
-              f"n {r['n_items']}  bytes {r.get('total_bytes')}")
+        # SIGN: paired_se computes A - B (n3_report.py's contrib line), and A is the BASELINE cell
+        # here, so a NEGATIVE delta means the second cell is WORSE -- the same finding the cell
+        # table above prints as a positive number. Printing both orientations unlabelled read as a
+        # contradiction, so the direction is stated in words rather than left to the reader.
+        worse = "second cell worse" if r["delta_bpb"] < 0 else "second cell better"
+        print(f"\n{label}: delta {r['delta_bpb']:+.4f} (baseline minus cell, so {worse})  "
+              f"SE {se_s}  z {z_s}  n {r['n_items']}  bytes {r.get('total_bytes')}")
         if r.get("note"):
             print(f"  note: {r['note']}")
         if r.get("seed_sigma") is None:
