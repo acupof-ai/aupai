@@ -1,87 +1,97 @@
 {
-  "total_tokens": 30000000000.0,
-  "domains": {},
-  "_blocked": {
-    "code_rp1t": {
-      "weight": 0.26667,
-      "epochs": 1,
-      "anneal": 0.26667,
-      "role": "code raw (RedPajama-1T github)",
-      "tokens": 8000000000,
-      "source": "RedPajama-1T github, 73.6B reachable, exact count",
-      "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b)",
-      "status": "blocked: raw fetched, corpus build+stamp pending"
-    },
-    "code_tests": {
-      "weight": 0.06667,
-      "epochs": 1,
-      "anneal": 0.06667,
-      "role": "code with execution annotation (impl+test pairs, two-turn tool-call rendering per plan section 'tool-call')",
-      "tokens": 2000000000,
-      "source": "mined from code_rp1t: 7.6% of repos have impl+test, 26.96% of docs in such repos (ds.code_exec_supply)",
-      "supply": "5.6B mineable from the 73.6B raw; filter only, zero generation",
-      "status": "blocked: mining pending (3b)"
-    },
-    "math_owm": {
-      "weight": 0.18333,
-      "epochs": 1,
-      "anneal": 0.18333,
-      "role": "verifiable math (OpenWebMath + proof-pile)",
-      "tokens": 5500000000,
-      "source": "OpenWebMath / proof-pile, open",
-      "supply": "open, landed count unknown",
-      "status": "blocked: not fetched. Interim: arxiv and stackexchange from data.together.xyz are the reachable stand-ins 3b is fetching; whether they count toward this role is decided when 44 reads their content, not now (fb 2026-08-31)"
-    },
-    "cot": {
-      "weight": 0.15,
-      "epochs": 1,
-      "anneal": 0.15,
-      "role": "long CoT (OpenThoughts + Skywork-OR1)",
-      "tokens": 4500000000,
-      "source": "OpenThoughts / Skywork-OR1, Apache",
-      "supply": "open, landed count unknown",
-      "status": "blocked: not fetched. Interim: arxiv and stackexchange from data.together.xyz are the reachable stand-ins 3b is fetching; whether they count toward this role is decided when 44 reads their content, not now (fb 2026-08-31)"
-    },
-    "en_c4": {
-      "weight": 0.18333,
-      "epochs": 1,
-      "anneal": 0.18333,
-      "role": "English general (RedPajama-1T c4, reachable stand-in)",
-      "tokens": 5500000000,
-      "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
-      "supply": "open",
-      "status": "blocked: not fetched. fineweb-edu sample/10BT remains the PREFERRED source: if the hf-mirror returns before en is half landed, switch back to it at the same weight (fb ruling 2026-08-31)"
-    },
-    "zh_web": {
-      "weight": 0.11,
-      "epochs": 1,
-      "anneal": 0.11,
-      "role": "Chinese web (fineweb2-HQ + CCI3-HQ)",
-      "tokens": 3300000000,
-      "source": "fineweb2-HQ + CCI3-HQ, downloaded, sha-pinned",
-      "supply": "21.29B tokens measured (t49, 44: 909 shards, 84G, train.encode exact) -- epochs 1 suffices (21.29B >= 3.3B demand); the weight 0.11 does the downsampling",
-      "status": "blocked: needs a fresh stamped build (the ladder web_hq dir is a frozen ladder directory, never reused). epochs 3->1 per fb 2026-08-31 (measured supply 21.29B, not the 1.434B estimate)"
-    },
-    "textbook_30b": {
-      "weight": 0.03333,
-      "epochs": 1,
-      "anneal": 0.03333,
-      "role": "Chinese textbook (cosmopedia, truncated)",
-      "tokens": 1000000000,
-      "source": "cosmopedia, truncated (48.2% of docs share the same 100 sentence frames, 6.38x frame concentration)",
-      "supply": "1.610B on disk, truncated to 1.0B",
-      "status": "blocked: needs a fresh stamped build (the ladder textbook dir is a frozen ladder directory, never reused)"
-    },
-    "wiki_chat": {
-      "weight": 0.00667,
-      "epochs": 1,
-      "anneal": 0.00667,
-      "role": "wiki + chat",
-      "tokens": 200000000,
-      "source": "existing wiki/chat sources",
-      "supply": "0.284B on disk",
-      "status": "blocked: needs a fresh stamped build; weight KEPT at 0.2B per fb 2026-08-31 (it exists so ChatML and the two-turn tool rendering are not learned from nothing -- the SFT pack that installs the format is 192M tokens, so 0.2B pretraining is already the same order). Raise trigger, written in the plan: if the 8B-milestone per-role loss on tool-turn spans is flat while other roles move, it is raised at the anneal, not before. Dependency-length capability is a t19/context question, not a weight question"
-    }
+ "total_tokens": 30000000000.0,
+ "domains": {},
+ "_blocked": {
+  "code_rp1t": {
+   "weight": 0.26667,
+   "epochs": 1,
+   "anneal": 0.26667,
+   "role": "code raw (RedPajama-1T github)",
+   "tokens": 8000000000,
+   "source": "RedPajama-1T github, 73.6B reachable, exact count",
+   "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b)",
+   "status": "blocked: raw fetched, corpus build+stamp pending"
   },
-  "_comment": "30B pretrain mix (t30, fb 2026-08-31). Source of truth: docs/lessons/scale_36b_plan.md section 1 (role table) + 1b (recipe). Weights are token shares of 30e9, carried to the token from the plan table (8.0/2.0/5.5/4.5/5.5/3.3/1.0/0.2 B). `domains` is EMPTY today: no domain is stamped yet. Every domain not on disk is declared in `_blocked` with its full contract (weight/epochs/anneal/role/source/supply/status) -- the composition must not silently shrink to what exists. As 3b lands and stamps each corpus dir, the entry moves from `_blocked` to `domains` unchanged. t22 MUST NOT launch until `_blocked` is empty and weights(domains) sum to 1.0. Directory naming: NEW stamped dirs only, never a frozen ladder directory (web_hq/textbook/en/math/code/wiki/chat are ladder names and are banned by the mix_30b_contract harness check). epochs: 1 for all (supply >= need at landing; zh_web measured 21.29B supply vs 3.3B need at epochs 1, t49 44 2026-08-31). anneal=weight (constant, same convention as the ladder mixes; plan 1b changes no anneal rule). zh:en language split: MEASURED on stamped shards, not estimated by source name -- math_owm/cot/textbook_30b carry Chinese sources, so the source-name split (~85:15 en:zh) is not the content-language split. 44's t24 audit emits the per-domain language fraction as domains land; the number is written at facts/multilingual.json#mlm.ratio.30b_measured when it exists, never estimated (fb ruling 2026-08-31; the table is authoritative, the earlier 35:65 prose was a rough estimate and is superseded by the measurement). The tool-call two-turn rendering is not a separate domain: it is the rendering of code_tests (2.0B) and the math domain's <<expr=result>> subset, per plan section 'tool-call' and t19. en role source: RedPajama-1T c4 via data.together.xyz (en_c4) since 2026-08-31 -- hf-mirror unreachable from the pod; fineweb-edu sample/10BT stays preferred if the mirror returns before en is half landed (fb ruling). math_owm/cot keep their contracts; arxiv+stackexchange from the same host are fetched as reachable stand-ins, role attribution pending 44's content read."
+  "code_tests": {
+   "weight": 0.06667,
+   "epochs": 1,
+   "anneal": 0.06667,
+   "role": "code with execution annotation (impl+test pairs, two-turn tool-call rendering per plan section 'tool-call')",
+   "tokens": 2000000000,
+   "source": "mined from code_rp1t: 7.6% of repos have impl+test, 26.96% of docs in such repos (ds.code_exec_supply)",
+   "supply": "5.6B mineable from the 73.6B raw; filter only, zero generation",
+   "status": "blocked: mining pending (3b)"
+  },
+  "math_owm": {
+   "weight": 0.18333,
+   "epochs": 1,
+   "anneal": 0.18333,
+   "role": "verifiable math (OpenWebMath + proof-pile)",
+   "tokens": 5500000000,
+   "source": "OpenWebMath / proof-pile, open",
+   "supply": "open, landed count unknown",
+   "status": "blocked: not fetched. Interim: arxiv and stackexchange from data.together.xyz are the reachable stand-ins 3b is fetching; whether they count toward this role is decided when 44 reads their content, not now (fb 2026-08-31)"
+  },
+  "cot": {
+   "weight": 0.15,
+   "epochs": 1,
+   "anneal": 0.15,
+   "role": "long CoT (OpenThoughts + Skywork-OR1)",
+   "tokens": 4500000000,
+   "source": "OpenThoughts / Skywork-OR1, Apache",
+   "supply": "open, landed count unknown",
+   "status": "blocked: not fetched. Interim: arxiv and stackexchange from data.together.xyz are the reachable stand-ins 3b is fetching; whether they count toward this role is decided when 44 reads their content, not now (fb 2026-08-31)"
+  },
+  "en_c4": {
+   "weight": 0.12228,
+   "epochs": 1,
+   "anneal": 0.12228,
+   "role": "English general (RedPajama-1T c4, data/corpus/en_c4/, 166 shards)",
+   "tokens": 3668395684,
+   "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
+   "supply": "3.668B allocation; landed 4.801B exact (count_code_dirs 2026-09-03, 7,767,463 docs)",
+   "status": "landed: exact 4.801B; share of original en_c4 5.5B role split {f1:.4f} by size; near-dup pass + stamp pending (3b)"
+  },
+  "zh_web": {
+   "weight": 0.11,
+   "epochs": 1,
+   "anneal": 0.11,
+   "role": "Chinese web (fineweb2-HQ + CCI3-HQ)",
+   "tokens": 3300000000,
+   "source": "fineweb2-HQ + CCI3-HQ, downloaded, sha-pinned",
+   "supply": "21.29B tokens measured (t49, 44: 909 shards, 84G, train.encode exact) -- epochs 1 suffices (21.29B >= 3.3B demand); the weight 0.11 does the downsampling",
+   "status": "blocked: needs a fresh stamped build (the ladder web_hq dir is a frozen ladder directory, never reused). epochs 3->1 per fb 2026-08-31 (measured supply 21.29B, not the 1.434B estimate)"
+  },
+  "textbook_30b": {
+   "weight": 0.03333,
+   "epochs": 1,
+   "anneal": 0.03333,
+   "role": "Chinese textbook (cosmopedia, truncated)",
+   "tokens": 1000000000,
+   "source": "cosmopedia, truncated (48.2% of docs share the same 100 sentence frames, 6.38x frame concentration)",
+   "supply": "1.610B on disk, truncated to 1.0B",
+   "status": "blocked: needs a fresh stamped build (the ladder textbook dir is a frozen ladder directory, never reused)"
+  },
+  "wiki_chat": {
+   "weight": 0.00667,
+   "epochs": 1,
+   "anneal": 0.00667,
+   "role": "wiki + chat",
+   "tokens": 200000000,
+   "source": "existing wiki/chat sources",
+   "supply": "0.284B on disk",
+   "status": "blocked: needs a fresh stamped build; weight KEPT at 0.2B per fb 2026-08-31 (it exists so ChatML and the two-turn tool rendering are not learned from nothing -- the SFT pack that installs the format is 192M tokens, so 0.2B pretraining is already the same order). Raise trigger, written in the plan: if the 8B-milestone per-role loss on tool-turn spans is flat while other roles move, it is raised at the anneal, not before. Dependency-length capability is a t19/context question, not a weight question"
+  },
+  "en_c4_stage2": {
+   "weight": 0.06105,
+   "epochs": 1,
+   "anneal": 0.06105,
+   "role": "English general (RedPajama-1T c4, data/corpus/en_c4_stage2/, 83 shards)",
+   "tokens": 1831604316,
+   "source": "RedPajama-1T c4 via data.together.xyz -- hf-mirror is unreachable from the pod (fb probe 2026-08-31: rc=28 at 10s; data.together.xyz 200 in 0.6s)",
+   "supply": "1.832B allocation; landed 2.397B exact (count_code_dirs 2026-09-03, 3,887,759 docs)",
+   "status": "landed: exact 2.397B; NOT a doc-subset of en_c4/ (0 overlap, subset check 2026-09-03); share {f2:.4f} by size; near-dup pass + stamp pending (3b)"
+  }
+ },
+ "_comment": "30B pretrain mix (t30, fb 2026-08-31). Source of truth: docs/lessons/scale_36b_plan.md section 1 (role table) + 1b (recipe). Weights are token shares of 30e9, carried to the token from the plan table (8.0/2.0/5.5/4.5/5.5/3.3/1.0/0.2 B). `domains` is EMPTY today: no domain is stamped yet. Every domain not on disk is declared in `_blocked` with its full contract (weight/epochs/anneal/role/source/supply/status) -- the composition must not silently shrink to what exists. As 3b lands and stamps each corpus dir, the entry moves from `_blocked` to `domains` unchanged. t22 MUST NOT launch until `_blocked` is empty and weights(domains) sum to 1.0. Directory naming: NEW stamped dirs only, never a frozen ladder directory (web_hq/textbook/en/math/code/wiki/chat are ladder names and are banned by the mix_30b_contract harness check). epochs: 1 for all (supply >= need at landing; zh_web measured 21.29B supply vs 3.3B need at epochs 1, t49 44 2026-08-31). anneal=weight (constant, same convention as the ladder mixes; plan 1b changes no anneal rule). zh:en language split: MEASURED on stamped shards, not estimated by source name -- math_owm/cot/textbook_30b carry Chinese sources, so the source-name split (~85:15 en:zh) is not the content-language split. 44's t24 audit emits the per-domain language fraction as domains land; the number is written at facts/multilingual.json#mlm.ratio.30b_measured when it exists, never estimated (fb ruling 2026-08-31; the table is authoritative, the earlier 35:65 prose was a rough estimate and is superseded by the measurement). The tool-call two-turn rendering is not a separate domain: it is the rendering of code_tests (2.0B) and the math domain's <<expr=result>> subset, per plan section 'tool-call' and t19. en role source: RedPajama-1T c4 via data.together.xyz (en_c4) since 2026-08-31 -- hf-mirror unreachable from the pod; fineweb-edu sample/10BT stays preferred if the mirror returns before en is half landed (fb ruling). math_owm/cot keep their contracts; arxiv+stackexchange from the same host are fetched as reachable stand-ins, role attribution pending 44's content read."
 }
