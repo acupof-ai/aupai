@@ -2130,6 +2130,97 @@ def _broken_pod_ledger_rows_home():
     return d
 
 
+def check_run_commits_resolve(root):
+    """Every experiments row's `commit` names an object this repository holds (de-38).
+
+    A sha that resolves nowhere reads as provenance while answering nothing, and nothing
+    looked: p500m_20b_0902's 00:03 row carried `cec145b`, which matches no commit here and no
+    prefix of one. It surfaced only because the pod's copy of that row disagreed in this one
+    field, and the disagreement was the ONLY reason anyone read it.
+
+    The cause was width, not a wrong tree. exp.git_commit used `rev-parse --short` on the git
+    path and a hardcoded `[:7]` on the pod-stamp path; --short is git's AUTO-SCALING
+    abbreviation and began returning 8 characters once the object count grew, so one commit
+    wrote two strings (8cd68340 vs 8cd6834). Both paths now store the full 40, which is why
+    this check can be exact.
+
+    WARN, not FAIL: the rows already written cannot be re-derived by this check, and a FAIL on
+    unfixable history is a permanent red. `unknown` and a `+dirty<n>` suffix PASS -- both are
+    honest statements about what the sha can say, and refusing them would push writers back to
+    the blank that git_commit exists to eliminate."""
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/experiments.jsonl"
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "not a git checkout (the pod cannot resolve a sha)"
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import exp as _exp
+
+    # THE FOLDED CURRENT ROW PER KEY, not every line. This ledger is an event log: a
+    # correction is APPENDED and the last row under (name, started) is what the row says
+    # now. Reading every line reports superseded values as live -- measured here, three rows
+    # corrected to `unknown` still WARNed because their originals were still on disk, which
+    # is exactly the sibling of the de-36 defect where an earlier pod row was compared
+    # against a current local one. exp.fold is THE reduction; a second copy would be a
+    # second thing to keep correct.
+    evs = []
+    for line in open(p, encoding="utf-8"):
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            evs.append(json.loads(line))
+        except ValueError:
+            continue  # ledgers_one_line_per_row owns malformed lines
+    seen, bad = {}, []
+    for r in _exp.fold(evs):
+        sha = r.get("commit")
+        if sha is None or sha == "":
+            continue  # rows predating the field; git_commit never returns ""
+        if sha not in seen:
+            seen[sha] = _exp.commit_resolves(sha, root)
+        ok, why = seen[sha]
+        if not ok:
+            bad.append(f"{r.get('name')} {r.get('started')}: {why}")
+    if not bad:
+        return PASS, f"{len(seen)} distinct commit value(s), all resolve or are 'unknown'"
+    return WARN, f"{len(bad)} row(s) name an unresolvable commit: {'; '.join(bad[:3])}"
+
+
+def _broken_run_commits_resolve():
+    """The REAL ledger with EVERY unresolvable commit repaired except one planted `cec145b` --
+    the shape p500m_20b_0902's row actually had.
+
+    Repairing the others is what makes the world a discriminator. The real tree already WARNs
+    (three pod-side shas came home with de-36's pull), so a world that merely adds a fourth
+    proves nothing: undo the mutation and it still WARNs. Here the mutation is the ONLY
+    unresolvable value, so removing it would make the world PASS."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "experiments.jsonl")
+    if not os.path.exists(src):
+        raise SelftestSkip("runs/experiments.jsonl absent; nothing real to mutate")
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import exp as _exp
+
+    rows = [json.loads(x) for x in open(src, encoding="utf-8") if x.strip()]
+    assert rows, "the real ledger is empty"
+    for r in rows:
+        sha = r.get("commit")
+        if sha and not _exp.commit_resolves(sha, ROOT)[0]:
+            r["commit"] = "unknown"          # an honest non-answer; the check accepts it
+    rows[-1]["commit"] = "cec145b"           # the planted defect, and now the only one
+    dst = os.path.join(d, "runs", "experiments.jsonl")
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    with open(dst, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # The check needs an object database to ask `cat-file -e` of; the mutation is in the
+    # ledger, not in git, so linking the real .git is what keeps the world minimal.
+    os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
+    return d
+
+
 def check_ckpt_facts_sources_present(root):
     """A measured fact whose only recomputable source is a checkpoint that is
     doomed or gone must be red at write time, not at prune time.
@@ -7307,6 +7398,13 @@ CHECKS = [
         _broken_ckpt_facts_sources,
     ),
     (
+        "run_commits_resolve",
+        "every experiments row's commit names an object this repository holds",
+        "p500m_20b_0902's 00:03 row carried cec145b, which resolves to nothing here; it surfaced only because the pod's copy of that row disagreed in that one field, and the cause was exp.git_commit writing 8 chars via rev-parse --short on one path and 7 via a hardcoded slice on the other",
+        check_run_commits_resolve,
+        _broken_run_commits_resolve,
+    ),
+    (
         "pod_ledger_rows_home",
         "every row in the pod's runs/*.jsonl has its key present in the repository's copy",
         "five score_matrix rows behind the closed A/Bs existed only on the pod's emptyDir; pod_push only pushes and pod_drift only asserts listed files match, so a pod-only ledger row is invisible to every check",
@@ -7802,6 +7900,8 @@ EVIDENCE = {
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
     # local side to compare against.
     "pod_ledger_rows_home": "both",
+    # repo: resolving a sha needs the object database, which the pod's tree does not have.
+    "run_commits_resolve": "repo",
     "keep_claim_reasons_live": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
@@ -9571,7 +9671,8 @@ def _demo():
     # force the tier back. What its world must still prove is that removing a review row
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
-                 "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home"}
+                 "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
+                 "run_commits_resolve"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
