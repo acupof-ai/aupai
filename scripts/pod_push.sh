@@ -30,8 +30,28 @@ cd "$(dirname "$0")/.."
 # guards is a three-day run on code somebody pushed one file into.
 stamp_sync() {
   if [ "$1" = all ]; then
-    local head_sha dirty
+    local head_sha dirty main_sha
     head_sha=$(git rev-parse HEAD)
+    # THE SHA MUST BE MAIN'S, NOT THIS WORKTREE'S BRANCH TIP (de-14). Every session pushes
+    # from its own worktree, so `rev-parse HEAD` is that branch's tip: measured 2026-09-03,
+    # this tree's HEAD was 1b85dd0c while main was 69c8bd87. The pod runs main -- push_one
+    # already refuses any file that differs from main -- so a stamp naming a branch tip
+    # describes a tree that does not exist anywhere: main's file contents under a sha only
+    # one laptop has. run_ddp.sh then compares against a value nobody else can resolve.
+    main_sha=$(git rev-parse main 2>/dev/null || echo "")
+    if [ -n "$main_sha" ] && [ "$head_sha" != "$main_sha" ]; then
+      if git merge-base --is-ancestor "$head_sha" "$main_sha" 2>/dev/null; then
+        # Behind main: the files pushed are main's (push_one enforced that), so main's sha
+        # is what describes them.
+        echo "pod sync stamp: using main ($main_sha) not this branch tip ($head_sha)"
+        head_sha=$main_sha
+      else
+        echo "refusing to stamp: HEAD ($head_sha) is not reachable from main ($main_sha)." >&2
+        echo "  The pod runs main. A stamp naming an unmerged commit describes a tree that" >&2
+        echo "  exists on no branch, and run_ddp.sh cannot verify it. Merge into main first." >&2
+        return 1
+      fi
+    fi
     dirty=$(git status --porcelain -- $(awk '{print $2}' data/pod_head_manifest.txt \
             | grep -v '^runs/') 2>/dev/null | wc -l | tr -d ' ')
     ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $head_sha $dirty $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
