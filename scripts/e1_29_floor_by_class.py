@@ -115,16 +115,23 @@ def main():
     # so the two kept-sets are known up front and the comparison can be made real rather than
     # merely reported.
     #
-    # This is not hygiene, it is a defect in the published pair. floor_ours.json and
-    # floor_control.json both carry supervised_bytes 10554038 -- the SAME denominator -- while
-    # dropping 28 and 220 overlong items respectively. Each numerator sums only over what that
-    # arm scored, so the control's 0.903758 divides a 10201-item loss by a 10421-item byte count
-    # and is UNDERSTATED; the published 2.004x therefore understates our lead. That direction is
-    # favourable to us, which is exactly why it does not get inherited here.
+    # ON THIS DATA THIS IS A NO-OP, and the record should say so plainly. I first read
+    # floor_ours.json's dropped_overlong 28 against floor_control.json's 220, saw one shared
+    # supervised_bytes 10554038, and reported a two-population defect in the published pair. That
+    # was WRONG. dropped_overlong is counted at eval_heldout.py:515, BEFORE the --ids restriction
+    # at 531-547 -- it reports what each arm dropped from the full 10,641-row file, not from the
+    # scored population. eval_heldout already refuses unless every requested id fits the arm, then
+    # restricts to exactly those. Both floors carry restricted_to_ids ids_shared.txt and the same
+    # evaluated_ids_sha256 cae4daf7ad59388c over 10,421 items, so the shared denominator is
+    # correct and 2.004x stands.
     #
-    # For a per-class split it would be worse than a small bias: the 220 dropped items are the
-    # LONGEST ones, and length correlates with code and with English -- the two axes being
-    # measured. The confound would land directly on the answer.
+    # What survives is narrower: this script does not depend on its caller having passed the right
+    # --ids. It computes the intersection itself and refuses if any class holds different items in
+    # the two arms -- eval_heldout's guarantee re-checked at this layer, not replaced. The cost is
+    # one CPU tokenization pass; the benefit is that a per-class ratio cannot silently become two
+    # measurements side by side, which per class would be worse than a small bias because the
+    # longest items are also the ones most likely to be code and English.
+
     tok = {}
     for arm, seq in (("ours", a.seq_ours), ("control", a.seq_ctrl)):
         kw = {} if arm == "ours" else {"model_dir": a.ctrl_dir}
@@ -137,11 +144,13 @@ def main():
         "n": len(both), "sha": E.ids_sha(sorted(both)),
         "dropped_by_ours_only": len(tok["ours"][0]) - len(both),
         "dropped_by_control_only": len(tok["control"][0]) - len(both),
-        "why": "both arms scored EXACTLY these ids. The published floors did not: they share one "
-               "denominator (supervised_bytes 10554038) while dropping 28 and 220 overlong items, "
-               "so the control's 0.903758 is understated and the published 2.004x understates our "
-               "lead. Per class the bias would be worse than small, because the dropped items are "
-               "the longest and length tracks both code and English."}
+        "why": "both arms scored EXACTLY these ids, checked here rather than assumed from the "
+               "caller's --ids. On this data it is a no-op: the published floors already restrict "
+               "to ids_shared.txt and both report evaluated_ids_sha256 cae4daf7ad59388c over "
+               "10,421 items, so 2.004x is sound. (I first misread floor_*.json's dropped_overlong "
+               "28 vs 220 as evidence of two populations; that field is counted before the --ids "
+               "restriction and describes the 10,641-row file, not the scored set.)"}
+
     print(f"  intersection: {len(both):,} items (sha {out['scored_population']['sha']}), "
           f"ours-only {out['scored_population']['dropped_by_ours_only']}, "
           f"control-only {out['scored_population']['dropped_by_control_only']}")
@@ -190,8 +199,8 @@ def main():
     kb = out["arms"]["control"]["nll_per_byte"]
     out["gap_shared_population"] = kb / ob
     print(f"\nSHARED-POPULATION GAP: ours {ob:.6f}  ctrl {kb:.6f}  gap {kb / ob:.3f}x")
-    print("  (published 2.004x divides each arm's own numerator by a shared 10,554,038-byte "
-          "denominator despite dropping 28 vs 220 items -- understating the control's loss)")
+    print("  (this should reproduce the published 2.004x: both floors already restricted to "
+          "ids_shared.txt, so the intersection above is that same population)")
 
     # THE GAP, PER CLASS, on the shared population -- so a class's two arms hold the SAME items
     # and the ratio is a comparison rather than two measurements side by side. An n mismatch is
@@ -236,7 +245,7 @@ def main():
               f"{100 * (1 - zh_share):.1f}% of the population): "
               f"ours {no / bo:.6f}  ctrl {nk / bo:.6f}  gap {nk / no:.3f}x")
         print(f"  against the shared-population gap {out['gap_shared_population']:.3f}x "
-              f"(published, two-population: 2.004x)")
+              f"(published, all items: 2.004x)")
         print("The English subset is what the control was trained for. Read per the pre-registered "
               "readings in this file's docstring.")
     with open(os.path.join(ROOT, a.out), "w") as f:
