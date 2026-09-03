@@ -146,10 +146,12 @@ def _init_loaded(loaded):
     _G_LOADED = loaded
 
 
-def scan(paths, golds, use_char=True, pool_n=8):
+def scan(paths, golds, use_char=False, pool_n=8):
     """(name, needles_by_type) x corpus shards -> {name: {type: [hits]}}, shards in
-    parallel. Use mp.Pool over the shards (aupai-6e 2026-09-03): the serial scan
-    was minutes-plus on a big domain and offered no progress signal per shard."""
+    parallel since 2026-09-03. use_char defaults FALSE here too (the needles()
+    default was changed, but this signature's own True override silently kept
+    char-13 on for every scan -- the 18,000%/doc shredding). e1-28 reserves the
+    char window for dense-chardomains only."""
     import multiprocessing as mp
     loaded = []
     for gp in golds:
