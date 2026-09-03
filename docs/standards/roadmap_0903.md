@@ -19,6 +19,10 @@ is named in the deleting commit.
 | pre-registered val check (e3b06e89) | step 9000 read 2.023 < 2.032: print resolution, no action; monotone since to 1.956 at 14000 | pod log |
 | the one metric with resolution | HumanEval gold BPB 0.5451 → 0.5199 (step 7000 → 10000, +43% tokens), 2021 → 1928 bytes for 164 solutions | runs/score_matrix.jsonl |
 | its anchors on the same 29,662 bytes | gzip -9 2.0961, bzip2 1.8974, Pythia-160M @4.2B tok 0.918 bits/byte; math_test_500 scored 379,651 bytes: gzip -9 1.9815, bzip2 1.4236 | `eval/n3_report.py` `corpus_bytes` + `anchors`, e1 2026-09-03; Pythia from `humaneval_bpb.py --hf` |
+| public models on the same 29,662 bytes (`humaneval_bpb.py --hf`, e1 2026-09-03; tokens as stated by model cards) | Qwen2.5-0.5B 494M/18T 0.2640; SmolLM2-360M 362M/4T 0.3624; SmolLM2-135M 134M/2T 0.4463; **ours 206M/8B 0.4567**; Pythia-160M 162M/300B 0.6024. Different points on different data curves: says the number is good for the budget, not that the architecture is better | runs/n7_hf_*.json |
+| N7 Stage A (inference-only loop, blocks 4-7) | humaneval BPB 0.4567 -> 0.4840 (145/164 worse, z 13.4); domain_loss 1.9443 -> 2.0609 (9/9); 1.64x ms/token; parity 0. Stage B (SFT twin on control_sft_ours.pt) follows | runs/n7_domain.jsonl, e1-31 |
+| public models on the same 29,662 bytes (`humaneval_bpb.py --hf`, e1 2026-09-03; tokens as stated by model cards) | Qwen2.5-0.5B 494M/18T 0.2640; SmolLM2-360M 362M/4T 0.3624; SmolLM2-135M 134M/2T 0.4463; **ours 206M/8B 0.4567**; Pythia-160M 162M/300B 0.6024. Different points on different data curves: the number is good for the budget, it says nothing about which architecture is better | runs/n7_hf_*.json |
+| N7 Stage A (inference-only loop, blocks 4-7) | humaneval BPB 0.4567 -> 0.4840 (145/164 worse, z 13.4); domain_loss 1.9443 -> 2.0609 (9/9); 1.64x ms/token forward-only, 1.002x in SFT training; parity 0. Stage B: SFT twin on control_sft_ours.pt, 250 steps per arm, running | runs/n7_domain.jsonl, e1-31 |
 | curve so far | humaneval byte-weighted BPB 0.5451 / 0.5227 / 0.5199 at steps 7000 / 7500 / 10000; lambada_en 22.9 / 21.0 / 23.9 % | runs/score_matrix.jsonl |
 | compute-matched control | held-out nat/byte floors ours 0.451 vs Pythia-160M 0.904; after SFT 0.294 vs 0.353 | docs/audits/control_pythia160m_vs_ours.md |
 | 30B mix | `domains` is empty; all 8 domains sit in `_blocked` | data/mix_30b.json |
@@ -32,8 +36,8 @@ Supply against the 30B contracts (tokens, `facts/corpus_supply.json`):
 | code_tests | 2.0B | 0 (Phase A mining running) | 2.0B |
 | math_owm | 5.5B | 6.51B | none |
 | cot | 4.5B | 0.42B | 4.1B |
-| en_c4 | 5.5B | 2.40B | 3.1B |
-| textbook | 3.3B | 1.61B | 1.7B |
+| en_c4 | 5.5B | 4.801B exact in en_c4/ (frozen tokenizer, 3b 2026-09-03); the 2.40B was en_c4_stage2/'s 3-shard extrapolation | 0.70B, tilerl fetching ~5 files |
+| textbook | 1.0B | 1.61B | surplus (the 3.3B written here earlier was zh_web's contract) |
 | code_py_starcoder | — | 8.78B | surplus |
 | arxiv | stand-in | 3.10B | role undecided |
 

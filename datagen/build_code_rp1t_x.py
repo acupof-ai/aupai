@@ -42,7 +42,6 @@ def main():
     # Pass 1: line document-frequency on a sample (boilerplate = high-DF line).
     n_docs_sample = 0
     line_df = Counter()          # normalized line -> number of distinct docs (approx)
-    seen_doc_line = set()
     for i, p in enumerate(shards):
         if i / len(shards) > DF_SAMPLE:
             break
@@ -60,7 +59,6 @@ def main():
           f"{len(high_df)} high-DF boilerplate lines", flush=True)
 
     # Pass 2: per-doc boilerplate fraction + parse, keep survivors.
-    out_conf = os.path.join(DST, "build_corpus_stats.json")
     os.makedirs(DST, exist_ok=True)
     w = B.ShardWriter(DST, "code_rp1t_x")
     kept = boil_drop = parse_fail = 0

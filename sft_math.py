@@ -93,6 +93,28 @@ def main():
         help="override the base's vocabulary fingerprint, for a checkpoint saved before "
         "train.py started recording it (print it with scripts/ckpt_info.py)",
     )
+    parser.add_argument(
+        "--allow_unstamped_pack",
+        action="store_true",
+        help="train on a pack that carries no holdout_fp. Records 'holdout status unknown' "
+             "against the run: this run's eval numbers cannot be read as holdout-clean, and that "
+             "belongs in the exp row. Without this flag an unstamped pack REFUSES, because an "
+             "unverified pack and a verified one were otherwise the same state to this launcher.",
+    )
+    parser.add_argument(
+        "--loop",
+        nargs=2,
+        type=int,
+        metavar=("LO", "HI"),
+        help="N7 Stage B: TRAIN with blocks LO..HI run twice (eval/loop_wrapper.py, AttnRes "
+             "option 3). Patched on raw_model BEFORE torch.compile and before DDP wraps it, so "
+             "the loop is inside the traced graph rather than around it. Stage A measured this "
+             "same loop applied at inference only to weights trained to be visited once: worse "
+             "on all three rulers (humaneval BPB +0.0273, domain_loss +0.1166 nat, 1.64x "
+             "latency). Stage B asks the different question of whether weights TRAINED under the "
+             "loop recover that -- so a Stage B arm must never be compared against a Stage A "
+             "number, only against its own unlooped arm at the same step.",
+    )
     args = parser.parse_args()
     if args.stop_after and args.max_steps:
         parser.error("--stop_after and --max_steps together are ambiguous: --max_steps also "
@@ -151,6 +173,19 @@ def main():
         print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
     # A pack built against a stale holdout set may contain held-out questions.
     # Refuse, the same way a vocab_id mismatch refuses.
+    #
+    # AND A PACK WITH NO STAMP REFUSES TOO (6e's ruling, 2026-09-03). Until this change the
+    # unstamped case printed a WARNING and proceeded, which made "stamped and verified clean" and
+    # "holdout status unknown" the same state to the launcher -- the shape §140 names, where the
+    # representation of success is shared with the thing that has no evidence behind it. 12 of the
+    # 16 packs in data/sft/ carry no holdout_fp, so this was not a hypothetical gap. The number
+    # that forced it: building data/rl/rlvr_math.jsonl the same day found 515 of 218,095 rows were
+    # holdout questions (0.2361%), three of them verbatim eval text, in a pool nothing had ever
+    # filtered because nothing required it.
+    #
+    # --allow_unstamped_pack is the escape hatch and it is LOUD: it names the pack and prints
+    # "holdout status unknown" so the fact reaches the log and the exp row. An escape hatch that
+    # left no trace would restore exactly the state this refusal removes.
     holdout_path = os.path.join(ROOT, "data", "eval", "holdout_hashes.txt")
     if "holdout_fp" in d and os.path.isfile(holdout_path):
         import hashlib
@@ -161,8 +196,23 @@ def main():
                 f"but the current holdout_hashes.txt is {live_fp}. The pack may contain "
                 f"held-out questions. Repack with prepare_sft.py."
             )
+    elif "holdout_fp" not in d:
+        if not args.allow_unstamped_pack:
+            raise RuntimeError(
+                f"{args.sft_path} carries NO holdout_fp, so nothing can say whether it contains "
+                f"held-out questions. Until 2026-09-03 this printed a warning and trained anyway, "
+                f"which made an unverified pack indistinguishable from a verified one. Repack with "
+                f"prepare_sft.py to stamp it, or pass --allow_unstamped_pack to train on it "
+                f"deliberately -- that flag records 'holdout status unknown' against this run."
+            )
+        if is_main:
+            print(f"UNSTAMPED PACK {args.sft_path}: holdout status unknown -- this run's eval "
+                  f"numbers cannot be read as holdout-clean (--allow_unstamped_pack)", flush=True)
     elif is_main:
-        print("WARNING pack predates holdout fingerprinting; verify holdout by hand", flush=True)
+        # Stamped pack, but holdout_hashes.txt is missing: the stamp cannot be checked against
+        # anything. Not a refusal, because the pack did record what it was built against.
+        print(f"WARNING {holdout_path} missing; {args.sft_path} claims holdout_fp "
+              f"{d['holdout_fp']} and nothing here can verify it", flush=True)
     assert Cfg.fone == ("values" in d), (
         f"checkpoint fone={Cfg.fone} but {args.sft_path} "
         f"{'has' if 'values' in d else 'has no'} values; repack with datagen/prepare_sft_math.py --fone"
@@ -199,6 +249,25 @@ def main():
         )
 
     optimizers = build_optimizers(raw_model, Cfg)
+
+    if args.loop:
+        # BEFORE torch.compile and before DDP: the patch replaces a bound method, and compile
+        # traces whatever _body is at trace time, so patching after would either be traced around
+        # or (under DDP static_graph) change the graph the buckets were built for. Also AFTER
+        # build_optimizers, which walks parameters -- the loop adds no parameters, so the optimizer
+        # groups are identical between the arms and that is the point.
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+        from loop_wrapper import patch_body
+
+        patch_body(raw_model, tuple(args.loop))
+        # ON Cfg, so save_checkpoint carries it into the final ckpt AND every .stepN. Without this
+        # the looped and unlooped arms write byte-different checkpoints whose metadata is
+        # identical, and six weeks later nothing but the filename says which is which -- the
+        # failure this repo has already paid for with .stepN files holding earlier weights.
+        Cfg.loop_blocks = list(args.loop)
+        if is_main:
+            print(f"LOOPED TRAINING: blocks {args.loop[0]}..{args.loop[1]} run twice "
+                  f"(AttnRes option 3); grad_ckpt {Cfg.grad_ckpt}", flush=True)
 
     model = raw_model
     if ddp:

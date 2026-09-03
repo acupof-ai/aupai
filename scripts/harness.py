@@ -72,6 +72,18 @@ _CHECK_TIMEOUTS = {
     # to build and 0.49s to search, so it is 3x SLOWER than the linear scan it would
     # replace. Measured before choosing (de).
     "sft_pack_uncontaminated": 60,
+    # Measured on this checkout, 2026-09-03: 8.2s wall -- it walks git log once per
+    # closed task (86 of them), so it was never going to fit 5s; it timed out on 2
+    # consecutive runs and FAILed with "has not actually run since", blocking a commit
+    # whose changes it has nothing to say about. 30s is ~4x the measured total.
+    "tasks_closed_by_commit": 30,
+    # Measured on this checkout under load (load avg 28, 25 users), 2026-09-03:
+    # getattr_cfg_names_exist 6.5s, restartability 4.5s (291 files scanned) -- both
+    # pass by hand but cross 5s when the shared machine is busy, and each banked
+    # 2 consecutive timeout strikes and FAILed a commit with 'has not actually run
+    # since'. ~4x the measured wall time, same ratio as the entries above.
+    "getattr_cfg_names_exist": 30,
+    "restartability": 20,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -6819,6 +6831,113 @@ def _broken_env():
 # --------------------------------------------------------------------------- tasks
 
 TASKS_PATH = os.path.join(ROOT, "runs", "tasks.jsonl")
+FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
+FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch")
+
+
+def _friction_rows(path=None):
+    """Every row, newest last. No fold: each row is one blocking event, not a state."""
+    p = path or FRICTION_PATH
+    out = []
+    if not os.path.exists(p):
+        return out
+    with open(p, encoding="utf-8") as fh:
+        for ln in fh:
+            ln = ln.strip()
+            if not ln:
+                continue
+            try:
+                out.append(json.loads(ln))
+            except json.JSONDecodeError:
+                continue
+    return out
+
+
+def cmd_friction(argv):
+    """The one ledger of things that blocked someone, and the counts by cause.
+
+    User order 14:2xZ 2026-09-03: every time a merge, a hook, a check or a pod push blocks
+    someone, the cause goes in one place, and the place is periodically summarised into
+    fixes. Without it each session pays the same toll privately and nobody can see which
+    toll is the expensive one -- six merges blocked on two derived files today, and that
+    only became visible when one person happened to hit all six.
+
+    `minutes_lost` IS A SELF-REPORT AND THE OUTPUT SAYS SO. It is the field a reader will
+    want to sum, and a sum of estimates printed beside measured counts reads as measured
+    (this repo's most common defect shape). So the summary prints the count as the number
+    and the minutes as `~N min (self-reported)`, and a row may omit minutes entirely
+    rather than inventing one.
+
+    Rows are events, never folded: two merges blocked by the same cause are two rows, which
+    is the whole point of counting by cause."""
+    ap = argparse.ArgumentParser(prog="harness friction")
+    sub = ap.add_subparsers(dest="op")
+    a = sub.add_parser("add")
+    a.add_argument("--kind", required=True, choices=FRICTION_KINDS)
+    a.add_argument("--cause", required=True,
+                   help="what actually blocked it, specific enough to fix: the file and the "
+                        "mechanism, not 'merge conflict'")
+    a.add_argument("--blocked", required=True, help="what could not proceed")
+    a.add_argument("--fix", default="", help="what unblocked it, or empty if nothing did yet")
+    a.add_argument("--minutes", type=int, default=None,
+                   help="SELF-REPORTED minutes lost; omit rather than guess")
+    a.add_argument("--who", default=None, help="defaults to the current branch")
+    args = ap.parse_args(argv)
+
+    if args.op != "add":
+        rows = _friction_rows()
+        if not rows:
+            print(f"no friction rows in {os.path.relpath(FRICTION_PATH, ROOT)}")
+            return 0
+        by_cause = {}
+        for r in rows:
+            c = (r.get("cause") or "?")
+            d = by_cause.setdefault(c, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
+                                        "fixed": 0, "last": ""})
+            d["n"] += 1
+            if isinstance(r.get("minutes_lost"), int):
+                d["min"] += r["minutes_lost"]
+                d["reported"] += 1
+            d["kinds"].add(r.get("kind") or "?")
+            if r.get("fix_applied"):
+                d["fixed"] += 1
+            d["last"] = max(d["last"], r.get("when") or "")
+        print(f"{len(rows)} row(s), {len(by_cause)} cause(s) -- most rows first\n")
+        for c, d in sorted(by_cause.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
+            mins = (f"~{d['min']} min (self-reported, {d['reported']}/{d['n']} rows)"
+                    if d["reported"] else "minutes not reported")
+            print(f"{d['n']:>3}x  {','.join(sorted(d['kinds'])):<14} {mins}")
+            print(f"      {c}")
+            print(f"      {d['fixed']}/{d['n']} row(s) carry a fix; last {d['last']}")
+        return 0
+
+    row = {
+        "when": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
+        "who": args.who or _current_branch(),
+        "kind": args.kind,
+        "blocked_what": args.blocked,
+        "cause": args.cause,
+        "fix_applied": args.fix,
+        "minutes_lost": args.minutes,
+        "sha": _head_sha(),
+    }
+    _append_task(row, path=FRICTION_PATH)
+    print(f"friction <- {args.kind}: {args.cause[:70]}")
+    return 0
+
+
+def _current_branch():
+    r = subprocess.run(["git", "-C", ROOT, "rev-parse", "--abbrev-ref", "HEAD"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or "unknown"
+
+
+def _head_sha():
+    r = subprocess.run(["git", "-C", ROOT, "rev-parse", "--short", "HEAD"],
+                       capture_output=True, text=True)
+    return r.stdout.strip() or ""
+
+
 
 
 def _read_tasks(path=None, raw=False):
@@ -7444,6 +7563,102 @@ def _busy_training_cards(train_cards):
     busy_uuids = {l.strip() for l in apps.stdout.splitlines() if l.strip()}
     busy = [c for c in sorted(train_cards) if any(by_uuid.get(u) == c for u in busy_uuids)]
     return busy, None
+
+
+CARD_HELD_MIB = 1000
+
+
+def check_card_held_without_claim(root):
+    """A card holding real memory that no live claim names.
+
+    e1's Stage A held card 5 for 15 minutes with the claim written in its LAPTOP tree, so
+    nothing on the pod said the card was held: claims live where the job runs
+    (scripts/card_claim.py reads runs/claims/ in the tree it is invoked from), and a claim on
+    the wrong side of the boundary is invisible to everyone who looks.
+
+    THE SPEC'S MECHANISM DOES NOT WORK HERE AND THIS IS WHY THE CHECK IS SHAPED DIFFERENTLY.
+    It asked to report a pid that is "not in our namespace" as foreign. Measured on the pod
+    2026-09-03: container nvidia-smi reports HOST pids (2274285, 2274286, ...) and container
+    `ps` resolves NONE of them -- not even our own live training ranks, whose claim sits right
+    there in runs/claims/ naming container pid 3818363. `--query-compute-apps=process_name`
+    returns `[Not Found]` for every one. So "unresolvable pid" is the normal case for every
+    process on the machine, ours included, and a foreign/ours split built on it would mark
+    every card foreign. AGENTS.md already states the general form: a PID is only meaningful
+    in the namespace that read it, and GPU UUID plus cmdline are the only cross-boundary
+    identities.
+
+    What the check can therefore say, and does: this card holds N MiB and no live claim in
+    THIS tree names it. It cannot say whose process it is. That is still the whole content of
+    the incident -- e1's card 5 had memory and no claim here -- and it is honest about the
+    limit instead of inventing an attribution. Foreign containers are named as a possible
+    cause in the message, not decided between.
+
+    WARN, never FAIL: an unclaimed card is a real state needing a person, but it is also what
+    a legitimate job looks like in the seconds between allocating memory and writing its
+    claim, and what another team's container looks like permanently."""
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    try:
+        import card_claim
+    except Exception as e:
+        return SKIP, f"scripts/card_claim.py not importable: {type(e).__name__}: {e}"
+    # The claim dir of the tree being checked, not this process's default: on the pod the
+    # harness runs from /work/aupai and must read /work/aupai/runs/claims.
+    claim_dir = os.path.join(root, "runs", "claims")
+    saved = card_claim.CLAIM_DIR
+    try:
+        card_claim.CLAIM_DIR = claim_dir
+        live, _stale = card_claim.claims()
+        held = card_claim.held_cards(live)
+        mem = card_claim.card_memory()
+    finally:
+        card_claim.CLAIM_DIR = saved
+    if mem is None:
+        return SKIP, "no nvidia-smi here -- this check is pod-side"
+    unclaimed = [(c, m) for c, m in sorted(mem.items(), key=lambda kv: int(kv[0]))
+                 if m > CARD_HELD_MIB and c not in held]
+    if unclaimed:
+        detail = ", ".join(f"card {c} {m} MiB" for c, m in unclaimed)
+        return WARN, (
+            f"{len(unclaimed)} card(s) hold memory no live claim in {os.path.relpath(claim_dir, root)} "
+            f"names: {detail} -- either a claim written in another tree (claims live where the "
+            f"job runs), a job that has not claimed yet, or another container. Whose it is cannot "
+            f"be read here: nvidia-smi gives host pids that this namespace cannot resolve, so "
+            f"identify it by GPU UUID plus cmdline "
+            f"(nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory)")
+    n_busy = sum(1 for m in mem.values() if m > CARD_HELD_MIB)
+    return PASS, (f"{len(mem)} card(s), {n_busy} above {CARD_HELD_MIB} MiB, every one named by a "
+                  f"live claim ({len(live)} claim(s))")
+
+
+def _broken_card_held_without_claim():
+    """The REAL claim dir with one live claim's cards emptied, so its card holds memory that
+    no claim names -- exactly e1's state, produced by mutation rather than by hand.
+
+    SKIPs where there is no nvidia-smi, because the check SKIPs there too: a world that
+    cannot reach the instrument certifies nothing about it. On a cardless box this is the
+    honest outcome, and the pod is where the world has teeth."""
+    import shutil as _sh
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+    if card_claim.card_memory() is None:
+        raise SelftestSkip("no nvidia-smi: card_held_without_claim SKIPs here, so its world can "
+                           "only be built on the pod")
+    real = os.path.join(ROOT, "runs", "claims")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs", "claims"), exist_ok=True)
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    _sh.copy(os.path.join(ROOT, "scripts", "card_claim.py"), os.path.join(d, "scripts", "card_claim.py"))
+    names = sorted(os.listdir(real)) if os.path.isdir(real) else []
+    if not names:
+        raise SelftestSkip("no live claim to mutate: the world needs a real claim whose cards "
+                           "can be emptied")
+    for nm in names:
+        src = os.path.join(real, nm)
+        obj = json.load(open(src, encoding="utf-8"))
+        obj["cards"] = []          # the claim stays live; it just names no card
+        with open(os.path.join(d, "runs", "claims", nm), "w", encoding="utf-8") as fh:
+            json.dump(obj, fh)
+    return d
 
 
 def check_lane_respected(root):
@@ -8803,6 +9018,13 @@ CHECKS = [
         _broken_tasks_stale,
     ),
     (
+        "card_held_without_claim",
+        "every card holding real memory is named by a live claim in this tree",
+        "e1's Stage A held card 5 for 15 minutes with the claim written in its laptop tree, so nothing on the pod said the card was held (2026-09-03)",
+        check_card_held_without_claim,
+        _broken_card_held_without_claim,
+    ),
+    (
         "lane_respected",
         "non-training processes do not occupy training cards",
         "a 10-min eval on one training card blocks a 55-min 7-card run; the lane rule was announced in docs but nothing enforced it",
@@ -8884,7 +9106,7 @@ EVIDENCE = {
     "eval_sft_template_contamination": "pod", "corpus_fp_matches": "pod", "pod_drift": "pod",
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
-    "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
+    "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
@@ -10185,15 +10407,30 @@ def _selftest_batched_git_probes():
             "data/deep/nested/x.pt",
         }
     )
-    # data/synthetic/ is the ONE known exception and it is git's behaviour, not a defect
-    # here: git consults the index, so a directory holding a tracked file reads as
-    # not-ignored, while this reader answers only what .gitignore says.
-    # `check-ignore --no-index` agrees with the reader. Named, so a NEW divergence
-    # cannot hide behind it.
-    INDEX_EXCEPTIONS = {"data/synthetic/", "data/synthetic"}
+    # THE EXCEPTION IS DERIVED FROM THE INDEX, NOT A LIST OF NAMES. git consults the index,
+    # so a directory that HOLDS A TRACKED FILE reads as not-ignored even when .gitignore
+    # covers it, while this reader answers only what .gitignore says; `check-ignore
+    # --no-index` agrees with the reader on exactly those paths.
+    #
+    # The first version hard-coded {"data/synthetic/", "data/synthetic"} -- the one path that
+    # diverged the day it was written. Adding a fact source that names data/corpus/sample/
+    # (148 tracked files under it) turned the selftest red on a divergence of the SAME KIND,
+    # and a two-name allow-list has to be edited every time. Asking the index instead means
+    # the exception is the property, so a NEW divergence of a DIFFERENT kind still fails.
     git_says = _gitignored_set(sorted(probe), ROOT)
+    tracked_under = set(
+        subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout.split()
+    )
+
+    def _holds_tracked(p):
+        pre = p.rstrip("/") + "/"
+        return any(t == p.rstrip("/") or t.startswith(pre) for t in tracked_under)
+
     disagree = [
-        p for p in sorted(probe) if p not in INDEX_EXCEPTIONS and git_says[p] != _gitignore_reader(p, ROOT)
+        p for p in sorted(probe)
+        if git_says[p] != _gitignore_reader(p, ROOT)
+        # git says not-ignored, reader says ignored, and the index explains exactly that gap.
+        and not (git_says[p] is False and _holds_tracked(p))
     ]
     assert not disagree, (
         f"the .gitignore reader disagrees with git on {len(disagree)} of {len(probe)} "
@@ -10838,7 +11075,7 @@ def _demo():
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
-                 "peer_stalled"}
+                 "peer_stalled", "card_held_without_claim"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         try:
@@ -13352,6 +13589,20 @@ def cmd_install_hooks(rest):
             os.remove(hook_dst)
         os.symlink(os.path.relpath(src, hooks_dir), hook_dst)
         print(f"installed: {hook_dst} -> {os.path.relpath(src, main_root)}")
+    # THE MERGE DRIVERS BELONG HERE, not in .gitattributes alone. The attribute names a
+    # driver; `git config merge.<name>.driver` defines it, per clone and untracked -- so a
+    # committed attribute with no config is a merge that cannot find its driver, which is
+    # the same shape as a hook edited in a branch worktree: installed-looking and never run.
+    # Installing hooks is the one step every session already runs in every tree.
+    sys.path.insert(0, os.path.join(main_root, "scripts"))
+    try:
+        import merge_drivers
+        merge_drivers.install(root=ROOT)
+        ok, msg = merge_drivers.check(root=ROOT)
+        print(f"merge drivers: {'OK' if ok else 'INCOMPLETE'} -- {msg}")
+    except Exception as e:
+        print(f"merge drivers NOT installed: {type(e).__name__}: {e}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -13379,6 +13630,8 @@ def main():
         return run_dispatch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "task":
         return cmd_task(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "friction":
+        return cmd_friction(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
