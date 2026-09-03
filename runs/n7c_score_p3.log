@@ -1,0 +1,24 @@
+== p3_matched: ckpt ckpt_n7c_p3.pt loop none mask prefix p3
+   bpb 0.4871  (164 tasks, 29662 bytes, prefix_arm 'p3', loop None)
+== p3_causal: ckpt ckpt_n7c_p3.pt loop none mask causal
+   bpb 0.4612  (164 tasks, 29662 bytes, prefix_arm None, loop None)
+== p3_twin_causal: ckpt ckpt_n7c_unlooped.pt loop none mask causal
+   bpb 0.4643  (164 tasks, 29662 bytes, prefix_arm None, loop None)
+
+== arm p3: prefix vs its causal twin (lower is better)
+  twin, causal          0.4643   <- baseline, an existing 500-step run
+  arm,  prefix p3      0.4871   delta +0.0228   <- THE EXPERIMENT
+  arm,  causal          0.4612   delta -0.0031   <- mismatch control
+  If the mismatch cell is far larger than the matched delta, the number is the mask mismatch and not the intervention -- Stage A's failure mode.
+  the causal 2x2's UtSu cell read 0.4643 on the same 164 tasks (runs/n7c_2x2, same run family)
+
+== paired, against the twin
+  matched (prefix): delta -0.0228 (twin minus cell, so cell WORSE than twin)  SE 0.0017  z -13.7  n 164
+    pre-registered rule: |delta| 0.0228 vs 2*SE 0.0033 -> PASSES the 2-SE bar
+  mismatch (causal): delta +0.0031 (twin minus cell, so cell BETTER than twin)  SE 0.0006  z +5.5  n 164
+    pre-registered rule: |delta| 0.0031 vs 2*SE 0.0011 -> PASSES the 2-SE bar
+
+== per-item count (separate measurement, not from paired_se)
+  matched (prefix): 151/164 items worse than the twin
+  mismatch (causal): 38/164 items worse than the twin
+  The rule needs the item count to AGREE with the paired delta's direction: a mean that improves while most items get worse is a few large items, not the intervention.

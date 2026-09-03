@@ -1,0 +1,67 @@
+vocab_id matches: 0bce3584bc24f255
+sft rows 49152 per rank (world 1)
+resumed ckpt_data_leg_206m_8b.pt | params 206.1M | fp8 True | fa True | doc_mask True
+LOOPED TRAINING: blocks 4..7 run twice (AttnRes option 3); grad_ckpt True
+PREFIX TRAINING: arm p7, prefix-LM mask on MLA blocks [7]; the other MLA layers stay causal
+argv ["--resume", "ckpt_data_leg_206m_8b.pt", "--sft_path", "data/sft/control_sft_ours.pt", "--out", "ckpt_n7c_p7.pt", "--max_steps", "500", "--batch", "16", "--save_every", "250", "--prefix", "p7", "--loop", "4", "7"]
+lr_scale 0.1 total_steps 500 stop_after None batch 16 epochs 1 seed 42
+  lr[Muon:0] initial 0.01 -> step0 3.33e-06
+  lr[AdamW:0] initial 0.1 -> step0 3.33e-05
+  lr[AdamW:0] initial 0.15 -> step0 5e-05
+  lr[AdamW:0] initial 0.01 -> step0 3.33e-06
+step 10/500 loss 1.581 43s/10steps
+step 20/500 loss 1.471 19s/10steps
+step 30/500 loss 1.482 19s/10steps
+step 40/500 loss 1.452 19s/10steps
+step 50/500 loss 1.544 19s/10steps
+step 60/500 loss 1.444 19s/10steps
+step 70/500 loss 1.452 19s/10steps
+step 80/500 loss 1.488 19s/10steps
+step 90/500 loss 1.359 19s/10steps
+step 100/500 loss 1.389 19s/10steps
+step 110/500 loss 1.311 19s/10steps
+step 120/500 loss 1.357 19s/10steps
+step 130/500 loss 1.459 19s/10steps
+step 140/500 loss 1.275 19s/10steps
+step 150/500 loss 1.470 19s/10steps
+step 160/500 loss 1.252 19s/10steps
+step 170/500 loss 1.369 19s/10steps
+step 180/500 loss 1.352 19s/10steps
+step 190/500 loss 1.286 19s/10steps
+step 200/500 loss 1.349 19s/10steps
+step 210/500 loss 1.300 19s/10steps
+step 220/500 loss 1.174 19s/10steps
+step 230/500 loss 1.290 19s/10steps
+step 240/500 loss 1.386 19s/10steps
+step 250/500 loss 1.335 23s/10steps
+step 260/500 loss 1.274 19s/10steps
+step 270/500 loss 1.214 19s/10steps
+step 280/500 loss 1.352 19s/10steps
+step 290/500 loss 1.235 19s/10steps
+step 300/500 loss 1.209 19s/10steps
+step 310/500 loss 1.183 19s/10steps
+step 320/500 loss 1.271 19s/10steps
+step 330/500 loss 1.206 19s/10steps
+step 340/500 loss 1.201 19s/10steps
+step 350/500 loss 1.332 19s/10steps
+step 360/500 loss 1.174 19s/10steps
+step 370/500 loss 1.168 19s/10steps
+step 380/500 loss 1.250 19s/10steps
+step 390/500 loss 1.202 19s/10steps
+step 400/500 loss 1.186 19s/10steps
+step 410/500 loss 1.258 19s/10steps
+step 420/500 loss 1.190 19s/10steps
+step 430/500 loss 1.226 19s/10steps
+step 440/500 loss 1.143 19s/10steps
+step 450/500 loss 1.033 19s/10steps
+step 460/500 loss 1.192 19s/10steps
+step 470/500 loss 1.194 19s/10steps
+step 480/500 loss 1.158 19s/10steps
+step 490/500 loss 1.015 19s/10steps
+step 500/500 loss 1.057 22s/10steps
+saved ckpt_n7c_p7.pt
+/work/aupai/runs/n7c_p7.log -> /work/aupai/plots/n7c_p7.png
+70/500 loss 1.194 19s/10steps
+step 480/500 loss 1.158 19s/10steps
+step 490/500 loss 1.015 19s/10steps
+step 500/500 loss 1.057 22s/10steps
