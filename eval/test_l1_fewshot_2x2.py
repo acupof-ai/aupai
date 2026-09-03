@@ -142,6 +142,27 @@ def main():
         fails.append("open_artifact still gets run=, but out_path is already versioned -- the "
                      "path would be versioned twice (verified: preds_x.r1.r1.jsonl)")
 
+    # 8. THE DECODER IS THE SAME ON BOTH ARMS, AND THE RUN RECORDS WHICH DECODER IT WAS.
+    #    train.generate_batch gates rep_stop on `tokenizer is not None` (train.py:944), so the
+    #    original call here -- which omitted the argument -- ran OUR arm with NO repetition stop
+    #    while the control arm, whose tokenizer was passed explicitly, ran with one. The 2x2's
+    #    length gap (794-851 characters against 84-86) and our 98.8% loop rate are partly that:
+    #    a decoder difference read as a model difference, from an argument whose absence means a
+    #    silent False rather than an error.
+    if "tokenizer=tok" not in src:
+        fails.append("generate_batch is called without tokenizer=, so rep_stop is silently False "
+                     "for our arm while the control arm has it -- the arms would run different "
+                     "decoders and the length gap would be an artefact of the call site")
+    if src.count("rep_stop=not args.no_rep_stop") < 2:
+        fails.append("--no_rep_stop does not reach both decode paths; one arm would keep the stop "
+                     "while the other loses it")
+    if '"rep_stop": not args.no_rep_stop' not in src:
+        fails.append("the summary JSON does not record whether the stop was on, so two runs "
+                     "differing only in the decoder are indistinguishable afterwards")
+    if '".norepstop" if args.no_rep_stop' not in src:
+        fails.append("the preds path omits the rep_stop state, so a stop-off rerun overwrites the "
+                     "stop-on rows")
+
     for f in fails:
         print(f"FAIL: {f}", file=sys.stderr)
     if fails:
