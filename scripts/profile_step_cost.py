@@ -127,6 +127,18 @@ def _selftest():
     def _loop_end():
         return max((getattr(x, "lineno", 0) for x in _a0.walk(loop_node)), default=0) if loop_node else 0
 
+    def _startup_before_reset():
+        """The STARTUP read exists only if it happens before the reset. Same shape as the
+        reset check itself: a read on the wrong side of one line turns two numbers into one,
+        and both print fine."""
+        if loop_node is None or reset_line is None:
+            return False
+        for n in _a0.walk(loop_node):
+            if isinstance(n, _a0.Assign) and any(
+                    isinstance(t, _a0.Name) and t.id == "startup_res" for t in n.targets):
+                return n.lineno < reset_line
+        return False
+
     def _reset_ok():
         """Before the loop, or inside it under `if st == a.warmup` -- both mean the peak
         describes the timed steps. The previous form was `reset_line < loop_line`, a line
@@ -150,6 +162,9 @@ def _selftest():
          f"tok_step is {tok_expr!r}; a rate over one micro-batch reports the b8a4 arm at 4x"),
         (reset_line is not None, "the peak is reset in main()",
          "the peak would carry setup both arms pay identically, not the step's own cost"),
+        (_startup_before_reset(), "the startup peak is read BEFORE the reset",
+         "max_memory_reserved for STARTUP must be read before reset_peak_memory_stats, or it "
+         "reports the steady-state number twice and the launch gate loses the transient it exists to catch"),
         (_reset_ok(), "the peak reset covers the timed steps and nothing else",
          f"reset at line {reset_line}, loop {loop_line}-{_loop_end()}: it must sit before the "
          "loop or inside it under `if st == a.warmup`. After the loop measures nothing; "
@@ -566,7 +581,7 @@ def main():
         prof = profile(activities=[ProfilerActivity.CPU, ProfilerActivity.CUDA],
                        record_shapes=True, with_flops=False, with_stack=False)
 
-    wall0 = None
+    wall0 = startup_res = startup_alloc = None
     for st in range(a.steps + a.warmup):
         if prof is not None and st == trace_from:
             prof.start()
@@ -574,6 +589,13 @@ def main():
         # construction, compile and warmup's transient allocations out of a number that decides
         # whether a shape FITS -- the question is whether the steady-state step fits.
         if st == a.warmup:
+            # READ BEFORE THE RESET. Construction, compile and warmup allocate more than a
+            # steady-state step does -- b0 watched nvidia-smi hit 72.5 GiB on a d1536 b8 probe
+            # whose steady-state peak predicts 38.87 -- and that transient OOMs exactly like a
+            # step does. The reset below is correct for "does the STEP fit"; without this read
+            # the run reports a number that says GO on a shape that dies during compile.
+            startup_res = torch.cuda.max_memory_reserved() / 1024**3
+            startup_alloc = torch.cuda.max_memory_allocated() / 1024**3
             torch.cuda.reset_peak_memory_stats()
             wall0 = time.perf_counter()
         torch.cuda.synchronize()
@@ -649,6 +671,12 @@ def main():
         print("  reserved is the number that decides whether it FITS -- allocated omits the "
               "caching allocator's fragmentation, and OOM is raised against reserved.",
               flush=True)
+        print(f"STARTUP {startup_alloc:.2f} GiB allocated, {startup_res:.2f} GiB reserved "
+              f"(construction + compile + {a.warmup} warmup steps, before the reset)", flush=True)
+        print("  TWO NUMBERS, TWO QUESTIONS. STARTUP decides whether the shape can be LAUNCHED "
+              "at all; PEAK decides whether each step fits once it is running. STARTUP is the "
+              "larger of the two and a gate reading only PEAK says GO on a shape that dies "
+              "during compile.", flush=True)
 
     trace_path = None
     if prof is not None:
