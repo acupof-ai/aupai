@@ -425,11 +425,24 @@ def _cache_pool(name):
     the pod for 24 minutes while I reported GO from my laptop -- the same file being two
     different things in two places is exactly what derivation is meant to end.
 
-    Cheap: torch reads the header under mmap, not the tensor.
+    Cheap: torch reads the header under mmap, not the tensor. The co-residency refusal is
+    still asked, and the reason it is not skipped as "only a header" is that the check
+    guarding this rule cannot tell a header read from a whole-tensor one -- the argument for
+    an exemption is exactly the argument that lets the next by-path reader in (e1,
+    2026-09-05). One domain at a time keeps the measured bytes honest: the refusal is
+    handed the domain this call reads, not the mix.
     """
     path = f"/data00/tokens_{name}.pt"
     if not os.path.exists(path):
         return None
+    # OUTSIDE THE try, deliberately. The `except Exception` below turns any failure into
+    # "no cache here", so a refusal raised inside it would be swallowed and this function
+    # would fall back to the recorded file while the read it was refusing still looked
+    # optional. A guard inside a broad except is not a guard.
+    sys.path.insert(0, os.path.join(ROOT, "eval"))
+    from cache_guard import assert_not_co_resident
+
+    assert_not_co_resident([name])
     try:
         import torch
 

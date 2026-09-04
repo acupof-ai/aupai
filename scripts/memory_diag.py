@@ -197,6 +197,54 @@ def stop_rules(row):
     return hit
 
 
+def check_arm(name, root=None, path=None):
+    """One line saying whether this arm's newest row trips a stop rule, and exit 0/1/2.
+
+    The launch monitor's reader. It exists so the monitor does not re-transcribe the two
+    thresholds: a monitor carrying its own copy of 70000 and 0.20 is a second definition
+    that drifts from the charter silently, and the drift is invisible because both numbers
+    look right in isolation.
+
+    Exit 0 nothing tripped, 1 a rule tripped, 2 nothing to read yet. 2 is not an error:
+    before step 100 an arm legitimately has no row, and a monitor must not treat that as a
+    stop.
+    """
+    rows, errs = read_rows(root=root, path=path)
+    if errs:
+        print(f"memory_diag: {len(errs)} unreadable line(s): {errs[0]}")
+        return 1
+    want = _arm_key(name)
+    latest = latest_by_arm(rows)
+    key = next((k for k in latest if _arm_key(k) == want), None)
+    if key is None:
+        print(f"memory_diag: no row for arm {want or name} yet")
+        return 2
+    row = latest[key]
+    hits = stop_rules(row)
+    if not hits:
+        print(f"memory_diag: {want} step {row.get('step')} within bounds "
+              f"(pool {row.get('pool_touched_frac')}, {row.get('tok_s_gpu')} tok/s/gpu)")
+        return 0
+    for rule, why in hits:
+        print(f"STOP RULE {rule} -- {why}")
+    return 1
+
+
+def _arm_key(name):
+    """'m1' from b0_mem_m1, m1_probe or m1; None from a non-arm name.
+
+    The join key between a run name and its rows. Both sides are written by different
+    hands -- the launch names the run, train.py's hook names the row -- so neither is a
+    prefix of the other: b0_mem_m1 against m1 is the live case, and a prefix test returns
+    False for it."""
+    import re
+
+    m = re.search(r"(^|_)mem_m([123])([_-]|$)|(^|_)m([123])([_-]|$)", str(name or ""), re.I)
+    if not m:
+        return None
+    return "m" + (m.group(2) or m.group(5))
+
+
 def _selftest():
     import shutil
     import tempfile
@@ -301,13 +349,37 @@ def _selftest():
         # 7. No ledger yet is (no rows, no errors) -- distinct from a corrupt one.
         rows, errs = read_rows(path=os.path.join(d, "nope.jsonl"))
         assert rows == [] and errs == [], (rows, errs)
+        # 8. check_arm is the monitor's reader, and its three exit codes are the contract:
+        #    0 within bounds, 1 a rule tripped, 2 nothing to read yet. 2 must not be an
+        #    error -- an arm before step 100 has no row, and a monitor treating that as a
+        #    stop would kill every launch in its first minutes.
+        p2 = os.path.join(d, "runs", "arm.jsonl")
+        assert check_arm("b0_mem_m1", path=p2) == 2, "no ledger must exit 2, not 1"
+        log_diag("m1", 500, 0.83, 3.1, 0.30, 81000.0, path=p2)
+        # THE LIVE SPELLING: run named b0_mem_m1, rows named m1. Neither is a prefix of the
+        # other, which is the join that broke in harness's copy of this logic.
+        assert check_arm("b0_mem_m1", path=p2) == 0, "healthy arm must exit 0"
+        assert check_arm("m1", path=p2) == 0, "bare arm id must resolve too"
+        assert check_arm("b0_mem_m2", path=p2) == 2, "a different arm has no row: exit 2"
+        log_diag("m1", 600, 0.83, 3.1, 0.30, 41000.0, path=p2)
+        assert check_arm("b0_mem_m1", path=p2) == 1, "tripped readout 5 must exit 1"
+        for nm, want in (("b0_mem_m1", "m1"), ("m3_probe", "m3"), ("mem_m2_x", "m2"),
+                         ("p200m_control", None), ("b0_memoir_m1x", None),
+                         ("b0_mem_m4", None)):
+            assert _arm_key(nm) == want, f"_arm_key({nm}) = {_arm_key(nm)}, want {want}"
+
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
-    print("memory_diag selftest OK (7 cases: round-trip, arms separate, 9 refusals, "
-          "positive control, stop rules incl. warmup, corrupt line, absent file)")
+    print("memory_diag selftest OK (8 cases: round-trip, arms separate, 9 refusals, "
+          "positive control, stop rules incl. warmup, corrupt line, absent file, "
+          "check_arm exit codes on the live spelling)")
     return 0
 
 
 if __name__ == "__main__":
-    sys.exit(_selftest() if "--selftest" in sys.argv else 0)
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
+    if "--check-arm" in sys.argv:
+        sys.exit(check_arm(sys.argv[sys.argv.index("--check-arm") + 1]))
+    sys.exit(0)
