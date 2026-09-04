@@ -334,6 +334,97 @@ def running_jobs():
     return names
 
 
+def _md_inline(s):
+    s = _esc(s)
+    s = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", s)
+    return re.sub(r"`([^`]+)`", r"<code>\1</code>", s)
+
+
+def md_to_html(md):
+    # minimal subset: headings, dash lists, pipe tables, paragraphs
+    out, lines, i = [], md.splitlines(), 0
+    while i < len(lines):
+        ln = lines[i]
+        if not ln.strip():
+            i += 1
+            continue
+        if ln.startswith("### "):
+            out.append(f"<h4>{_md_inline(ln[4:])}</h4>")
+            i += 1
+            continue
+        if ln.startswith("## "):
+            out.append(f"<h3>{_md_inline(ln[3:])}</h3>")
+            i += 1
+            continue
+        if ln.startswith("# "):
+            out.append(f"<h2>{_md_inline(ln[2:])}</h2>")
+            i += 1
+            continue
+        if ln.lstrip().startswith("|"):
+            tbl = []
+            while i < len(lines) and lines[i].lstrip().startswith("|"):
+                cells = [c.strip() for c in _split_row(lines[i].strip().strip("|"))]
+                tbl.append(cells)
+                i += 1
+            tbl = [r for r in tbl if not all(set(c) <= set("-: ") for c in r)]
+            if tbl:
+                head = "".join(f"<th>{_md_inline(c)}</th>" for c in tbl[0])
+                body = "".join(
+                    "<tr>" + "".join(f"<td>{_md_inline(c)}</td>" for c in r) + "</tr>"
+                    for r in tbl[1:]
+                )
+                out.append(f"<table class='findings'><tr>{head}</tr>{body}</table>")
+            continue
+        if ln.lstrip().startswith(("- ", "* ")):
+            items = []
+            while i < len(lines) and lines[i].lstrip().startswith(("- ", "* ")):
+                items.append(f"<li>{_md_inline(lines[i].lstrip()[2:])}</li>")
+                i += 1
+            out.append("<ul class='meaning'>" + "".join(items) + "</ul>")
+            continue
+        para = [ln]
+        i += 1
+        while i < len(lines) and lines[i].strip() and not lines[i].startswith(("#", "- ", "* ", "|")):
+            para.append(lines[i])
+            i += 1
+        out.append(f"<p>{_md_inline(' '.join(para))}</p>")
+    return "".join(out)
+
+
+def state_block(root):
+    p = os.path.join(root, "docs", "standards", "state_0904.md")
+    if not os.path.exists(p):
+        return ""
+    return (
+        '<section class="audit"><h1>现状（state_0904）</h1>'
+        + md_to_html(open(p, encoding="utf-8").read())
+        + "</section>"
+    )
+
+
+def cleanup_block(root):
+    p = os.path.join(root, "runs", "audit_0904", "cleanup.jsonl")
+    if not os.path.exists(p):
+        return ""
+    trs = []
+    for ln in open(p, encoding="utf-8"):
+        if not ln.strip():
+            continue
+        r = json.loads(ln)
+        st = r.get("state") or "open"
+        cls = "ok" if st == "done" else "pend"
+        trs.append(
+            f"<tr><td>{_esc(r.get('id', ''))}</td><td>{_esc(r.get('owner', ''))}</td>"
+            f"<td class='claim'>{_esc(r.get('item') or r.get('action', ''))}</td>"
+            f"<td>{chip(st, cls)}</td><td>{_esc(r.get('evidence', ''))}</td></tr>"
+        )
+    return (
+        '<section class="audit"><h1>清理清单（cleanup_0904）</h1>'
+        "<table class='findings'><tr><th>id</th><th>owner</th><th>项</th>"
+        f"<th>状态</th><th>证据</th></tr>{''.join(trs)}</table></section>"
+    )
+
+
 def render_page(reports, findings, unparsed, old_html):
     sha = (
         subprocess.run(
@@ -498,7 +589,7 @@ table.findings {{ width:100%; border-collapse:collapse; margin-top:8px;
 .old {{ border-top:2px solid var(--line); margin-top:28px; }}
 </style></head>
 <body>
-{audit}
+{state_block(ROOT)}{cleanup_block(ROOT)}{audit}
 <section class="old">{old_body}</section>
 </body></html>
 """
@@ -565,6 +656,22 @@ T-1 holds on the numbers; T-2 fails the sign check.
         open(ap, "w").write(good.replace("| T-2 | S2 |", "| T-X | S9 |"))
         rep = read_report(ap)
         assert len(rep["findings"]) == 3 and len(rep["unparsed"]) == 1
+        # state/cleanup blocks: absent -> empty, present -> rendered
+        with tempfile.TemporaryDirectory() as td:
+            assert state_block(td) == "" and cleanup_block(td) == ""
+            os.makedirs(os.path.join(td, "docs", "standards"))
+            os.makedirs(os.path.join(td, "runs", "audit_0904"))
+            open(os.path.join(td, "docs", "standards", "state_0904.md"), "w").write(
+                "# 现状\n\n## user_facing\n\n- **stands**: x\n- retracted: y\n\n| a | b |\n|---|---|\n| 1 | 2 |\n"
+            )
+            open(os.path.join(td, "runs", "audit_0904", "cleanup.jsonl"), "w").write(
+                '{"id": "C9", "owner": "98", "item": "amend", "state": "done", "evidence": "abc1234"}\n'
+                '{"id": "C1", "owner": "tilerl", "item": "kill loops", "state": "open", "evidence": ""}\n'
+            )
+            sb = state_block(td)
+            assert "<strong>stands</strong>" in sb and "<th>a</th>" in sb and "<td>2</td>" in sb, sb
+            cb = cleanup_block(td)
+            assert 'class="chip ok">done' in cb and "abc1234" in cb and 'class="chip pend">open' in cb, cb
     print("selftest ok")
 
 
