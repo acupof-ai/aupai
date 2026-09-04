@@ -52,6 +52,17 @@ class UnregisteredEval(KeyError):
 # not a question at all, and it REQUIRES a `why` saying what the surface is: without that,
 # None becomes the value someone reaches for when they have not looked, and the registry
 # records "no question here" where it means "nobody checked".
+#
+# data/probes/ IS THE OPPOSITE OF A HOLDOUT AND MUST NEVER BE REGISTERED HERE (4c's ruling,
+# 2026-09-05). A registry entry tells every corpus builder to EXCLUDE that file's items from
+# the pretraining corpus. A probe item file is drawn FROM the corpus on purpose -- readout 2's
+# api_cloze.jsonl samples rows the control TRAINED on, and its whole estimator depends on those
+# rows having been trained on -- so registering it would exclude real training rows to protect
+# an eval that requires them included, which is this registry's purpose inverted. That is why
+# the file lives under data/probes/ and not data/eval/: every file under data/eval/ must appear
+# here, and check_eval_registry_complete FAILed on the pod for as long as this one sat there.
+# A probe whose items must NOT reach the corpus is a holdout and belongs in data/eval/ with an
+# entry; the test is which way the contamination runs, not the word "probe".
 REGISTRY = {
     "math_test_500": {
         "path": "data/eval/math_test_500.jsonl",
