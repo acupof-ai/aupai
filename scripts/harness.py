@@ -999,8 +999,8 @@ def check_selftests_are_gated(root):
         if "--selftest" in strip_docstrings(body):
             have.add(rel)
         # A RUNNABLE test_*.py IS A SELFTEST WHETHER OR NOT IT CARRIES THE FLAG (de,
-        # 2026-09-04, measured: 63 test_*.py tracked, 37 runnable, 19 of those in neither
-        # map). The population above is "files containing the string --selftest", so a
+        # 2026-09-04, measured: 63 test_*.py tracked, 53 runnable by `if __name__`, 19 of
+        # those in neither map). The population above is "files containing the string --selftest", so a
         # test_*.py with a main() and no flag was outside this check by construction --
         # the third time this check's population has been narrower than its property, after
         # the four-directory listdir blind to mathbank/ and the argparse-only predicate
@@ -11169,7 +11169,7 @@ def _selftest_flagless_test_is_gated():
     on purpose: scripts/test_resume_accumulates.py, whose docstring explains it deliberately
     carries no --selftest. Under the old population it was invisible with docstrings stripped,
     which is exactly the blindness being fixed -- pick a flag-carrying file here and the
-    mutation proves nothing about the widening (measured: 63 test_*.py tracked, 37 runnable,
+    mutation proves nothing about the widening (measured: 63 test_*.py tracked, 53 runnable,
     19 in neither map before this).
 
     Also asserts the NEGATIVE, because a predicate that fires on every test_*.py would pass
