@@ -1,0 +1,63 @@
+{
+  "memory_diag": {
+    "path": "runs/memory_diag.jsonl",
+    "written_by": "train.py, every 100 steps, rank 0 only",
+    "read_by": "harness check memory_diag_fresh; 98's progress page; readout 4 of memory_layers_0905",
+    "row_identity": ["name", "step"],
+    "append_only": true,
+    "fields": {
+      "name": {
+        "type": "str",
+        "required": true,
+        "why": "the ARM name (m1, m2, m3), not the run kind. Readout 3 is M2 vs M1 vs the control and 98 draws three curves, so a ledger keyed only on step folds the three arms into one line. --name from the launch, so it matches the experiments row and the checkpoint."
+      },
+      "step": {
+        "type": "int",
+        "required": true,
+        "min": 0,
+        "why": "optimizer step, not tokens: the stop rules in readouts 4 and 5 are stated in steps (tok/s at 30, pool_touched at 1000) and a reader must not have to convert."
+      },
+      "pool_touched_frac": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "max": 1.0,
+        "why": "fraction of memory values touched in the window since the last row -- readout 4's collapse detector, stop below 0.20 at step 1000. A FRACTION, not a count: the count is not comparable between M1 (1,048,576 values) and M2 (262,144), which is the comparison readout 3 exists to make."
+      },
+      "topk_entropy": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "why": "entropy of the top-k weight distribution in nats, mean over the window. 0 means one value takes all the weight; ln(k)=ln(32)=3.466 is uniform over the top-k. Unbounded above is wrong but harmless -- pinning max=ln(k) here would make the schema depend on the arm's k."
+      },
+      "key_gini": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "max": 1.0,
+        "why": "Gini of the key-usage histogram over the window. 0 is uniform use, 1 is one key. Distinguishes the two collapse shapes pool_touched_frac cannot separate: a pool can be 90% touched and still be one hot key per row."
+      },
+      "tok_s_gpu": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "why": "readout 5's stop rule: below 70000 at step 30 the arm stops. Per GPU, so it compares against the control's 82K regardless of world size -- an aggregate would read as a pass at any world."
+      },
+      "n_values": {
+        "type": "int",
+        "required": false,
+        "why": "size of the pool this row measured. Optional and recorded anyway: pool_touched_frac is a ratio, and a ratio whose denominator is not written down cannot be re-derived if the arm's config is later disputed."
+      },
+      "topk": {
+        "type": "int",
+        "required": false,
+        "why": "the k of the top-k. Same reason as n_values: it is the scale of topk_entropy, and ln(k) is the only reference value a reader can compare against."
+      },
+      "ts": {
+        "type": "str",
+        "required": false,
+        "why": "wall clock, UTC, YYYY-MM-DD HH:MM:SS. The freshness check uses step distance, not time, because a stalled run keeps its last step while the clock advances -- so this is for humans reading the file, never for a gate."
+      }
+    }
+  }
+}
