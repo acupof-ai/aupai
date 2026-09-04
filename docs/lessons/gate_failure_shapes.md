@@ -89,12 +89,13 @@ The mutation never landed or its verification reads the wrong signal.
 
 Cannot see: whether the mutation reached the code path the check exercises (§81).
 
-### R2-d Parser reads prose as code (5 incidents)
+### R2-d Parser reads prose as code (6 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
 - §61: a substring/word match read a comment mentioning the symbol as evidence the symbol was used.
 - §94: a symbol's name was present in the file, read as "assigned"; the name appeared in a string, not an assignment.
+- §194: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
 
 Cannot see: whether a text match is reading behavior or prose (§56, §77, §141).
 
@@ -116,7 +117,7 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (29 incidents)
+### R2-g Criterion answers an adjacent question (30 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
