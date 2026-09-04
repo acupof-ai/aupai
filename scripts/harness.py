@@ -10654,41 +10654,68 @@ def check_no_ghost_close(root):
 
 
 def _broken_no_ghost_close():
-    """The REAL ledger with the two events f4d48444 pulled home removed -- the world as it was.
+    """The REAL ledger, with every TERMINAL event under armA's 09:09 key removed.
 
-    Mutated, not hand-written, and the mutation is a DELETION of real rows rather than an edit, so
-    there is no size-preserving-pyc question here (this world runs no python it wrote). Removing
-    armA's `error` and `dropped` events restores exactly the state 6e reported: the pod held the
-    measurement, 09:09 read `running`, and a `fail vanished` row stood under 11:10. Measured
-    2026-09-04: 1 ghost in this world, 0 in the real ledger.
+    Mutated, not hand-written: the ledger is the real file and the mutation is a deletion of real
+    rows, so there is no size-preserving-pyc question (this world runs no python it wrote). What it
+    restores is the state 6e reported -- 09:09 open, a terminal row standing under the later 11:10
+    key -- which is a ghost close by this check's predicate.
 
-    The check that this world is load-bearing and not merely different: it must hold a terminal row
-    under a LATER `started` than a still-open key of the same name. Asserted here, because a future
-    edit to armA's rows could leave the deletion valid and the property absent.
+    KEYED, NOT ROW-FILTERED, and that correction is why this world exists in its second form. The
+    first version deleted armA's `error` and `dropped` rows by status and asserted the property with
+    a per-ROW test: some open row earlier than some closed row. That was true of the ledger it was
+    written against and stopped being true hours later, when two `ok` rows for 09:09 arrived from
+    b0's doc_cu pass -- the key was then closed, the world held no ghost, and the check PASSED on its
+    own broken world. CI caught it as `no_ghost_close reported PASS on its broken world` (run
+    33890047643); locally it had been green all along, because a repair that lands between writing a
+    world and running it is invisible to a per-row assertion. So the deletion is now defined by the
+    property: every terminal event under the chosen key goes, whatever its status, which leaves the
+    key open by construction.
+
+    The assertion uses check_no_ghost_close's OWN predicate rather than restating it. A world that
+    re-implements what it is testing can agree with a broken check, and this world's whole failure
+    mode was an assertion that disagreed with the check it guards.
     """
     d = _tmp_repo()
     src = os.path.join(ROOT, "runs", "experiments.jsonl")
-    kept = []
+    rows = []
     for line in open(src, encoding="utf-8"):
         if not line.strip():
             continue
         try:
-            r = json.loads(line)
+            rows.append(json.loads(line))
         except Exception:
             continue
-        if r.get("name") == "b0_headmix_armA" and str(r.get("status")) in ("error", "dropped"):
+    # The key to open: one that has BOTH an earlier key of the same name and terminal events of its
+    # own, so deleting those events leaves a ghost. armA is the incident and is tried first; any
+    # other name with two keys works identically, so the world survives armA being pruned.
+    by_name = {}
+    for r in rows:
+        by_name.setdefault(r.get("name"), set()).add(str(r.get("started")))
+    victim = None
+    for name in ["b0_headmix_armA"] + sorted(k for k in by_name if k != "b0_headmix_armA"):
+        starts = sorted(by_name.get(name) or [])
+        if len(starts) < 2:
             continue
-        kept.append(r)
-    arm = [r for r in kept if r.get("name") == "b0_headmix_armA"]
-    opens = {str(r.get("started")) for r in arm if _exp_open(r)}
-    closes = {str(r.get("started")) for r in arm if not _exp_open(r)}
-    assert opens and closes and min(opens) < max(closes), (
-        f"b0_headmix_armA no longer holds an open key earlier than a closed one "
-        f"(open {sorted(opens)}, closed {sorted(closes)}); this world would report no ghost and "
-        f"the check would pass on it untested")
+        # open the EARLIEST key; a later key of the same name then stands as the ghost close
+        if any(not _exp_open(r) for r in rows
+               if r.get("name") == name and str(r.get("started")) == starts[0]):
+            victim = (name, starts[0])
+            break
+    assert victim, ("no experiments name holds two keys with a terminal event under the earlier "
+                   "one; this world cannot construct a ghost close and the check would pass "
+                   "untested")
+    vname, vstart = victim
+    kept = [r for r in rows
+            if not (r.get("name") == vname and str(r.get("started")) == vstart
+                    and not _exp_open(r))]
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
         for r in kept:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    st, ev = check_no_ghost_close(d)
+    assert st == FAIL, (
+        f"opening {vname} at {vstart} did not produce a ghost close: the check reports {st} "
+        f"({ev[:120]}). The world must hold the property before it is allowed to judge the check")
     return d
 
 
@@ -11487,9 +11514,30 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
-            # is what separates "this machine was busy" from "this check never runs".
-            n = prev_strikes.get(name, 0) + 1
+            # AN UNREACHABLE POD IS NOT A TIMEOUT, and the strike counter must not move for one.
+            # 6e's ruling 2026-09-04, from a commit refused twice while the tn tunnel flapped: a
+            # deadline hit on an auth=pod check off-pod can mean the check hangs OR that there was
+            # nothing on the other end, and only the first is the check's fault. Banking strikes
+            # against a dropped tunnel is what produced "has not actually run since" on
+            # pod_stamp_is_main and snapshot_logs, both of which pass by hand in 2.9s and 9.3s, and
+            # a FAIL there blocks commits the check has nothing to say about.
+            unreachable = ""
+            if EVIDENCE.get(name) == "pod" and not pod_drift.is_pod(root):
+                ok, why = pod_reachable()
+                unreachable = "" if ok else why
+            limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
+            if unreachable:
+                # `strikes[name]` deliberately NOT set: only checks that timed out THIS run keep a
+                # count (see after the loop), so leaving it unset RESETS the counter, which is right
+                # -- a check that never got to run has not struck out.
+                state = SKIP
+                evidence = (f"pod-authoritative check, and the pod is unreachable from here: "
+                            f"{unreachable}. Not a timeout in the check -- rerun when the tunnel "
+                            f"is up")
+            else:
+                # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
+                # is what separates "this machine was busy" from "this check never runs".
+                n = prev_strikes.get(name, 0) + 1
             strikes[name] = n
             limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
             if n >= _TIMEOUT_STRIKES:
