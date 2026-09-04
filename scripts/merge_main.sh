@@ -10,6 +10,25 @@ LOCK=$MAIN/.git/merge_main.lock
 for _ in $(seq 1 120); do
   if mkdir "$LOCK" 2>/dev/null; then
     trap 'rmdir "$LOCK"' EXIT
+    # ALREADY AN ANCESTOR: nothing will ship, and git says only "Already up to date."
+    # 2026-09-04: `merge_main.sh b0` merged b0 at ccbc0891, already in main, while b0's real
+    # work was on b0-ve-rownorms. The merge printed success, exited 0, and what caught it was
+    # pod_push's unrelated "differs from main" refusal minutes later. The likeliest cause is
+    # the operator naming the wrong branch -- a stale local ref, or a branch that was renamed
+    # -- so the message names the tip and asks whether that is the branch meant.
+    #
+    # READ BEFORE THE MERGE, because afterwards the question cannot be asked: a merge that
+    # fast-forwards makes the branch an ancestor, so the same test run after would be true of
+    # every successful merge. WARN, not a refusal (6e): merging an ancestor is harmless and a
+    # refusal would break a legitimate no-op re-run. Exit code is unchanged.
+    if git -C "$MAIN" merge-base --is-ancestor "$1" main 2>/dev/null; then
+      _tip=$(git -C "$MAIN" rev-parse --short "$1" 2>/dev/null || echo "?")
+      _sub=$(git -C "$MAIN" log -1 --format=%s "$1" 2>/dev/null || echo "?")
+      echo "merge_main: WARNING -- $1 ($_tip) is already an ancestor of main, so this merge" >&2
+      echo "  ships nothing. Its tip is: $_sub" >&2
+      echo "  If that is not the work you meant to merge, you have named the wrong branch:" >&2
+      echo "  \`git branch --sort=-committerdate | head\` shows what moved most recently." >&2
+    fi
     if git -C "$MAIN" merge --no-edit "$1"; then
       # THE MERGE IS ALREADY A COMMIT HERE, so a drop cannot be aborted -- `git merge --abort`
       # only works before the commit exists, and `reset --hard` in the shared integration tree
