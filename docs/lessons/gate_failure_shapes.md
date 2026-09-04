@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (76 model-project incidents) and docs/lessons/infra_incidents.md (85 pod/infra incidents); 33 closed incidents removed 2026-09-04 (161 = 76 + 85); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (77 model-project incidents) and docs/lessons/infra_incidents.md (85 pod/infra incidents); 33 closed incidents removed 2026-09-04 (162 = 77 + 85); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -54,7 +54,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (18 incidents, 54h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
-- **R4** (10 incidents, 30h): failures must be loud. Owner: blank.
+- **R4** (11 incidents, 33h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
@@ -157,12 +157,12 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-10 incidents (7 infra, 3 model), ~3h each, 30h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+11 incidents (7 infra, 4 model), ~3h each, 33h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193).
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §194).
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
