@@ -123,7 +123,9 @@ def main():
     res["ms_topk"] = bench(topk_indices, q, k1, k2, a.topk, a.n_side)
 
     # embedding_bag reads the [N, topk] form directly as N bags of topk each.
-    res["ms_gather_embedding_bag"] = bench(gather_embedding_bag, values, idx, w.float())
+    # per_sample_weights must match the values dtype: embedding_bag refuses a float32
+    # weight against a bf16 table ("expected scalar type BFloat16 but found Float").
+    res["ms_gather_embedding_bag"] = bench(gather_embedding_bag, values, idx, w)
     res["ms_gather_index_select"] = bench(gather_index_select, values, idx, w)
 
     best = min(res["ms_gather_embedding_bag"], res["ms_gather_index_select"])
