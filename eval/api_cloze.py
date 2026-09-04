@@ -66,7 +66,17 @@ sys.path.insert(0, os.path.join(ROOT, "eval"))
 from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
 
 DOMAIN = "code_py_starcoder"
-DATA = os.path.join(ROOT, "data", "eval", "api_cloze.jsonl")
+#: NOT under data/eval/, and the distinction is load-bearing rather than cosmetic. Every file
+#: under data/eval/ must be in datagen/holdout.py's REGISTRY, whose job is keeping held-out
+#: items OUT of the pretraining corpus -- and these items are drawn FROM that corpus by
+#: construction: the SEEN half is literally rows the control trained on. Registering them would
+#: tell every corpus builder to EXCLUDE 929 real training rows to protect an eval that requires
+#: them included, which is the registry's purpose inverted. Measured 2026-09-05: with the file
+#: at data/eval/api_cloze.jsonl, check_eval_registry_complete FAILed on the pod naming it, and
+#: had done so since the file was first written. Location ruled by 4c; TRACKED, because the
+#: prereg cites this file's identity and a rebuildable artifact that decides a readout belongs
+#: in history.
+DATA = os.path.join(ROOT, "data", "probes", "api_cloze.jsonl")
 N_OPTIONS = 4  # gold + 3 distractors; chance = 0.25
 
 #: An attribute access whose object is a plain name and whose attribute is a real
