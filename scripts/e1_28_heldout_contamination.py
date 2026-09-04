@@ -144,6 +144,123 @@ def _scan_shard(path):
     return nl, nb, a_m, q_m
 
 
+def per_domain_alone(rows, a_index, domains, workers):
+    """Each domain's hit set measured INDEPENDENTLY, plus the first matching shard per item.
+
+    WHY THIS IS A SEPARATE PASS. main()'s running column prints `len(a_hit) - before`: what each
+    domain added to a growing UNION in mix order. It printed chat_qa +0, zh_web +0, code_py_rp1t +0 --
+    whose alone values are 1,515 / 81 / 57. chat_qa's +0 meant "added nothing new", because
+    build_chat_qa.py and build_chatml.py are two renders of data/corpus/chat, so chatml had already
+    contributed every one of those items. An incremental column cannot be read per domain, and the
+    exclusion list needs a per-item domain to separate a shared source from ordinary overlap.
+
+    Returns (per_domain, item_domains). per_domain[dom] carries the alone count, the scanned bytes and
+    the shards' size on disk; item_domains[id][dom] is the first shard that matched that item.
+    """
+    keys = frozenset(a_index)
+    global _A_KEYS, _Q_KEYS
+    _A_KEYS, _Q_KEYS = keys, frozenset()
+    per_domain, item_domains = {}, {}
+    for dom in domains:
+        d = os.path.join(CORPUS, dom)
+        if not os.path.isdir(d):
+            continue
+        shards = [os.path.join(d, f) for f in sorted(os.listdir(d)) if f.endswith(".jsonl")]
+        hit, nb = set(), 0
+        ctx = multiprocessing.get_context("fork")
+        with ctx.Pool(min(workers, max(1, len(shards)))) as pool:
+            for path, (_nl, s_nb, a_m, _q) in pool.imap_unordered(_shard_with_path, shards,
+                                                                  chunksize=1):
+                nb += s_nb
+                for g in a_m:
+                    for i in a_index[g]:
+                        hit.add(i)
+                        item_domains.setdefault(str(i), {}).setdefault(dom, os.path.basename(path))
+        on_disk = sum(os.path.getsize(s) for s in shards)
+        per_domain[dom] = {"alone": len(hit), "bytes": nb, "on_disk": on_disk,
+                           "ids": sorted(hit)}
+        print(f"  {dom:22s} alone {len(hit):5d}  {nb / 1e9:6.2f} GB  "
+              f"{100 * nb / on_disk:.1f}% of shards", flush=True)
+    return per_domain, item_domains
+
+
+def _shard_with_path(path):
+    """(path, _scan_shard(path)), so imap_unordered results can be attributed to their shard."""
+    return path, _scan_shard(path)
+
+
+def longest_run(a, b):
+    """Longest common contiguous word run between two token lists, by binary search on the length.
+
+    The classifier that separates 6e's two provenance cases: ~13-20 words is an ordinary shared
+    phrase and the 13-gram threshold is doing the work; most of the answer means the answer is IN the
+    corpus; all of it means one generator wrote both sides. Measured on chatml: 1,199 of 1,515
+    answers are a verbatim substring of one corpus document, and ZERO equal the whole document,
+    because the document also carries the question.
+
+    Binary search rather than a DP table: the answers run to 1,284 words and the documents longer, so
+    an O(len(a)*len(b)) table is hundreds of millions of cells per item. Monotone because a common run
+    of length k implies one of every length below k.
+    """
+    lo, hi, best = 0, min(len(a), len(b)), 0
+    while lo <= hi:
+        k = (lo + hi) // 2
+        if k == 0:
+            break
+        bg = {" ".join(b[i:i + k]) for i in range(len(b) - k + 1)}
+        if any(" ".join(a[i:i + k]) in bg for i in range(len(a) - k + 1)):
+            best, lo = k, k + 1
+        else:
+            hi = k - 1
+    return best
+
+
+def classify_domain(rows, a_index, dom):
+    """Per-item longest common run against the first matching document in one domain.
+
+    Streams the domain serially: it needs the matching document's TEXT, not just the fact of a match,
+    and the domains worth classifying (chatml 0.17 GB) are small.
+    """
+    keys = frozenset(a_index)
+    by_id = {str(r["id"]): r for r in rows}
+    d = os.path.join(CORPUS, dom)
+    first = {}
+    for sh in sorted(f for f in os.listdir(d) if f.endswith(".jsonl")):
+        with open(os.path.join(d, sh), "rb") as fh:
+            for lineno, raw in enumerate(fh, 1):
+                try:
+                    obj = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    continue
+                t = obj.get("content") or obj.get("text") or ""
+                if not t:
+                    continue
+                toks = words(t)
+                ids = set()
+                for g in grams(toks):
+                    if g in keys:
+                        ids |= a_index[g]
+                for i in ids:
+                    if str(i) not in first:
+                        first[str(i)] = (sh, lineno, toks, t)
+        print(f"  {sh}: {len(first)} item(s) located", flush=True)
+    out = []
+    for i, (sh, lineno, toks, text) in first.items():
+        ans = words(by_id[i]["answer"])
+        run = longest_run(ans, toks)
+        # VERBATIM is tested on the text, not the token run: a substring test answers "is this answer
+        # in that document" directly, while the run length answers "how much of it".
+        norm_a = " ".join(by_id[i]["answer"].split())
+        norm_t = " ".join(text.split())
+        out.append({"id": i, "shard": sh, "line": lineno, "answer_words": len(ans),
+                    "doc_words": len(toks), "longest_run": run,
+                    "frac_of_answer": round(run / len(ans), 4) if ans else None,
+                    "verbatim_substring": norm_a in norm_t,
+                    "equals_whole_doc": norm_a == norm_t})
+    out.sort(key=lambda r: -(r["frac_of_answer"] or 0))
+    return out
+
+
 def main():
     if "--selftest" in sys.argv:
         return selftest()
@@ -169,6 +286,46 @@ def main():
             q_index.setdefault(g, set()).add(r["id"])
     print(f"index: {len(a_index):,} distinct answer {N}-grams, {len(q_index):,} question "
           f"{N}-grams")
+    workers = int(os.environ.get("E1_28_WORKERS", "32"))
+    with open(MIX, encoding="utf-8") as fh:
+        all_domains = list(json.load(fh)["domains"])
+
+    # THE TWO ANALYSES THAT ANSWER "what does the rate mean", as flags on this one scanner rather
+    # than as separate scripts: 6e's ruling 2026-09-04 was one scanner with one selftest, and two
+    # files sharing an index-building path is how the index drifts between them.
+    if "--per-domain-alone" in sys.argv:
+        per_domain, item_domains = per_domain_alone(rows, a_index, all_domains, workers)
+        union = set()
+        for v in per_domain.values():
+            union |= {str(i) for i in v["ids"]}
+        dest = os.path.join(ROOT, "runs", "e1_28", "e1_28_per_domain_alone.json")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as fh:
+            json.dump({"per_domain": per_domain, "item_domains": item_domains,
+                       "union": sorted(union)}, fh)
+        print(f"union {len(union)}  sum-of-alone "
+              f"{sum(v['alone'] for v in per_domain.values())}")
+        print(f"wrote {dest}")
+        return 0
+    if "--classify" in sys.argv:
+        dom = sys.argv[sys.argv.index("--classify") + 1]
+        out = classify_domain(rows, a_index, dom)
+        dest = os.path.join(ROOT, "runs", "e1_28", f"e1_28_prov_{dom}.json")
+        os.makedirs(os.path.dirname(dest), exist_ok=True)
+        with open(dest, "w", encoding="utf-8") as fh:
+            json.dump(out, fh, indent=1)
+        runs = sorted(r["longest_run"] for r in out)
+        print(f"\n{dom}: {len(out)} item(s) located")
+        print(f"verbatim substring of one doc: {sum(1 for r in out if r['verbatim_substring'])}")
+        print(f"equal to the whole doc: {sum(1 for r in out if r['equals_whole_doc'])}")
+        print(f"longest common run: median {runs[len(runs) // 2]} words, min {runs[0]}, "
+              f"max {runs[-1]}")
+        for cut in (0.25, 0.5, 0.9, 0.99):
+            print(f"  >={int(100 * cut)}% of the answer's words in one run: "
+                  f"{sum(1 for r in out if (r['frac_of_answer'] or 0) >= cut)}")
+        print(f"wrote {dest}")
+        return 0
+
     short = sum(1 for r in rows if len(words(r["answer"])) < N)
     if short:
         # AN ITEM SHORTER THAN THE WINDOW CAN NEVER HIT, so it is a structural zero, not a clean
@@ -178,8 +335,7 @@ def main():
 
     with open(MIX, encoding="utf-8") as fh:
         domains = list(json.load(fh)["domains"])
-    # RESUME STATE. The hit set is a UNION over domains, so replaying a prefix of the domain list is
-    # exactly equivalent to having scanned it -- that is what makes a per-domain checkpoint sound
+    # RESUME STATE. The hit set is a UNION over domains, so replaying a prefix of the domain list is    # exactly equivalent to having scanned it -- that is what makes a per-domain checkpoint sound
     # here and would not hold for a running mean.
     prog_path = os.path.join(ROOT, "runs", "e1_28_progress.json")
     a_hit, q_hit = set(), set()
@@ -212,12 +368,11 @@ def main():
     # over lines and therefore over shards, and shard order and grouping cannot change it. This would
     # NOT hold for a running mean, a first-hit location, or a per-shard rate.
     #
-    # Workers return MATCHED GRAM HASHES, not ids: the id-bearing dict (1.18M grams -> id sets) stays
-    # in the parent and each worker carries only the frozenset of hashes to test membership against
-    # (~1.18M 8-byte keys). A match is rare, so the returned sets are tiny.
+    # Workers return MATCHED GRAM HASHES, not ids: the id-bearing dict (1.07M answer grams -> id sets)
+    # stays in the parent and each worker carries only the frozenset of hashes to test membership
+    # against. A match is rare, so the returned sets are tiny.
     global _A_KEYS, _Q_KEYS
     _A_KEYS, _Q_KEYS = frozenset(a_index), frozenset(q_index)
-    workers = int(os.environ.get("E1_28_WORKERS", "32"))
     print(f"scanning with {workers} worker process(es) over shards (serial was 4.18 MB/s measured, "
           f"10.7 h for the corpus)", flush=True)
     for dom in domains:
@@ -378,6 +533,51 @@ def selftest():
         if n_bytes != on_disk:
             print(f"  FAIL counted {n_bytes} but the shard is {on_disk} bytes on disk; the byte "
                   f"column is counting characters")
+            bad += 1
+    # longest_run's known answers. This is what separates "the answer is IN the corpus" from "13 words
+    # of it are", so a wrong answer here mislabels the whole provenance question.
+    A = ["alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"]
+    if longest_run(A, ["xx"] + A + ["yy"]) != 7:
+        print("  FAIL longest_run missed a fully contained run")
+        bad += 1
+    if longest_run(A, ["alpha", "beta", "gamma", "zz", "epsilon", "zeta", "eta"]) != 3:
+        print("  FAIL longest_run did not stop at the break; a split run must not count as one")
+        bad += 1
+    if longest_run(A, ["nothing", "shared", "at", "all", "here"]) != 0:
+        print("  FAIL longest_run found a run between disjoint texts")
+        bad += 1
+    # THE INCREMENTAL-VS-ALONE DISTINCTION, on a fixture that reproduces the real defect: two domains
+    # holding the SAME document (chatml/chat_qa are two renders of one source). Incrementally the
+    # second adds 0; alone it holds the item. A per_domain_alone that shared state between domains
+    # would print 0 for the second and the exclusion list would name one domain instead of two.
+    with _tf.TemporaryDirectory() as d2:
+        span2 = ("one two three four five six seven eight nine ten eleven twelve thirteen "
+                 "fourteen")
+        idx2 = {}
+        for g in grams(words(span2)):
+            idx2.setdefault(g, set()).add("dup-1")
+        doms = ["dom_a", "dom_b"]
+        for dom in doms:
+            os.makedirs(os.path.join(d2, "data", "corpus", dom))
+            with open(os.path.join(d2, "data", "corpus", dom, "s.jsonl"), "w",
+                      encoding="utf-8") as fh:
+                fh.write(json.dumps({"content": "lead in " + span2 + " tail"}) + "\n")
+        global CORPUS
+        real_corpus = CORPUS
+        try:
+            CORPUS = os.path.join(d2, "data", "corpus")
+            rows2 = [{"id": "dup-1", "answer": span2, "question": "q"}]
+            pd2, where2 = per_domain_alone(rows2, idx2, doms, 2)
+        finally:
+            CORPUS = real_corpus
+        if pd2["dom_a"]["alone"] != 1 or pd2["dom_b"]["alone"] != 1:
+            print(f"  FAIL a document present in BOTH domains gave alone counts "
+                  f"{pd2['dom_a']['alone']}/{pd2['dom_b']['alone']}, expected 1/1 -- state is "
+                  f"leaking between domains, which is the incremental column's defect")
+            bad += 1
+        if sorted(where2.get("dup-1", {})) != doms:
+            print(f"  FAIL the item->domain map names {sorted(where2.get('dup-1', {}))}, not both "
+                  f"domains; the exclusion list could not separate a shared source")
             bad += 1
     print(f"e1_28 selftest: {'OK' if not bad else f'{bad} FAILURE(S)'}")
     return 1 if bad else 0

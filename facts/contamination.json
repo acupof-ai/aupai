@@ -745,6 +745,48 @@
    "claim": "data/sft/sft_all.pt contained 19/20 sampled code-500 questions verbatim, so the SFT zero-shot code-500 reading of 16.6% was declared VOID.",
    "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild.",
    "retracted_value": []
+  },
+  {
+   "id": "cont.heldout_in_pretrain_corpus",
+   "value": {
+    "answer_hits": 2114,
+    "measurable_denominator": 7523,
+    "answer_hit_rate": 0.281,
+    "population": 10421,
+    "answers_under_13_words": 2898,
+    "question_hits": 2364,
+    "chatml_verbatim_substring": 1199,
+    "chatml_hits": 1515,
+    "per_domain_alone": {
+     "math_owm_stage2": 542,
+     "en_c4_stage2": 22,
+     "cot": 334,
+     "textbook_30b": 185,
+     "chatml": 1515,
+     "chat_qa": 1515,
+     "zh_web": 81,
+     "code_py_starcoder": 239,
+     "code_py_rp1t": 57
+    },
+    "union": 2114,
+    "sum_of_alone": 4490
+   },
+   "measured": "2026-09-04",
+   "source": "scripts/e1_28_heldout_contamination.py, one scanner three modes: default (whole-corpus 48-worker shard-parallel) -> runs/e1_28/e1_28_heldout_contamination.json and runs/e1_28/e1_28_scan.log; --per-domain-alone (each domain independently, plus the item->domain map) -> runs/e1_28/e1_28_per_domain_alone.json and runs/e1_28/e1_28_alone.log; --classify chatml (per-item longest common run and verbatim test) -> runs/e1_28/e1_28_prov_chatml.json ; held-out set data/sft/control_sft_text_heldout.jsonl restricted to runs/heldout_v2/ids_shared.txt (10,421 rows). The artifacts were produced on the pod and copied back verbatim; the two analysis modes were folded into the scanner afterwards from the pod-side drivers that produced them, so the committed code and the artifacts share one index-building path.",
+   "config": {
+    "host": "pod, CPU only, no card",
+    "counting_rule": "word 13-grams, lowercased, unicode word class; an item HITS if any 13-gram of its ANSWER appears in any corpus line. The answer, not the question: the floor scores nll over supervised tokens = the answer. Question hits reported separately.",
+    "denominator": "7,523 = the 10,421 scored ids minus 2,898 whose answers are under 13 words and therefore CANNOT hit at this n. Those 2,898 are UNMEASURABLE at n=13, not clean; counting them as clean would give 20.3% and understate the measured items.",
+    "corpus": "160.97 GB on disk over 9 domains, 29,984,286 lines, 100.0% of every domain's shards read",
+    "per_domain_is_ALONE": "each domain measured independently against the full index. The scan's own running column is INCREMENTAL over a growing union in mix order and cannot be read per domain: it printed chat_qa +0, zh_web +0, rp1t +0, whose alone values are 1,515 / 81 / 57. sum_of_alone 4,490 vs union 2,114 means 2,376 item-hits are shared across domains.",
+    "chatml_and_chat_qa_are_ONE_source": "both hit exactly 1,515 items because they are two renders of data/corpus/chat -- datagen/build_chatml.py (ChatML) and datagen/build_chat_qa.py (original 问:/答: form), fb KEEP ruling 2026-09-01. One contamination source, 71.7% of all hits, from 0.33 GB of the 160.97.",
+    "mechanism": "the corpus document IS the held-out row: <|im_start|>user\\n{question}<|im_end|>\\n<|im_start|>assistant\\n{answer}<|im_end|>. 1,199 of 1,515 answers are a verbatim substring of one corpus document; 1,247 have >=99% of their words in one contiguous run, 1,310 >=90%, 109 share only a 13-gram. ZERO equal the whole document, because the document also carries the question.",
+    "cause": "datagen/holdout.py's EVAL_FILES lists four math/code eval files and NOT control_sft_text_heldout.jsonl. Both corpus builders call is_holdout per row and both emitted a holdout slice (chatml's is 59 bytes, one line), so the guard RAN -- its population lacked the file. Same source on both sides: prepare_sft.SOURCES[0] is data/alpaca_gpt4_zh.jsonl, Chinese instruction QA, and data/corpus/chat is the same material.",
+    "fingerprint": "ids c3895c21973bf49b over this script's serialisation; the audit's cae4daf7ad59388c is over its own. The ROW COUNT 10,421 is the check that carries weight, and it is asserted before any scanning -- an int-vs-str id mismatch matched 0 of 10,421 and that assertion is what caught it."
+   },
+   "uncertainty": "THE CONSUMED-ROWS RATE IS UNMEASURED. This is containment in the corpus ON DISK, not in the rows the 200M run actually read. row_cursor (1,189,548) counts TOKEN-BLOCK rows (cache.numel()//(seq+1)), the corpus is documents, and the pre-tokenize shuffle at train.py:1456 means the first N documents are not the first N of the token cache -- so no instrument here maps cursor to documents. 6e's ruling 2026-09-04: do not build the doc-level cursor now. Direction of the bound: the run consumed a fraction of each domain, so the consumed-rows rate is AT MOST 28.10% and its true value is unknown.",
+   "boundary": "The Pile side is UNMEASURED and unmeasurable here -- the control arm's pretraining corpus is not on this machine, so this halves the confound rather than closing it. The floor re-score on the clean subset is NOT in this fact: it is a card decision. SUPERSEDES the 316-item exclusion in runs/e1_28_matched.json, which docs/audits/control_pythia160m_vs_ours.md 5.3d used for its clean-subset re-score: scripts/e1_28_leak_scan.py read 5.0-13.2% of each domain's documents because it treated cursor rows as documents, and its coverage guard was in the same wrong unit so it never fired. That scan also saw chatml and chat_qa report 808 char-hits EACH and filtered the identical count away as markdown formatting; it was the shared source.",
+   "status": "measured"
   }
  ]
 }
