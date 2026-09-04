@@ -1110,27 +1110,72 @@ def main():
     # PARTIAL would have recorded it as data-exempt, which is false and would mislead
     # the next reader of NEEDS_DATA.
     SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict"}
+    # A TEST ALSO RUNS WHEN ITS SUBJECT IS STAGED, not only when the test file itself is.
+    #
+    # MEASURED 2026-09-04, by staging a real defect and running this hook: dropping `demo_lang`
+    # from eval/l1_fewshot.py's artifact name -- which collides the zh and en cells of the 2x2 onto
+    # one file, the shape be.l1_3shot_retracted records -- committed GREEN with `selftests 0.07s`,
+    # i.e. zero selftests ran. eval/test_l1_fewshot_2x2.py holds 13 checks that go red on exactly
+    # that edit and is correctly listed in SELFTEST_FILES, but the loop intersects the map with the
+    # STAGED set, so a test only runs when someone edits the test. The file under test is the file
+    # that changes.
+    #
+    # Keyed on the subject, listing the tests that read it. Only pairs where the test genuinely
+    # exercises the subject go here -- a test listed against a file it does not read costs seconds
+    # on every commit and buys nothing.
+    TESTS_FOR_SUBJECT = {
+        "eval/l1_fewshot.py": {"eval/test_l1_fewshot_2x2.py", "eval/score_matrix.py"},
+        # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
+        # verify_artifact and the transcriber, so a change to either file can break it.
+        "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
+        "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
+    }
+    _subject_tests = set()
+    for _subj in staged("AM"):
+        _subject_tests |= TESTS_FOR_SUBJECT.get(_subj, set())
+    # Restricted to the map: a test pulled in this way still has to be one the hook can run here,
+    # or a NEEDS_DATA file would be launched on a box without its data and fail for the wrong
+    # reason. Its own staged-ness is irrelevant, so `git show :<f>` cannot be used for those --
+    # handled below.
+    _subject_tests &= (SELFTEST_FILES | set(PARTIAL))
+
     # Measured per selftest, not once around the loop, so the refusal can name WHICH
     # one did it (e1-14). A single before/after pair would say "something changed".
     state_before = _shared_repo_state(repo_root())
     try:
-        for f in sorted((SELFTEST_FILES | set(PARTIAL)) & set(staged("AM"))):
-            blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
-            if blob.returncode != 0:
-                print(f"REFUSING: cannot read staged {f}", file=sys.stderr)
-                sys.exit(1)
+        for f in sorted(((SELFTEST_FILES | set(PARTIAL)) & set(staged("AM"))) | _subject_tests):
+            # A staged file is read from the INDEX (the version being committed); a test pulled in
+            # because its subject changed is read from the WORKING TREE, since it is not staged and
+            # `git show :<f>` would fail or return an older blob. Both are the version that will be
+            # in effect after this commit.
+            if f in set(staged("AM")):
+                blob = subprocess.run(["git", "show", f":{f}"], capture_output=True)
+                if blob.returncode != 0:
+                    print(f"REFUSING: cannot read staged {f}", file=sys.stderr)
+                    sys.exit(1)
+                content = blob.stdout
+            else:
+                try:
+                    with open(os.path.join(repo_root(), f), "rb") as fh:
+                        content = fh.read()
+                except OSError as e:
+                    print(f"REFUSING: cannot read {f} ({e}); it guards a staged file",
+                          file=sys.stderr)
+                    sys.exit(1)
             d, base = os.path.split(os.path.join(repo_root(), f))
             dst = os.path.join(d, f".hookstaged_{base}")
             staged_copies.append(dst)
             with open(dst, "wb") as fh:
-                fh.write(blob.stdout)
+                fh.write(content)
             flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             r = subprocess.run([sys.executable, dst, flag], capture_output=True,
                                text=True, cwd=repo_root(),
                                env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
-                print(f"REFUSING: {f} {flag} failed (staged version):\n" + "\n".join(tail),
+                _origin = ("staged version" if f in set(staged("AM"))
+                           else "working tree; it guards a staged file")
+                print(f"REFUSING: {f} {flag} failed ({_origin}):\n" + "\n".join(tail),
                       file=sys.stderr)
                 sys.exit(1)
             # A selftest that PASSED can still have written to the shared repo, and that

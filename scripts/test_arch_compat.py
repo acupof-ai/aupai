@@ -710,12 +710,19 @@ def _gpu_check(cfg, B, T, cu):
     xg = _torch.randn(B, T, cfg.d).cuda().to(_torch.bfloat16)
     mg = _train.GatedMLA(cfg).cuda().to(_torch.bfloat16).eval()
     cug = cu.cuda().to(_torch.int32)
-    real = _train.flash_attn_varlen_func
+    # PATCH THE MODULE THAT OWNS THE SYMBOL. This read `_train.flash_attn_varlen_func`, and
+    # train.py:135 re-exports 14 names from model -- flash_attn_varlen_func is not one of them.
+    # So this line raised AttributeError and _gpu_check NEVER RAN, taking all three asserts
+    # below with it (2026-09-04, found while running this before the head-hybrid edit; the
+    # symbol has never been on train, at 28ae5917 which added this or at any commit since).
+    # GatedMLA.forward resolves it as a model-module global, so model is the only binding that
+    # changes what the mixer calls; patching train would not have counted anything either.
+    real = _model.flash_attn_varlen_func
     n = [0]
     def _shim(*a, **k):
         n[0] += 1
         return real(*a, **k)
-    _train.flash_attn_varlen_func = _shim
+    _model.flash_attn_varlen_func = _shim
     try:
         # autocast, as training does: rms_norm returns fp32 otherwise and flash refuses it.
         with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
@@ -726,7 +733,7 @@ def _gpu_check(cfg, B, T, cu):
             naive = mg(xg, None)       # no cu: plain causal, the mask absent
             _train.HAS_FA = _model.HAS_FA = True
     finally:
-        _train.flash_attn_varlen_func = real
+        _model.flash_attn_varlen_func = real
     d = (flash.float() - ref.float()).abs().max().item()
     gap = (ref.float() - naive.float()).abs().max().item()
     assert gap > 10 * d, f"mask barely changes output (gap {gap:.4f} vs diff {d:.4f}) -- test cannot fail"
@@ -750,14 +757,20 @@ else:
 # move when it regresses -- 81K in both arms of the lane test -- so nothing else in the suite
 # would catch it. This asserts the wrap by its effect on a traced function, not by looking for
 # an attribute name that a torch bump could rename.
-if _train.HAS_FA:
-    _f = _train.flash_attn_varlen_func
+#
+# ON _model, NOT _train, and this site was broken the same way as _gpu_check's: train.py:135
+# re-exports 14 names from model and flash_attn_varlen_func is not one of them, so this raised
+# AttributeError and the assert never ran (2026-09-04). Its own message pointed at "train.py's
+# flash import block", which is where the wrap is NOT -- model.py:52-60 holds it. Two sites in
+# one file reading the same nonexistent attribute is why this is a ruling and not a typo.
+if _model.HAS_FA:
+    _f = _model.flash_attn_varlen_func
     _marker = getattr(_f, "_torchdynamo_disable", None)
     assert _marker, (
         "flash_attn_varlen_func is not wrapped in torch._dynamo.disable. Its shape asserts "
         "(cute/interface.py:376/381/384) specialise dynamo on the unbounded document count, "
         "which reopens permanent recompilation at ~54.9 ms/step with NO tok/s signal. "
-        "Restore the wrap at train.py's flash import block."
+        "Restore the wrap at model.py's flash import block."
     )
     print("flash_attn_varlen_func is dynamo-disabled OK")
 else:

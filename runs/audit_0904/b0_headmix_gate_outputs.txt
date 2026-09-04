@@ -1,0 +1,70 @@
+b0 head-hybrid arm B: the equivalence gate's four outputs, PRE-EDIT.
+Recorded 2026-09-04 on the pod, card 5 (granted, runs/card_assignment.json), model.py UNTOUCHED.
+Gate: runs/audit_0904/b0_headmix_bitwise_gate.py at 52fc915a.
+
+The two PASSes below are worth nothing on their own -- this gate was adjusted five times before
+it first agreed (bad import, dead CASES list, single-slot baseline, CPU->CUDA, fp32->bf16, the
+summary statistic), which is the shape of an instrument tuned until it agrees. The two FAILs are
+what make the PASSes readable: they show the gate reports DIFFERS when the model really differs.
+
+Both baselines are PRE-edit, so these PASSes compare today's code with itself. Their job is to
+fix the reference; the post-edit --check is the actual test.
+
+=== PASS 1: d768L12h6, ckpt_b0_sd_unlooped.pt, unperturbed ===
+d768L12h6: baseline 733d729d743a3e19  now 733d729d743a3e19  ->  IDENTICAL
+  logits [2, 64, 32784]: the inner=None path matches the code it replaced at bf16 resolution, the precision the training path runs at
+  sum over [:32773] -4929947.730082078
+
+=== PASS 2: d1024L12h8, ckpt_data_leg_206m_8b.pt, unperturbed ===
+d1024L12h8: baseline 84920c28d10664e7  now 84920c28d10664e7  ->  IDENTICAL
+  logits [2, 64, 32784]: the inner=None path matches the code it replaced at bf16 resolution, the precision the training path runs at
+  sum over [:32773] -3569709.1553877806
+
+=== FAIL 1: --perturb kda  (deepest path: block 0, its change traverses every later block) ===
+  perturbed blocks.0.mixer.qkv.weight[0,:] (768 elements, 768 moved by one BF16 ulp; first of 9 such tensors)
+d768L12h6: baseline 733d729d743a3e19  now 3636b157b80502cf  ->  DIFFERS
+  sum over [:32773] was -4929947.730082078, now -4941323.712040253
+exit 1
+
+=== FAIL 2: --perturb mla  (shallowest path: only the final norm and head follow it) ===
+  perturbed blocks.11.mixer.kv_down.weight[0,:] (768 elements, 768 moved by one BF16 ulp; last of 3 such tensors)
+d768L12h6: baseline 733d729d743a3e19  now 6c7df168dea91216  ->  DIFFERS
+  sum over [:32773] was -4929947.730082078, now -4929131.105647517
+exit 1
+
+Block 11 is verified as the LAST MLA layer, not assumed: model.py:386 selects MLA at
+i % attn_every == attn_every - 1, so at L12/attn_every 4 the MLA blocks are 3, 7, 11.
+
+--------------------------------------------------------------------------------
+WHAT THE PASS BOUNDS. Two limits, both measured on this hardware, both of which the fixture
+got wrong first. Stating them because "bitwise identical" would overclaim the result.
+
+1. ONE BF16 ULP IN A WEIGHT IS THE FLOOR. Weights are stored fp32 and the forward runs under
+   bf16 autocast. One fp32 ulp at 0.017333984375 is 0.01733398623764515; bf16's neighbouring
+   value is 0.0174560546875, ~700x further. The first fixture stepped one fp32 ulp and BOTH
+   sites reported IDENTICAL -- autocast rounded the perturbation away before the kernel saw it.
+   A change below one bf16 step is invisible here by construction.
+
+2. AND THE UNIT IS A ROW, NOT AN ELEMENT. After fixing (1), the KDA site STILL reported
+   IDENTICAL: one bf16 ulp on blocks.0.mixer.qkv.weight[0] alone moved the logits by exactly
+   0.0. Not a saturation artifact -- at the argmax the logit is 8.905232 and NO logit is within
+   0.01 of SOFTCAP=15 (model.py:63, :554). It is the path's real sensitivity: that element
+   supplies 1 of d=768 terms in a dot product, one bf16 ulp there is dw=1.2207e-04, and the
+   pre-activation it lands in is stored at bf16 whose ulp near 1.0 is ~4e-3 -- roughly 30x
+   larger, so the store rounds it away.
+
+   Measured on the same weight, same seed, same card, to rule out a dead path:
+     one element, one bf16 ulp      max|diff| 0.000000e+00
+     one element x1.5               max|diff| 1.634884e-01   (3,184,470 of 4,194,944 nonzero)
+     one element x2.0               max|diff| 1.634884e-01   (3,198,005 of 4,194,944 nonzero)
+     whole row (128 el, 1 ulp each) max|diff| 1.485295e-01
+   The element is on a live path. x1.5 and x2.0 share a max but differ in nonzero count, so
+   they are different outputs whose maxima coincide, not a clamp.
+
+   MLA's kv_down fired on a single element only because its rows are narrower. Accepting that
+   would have shipped a gate whose KDA half never discriminated -- and KDA is the half arm B
+   changes. So both sites step row 0.
+
+Lesson, one line: A FIXTURE MUST PERTURB AT THE RESOLUTION AND THE GRANULARITY OF THE PATH IT
+CERTIFIES. Resolution was the first defect (fp32 vs bf16), granularity the second (element vs
+row). Both produced a green gate on a model that had genuinely changed.
