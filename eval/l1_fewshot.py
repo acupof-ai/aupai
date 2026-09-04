@@ -23,10 +23,12 @@ import sys as _sys
 
 _sys.path.insert(0, _os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), "scripts"))
 from eval_artifacts import attest, open_artifact, versioned_path  # noqa: E402
+import hashlib
 import json
 import os
 import re
 import sys
+import time
 
 import torch
 
@@ -40,7 +42,7 @@ sys.path.insert(0, ROOT)
 import fone  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
 from algorithms.rlvr_reward import reward_fn, extract_boxed  # noqa: E402
-from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import load_checkpoint, load_tokenizer, vocab_fingerprint  # noqa: E402
 
 TEST_PATH = os.path.join(ROOT, "data", "eval", "math_test_500.jsonl")
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
@@ -109,6 +111,140 @@ def answer_marker(text):
     if m:
         cands.append(m.start())
     return min(cands) if cands else None
+
+
+def _hf_tok_fp(hf_tok):
+    """Fingerprint a transformers tokenizer's vocabulary, mirroring loader.vocab_fingerprint.
+
+    Its own function rather than a call to loader.vocab_fingerprint, which takes a `tokenizers`
+    object: get_vocab() is the one method both expose with the same meaning, and reaching for the
+    shared helper would work by coincidence and break on the first interface difference.
+    """
+    try:
+        h = hashlib.sha256()
+        for t, _i in sorted(hf_tok.get_vocab().items(), key=lambda kv: kv[1]):
+            h.update(str(t).encode())
+        return h.hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def ckpt_sha256(path):
+    """sha256 of the checkpoint FILE, or None for an --hf directory.
+
+    THE FILE, not the cfg's vocab_id, because vocab_id is the field the old checkpoints do not
+    have: ckpt_b0_sd_equalcompute.pt reads `vocab_id: None`, and an identity built on it would be
+    None-vs-None for every pre-fingerprint checkpoint -- equal, and proving nothing (6e's ruling).
+    A directory returns None rather than a hash of one file inside it; the control arm's identity
+    is its path plus the header's other fields.
+    """
+    if not os.path.isfile(path):
+        return None
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1 << 22), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+
+def artifact_path(ckpt, demos, demo_lang="zh", hf=False, no_rep_stop=False, temperature=0.0,
+                  run=None, root=None):
+    """The predictions path for one cell. THE ONLY PLACE THIS NAME IS BUILT.
+
+    It used to be an expression inside main(), which meant a reader that wanted the path had to
+    restate it -- and metric_l1_fewshot, which now verifies the artifact before transcribing it,
+    would have been the second copy. Two copies of a filename rule is how the 2x2 nearly collided
+    two cells onto one file; a rule with one implementation cannot disagree with itself.
+
+    Every variable that changes the number is in the name: test_l1_fewshot_2x2 group 6 CALLS this
+    function with each axis both ways and requires four distinct paths, rather than searching for
+    the expression that builds them.
+
+    NOT named `preds_path`: that identifier is harness.check_reported_path_is_written's marker for
+    the stale-unversioned-variable defect, and a call to a function of that name reads to it as the
+    defect itself (the check looks for the Name, not for how it is used).
+    """
+    root = root or ROOT
+    p = os.path.join(root, "data", "eval",
+                     f"preds_l1_d{demos}_{os.path.basename(str(ckpt).rstrip('/'))}"
+                     + f".{demo_lang}"
+                     + (".hf" if hf else "")
+                     + (".norepstop" if no_rep_stop else "")
+                     + (f".t{temperature}" if temperature else "")
+                     + ".jsonl")
+    return versioned_path(p, run) if run else p
+
+
+# The header is row 0 of the predictions file and every reader must skip it. It exists because a
+# 497-row artifact with acc 0.0181 sat on disk while its score_matrix row said ERROR, and nothing
+# in the file said WHICH checkpoint produced it: the keys were q/gen/ok only, so mtime and filename
+# were the whole identity -- and this repo has rewritten same-named checkpoints (6e's ruling,
+# audit_0904 E22/E23). A reader distinguishes it by the "_header" key, which no scored row has.
+HEADER_KEY = "_header"
+
+
+def build_header(args, ckpt_sha, vocab_id, tok_fp, n_evals):
+    """The identity row. `ckpt_sha` is the checkpoint file's, not the cfg's vocab_id."""
+    return {
+        HEADER_KEY: 1,
+        "ckpt": os.path.basename(str(args.ckpt).rstrip("/")),
+        "ckpt_sha256": ckpt_sha,
+        "vocab_id": vocab_id or "none",
+        "tokenizer_fp": tok_fp or "none",
+        "demos": args.demos,
+        "demo_lang": args.demo_lang,
+        "arm": "control" if args.hf else "ours",
+        "rep_stop": not args.no_rep_stop,
+        "temperature": args.temperature,
+        "n_evals": n_evals,
+        "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+
+
+def read_header(path):
+    """The header dict, or None if the file has none (every artifact written before this change).
+
+    None is NOT an error here -- it is the honest answer for the seven pre-header artifacts, and
+    the caller's job is to refuse rather than to guess. A header-less file still parses as rows.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            for line in f:
+                if not line.strip():
+                    continue
+                d = json.loads(line)
+                return d if HEADER_KEY in d else None
+    except (OSError, json.JSONDecodeError):
+        return None
+    return None
+
+
+def verify_artifact(path, ckpt):
+    """(header, reason). A header whose ckpt_sha256 matches `ckpt` on disk, or None + why not.
+
+    THE COMPARISON IS AGAINST THE BYTES ON DISK, so a checkpoint rewritten under the same name
+    fails it -- which is the whole point: filename-and-mtime is not identity. Returns the header
+    only when the artifact provably came from THIS checkpoint's bytes.
+    """
+    if not os.path.exists(path):
+        return None, f"{os.path.basename(path)} absent"
+    h = read_header(path)
+    if h is None:
+        return None, (f"{os.path.basename(path)} has no header row -- written before headers "
+                      f"existed, so the checkpoint that produced it is unrecorded")
+    want = ckpt_sha256(ckpt)
+    if want is None:
+        # STATES THE FACT, NOT A CAUSE. This said "--ckpt is a directory", which is only one of
+        # the two ways ckpt_sha256 returns None (the other is an absent path) -- a message that
+        # names a cause it did not check misdiagnoses the other one.
+        return None, (f"{os.path.basename(path)}: {ckpt} is not a file, so there is no "
+                      f"checkpoint hash to compare")
+    got = h.get("ckpt_sha256")
+    if got != want:
+        return None, (f"{os.path.basename(path)} was written from checkpoint sha "
+                      f"{str(got)[:16]}..., the file on disk is {want[:16]}... -- same name, "
+                      f"different bytes")
+    return h, None
 
 
 def score(gen, gold, demo_lang="zh"):
@@ -335,6 +471,11 @@ def main():
                      "padded batch would be indistinguishable from real content")
         cfg, tok = None, None
         fone_on, num_id = False, None
+        # THE CONTROL ARM'S TOKENIZER FINGERPRINT comes from the transformers tokenizer, so the
+        # header can tell two control runs apart if the control model is ever swapped. vocab_id is
+        # ours-only, hence "none" here rather than a borrowed value.
+        vocab_id = None
+        tok_fp = _hf_tok_fp(hf_tok)
     else:
         # dtype goes through load_checkpoint (a3a0de0 upcasts KDA A_log/dt_bias to
         # fp32 after the cast); a separate .to(bf16) here would undo the upcast.
@@ -343,6 +484,12 @@ def main():
         hf_tok = None
         fone_on = getattr(cfg, "fone", False)
         num_id = getattr(cfg, "num_id", None)
+        # BOTH, because they answer different questions and one of them is missing on the
+        # checkpoints this header exists for. vocab_id is the checkpoint's recorded fingerprint and
+        # reads None on every pre-fingerprint checkpoint (ckpt_b0_sd_equalcompute.pt is one);
+        # tokenizer_fp is computed here from the tokenizer actually loaded, so it is never absent.
+        vocab_id = getattr(cfg, "vocab_id", None)
+        tok_fp = vocab_fingerprint(tok)
 
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     demos, evals, err = split_rows(rows, args.demos, args.eval_from)
@@ -350,32 +497,26 @@ def main():
         sys.exit(err)
     print(f"L1 few-shot: {len(demos)} demos, {len(evals)} eval problems", flush=True)
 
-    # The checkpoint's name is IN the path. Without it every checkpoint writes the same
-    # file, so open_artifact refuses the second one -- the guard firing correctly on a
-    # path that was wrong: score_matrix scored two checkpoints in one session and the
-    # second got ArtifactExists rather than a number (fb, 2026-09-02). --run also
-    # versions, but --run is a name a human remembers to pass and the checkpoint is not.
-    # Same shape as eval/math_zh.py:103 and eval/code_zh.py:160, which already do this.
-    # THE PATH CARRIES EVERY VARIABLE THAT CHANGES THE NUMBER. Adding --demo_lang without
-    # adding it here would make the zh and en runs collide on one filename: open_artifact
-    # refuses the second, or --force silently overwrites the first -- and the 2x2 would end up
-    # with two of its four cells pointing at the same rows. This is the retraction in
-    # be.l1_3shot_retracted (preds_l1_d3.jsonl overwritten by an unlogged run) in advance.
-    # BUILT AND VERSIONED IN ONE EXPRESSION, under the name that is then used everywhere. There is
-    # no unversioned `preds_path` left in this function to read, print, or record by mistake --
-    # which is the defect harness.check_reported_path_is_written guards: four runners attested the
+    # THE CHECKPOINT'S NAME IS IN THE PATH, and the path is built by artifact_path() -- one
+    # implementation, because metric_l1_fewshot now needs the same name to verify the artifact
+    # before transcribing it, and a second copy of the rule is a second thing to get wrong.
+    # Without the checkpoint in the name every checkpoint writes the same file, so open_artifact
+    # refuses the second one -- the guard firing correctly on a path that was wrong: score_matrix
+    # scored two checkpoints in one session and the second got ArtifactExists rather than a number
+    # (fb, 2026-09-02). Same shape as eval/math_zh.py:103 and eval/code_zh.py:160.
+    # THE PATH CARRIES EVERY VARIABLE THAT CHANGES THE NUMBER. Adding --demo_lang without adding it
+    # there would make the zh and en runs collide on one filename: open_artifact refuses the second,
+    # or --force silently overwrites the first -- and the 2x2 would end up with two of its four
+    # cells pointing at the same rows. This is the retraction in be.l1_3shot_retracted
+    # (preds_l1_d3.jsonl overwritten by an unlogged run) in advance.
+    # BUILT AND VERSIONED IN ONE CALL, under the name that is then used everywhere. There is no
+    # unversioned second path left in this function to read, print, or record by mistake -- which
+    # is the defect harness.check_reported_path_is_written guards: four runners attested the
     # versioned path and then printed the unversioned one, and an hour went on 2026-09-01 to a log
     # naming a file that did not exist. run= is NOT passed to open_artifact below, because that
     # would version an already-versioned name (verified: preds_x.r1.r1.jsonl).
-    out_path = os.path.join(ROOT, "data", "eval",
-                            f"preds_l1_d{args.demos}_{os.path.basename(args.ckpt)}"
-                            + f".{args.demo_lang}"
-                            + (".hf" if args.hf else "")
-                            + (".norepstop" if args.no_rep_stop else "")
-                            + (f".t{args.temperature}" if args.temperature else "")
-                            + ".jsonl")
-    if args.run:
-        out_path = versioned_path(out_path, args.run)
+    out_path = artifact_path(args.ckpt, args.demos, args.demo_lang, args.hf,
+                             args.no_rep_stop, args.temperature, args.run)
     correct = total = 0
     n_box = 0
     # RESUME REBUILDS THE COUNTS, not just the skip-set. Counting only the newly generated rows
@@ -389,6 +530,12 @@ def main():
                 if not line:
                     continue
                 d = json.loads(line)
+                # THE HEADER IS NOT A SCORED ROW. Counting it would put 1 in the denominator with
+                # no `ok` to add to the numerator -- a KeyError if it raised, and an off-by-one
+                # accuracy if it did not. Every reader of this file needs this skip; that is why
+                # the key is a name no scored row carries rather than a position.
+                if HEADER_KEY in d:
+                    continue
                 seen.add(d["q"])
                 correct += int(d["ok"])
                 total += 1
@@ -399,11 +546,21 @@ def main():
         if not evals:
             print("nothing left to score; the file already covers the eval set")
     n_target = total + len(evals)  # resumed rows + rows this process will generate
-    # run= is NOT passed: preds_path is already versioned above, and open_artifact would version
+    # run= is NOT passed: artifact_path already versioned it above, and open_artifact would version
     # it again -- verified, it yields preds_x.r1.r1.jsonl. The handle's .name is still what gets
     # attested, so the contract that check exists for is unchanged.
     with open_artifact(out_path, force=args.force,
                        mode="a" if args.resume else "w") as fout:
+        # THE HEADER GOES FIRST, before any generation, so an interrupted run still carries its
+        # identity: the 497-row artifact this exists for was complete and unattributable, and one
+        # that dies at row 12 must not be worse off. Written only on a fresh run -- a resume is
+        # appending to a file that already has one, and a second header row would make
+        # read_header's answer depend on which line it reached first.
+        if not args.resume or total == 0:
+            fout.write(json.dumps(build_header(
+                args, ckpt_sha256(args.ckpt), vocab_id, tok_fp, len(evals) + total),
+                ensure_ascii=False) + "\n")
+            fout.flush()
         for s in range(0, len(evals), args.batch):
             batch = evals[s : s + args.batch]
             texts_in = [build_prompt(demos, r["instruction"], args.demo_lang) for r in batch]
@@ -507,6 +664,10 @@ def main():
                         "demo_lang": args.demo_lang, "arm": "control" if args.hf else "ours",
                         "rep_stop": not args.no_rep_stop,
                         "ckpt": os.path.basename(args.ckpt.rstrip("/")),
+                        # THE SAME sha THE HEADER CARRIES, so a summary and its artifact can be
+                        # matched to each other and to the checkpoint. Without it the summary is
+                        # the third thing whose only link to a checkpoint is a filename.
+                        "ckpt_sha256": ckpt_sha256(args.ckpt),
                         "preds_path": out_path}, f, ensure_ascii=False)
 
 

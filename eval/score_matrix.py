@@ -407,14 +407,130 @@ def metric_math_v2_like(ckpt_path):
     return _run_eval_json("math_v2_like.py", ckpt_path)
 
 
+_L1_MOD = None
+
+
+def _l1_module():
+    """eval/l1_fewshot.py as a module, loaded once.
+
+    Loaded by path rather than imported at the top of this file because importing it pulls torch,
+    fone and eval.gsm8k -- and this file's other metrics must keep working on a machine where that
+    import fails. Cached, so the three call sites below load it once per process.
+
+    THE SCRIPT IS THE SOURCE OF ITS OWN FILENAME RULE AND ITS OWN SCORER. Restating either here is
+    how the two would drift: the preds path encodes demos, demo_lang, --hf, rep_stop and
+    temperature, and a copy of that expression in this file would be a second thing to update.
+    """
+    global _L1_MOD
+    if _L1_MOD is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "l1_fewshot_for_score_matrix", os.path.join(ROOT, "eval", "l1_fewshot.py"))
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+        _L1_MOD = mod
+    return _L1_MOD
+
+
 def metric_l1_fewshot(ckpt_path):
     """Reasoning panel L1: few-shot continuation math (docs/lessons/reasoning_panel.md §2).
     3 solved demos in prompt, model continues, exact-match on boxed/last number.
-    N=497, binomial delta=1.4/sqrt(N)≈6.3pt. Script: eval/l1_fewshot.py."""
+    N=497, binomial delta=1.4/sqrt(N)≈6.3pt. Script: eval/l1_fewshot.py.
+
+    TRANSCRIBES AN EXISTING ARTIFACT WHEN IT PROVABLY CAME FROM THIS CHECKPOINT, and refuses
+    otherwise. Seven rows of this metric read `eval_artifacts.ArtifactExists` and were audited as
+    failures twice before anyone opened the files (audit_0904 E18, E21, E22): the guard was working,
+    and one of the seven -- `ckpt_b0_sd_equalcompute.pt` -- had a COMPLETE 497-row result at
+    accuracy 0.0181 on disk while this metric recorded ERROR. The number was unreachable because
+    the artifact carried nothing but q/gen/ok rows, so its only link to a checkpoint was a filename
+    and an mtime, and this repo has rewritten same-named checkpoints.
+
+    So the artifact now carries a header naming the checkpoint's file sha256, and the rule is
+    6e's: match -> transcribe with from_artifact=true; mismatch or no header -> refuse and record
+    "artifact unverifiable, not re-run", NEVER --force. --force stays an operator flag on the
+    script, reached deliberately, and open_artifact keeps writing its .REFUSED sidecars.
+
+    WHERE THE .REFUSED SIDECARS ARE: beside the ARTIFACT, in `data/eval/`, not in `runs/`.
+    open_artifact writes `<artifact path>.REFUSED`, so a refusal leaves its reason where the reader
+    who went looking for the output will find it. Six exist on the pod (all under data/eval/,
+    2026-09-02 to 09-04); a `find runs/ -name '*.REFUSED*'` returns 0 and says nothing about
+    whether any were written -- de's disk inventory read that 0 as "design-only". Nothing in runs/
+    cites them, which is why this metric records `refused_sidecar` in the row: a refusal that
+    happened and left no ledger trace is how the seven E22 rows stayed unexamined through two
+    audits. Note the sidecar is named after the ARTIFACT, so before `5a989647` put the checkpoint
+    in the artifact name, six refusals on six checkpoints all wrote ONE sidecar -- which is why
+    there are 6 sidecars for 7 refusal rows.
+    """
     script = os.path.join(ROOT, "eval", "l1_fewshot.py")
     if not os.path.exists(script):
         return None, "eval/l1_fewshot.py not found"
+    L = _l1_module()
+    path = L.artifact_path(ckpt_path, 3)
+    # RECORDED WHETHER OR NOT IT MATTERS to this call's outcome. A .REFUSED sidecar is a refusal
+    # that already happened, and audit_0904 found sidecars on the pod with nothing in runs/ citing
+    # them -- an absence in the ledger is how they stayed invisible.
+    refused = os.path.exists(path + ".REFUSED")
+    header, why = L.verify_artifact(path, ckpt_path)
+    if header is not None:
+        v, err = _transcribe_l1(L, path, header)
+        if err:
+            return None, err
+        v["from_artifact"] = True
+        v["artifact"] = os.path.relpath(path, ROOT)
+        v["ckpt_sha256"] = header.get("ckpt_sha256")
+        if refused:
+            v["refused_sidecar"] = True
+        return v, None
+    if os.path.exists(path):
+        # A number exists and cannot be attributed. Recording it as a value would publish an
+        # unverifiable measurement; recording nothing would lose the fact that it is there.
+        rows = sum(1 for ln in open(path, encoding="utf-8") if ln.strip())
+        return None, (
+            f"artifact unverifiable, not re-run: {os.path.relpath(path, ROOT)} holds {rows} "
+            f"row(s) but {why}. Re-run eval/l1_fewshot.py --force to replace it, deliberately."
+            + ("  A .REFUSED sidecar sits beside it." if refused else ""))
     return _run_eval_json("l1_fewshot.py", ckpt_path)
+
+
+def _transcribe_l1(L, path, header):
+    """(value, error) scored from a verified artifact's rows, using the script's own scorer."""
+    gold = {}
+    for line in open(L.TEST_PATH, encoding="utf-8"):
+        if line.strip():
+            d = json.loads(line)
+            gold[d["instruction"]] = d["output"]
+    lang = header.get("demo_lang", "zh")
+    correct = total = n_box = missing = 0
+    for line in open(path, encoding="utf-8"):
+        if not line.strip():
+            continue
+        d = json.loads(line)
+        if L.HEADER_KEY in d:
+            continue
+        g = gold.get(d["q"])
+        if g is None:
+            missing += 1
+            continue
+        # RESCORED, not read from the row's `ok`. The row's ok was written by whatever the scorer
+        # was on the day of the run; rescoring means the transcribed number is in today's scorer's
+        # units, which is what makes it comparable to a freshly measured row.
+        correct += int(L.score(d["gen"], g, lang) == 1.0)
+        total += 1
+        n_box += int(L.answer_marker(L.model_turn(d["gen"], lang)) is not None)
+    if missing:
+        return None, (f"{os.path.relpath(path, ROOT)}: {missing} of {total + missing} questions "
+                      f"are not in {os.path.basename(L.TEST_PATH)} -- the artifact was scored "
+                      f"against a different eval set")
+    # THE ONE GUARD BEFORE THREE DIVISIONS BY `total`. Not defended individually on purpose: a
+    # per-division `if total else 0.0` turns an artifact that measured nothing into acc 0.0,
+    # binomial_delta 0.0 and answer-present 0.0 -- three numbers that read as a measured result
+    # from a model that got everything wrong. Found while mutating: removing this line crashed on
+    # binomial_delta, which is how I learned the refusal was carrying all three.
+    if not total:
+        return None, f"{os.path.relpath(path, ROOT)} carries a header but no scorable rows"
+    return {"correct": correct, "total": total, "acc": correct / total,
+            "binomial_delta": 1.4 / (total ** 0.5),
+            "answer_present_rate": n_box / total}, None
 
 
 def _run(cmd, patterns, env=None):
@@ -1105,6 +1221,139 @@ def selftest():
             proc.join()
         rows4 = [json.loads(l) for l in open(p4, encoding="utf-8")]  # noqa: SIM115
         assert len(rows4) == 4, f"concurrent write lost records: {len(rows4)}/4 survived"
+
+        # C6e: THE L1 ARTIFACT IS TRANSCRIBED ONLY WHEN ITS HEADER MATCHES THE CHECKPOINT'S BYTES.
+        # The world this is built for: a complete 497-row result at acc 0.0181 sat in data/eval
+        # while its score_matrix row said ERROR, and its only link to a checkpoint was a filename
+        # (E22). The identity has to be the checkpoint's FILE hash, because vocab_id is None on
+        # exactly the checkpoints that need it -- ckpt_b0_sd_equalcompute.pt is one, so a
+        # vocab_id-based check would compare None to None and call it a match.
+        _L1 = _l1_module()
+        # A sentinel distinct from None, because None is itself one of the cases under test: a
+        # header whose ckpt_sha256 IS None (case d) and a file with NO header at all (case c) are
+        # different worlds, and using None for "omit the header" would collapse them.
+        _SENTINEL = object()
+        _ck = os.path.join(d, "ckpt_fake.pt")
+        with open(_ck, "wb") as _f:
+            _f.write(b"weights-v1")
+        _sha1 = _L1.ckpt_sha256(_ck)
+        assert _sha1 and len(_sha1) == 64, _sha1
+        # a directory has no file hash, and returning one for it would be a hash of some file
+        # inside -- an identity that changes when an unrelated file in the dir does
+        assert _L1.ckpt_sha256(d) is None, "a directory must have no checkpoint file hash"
+
+        _art = os.path.join(d, "preds_fake.jsonl")
+
+        def _write_art(sha, rows=(("q1", "答案是：4", 1),), vocab_id=None):
+            with open(_art, "w", encoding="utf-8") as _f:
+                if sha is not _SENTINEL:
+                    # vocab_id RIDES ALONG because the rejected design read identity from it. A
+                    # fixture whose header lacks the field makes that mutation fail on a KeyError
+                    # or a None-vs-real mismatch -- red, but for the wrong reason, and it would
+                    # stay red even if the field WERE a valid identity. Carrying the real-looking
+                    # value is what makes the vocab_id world pass the wrong artifact.
+                    _f.write(json.dumps({_L1.HEADER_KEY: 1, "ckpt": "ckpt_fake.pt",
+                                         "ckpt_sha256": sha, "vocab_id": vocab_id,
+                                         "demo_lang": "zh"}) + "\n")
+                for q, g, ok in rows:
+                    _f.write(json.dumps({"q": q, "gen": g, "ok": ok}, ensure_ascii=False) + "\n")
+
+        # (a) matching header -> the header comes back, so the caller may transcribe
+        _write_art(_sha1)
+        _h, _why = _L1.verify_artifact(_art, _ck)
+        assert _h is not None and _why is None, f"a matching artifact was refused: {_why}"
+        assert _h["ckpt_sha256"] == _sha1, _h
+        # (b) SAME NAME, DIFFERENT BYTES -- the case filename-and-mtime cannot see, and the reason
+        # this check exists at all: this repo has rewritten same-named checkpoints. The artifact is
+        # untouched; only the checkpoint changes underneath it.
+        with open(_ck, "wb") as _f:
+            _f.write(b"weights-v2-rewritten-under-the-same-name")
+        _h, _why = _L1.verify_artifact(_art, _ck)
+        assert _h is None, (
+            "a checkpoint rewritten under the same name was accepted as the source. This is also "
+            "the assertion that rejects the vocab_id design: the header and this checkpoint both "
+            "carry vocab_id None, so an identity read from that field sees None == None and "
+            "accepts an artifact these bytes did not produce -- on exactly the population (E22's "
+            "seven rows) where the field is missing")
+        # ...and the identity must come from the checkpoint's BYTES, asserted at the source rather
+        # than by a mutation. The design 6e rejected -- identity from the cfg's vocab_id -- cannot
+        # be written as a mutation of verify_artifact, because that function is given a PATH and
+        # never opens a cfg; any small edit expressing it compares two different fields and goes
+        # red at case (a) instead, which proves nothing about the design. What IS checkable is that
+        # `want` has exactly one source: an AST read, because a substring search would match this
+        # comment.
+        import ast as _ast2
+        _va = next(n for n in _ast2.parse(open(
+            os.path.join(HERE, "l1_fewshot.py"), encoding="utf-8").read()).body
+            if isinstance(n, _ast2.FunctionDef) and n.name == "verify_artifact")
+        _want_srcs = {_ast2.unparse(n.value) for n in _ast2.walk(_va)
+                      if isinstance(n, _ast2.Assign)
+                      and any(_ast2.unparse(t) == "want" for t in n.targets)}
+        assert _want_srcs == {"ckpt_sha256(ckpt)"}, (
+            f"verify_artifact builds `want` from {_want_srcs} -- it must be the checkpoint file's "
+            f"hash and nothing else. vocab_id is None on every pre-fingerprint checkpoint "
+            f"(ckpt_b0_sd_equalcompute.pt is one), so an identity read from it compares None to "
+            f"None and matches on exactly the population that needs checking")
+        # (c) NO HEADER -- every artifact written before this change, including the seven E22 rows.
+        # None is the honest answer and the caller must refuse; a default-to-trust here would
+        # publish exactly the unattributable number this whole change is about.
+        with open(_ck, "wb") as _f:
+            _f.write(b"weights-v1")
+        _write_art(_SENTINEL)
+        _h, _why = _L1.verify_artifact(_art, _ck)
+        assert _h is None and _why and "no header" in _why, (
+            f"a header-less artifact was trusted: header={_h}, reason={_why}")
+        # (d) A HEADER CARRYING None for the sha -- an artifact from an --hf directory, where there
+        # is no checkpoint file to hash. It must NOT match a real hash.
+        _write_art(None)
+        _h, _why = _L1.verify_artifact(_art, _ck)
+        assert _h is None, "a header with ckpt_sha256=None matched a real checkpoint"
+
+        # (e) THE TRANSCRIBER RESCORES, and its denominator is the rows it could score. Gold comes
+        # from the real math_test_500, so this uses one real question rather than a made-up one:
+        # a fixture with invented questions would take the `missing` branch and never reach the
+        # scorer, and a transcription test that never scores anything proves nothing.
+        _gold_rows = [json.loads(_l) for _l in open(_L1.TEST_PATH, encoding="utf-8") if _l.strip()]
+        _q0, _a0 = _gold_rows[0]["instruction"], _gold_rows[0]["output"]
+        # The gold answer comes out of the eval file through the SCRIPT's own extractor, so the
+        # fixture's "correct" generation is correct by the scorer's definition rather than by mine.
+        _boxed = _L1.extract_boxed(_a0)
+        assert _boxed is not None, "math_test_500 row 0 has no boxed answer; the fixture is blind"
+        _write_art(_sha1, rows=[(_q0, f"解答：\\boxed{{{_boxed}}}", 1)])
+        _h, _why = _L1.verify_artifact(_art, _ck)
+        assert _h is not None, _why
+        _v, _err = _transcribe_l1(_L1, _art, _h)
+        assert _err is None, _err
+        assert (_v["correct"], _v["total"]) == (1, 1), _v
+        assert _v["answer_present_rate"] == 1.0, _v
+        # ...and a WRONG answer must score 0 while still counting in the denominator. Without this
+        # the transcriber could be returning the row's own `ok` field, or counting every row
+        # correct, and (e) alone would not tell the difference.
+        _write_art(_sha1, rows=[(_q0, "解答：\\boxed{999999}", 1)])
+        _v, _err = _transcribe_l1(_L1, _art, _h)
+        assert _err is None, _err
+        assert (_v["correct"], _v["total"]) == (0, 1), \
+            f"a wrong answer transcribed as correct -- the row's own ok= was trusted: {_v}"
+        # (f) A ROW WHOSE QUESTION IS NOT IN THE EVAL SET REFUSES, rather than shrinking the
+        # denominator silently. An artifact scored against a different eval set is not this
+        # metric's number, and a quiet 1/1 over the one recognised row would carry N=1 as if it
+        # were 497.
+        _write_art(_sha1, rows=[(_q0, f"\\boxed{{{_boxed}}}", 1), ("not-a-real-question", "x", 0)])
+        _v, _err = _transcribe_l1(_L1, _art, _h)
+        assert _v is None and _err and "different eval set" in _err, (
+            f"a question outside math_test_500 was dropped instead of refused: value={_v}, "
+            f"error={_err} -- a quiet 1/1 over the one recognised row carries N=1 under the "
+            f"label of a 497-item metric")
+        # (g) HEADER ONLY, NO ROWS -- an interrupted run that wrote its identity and died. It must
+        # refuse. The guard is load-bearing twice over: without it `correct / total` divides by
+        # zero, and a version that "fixed" that by defaulting would publish acc 0.0 for a run that
+        # measured nothing, which is indistinguishable from a model that got everything wrong.
+        _write_art(_sha1, rows=[])
+        _v, _err = _transcribe_l1(_L1, _art, _h)
+        assert _v is None and _err and "no scorable rows" in _err, (
+            f"an artifact with a header and no rows produced value={_v}, error={_err} -- a 0.0 "
+            f"here reads as a measured zero")
+
     # the MC parser keys on display name, not flag name (ceval prints "C-Eval (zh)")
     m = re.match(r"\s*(.+?)\s{2,}([\d.]+)%", "  C-Eval (zh)        25.1%")
     assert m and (m.group(1).strip(), m.group(2)) == ("C-Eval (zh)", "25.1")
