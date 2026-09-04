@@ -62,7 +62,8 @@ a `## Pair check` section naming which three and whether they held.
 | facts and documents | 44 | de | every `facts/*.json` entry: status, source exists, config non-empty, a fixed-seed sample of 30 values recomputed from the cited artifact; `docs/lessons`, `docs/audits`, `docs/standards/roadmap_0903.md` claims against facts |
 | user-facing statements | 98 | e1 | `~/aupai-progress.html`, `EXPERIMENTS.md`, the controller's replies logged in `runs/board.jsonl`: every number and verdict traced to a fact or ledger row; the untraceable ones listed |
 
-Running jobs that continue: Stage E arm 1 (`b0_se_16lnew_1b`, cards 0+1), the v14 agentic SFT
-build (laptop, e1). Not started and not to be started until the audit closes: Stage E arm 2 and
-the 2B arms, the OT3 fetch, hand-read #70, the v14 hand-read, any re-score. The 12:03Z
+Running jobs that continue: Stage E arm 1 (`b0_se_16lnew_1b`, cards 0+1), Stage E arm 2
+(`b0_se_looped_2b`, cards 2+3, launched 03:22:03Z, one minute before the stop reached b0), the
+v14 agentic SFT build (laptop, e1). Not started and not to be started until the audit closes: the
+third 2B arm, the OT3 fetch, hand-read #70, the v14 hand-read, any re-score. The 12:03Z
 checkpoint prune is a scheduled deletion under a prior user order and executes as planned.
