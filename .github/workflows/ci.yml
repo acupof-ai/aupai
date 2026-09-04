@@ -39,8 +39,14 @@ jobs:
       - run: python scripts/eqcheck.py
       # --check, not the bare call: the bare call REGENERATES, and d2c95b1c correctly made that
       # refuse where any registry path is absent -- a runner holds 5 of 13, so it can only write a
-      # fingerprint no other machine reproduces. CI wants the committed guard to LOAD and be
-      # non-empty; regenerating is a deliberate act on the pod.
+      # fingerprint no other machine reproduces. Regenerating is a deliberate act on the pod.
+      #
+      # --check asserts three things here, none of which regenerate anything: the committed guard
+      # LOADS and is non-empty; its fingerprint matches the file list REGISTRY declares, derived
+      # from REGISTRY_SHA1 so it holds on a runner missing 8 files; and every file present hashes
+      # as recorded, with the absent ones NAMED as not checkable rather than counted as verified.
+      # HOLDOUT_ALLOW_PARTIAL must stay out of CI -- it writes a knowingly partial guard, which is
+      # the opposite of verifying one.
       - run: python datagen/holdout.py --check
       - run: python datagen/holdout.py --selftest
       - run: python scripts/tokenizer_report.py --selftest
