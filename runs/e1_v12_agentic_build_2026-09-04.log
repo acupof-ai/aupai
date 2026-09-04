@@ -1,0 +1,66 @@
+  7765 kept / 22000 episodes
+
+DISCARDED 15 episode(s): 4 1 span(s) over 512 chars, 1 13 span(s) over 512 chars, 2 2 span(s) over 512 chars, 3 3 span(s) over 512 chars, 1 5 span(s) over 512 chars, 1 6 span(s) over 512 chars, 3 REAL_CREDENTIAL
+  A REAL_CREDENTIAL drops the episode -- a masked line still teaches the model that a credential belongs there. An over-limit opaque span drops it because redacting >512 chars deletes content while leaving the episode looking intact.
+  ['Opaque Span Over Limit']  153 turns  -Users-<USER>-code-agent-infer  [3 span(s) over 512 chars]
+  ['GitHub Token']  49 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['IBM Cloud IAM Key']  5 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  33 turns  -Users-<USER>-code-aupai  [1 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  120 turns  -Users-<USER>-code-clean-my-repo  [1 span(s) over 512 chars]
+  ['Private Key']  79 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  72 turns  -Users-<USER>-code-eic  [1 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  12 turns  -Users-<USER>-code-eic  [1 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  161 turns  -Users-<USER>-code-eic  [3 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  54 turns  -Users-<USER>-code-eic  [6 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  92 turns  -Users-<USER>-code-eic  [2 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  619 turns  -Users-<USER>-code-eic  [5 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  444 turns  -Users-<USER>-code-eic  [13 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  68 turns  -Users-<USER>-code-lessons  [2 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  34 turns  -Users-<USER>-code-llmserver  [3 span(s) over 512 chars]
+  Content is not printed or written anywhere. The source files still hold these; that is a separate problem for whoever owns the machine.
+
+REDACTED 5148 opaque span(s) in 855 kept episode(s) (8.6% of episodes, 5148 span(s) over 82457 turns), each replaced with [REDACTED-CREDENTIAL]. These episodes are KEPT: an opaque hit needs no credential-vs-identifier judgment, because replacing an identifier costs one span and dropping the episode costs the episode.
+   167 span(s)  37 turns  -Users-<USER>-code-eic
+   123 span(s)  408 turns  -Users-<USER>-code-sglang-iaas
+   119 span(s)  662 turns  -Users-<USER>-code-agent-infer
+   102 span(s)  171 turns  -Users-<USER>-code-eic
+    99 span(s)  8 turns  -Users-<USER>-code-agent-infer
+    86 span(s)  22 turns  -Users-<USER>-code-eic
+    78 span(s)  93 turns  -Users-<USER>-code-lessons
+    77 span(s)  15 turns  -Users-<USER>-code-agent-infer
+    73 span(s)  46 turns  -Users-<USER>-code-sglang-iaas
+    67 span(s)  71 turns  -Users-<USER>-code-eic
+  ... 845 more
+  token_filter: 9009 rows in 68.0s, 248 MB encoded (3.65 MB/s), 4244 over 4096 tokens
+staged 4765 rows -> data/sft/agentic_v12.jsonl.unscanned (not yet scanned for secrets)
+wrote 4765 rows -> data/sft/agentic_v12.jsonl
+
+sessions       1303
+episodes       27233
+kept           10000
+chars          245,132,911 (mean 24513/episode)
+dropped:
+     9425  opens on a machine event, not a person (task-notification etc.)
+     6432  fewer than 2 turns
+      408  an assistant turn is a harness error, not a response
+      351  a tool call was refused by the user; the refused call is supervised
+      251  opener the model cannot act on (image-only / slash command)
+      241  text contains a literal ChatML marker (tokenizes as the real token)
+       93  every assistant turn is a non-answer
+       17  over the memory ceiling (not an admission criterion)
+       15  an assistant turn holds an unparsed tool invocation as text
+      976  near-duplicate of an earlier episode (same opener and answer)
+top projects:
+     3611  -Users-<USER>-code-agent-infer  (36.1%)
+     1737  -Users-<USER>-code-aupai  (17.4%)
+      933  -Users-<USER>-code-lessons  (9.3%)
+      674  -Users-<USER>-code-sglang-iaas  (6.7%)
+      634  -Users-<USER>-code-tileRL  (6.3%)
+      454  -Users-<USER>-code-eic  (4.5%)
+      428  -Users-<USER>-code-arle-app-demo-ArleChat  (4.3%)
+      208  -Users-<USER>-code-ai-passport  (2.1%)
+
+secret scan: 2 type(s) over 16,176,764 chars ['Base64 High Entropy String', 'Secret Keyword']
+token filter (4096): 4765 of 9009 fit (52.9%), 4244 over
+tokens         7,059,524 in longest pairs (mean 1481, max 4095)
+wrote 4765 rows -> data/sft/agentic_v12.jsonl

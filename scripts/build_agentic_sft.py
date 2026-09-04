@@ -741,6 +741,64 @@ OPAQUE_MAX_REDACT = 512
 OPAQUE_PLACEHOLDER = "[REDACTED-CREDENTIAL]"
 
 
+#: CONTEXT EXCLUSIONS, from 44's hand-read of v12 (runs/redaction_handread_v12.tsv, 50 sites:
+#: 11 true secrets, 39 false positives, 0 incoherent turns). 32 of the 39 fall in five classes, and
+#: every one is identifiable by what SURROUNDS the span rather than by the span itself -- which is
+#: why they are excluded here and not by tightening the entropy threshold. A Lark device code and a
+#: SWE-bench instance id have the same charset and similar entropy; only the context differs.
+#:
+#: Each pattern must match the span PLUS its left context, and is anchored to end at the span, so
+#: `re.search` at the span's start position is not enough -- the check looks backwards. The pattern
+#: is matched against the text ending at the span's END, and must consume the span itself.
+#:
+#: WHAT IS DELIBERATELY NOT HERE. The 7 remaining false positives (pip-package, arlechat-log-id,
+#: base64-script-blob, cxx-symbol, wheel-filename, macos-tsm-uuid, npm-integrity-hash) are one site
+#: each. A class defined from one example is a rule fitted to a sample of one, and the cost of
+#: leaving them is one redacted span per site -- against the cost of a class that also swallows a
+#: real credential appearing in the same shape. Redaction is cheap; a missed credential is not.
+OPAQUE_EXCLUSIONS = (
+    # A Claude Code session URL in a commit-message trailer. 11 of the 39, the largest single class.
+    # The id is the session's own, carries nothing secret, and appears in text the model should
+    # learn to write (commit messages).
+    ("claude-session-url", re.compile(r"claude\.ai/code/[A-Za-z0-9_\-.]{32,}\Z")),
+    # A SWE-bench / harness task instance id: owner__repo.sha.variant__suffix. The double
+    # underscore is the discriminator -- it is a naming convention, not a token charset.
+    ("swebench-task-id", re.compile(r"[A-Za-z0-9_\-.]*__[A-Za-z0-9_\-.]{32,}\Z")),
+    # A HuggingFace repo id, owner/name, in search results or a model table. The owner segment plus
+    # "/" is the context; the name alone can be high-entropy.
+    ("hf-repo-id", re.compile(r"(?:^|[\s(\[\"'])[A-Za-z0-9][A-Za-z0-9_\-.]*/[A-Za-z0-9_\-.]{32,}\Z")),
+    # An Anthropic thinking signature. Cryptographic, not a credential: it authenticates a thinking
+    # block and grants no access. Identified by the JSON key it sits under.
+    ("thinking-signature",
+     re.compile(r"\"?signature\"?\s*[:=]\s*\"?[A-Za-z0-9_\-.+/=]*[A-Za-z0-9_\-.]{32,}\Z")),
+    # A filesystem path segment. 12 of the 39: arxiv shard filenames with a uuid shape, model
+    # directory names, task directories, a widget html path. A path is identifiable by the
+    # separator immediately before the span, and a credential is not normally written after a "/".
+    #
+    # LAST ON PURPOSE. `[/\\]<span>` also matches "owner/<span>" and any URL tail, so placed first
+    # it swallows hf-repo-id and claude-session-url and the report names the wrong class. The
+    # selftest asserts each class is attributed to itself, and this ordering is what it caught.
+    ("path", re.compile(r"[/\\][A-Za-z0-9_\-.]{32,}\Z")),
+)
+
+
+def _excluded(text, start, end):
+    """The exclusion class covering the span at [start, end), or None.
+
+    Matches against text[:end] anchored at the end, so each pattern sees the span AND what precedes
+    it. Looking only at the span cannot separate these classes from a real credential: that is the
+    finding, not an implementation detail.
+    """
+    left = text[:end]
+    for name, pat in OPAQUE_EXCLUSIONS:
+        m = pat.search(left)
+        # The match must actually COVER the span, not merely end at it: an anchored pattern whose
+        # own match starts after `start` would be describing different text than the span.
+        if m and m.end() == end and m.start() <= start:
+            return name
+    return None
+
+
 def opaque_spans(text):
     """[(start, end)] of high-entropy opaque tokens in `text`, in order, non-overlapping.
 
@@ -748,13 +806,16 @@ def opaque_spans(text):
     has ONE definition of what a hit is. Two copies of an entropy loop would be two things to
     keep in step -- the same reason _job_pids_for imports card_claim's predicate rather than
     reimplementing it.
+
+    Spans in OPAQUE_EXCLUSIONS' five hand-read classes are dropped here rather than downstream, so
+    the count of redactions and the count of over-limit drops both see the same span set.
     """
     out = []
     for m in OPAQUE_TOKEN.finditer(text):
         s = m.group(0)
         counts = collections.Counter(s)
         h = -sum(c / len(s) * math.log2(c / len(s)) for c in counts.values())
-        if h >= OPAQUE_ENTROPY:
+        if h >= OPAQUE_ENTROPY and not _excluded(text, m.start(), m.end()):
             out.append((m.start(), m.end()))
     return out
 
@@ -1127,6 +1188,50 @@ def _selftest():
                      f"{kept2 and kept2[0]['messages'][1]['content'][:60]!r}")
     if red2 and red2[0]["spans"] != 2:
         fails.append(f"the span count is wrong for a two-span turn: {red2}")
+
+    # 4c. THE FIVE HAND-READ EXCLUSION CLASSES, from 44's read of v12
+    #     (runs/redaction_handread_v12.tsv: 50 sites, 11 true secrets, 39 false positives).
+    #
+    #     THE FIXTURES ARE SYNTHETIC AND THAT IS DELIBERATE, twice over. The TSV records the site,
+    #     project, class and a note -- it does NOT carry the matched text, so a literally TSV-driven
+    #     case is not possible from it. And it must not be: the 11 true-secret sites are real
+    #     credentials in the user's transcripts, and copying one into a test fixture would put a live
+    #     credential in git. So each class gets a token of the same SHAPE in the same CONTEXT, and
+    #     the TSV's role is to say which classes exist and how many sites each covers.
+    #
+    #     The pairing is what makes each case discriminating: the same token, once inside the
+    #     excluded context and once bare. If the exclusion matched on the token instead of the
+    #     context, the bare half would stop being redacted -- which is the failure that would ship a
+    #     credential.
+    for name, framed, bare in (
+        ("claude-session-url", f"See https://claude.ai/code/{fake} for the session", fake),
+        ("path", f"reading /data/shards/{fake}.jsonl now", fake),
+        ("swebench-task-id", f"instance google__textfsm.{fake}", fake),
+        ("hf-repo-id", f"found chimingw/{fake} on the hub", fake),
+        ("thinking-signature", f'"signature": "{fake}"', fake),
+    ):
+        if opaque_spans(framed):
+            fails.append(f"the {name} exclusion did not fire: {framed[:70]!r} still reports a span, "
+                         f"so v13 would redact the {name} sites 44 hand-read as false positives")
+        if not opaque_spans(f"device_code={bare}"):
+            fails.append(f"the {name} exclusion also suppressed the BARE token -- it is matching on "
+                         f"the token, not the context, so a real credential of this shape now "
+                         f"ships unredacted")
+        if _excluded(framed, framed.index(fake), framed.index(fake) + len(fake)) != name:
+            fails.append(f"_excluded attributes {framed[:50]!r} to "
+                         f"{_excluded(framed, framed.index(fake), framed.index(fake) + len(fake))!r}"
+                         f", not {name!r} -- the classes overlap and the report would name the "
+                         f"wrong one")
+    # A CREDENTIAL IN A CONTEXT THAT LOOKS LIKE AN EXCLUSION MUST STILL REDACT. The Lark device code
+    # 44 found at site 17 was an --device-code ARGUMENT, i.e. it followed a space, not a "/". This
+    # asserts the path exclusion is anchored on the separator rather than on "appears in a command".
+    for ctx, why_ in ((f"lark-cli auth login --device-code {fake}", "a flag argument"),
+                      (f"DEVICE_CODE={fake}", "an env assignment"),
+                      (f"token: {fake}", "a json-ish field")):
+        if not opaque_spans(ctx):
+            fails.append(f"an opaque token in {why_} was excluded: {ctx[:60]!r} -- that is the "
+                         f"shape of the real credentials in the hand-read, not of the false "
+                         f"positives")
 
     # 5. An episode quoting a ChatML marker must be refused: the tokenizer turns the quote
     #    into the real special token, so it would inject a role boundary into a completion.
