@@ -72,3 +72,5 @@
 {"id": "PR-5", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
 {"id": "PR-6", "ruling": "accepted", "by": "fb", "note": "accepted after dual-rule publication (197 vs 130, manifest sha pinned)"}
 {"id": "PR-7", "ruling": "accepted", "by": "fb", "note": "accepted, same as PR-6"}
+{"id": "E9", "ruling": "accepted", "by": "fb", "note": "no defect: assigned question answered, no eval hands ChatML to a base checkpoint"}
+{"id": "F5", "ruling": "accepted", "by": "fb", "note": "not a defect: AGENTS.md documents [] as the deliberate retracted_value; withdrawn by 44 on return"}
