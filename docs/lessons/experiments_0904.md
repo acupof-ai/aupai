@@ -6,7 +6,7 @@ source: facts/data_scaling.json#ds.n2_params_vs_data_matched_compute; facts/smel
 
 # Experiments of 2026-09-04
 
-Four experiments. Two decisions (N7 not adopted, N8 enters the recipe), one no-difference verdict (N2), one pending (head-hybrid A/B).
+Four experiments. Three decisions (N7 not adopted, N8 enters the recipe, headmix B loses), one no-difference verdict (N2).
 
 ## N2: parameters vs data at matched compute
 
@@ -94,7 +94,7 @@ What this cannot say:
 
 ## head-hybrid A/B
 
-**Verdict pending. No doc_cu number exists for either arm.**
+**Verdict: B LOSES. Per-layer 6 KDA + 2 MLA heads (head_mixed=3, latent 256) loses to layer-level 3:1 at d1024 L12, 1B tokens, seed 42, on doc_cu by 0.087 nat, 576/576 blocks. The layer-level form stays.**
 
 Design (`runs/prereg.jsonl` b0_head_hybrid_3to1, registered 2026-09-04T08:29Z, amended 08:34Z):
 
@@ -112,7 +112,7 @@ Confound: attention count vs per-layer width. Arm B has 12 attention paths of wi
 
 Threshold: val BPB on doc_cu at the shared token budget (1.0001B tokens, 3815 steps, same seed, same data order, 2 cards per arm). B WINS if lower by more than 0.003; LOSES if higher by more than 0.003; between is NO DIFFERENCE and the layer-level form stays.
 
-Status: both arms trained to completion (Arm A: 3815/3815 steps, train 1.768, val 2.117 on the train path, 6968s; Arm B: 3815/3815, train 1.849, val 2.200, 8548s). Arm A scored on cu_none (domain_loss mean 2.284, humaneval gold BPB 0.683, lambada_en 18.8%; `runs/score_matrix.jsonl`). Arm B unscored. No doc_cu val BPB exists for either arm — the score_matrix ran its default cu_none path. The verdict waits on the doc_cu scoring at step 3815.
+Status: both arms trained to completion (Arm A: 3815/3815 steps, train 1.768, val 2.117 on the train path, 6968s; Arm B: 3815/3815, train 1.849, val 2.200, 8548s). Both scored on doc_cu (`runs/score_matrix.jsonl`, 2026-09-04). Block-paired on main: armA − armB = −0.087380 nat, SE 0.001077, t −81.12, 0 up / 576 down, 9/9 domains. domain_loss unweighted mean: Arm A 2.195, Arm B 2.2824. HumanEval gold BPB: A 0.6828, B 0.7176 per-task. L1 fewshot: A 3.2%, B 1.6%. lambada_en: A 18.8%, B 18.5%. Throughput: B 7.3% slower, +2.2 GiB at the clean step-30 read; later tok/s polluted by foreign co-residency, not quoted. The domain_bpb rows are cu_none (the tool ignores --cu_path) — labeled as such, not the ruler. One seed, one budget point.
 
 Periodic val (train path, cu_none — NOT the ruler; the ruler is doc_cu at step 3815):
 
@@ -130,5 +130,5 @@ Periodic val (train path, cu_none — NOT the ruler; the ruler is doc_cu at step
 Source: `runs/b0_headmix_armA.log`, `runs/b0_headmix_armB.log`. These are the train-path val (cu_none), a different quantity from the doc_cu val BPB the prereg names as the decision rule.
 
 What this cannot say:
-- Whether Arm B wins. No doc_cu number exists.
-- Why, if it wins. The +1.18% parameter count and the count-vs-width confound both stand.
+- Whether the result generalises. n=1 seed per arm; the delta is large enough that seed variance (0.0516 nat at 0.2B) is unlikely to flip it, but a reseeded pair was not run.
+- Why B loses. The +1.18% parameter count and the count-vs-width confound both stand; the loss cannot be attributed to either mechanism.
