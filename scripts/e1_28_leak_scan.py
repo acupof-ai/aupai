@@ -168,6 +168,34 @@ def main():
                  f"and scanning data/corpus would measure a different population")
     print(f"cursor: {sum(cursor.values()):,} rows over {len(cursor)} domains, seed "
           f"{ck.get('row_cursor_seed')}")
+    sys.exit(
+        "REFUSING: this scanner's cursor restriction is in the WRONG UNITS and its result "
+        "cannot be quoted.\n"
+        "row_cursor counts TOKEN-BLOCK rows (cache.numel()//(seq+1), see mix_200m_4b.json's "
+        "epochs_pool_source), and the loop below counts JSONL DOCUMENTS -- `for line in f: "
+        "seen += 1` capped at the cursor value. On ckpt_p200m_4b_0902 that reads 5.0-13.2% of "
+        "each domain's documents and reports it as 'the rows this run consumed': math_owm 7.6%, "
+        "en_c4 5.0%, cot 11.2%, textbook 13.2%, chatml 5.5%, chat_qa 5.5%, zh_web 0.3%, "
+        "starcoder 6.4%, rp1t 9.1%.\n"
+        "The `scanned < 0.5 * sum(cursor)` warning below cannot catch this: it compares the "
+        "mis-unit'd count against the cap it was taken from, so it is in the same units as the "
+        "bug and never fires.\n"
+        "MEASURED CONSEQUENCE: this scan reported 316 contaminated items (runs/e1_28_matched.json, "
+        "312 ws + 4 universal-only) and docs/audits/control_pythia160m_vs_ours.md 5.3d re-scored "
+        "the floors on that exclusion. A whole-corpus scan of the same population found 2,114 of "
+        "7,523 measurable (28.10%): scripts/e1_28_heldout_contamination.py, "
+        "runs/e1_28_heldout_contamination.json. On chatml alone this saw 8,778 of 160,414 "
+        "documents and found 40; the full scan found 1,515.\n"
+        "It also SAW the signal and filtered it: chatml and chat_qa both reported 808 char-hits, "
+        "and the docstring above names an identical count from two corpora as the signature of a "
+        "shared template. It is -- they are one source rendered twice (build_chatml.py and "
+        "build_chat_qa.py over data/corpus/chat).\n"
+        "WHAT TO USE: scripts/e1_28_heldout_contamination.py for a corpus-wide containment rate. "
+        "This file stays because datagen/scan_eval_golds.py imports ws_grams/char_grams/scan_text/"
+        "low_entropy from it -- the GRAM FUNCTIONS are sound and tested; only the cursor "
+        "population is not. A consumed-rows rate needs a document-level cursor, which no "
+        "instrument here provides, and the pre-tokenize shuffle at train.py:1456 means the first "
+        "N documents are not the first N of the token cache either.")
 
     # 1. THE HELD-OUT COMPLETIONS, restricted to the scored population.
     keep = None

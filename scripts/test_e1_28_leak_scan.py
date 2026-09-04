@@ -149,68 +149,57 @@ def main():
         except ImportError as e:
             SKIPS.append(f"case 2b: {type(e).__name__}: {e}")
 
-    # 3. END TO END, with a PLANTED overlap and a control document that must NOT match.
-    #    Run against a real checkpoint if one is here; otherwise this case reports SKIP, because
-    #    a case that cannot run must say so rather than pass.
+    # 3. THE CURSOR PATH MUST REFUSE, with the units statement.
+    #    This case used to be the planted-overlap end-to-end check, and it was the case that would
+    #    have caught the units bug if it could have run: it needs ckpt_p200m_4b_0902.pt, which is
+    #    pod-only, so it reported SKIP on every local run while the scan's 316-item result was
+    #    quoted in an audit. The scan now exits before touching the corpus, because its cursor
+    #    restriction reads token-block rows as documents (5.0-13.2% of each domain). The
+    #    planted-overlap capability lives in scripts/e1_28_heldout_contamination.py --selftest,
+    #    which plants a span across three shards and runs everywhere with no checkpoint.
     ckpt = os.path.join(ROOT, "ckpt_p200m_4b_0902.pt")
     if not os.path.isfile(ckpt):
-        SKIPS.append("case 3 (end-to-end, the planted-overlap check) needs "
-                     "ckpt_p200m_4b_0902.pt, which is pod-only")
+        SKIPS.append("case 3 (the cursor path refuses) needs ckpt_p200m_4b_0902.pt, which is "
+                     "pod-only -- the refusal is unconditional in main(), so this only checks "
+                     "that it fires before any corpus read")
     else:
         with tempfile.TemporaryDirectory() as td:
-            # A held-out file of two records. Record 7's answer is planted verbatim into the
-            # corpus; record 8's is not.
-            planted = ("the quick brown fox jumps over the lazy dog while seventeen blue "
-                       "penguins recite arithmetic in the corridor")
-            clean = ("an entirely different sentence about maritime navigation and the price "
-                     "of copper in distant markets during autumn")
             ho = os.path.join(td, "ho.jsonl")
-            with open(ho, "w") as f:
-                for i, ans in ((7, planted), (8, clean)):
-                    f.write(json.dumps({"id": str(i), "question": "q", "answer": ans,
-                                        "src": "t"}) + "\n")
+            open(ho, "w").write(json.dumps({"id": "7", "question": "q",
+                                            "answer": " ".join(f"w{i}" for i in range(40)),
+                                            "src": "t"}) + "\n")
             ids = os.path.join(td, "ids.txt")
-            open(ids, "w").write("7\n8\n")
+            open(ids, "w").write("7\n")
             out = os.path.join(td, "out.json")
-
-            # A fake corpus domain under --root, so nothing touches the real one. cwd is NOT
-            # enough: the scanner derives its ROOT from __file__, so the first version of this
-            # test silently began sha256-ing the real 232 GB corpus and hung with no output.
             fake_root = os.path.join(td, "root")
             os.makedirs(os.path.join(fake_root, "data", "corpus", "cot"))
             with open(os.path.join(fake_root, "data", "corpus", "cot", "a.jsonl"), "w") as f:
-                f.write(json.dumps({"content": "preamble text " + planted + " trailing"}) + "\n")
-                f.write(json.dumps({"content": "unrelated filler about geology"}) + "\n")
-
+                f.write(json.dumps({"content": "filler"}) + "\n")
             try:
                 r = subprocess.run(
-                [sys.executable, os.path.join(ROOT, "scripts", "e1_28_leak_scan.py"),
-                 "--ckpt", ckpt, "--heldout", ho, "--ids", ids, "--out", out,
-                 "--root", fake_root, "--UNSAFE_skip_srcfp_check"],
-                capture_output=True, text=True, timeout=120,
-                env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
+                    [sys.executable, os.path.join(ROOT, "scripts", "e1_28_leak_scan.py"),
+                     "--ckpt", ckpt, "--heldout", ho, "--ids", ids, "--out", out,
+                     "--root", fake_root, "--UNSAFE_skip_srcfp_check"],
+                    capture_output=True, text=True, timeout=120,
+                    env=dict(os.environ, CUDA_VISIBLE_DEVICES=""))
             except subprocess.TimeoutExpired:
-                fails.append("the scan did not finish in 120s against a 2-document fake corpus, "
-                             "so it is not reading --root -- it is scanning something large")
+                fails.append("the scan did not exit in 120s, so the refusal is not reached")
                 r = None
             blob = (r.stdout + r.stderr) if r else ""
             if r is None:
                 pass
             elif "ModuleNotFoundError" in blob:
-                SKIPS.append(f"case 3 (planted overlap): imports unavailable "
+                SKIPS.append(f"case 3: imports unavailable "
                              f"({blob.strip().splitlines()[-1][:80]})")
-            elif not os.path.isfile(out):
-                fails.append(f"end-to-end produced no output; tail: "
-                             f"{blob.strip().splitlines()[-1][:140] if blob.strip() else '(silent)'}")
-            else:
-                d = json.load(open(out))
-                hit = d.get("contaminated_ids", [])
-                if 7 not in hit:
-                    fails.append(f"THE PLANTED OVERLAP WAS NOT FOUND: contaminated_ids={hit}. A "
-                                 f"scan that misses a verbatim 20-token match cannot be trusted "
-                                 f"to report zero.")
-                if 8 in hit:
-                    fails.append(f"a clean completion was reported as contaminated: {hit}")
+            elif r.returncode == 0:
+                fails.append("the cursor path exited 0 instead of refusing -- its 5-13% document "
+                             "coverage would be reported as the consumed population again")
+            elif "WRONG UNITS" not in blob:
+                fails.append(f"it refused, but without the units statement, so a reader cannot "
+                             f"tell why; tail: {blob.strip().splitlines()[-1][:120]}")
+            elif os.path.isfile(out):
+                fails.append("it refused but still wrote an output file, which a later reader "
+                             "would load as a measurement")
 
     # 4. A SCAN THAT EXAMINED NOTHING MUST REFUSE. Without --UNSAFE_skip_srcfp_check the fake
     #    corpus fails every srcfp check, so zero rows are scanned -- and the first version
@@ -240,8 +229,12 @@ def main():
                 elif r2.returncode == 0:
                     fails.append("with every domain stale, the scan exited 0 instead of refusing "
                                  "-- it would report '0 contaminated' having examined no rows")
-                elif "REFUSING: 0 rows were scanned" not in blob2:
-                    fails.append(f"the scan failed but not with the zero-scanned refusal; "
+                elif "WRONG UNITS" not in blob2 and "REFUSING: 0 rows were scanned" not in blob2:
+                    # The units refusal now fires FIRST and supersedes this one, so either message
+                    # is a pass. Pinning only the old string would have gone red for the right
+                    # behaviour -- a test asserting the exact refusal it was written against fails
+                    # when an EARLIER, stronger refusal is added.
+                    fails.append(f"the scan failed but with neither refusal; "
                                  f"tail: {blob2.strip().splitlines()[-1][:120]}")
             except subprocess.TimeoutExpired:
                 fails.append("case 4 timed out, so --root is still not being honoured")
@@ -254,13 +247,15 @@ def main():
         return 1
     ran = ["both gram units are 13 wide", "character grams ignore whitespace",
            "a missing field refuses instead of counting zero"]
+    if any("case 3" in x for x in SKIPS):
+        ran.append("the cursor refusal is unconditional in main() but was not EXERCISED here "
+                   "(no local checkpoint)")
+    else:
+        ran.append("the cursor path refuses with the units statement and writes no output")
     if not any("case 4" in x for x in SKIPS) and os.path.isfile(ckpt):
         ran.append("a scan that examined zero rows refuses instead of reporting zero hits")
-    if any("case 3" in x for x in SKIPS):
-        ran.append("BUT THE PLANTED-OVERLAP CHECK DID NOT RUN -- nothing here shows the scan can "
-                   "find a real match, so a zero from it is not yet trustworthy")
-    else:
-        ran.append("a planted overlap is found while a clean record is not")
+    ran.append("the planted-overlap capability lives in e1_28_heldout_contamination.py --selftest, "
+               "which needs no checkpoint and runs here")
     print("e1_28_leak_scan OK: " + "; ".join(ran)
           + (f" [{len(SKIPS)} case(s) SKIPPED]" if SKIPS else ""))
     return 0
