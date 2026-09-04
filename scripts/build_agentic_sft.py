@@ -920,6 +920,29 @@ def scan_rows(rows, sample=None):
     return (hits or []), len(text), hits is not None
 
 
+def real_credential_rows(rows):
+    """[(index, [types])] for rows carrying a REAL_CREDENTIAL type after redaction.
+
+    scan_rows answers "does this pack contain one" and CANNOT answer "which row", because
+    it joins every row into a single document and returns bare type names. That gap is why
+    v13's `secret scan: 2 type(s)` read as two findings: it is a count of distinct TYPES
+    over 4,799 rows, and a per-row scan of the same pack found 55 rows hit. A gate that
+    refuses without naming the row leaves nobody able to act on the refusal.
+
+    Only REAL_CREDENTIAL types are returned. Base64 High Entropy String and Secret Keyword
+    are deliberately excluded here for the reason REAL_CREDENTIAL's own definition gives:
+    they fire on example values, log lines and shas, so gating on them would refuse every
+    pack while removing nothing real. Those are counted and printed instead, which is the
+    allowlist -- an allowed type is one the gate names and passes, not one it cannot see.
+    """
+    out = []
+    for i, r in enumerate(rows):
+        h = find_secrets("\n".join(m["content"] for m in r["messages"]))
+        if h and set(h) & REAL_CREDENTIAL:
+            out.append((i, sorted(set(h) & REAL_CREDENTIAL)))
+    return out
+
+
 def _selftest():
     """Broken worlds. Every assertion is a case with a known right answer.
 
@@ -1389,6 +1412,67 @@ def _selftest():
     finally:
         _mod.scan_rows, sys.argv, _mod.SESSIONS = _real_scan, _real_argv, _real_sessions
 
+    # THE SCAN GATES THE RENAME, both directions, by running main() rather than reading it.
+    # Same fixture machinery as the kill case above and for the same reason: the first version of
+    # THAT check asserted on main()'s source text and stayed green when the write was dead.
+    #
+    # The defect: `os.replace(staged, a.out)` used to run unconditionally after scan_rows, so a
+    # pack carrying a credential landed under its real name with the hit merely printed. A second
+    # unconditional write at the end of main() wrote it again outside the staged path -- v13's log
+    # prints `wrote 4799 rows -> ...` twice, which is that second write.
+    #
+    # real_credential_rows is monkey-patched, NOT the fixture text. A planted `ghp_...` in a
+    # fixture would be a real-credential SHAPE copied into this file, and this repository's rule
+    # is that a credential span never enters a test fixture. Patching the classifier exercises the
+    # branch under test -- the gate's response to a positive verdict -- without one existing.
+    if find_secrets("x") is not None:
+        for _label, _verdict, _want_out in (
+            ("a real-credential row", [(7, ["GitHub Token"])], False),
+            ("no real-credential row", [], True),
+        ):
+            _d2 = _tf.mkdtemp()
+            _sess2 = os.path.join(_d2, "s.jsonl")
+            with open(_sess2, "w", encoding="utf-8") as fh:
+                for i in range(3):
+                    fh.write(json.dumps({"type": "user", "message": {"role": "user",
+                             "content": f"question {i} " + "x" * 200}}) + "\n")
+                    fh.write(json.dumps({"type": "assistant", "message": {"role": "assistant",
+                             "content": [{"type": "text",
+                                          "text": f"answer {i} " + "y" * 200}]}}) + "\n")
+            _out2 = os.path.join(_d2, "pack.jsonl")
+            _real_rcr = _mod.real_credential_rows
+            _mod.real_credential_rows = lambda rows, _v=_verdict: _v
+            # SESSIONS, like the kill case: without it main() globs the real ~/.claude tree.
+            _mod.SESSIONS = _sess2
+            try:
+                sys.argv = ["build_agentic_sft.py", "--out", _out2]
+                _rc = main()
+            except SystemExit as e:
+                _rc = e.code
+            finally:
+                _mod.real_credential_rows, sys.argv = _real_rcr, _real_argv
+                _mod.SESSIONS = _real_sessions
+            _landed = os.path.exists(_out2)
+            _staged_left = os.path.exists(_out2 + ".unscanned")
+            if _want_out:
+                if _rc != 0:
+                    fails.append(f"main() returned {_rc} on {_label}; a clean pack must land")
+                if not _landed:
+                    fails.append(f"{_label}: the pack did not land at --out")
+                if _staged_left:
+                    fails.append(f"{_label}: the .unscanned file survived a clean write, so the "
+                                 "rename is now a copy and two files claim to be the pack")
+            else:
+                if _rc == 0:
+                    fails.append(f"main() returned 0 on {_label} -- the scan does not gate the "
+                                 "write, which is the v13 defect")
+                if _landed:
+                    fails.append(f"{_label}: the pack LANDED at --out anyway; a credential-carrying "
+                                 "pack must never take the real name")
+                if not _staged_left:
+                    fails.append(f"{_label}: no .unscanned file remains, so the refusal also "
+                                 "destroyed the rows instead of holding them for inspection")
+
     for f in fails:
         print(f"  FAIL {f}")
     print(f"\n{len(fails)} failure(s)")
@@ -1490,6 +1574,42 @@ def main():
             os.fsync(fh.fileno())
         print(f"staged {len(rows)} rows -> {staged} (not yet scanned for secrets)", flush=True)
     hits, scanned, ran = scan_rows(rows)
+    # THE SCAN GATES THE RENAME. Until 2026-09-04 it did not: `os.replace(staged, a.out)` ran
+    # unconditionally right after this call, so the .unscanned name promoted itself whatever the
+    # scan said, and a second unconditional `open(a.out, "w")` at the end of main() wrote the pack
+    # again outside the staged path entirely -- which is why v13's log prints
+    # `wrote 4799 rows -> ...` TWICE. The staging discipline was real; nothing enforced it.
+    #
+    # TWO TIERS, and the split is REAL_CREDENTIAL's, not a new judgement:
+    #   a REAL_CREDENTIAL type   refuses. The pack does not land, the .unscanned file stays, and
+    #                            the row index is printed so the episode can be found and dropped.
+    #   any other type           passes, NAMED AND COUNTED. Base64 High Entropy String and Secret
+    #                            Keyword fire on example values, log lines and shas; gating on
+    #                            them would refuse every pack while removing nothing real (see
+    #                            REAL_CREDENTIAL). Printing them is what makes them allowed rather
+    #                            than invisible.
+    #
+    # drop_credential_rows already dropped every episode whose turns carry a REAL_CREDENTIAL hit,
+    # so a hit HERE means one survived that pass -- a span assembled across turns, or a detector
+    # that fires on the joined text and not on any single turn. That is exactly the case worth
+    # refusing on, and the case the old code could not see.
+    if ran and rows:
+        real = real_credential_rows(rows)
+        allowed = sorted(t for t in set(hits) if t not in REAL_CREDENTIAL)
+        if real:
+            print(f"\nREFUSING TO WRITE {a.out}: {len(real)} row(s) carry a real-credential type "
+                  f"that survived drop_credential_rows", file=sys.stderr)
+            for i, ts in real[:20]:
+                print(f"  row {i}: {ts}", file=sys.stderr)
+            if len(real) > 20:
+                print(f"  ... {len(real) - 20} more", file=sys.stderr)
+            if staged:
+                print(f"  the rows are in {staged} -- that name says they were never cleared. "
+                      f"Drop these episodes and rebuild; do NOT rename this file by hand.",
+                      file=sys.stderr)
+            return 1
+        print(f"\nsecret scan gate: 0 real-credential row(s), "
+              f"{len(allowed)} allowed type(s) {allowed or '[]'} over {scanned:,} chars")
     if staged:
         os.replace(staged, a.out)
         print(f"wrote {len(rows)} rows -> {a.out}", flush=True)
@@ -1516,12 +1636,6 @@ def main():
     if a.subagents:
         print(f"subagents      {rep.get('subagent_pairs', 0)} pairs from "
               f"{rep.get('subagent_files', 0)} files, source=subagent, never interleaved")
-    if a.out:
-        os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
-        with open(a.out, "w", encoding="utf-8") as fh:
-            for r in rows:
-                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
-        print(f"wrote {len(rows)} rows -> {a.out}")
     return 0
 
 

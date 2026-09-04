@@ -3,6 +3,18 @@
  "_filled_by": "scripts/w7_peak.sh via scripts/w7_driver.sh, cards 1-7, 2026-09-01",
  "_caveat": "Every peak here is RANK 0 (train.py's log line is is_main), so each is a LOWER bound on the worst rank -- per-rank DDP buckets differ. Safe to rule from at 25 GiB of headroom; NOT safe below about 10 GiB, where every rank has to report before the number means anything.",
  "_why_not_nvidia_smi": "nvidia-smi reads the caching allocator's reservation, not the high-water mark of live tensors. It returned 74.10 GiB at world=3 and 74.09 at world=7 -- the DDP bucket growth these measurements exist to find is invisible to it, because a larger bucket is served from cache the allocator never returns. Every fits/does-not-fit call in this repo before train.py:2604 (661e5ce) came from that number.",
+ "2": {
+  "peak_GiB": 49.56,
+  "config": "b16 accum2 d768 L16 h6 ffn2304 seq4096 NO grad_ckpt compiled fp8 attn_every4",
+  "params_M": 154.67,
+  "tok_per_step": 262144,
+  "card_usable_GiB": 95.58,
+  "headroom_GiB": 46.02,
+  "cards": "0-1",
+  "log": "runs/b0_se_16lnew_1b.log",
+  "measured": "2026-09-04",
+  "note": "THE LARGEST OF THREE MEASURED WORLD-2 SHAPES, recorded so the gate rules from the worst of them and not from whichever ran last. All three are b16 accum2 seq4096 no-grad_ckpt fp8 at world 2, and all three are FULL RUNS, not probes:\n  49.56 GiB  d768 L16 h6 ffn2304, 154.67M, N7 Stage E arm 1 (16 new layers)   runs/b0_se_16lnew_1b.log\n  47.85 GiB  d768 L12 h6 ffn2304 --loop 4 7, 122.30M active 154.67M, Stage D  runs/b0_sd_looped.log\n  37.07 GiB  d768 L12 h6 ffn2304, 122.30M, Stage D unlooped                   runs/b0_sd_unlooped.log\nThe looped figure was flat across the whole 3815-step run (776 logged steps, range 47.77-47.85), so it is a steady state and not a startup transient. Its own header line states `params 122.3M | world 2`, which is what makes it a world-2 measurement of this shape rather than an extrapolation.\nWHY THE LOOP COSTS 10.8 GiB FOR ZERO EXTRA PARAMETERS: replaying blocks 4..7 stores a second set of activations for them, so the looped arm's memory tracks its ACTIVE count (154.67M) while its parameter count stays at the unlooped 122.30M. Reading the loop as free because it adds no weights is the error this pair of numbers refutes.\nRANK 0 ONLY, like every other entry here -- see _caveat. At 46 GiB of headroom that is safe to rule from; it would not be near 10.\nFILLED FROM RUNS THAT HAD ALREADY HAPPENED (6e ruled 2026-09-04): gate_memory_measured was NO-GO for world 2 while three logs on the pod held the answer, because nobody wrote them here. A measured log is evidence; what the gate refuses is a number derived from another world size, and none of these is."
+ },
  "7": {
   "peak_GiB": 69.63,
   "config": "b32 accum1 d1024 L32 h8 ffn3072 seq4096 grad_ckpt compiled fp8 attn_res-Full",
