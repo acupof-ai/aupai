@@ -542,10 +542,15 @@ def render_page(reports, findings, unparsed, old_html):
     # old page body below
     m = re.search(r"<body[^>]*>(.*)</body>", old_html, re.S)
     old_body = m.group(1) if m else f"<pre>{_esc(old_html)}</pre>"
+    sm = re.search(r"<style>(.*?)</style>", old_html, re.S)
+    old_style = sm.group(1) if sm else ""
     return f"""<!doctype html>
 <html lang="zh"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>aupai 进展 + 审计</title>
+<style>
+{old_style}
+</style>
 <style>
 :root {{ --bg:#f7f7f5; --fg:#1a1a1a; --card:#fff; --line:#ddd; --mut:#666; }}
 @media (prefers-color-scheme: dark) {{ :root:not([data-theme=light]) {{
@@ -553,39 +558,39 @@ def render_page(reports, findings, unparsed, old_html):
 body {{ margin:0; background:var(--bg); color:var(--fg);
   font:14px/1.6 -apple-system,'PingFang SC',system-ui,sans-serif; }}
 .audit {{ max-width:1100px; margin:0 auto; padding:16px; }}
-h1 {{ font-size:20px; }} h2 {{ font-size:16px; margin-top:24px; }}
-.strip {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center;
+.audit h1 {{ font-size:20px; }} .audit h2 {{ font-size:16px; margin-top:24px; }}
+.audit .strip {{ display:flex; flex-wrap:wrap; gap:8px; align-items:center;
   padding:10px 12px; background:var(--card); border:1px solid var(--line); border-radius:8px; }}
-.strip-item {{ color:var(--mut); font-size:13px; }}
-.cards {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
+.audit .strip-item {{ color:var(--mut); font-size:13px; }}
+.audit .cards {{ display:grid; grid-template-columns:repeat(auto-fill,minmax(300px,1fr));
   gap:10px; margin-top:12px; }}
-.card {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }}
-.card h3 {{ margin:0 0 6px; font-size:14px; }}
-.kv {{ font-size:13px; color:var(--mut); margin:2px 0; }}
-.kv.warn {{ color:#c0392b; }}
-.blind {{ margin:6px 0 0; padding-left:18px; font-size:12.5px; color:var(--mut); }}
-.blind li {{ margin:3px 0; }}
-details summary {{ cursor:pointer; font-size:13px; color:var(--mut); }}
-.chip {{ display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px;
+.audit .card {{ background:var(--card); border:1px solid var(--line); border-radius:8px; padding:10px 12px; }}
+.audit .card h3 {{ margin:0 0 6px; font-size:14px; }}
+.audit .kv {{ font-size:13px; color:var(--mut); margin:2px 0; }}
+.audit .kv.warn {{ color:#c0392b; }}
+.audit .blind {{ margin:6px 0 0; padding-left:18px; font-size:12.5px; color:var(--mut); }}
+.audit .blind li {{ margin:3px 0; }}
+.audit details summary {{ cursor:pointer; font-size:13px; color:var(--mut); }}
+.audit .chip {{ display:inline-block; padding:1px 8px; border-radius:10px; font-size:12px;
   border:1px solid var(--line); white-space:nowrap; }}
-.chip.s1 {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
-.chip.s2 {{ background:#d68910; color:#fff; border-color:#d68910; }}
-.chip.s3 {{ background:var(--mut); color:#fff; border-color:var(--mut); }}
-.chip.nd {{ background:transparent; color:var(--mut); border:1px solid var(--line); }}
-.rnote {{ font-size:11px; color:var(--mut); margin-top:2px; }}
-.chip.ok {{ background:#1e8449; color:#fff; border-color:#1e8449; }}
-.chip.bad {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
-.chip.pend {{ background:transparent; color:var(--mut); }}
-table.findings {{ width:100%; border-collapse:collapse; margin-top:8px;
+.audit .chip.s1 {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
+.audit .chip.s2 {{ background:#d68910; color:#fff; border-color:#d68910; }}
+.audit .chip.s3 {{ background:var(--mut); color:#fff; border-color:var(--mut); }}
+.audit .chip.nd {{ background:transparent; color:var(--mut); border:1px solid var(--line); }}
+.audit .rnote {{ font-size:11px; color:var(--mut); margin-top:2px; }}
+.audit .chip.ok {{ background:#1e8449; color:#fff; border-color:#1e8449; }}
+.audit .chip.bad {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
+.audit .chip.pend {{ background:transparent; color:var(--mut); }}
+.audit table.findings {{ width:100%; border-collapse:collapse; margin-top:8px;
   background:var(--card); border:1px solid var(--line); border-radius:8px; }}
-.findings th, .findings td {{ padding:6px 8px; border-bottom:1px solid var(--line);
+.audit .findings th, .audit .findings td {{ padding:6px 8px; border-bottom:1px solid var(--line);
   text-align:left; vertical-align:top; font-size:13px; }}
-.findings th {{ color:var(--mut); font-weight:600; }}
-.findings td.claim {{ max-width:420px; }}
-.findings td.ruling {{ max-width:220px; color:var(--mut); }}
-.findings code {{ background:var(--bg); padding:1px 4px; border-radius:4px; font-size:12px; }}
-.findings a {{ color:inherit; }}
-.meaning li, .questions li {{ margin:4px 0; }}
+.audit .findings th {{ color:var(--mut); font-weight:600; }}
+.audit .findings td.claim {{ max-width:420px; }}
+.audit .findings td.ruling {{ max-width:220px; color:var(--mut); }}
+.audit .findings code {{ background:var(--bg); padding:1px 4px; border-radius:4px; font-size:12px; }}
+.audit .findings a {{ color:inherit; }}
+.audit .meaning li, .audit .questions li {{ margin:4px 0; }}
 .old {{ border-top:2px solid var(--line); margin-top:28px; }}
 </style></head>
 <body>

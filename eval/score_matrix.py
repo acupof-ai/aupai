@@ -1738,7 +1738,16 @@ def main():
     # claim_my_cards refuses an unset CVD, so that branch is now unreachable from here: the
     # caller names its card and the claim protects it. When CVD names several cards the claim
     # covers all of them and _pick_card uses one, which is conservative in the safe direction.
-    claim_my_cards("score_matrix", note=f"{len(a.ckpt)} ckpt(s), profile {a.profile or 'full'}")
+    #
+    # GATED ON CUDA BEING AVAILABLE, which e0253c78 applied to the three test_* entry points and
+    # missed here -- it turned CI red on main, 6 cases of test_score_matrix_failpath.py, because
+    # the refusal fires before the scoring-failure path the test exercises and CI has neither a
+    # card nor CVD. The refusal is only meaningful where there is a card to take: on a CUDA-less
+    # machine _pick_card returns "cpu", nothing can be claimed and nothing can be stolen. Gated
+    # on torch.cuda.is_available() rather than on CVD, because CVD being unset is precisely the
+    # state the refusal exists to catch and reading it here would delete the check.
+    if torch.cuda.is_available():
+        claim_my_cards("score_matrix", note=f"{len(a.ckpt)} ckpt(s), profile {a.profile or 'full'}")
     device = _pick_card()
     records = []
     failed = []
