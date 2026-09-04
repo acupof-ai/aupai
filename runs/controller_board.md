@@ -1,4 +1,4 @@
-# Controller board (fb) — updated 2026-09-04T21:04Z, rewritten every tick
+# Controller board (fb) — updated 2026-09-04T22:07Z, rewritten every tick
 
 Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in their own work.
 
@@ -20,14 +20,14 @@ Percent = share of the deliverable landed on main and verified by a second reade
 
 | item | owner | % | state | next |
 |---|---|---|---|---|
-| CI green | de | 100 | four consecutive greens (bb876bd7, 27b9ea15, bd82cad6, 95579a06) | 25e0ca58 and 10acde74 green; 6fe808a5 in progress; four reds fixed (launch_tests, score_matrix_failpath, holdout regenerate, pod_drift world, free-card fixture) | CI-red WARN 2 h / FAIL 8 h check still owed |
+| CI green | de | 80 | RED since 121a865d: loader.py selftest's claim demo acquires on its own pid; Linux runner has /proc and no GPU so acquire refuses and exits 1; laptop passes via the no-/proc path. de told to fix first (CI-shaped world added to card_claim cases) | 25e0ca58 and 10acde74 green; 6fe808a5 in progress; four reds fixed (launch_tests, score_matrix_failpath, holdout regenerate, pod_drift world, free-card fixture) | CI-red WARN 2 h / FAIL 8 h check still owed |
 | Harness: pod-reaching checks time out when tunnel down | de | 60 | UnboundLocalError in strike handling fixed (8319002d); reachability SKIP written, not committed | deadlines raised (stopgap); pod_stamp_is_main → auth=pod with reachability SKIP written, not committed | commit with the dead-host broken world |
 | Harness package split (core/checks/cmds/infra) | de | 0 | design accepted | plan doc after the memory program's monitors |
 | Funnel table (T0-T3 per rule) + gates_inventory.tsv | de | 0 | tiers ruled | table |
 | temp-world leak (12 dirs / 7.5 MB per harness selftest; 22 dirs / 12 MB per test_exp_done_started) | de | 100 | scripts/tmpworld.py process-level redirect + rmtree at exit, four call sites, 4 → 0 leaked through the hook (bd82cad6); 349 MB freed | mutation-tested 4 ways; test_attest_cases.py still leaks by hand (not in SELFTEST_FILES) |
 | Infra decoupling (aupai-infra) | tilerl | 40 | inventory + contract 326831f1; wrappers vendored 1ab666f6 with cd-into-background refusal; two inventory misfiles returned | subtree cut after the memory program's kernel work |
 | Prose rules → layers (user direction 2026-09-05: less control, brief before the work) | 44+de | 50 | 31 manual rules reviewed against 5 sources: KEEP 15 / BRIEF 14 / MOVE 2 / DELETE 0 (ec64087f, 3d11225f); rule→kind table handed to de; `harness brief <kind>` + two L1 gates (fixture-only checks; owned output dirs) + `harness ruling` queued at de behind the monitors | Shared-files T0 (3b, file_claim + owner scoping ed3eba36), Language T3 deleted, rule 1 (e1), rule 2 T1 (e1 38af3d47), rule 3 (e1, unblocked, after the probe) | rule 3 train.py ETA |
-| gate_failure_shapes restructure + 33 folded incidents | 44 | 100 | 141 = 59 + 82; 33/33 located, §162 re-cited, file::function rule; §175 §176 landed | §177 (attn_res) on b0's write-up |
+| gate_failure_shapes restructure + 33 folded incidents | 44 | 100 | 167 = 80 + 87 (§190-§199 filed tonight: never-constructed class, readout 4 blind, share across denominators, claim on shell pid + wrapper hole, rank-0 save desync, claim is not progress, probe without master, refused commit reported landed); 33/33 located, §162 re-cited, file::function rule; §175 §176 landed | §177 (attn_res) on b0's write-up |
 | Friction summary + fixes | 44 | 100 | 2fa5c710; post-merge hook warn-only; minutes_required check | daily |
 | Credential in transcripts (ANTHROPIC_AUTH_TOKEN) | fb | 100 | 83 occurrences in 6 transcripts + 2 zsh_history lines redacted; repo/pod clean across 18 branch tips and 4149 commits | user rotates the relay token; GitHub secret scanning is off on the repo (user setting) |
 | Laptop disk | user | 100 | 5 GB → 112 GB free | /private/tmp/e1_v11_snapshot (2.8 GB, 8 projects' transcripts) left in place per user |
