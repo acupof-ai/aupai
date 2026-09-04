@@ -72,6 +72,18 @@ def _amp():
 
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
 
+# INSIDE the cuda branch, and only there (de-55). CI runs this on a machine with no fla, where
+# DEV == "cpu" and no card is touched; an unconditional claim would refuse every CI run.
+#
+# The freest-card branch above is a card taken with no CVD and no claim, chosen by an
+# instantaneous free-memory poll -- the ownership test AGENTS.md rejects. claim_my_cards refuses
+# an unset CVD, so reaching this line on that branch now fails loudly and names the fix
+# (CUDA_VISIBLE_DEVICES=N) instead of landing on whatever card looked idle a moment ago.
+if DEV.startswith("cuda"):
+    from loader import claim_my_cards  # noqa: E402
+
+    claim_my_cards("test_arch_compat", note="arch compat gate")
+
 Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden, Cfg.vocab, Cfg.seq = 64, 2, 4, 128, 100, 16
 x = torch.randint(0, 100, (2, 16), device=DEV)
 y = torch.randint(0, 100, (2, 16), device=DEV)

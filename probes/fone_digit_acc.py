@@ -19,9 +19,11 @@ import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import fone  # noqa: E402
 import train  # noqa: E402
+from loader import claim_my_cards  # noqa: E402
 
 
 def main():
@@ -32,6 +34,9 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu")
     a = ap.parse_args()
+
+    if a.device.startswith("cuda"):
+        claim_my_cards("fone_digit_acc", note=f"digit head on {os.path.basename(a.ckpt)}")
 
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
     cfg = type("C", (), ck["cfg"])

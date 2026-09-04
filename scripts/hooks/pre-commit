@@ -671,6 +671,14 @@ def main():
         # mutation harness wrote a 501-line partial set through a symlink and it had to be
         # restored from HEAD. No card, no data beyond what is already on disk.
         "datagen/holdout.py",
+        # scripts/loader.py carries a selftest and was NOT in this map until 2026-09-04, so
+        # every commit touching the one file that owns ChatML, the vocab_id cross-check and now
+        # claim_my_cards printed a `selftests` timing line covering none of it. Its ChatML and
+        # fingerprint cases SKIP without data/tokenizer.json (gitignored), which is why the
+        # format assertions were deliberately moved above that gate -- and the claim cases need
+        # neither: they swap card_claim.CLAIM_DIR to a temp dir and set CUDA_VISIBLE_DEVICES
+        # themselves. No card, no data, ~1s.
+        "scripts/loader.py",
         # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
         # check_selftests_are_gated's population widened from "contains the string
         # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE

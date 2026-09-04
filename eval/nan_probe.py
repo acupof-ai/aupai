@@ -17,6 +17,11 @@ GC = os.environ.get("GC", "0") == "1"
 USE_MUON = os.environ.get("MUON", "0") == "1"
 STEPS = int(os.environ.get("STEPS", "40"))
 dev = "cuda:0"
+
+sys.path.insert(0, os.path.join("/work/aupai", "scripts"))
+from loader import claim_my_cards  # noqa: E402
+
+claim_my_cards("nan_probe", note="FP8 NaN probe")
 d = torch.load("/work/aupai/data/sft/sft_v3.pt", map_location="cpu", weights_only=True)
 X = d["input_ids"][:4096, :-1].long()
 Y = d["labels"][:4096, 1:].long()
