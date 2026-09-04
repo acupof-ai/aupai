@@ -52,6 +52,11 @@ ALLOWED = [
     # to keep out.
     "data/ledger_schema.json",
     "data/ledger_transport_schema.json",
+    # Probe item files. Items are drawn FROM the training corpus, so they must stay
+    # OUT of data/eval/ -- everything under that prefix has to be in datagen/holdout.py
+    # REGISTRY, and registering these would EXCLUDE them from the corpus, inverting the
+    # purpose of the probe. Under MAX, one row per line, and read by eval/*.py.
+    "data/probes/*.jsonl",
 ]
 
 
