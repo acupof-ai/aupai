@@ -9,8 +9,10 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 
 # Audit: evaluation and held-out, 2026-09-04
 
-Partial report at the 3-hour mark, per the method's "a partial report at 3 hours beats a
-complete one at 6". Section 5 names what is not yet covered.
+Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
+E9-E12 and section 5 names what remains unseen. Twelve entries: two S1, six S2, three S3, and
+E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
+since "no defect" is an answer to an assigned question and silence is not.
 
 ## 1. Scope
 
@@ -19,6 +21,8 @@ Covered:
 - `runs/score_matrix.jsonl` — all 60 rows, every field, read directly.
 - `runs/b0_23_blocks.jsonl`, `runs/b0_final_blocks.jsonl` — all rows.
 - `eval/domain_loss.py` and `eval/score_matrix.py` — the cu path, line by line.
+- All 43 `eval/*.py` scorers — prompt format, cu path, output artifact, selftest, population
+  guard. Delegated sweep; every line cited in E9-E12 re-verified by me at the file.
 - `datagen/holdout.py` — the registry and `EVAL_FILES`, imported and enumerated.
 - `facts/contamination.json` — all 36 entries: status, source, population.
 - `facts/*.json` — every entry citing `score_matrix`, by grep over the serialized entry.
@@ -27,10 +31,10 @@ Covered:
 
 Deliberately excluded from THIS report, listed rather than silent:
 
-- The per-file prompt-format sweep over all 46 `eval/*.py` scorers. Delegated and still
-  running when this was written; it is the largest remaining piece and section 5 says so.
 - `eval/*.sh` drivers.
-- Anything requiring a GPU. The audit forbids launches and I hold no card.
+- Anything requiring a GPU. The audit forbids launches and I hold no card. This is what makes
+  E10 an S2 and not an S1: whether the four extra cu=None scorers moved any published number
+  is a measurement, not a reading.
 
 ## 2. Method
 
@@ -68,7 +72,7 @@ No fixed-seed sample was needed: every population here is small enough to read w
 | contamination facts | 36 | 36 | n/a |
 | facts citing score_matrix | 18 | 18 | n/a |
 | corpus domains on the pod | 321 | 321 | n/a |
-| eval scorers under eval/ | 46 | 2 in this report | see §5 |
+| eval scorers under eval/ | 43 | 43 (E9-E12); 2 line by line by me | n/a, enumerated whole |
 
 ### Which corpus domains were built against which holdout population
 
@@ -104,16 +108,21 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E6 | S3 | 14 `score_matrix` rows appear to carry a `path` field. | The 14 are `"path": "/work/aupai/data/eval/preds_l1_d3.jsonl"` on rows 16-19 and 24 — a predictions-file location, not a forward path. | Cosmetic, but it is why a grep for `path` in this ledger reads as partially labelled when the cu label is absent everywhere. Noted so the next reader does not repeat my first mistake. |
 | E7 | S2 | The holdout guard runs per row in both corpus builders and is fail-closed and fingerprinted, so a domain that went through it is protected. | `datagen/build_corpus.py:28` imports `is_holdout`; it is called at `:86`, `:89`, `:93`, `:448`, `:717`. All 9 domains of `data/mix_200m_4b.json` are reachable through its generic `--domain` path (`:1585`). And `runs/e1_28/e1_28_per_domain_alone.json` gives every one of those 9 domains a non-zero alone-hit count: chatml 1515, chat_qa 1515, math_owm_stage2 542, cot 334, code_py_starcoder 239, textbook_30b 185, zh_web 81, code_py_rp1t 57, en_c4_stage2 22. | The guard ran, on every domain, and excluded none of these items — because the population it was checking against did not contain `data/sft/control_sft_text_heldout.jsonl`. **This is the empirical form of E4 and it is stronger than the date argument:** 9 of 9 domains carry hits, so no domain in the 200M mix was built against a population containing the held-out file. The per-domain spread also shows the guard is not uniformly blind — it is blind to one file, and the hit count tracks how much of that file's material each domain contains (chatml and chat_qa at 1515 each are two renders of one source). |
 | E8 | S3 | `datagen/build_cot.py` and `datagen/build_code_tests_v1.py` are corpus builders. | `grep -c 'is_holdout\|holdout'` returns 0 for both. | Neither consults the guard at all. This is NOT a finding about the `cot` domain in the current mix — E7 shows `cot`'s 334 hits, so the domain that exists was built through the guarded `build_corpus.py` path. It is a finding about the builders: two scripts that can write corpus material have no holdout check, so whether a future domain is guarded depends on which script someone reaches for. No consequence found in current data. |
+| E9 | — | **The assigned question, answered: does any eval hand ChatML to a base checkpoint?** NO. | `grep -ln 'im_start' eval/*.py` returns exactly one file, `eval/score_matrix.py`, where the marker appears in a dispatch-guard comment and not in a prompt. The five generative scorers all route through `prompt_fn(classify(cfg, ...))`: `code_zh.py`, `gsm8k.py`, `math_zh.py`, `math_hard.py`, `run_eval.py`. `eval/gsm8k.py:43-45` raises on a missing format with the reason in the message: "a default would silently score a base checkpoint in ChatML". Backed by an AST test, `scripts/test_eval_base_prompt_format.py`. | Nothing. This is a clean result, recorded as a finding because "no defect" is an answer and silence is not. The one gap: `eval/code_l0prime.py:121` builds a hardcoded continuation prompt with no `classify` call — correct for a base checkpoint, but an SFT/RL checkpoint scored by it also gets continuation with nothing recording the choice. S3 at most. |
+| E10 | S2 | The cu-path defect is confined to `domain_loss`/`score_matrix` (E1). | Four more scorers pass no cu on packed multi-document rows, each verified at the cited line: `eval/ppl.py:74` `logits, _ = model(xb)` on rows from `train._domain_seqs`; `eval/domain_bpb.py:67` `out = self.model(x)` where `:257` takes `val_seqs(name, ours_tok)` and `:272` decodes a whole packed row to one text; `eval/math_bpb.py:211` constructs `OursModel` with no `prefix_arm`, so `eval/humaneval_bpb.py:178`'s `cu = None` holds on every forward; and `humaneval_bpb.py` itself is cu=None unless `--prefix` is passed. | E1 is narrower than the defect. `ppl.py`'s docstring claims it "rebuilds exactly the rows train.py holds out" and then scores them under a different mask than training used. `domain_bpb.py` is the metric `score_matrix.py:62` uses for the **control-arm comparison**, so a cross-tokenizer conclusion rests on an undocumented path. None of these four carries a `path` label either. Whether any published number moves is UNMEASURED — that needs a card. |
+| E11 | S2 | `block_paired.py` and `readout_30b.py` refuse mismatched pairings. | They refuse on block-set mismatch (`block_paired.py:114-120`), token-count mismatch (`:123-129`) and `head_fp` (`readout_30b.py:486-509`). Neither reads `path`: no `get("path")` in either file. | `block_paired.py:220-233` loads `runs/b0_23_blocks.jsonl` (domain_loss CLI, doc_cu) beside `runs/score_matrix.jsonl` (score_matrix, cu_none) in the same call. The guards that exist are thorough about population and silent about the forward, so a doc_cu row and a cu_none row can be paired and nothing refuses. The `#cu` suffix keeps the keys distinct enough to be addressable, which makes the mixing possible rather than impossible. |
+| E12 | S3 | Sibling scorers are the same instrument. | `eval/code_fewshot.py:173` hardcodes `rep_stop=False` with no `tokenizer=` and has no `--no_rep_stop` flag; `eval/l1_fewshot.py:429-431` passes `tokenizer=tok` and `rep_stop=not args.no_rep_stop`. Same divergence in `math_hard.py:123` (no `tokenizer=`, no flag) vs `math_zh.py:136-138`. | `l1_fewshot.py:417-423` records that this exact omission once made two arms differ in DECODER rather than in model — "a decoder difference read as a model difference, from an argument that defaults to a silent False". The lesson is recorded in one sibling and not applied in the other two, and `math_hard.py` supports `--k`/`--temperature` for the sampled arm that `math_zh.py` documents this decoder as confounding. |
 
 ## 5. Blind spots of this audit
 
-- **The 46-scorer prompt-format sweep is not in this report.** Whether any eval hands ChatML
-  to a base checkpoint is therefore UNANSWERED here, and it is one of the three questions the
-  area was assigned. Running count: **2 of 46 scorers read** — `eval/domain_loss.py` and
-  `eval/score_matrix.py`, both line by line. `block_paired.py` and `humaneval_bpb.py` I have
-  only seen NAMED in fact sources and roadmap rows, which is not reading them.
-  The sweep is delegated and will be appended with the count updated; 6e ruled 2026-09-04 that
-  it stays in this area's report rather than moving.
+- **The 46-scorer prompt-format sweep is DONE and its results are E9-E12.** Running count:
+  **43 of 43 scorers enumerated** — and the "46" in my earlier draft was wrong: `ls eval/*.py | wc -l`
+  is 43. I had counted from a directory listing that included `__init__.py`, `_devs.sh` and
+  `__pycache__`. The sweep was delegated; I re-verified every line it cites for E9-E12 myself
+  (`ppl.py:74`, `domain_bpb.py:67`/`:257`/`:272`, `math_bpb.py:211`, `humaneval_bpb.py:178`,
+  `gsm8k.py:43-45`, the `im_start` grep, the `prompt_fn(classify` grep) before writing them down,
+  because a subagent's report is a claim and principle 1 does not exempt it. The sweep also
+  reported "42 files"; the count is 43.
 - I read no scorer's behaviour, only its source. A file that passes `doc_cu` in the line I
   quoted may still be reached through a wrapper that does not.
 - E3 says the N2 verdict's instrument was defective by 7.6× its own size. It does NOT say the
