@@ -1,0 +1,31 @@
+site	row	project	role	class	subclass	coherent	note
+1	2032	arle-app-demo	tool	fp	crash-report-filename	y	bare .ips name in ls output, no slash before span (path tail)
+2	3517	eic	tool	fp	log-hex-id	y	zmq_transport log line prefix id
+3	4040	llmserver	tool	secret	lark-device-code	y	device_code field of lark auth json
+4	3711	eli	tool	fp	binary-strings-blob	y	strings output of arle binary, help text chunked
+5	4278	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
+6	3661	eic	tool	fp	harness-tool-use-id	y	tool-use-id in task-notification block
+7	4280	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
+8	4274	sglang-iaas	tool	fp	base64-blob	y	recovered remote output, 8 placeholders chunking one blob
+9	2111	arle-app-demo	tool	fp	macos-tsm-uuid	y	TSM context id in Cupai system log
+10	289	agent-infer	tool	fp	api-message-id	y	id field of assistant message in transcript json
+11	3955	lessons	tool	fp	hf-cache-dirname	y	bare models-- name in ssh ls output (path tail)
+12	4041	llmserver	tool	secret	lark-device-code	y	device_code field of lark auth json
+13	2155	arle-app-demo	tool	fp	macos-tsm-uuid	y	TSM context id in Cupai system log
+14	3827	lessons	tool	secret	lark-device-code	y	device_code field of lark auth json
+15	3433	eic	tool	fp	docker-image-tag	y	REMOTE_IMAGE_TAG value; SAME ROW holds unredacted --password registry credential, see review row
+16	3926	lessons	tool	secret	lark-device-code	y	device_code field of lark auth json
+17	3636	eic	tool	fp	base64-script-blob	y	tmux send-keys echo of base64 chunk
+18	3695	eli	tool	fp	eli-workspace-dirname	y	bare chat.*.v1-* dirname in ls output (path tail)
+19	4162	sglang-iaas	tool	fp	log-symlink-target	y	symlink target after -> in ls -l (path tail)
+20	1999	arle-app-demo	tool	fp	arlechat-log-filename	y	bare 2026*_arlechat-*.ndjson name in ls output (path tail)
+21	3706	eli	tool	fp	eli-workspace-dirname	y	bare agent.*.v1-* dirname in ls output (path tail)
+22	4043	llmserver	tool	secret	lark-device-code	y	first printed line of device_code/verification_url output
+23	410	agent-infer	tool	fp	filename-prefix-hex	y	normalized /host filename prefix in sort|uniq -c output
+24	4161	sglang-iaas	tool	fp	log-filename	y	bare eic_client_byterpc.* rotation name in ls -l (path tail)
+25	1534	agent-infer	tool	fp	api-message-id	y	id field of assistant message in transcript json
+26	964	agent-infer	tool	fp	deepgemm-cache-hash	y	bare cache hash dirname in ls output (path tail)
+27	4158	sglang-iaas	tool	fp	log-symlink-target	y	symlink target after -> in ls -l (path tail)
+28	3357	cha	tool	secret	playwright-token	y	PLAYWRIGHT_MCP_EXTENSION_TOKEN= in .zshrc
+29	4279	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
+30	4267	sglang-iaas	tool	fp	k8s-pod-name	y	pod name column in kubectl get pods output
