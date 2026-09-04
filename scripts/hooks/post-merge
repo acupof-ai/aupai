@@ -1,0 +1,49 @@
+#!/usr/bin/env python3
+"""Post-merge hook: run harness check after a fast-forward merge.
+
+Fast-forward merges run no pre-commit and no pre-merge-commit hook, so a wip
+commit that would have been refused on its own branch lands on main unchecked
+(2026-09-03 friction row, ~10 min). This hook runs the harness check after a
+fast-forward and warns on failure.
+
+Three-way merges are gated by pre-merge-commit; this hook skips them by
+checking whether ORIG_HEAD is a direct parent of HEAD (true for three-way,
+false for fast-forward).
+
+Install: python scripts/harness.py install-hooks
+"""
+import subprocess
+import sys
+
+
+def _git(*args):
+    return subprocess.run(["git", *args], capture_output=True, text=True).stdout.strip()
+
+
+def main():
+    # Squash merges produce a new commit that pre-commit already gated.
+    if len(sys.argv) > 1 and sys.argv[1] == "1":
+        return 0
+    try:
+        orig = _git("rev-parse", "ORIG_HEAD")
+        parents = _git("log", "--pretty=%P", "-1", "HEAD").split()
+        if orig and orig in parents:
+            return 0  # three-way merge, pre-merge-commit gated it
+    except Exception:
+        pass  # cannot tell; run the check anyway
+    top = _git("rev-parse", "--show-toplevel")
+    if not top:
+        return 0
+    r = subprocess.run([sys.executable, "scripts/harness.py", "check"], cwd=top)
+    if r.returncode != 0:
+        print(
+            "\npost-merge: harness check FAILED after fast-forward merge.\n"
+            "  The merged commits were not gated by pre-commit.\n"
+            "  Fix the failures above before pushing.",
+            file=sys.stderr,
+        )
+    return 0  # warn only, do not block
+
+
+if __name__ == "__main__":
+    sys.exit(main())
