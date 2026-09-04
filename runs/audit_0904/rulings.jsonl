@@ -1,19 +1,19 @@
-{"id": "CD-1", "ruling": "accepted", "by": "fb"}
-{"id": "CD-2", "ruling": "accepted", "by": "fb"}
-{"id": "CD-3", "ruling": "accepted", "by": "fb"}
-{"id": "CD-4", "ruling": "accepted", "by": "fb"}
-{"id": "CD-5", "ruling": "accepted", "by": "fb"}
-{"id": "CD-6", "ruling": "accepted", "by": "fb"}
-{"id": "E1", "ruling": "accepted S1 — N2 not a 30B-shape input until both legs are rescored on doc_cu, first lane job after the audit", "by": "fb"}
-{"id": "E2", "ruling": "qualify, not retract", "by": "fb"}
-{"id": "E3", "ruling": "accepted S1 — N2 not a 30B-shape input until both legs are rescored on doc_cu, first lane job after the audit", "by": "fb"}
-{"id": "E5", "ruling": "#cu suffix before any doc_cu row", "by": "fb"}
-{"id": "UF-1", "ruling": "accepted S1", "by": "fb"}
-{"id": "UF-2", "ruling": "accepted S1", "by": "fb"}
-{"id": "UF-3", "ruling": "accepted S2", "by": "fb"}
-{"id": "UF-4", "ruling": "accepted", "by": "fb"}
-{"id": "UF-5", "ruling": "accepted", "by": "fb"}
-{"id": "UF-6", "ruling": "accepted", "by": "fb"}
+{"id": "CD-1", "ruling": "accepted", "by": "fb", "note": "accepted S2"}
+{"id": "CD-2", "ruling": "accepted", "by": "fb", "note": "accepted S2"}
+{"id": "CD-3", "ruling": "accepted", "by": "fb", "note": "accepted S3 (citation build_corpus.py:647 verified)"}
+{"id": "CD-4", "ruling": "accepted", "by": "fb", "note": "accepted S3, widened to 47 stamps by b0"}
+{"id": "CD-5", "ruling": "accepted", "by": "fb", "note": "accepted S2 (harness.py:4100 verified)"}
+{"id": "CD-6", "ruling": "accepted", "by": "fb", "note": "accepted S3; record only, no deletion during audit"}
+{"id": "E1", "ruling": "accepted", "by": "fb", "note": "accepted S1; re-score on doc_cu is the first lane job post-audit"}
+{"id": "E2", "ruling": "accepted", "by": "fb", "note": "accepted S2; qualify the sentence, do not retract the numbers"}
+{"id": "E3", "ruling": "accepted", "by": "fb", "note": "accepted S1; N2 not a 30B-shape input until both legs rescored on doc_cu"}
+{"id": "E5", "ruling": "accepted", "by": "fb", "note": "accepted S2; #cu suffix in score_matrix before any doc_cu row"}
+{"id": "UF-1", "ruling": "accepted", "by": "fb", "note": "accepted S1"}
+{"id": "UF-2", "ruling": "accepted", "by": "fb", "note": "accepted S1"}
+{"id": "UF-3", "ruling": "accepted", "by": "fb", "note": "accepted S2 after pair check"}
+{"id": "UF-4", "ruling": "accepted", "by": "fb", "note": "accepted S2"}
+{"id": "UF-5", "ruling": "accepted", "by": "fb", "note": "accepted S3"}
+{"id": "UF-6", "ruling": "accepted", "by": "fb", "note": "accepted S3"}
 {"id": "DL-11", "ruling": "accepted", "by": "fb", "note": "accepted S1; one transport for every runs/*.jsonl, union by event, second on queue"}
 {"id": "DL-4", "ruling": "accepted", "by": "fb", "note": "accepted S1; fix already on main via merge (c8f9f25f), recorded as freeze breach"}
 {"id": "DL-5", "ruling": "accepted", "by": "fb", "note": "accepted S1; inverted on main at b98cd784"}
@@ -72,5 +72,4 @@
 {"id": "PR-5", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
 {"id": "PR-6", "ruling": "accepted", "by": "fb", "note": "accepted after dual-rule publication (197 vs 130, manifest sha pinned)"}
 {"id": "PR-7", "ruling": "accepted", "by": "fb", "note": "accepted, same as PR-6"}
-{"id": "UNPARSED", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
 {"id": "UNPARSED", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
