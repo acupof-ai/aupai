@@ -175,3 +175,17 @@ Pod `stat`: newest corpus dirs are all 2026-09-03 (`en_c4_30b` 09-03 20:29Z, `co
 09-03 15:23Z, `rp1t_arxiv_papers` 09-03 08:19Z). Every corpus domain predates the registry. This
 matches the corpus audit's CD-2: no stamp records which holdout population it was built against,
 and none could have been built against the registry.
+
+### One number reconciled between the two passes (e1, after reading 3b's check)
+
+3b read **52** score_matrix rows carrying `domain_loss`; I read **51**. **51 is correct.**
+
+The 52nd is `pythia-160m-step2000`, the control. Its metrics keys are
+`[domain_bpb, lambada_en, humaneval_bpb]` — no `domain_loss`. The string `domain_loss` appears in
+that row only inside a `skipped` reason. A search over the serialized row counts it; the metric is
+absent.
+
+Kept rather than quietly corrected, because it is the same shape as the broken-world note in §2 —
+a loose match reading as presence — arrived at independently by two readers on the same file
+within an hour. Neither pass was careless; the substring is simply not the property. The finding
+E1 rests on is unaffected: 0 rows carry a cu label either way.
