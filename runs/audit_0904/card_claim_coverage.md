@@ -97,3 +97,36 @@ a separate refactor and it is not required by any of the three options above.
 Whether `test_arch_compat`'s freest-card branch has ever collided with a running job. It is a
 latent instance of the same defect and belongs in its own row, not this one.
 
+
+## The population was 11 because of how it was selected, not because it is 11 (de, 2026-09-04)
+
+Implemented Option 1 and then re-measured the population from the tracked tree rather than from
+the earlier hand list. **A file that loads a checkpoint AND puts something on cuda: 48 tracked
+`.py`, 41 with a `__main__`.** Ten now call `claim_my_cards`; `harness.py` acquires as before.
+Both numbers are FLOORS: the predicate is textual, and the scan's own first version missed
+`eval/score_matrix.py`, whose device comes back from a helper returning an f-string.
+
+The predicate is `torch.load|load_checkpoint` AND one of `.cuda()`, an argparse `default="cuda"`,
+`dev = "cuda[:N]"`, or `.to("cuda")` — a card actually taken, not the string `cuda` appearing
+somewhere. Scanned with `runs/audit_0904/card_claim_population.py`, which is committed so the count can be
+re-derived rather than trusted; the looser "names cuda anywhere" predicate returns 50, and the
+difference between 50 and 48 is files that mention cuda without taking a card.
+
+So the ten sites in this commit close the ruling as written and cover **10 of 41**. The
+uncovered 31 are the same defect: `eval/` has 19 of them (`math_hard`, `mmlu`, `ppl`,
+`domain_loss`, `l1_fewshot`, `run_eval`, …), plus `sft.py`, `sft_math.py`, `train.py`,
+`chat.py`, `infer.py`, `algorithms/rlvr_trainer.py`, four `scripts/b0_*`/`e1_*` probes and two
+`n7c_*` gates.
+
+What this does NOT establish, and the reason it is a note rather than a task: whether all 31
+should acquire. `train.py` and `sft*.py` go through `harness launch`, which already claims, so a
+second acquire there would refuse its own launcher's claim — the acquire point for a launched job
+is the launcher, and adding one inside would be wrong rather than merely redundant. The 19 `eval/`
+tools are the live question: `eval_all.sh`/`eval_hard.sh` wrap several of them, so the right unit
+may be the wrapper rather than each metric. Deciding that needs a reading of which are ever run
+directly, which is a separate measurement.
+
+**Nothing here weakens the ruling; it bounds it.** Option 1's shape — one helper, one line per
+entry point, the refusal in one testable place — is what makes 31 more sites cheap if the
+controller wants them. The scan is the deciding artifact and it is reproducible: rerun the
+predicate above rather than trusting this count.

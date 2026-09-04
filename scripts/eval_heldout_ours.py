@@ -87,6 +87,13 @@ def main():
 
     from train import Cfg, Transformer  # noqa: F401  -- Cfg is mutated by the checkpoint
 
+    # AFTER --selftest and the CANNOT CHECK paths: neither loads a model, so neither needs a
+    # card and a claim there would refuse a correct cardless invocation (de-55).
+    if str(a.device).startswith("cuda"):
+        from loader import claim_my_cards
+
+        claim_my_cards("eval_heldout_ours", note=f"ours arm on {os.path.basename(a.ckpt)}")
+
     d = torch.load(a.pack, map_location="cpu", weights_only=True)
     ck = torch.load(a.ckpt, map_location="cpu", weights_only=False)
 
