@@ -36,8 +36,25 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
   control's and the arm differs from it only by the memory.
 - product-key lookup, top-k = 32, one query head, output gated (Meta memory+ style: value
   projection then silu gate). Memory values and keys are excluded from FP8 and from Muon;
-  they train with a sparse optimizer (SparseAdam or Adagrad) at their own lr.
-- sparse gradients across DDP: gather touched indices, never all-reduce the dense 1B table.
+  they train with Adagrad at their own lr. **The value table is outside FP8 by module
+  type, not by the filter**: it is an `nn.Embedding`, and `convert_to_float8_training`
+  only replaces `nn.Linear`, so torchao never reaches it. The three projections
+  (`query`, `gate`, `out`) ARE reachable and are excluded by path — verified by listing
+  what the real filter converts, 0 of 3, against 3 of 3 under a leaf-name test
+  (`probes/mem_boundary_audit.py`, reviewed against `4d0319cf`). The reason to exclude
+  them is not cost but that `query` feeds a top-k selection, so FP8 noise in the scores
+  changes WHICH rows are read — a discrete effect the block-paired readout cannot
+  separate from the memory's own (4c, 2026-09-05).
+- gradient exchange across DDP is chosen **per arm, by measurement**. The original rule
+  was "gather touched indices, never all-reduce the dense table"; it was struck on
+  2026-09-05 because sparse loses at both launched shapes. Measured on cards 5+0:
+  M1 touches 86.5% of its table per step (69.2% under a peaked draw) and M2 touches
+  **99.97%** — smaller table, more saturated, since the same 2,097,152 draws hit 4x
+  fewer values. Sparse costs 1.5–2.3x dense in time and 1.4–2.0x in bytes at every
+  shape. **M1 and M2 run dense all-reduce** with `mem_sparse=False`; NCCL raises on a
+  COO gradient, so there is no automatic sparse path either way. M3 is re-measured
+  before its launch (2,097,152 draws into 4,194,304 values is ~39% distinct, the first
+  shape where sparse could win). `scripts/memory_ddp_bench.py`.
 - `test_arch_compat.py` gains: memory fwd/bwd on CPU, save/load round-trip, and a legacy
   checkpoint (no memory) still loads.
 
