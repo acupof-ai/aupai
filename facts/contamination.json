@@ -875,6 +875,68 @@
    "artifact_sha256": {
     "math_test_500.jsonl": "609a5a5af31d666a01e2a82c692d1d54f5e13a081a2a98c929e02670941b34e5"
    }
+  },
+  {
+   "id": "cont.en_c4_ws13",
+   "value": {
+    "unit": "whitespace 13-gram containment (same method as cont.math_owm_ws13)",
+    "en_c4": {
+     "shards": 166,
+     "docs": 7767463,
+     "wall_s": 3728,
+     "humaneval_164": {
+      "question": {
+       "docs_hit": 11,
+       "rate": 1e-06
+      },
+      "other": {
+       "docs_hit": 1,
+       "rate": 0.0
+      }
+     },
+     "math_test_500": 0,
+     "math_hard_eval_v2_1k": 0,
+     "lambada_test_en": {
+      "answer": {
+       "docs_hit": 2,
+       "rate": 0.0
+      }
+     },
+     "code_holdout_v2_500": 0
+    },
+    "en_c4_stage2": {
+     "shards": 83,
+     "docs": 3887759,
+     "wall_s": 1940,
+     "humaneval_164": {
+      "question": {
+       "docs_hit": 7,
+       "rate": 2e-06
+      }
+     },
+     "math_test_500": 0,
+     "math_hard_eval_v2_1k": 0,
+     "lambada_test_en": {
+      "answer": {
+       "docs_hit": 1,
+       "rate": 0.0
+      }
+     },
+     "code_holdout_v2_500": 0
+    },
+    "verdict": "both en_c4 dirs carry no gold contamination: math-500 / math-hard v2 / code_holdout all 0; humaneval-question 13-gram hits 11+7 docs (gram collisions at ~1e-6 rate), lambada answer 2+1. Markedly cleaner than math_owm -- web text, few digit-grams.",
+    "wall_s_total": 5668
+   },
+   "measured": "2026-09-04",
+   "source": "runs/scan_en_c4_ws.json (datagen/scan_eval_golds.py whitespace-13, pool 8 CPU) over data/corpus/en_c4 and en_c4_stage2",
+   "config": {
+    "golds": "the 5 default eval golds: humaneval_164 / math_test_500 / math_hard_eval_v2_1k / lambada_test_en / code_holdout_v2_500",
+    "method": "whitespace 13-gram containment; exact 13-token gram of the gold in a corpus doc",
+    "unit": "docs hit; rate=docs_hit/docs",
+    "selftest": "verbatim gold found, shuffled gold 0 hits"
+   },
+   "uncertainty": "humaneval/lambada hits are per-doc gram collisions, not problem-text leakage; the same gold sentence can hit multiple docs (not a distinct-holdout union) at these ~1e-6 rates.",
+   "status": "measured"
   }
  ]
 }
