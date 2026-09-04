@@ -12403,6 +12403,19 @@ def _selftest_flagless_test_is_gated():
         f"a test_*.py with no `if __name__` runs nothing and must not be demanded: {ev2[:200]}")
     print("  selftests_are_gated: a flagless runnable test must be gated; an inert test_*.py "
           "is not demanded")
+    # The odd-quote arm (§74): a comment inside the map with an odd number of double quotes
+    # re-pairs every quote below it and silently drops entries. The cross-validation must
+    # refuse rather than report a false FAIL.
+    mutated = text.replace("SELFTEST_FILES = {",
+                           'SELFTEST_FILES = {\n    # odd quote " here', 1)
+    if mutated != text:
+        open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(mutated)
+        st3, ev3 = check_selftests_are_gated(d)
+        assert st3 == FAIL and "invisible to this check" in ev3, (
+            f"an odd quote in a map comment must FAIL with the cross-validation message; "
+            f"got {st3}: {ev3[:200]}")
+        print("  selftests_are_gated: an odd quote in a map comment is refused, not reported "
+              "as a false FAIL")
 
 
 def _selftest_repo_auth_mirror():
