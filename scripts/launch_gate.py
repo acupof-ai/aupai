@@ -817,6 +817,9 @@ AUTHORITY = {
     "arch_tests": "main", "cards": "main", "memory_measured": "main",
     "corpora": "pod", "epochs_measured": "pod",
     "checks_and_drift": "both",
+    # main: the probe file and the mix are both tracked, and the command comes from the
+    # register -- the pod holds no experiments.jsonl to read a launch line from.
+    "cloze_regions": "main",
 }
 
 
@@ -1027,6 +1030,93 @@ def _recorded_cmd(root):
     return running[0]["cmd"], f"runs/experiments.jsonl, {running[0]['name']}"
 
 
+def gate_cloze_regions(root, mix_path, world, cmd=None):
+    """11. A memory arm may not read into the cloze probe's UNSEEN region.
+
+    Readout 2 compares what the control read against what it never read, and both regions are
+    row indices into ONE cache ordering. UNSEEN = pool [alloc, len(pool)) where alloc is the
+    phase allocation int(total_rows x weight) -- unread by CONSTRUCTION, because the plan never
+    allocates past it. An arm that allocates more, or runs longer, starts reading into the
+    region the probe calls never-seen, and the readout silently becomes seen-vs-seen.
+
+    Three conditions, and the third is not about UNSEEN at all (e1):
+
+      alloc      an arm whose mix moves code_py_starcoder's weight moves the boundary itself,
+                 so the item file's indices stop meaning what they say.
+      max_steps  the arms reuse the control's line, so 3815 steps keeps every read below alloc.
+      seed       UNSEEN survives a seed change (it is past the allocation either way), but the
+                 READ SET does not: the plan's shuffle is seeded, so an arm at another seed
+                 reads different rows inside the same allocation and SEEN stops describing what
+                 it trained on. That breaks delta_seen, not delta_unseen.
+
+    The boundary is READ FROM THE ITEM FILE's header, never hardcoded. A constant here and a
+    number in the file are two copies of one quantity, and the failure this gate exists to
+    prevent is precisely the two drifting apart (the first item file was built on a wrong
+    boundary and looked internally consistent).
+
+    UNKNOWN, not GO, when there is no probe file or no command: this gate answers about a
+    launch's argv against a registered probe, and a missing probe means the question has no
+    subject -- a GO there would certify a comparison nobody has defined yet.
+    """
+    probe = os.path.join(root, "data", "eval", "api_cloze.jsonl")
+    if not os.path.exists(probe):
+        return UNKNOWN, ("no data/eval/api_cloze.jsonl: no registered cloze probe, so no "
+                         "region for a launch to violate")
+    try:
+        with open(probe, encoding="utf-8") as fh:
+            head = json.loads(fh.readline())
+    except (OSError, ValueError) as e:
+        return NOGO, f"data/eval/api_cloze.jsonl header unreadable: {e}"
+    need = ("domain", "unseen_lo", "seed")
+    missing_hdr = [k for k in need if head.get(k) is None]
+    if missing_hdr:
+        return NOGO, (f"cloze header lacks {', '.join(missing_hdr)}: the boundary this gate "
+                      f"enforces is not stated in the file it protects")
+    dom, unseen_lo, want_seed = head["domain"], int(head["unseen_lo"]), int(head["seed"])
+    if cmd is None:
+        cmd, src = _recorded_cmd(root)
+        if cmd is None:
+            return UNKNOWN, (f"no launch command recorded ({src}); this gate answers on argv")
+    else:
+        src = "the command given to this gate"
+    m = re.search(r"--mix\s+(\S+)", cmd)
+    launch_mix = m.group(1) if m else mix_path
+    try:
+        mix = json.load(open(os.path.join(root, launch_mix), encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return NOGO, f"launch mix {launch_mix} unreadable: {e}"
+    d = mix.get("domains", {}).get(dom)
+    if d is None:
+        return NOGO, (f"{launch_mix} does not name {dom}, the domain the cloze regions index; "
+                      f"the probe cannot describe this run's data")
+    seq = int(head.get("seq") or 4096)
+    alloc = int((mix["total_tokens"] / seq) * d["weight"])
+    bad = []
+    if alloc != unseen_lo:
+        bad.append(f"allocation int(rows x weight)={alloc:,} != the probe's unseen_lo="
+                   f"{unseen_lo:,}, so this launch reads {alloc - unseen_lo:,} rows into UNSEEN"
+                   if alloc > unseen_lo else
+                   f"allocation int(rows x weight)={alloc:,} != the probe's unseen_lo="
+                   f"{unseen_lo:,}: the boundary moved, so the item file's row indices no "
+                   f"longer mean what its header says")
+    ms = re.search(r"--max_steps\s+(\d+)", cmd)
+    max_steps = int(ms.group(1)) if ms else None
+    want_steps = head.get("control_max_steps")
+    if want_steps is not None and (max_steps is None or max_steps > int(want_steps)):
+        bad.append(f"--max_steps {max_steps} > the control's {int(want_steps)}: a longer run "
+                   f"consumes more of the plan and reads past the boundary")
+    sd = re.search(r"--seed\s+(\d+)", cmd)
+    seed = int(sd.group(1)) if sd else None
+    if seed != want_seed:
+        bad.append(f"--seed {seed} != the probe's {want_seed}: the plan shuffle is seeded, so "
+                   f"this arm reads DIFFERENT rows inside the same allocation and SEEN stops "
+                   f"describing what it trained on (delta_seen, not delta_unseen)")
+    if bad:
+        return NOGO, f"cloze regions ({src}): " + "; ".join(bad)
+    return GO, (f"cloze regions hold ({src}): {dom} alloc {alloc:,} == unseen_lo, "
+                f"--max_steps {max_steps} <= {want_steps}, --seed {seed}")
+
+
 GATES = [
     ("mix_file", gate_mix_file),
     ("epochs_measured", gate_epochs_measured),
@@ -1038,6 +1128,7 @@ GATES = [
     ("vocab_id", gate_vocab_id),
     ("checks_and_drift", gate_checks_and_drift),
     ("launch_command", gate_launch_command),
+    ("cloze_regions", gate_cloze_regions),
 ]
 
 
@@ -1291,6 +1382,44 @@ def selftest():
     d = world(_badcmd)
     broken["launch_command"] = (d, os.path.join(d, mix_rel))
 
+    # cloze_regions: the probe file states the boundary, and the world nudges the MIX's
+    # starcoder weight so the launch allocates past it. Mutating the mix rather than the
+    # header is the direction that matters -- a real arm violates this by changing its own
+    # composition, not by editing the probe. The running row carries the control's line so
+    # _recorded_cmd has a command to read.
+    #
+    # This world carries mix_200m_8b.json, NOT the shared mix_30b_stage2 the other worlds
+    # use: the probe indexes code_py_starcoder, which mix_30b_stage2 does not name, and a
+    # world whose mix lacks the domain would exercise the "domain absent" branch instead of
+    # the boundary one -- passing for the wrong reason.
+    _CLOZE_MIX = os.path.join("data", "mix_200m_8b.json")
+
+    def _badcloze(dd):
+        _src = os.path.join(ROOT, _CLOZE_MIX)
+        _dst = os.path.join(dd, _CLOZE_MIX)
+        os.makedirs(os.path.dirname(_dst), exist_ok=True)
+        shutil.copy2(_src, _dst)
+        _w0 = json.load(open(_src, encoding="utf-8"))["domains"]["code_py_starcoder"]["weight"]
+        _m = json.load(open(_dst, encoding="utf-8"))
+        _unseen_lo = int((_m["total_tokens"] / 4096) * _w0)   # from the UNMUTATED weight
+        _m["domains"]["code_py_starcoder"]["weight"] = _w0 * 1.01
+        json.dump(_m, open(_dst, "w"))
+        os.makedirs(os.path.join(dd, "data", "eval"), exist_ok=True)
+        with open(os.path.join(dd, "data", "eval", "api_cloze.jsonl"), "w",
+                  encoding="utf-8") as f:
+            f.write(json.dumps({"domain": "code_py_starcoder", "seq": 4096, "seed": 42,
+                                "unseen_lo": _unseen_lo, "control_max_steps": 3815,
+                                "n_seen_rows": 80280}) + "\n")
+        os.makedirs(os.path.join(dd, "runs"), exist_ok=True)
+        with open(os.path.join(dd, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
+            f.write(json.dumps({
+                "name": "memory_arm_M1", "status": "running",
+                "cmd": (f"NGPU=2 ./run_ddp.sh --name memory_arm_M1 --mix {_CLOZE_MIX} "
+                        "--batch 16 --accum 2 --max_steps 3815 --seed 42"),
+            }) + "\n")
+    d = world(_badcloze)
+    broken["cloze_regions"] = (d, os.path.join(d, _CLOZE_MIX))
+
     ungated = [n for n, _ in GATES if n not in broken]
     assert not ungated, (
         "gate(s) with no broken world: " + ", ".join(ungated) +
@@ -1481,6 +1610,7 @@ def selftest():
         "vocab_id": "distinct vocab_id",
         "checks_and_drift": "no check lines",
         "launch_command": "warmdown",
+        "cloze_regions": "unseen_lo",
     }
     bad = []
     for name, fn in GATES:
@@ -1866,6 +1996,53 @@ def selftest():
                     bad.append(f"gate_vocab_id on {_label}: {_s}, wanted {_want} ({_why[:70]})")
                 elif _named and _named not in _why:
                     bad.append(f"gate_vocab_id excluded {_named} without naming it: {_why[:90]}")
+
+    # gate_cloze_regions: four worlds off the REAL mix and a real-shaped header. Each of the
+    # three conditions must refuse on its own, and a fifth asserts the gate does not
+    # manufacture a verdict when the probe is absent -- UNKNOWN, because a GO there would
+    # certify a comparison nobody has defined. The mix is copied and MUTATED (the weight
+    # nudged), never hand-written: a hand-made mix shares the gate's own assumption about
+    # which fields exist and would pass a gate that reads none of them.
+    _mix_src = os.path.join(ROOT, "data", "mix_200m_8b.json")
+    if os.path.exists(_mix_src):
+        import shutil
+        import tempfile
+        _CTRL = ("env CUDA_VISIBLE_DEVICES=4,2 NGPU=2 ./run_ddp.sh --name arm "
+                 "--mix data/mix_200m_8b.json --batch 16 --accum 2 --max_steps 3815 --seed 42")
+        _mix0 = json.load(open(_mix_src, encoding="utf-8"))
+        _alloc = int((_mix0["total_tokens"] / 4096)
+                     * _mix0["domains"]["code_py_starcoder"]["weight"])
+        _hdr = {"domain": "code_py_starcoder", "unseen_lo": _alloc, "seed": 42, "seq": 4096,
+                "control_max_steps": 3815, "n_seen_rows": 80280}
+        for _label, _mut, _cmd, _want in (
+            ("the control's own line", None, _CTRL, GO),
+            ("a mix whose starcoder weight is nudged up",
+             ("weight", _mix0["domains"]["code_py_starcoder"]["weight"] * 1.01), _CTRL, NOGO),
+            ("a run 500 steps longer", None, _CTRL.replace("--max_steps 3815",
+                                                           "--max_steps 4315"), NOGO),
+            ("an arm at another seed", None, _CTRL.replace("--seed 42", "--seed 43"), NOGO),
+        ):
+            with tempfile.TemporaryDirectory(prefix="cloze_selftest_") as _d:
+                os.makedirs(os.path.join(_d, "data", "eval"))
+                shutil.copy(_mix_src, os.path.join(_d, "data", "mix_200m_8b.json"))
+                if _mut:
+                    _mp = os.path.join(_d, "data", "mix_200m_8b.json")
+                    _m = json.load(open(_mp, encoding="utf-8"))
+                    _m["domains"]["code_py_starcoder"][_mut[0]] = _mut[1]
+                    json.dump(_m, open(_mp, "w"))
+                with open(os.path.join(_d, "data", "eval", "api_cloze.jsonl"), "w",
+                          encoding="utf-8") as _f:
+                    _f.write(json.dumps(_hdr) + "\n")
+                _s, _why = gate_cloze_regions(_d, "data/mix_200m_8b.json", 2, cmd=_cmd)
+                if _s != _want:
+                    bad.append(f"gate_cloze_regions on {_label}: {_s}, wanted {_want} "
+                               f"({_why[:80]})")
+        with tempfile.TemporaryDirectory(prefix="cloze_selftest_") as _d:
+            os.makedirs(os.path.join(_d, "data"))
+            shutil.copy(_mix_src, os.path.join(_d, "data", "mix_200m_8b.json"))
+            _s, _why = gate_cloze_regions(_d, "data/mix_200m_8b.json", 2, cmd=_CTRL)
+            if _s != UNKNOWN:
+                bad.append(f"gate_cloze_regions with no probe file: {_s}, wanted UNKNOWN")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
