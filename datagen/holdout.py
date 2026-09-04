@@ -24,6 +24,7 @@ is the reason this is loud, not silent.
 import hashlib
 import json
 import os
+import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -164,9 +165,14 @@ REGISTRY = {
     },
 }
 
-# Registry names whose file is expected to be absent here: named in code, on no disk we have.
-# Kept as entries rather than deleted so `eval_path` still resolves them and the completeness
-# check's reverse direction (an entry whose path is gone) does not fire on a known state.
+# Eval names that exist in the codebase's vocabulary but are in no REGISTRY entry and on no
+# disk we have. This is a DENYLIST OF NAMES, not a set of registry keys: measured 2026-09-04,
+# eval_path("ceval") and eval_path("code_rp1t_handread50") both raise UnregisteredEval, and
+# neither contributes an EVAL_FILES path. The comment here previously said they were "kept as
+# entries rather than deleted so eval_path still resolves them", which was false in both
+# halves -- they are not entries and it does not resolve them. Its only real use is
+# _NON_EVAL_PREFIXES-style exclusion in the completeness check, so a scan does not demand a
+# registry row for a file nobody has.
 KNOWN_ABSENT = {"ceval", "code_rp1t_handread50"}
 
 
@@ -234,15 +240,35 @@ def qhash(q):
     return hashlib.sha1(norm(q).encode("utf-8")).hexdigest()[:16]
 
 
+def _fp_inputs():
+    """(present, absent) EVAL_FILES paths. The split IS the fingerprint's domain."""
+    present = sorted(p for p in EVAL_FILES if os.path.exists(p))
+    absent = sorted(p for p in EVAL_FILES if not os.path.exists(p))
+    return present, absent
+
+
 def _fingerprint():
-    """sha1 of (basename, file-sha1) for every existing EVAL_FILES entry. Changes
+    """sha1 of (basename, file-sha1) for every EXISTING EVAL_FILES entry. Changes
     when an eval file is added, removed, or edited -- which is exactly when the
-    hash set must be regenerated."""
+    hash set must be regenerated.
+
+    SKIPPING ABSENT FILES MAKES THIS MACHINE-DEPENDENT, and that is the whole reason for
+    the two guards below. The laptop holds 8 of the 13 registry files and the pod holds
+    more, so the two compute DIFFERENT values over the same committed hash set: whichever
+    regenerates last leaves the other's load() raising "stale" about a file that never
+    changed. Measured 2026-09-04, after de-50 widened the registry from 4 entries to 13 and
+    datagen/test_parallel_exact_identity.py died on exactly that.
+
+    Not fixed by hashing the absent NAMES too -- that would make the fp stable across
+    machines while still describing a hash set built from fewer files, i.e. a fingerprint
+    that verifies and a population that is wrong. The honest split is: only a machine where
+    every path resolves may GENERATE (main()), and a machine missing files does not
+    recompute at all (load()). 6e's ruling, 2026-09-04."""
+    present, _ = _fp_inputs()
     h = hashlib.sha1()
-    for path in sorted(EVAL_FILES):
-        if os.path.exists(path):
-            h.update(os.path.basename(path).encode())
-            h.update(hashlib.sha1(open(path, "rb").read()).digest())
+    for path in present:
+        h.update(os.path.basename(path).encode())
+        h.update(hashlib.sha1(open(path, "rb").read()).digest())
     return h.hexdigest()[:16]
 
 
@@ -259,7 +285,17 @@ def load():
             f"{HASH_PATH} has no fingerprint (old format) -- the guard may be stale. "
             "Run `python datagen/holdout.py` to regenerate."
         )
-    if fp != _fingerprint():
+    present, absent = _fp_inputs()
+    if absent:
+        # NOT VERIFIABLE HERE, so do not pretend either way. Recomputing would hash a
+        # subset and call the committed fp stale for files this machine simply lacks --
+        # a false staleness that reads exactly like a real one, and the fix an operator
+        # reaches for (regenerate) replaces a 13-file hash set with an 8-file one.
+        # Trusting-and-saying-so keeps the guard loaded and the limit visible.
+        print(f"holdout: fp not verifiable here, {len(absent)} of "
+              f"{len(present) + len(absent)} files absent -- trusting the committed "
+              f"{fp}. Absent: {', '.join(os.path.basename(p) for p in absent[:4])}")
+    elif fp != _fingerprint():
         raise RuntimeError(
             f"{HASH_PATH} is stale: eval files changed since it was generated. "
             "Run `python datagen/holdout.py` to regenerate."
@@ -340,6 +376,30 @@ def main():
             f"this tree). An empty holdout set is indistinguishable from no guard -- it is the "
             f"2026-08-30 sft_all.pt contamination. Run this where the eval data exists."
         )
+    # AND REFUSE A PARTIAL ONE, for the same reason one level up. An empty set is the loud
+    # case; a set built from 5 of 13 files is the quiet one -- it writes a fingerprint that
+    # only this machine can reproduce, so the pod's load() then calls it stale about files
+    # that never changed, and the operator's fix (regenerate there) overwrites a 13-file set
+    # with a partial one in the other direction. The two machines take turns invalidating
+    # each other and every round loses questions from the guard.
+    #
+    # NOT filtering KNOWN_ABSENT here: measured 2026-09-04, neither `ceval` nor
+    # `code_rp1t_handread50` is a REGISTRY key, so they contribute no EVAL_FILES path and
+    # nothing to filter. The first version of this block filtered them anyway and added
+    # len(KNOWN_ABSENT) to the total, which printed "5 of 15" for a 13-entry registry --
+    # a guard reporting a population that does not exist.
+    _present, _absent = _fp_inputs()
+    if _absent and not os.environ.get("HOLDOUT_ALLOW_PARTIAL"):
+        raise RuntimeError(
+            f"refusing to regenerate {HASH_PATH} from {len(_present)} of "
+            f"{len(EVAL_FILES)} registry files: {len(_absent)} are absent here, so the "
+            f"fingerprint written would be reproducible on no other machine and every other "
+            f"machine's load() would read it as stale. Regenerate where every path resolves "
+            f"(the pod). Absent: "
+            f"{', '.join(os.path.basename(p) for p in _absent)}. "
+            f"HOLDOUT_ALLOW_PARTIAL=1 to override, which produces a guard covering fewer "
+            f"questions than the registry claims."
+        )
     os.makedirs(os.path.dirname(HASH_PATH), exist_ok=True)
     with open(HASH_PATH, "w", encoding="utf-8") as f:
         f.write(f"# fp:{_fingerprint()}\n")
@@ -347,5 +407,90 @@ def main():
     print(f"{len(hs)} unique holdout hashes (fp {_fingerprint()}) -> {HASH_PATH}")
 
 
+def _selftest():
+    """The two machine-dependence guards, on a REAL registry file made absent.
+
+    The property: a fingerprint computed over a subset is reproducible on no other machine, so
+    generation must refuse where a path is missing and load() must not recompute there. Both
+    halves matter and they fail in opposite directions -- a missing generation guard writes a
+    partial set that invalidates the pod's, a missing load guard raises "stale" about a file
+    that never changed. datagen/test_parallel_exact_identity.py died on the second one.
+
+    Mutates by MOVING one real file aside, not by pointing the registry at a fake path: the
+    thing under test is what os.path.exists reports for the paths the registry actually
+    names, and a fixture path shares the author's assumption about which paths those are.
+
+    IT WRITES TO THE REAL HASH_PATH AND MUST PUT IT BACK BYTE-FOR-BYTE. Measured 2026-09-04:
+    a mutation harness that symlinked data/ into a fixture tree had its `main()` write a
+    501-line partial set straight through to the committed file, restored from HEAD. So the
+    saved bytes are compared after restoring, not assumed, and a mismatch raises rather than
+    printing OK -- a selftest that corrupts the artifact it guards is worse than none."""
+    import shutil
+
+    present, absent = _fp_inputs()
+    if not present:
+        print("holdout selftest SKIP: no registry file resolves here to hide")
+        return 0
+    victim = present[0]
+    stash = victim + ".selftest_hidden"
+    fp_all = _fingerprint()
+    # Saved BEFORE the first thing that can write it: main() below writes HASH_PATH when the
+    # refusal is absent, which is exactly the case being tested.
+    _hash_saved = (open(HASH_PATH, encoding="utf-8").read()
+                   if os.path.exists(HASH_PATH) else None)
+    shutil.move(victim, stash)
+    try:
+        # 1. The fingerprint MOVED, which is the machine-dependence itself.
+        fp_minus = _fingerprint()
+        assert fp_minus != fp_all, (
+            f"hiding {os.path.basename(victim)} did not change the fingerprint "
+            f"({fp_all}) -- then it is not computed over the files it claims")
+        # 2. Regeneration refuses rather than writing that fingerprint.
+        os.environ.pop("HOLDOUT_ALLOW_PARTIAL", None)
+        try:
+            main()
+        except RuntimeError as e:
+            assert "refusing to regenerate" in str(e), f"wrong refusal: {str(e)[:120]}"
+            assert os.path.basename(victim) in str(e), (
+                f"the refusal must NAME the absent file, or an operator cannot act on it: "
+                f"{str(e)[:160]}")
+        else:
+            raise AssertionError(
+                f"main() wrote a hash set with {os.path.basename(victim)} absent -- that "
+                f"fingerprint is reproducible on no other machine")
+        # 3. load() does NOT recompute where files are absent: it must return the committed
+        #    set, not raise "stale". This is the half that broke a passing test.
+        #
+        # ASSERTED AGAINST A HASH SET THIS MACHINE CANNOT REPRODUCE, because the committed
+        # one on the tree that hosts this selftest may already match by accident, and then
+        # `load() worked` says nothing. MEASURED 2026-09-04: with the `if absent:` branch
+        # mutated to `if False:` the earlier version of this assertion stayed GREEN for
+        # exactly that reason. So write a file whose fp is a value no computation here can
+        # produce -- if load() recomputes, it must raise.
+        if _hash_saved is not None:
+            with open(HASH_PATH, "w", encoding="utf-8") as f:
+                f.write("# fp:" + "f" * 16 + "\n0000000000000000\n")
+            hs = load()
+            assert hs == {"0000000000000000"}, (
+                f"load() returned {hs} rather than the committed set -- it recomputed "
+                f"the fingerprint on a machine missing {len(absent) + 1} files, which "
+                f"is the false-stale failure")
+    finally:
+        shutil.move(stash, victim)
+        if _hash_saved is not None:
+            with open(HASH_PATH, "w", encoding="utf-8") as f:
+                f.write(_hash_saved)
+            back = open(HASH_PATH, encoding="utf-8").read()
+            if back != _hash_saved:
+                raise AssertionError(
+                    f"the selftest did not restore {HASH_PATH}: {len(back)} bytes back "
+                    f"against {len(_hash_saved)} saved. Restore it from git before trusting "
+                    f"the holdout guard.")
+    assert _fingerprint() == fp_all, "the selftest did not restore the file it hid"
+    print(f"holdout selftest OK: hiding {os.path.basename(victim)} moves the fp "
+          f"({fp_all} -> {fp_minus}), regeneration refuses and names it, load() still loads")
+    return 0
+
+
 if __name__ == "__main__":
-    main()
+    sys.exit(_selftest() if "--selftest" in sys.argv else (main() or 0))
