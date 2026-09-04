@@ -9288,13 +9288,28 @@ def check_allocation_reads_the_grant(root):
         return FAIL, f"a card source is unreadable: {e}"
     granted = _expand_cards(grant.get("block_cards", "")) if grant.get("launch_block_granted") else []
 
+    # AN UNGRANTED BOX IS THE LEGITIMATE STATE OF AN IDLE BOX (de, on 6e's report 2026-09-04).
+    # An explicit launch_block_granted:false must stop a LAUNCH, and it does -- cmd_launch
+    # calls with raise_on_false left set. It must not stop a READ: SystemExit is a
+    # BaseException, so run_checks:10136's `except Exception` never saw it and `harness check`
+    # printed ZERO of its check lines on a false-grant tree, measured. That took every other
+    # red in the tree dark with it, and 6e -- unable to commit an honest false -- kept the
+    # field true with the real decision in the prose. The instrument made the file lie.
+    # Reported here as SKIP rather than FAIL: nothing is wrong with a box nobody has claimed.
+    if "launch_block_granted" in grant and not grant["launch_block_granted"]:
+        return SKIP, (f"the grant says launch_block_granted is false, so there is no block to "
+                      f"compare an allocation against -- an ungranted box is a legitimate "
+                      f"state, and a LAUNCH is where a false grant refuses (granted_by "
+                      f"{str(grant.get('granted_by', 'unknown'))[:40]})")
+
     import io
 
     err = io.StringIO()
     _real, sys.stderr = sys.stderr, err
     try:
-        block = [int(c) for c in _allocation_cards(True, root=root).split(",") if c.strip()]
-        lane_s = _allocation_cards(False, root=root)
+        block = [int(c) for c in
+                 _allocation_cards(True, root=root, raise_on_false=False).split(",") if c.strip()]
+        lane_s = _allocation_cards(False, root=root, raise_on_false=False)
     finally:
         sys.stderr = _real
     msg = err.getvalue()
@@ -9340,10 +9355,13 @@ def check_allocation_reads_the_grant(root):
         return PASS, (f"grant {_csv(granted)} decides the block; "
                       f"{'disagreement announced' if set(ladder_cards) != set(granted) else 'sources agree'}; "
                       f"lane {lane_s or 'none (grant says null)'}")
-    # 6. An explicit launch_block_granted:false must RAISE, not fall back. "I say no" and
-    #    "I have not spoken" are different answers, and on the pod they were worlds apart:
-    #    the pod held a false grant from 2026-09-01 and the launcher happily fell back to
-    #    cards 0-6, the user's card 4 included. Built as a throwaway world rather than by
+    # 6. An explicit launch_block_granted:false must RAISE FOR A LAUNCH and NOT for a read.
+    #    "I say no" and "I have not spoken" are different answers, and on the pod they were
+    #    worlds apart: the pod held a false grant from 2026-09-01 and the launcher happily fell
+    #    back to cards 0-6, the user's card 4 included. BOTH halves are asserted, because the
+    #    raising half alone is what took this whole instrument dark -- SystemExit is a
+    #    BaseException, run_checks' `except Exception` cannot catch it, and a false grant printed
+    #    zero check lines (measured 2026-09-04). Built as a throwaway world rather than by
     #    damaging `root`, because the property is about a value this tree does not hold.
     import shutil as _sh
     import tempfile as _tf
@@ -9360,6 +9378,15 @@ def check_allocation_reads_the_grant(root):
                           "from, which is how the pod allocated 0-6 under a false grant")
         except SystemExit:
             pass
+        try:
+            _cards, _why = _grant_cards(_d, raise_on_false=False)
+        except SystemExit:
+            return FAIL, ("raise_on_false=False still raised -- a READ of a false grant kills "
+                          "the whole check run, because SystemExit is a BaseException that "
+                          "run_checks' `except Exception` cannot catch")
+        if _cards is not None or "false" not in _why:
+            return FAIL, (f"a read of a false grant returned {_cards!r}/{_why[:50]!r} -- it must "
+                          f"return no cards and say the grant is false")
     finally:
         _sh.rmtree(_d, ignore_errors=True)
 
@@ -13208,7 +13235,7 @@ def _csv(cards):
     return ",".join(str(c) for c in cards)
 
 
-def _grant_cards(root=None):
+def _grant_cards(root=None, raise_on_false=True):
     """The controller's card grant from runs/card_assignment.json, or (None, why).
 
     THE GRANT FILE IS THE AUTHORITY, and before 2026-09-03 nothing read it for this
@@ -13238,6 +13265,20 @@ def _grant_cards(root=None):
     unreadable file still falls back with a note, because a blanket refusal would stop
     every training launch on a pod that has never received this file -- other sessions'
     included, and narrowing a rule for my own leg must not sweep them in (6e).
+
+    AND IT RAISES FOR A LAUNCH, NOT FOR A READ (de, 2026-09-04, on 6e's report). SystemExit
+    is a BaseException, so `except Exception` in run_checks:10136 does not catch it: with
+    launch_block_granted false, MEASURED, `harness check` printed ZERO of its check lines and
+    exited 1 on this message. One check's refusal took the whole instrument dark, and every
+    other red in the tree with it -- the permanent-red rule in AGENTS, arrived at from the
+    other direction. 6e hit the consequence at commit time and kept the field `true` with the
+    real decision in the prose, which is the file lying because the instrument made honesty
+    uncommittable.
+
+    So `raise_on_false` is the caller's question. A LAUNCH asks with it set: an explicit false
+    must stop a job from reaching a card, which is the 0-6 allocation this refusal was written
+    for. A CHECK reads with it clear and gets (None, why) naming the false, because an
+    ungranted box is the legitimate state of an idle box and a check may only report it.
     """
     root = ROOT if root is None else root
     p = os.path.join(root, "runs", "card_assignment.json")
@@ -13249,12 +13290,15 @@ def _grant_cards(root=None):
     except (OSError, ValueError) as e:
         return None, f"card_assignment.json unreadable: {e}"
     if "launch_block_granted" in a and not a["launch_block_granted"]:
+        why = (f"{os.path.relpath(p, root)} says launch_block_granted is false -- the "
+               f"controller has NOT granted a card block here "
+               f"(granted_by {a.get('granted_by', 'unknown')}, {a.get('granted', 'undated')})")
+        if not raise_on_false:
+            return None, why
         raise SystemExit(
-            f"REFUSING: {os.path.relpath(p, root)} says launch_block_granted is false -- "
-            f"the controller has NOT granted a card block here. That is a decision, not a "
-            f"missing value, so it is not something to fall back from: falling back on it "
-            f"is what put a launch on cards 0-6 with this file reading false "
-            f"(granted_by {a.get('granted_by', 'unknown')}, {a.get('granted', 'undated')}). "
+            f"REFUSING: {why}. That is a decision, not a missing value, so it is not "
+            f"something to fall back from: falling back on it is what put a launch on cards "
+            f"0-6 with this file reading false. "
             f"Get a grant, or push the current one -- runs/card_assignment.json is in "
             f"pod_drift's SCOPE as of 2026-09-03 and reaches the pod with `pod_push.sh --all`.")
     if not a.get("launch_block_granted"):
@@ -13265,7 +13309,7 @@ def _grant_cards(root=None):
     return cards, ""
 
 
-def _allocation_cards(training, root=None):
+def _allocation_cards(training, root=None, raise_on_false=True):
     """Card set from the controller's allocation file, never from the caller.
 
     Training jobs get the block: runs/card_assignment.json's block_cards when that file
@@ -13296,7 +13340,7 @@ def _allocation_cards(training, root=None):
                 ladder = _expand_cards(json.load(fh).get("cards", ""))
         except (OSError, ValueError):
             ladder = []
-    granted, why = _grant_cards(root)
+    granted, why = _grant_cards(root, raise_on_false=raise_on_false)
     if granted is None:
         # Fall back to the old source, SAYING SO. A silent fallback here would look
         # identical to a grant that happens to match, and the message is the only thing
