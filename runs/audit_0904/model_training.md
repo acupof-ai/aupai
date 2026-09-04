@@ -60,6 +60,7 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | fact ids citing a path absent everywhere | 12 | 12 | 4 chased through git history |
 | corpus stamps opened on the pod | 47 | 47 (`filters_fp`) | 6 opened in full |
 | facts whose VALUE was recomputed (pass 2) | 124 | 40 sampled at seed 904 | 21 PARTIAL classified by hand, 4 re-derived arithmetically |
+| `runs/score_matrix.jsonl` rows | 60 | 60 (`metrics`/`skipped` keys) | 10 `domain_bpb` entries read in full |
 
 ## 4. Findings
 
@@ -76,6 +77,8 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | MT-9 | S2 | The two fact files are the repo's record of what it measured. | §4c: of 40 facts sampled at seed 904, **30 cannot be recomputed by a reader on main** — 9 need the pod, 11 need a card, 4 are literature-only (`smelt.*`), 6 cite a script in no commit. Instrument `runs/audit_0904/audit_fact_values.py`. | Nothing is CONTRADICTED — zero wrong values in 40 — but the repo cannot demonstrate its own numbers to anyone who was not there. Pass 1 found 15 facts with an unopenable source; pass 2 puts the sampled rate at 75%, so 15 was a floor and not a measure. |
 | MT-10 | S2 | `sft_math.py:190` asserts a pack's `vocab_id` equals the checkpoint's — "a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match." | The file's OWN comment (:181-187) records that the condition read `"vocab" in d` while `prepare_sft.pack_and_save` writes `"vocab_id"`, so for every pack built by the current packer the assert was skipped and the run took the WARNING branch — "the pack predates vocabulary fingerprinting" printed about a pack that carries the fingerprint. Fixed 2026-09-03. **Nothing has exercised the fix.** `grep -rln pack_vocab --include=*.py` returns `sft_math.py` and `scripts/check_sft_ready.py` and no test; `runs/experiments.jsonl` has **zero** SFT runs after 2026-09-03. | The guard has never fired in either state — not once while broken (the whole point of the comment), and not once since the repair. Its correctness rests on a code reading alone, which is the same shape as `guards-dont-backfill`: the fix is present, the demonstration that it works is not. |
 | MT-11 | S2 | `sft_math.py:496` on a NaN step: `step {step}/{total} NaN — restored last good state`, and the run continues. | `good_state` is initialised at `:413` before the loop and refreshed ONLY at `if step % args.save_every == 0` (`:510`), and `--save_every` defaults to `SAVE_INTERVAL = 200` (`:45`). So the restore target is the last multiple of 200, not the previous step. Nothing records the distance: `grep -c good_step` → **0**, and the log line names neither the step the state came from nor how many steps were discarded. | A NaN at step 399 silently discards 199 optimizer steps and the run reports one line about it. Two runs that both "recovered from a NaN" can differ by 200 steps of training with nothing in the artifact to distinguish them, and the token count the run reports is unaffected because `step` is incremented on the rollback path too (`:501`). Not a correctness bug — the rollback is real and the state is consistent — but the run's own record cannot say what it lost. |
+| MT-12 | S1 | `eval/domain_bpb.py`'s failures are recorded in `runs/score_matrix.jsonl` as `domain_bpb.py exited 1: /work/aupai/eval/domain_bpb.py:221: UserWarning: checkpoint has no vocab_id (old format); cannot cross-check tokenizer \| ours_tok = load_tokenizer(a.tokenizer, None)`, six rows of it (rows 55-60; arm 1's live run is a seventh occurrence, not yet a row). | **For these six the quoted text is a WARNING and a source line; neither is the cause, and the cause is in no artifact.** e1's independent read (E18, on main) corrected my first draft here, which attributed all ten error rows to this mechanism: the ten split 6 shadowed / 3 real-cause-survived / 1 truncated-source-line. Recomputed and confirmed: rows 55-60 shadowed, rows 51-53 carrying the `cache_guard.py:140` refusal text intact, row 54 the older shape (source line, no warning). Three separate facts, each checked: (1) The warning is unconditional. `eval/domain_bpb.py:221` passes `cfg=None` DELIBERATELY (`:222-235` explains it: both arms must reach `val_seqs` and the `--hf` control has no cfg), and `scripts/loader.py:126` reads `getattr(cfg,"vocab_id",None)`, which for `None` is always `None`, so `:136` warns on every call. Arm 1's checkpoint, written minutes before its row, carries `vocab_id: '0bce3584bc24f255'` at top level — I loaded it. (2) `main()` has exactly ONE nonzero return, `:293`, reached from `:291 if not out:` after printing `REFUSING: no domain produced a number` — **to stdout**. The captured stderr for rows 55-60 is exactly two non-blank lines (warning + its `stacklevel` source echo) with no traceback and no `*Error` line, so no exception was raised: every one of these rows is that `REFUSING`, and the per-domain reason is in `skipped[name]` at `:280`, discarded with the rest of stdout. (3) `eval/score_matrix.py:304` reads `(r.stderr or r.stdout)`. stderr is non-empty — the unconditional warning alone fills it — so **stdout is never read**. Two of the four capture sites in that file are defective this way — `:304` (`_run_eval_json`, which drives domain_bpb) and `:281` (`metric_minimal_pairs`) — while `:387` and `:421` (`_run`, `metric_mc`) concatenate `r.stdout + r.stderr` and are correct; the correct form is three lines away from the defective one in the same file (E18). Reproduced with a fixture reproducing the stream layout: captured the warning, discarded `REFUSING: no domain produced a number`. | `domain_bpb` has produced a number in **zero of 60 rows** of `runs/score_matrix.jsonl`: ten rows carry `metrics.domain_bpb`, all ten an `{"error": …}` object. It failed in two eras — rows 51-53 on the `eval/cache_guard.py:140` retokenise refusal, whose text SURVIVED the capture, and rows 54-60 after `2d37eede` (2026-09-03 17:04) replaced that with the present state — and `2d37eede`'s own message says "all three of its rows … are that error", written when three was the count; seven more have failed since under a cause its record cannot name. The stream-preference defect is what sustains it: `57a1177c` (2026-09-03 18:48) was committed as "record WHAT failed, not just where" and its comment states the old capture "recorded domain_bpb's failure as the SOURCE LINE … which names where, never what" — that is still exactly what rows 59-60, measured 2026-09-04 after the fix, contain. So the metric's ten failures are not one bug reported ten times: three were reported legibly and nobody acted, six are shadowed by the warning, one predates the current capture. Two fixes have been aimed at this metric and neither reached it. |
+| MT-13 | S3 | `scripts/loader.py:136`'s warning tells a reader their checkpoint predates vocabulary fingerprinting. | It fires on every `load_tokenizer(path, None)` call, of which `eval/domain_bpb.py:221` is one by design. It cannot distinguish "no cfg was supplied" from "the cfg has no vocab_id". | A warning that fires whether or not its condition holds carries no information, and here it does active harm: it keeps stderr non-empty, which is the precondition for MT-12's `stderr or stdout` masking. The `None` call site is deliberate and should stay; the warning needs to say which of the two cases it is in. |
 
 ### 4a. Every pod-only source, with size and committability (MT-2)
 
@@ -318,6 +321,22 @@ measure.
    `num_blocks` change or see whether the 256 was ever there — only that the file post-dates the
    fact by three days and does not contain it now.
 
+7. **MT-12 is one metric of `score_matrix.py`'s several; the masking is in shared code.**
+   `(r.stderr or r.stdout)` at `eval/score_matrix.py:304` is the capture for EVERY script the
+   matrix drives, not just `domain_bpb`. Any of them that writes its reason to stdout while
+   anything at all — a `UserWarning`, a torch deprecation, a NCCL banner — reaches stderr will be
+   recorded by the wrong stream. I checked this for `domain_bpb` only, and only because its rows
+   were the ones in front of me; I did not enumerate the other scripts. **e1 did (E18), and the
+   answer is two of four**: `:304` (`_run_eval_json`, which drives domain_bpb) and `:281`
+   (`metric_minimal_pairs`) prefer stderr; `:387` (`_run`) and `:421` (`metric_mc`) concatenate
+   `r.stdout + r.stderr` and are correct. Per E18's accepted ruling the scorers actually affected
+   are `domain_bpb`, one path of `humaneval_bpb`, every failure of `minimal_pairs`, and
+   `l1_fewshot`'s SIGTERM rows — four, not one. Recorded rather than silently absorbed, because the
+   shape of the miss is what is worth keeping: I read the one call site the failing row led me to
+   and stopped, when `grep -n stderr eval/score_matrix.py` returns four lines and costs one
+   command. Same class as this audit's other enumeration defects — the checking was sound, the
+   population was not.
+
 ## 6. Open questions for the controller
 
 1. **MT-1**: retract `eff.kv_pool_undersized_for_serving`, or re-measure against the current
@@ -332,3 +351,13 @@ measure.
 5. Should §5.2 be closed before this report is accepted — i.e. do you want the ≥30-value
    recomputation the charter asks for as a second pass, or is the source-existence sweep the
    deliverable?
+6. **MT-12** is a live gate hole, not a historical one: rows 59-60 were measured 2026-09-04 and
+   `domain_bpb` has produced a number in 0 of 60 `score_matrix.jsonl` rows. Two commits have
+   already been aimed at it (`2d37eede`, `57a1177c`) and neither reached it, because each was
+   written from the record's text and the record's text is the defect. **Ruled by the controller 2026-09-04**: post-audit fix at all
+   three sites, one commit per owner — `stderr or stdout` at `eval/score_matrix.py:304` (and `:281`,
+   the second defective runner e1 found) is score_matrix's, the unconditional warning at
+   `scripts/loader.py:136` is the loader's, the `REFUSING`-to-stdout at `eval/domain_bpb.py:292` is
+   domain_bpb's. Any ONE of the three would have made the cause visible. The enumeration of other
+   affected scorers is e1's (E18). I have touched none of it: audit only. Arm 1's score_matrix row
+   stays without a `domain_bpb` value until the fix lands; its other metrics are unaffected.
