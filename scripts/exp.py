@@ -260,6 +260,11 @@ def main():
     d.add_argument("--started", default=None,
                    help="close THIS row (its 'started' value), not the newest running one. "
                         "Required when a name has more than one open row")
+    d.add_argument("--reading_artifact", default="",
+                   help="repo-relative path to the file the result was READ FROM, when the row's "
+                        "cmd produces no checkpoint harness.py can score. harness.py's "
+                        "score_matrix_present FAILs on a path that does not exist, so this "
+                        "names a real file or it names nothing")
     n = sub.add_parser("note", help="append a line to a RUNNING row's notes; does not close it")
     n.add_argument("--name", required=True)
     n.add_argument("--text", required=True)
@@ -340,6 +345,16 @@ def main():
             },
             status=a.status, result=a.result, finding=a.finding, decision=a.decision, ended=now(),
         )
+        if a.reading_artifact:
+            # CHECKED HERE, not only by harness.py. The field's whole job is to point at the
+            # file a reader can open; a path that does not exist turns a scoring exemption
+            # into an unfalsifiable claim, and harness.py would then FAIL the ledger AFTER
+            # the close is already appended (append-only: it cannot be taken back).
+            p = os.path.join(ROOT, a.reading_artifact)
+            if not os.path.exists(p):
+                sys.exit(f"--reading_artifact {a.reading_artifact} does not exist under "
+                         f"{ROOT}; pull the file into the repo before closing the row")
+            ev["reading_artifact"] = a.reading_artifact
         append(ev)
         print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "note":
