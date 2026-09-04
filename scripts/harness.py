@@ -11046,7 +11046,45 @@ def check_memory_diag_fresh(root):
     arms = [r for r in rows
             if _exp_open(r) and _ARM_RE.search(str(r.get("name") or ""))]
     if not arms:
-        return SKIP, "no memory arm (m1/m2/m3) is running"
+        # NO OPEN ARM IS NOT THE SAME AS NOTHING TO SAY. "No diagnostics row at all" was
+        # ambiguous between three states and reported as one (62, 2026-09-05): (a) launched,
+        # has not reached the first cadence point, (b) launched, writer broken, (c) no arm has
+        # run since the writer existed. On 2026-09-05 the ledger was in (c) -- every b0_mem_m1
+        # row closed, the 10/20/30 cadence landed at 6b678541 AFTER the last arm was killed at
+        # step 83 -- and this branch SKIPped with "no memory arm is running", which reads as
+        # "nothing to check" for a state where a finished arm may have produced no rows at all.
+        #
+        # The separable case is a CLOSED arm whose code contained the writer: if the run's own
+        # commit has the cadence commit as an ancestor and the ledger holds no row for that
+        # arm, the writer was present and wrote nothing, which is a defect and cannot be
+        # explained by "too early". Before that commit there is nothing to expect, so those
+        # rows are named as unmeasurable rather than counted as green.
+        closed = [r for r in rows if _ARM_RE.search(str(r.get("name") or ""))
+                  and _is_training_cmd(r)]
+        if not closed:
+            return SKIP, "no memory arm (m1/m2/m3) has ever run"
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "scripts"))
+            import memory_diag as md
+        except Exception as e:
+            return FAIL, f"cannot import scripts/memory_diag.py, which owns the ledger: {e}"
+        drows, _derrs = md.read_rows(root=root)
+        have = {_arm_id(str(k)) for k in md.latest_by_arm(drows)}
+        empty, pre = [], []
+        for r in closed:
+            nm = str(r.get("name"))
+            if _arm_id(nm) in have:
+                continue
+            (empty if _ran_with_diag_writer(r) else pre).append(nm)
+        if empty:
+            return FAIL, (
+                f"{len(empty)} finished memory arm(s) wrote NO diagnostics row while the "
+                f"writer was in their own code: {', '.join(sorted(set(empty)))} -- the "
+                f"cadence ({md.DIAG_CADENCE_COMMIT[:8]}) writes at steps 10/20/30, so a run "
+                f"that got past step 10 and left no row had a dead hook, not an early death")
+        return SKIP, (f"no memory arm is running; {len(set(pre))} finished arm(s) predate the "
+                      f"diagnostics writer ({', '.join(sorted(set(pre)))}) so their empty "
+                      f"ledger is expected, not measured")
 
     try:
         sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -11115,6 +11153,63 @@ def check_memory_diag_fresh(root):
                             + (f", log at {ls}" if ls is not None else ", log step unread")
                             for nm, ds, ls in sorted(fresh))
                   + f" (window {md.FRESH_WITHIN_STEPS} steps)")
+
+
+def _is_training_cmd(row):
+    """Does this experiments row run train.py's step loop, the only writer of diag rows?
+
+    THE ARM NAME IS NOT ENOUGH, measured 2026-09-05: `b0_mem_m3_peak` matches the arm regex
+    and is `scripts/profile_step_cost.py --peak-only`, a probe that allocates the model to read
+    its peak memory and never enters the loop. It cannot write a diagnostics row, so counting it
+    as a run that should have produced one made the check FAIL on a healthy tree the first time
+    it ran -- a probe named after an arm is still a probe.
+
+    Reads the recorded cmd for train.py or run_ddp.sh, and returns False when there is no cmd:
+    the caller FAILs on True, so an unreadable row must not manufacture a defect."""
+    cmd = str(row.get("cmd") or "")
+    if not cmd:
+        return False
+    return "train.py" in cmd or "run_ddp.sh" in cmd
+
+
+def _ran_with_diag_writer(row):
+    """Did this experiments row's own code contain the memory_diag cadence?
+
+    The join is `git merge-base --is-ancestor <cadence commit> <row's commit>`, which answers
+    "was the writer in the tree this run executed" -- not a date comparison, because a branch
+    can carry an older tree at a later wall-clock time.
+
+    QUERIED AGAINST ROOT, NOT THE CHECK'S root ARGUMENT, and the difference is load-bearing.
+    A commit sha resolves in a repository's object database, which every worktree of this repo
+    shares; a broken world is a temp directory with no .git at all, so asking it about a sha
+    returns "unknown" for every row. That is what the first version did, and its own world
+    caught it: the post-cadence world read as pre-cadence and the FAIL branch was unreachable
+    (measured 2026-09-05, SKIP naming both arms as predating the writer). The ledger's shas are
+    facts about this repository, so this reader is too.
+
+    False when the row has no commit, when git cannot answer, or when the cadence commit is not
+    in this repository: an unanswerable join must not manufacture a defect. That direction
+    matters -- the caller FAILs on True, so defaulting to True would turn every unreadable row
+    into a red."""
+    sha = str(row.get("commit") or "").strip()
+    if not sha:
+        return False
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import memory_diag as md
+        base = md.DIAG_CADENCE_COMMIT
+    except Exception:
+        return False
+    try:
+        for ref in (f"{base}^{{commit}}", f"{sha}^{{commit}}"):
+            if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", ref],
+                              capture_output=True).returncode != 0:
+                return False
+        r = subprocess.run(["git", "-C", ROOT, "merge-base", "--is-ancestor", base, sha],
+                           capture_output=True)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    return r.returncode == 0
 
 
 def _last_log_step(root, name):
@@ -13222,6 +13317,69 @@ def _selftest_milestone_selection():
     short = 1 - (3000 * TOKENS_PER_STEP) / 3.24e9
     assert 0.14 < short < 0.16, f"step3000 vs the 3.24B label is ~15%, got {short:.3f}"
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
+
+
+def _selftest_diag_closed_arms():
+    """The closed-arm branch: three states that used to print as one SKIP.
+
+    62's correction, 2026-09-05. "No diagnostics row at all" was ambiguous between (a) launched
+    and too early, (b) launched with a broken writer, (c) no arm has run since the writer
+    existed. The ledger was in (c) and the check SKIPped "no memory arm is running", which
+    reads as nothing-to-check for a state where a finished arm may have written nothing.
+
+    FOUR WORLDS, and two of them are the ones that matter:
+      - a closed arm whose commit POSTDATES the cadence and has no diag row -> FAIL
+      - the same arm whose commit PREDATES it -> SKIP, and the message must name it as
+        unmeasurable rather than green
+      - a closed arm that is a PROBE (profile_step_cost.py) -> SKIP, not FAIL. This is the
+        real false positive the first version produced: b0_mem_m3_peak matches the arm regex,
+        never enters train.py's loop, and cannot write a row.
+      - a closed arm WITH a diag row -> SKIP, so the FAIL is about absence and not about
+        being closed.
+    """
+    import shutil
+
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import memory_diag as md
+
+    real = os.path.join(ROOT, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
+    template = dict(rows[-1])
+    head = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
+                          capture_output=True, text=True).stdout.strip()
+    old = subprocess.run(["git", "-C", ROOT, "rev-parse", f"{md.DIAG_CADENCE_COMMIT}~1"],
+                         capture_output=True, text=True).stdout.strip()
+
+    def _world(commit, cmd, with_row):
+        d = _tmp_repo()
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        dst = os.path.join(d, "runs", "experiments.jsonl")
+        shutil.copy(real, dst)
+        with open(dst, "a", encoding="utf-8") as f:
+            f.write(json.dumps(dict(template, name="b0_mem_m2", status="ok",
+                                    started="2026-09-05 06:00", ended="2026-09-05 07:00",
+                                    commit=commit, cmd=cmd, result="done"),
+                               ensure_ascii=False) + "\n")
+        if with_row:
+            md.log_diag("m2", 500, 0.83, 3.1, 0.30, 81000.0,
+                        path=os.path.join(d, "runs", "memory_diag.jsonl"))
+        return d
+
+    train = "torchrun --nproc_per_node=2 train.py --fp8 --mem_arm m2"
+    probe = "/usr/bin/python3 scripts/profile_step_cost.py --peak-only --dim 1024"
+
+    st, ev = check_memory_diag_fresh(_world(head, train, False))
+    assert st == FAIL and "b0_mem_m2" in ev, f"post-cadence arm with no row must FAIL: {st} {ev}"
+    st, ev = check_memory_diag_fresh(_world(old, train, False))
+    assert st == SKIP and "predate" in ev and "b0_mem_m2" in ev, \
+        f"a pre-cadence arm is unmeasurable, and must be NAMED: {st} {ev}"
+    st, ev = check_memory_diag_fresh(_world(head, probe, False))
+    assert st == SKIP and "b0_mem_m2" not in ev, \
+        f"a probe named after an arm cannot write a row and must not FAIL: {st} {ev}"
+    st, ev = check_memory_diag_fresh(_world(head, train, True))
+    assert st == SKIP and "b0_mem_m2" not in ev, \
+        f"a closed arm WITH a row is not a defect: {st} {ev}"
+    print("  ok   memory_diag closed-arm states separate (4 worlds)")
 
 
 def _selftest_brief():
@@ -15348,6 +15506,7 @@ def _demo(only=None):
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
+    _selftest_diag_closed_arms()
     _selftest_brief()
     _selftest_gate_timeout()
     _selftest_register_union()
@@ -16552,6 +16711,54 @@ def _job_pids_for(pid):
         return []
 
 
+def _device_pid_for(pid, deadline=None):
+    """(pid, device_fds) of the descendant that HOLDS a card, or None. Blocks up to `deadline`.
+
+    WHY THIS BLOCKS. "not a shell" is necessary and not sufficient: measured on the pod in this
+    exact wrapper shape, the first non-shell descendant appears 0.11s after Popen holding ZERO
+    device fds, and the first fd appears at 1.33s. b0_mem_m1's claim landed in that 1.22s window,
+    so `card_claim.py status` reported STALE plus "ORPHAN card 1 holds 1179 MiB with no claim" for
+    a correctly running arm and any sweep could have reclaimed two cards from under it.
+
+    4c's ruling 2026-09-05: block here rather than poll from the monitor. harness launch returning
+    now means "the job holds a card and the claim names it". The monitor variant leaves the card
+    unclaimed for ~1.3s, which is the exact window a sweep reads.
+
+    Returns None both when nothing ever opens a device and when /proc cannot be read (macOS).
+    The caller distinguishes them, because one is a timeout and the other is "this predicate has
+    no opinion here"."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return None
+    try:
+        return card_claim.wait_for_device(
+            pid, deadline=card_claim.DEVICE_WAIT_S if deadline is None else deadline)
+    except Exception:  # noqa: BLE001 -- a claim helper must never take the launch down
+        return None
+
+
+def _dev_wait():
+    """card_claim's device-wait deadline, or 90.0 if it is not importable."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return 90.0
+    return card_claim.DEVICE_WAIT_S
+
+
+def _proc_readable():
+    """Whether the device predicate can answer at all here. False on macOS: no /proc."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return False
+    return card_claim.nvidia_fds(os.getpid()) is not None
+
+
 def _acquire_cards(name, cards, pid, note):
     """(ok, message). Claim `cards` for `name` on behalf of `pid`."""
     r = subprocess.run(
@@ -16840,19 +17047,42 @@ def cmd_launch(rest):
     # WHICH PID. Not proc.pid: that is `bash -c 'set -o pipefail; "$@"; ...'`, a shell by
     # construction, and card_claim refuses a shell because a claim on one fails both ways (de-34,
     # measured 2026-09-03 on both of tonight's incidents). The claim must name the process that
-    # dies WITH the job, so acquire on the job descendant. Measured on harness's own wrapper
-    # shape: the descendant exists by the time Popen returns, both for a python payload and for a
-    # shell script that execs one, as run_ddp.sh does. If it has not appeared yet -- a slow
-    # interpreter start -- claim nothing and say so rather than claim the wrapper.
+    # dies WITH the job.
+    #
+    # AND IT MUST HOLD A CARD, which "not a shell" does not establish. Measured on the pod in this
+    # wrapper shape: the first non-shell descendant appears at t=0.11s with ZERO device fds, the
+    # first fd at t=1.33s. b0_mem_m1's claim bound a pid in that window, so status read STALE plus
+    # ORPHAN for a live arm. 4c's ruling 2026-09-05: block here for up to card_claim.DEVICE_WAIT_S
+    # until a descendant holds a device, then claim that pid. Nothing may sequence two launches on
+    # this command's return -- AGENTS.md already says a `for` loop over harness launch is not a
+    # queue.
+    #
+    # On a machine with no /proc (macOS) the predicate has no opinion, so fall back to the
+    # first non-shell descendant rather than blocking 90s for an answer that cannot arrive.
     claim_name = None
     if cards and not args.no_gpu:
-        job_pids = _job_pids_for(proc.pid)
-        if job_pids:
-            ok_claim, claim_msg = _acquire_cards(args.name, cards, job_pids[0], f"harness launch {args.name}")
+        claim_pid, claim_dev = None, None
+        if _proc_readable():
+            got = _device_pid_for(proc.pid)
+            if got:
+                claim_pid, claim_dev = got
+        else:
+            job_pids = _job_pids_for(proc.pid)
+            claim_pid = job_pids[0] if job_pids else None
+        if claim_pid:
+            note = f"harness launch {args.name}"
+            ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note)
             if ok_claim:
                 claim_name = args.name
+                held = f" ({claim_dev} device fds)" if claim_dev else ""
+                print(f"claim  cards {cards} -> pid {claim_pid}{held}")
             else:
                 print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+        elif _proc_readable():
+            print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
+                  f"device within {int(_dev_wait())}s. The job may still be running -- read the "
+                  f"log. A claim on a process that is not on a card protects nothing (b0_mem_m1).",
+                  file=sys.stderr)
         else:
             print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
                   f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
