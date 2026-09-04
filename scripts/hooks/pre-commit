@@ -935,6 +935,7 @@ def main():
         "scripts/mem_grad_bench.py",
         "scripts/mem_master_cell.py",
         "scripts/gen_ledger_transport_schema.py",
+        "scripts/test_table_master_resync.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
