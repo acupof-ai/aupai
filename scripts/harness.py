@@ -7618,7 +7618,18 @@ def check_score_matrix(root):
             # that resolves it (6e's ruling: make the escape visible, do not fix it by accident).
             unverifiable.append(str(r.get("name", "?")))
             continue
-        if f"{cand}.pt" not in scored:
+        # THE `#cu` SUFFIX IS A SCORE, NOT A DIFFERENT CHECKPOINT. score_matrix.py:1602 writes
+        # `<ckpt>.pt#cu` when cu_path == "doc_cu", deliberately, so a doc_cu re-score cannot silently
+        # REPLACE the cu_none row it exists to be compared against -- rows fold on (ckpt, profile)
+        # and the two differ by up to 0.28 nat. This check matched the bare name exactly, so a run
+        # scored ONLY on doc_cu read as never scored: b0 hit it on armB, and measured on the live
+        # matrix 2026-09-05, 7 of 69 rows carry the suffix and ckpt_b0_headmix_armB.pt is scored
+        # under `#cu` alone. A gate that calls a scored run unscored is the mirror of one that calls
+        # an unscored run fine, and it costs a card to satisfy.
+        #
+        # Split on "#" rather than matching "#cu" literally: the suffix is the cu_path, which the
+        # producer interpolates, so a second path added there stays covered without touching this.
+        if not any(str(s).split("#", 1)[0] == f"{cand}.pt" for s in scored):
             missing.append(cand)
     if missing:
         return FAIL, f"ok training run(s) with no score-matrix record: {sorted(set(missing))[:5]}"
@@ -7665,6 +7676,38 @@ def _broken_score_matrix_no_ckpt():
             [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
             check=True, capture_output=True,
         )
+    return d
+
+
+def _broken_score_matrix_cu_only():
+    """An ok training row scored ONLY under the `#cu` suffix -- must PASS, and did not.
+
+    The world armB was in, and the only one of these three tiers where the check was WRONG rather
+    than merely incomplete: score_matrix.py:1602 writes `<ckpt>.pt#cu` for a doc_cu score, on purpose
+    (rows fold on (ckpt, profile), so an unsuffixed doc_cu row would REPLACE the cu_none row it
+    exists to be compared against, and the two differ by up to 0.28 nat). This check matched the bare
+    name exactly, so a run scored only on doc_cu read as never scored and the fix was to spend a card
+    re-scoring something already measured. Measured on the live matrix 2026-09-05: 7 of 69 rows carry
+    the suffix, and ckpt_b0_headmix_armB.pt appears under `#cu` alone.
+
+    A PASS-expecting world, unlike its two siblings. The registered `_broken_score_matrix` covers the
+    FAIL tier; what this pins is that a real score is not read as its absence. Reverting the split to
+    an exact match turns it red.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "cuonly", "--cmd", "./run_ddp.sh --name cuonly"],
+        ["done", "--name", "cuonly", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    # The suffix spelled by the producer, not by hand: score_matrix.py interpolates cu_path, so a
+    # literal here would be a second copy of that convention to keep in step.
+    with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_cuonly.pt#cu", "cu_path": "doc_cu", "profile": "full",
+                             "measured": "2026-09-05", "metrics": {}}) + "\n")
     return d
 
 
@@ -13845,11 +13888,18 @@ def _demo(only=None):
     # fixed for: reading_artifact is an escape hatch, so a path that does not exist must FAIL rather
     # than wave the row through; and a cmd that names no checkpoint used to be skipped outright,
     # which is how e1_31_middle_layer_loop passed while its honestly-written sibling did not.
+    #
+    # The third expects PASS, which is why it is listed here rather than left to the registered
+    # world: a run scored only under the `#cu` suffix must not read as unscored (4c's report, b0 hit
+    # it on armB). A check that calls a scored run unscored costs a card to satisfy, so the wrong
+    # answer is expensive in the opposite direction from the other two.
     for _w, _want, _label, _needle in (
         (_broken_score_matrix_dangling_artifact, FAIL, "reading_artifact at a missing path",
          "does not exist"),
         (_broken_score_matrix_no_ckpt, WARN, "an ok training row whose cmd names no checkpoint",
          "names no checkpoint"),
+        (_broken_score_matrix_cu_only, PASS, "a run scored only under the #cu suffix",
+         "score-matrix record"),
     ):
         _d = _w()
         if _d:
