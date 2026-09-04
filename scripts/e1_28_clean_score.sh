@@ -3,15 +3,52 @@
 # restartable: three eval_heldout runs writing one small JSON each, ~2 min per point on one card.
 # An interrupt costs the unfinished point; finished JSONs are complete and self-describing.
 #
-# WHY THESE THREE AND NOT ALL NINE. 1e's ruling: the scan found overlap, so section 4 keeps
-# "direction unknown" and only the three numbers the verdict rests on get recomputed on the clean
-# subset -- ours floor, control floor, ours SFT. The other six points are NOT recomputed, and the
-# report must say so rather than leave a reader to assume one population throughout.
+# THIS SCRIPT'S POPULATION IS SUPERSEDED AND IT NOW REFUSES TO RUN. Read this before editing
+# the refusal away.
 #
-# THE POPULATION IS 10,105 ids, sha 7231156c5698c210: 10,421 minus all 316 whitespace-unit hits,
-# including the 4 whose grams are universal forms. Dropping can only work against us -- a removed
-# item is one the model might have got right -- so the conservative direction is to drop more.
+# It scores runs/heldout_v2/ids_clean.txt: 10,421 minus the 316 items scripts/e1_28_leak_scan.py
+# flagged. That scan is retracted (facts/contamination.json#cont.heldout_in_pretrain_corpus): it
+# read 5.0-13.2% of each domain's documents because it counted token-block cursor rows as
+# documents, and its coverage guard was in the same wrong unit so it never fired. The
+# whole-corpus scan found 2,114 contaminated items, not 316.
+#
+# So the four numbers already in runs/heldout_v2/clean_*.json -- ours floor 0.457462, control
+# floor 0.926041, and the SFT pair -- are measurements of a population that is still 1,818
+# contaminated items wide. They are not wrong arithmetic; they answer a question nobody asked.
+# docs/audits/control_pythia160m_vs_ours.md 5.3d carries them marked 作废 for that reason.
+#
+# THE TWO EXCLUSION SETS CROSS, which is why this cannot be fixed by pointing IDS at a bigger
+# file and keeping the old numbers as a baseline: 296 of the 316 are among the 2,114, and 20
+# are NOT -- items the retracted scan dropped that the full scan says are fine. The new
+# population is not the old one shrunk, so 0.457462 is not a point on the same curve.
+#
+# WHAT TO RUN INSTEAD: scripts/e1_28_clean_ids.py writes runs/heldout_v2/ids_clean_v2_notknown.txt
+# (8,307 ids, ids_sha ff496ed9ed26c44d) and reports the 5,409-item verified-clean count beside
+# it -- 8,307 includes 2,898 items whose answers are under 13 words, which have no 13-gram and
+# were never testable, so that set is "not known to be dirty" rather than clean. Choosing
+# between the two populations is a judgement about what the floor is meant to support; it is not
+# this script's to make silently. Then re-run the three points with IDS and WANT_SHA set to the
+# chosen set, on a card that is granted in runs/card_assignment.json.
 set -uo pipefail
+
+cat >&2 <<'REFUSAL'
+REFUSING: this script's population is superseded.
+
+  ids_clean.txt      10,105 ids = 10,421 - the 316-item exclusion from e1_28_leak_scan.py
+  that scan           RETRACTED: 5.0-13.2% document coverage, coverage guard in the wrong unit
+  the real figure     2,114 contaminated of 7,523 measurable (28.10%), whole-corpus scan
+  consequence         1,818 contaminated items are still inside ids_clean.txt
+
+  The four numbers in runs/heldout_v2/clean_*.json are kept as a record and marked 作废 in
+  docs/audits/control_pythia160m_vs_ours.md 5.3d. Do not cite them as a clean-subset result.
+
+  Next: CUDA_VISIBLE_DEVICES= python3 scripts/e1_28_clean_ids.py --write
+        then set IDS/WANT_SHA here to the chosen population and delete this refusal in the
+        same commit that records which population was chosen and why.
+REFUSAL
+exit 2
+
+# ---- unreachable below; kept so the recipe is not lost when the population is settled ----
 cd /work/aupai
 
 IDS=runs/heldout_v2/ids_clean.txt
