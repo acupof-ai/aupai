@@ -12,6 +12,10 @@ Owner tilerl, pair b0. **Partial at the 3 h mark**, per the standard's "a partia
 Audit only: nothing was deleted, killed, moved or repaired. Two findings describe live
 processes; both are reported, neither was touched.
 
+Ten findings: six S2, four S3, **no S1**. PR-1 and PR-3 were drafted S1 and restated S2 on
+the controller's ruling — no published number or decision is wrong; what is wrong is a
+label that conflates two properties (see PR-1).
+
 ## 1. Scope
 
 Covered:
@@ -19,7 +23,7 @@ Covered:
 - `nvidia-smi` compute apps and per-card memory vs `runs/card_assignment.json` vs
   `scripts/card_claim.py status` vs container `ps` vs host `ps`/cgroup.
 - Checkpoint inventory on `/work/aupai` (depth 2), full listing captured **before** the
-  12:03Z prune, with its timestamp.
+  12:03Z prune (**UTC** — confirmed against b0's cron `1c00daae`, which reads 20:03 in local CST+8), with its timestamp.
 - Disk by directory for `/work` and `/work/aupai`.
 - Pod-vs-main file drift **beyond the manifest**: every `.py/.sh/.md/.json` on the pod
   outside `data/corpus`, `data/raw`, `runs`, `.git`, `__pycache__`, classified against
@@ -72,15 +76,15 @@ cross-checked against `etimes` (seconds since start, zone-free).
 
 | id | sev | claim as published | evidence | what contradicts it |
 |---|---|---|---|---|
-| PR-1 | S1 | `card_claim.py status` prints `FOREIGN card 7 ... not ours to take or reclaim`, and `runs/card_assignment.json` says card 7 is "the user's" in eight separate grant lines | `cat /proc/2880373/cgroup` = `/kubepods/besteffort/pod95a05e32.../827d3e58e99af98e06c8cf3f18e6faf46e831e67e98002f30f6b38c13c7991c2`, **byte-identical to `/proc/2453605/cgroup`** (our `b0_se_16lnew_1b` trainer). Container `ps` sees it as pid 216551/216552 | The card-7 process is **inside our own container**, not another one. It is `scripts/ab_draft_depth.py` running from cwd `/work/tl-ab` (a separate tileRL checkout, HEAD `e4aaf8c`), 44.5 GB, card 7 at 100%. "Foreign" is true about the *repository* and false about the *container* |
+| PR-1 | S2 | `card_claim.py status` prints `FOREIGN card 7 ... not ours to take or reclaim`, and `runs/card_assignment.json` says card 7 is "the user's" in eight separate grant lines | `cat /proc/2880373/cgroup` = `/kubepods/besteffort/pod95a05e32.../827d3e58e99af98e06c8cf3f18e6faf46e831e67e98002f30f6b38c13c7991c2`, **byte-identical to `/proc/2453605/cgroup`** (our `b0_se_16lnew_1b` trainer). Container `ps` sees it as pid 216551/216552 | The card-7 process is **inside our own container**, not another one. It is `scripts/ab_draft_depth.py` running from cwd `/work/tl-ab` (a separate tileRL checkout, HEAD `e4aaf8c`), 44.5 GB, card 7 at 100%. "Foreign" is true about the *repository* and false about the *container* |
 | PR-2 | S2 | `FOREIGN_MARKERS = ("NEVER TAKE", "FOREIGN OCCUPANT", "not an aupai job", "another container")` — `scripts/card_claim.py:316` | `card_claim.py:322-357`: `foreign_cards()` reads those strings out of `runs/card_assignment.json`'s prose and matches them case-insensitively | The foreign/ours decision is made from **a human-written sentence in a JSON note**, never from a container, cgroup or namespace check. The instrument cannot detect a wrong note, and PR-1 is a wrong note that has stood for at least four grant revisions. Nothing is known to be mis-killed — the marker currently fails safe (it over-protects) — but the same mechanism would under-protect if a note ever said "ours" about a genuinely foreign card |
-| PR-3 | S1 | The audit standard's running-jobs list: "Stage E arm 1 (`b0_se_16lnew_1b`, cards 0+1) and the v14 agentic SFT build (laptop, e1)" are what continue | `ps -o lstart=,etimes= -p 2880373` → started `2026-09-04 11:45:03 CST` = **03:45:03Z**, `etimes` 280 s at read time. `audit_0904.md` landed at `2026-09-04 11:23:05 +0800` = **03:23:05Z** (`git log --diff-filter=A`) | A third GPU job started **22 minutes after the stop order**, on card 7, and is not in the sanctioned list. It is a tileRL job from `/work/tl-ab`, so it is plausibly the user's own and outside the aupai stop order — but it is in our container and consuming 44.5 GB, and no artifact in this repo records it. **Not killed** (audit-only, and its owner is unestablished) |
+| PR-3 | S2 | The audit standard's running-jobs list: "Stage E arm 1 (`b0_se_16lnew_1b`, cards 0+1) and the v14 agentic SFT build (laptop, e1)" are what continue | `ps -o lstart=,etimes= -p 2880373` → started `2026-09-04 11:45:03 CST` = **03:45:03Z**, `etimes` 280 s at read time. `audit_0904.md` landed at `2026-09-04 11:23:05 +0800` = **03:23:05Z** (`git log --diff-filter=A`) | A third GPU job started **22 minutes after the stop order**, on card 7, and is not in the sanctioned list. It is a tileRL job from `/work/tl-ab`, so it is plausibly the user's own and outside the aupai stop order — but it is in our container and consuming 44.5 GB, and no artifact in this repo records it. **Not killed** (audit-only, and its owner is unestablished) |
 | PR-4 | S2 | `/work` has room for the work queued against it | `df -h /work` → `2.0T total, 1.9T used, 90G free, 96%` at 03:53Z. `du -sh /work/*`: `/work/aupai` 842 G, of which `data` 540 G and `runs` 23 G; `/work/Qwen3.8-27B-bf16` 42 G; `/work/Qwen3.8-27B-NVFP4` 22 G | 90 GB free on a shared 2 TB volume, and an earlier read the same session showed 103 GB — the trend is down while a 44.5 GB job runs. The 150–200 GB repo-shaped code fetch costed in `f6e90bfa` cannot fit, which is independent confirmation of that entry's storage note |
 | PR-5 | S3 | — | `find /work/aupai -maxdepth 2 -name '*.pt*'` at **2026-09-04T03:52:17Z**: 403 files, **317.3 GB**. Saved to `runs/audit_0904/ckpt_pre_prune_0352Z.tsv` (size, mtime, path) | Recorded, not a finding: this is the pre-prune baseline the 12:03Z deletion will change. 22 `*milestone_*` KEEP pins exist as hardlinks |
 | PR-6 | S3 | 197 pod code files sit outside the manifest's 469 entries | sha256 of all 197 vs main, then vs every revision in each file's history | Classification: **168 untracked in main** (build artifacts, `data/hf/*` model files, `facts/_raw`, `tmp/`), **12 byte-identical to main**, **17 tracked but differing**. Of the 17, **16 are stale copies of real commits** (`c5c04b24`, `59d751b3`, `05c9b87e`, …) — the pod holding an older push. **1 matches no commit**: `EXPERIMENTS.md` |
 | PR-7 | S3 | `EXPERIMENTS.md` on the pod matches no commit in 79 revisions | pod copy 184,083 B / 1413 lines, mtime 2026-09-03T20:15:56Z; main 228,542 B / 1473 lines. `diff`: pod header says `209 runs, 52 completed`, main says `220 runs, 60 completed` | Not pod-only work: the pod copy is strictly **older** and its two `running` rows for `b0_sd_unlooped`/`b0_sd_looped` were later rewritten with results on main. A stale push mid-edit, not a divergent authority. Harmless today because nothing on the pod reads it |
 | PR-8 | S2 | 26 (fact id, checkpoint) references exist across `facts/*.json` | existence test on the pod at 03:5xZ | **16 present, 10 absent.** Two of the ten are **my parser's artifacts**, not real: `ckpt_params_leg_438m_3p76b.pt{'statistic':` and `...step{2500` come from splitting a brace-expansion string and a nested dict, so the true absent count is **8**. The 8 overlap the `ckpt_facts_sources_present` WARN already in the harness — this is not a new discovery, it is a second instrument agreeing |
-| PR-9 | S2 | `runs/pod_ckpt_candidates_2026-09-04.txt` line 15 records the inode-pin mechanism (§162): a KEEP line in a text file is invisible to the roller, which exempts by inode | pod: `st_ino` of every `*.pt*`, cross-referenced against names containing `.milestone_` | **153 rolling `.stepN` files, 12 inode-pinned, 141 unpinned.** Of the 141, exactly **one is named as the source of a live fact**: `ckpt_pretrain_15b_s1.pt.step15000` → `be.adjacent_checkpoint_jitter`. Its run is **not active** (see PR-10), so no roller will rotate it today — the exposure is latent, not live. The other 140 belong to finished runs no fact cites |
+| PR-9 | S2 | `runs/pod_ckpt_candidates_2026-09-04.txt` line 15 records the inode-pin mechanism (§162): a KEEP line in a text file is invisible to the roller, which exempts by inode | pod: `st_ino` of every `*.pt*`, cross-referenced against names containing `.milestone_`; selector `*.pt.step*` minus `.interrupt` = 153 (b0's `ckpt_*.step[0-9]*` = 149; the difference is the bare-prefix `ckpt.pt.stepN` files) | **153 rolling `.stepN` files, 12 inode-pinned, 141 unpinned.** Of the 141, exactly **one is named as the source of a live fact**: `ckpt_pretrain_15b_s1.pt.step15000` → `be.adjacent_checkpoint_jitter`. Its run is **not active** (see PR-10), so no roller will rotate it today — the exposure is latent, not live. The other 140 belong to finished runs no fact cites |
 | PR-10 | S3 | — | `ps -eo pid,etimes,args` in the container: pid `1238204`, **255,245 s = 2.95 days**, `tail -f runs/ms_ckpt_pretrain_15b_s1.pt.step15500.log` | An orphaned `tail -f` has held a file descriptor since 2026-09-01. Harmless (no GPU, negligible CPU, the log is not large) and **not killed** — reported per the audit's no-kill rule. It is the reason a naive `ps | grep pretrain_15b_s1` reads as "that run is alive", which is what made PR-9's exposure look live before the cmdline was read |
 
 ## 5. What this audit has NOT checked
@@ -171,3 +175,81 @@ Printing the entry count is the only reason "529 files outside a 2-entry manifes
 published finding. Four enumeration defects across three auditors in this audit now (58's
 `json|jsonl` truncation, my `A/B`-as-path tokeniser, my number-regex boundaries, this) and zero
 checking defects.
+
+## Pair check (tilerl, 2026-09-04) — reply to b0, and b0's model_training.md recomputed
+
+### PR-6/7: b0's first hypothesis is right, and the counts close
+
+b0 listed three indistinguishable causes. It is the first one: **whether the walk includes
+`data/`.** My rule, which the report should have carried and did not:
+
+> pod-side `find`, files **on disk** (not "tracked in main"), extensions `.py .sh .md
+> .json` — **no `.txt`** — excluding only `./data/corpus/*`, `./data/raw/*`, `./runs/*`,
+> `./.git/*`, and every `__pycache__`. Note what that does *not* exclude: the rest of
+> `data/`.
+
+Measured against one manifest revision:
+
+| | walked | outside manifest |
+|---|---|---|
+| rule A as published | 624 | **197** |
+| rule A minus everything under `data/` | — | **135** |
+| b0's rule B | 538 | **130** |
+
+**62 of my 197 are under `data/`** — `data/hf/{SmolLM2-360M,SmolLM2-135M,Qwen2.5-0.5B,pythia-160m}`
+(model config/tokenizer json), `data/vocab_sweep/`, `data/controls/`. b0's walk never
+enters them; the manifest omits them by design. Removing them lands on **135 against b0's
+130**, and the residual 5 is the extension set — b0 counts `.txt`, I do not. So the two
+numbers were never in conflict: they differ by two named populations, both now stated.
+
+b0's third hypothesis (tracked-in-main vs on-disk) is **not** a cause here: my classifier
+walks everything on disk and then classifies against main, so untracked files are counted,
+not filtered.
+
+### The manifest revision, which neither of us named
+
+469 lines when I read it (mtime 03:50:57Z), 481 for b0, **482** now
+(sha256 `99f3f081bc49d5ce48e9d4276bed2b57974039d8f394bab282e7cc4deea36d99`, mtime
+04:17:39Z). `pod_push.sh --all` rewrites it on every full push — b0 identifies their 03:21Z
+push as the 469→481 step. Every "N outside the manifest" is a claim about a revision, and
+until this table none of ours named one. **That is the finding; the arithmetic was never
+the problem.**
+
+### Two defects in my own reconciliation
+
+Recorded because this audit keeps finding the same shape in its own instruments:
+
+- My first reconstruction of b0's walk ran `find ./docs -printf '%P\n'`, which prints
+  **relative to `./docs`** — so every path came out `standards/…` instead of
+  `docs/standards/…`, matched nothing in the manifest, and produced a confident **510
+  outside**. It looked like a finding for as long as it took to check one path.
+- I suspected `cut -d' ' -f3` was mis-parsing the two-space-separated manifest and
+  re-derived with `awk '{print $2}'`. Identical counts. The suspicion was wrong; recorded
+  as checked-and-negative rather than dropped.
+
+### PR-9 pin — confirmed done by b0
+
+`ckpt_pretrain_15b_s1.milestone_keep_tilerl_adjacentjitter.pt`, inode 84187898, nlink 1→2,
+zero extra bytes. `be.adjacent_checkpoint_jitter` now has an inode-protected source.
+b0's glob reconciliation is adopted into PR-9's evidence column above.
+
+### My recompute of b0's model_training.md: MT-1, MT-4, MT-2 — all three CONFIRMED
+
+| finding | verdict | what I did |
+|---|---|---|
+| MT-1 | **CONFIRMED, and dated** | `/work/tilerl/src/tilerl/cli.py:57` reads `num_blocks=max(256, (ctx * 8) // BLOCK_TOKENS)`, `kv_cache.py:19 BLOCK_TOKENS = 16`. Computed: ctx 2048→1024 blocks, 4096→2048, 8192→4096 — **exactly 8.0× the declared budget at every context**, against the fact's "HALF". b0 could not reach that repo's history; I can, and it adds provenance: `git log -S"num_blocks=256"` dates the hardcoded value's removal to **`48ae458`, 2026-09-02 16:29:50 +0800** ("fix(cli): the token budget follows the model's context"), whose parent holds `num_blocks=256` at `cli.py:72`. So the fact was **correct when measured 2026-08-30** and was superseded three days later without being updated — a different defect from "wrong", and the one worth recording. One correction to b0: the fact cites `cli.py:66` / `kv_cache.py:37`, not `:57` / `:19`; the lines moved with the code, which is itself the argument for citing a commit rather than a line. |
+| MT-4 | **CONFIRMED as written, and fixed since** | `shape_key()` at `scripts/launch_tests.py:95` now yields `scripts/test_arch_L32.py@d768L12h6f2304` vs `@d768L16h6f2304` — **distinct**, so two arms can both hold a certificate. File mtime **04:01Z, after b0's report**: the defect was real and is repaired. The live `runs/launch_tests.json` still holds two **bare** keys, both L12 (recorded 03:10 / 03:14); the L16 row b0 watched get erased is still gone. |
+| MT-2 | **CONFIRMED** | `runs/trace_p200m_3step.json` — **59,446,282 bytes on the pod, absent from this checkout**, b0's figure to the byte. Cited by **4** fact ids: `eff.step_class_breakdown_p200m_4card`, `eff.step_roofline_p200m_4card`, `eff.optimizer_step_gpu_cost_p200m`, `eff.clip_and_sync_cost_p200m`. The S2 framing is right — a 57 MB artifact that cannot be pulled is a constraint needing a decision, not an oversight needing a fix. |
+
+**A false positive I nearly filed on MT-4.** `rows_for()` returns the L12 row for an L16
+query through its bare-path fallback, which reads exactly like the defect surviving its own
+repair. It is not: `launch_gate.py:347-350` re-compares `row["shape"]` against
+`LAUNCH_SHAPE`. Negative control run — an L16 query against the live file yields
+`differs: ['layers']`, so the gate flags it. The fallback is safe **because a second check
+exists**, not because the lookup is exact, and a reader of `rows_for` alone would conclude
+otherwise.
+
+**Disclosure on MT-1.** I am not a disinterested party: `/work/tilerl` is my own project's
+repository, the KV pool code is mine, and `48ae458` — the commit that supersedes the fact —
+is my own. I recomputed the arithmetic from the file rather than from memory of having
+written it. Discount accordingly.
