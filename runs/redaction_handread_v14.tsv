@@ -1,0 +1,51 @@
+site	row	project	role	class	subclass	coherent	note
+1	11	-	-	clean	-	y	greeting exchange
+2	125	agent-infer	-	clean	-	y	tunnel/pod diagnostics; internal host and IP only, no credential
+3	595	agent-infer	-	clean	-	y	GPU test-batch dispatch to subagent
+4	826	agent-infer	-	clean	-	y	kernel tuning discussion, measured numbers only
+5	850	agent-infer	-	clean	-	y	measurement design discussion
+6	1016	agent-infer	-	clean	-	y	NVFP4 crash-trigger debugging; localhost URLs only
+7	1062	agent-infer	-	clean	-	y	perf roofline discussion
+8	1246	agent-infer	-	clean	-	y	web search for W4A16 kernels
+9	1249	agent-infer	-	clean	-	y	awk one-liner
+10	1424	agent-infer	-	clean	-	y	git hygiene session; commit shas and filenames only
+11	1495	agent-infer	-	clean	-	y	27B context-parallel probe dispatch
+12	1710	agent-infer	-	clean	-	y	GSPO training launch; model paths and ports only
+13	1819	agent-infer	-	clean	-	y	decode-gate miss diagnostics
+14	1856	ai-passport	-	clean	-	y	mic agent process discussion
+15	1976	ai-passport	-	clean	-	y	ESP32 firmware debugging; serial port only
+16	2008	arle-app-demo	-	clean	-	y	SwiftUI sidebar edit
+17	2112	arle-app-demo	-	clean	-	y	SwiftUI spacing edit
+18	2179	cupai-ui	-	clean	-	y	app launch log check; local model cache paths only
+19	2248	aupai	-	clean	-	y	SFT training log tail
+20	2463	aupai	-	clean	-	y	progress-patrol instructions; socket paths only
+21	2846	aupai	-	clean	-	y	progress-patrol tick; training log only
+22	3145	aupai	-	clean	-	y	SFT/RL verdict discussion, measured numbers
+23	3173	aupai	-	clean	-	y	controller task dispatch (t58)
+24	3179	aupai	-	clean	-	y	TileLang fusion dispatch
+25	3180	aupai	-	clean	-	y	controller loop tick
+26	3195	aupai	-	clean	-	y	training-data composition discussion
+27	3363	cha	-	clean	-	y	proxy/rate-limit discussion; placeholder proxy URL only, no value
+28	3373	cha	-	clean	-	y	search index stats
+29	3427	cklxx	-	clean	-	y	Megatron research request
+30	3428	cklxx	-	clean	-	y	skill launches only
+31	3438	clean-my-repo	-	clean	-	y	AI-slop rule coverage discussion
+32	3464	eic	-	clean	-	y	internal doc edit handoff
+33	3544	eic	-	clean	-	y	vLLM/LMCache engine config dump; model paths only, no key or token
+34	3566	eic	-	clean	-	y	tmux debugging; ssh user@host only, no key or password
+35	3717	eli	-	clean	-	y	wrapper smoke test
+36	3762	lessons	-	clean	-	y	KV cache doc critique
+37	3775	lessons	-	clean	-	y	dedup workflow launch
+38	3778	lessons	-	clean	-	y	one-line acknowledgment
+39	4057	llmserver	-	clean	-	y	KV tensor dimension discussion
+40	4129	sglang-iaas	-	clean	-	y	kubectl patch commands; namespace and roleset names only
+41	4276	sglang-iaas	-	clean	-	y	hicache research dispatch
+42	4377	sglang-iaas	-	clean	-	y	one-line acknowledgment
+43	4449	tileRL	-	clean	-	y	attention kernel debugging
+44	4453	tileRL	-	clean	-	y	DSpark head probe script; local model paths only
+45	4736	tileRL	-	clean	-	y	compatibility matrix setup
+46	4755	tilelang	-	clean	-	y	proxy env discussion; assistant asks for the value, none given
+47	4774	uvos	-	clean	-	y	trajectory collection design discussion
+48	4812	probe-resume	-	clean	-	y	ping/pong probe fixture
+49	4814	shimprobe	-	clean	-	y	say-hi probe fixture
+50	4819	eli-subagent-test	-	clean	-	y	hello.txt tool-use test fixture
