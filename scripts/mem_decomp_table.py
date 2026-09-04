@@ -172,9 +172,20 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("path", nargs="?", default="runs/mem_decomp_0905.jsonl")
     ap.add_argument("--selftest", action="store_true")
+    ap.add_argument("--has", nargs=4, metavar=("VALUES", "TOP_K", "LAYERS", "PATH"),
+                    help="exit 0 if a row for this memory config is already recorded, 1 if "
+                         "not. The runner's skip check, here rather than in the shell so it "
+                         "reads rows the same way the table does.")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
+    if a.has:
+        v, k, ly, path = a.has
+        if not os.path.exists(path):
+            return 1
+        with open(path, encoding="utf-8") as fh:
+            rows = [json.loads(ln) for ln in fh if ln.strip()]
+        return 0 if pick(rows, int(v), int(k), ly) else 1
     if not os.path.exists(a.path):
         print(f"no such file: {a.path}", file=sys.stderr)
         return 1

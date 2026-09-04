@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (77 model-project incidents) and docs/lessons/infra_incidents.md (85 pod/infra incidents); 33 closed incidents removed 2026-09-04 (162 = 77 + 85); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (77 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (164 = 77 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -162,7 +162,7 @@ Cannot see: whether a number's population matches the vision it is reported unde
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §194).
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §196).
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
@@ -194,10 +194,12 @@ Cannot see: whether a pod-only measurement was brought back before the pod was r
 
 ## R8. Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class
 
-2 incidents (2 infra, 0 model), ~2h each, 4h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources.
+4 incidents (4 infra, 0 model), ~2h each, 8h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources.
 
 - §15: a shared resource was used without an explicit claim; the co-residency cost was measured against a metric class, not the run's own spend.
 - §126: a resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a grant.
+- §194: a claim held by a live pid was read as evidence the job was progressing; 0% util against 76 GiB held was the signal, the claim status was not.
+- §195: a rank-0-only phase (save, 33.6 s) inside a world-2 job desynchronised the ranks; rank 1 entered the next collective with nothing to meet.
 
 Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-resident with a run it degrades.
 

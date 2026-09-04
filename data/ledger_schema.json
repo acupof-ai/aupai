@@ -53,6 +53,18 @@
         "required": false,
         "why": "the k of the top-k. Same reason as n_values: it is the scale of topk_entropy, and ln(k) is the only reference value a reader can compare against."
       },
+      "rows_changed_since_prev": {
+        "type": "float",
+        "required": false,
+        "min": 0.0,
+        "why": "readout 6, write effectiveness: rows of the value table whose fp32 checksum changed since the previous diag row, as a FRACTION OF TOUCHED ROWS. Stop below 0.50. It exists because the other four diagnostics cannot see a frozen table -- pool_touched_frac, topk_entropy and key_gini are all functions of the SELECTION distribution, which the keys produce, and the keys have an fp32 master; a table whose every bf16 update rounds to zero reads healthy on all three. NOT capped at 1.0: the denominator is this window's touched count, and a row touched in an earlier window can change in this one, so a ratio above 1 is a real observation rather than a bad number. ABSENT on a run's first diag row, where no previous checksum exists -- an absence means not measured, a 0.0 would mean nothing moved, and the two must not be spelled the same."
+      },
+      "rows_changed": {
+        "type": "int",
+        "required": false,
+        "min": 0,
+        "why": "the raw count behind rows_changed_since_prev, kept beside the fraction because the fraction alone cannot say whether a small value came from a small numerator or a small denominator. Measured by projecting each row of the table onto one seeded random vector in fp32 (model._ROW_PROBE_SEED) -- 4 bytes per ROW rather than 2 bytes per parameter, so 4 MiB at M1 against 4 GiB for keeping a copy of the previous table."
+      },
       "ts": {
         "type": "str",
         "required": false,

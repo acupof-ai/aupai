@@ -192,7 +192,13 @@ open: a check that distinguishes "not kept" from "claimed"; none exists.
 A guard was green by hand and red under automation, and three of us looked in the environment. Cause was TIME: a same-length mutation (3565 -> 3565 bytes) landing in the same wall-clock second as the preceding run reuses a stale `.pyc`, because Python invalidates on (whole-second mtime, size) -- so the interpreter ran the pre-mutation code and the mutation test passed on a defect it never executed. Confirmed by the shape of the failure: 6 replicas gave rc 1,1,1,0,0,1, which is a race, not a configuration. Two of my own diagnoses (a TZ artifact, then a resolving symlink) and one of 6e's (GIT_INDEX_FILE) were all refuted. Evidence: de's world-8 replica run.
 open: manual -- a mutation test must change the file's SIZE or force a `.pyc` invalidation; "green by hand, red under automation" is a race's signature and the environment is the wrong place to look first.
 
-## R3. Artifacts carry their producer's identity
+## R3. Artifacts carry their producer identity
+
+<!-- The two entries below are tagged R10, not R3: they are about a pod-only artifact being
+     unreachable, not about producer identity. They sat under a second "R3. Artifacts carry
+     their producer's identity" heading that differed from this one only by an apostrophe.
+     Headers merged 2026-09-05; the entries are left where they are because reassigning
+     someone else's incident to a rule is the file owner's call, not a passing reader's. -->
 
 ### §2 (2026-08-30, R10)
 A measurement existed only on the pod; the pod was recycled, and the measurement was lost. Evidence: pod-only artifact.
@@ -202,8 +208,6 @@ open: manual — pod-to-repo transport is a human discipline.
 A pod-only artifact was cited in a decision; the artifact was unreachable from the repo, and the decision rested on an unreadable source. Evidence: docs/standards/state_0904.md.
 open: a check that cited artifacts are reachable from the repo; none exists.
 
-## R3. Artifacts carry their producer identity
-
 ### §4 (2026-08-30, R3)
 An artifact with no producer identity was silently rebuilt; the rebuild used a different producer, and the artifact's meaning changed. Evidence: scripts/harness.py.
 open: check_cache_readers_set_vocab_id covers vocab identity; a general producer-identity check would close it.
@@ -211,8 +215,6 @@ open: check_cache_readers_set_vocab_id covers vocab identity; a general producer
 ### §44 (2026-09-01, R3)
 A checkpoint carried an identity that was not the one it ran with; the identity was copied from a template. Evidence: runs/ckpt_*.pt.
 open: a check that checkpoint identity is set at production, not copied; none exists.
-
-## R4. Failures must be loud
 
 ## R4. Failures must be loud
 
@@ -239,8 +241,6 @@ open: a check that failures set a nonzero exit code; none exists.
 ### §166 (2026-09-04, R4)
 A print-and-continue path swallowed an exception; the exception was logged and the run continued with bad state. Evidence: scripts/harness.py.
 open: a check that exceptions in the run path raise, not print; none exists.
-
-## R5. State the vision before the number
 
 ## R5. State the vision before the number
 
@@ -283,8 +283,6 @@ open: manual — vision statement is a human discipline.
 ### §100 (2026-09-03, R5)
 A measurement outside the stated vision was reported as "absent"; the correct label was "unmeasured." Evidence: docs/standards/state_0904.md.
 open: a check that "absent" and "unmeasured" are distinct; none exists.
-
-## R6. Every number carries its basis
 
 ## R6. Every number carries its basis
 
@@ -338,8 +336,6 @@ open: a check that numbers name their timezone; none exists.
 
 ## R7. Retractions travel as wide as the ruling
 
-## R7. Retractions travel as wide as the ruling
-
 ### §22 (2026-08-31, R7)
 A retraction did not reach every consumer; a consumer of the original ruling never saw the retraction. Evidence: docs/standards/state_0904.md.
 open: a check that retractions reach every citation of the original; none exists.
@@ -362,8 +358,6 @@ open: a check that retractions change the fact's status; none exists.
 
 ## R8. Shared resources are explicitly exclusive
 
-## R8. Shared resources are explicitly exclusive
-
 ### §15 (2026-08-31, R8)
 A shared resource was used without an explicit claim; the co-residency cost was measured against a metric class, not the run's own spend. Evidence: runs/card_assignment.json.
 open: check_card_held_without_claim covers cards; a general resource-claim check would close it.
@@ -372,7 +366,13 @@ open: check_card_held_without_claim covers cards; a general resource-claim check
 A resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a grant. Evidence: runs/card_assignment.json.
 open: a check that exclusivity is read from the claim ledger, not from utilization; none exists.
 
-## R9. Run a deletion candidate before judging it
+### §194 (2026-09-05, R8)
+A claim held by a live pid was read as evidence the job was progressing. The m1 decomposition cell hung after writing its row; `card_claim status` named `tilerl_mem_decomp_m1` correctly for 17 minutes while rank 1 held 76 GiB at 0% util. A claim answers who intends to hold a card and carries nothing about whether work is happening — the two questions have different evidence, and only 0% util against a large reservation showed the hang. Evidence: runs/mem_decomp_0905.log, commit acfb67bb.
+open: a check that flags a claimed card at ~0% util for N minutes; none exists. `card_claim status` reports claim-vs-memory disagreements and would report this one as agreeing.
+
+### §195 (2026-09-05, R8)
+A rank-0-only phase inside a world-2 job desynchronised the ranks: profile_step_cost times save (33.6 s here) and val after the loop, save runs on rank 0 alone, and rank 1 entered the next collective with nothing to meet. The cells' timings were already complete and correct when it hung, so the failure cost card time and no data. Fixed by `--skip-save-val`, which skips both and still writes the JSON row (`--peak-only` skips them but returns before the record is built). Evidence: scripts/profile_step_cost.py, commit acfb67bb.
+open: manual — nothing checks that a multi-rank script's post-loop phases are collective or rank-symmetric.
 
 ## R9. Run a deletion candidate before judging it
 
