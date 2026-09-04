@@ -56,7 +56,6 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
   - **When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency is judged by host IO and seconds, not by metric class.** The rule stated on 2026-09-02 was "likelihood evals may share a card, generative ones wait", derived from one eval (`score_matrix`, 2.3 GiB). MEASURED against the run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was killed. The class was never the variable. What separates `ppl` from `score_matrix` inside one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for `zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits for the run; one that only loads a checkpoint costs about what a save costs. `python3 scripts/eval_load_cost.py` is the table, with the unmeasured evals listed as unmeasured rather than as zero.
   - **Judge the cost in seconds against what the run already spends on itself, never by the printed ETA.** ETA extrapolates a single 10-step interval over 19,151 steps, so one interval 54 s slow prints as 29 lost hours, and every checkpoint save prints ~99 h. Total across every dip in the first 1990 steps: 10.3 min of 6.04 h elapsed, 2.8% (`docs/lessons/gate_failure_shapes.md` §50).
 - **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
-- **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
 - **A deletion needs a per-file check for glob and runtime loaders.** No static analysis sees a runtime glob. `scripts/reachability.py` is a citation graph -- a doc mention is an edge, so "reachable" can mean "named by a doc nobody runs" -- and `mathbank/vet_programs.py:37` globs `math_programs_l*_ext*.py`, so 23 live generators read as unreferenced to a name scan. Grep for `glob`/`importlib` over a directory before deleting anything in it.
@@ -263,20 +262,22 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
+Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 141 survive.
+
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 19 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 §106 §131 §139 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 79 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 §153 §158 §160 §163 §165 §167 §168 §169 §170 §171 §173 §174 |
-| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
-| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 9 | §7 §13 §25 §27 §51 §59 §101 §136 §166 |
-| State the vision before the number; outside it, label unmeasured, not absent | 12 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 §138 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 15 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 62 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 |
+| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 3 | §4 §24 §44 |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 7 | §7 §13 §25 §51 §59 §136 §166 |
+| State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 32 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 §109 §111 §115 §117 §118 §124 §127 §133 §143 §152 §155 §156 §157 §159 §161 §164 §172 |
-| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 8 | §16 §22 §42 §58 §68 §102 §119 §162 |
-| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 4 | §15 §33 §126 §154 |
-| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 4 | §39 §41 §107 §113 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §58 §68 §102 §119 |
+| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §126 |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
 
-Full cases live in the shapes doc; new shapes land there first and this table follows.
+New shapes land in the incidents doc first and this table follows.
 
 ## Rule coverage
 
@@ -301,7 +302,6 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
-| Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
@@ -337,7 +337,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 | `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-53 rules: 17 checked, 36 manual. The count is regenerated from `harness check`'s
+52 rules: 18 checked, 34 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
