@@ -24,7 +24,10 @@ the reports, and rejects or returns them; the controller writes no report.
    that has not been shown to fail on a known defect has not run.
 5. **Audit only.** No fixes, no refactors, no ledger edits, no new launches. The only writes are
    the report and audit scripts under `runs/audit_0904/`. A defect found is written down, not
-   repaired. Exception: a live security exposure (credential in a tracked or shared file) is
+   repaired. A branch merged with `scripts/merge_main.sh` ships every commit on it, so a session
+   holding pre-freeze commits merges only its report branch or rebases the report onto main
+   first; "no new work" did not say this and two frozen fixes reached main that way (de, §6).
+   Exception: a live security exposure (credential in a tracked or shared file) is
    reported to the controller at once, and the file is quarantined by rename, never printed.
 6. **Reproduce a sample, do not re-derive everything.** Where a report covers hundreds of items,
    recompute a fixed-seed sample of at least 30 and state the sample.
