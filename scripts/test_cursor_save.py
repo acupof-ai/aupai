@@ -138,6 +138,23 @@ def main():
     # origin missing so the count is impossible.
     for label, cfg in shapes(mid_run=True):
         cfg._plan_step_origin = 16000  # resumed here; the plan below is stage 2's
+        # AND THE ROWS THE EARLIER SEGMENTS CONSUMED. Without this the fixture described an
+        # impossible run: resumed at step 16000, so 16000 x 16 x 2 = 512,000 rows are behind
+        # it, while declaring a cursor base of nothing. train.py:1134 writes
+        # counts x world + _base, i.e. an ABSOLUTE cursor, and _base (:1056) is exactly those
+        # earlier rows -- so a fixture with no base produces a segment-only 3,200 and
+        # save_checkpoint's sum guard correctly refuses it. That guard is what
+        # ds.second_resume_rereads_one_segment exists to protect: its discriminating
+        # checkpoint, p200m_4b_0902.interrupt.step1192, reads 305,152 = 1192 x 256 absolute
+        # against 92,160 segment-only, and rejecting the 92,160 is the behaviour under test.
+        #
+        # So the old fixture was asserting the defect. It died at line 143 before printing a
+        # case, which read as "the guard is over-broad" and is really "the world is not
+        # possible" (de, 2026-09-04; 6e's ruling to change train.py inverted on this reading).
+        # Split across the two domains the plan's first half is domain 0, so all 512,000
+        # earlier rows are attributed there -- what matters is that base + segment is the
+        # absolute total the guard recomputes.
+        cfg._row_cursor_base = {"code_rp1t": 512_000, "zh_web": 0}
         with tempfile.TemporaryDirectory() as d:
             p = os.path.join(d, "ck.pt")
             save_checkpoint(p, {"w": torch.zeros(1)}, cfg, "deadbeefdeadbeef", step=16100)
@@ -147,13 +164,19 @@ def main():
                 bad.append(f"{label} (resumed): no row_cursor -- refused "
                            f"({ck.get('row_cursor_refused', 'no reason given')})")
                 continue
-            # 100 RELATIVE steps * 16 * 2 = 3200 rows, all in domain 0. The absolute
-            # reading would be 16100*32 = 515,200 rows, clamped to the 8000-row plan,
-            # giving code_rp1t 4000 and zh_web 4000 -- plan-complete, not as-of-step.
-            if got.get("code_rp1t") != 3200:
+            # 100 RELATIVE steps * 16 * 2 = 3200 rows of THIS segment, all in domain 0, plus
+            # the 512,000 the earlier segments consumed = 515,200 absolute -- which is also
+            # 16100 x 32, the identity the sum guard checks. The absolute-step READING would
+            # index 515,200 into an 8000-row plan, clamp, and report code_rp1t 4000 and
+            # zh_web 4000: plan-complete wearing an as-of-step label. The two are
+            # distinguishable precisely because the cursor is absolute and the INDEX is not.
+            if got.get("code_rp1t") != 515_200:
                 bad.append(f"{label} (resumed): code_rp1t {got.get('code_rp1t')}, expected "
-                           f"3200 from 100 RELATIVE steps; the absolute step would clamp to "
-                           f"the plan end and report {got.get('code_rp1t')} as if measured")
+                           f"515,200 = 512,000 base + 3,200 from 100 RELATIVE steps; the "
+                           f"absolute step would clamp to the plan end and report 4000")
+            if got.get("zh_web") != 0:
+                bad.append(f"{label} (resumed): zh_web {got.get('zh_web')}, expected 0 -- "
+                           f"3200 rows sit entirely inside domain 0's half of the plan")
 
     # The origin is wrong or absent: the count is impossible and the writer must refuse,
     # not clamp. A missing cursor costs a resume that repeats rows; a wrong one is
@@ -174,6 +197,51 @@ def main():
             # the srcfp/seed writes must still happen on the refusal path
             elif not ck.get("row_cursor_srcfp"):
                 bad.append(f"{label} (bad origin): the refusal path skipped row_cursor_srcfp")
+
+    # THE KNOWN ANSWER, from ds.second_resume_rereads_one_segment's own configuration rather
+    # than from a shape invented here. p200m_4b_0902 at batch 16, accum 2, world 8 = 256
+    # rows/step; interrupt.step1192 was written after a resume at origin 832, and its cursor
+    # reads 305,152 = 1192 x 256 ABSOLUTE against 92,160 = (1192-832) x 256 segment-only.
+    # That checkpoint is the only one of the fact's three with discriminating power: step500
+    # and interrupt.step832 sit at origin 0 where the two implementations agree.
+    #
+    # Both directions, because the guard's value is entirely in the second: a sum check that
+    # accepts an absolute cursor but does not REJECT a segment-only one is not protecting
+    # anything. Added 2026-09-04 after the resumed fixture above was found asserting the
+    # defect -- it declared origin 16000 with no _row_cursor_base, i.e. a run that consumed
+    # 512,000 rows and remembered none of them, so save_checkpoint refused it and the test
+    # died before printing a case. That read as "the guard is over-broad" and was really "the
+    # fixture is not a possible world"; a pair with a known answer distinguishes the two.
+    os.environ["WORLD_SIZE"] = "8"
+    for label, base, want in (
+        ("absolute cursor after a resume must be accepted", {"code_rp1t": 212_992}, 305_152),
+        ("segment-only cursor at the same checkpoint must be refused", {}, None),
+    ):
+        idx = torch.zeros(400_000, dtype=torch.int8)
+        cfg = types.SimpleNamespace(
+            batch=16, accum=2, seq=4096, vocab=32784,
+            _row_cursor={"code_rp1t": 0}, _row_cursor_srcfp={"code_rp1t": "deadbeef"},
+            _plan_domains=idx, _plan_names=["code_rp1t"],
+            _plan_step_origin=832, _row_cursor_base=base, _corpus_srcfp="deadbeef",
+        )
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "ck.pt")
+            try:
+                save_checkpoint(p, {"w": torch.zeros(1)}, cfg, "deadbeefdeadbeef", step=1192)
+                got = (torch.load(p, map_location="cpu", weights_only=False)
+                       .get("row_cursor") or {}).get("code_rp1t")
+                raised = None
+            except AssertionError as e:
+                got, raised = None, str(e)
+            if want is None:
+                if raised is None:
+                    bad.append(f"{label}: wrote cursor {got} instead of refusing -- the sum "
+                               f"guard accepts the exact defect "
+                               f"ds.second_resume_rereads_one_segment measured")
+            elif got != want:
+                bad.append(f"{label}: cursor {got}, expected {want} = 1192 x 256 "
+                           f"(raised: {raised})")
+    os.environ.pop("WORLD_SIZE", None)
 
     if bad:
         print("FAIL: save_checkpoint dropped the cursor")
