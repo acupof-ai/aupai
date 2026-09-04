@@ -2809,3 +2809,25 @@ MLA 的 `kv_down` 之所以单元素就能 FAIL,只是因为它的行更窄。**
 扰动的尺度不能从「这个数字看起来足够小」来选,要从「这条路径把什么当作一步、把什么当作一个单位」来选:
 存储 dtype 定分辨率,被点积的那一维定粒度。而 `max|diff| == 0.0` 永远先读成「这个对照什么都没变」
 (§169 的同一件事,那次是扰动了被测量不依赖的变量,这次是扰动小于被测量能表示的一步)。
+
+## 172. 第二个文件里有个叫 doc_cu 的字段,于是它被当成了同一条路径上的一行:侧写文件 schema 不同(顶层 `path`/`unweighted_mean` vs `cu_path`/`metrics.domain_loss`),两个数都是真的,只有一个是门能看见的(b0 当事人自报,6e 用 main 上的行复算后追问,2026-09-04,证据 pod `runs/b0_sd_fixpath.jsonl` 的两行与 `grep -c '#cu' runs/score_matrix.jsonl` = 3)
+
+我向 6e 报了 Stage E arm 1 的三方对比,说"在 ONE path 上、同样 576 个 block":均值 2.2789 / 2.2566 / 2.3101。
+6e 在 main 上复算,发现前两个数从任何行都算不出来——`score_matrix.jsonl` 里只有 5 条 `#cu` 行,
+unlooped/looped 一条都没有。查下来不是 DL-11 传输丢行(pod 上也只有 3 条 `#cu`),而是:
+
+    runs/b0_sd_fixpath.jsonl   {ckpt, path: "doc_cu", domains, unweighted_mean: 2.2789}
+    runs/score_matrix.jsonl    {ckpt: "...#cu", cu_path: "doc_cu", metrics: {domain_loss: {unweighted_mean: ...}}}
+
+**两个文件都写着 doc_cu,只有一个是门读的那个。** 用 score_matrix 的字段名读侧写文件,两个字段都返回
+None;用侧写文件自己的字段名读,返回一个长得和 score_matrix 数字一模一样的 doc_cu 均值。我的说法对测量为真,
+对账本为假——那两个 checkpoint 确实在 doc_cu 上被算过(两个 .pt 还在 pod 上,各 540 MB),但没有任何门看得见。
+
+**让它无法被发现的,恰恰是数字是对的。** 2.2789 和 2.2566 不是错数、不是伪造、不是过期;它们是真实
+checkpoint 的真实 doc_cu 均值。错的只有"一条门能读的行存在"这个隐含主张。一个错数会在复算时崩掉;
+一个对数装在错文件里,只有当别人试图复现它的来源时才暴露。
+
+**判据。一个数字进对比表之前,要说出它所在的那一行在哪个文件、用哪个字段名。** "同一条路径"指的是
+`cu_path` 相同,不是"两个文件里都出现了 doc_cu 这个词"。侧写文件不是行:要么用 scorer 重新打分,让
+`score_matrix.py --json` 自己写行,要么在报数时明说"这个数来自侧写文件,门读不到"。手工把侧写文件的数
+翻译成 score_matrix 的 schema 再 append 是最差的一种——那是我手打的数,不是 scorer 写的数(§150 同族)。
