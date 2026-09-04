@@ -132,7 +132,13 @@ def load_tokenizer(path, cfg):
                 "The tokenizer does not match the one this checkpoint was trained on; loading "
                 "anyway would decode scrambled ids."
             )
-    else:
+    elif cfg is not None:
+        # ONLY when a cfg was given. cfg=None means the caller has no checkpoint to cross-check
+        # against and never asked the question -- warning there reports a missing answer to a
+        # question nobody put. eval/domain_bpb.py:221 is such a caller, and its warning on stderr
+        # is what shadowed every stdout refusal in score_matrix's failure records for 6 of 10 rows
+        # (audit_0904 E18/MT-13). A cfg that HAS no vocab_id is a real old-format checkpoint and
+        # still warns: that is the case the warning was written for.
         warnings.warn("checkpoint has no vocab_id (old format); cannot cross-check tokenizer", stacklevel=2)
     return tok
 
@@ -291,6 +297,15 @@ def _demo():
         warnings.simplefilter("always")
         load_tokenizer(path, SimpleNamespace(vocab=n, vocab_id=None))
         assert w and "vocab_id" in str(w[0].message), "old-format checkpoint did not warn"
+
+    # 4b. cfg=None -> SILENT. The caller brought no checkpoint, so there is nothing to
+    # cross-check and no missing answer to report. Both halves are asserted because either one
+    # alone stays green while the other regresses: dropping the `elif cfg is not None` guard
+    # keeps case 4 passing, and dropping the warning entirely keeps this one passing.
+    with warnings.catch_warnings(record=True) as w:
+        warnings.simplefilter("always")
+        load_tokenizer(path, None)
+        assert not w, f"cfg=None warned about a checkpoint that was never given: {[str(x.message) for x in w]}"
 
     assert format_prompt("x") == "<|im_start|>user\nx<|im_end|>\n<|im_start|>assistant\n"
     pr, comp = format_example("x", "y")
