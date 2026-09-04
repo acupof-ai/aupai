@@ -836,19 +836,22 @@ class MasterWeights:
     def __init__(self, model):
         # THE MEMORY TABLE IS EXCLUDED, by name, and it is the only exclusion here.
         #
-        # WHY IT WOULD BE WRONG TO INCLUDE IT. A master copy exists because a bf16 parameter
-        # cannot absorb an update ~2^-9 below itself, so 91% of updates came back bit-identical
-        # (measured 2026-08-30) and the fp32 copy lets them accumulate. The memory's value table
-        # is ALREADY fp32 -- nn.Embedding is built in the default dtype and nothing casts it,
-        # measured on the pod 2026-09-05 -- so a "master copy" of it is a second fp32 tensor
-        # holding the same numbers to the same precision. It buys exactly nothing.
+        # It is excluded because it gets its OWN master (TableMaster below), which runs for any
+        # mem_values > 0 whether or not --fp32_master was passed. That separation is the point:
+        # --fp32_master is off on every arm and on the control (measured: 8 of 113 training
+        # launches in runs/experiments.jsonl ever passed it, all p02_fp32m_* on 2026-08-30/31),
+        # so a table master routed through THIS class would be dead code on the arms, and turning
+        # --fp32_master on for the arms would give every dense parameter a master the finished
+        # control never had -- a recipe difference on 206M parameters to fix a defect in one
+        # table (4c's ruling, option b, 2026-09-05).
         #
-        # WHY IT MATTERS RATHER THAN BEING MERELY REDUNDANT: at M1 that is 4.00 GiB, at 2048^2 it
-        # is 16.00 GiB, on a card with 95.22 GiB usable where the M3 shape already does not fit.
-        # A copy that buys nothing and costs 16 GiB decides whether an arm can be launched at all.
-        # 4c asked whether this was the cause of the M3 OOM; it was not (profile_step_cost never
-        # constructs MasterWeights) but it WOULD have been on a --fp32_master training launch,
-        # which is how the arms actually run.
+        # AN EARLIER VERSION OF THIS COMMENT WAS WRONG in a way worth keeping visible: it said the
+        # exclusion was safe because the table "is ALREADY fp32 -- nn.Embedding is built in the
+        # default dtype and nothing casts it". train.py:2435 casts it. `raw_model.to(
+        # torch.bfloat16)` under --fp8 walks every floating parameter, the value table included,
+        # measured on the pod 2026-09-05 (runs/b0_mem_m3_peak_1448.json: TABLE dtype=bfloat16,
+        # 6 B/param). The claim was read off the construction site instead of the model that
+        # trains, and it is what left the table as the one parameter group with no master at all.
         self.pairs, self.unmastered = [], []
         for n, p in model.named_parameters():
             if _is_mem_fqn(n):
@@ -896,6 +899,83 @@ class MasterWeights:
                 m.copy_(p)
 
 
+class TableMaster:
+    """An fp32 master for the sparse memory's value table, and for nothing else.
+
+    WHY IT EXISTS. Under --fp8 the model is cast to bf16 (train.py:2435), and that cast reaches
+    nn.Embedding: the value table, its dense gradient and Adagrad's `sum` are all bf16, measured
+    on the pod (runs/b0_mem_m3_peak_1448.json, TABLE line, 6 B/param). bf16 carries 8 mantissa
+    bits, so an update below ~2^-9 of the weight rounds away and the write is discarded -- 91% of
+    dense updates came back bit-identical at the schedule's LR floor when this was measured on
+    2026-08-30. Adagrad makes it worse for a table than for a dense group: `sum` only grows, so
+    the effective step lr*grad/sqrt(sum) decays like 1/sqrt(t) PER ROW, and a frequently-read row
+    crosses the rounding floor first. None of readout 4's diagnostics can see it -- touched,
+    key_hits, entropy and Gini are all functions of the SELECTION distribution, which the keys
+    produce, and the keys have a master. A frozen table reads perfectly healthy. Readout 6
+    (rows_changed_since_prev) is the instrument for that, and this class is the fix.
+
+    WHY IT IS NOT MasterWeights. MasterWeights is built only under --fp32_master, which is off on
+    every memory arm and on the finished control (8 of 113 training launches in
+    runs/experiments.jsonl ever passed it). Routing the table through it would have been a fix in a
+    class the callers never construct; passing --fp32_master on the arms instead would give all
+    206M dense parameters a master the control never had, which is a recipe difference on every
+    parameter to fix one table. So this is unconditional on mem_values > 0 and touches one tensor:
+    the arms' dense path stays bit-identical to the control's.
+
+    COST, from the same measurement: the table goes from 6 B/param (w2 + g2 + sum2) to 14 steady
+    (w2 + g2 + master4 + master.grad4 + sum4) and 16 at the moment both gradients are live, which
+    is inside the step and therefore what a peak must hold.
+    """
+
+    def __init__(self, model):
+        self.pairs = []
+        for n, p in model.named_parameters():
+            # The VALUE TABLE only, not the keys or the query/gate/out linears. Those are
+            # ordinary 2D/3D parameters in muon and arq, already mastered when --fp32_master is
+            # on and no worse off than any other dense weight when it is not. The table is the
+            # one parameter whose per-row update decays by construction.
+            if _is_mem_fqn(n) and n.endswith("values.weight"):
+                self.pairs.append((p, p.detach().float().clone().requires_grad_(True)))
+        self.map = {p: m for p, m in self.pairs}
+
+    def pull_grads(self):
+        """Copy p.grad into m.grad and clear p.grad -- both halves, in one place.
+
+        CLEARING IS THIS FUNCTION'S JOB, not zero_grad's. The optimizer holds `m`, so its
+        zero_grad(set_to_none=True) clears m.grad and nothing clears p.grad; the next backward
+        would accumulate into the old one and the arm would train on a running sum. That exact bug
+        is recorded in MasterWeights.pull_grads' docstring, and the table moving from unmastered
+        to mastered inverts which branch it needs: while it was unmastered, clearing it here would
+        have deleted the gradient before Adagrad stepped.
+        """
+        for p, m in self.pairs:
+            m.grad = None if p.grad is None else p.grad.float()
+            p.grad = None
+
+    def push(self):
+        """Write the fp32 master back into the bf16 table after the optimizer has stepped."""
+        with torch.no_grad():
+            for p, m in self.pairs:
+                p.copy_(m)
+
+    def resync(self):
+        """Re-read the master from the table on any path that rewrites the table underneath it.
+
+        ONE such path in this file: the 20-skip NaN rollback, which calls
+        raw_model.load_state_dict(good_state) while this object holds a master of the old table.
+        Without a resync the next push() would write the pre-rollback table straight back in.
+
+        The --resume load is NOT such a path, and it is worth saying why rather than adding a
+        defensive call: raw_model.load_state_dict(ck["model"]) runs at train.py:2481, and this
+        object is constructed at :2601 from whatever the model holds by then. A resume therefore
+        builds the master FROM the loaded table. If those two ever swap order, this method is what
+        the new order needs called.
+        """
+        with torch.no_grad():
+            for p, m in self.pairs:
+                m.copy_(p)
+
+
 def build_optimizers(model, cfg, master=None):
     """Muon for 2D matrices; AdamW for embeddings, 1D norm gains, and (low lr, wd=0) for the 3D
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
@@ -905,11 +985,17 @@ def build_optimizers(model, cfg, master=None):
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
-        # .get(p, p), not [p]: the memory table is deliberately absent from the master map
-        # (MasterWeights.__init__ excludes it -- it is already fp32, so a master copy holds the
-        # same numbers at the same precision and costs 4 GiB at M1, 16 at 2048^2). Absent means
-        # "step the parameter itself", which is correct here rather than a fallback. A bare [p]
-        # would raise KeyError on any --fp32_master run with a memory.
+        # .get(p, p), not [p]: not every parameter is in the map. MasterWeights excludes the
+        # memory (it has its own TableMaster), and TableMaster's own map holds ONLY the value
+        # table -- so under either master most parameters are absent. Absent means "step the
+        # parameter itself", which is correct rather than a fallback; a bare [p] would raise
+        # KeyError on the first parameter either master does not own.
+        #
+        # TWO MASTERS, ONE MAP. main() passes a merged mapping (MasterWeights.map | TableMaster
+        # .map) so this loop stays single-source: a parameter is looked up once and cannot be
+        # handed to the optimizer as the model tensor by one path and the master by another. The
+        # two maps are disjoint by construction -- MasterWeights skips every _is_mem_fqn name and
+        # TableMaster takes only `...values.weight` -- and test_arch_compat asserts that.
         q = p if master is None else master.get(p, p)
         # SPARSE MEMORY FIRST, before the shape branches, and the order is the point. The value
         # table is 2D and named `memory.values.weight`, so `p.ndim == 2` below would put it in
@@ -2520,7 +2606,33 @@ def main():
                   or "NONE (every field is at its class-body default)"))
 
     master = MasterWeights(raw_model) if args.fp32_master else None
-    optimizers = build_optimizers(raw_model, Cfg, master.map if master else None)
+    # THE TABLE'S OWN MASTER, unconditional on mem_values > 0 and independent of --fp32_master.
+    # See TableMaster for why it is not routed through MasterWeights: that class is constructed
+    # only under a flag no arm passes, so the fix would not have run.
+    table_master = TableMaster(raw_model) if raw_model.memory is not None else None
+    if table_master is not None and not table_master.pairs:
+        # A memory exists but no `...values.weight` matched, so the table would silently keep
+        # training in bf16 with the fix reporting itself as installed. Refuse: this can only mean
+        # the parameter was renamed, and every other memory exclusion (_is_mem_fqn in the FP8
+        # filter and the optimizer grouping) would be wrong in the same way.
+        raise SystemExit(
+            "the memory pool exists but TableMaster matched no value table: no parameter named "
+            "'...values.weight' under _is_mem_fqn. The table was renamed, which also breaks the "
+            "FP8 and Muon exclusions that match on the same predicate. Fix the name, do not "
+            "launch -- the arm would train the table in bf16 with updates rounding away."
+        )
+    _masters = [m for m in (master, table_master) if m is not None]
+    # ONE merged map into build_optimizers, so a parameter is resolved to a master exactly once.
+    # The two maps are disjoint by construction and test_arch_compat asserts it.
+    _mmap = {}
+    for _m in _masters:
+        _mmap.update(_m.map)
+    optimizers = build_optimizers(raw_model, Cfg, _mmap or None)
+    if table_master is not None and is_main:
+        _tn = sum(m.numel() for _, m in table_master.pairs)
+        print(f"fp32 table master: {_tn / 1e9:.2f}B params, {_tn * 4 / 2**30:.2f} GiB master + "
+              f"{_tn * 4 / 2**30:.2f} GiB its gradient (readout 6 measures whether it was needed)",
+              flush=True)
     if master is not None and is_main:
         print(f"fp32 master weights: {sum(m.numel() for _, m in master.pairs) * 4 / 1e9:.2f} GB", flush=True)
     if args.resume and "step" in ck and "opt" not in ck:
@@ -2776,8 +2888,11 @@ def main():
                         for j, opt in enumerate(optimizers):
                             if good_opt[j] is not None:
                                 opt.load_state_dict(good_opt[j])
-                        if master is not None:
-                            master.resync()
+                        # BOTH masters, and the table's is the one that matters here: the rollback
+                        # rewrites the table via load_state_dict, so a master left un-resynced
+                        # would push the pre-rollback table straight back on the next step.
+                        for _m in _masters:
+                            _m.resync()
                         n_skip = 0
                         if is_main:
                             runlog(f"step {step}/{total_steps} 20 skips in a row — rolled back to snapshot")
@@ -2796,13 +2911,13 @@ def main():
                 if args.frozen_probe and step == total_steps - 1:
                     probe = ([(p, p.detach().clone()) for p in raw_model.parameters()],
                              [(m, m.detach().clone()) for _, m in master.pairs] if master else None)
-                if master is not None:
-                    master.pull_grads()
+                for _m in _masters:
+                    _m.pull_grads()
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
-                if master is not None:
-                    master.push()
+                for _m in _masters:
+                    _m.push()
                 if probe is not None and is_main:
                     if probe[1] is None:
                         # Say it, or the next reader takes the missing line for a dropped
@@ -2969,6 +3084,15 @@ def main():
                             _mem.last_entropy, op=torch.distributed.ReduceOp.SUM)
                         _mem.last_entropy /= world
                     _md = _mem.diagnostics(reset=True)
+                    # READOUT 6, and it needs NO collective. Every rank holds the same table --
+                    # DDP all-reduces the gradient and the optimizer steps identically -- so each
+                    # rank's row checksums are the same numbers and the count is already global.
+                    # Reducing it would be wrong in both available forms: SUM multiplies by world,
+                    # MAX hides a rank whose table diverged. Called on every rank rather than
+                    # under is_main because it advances row_sum_prev, and a baseline that exists
+                    # only on rank 0 would make every other rank's first comparison span the whole
+                    # run instead of one window.
+                    _rows_changed = _mem.note_row_changes()
                     if is_main:
                         # `tps` is computed in the is_main block above, so every step in
                         # `_diag_due` must be a multiple of 10 or this row would carry an earlier
@@ -3023,6 +3147,16 @@ def main():
                                 tok_s_gpu=tps,
                                 n_values=_md["n_values"],
                                 topk=_mem.top_k,
+                                # READOUT 6. A FRACTION OF TOUCHED, not of the pool: the stop rule
+                                # is "below 0.50 of touched rows", and dividing by n_values instead
+                                # would read low for a healthy table simply because most of the
+                                # pool was not read in the window. -1 (the first diag step, no
+                                # baseline yet) is passed through as None rather than as a number:
+                                # a 0.0 there is indistinguishable from a frozen table.
+                                rows_changed_since_prev=(
+                                    None if _rows_changed < 0 or _md["touched_rows"] == 0
+                                    else _rows_changed / _md["touched_rows"]),
+                                rows_changed=(None if _rows_changed < 0 else _rows_changed),
                             )
                         except Exception as _e:  # noqa: BLE001 -- see the comment above
                             runlog(f"step {step}/{total_steps} memory_diag write FAILED, run "
