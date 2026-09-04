@@ -45,7 +45,7 @@ OUT = os.path.join(ROOT, "runs", "b0_headmix_bitwise.json")
 
 
 def _logits(ckpt_path, seed=904):
-    """Logits for one checkpoint on fixed input, eager, ON A GPU.
+    """Logits for one checkpoint on fixed input, eager, ON A GPU, in the training dtype.
 
     CUDA IS NOT OPTIONAL AND CPU IS NOT A FALLBACK. DeltaRecurrence routes through
     fla.ops.kda.chunk_kda, a Triton kernel: on CPU tensors it raises
@@ -53,9 +53,13 @@ def _logits(ckpt_path, seed=904):
     (measured 2026-09-04). A gate that silently fell back to a CPU path would be comparing
     a code path the training run never takes.
 
-    fp32 and eager: the question is whether the ARITHMETIC changed, and a compiled bf16 path
-    carries its own run-to-run variation that would both mask a real difference and manufacture
-    a fake one. Determinism is set explicitly rather than assumed.
+    NOR IS fp32. Forcing the model to float() and running it dies with
+    `torch.AcceleratorError: CUDA error: misaligned address` (measured 2026-09-04, card 5):
+    the KDA kernel is built for the bf16 layout the training path feeds it, and fp32 is not a
+    "more precise" version of that path, it is a different one that does not run. So this uses
+    bf16 autocast exactly as training does. Eager, never compiled: inductor is free to reorder
+    arithmetic between two builds of the same source, which would show up here as a difference
+    the edit did not cause.
     """
     import model as M
 
@@ -79,10 +83,10 @@ def _logits(ckpt_path, seed=904):
     m = M.HybridLM(cfg)
     sd = M.remap_legacy_state_dict(ck["model"])
     missing, unexpected = m.load_state_dict(sd, strict=False)
-    m.eval().float().to(dev)
+    m.eval().to(dev)
     torch.manual_seed(seed)
     x = torch.randint(0, int(getattr(cfg, "vocab_real", cfg.vocab)), (2, 64), device=dev)
-    with torch.no_grad():
+    with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         y = m(x)
     if isinstance(y, tuple):
         y = y[0]
