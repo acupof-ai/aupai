@@ -75,6 +75,7 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | MT-8 | S3 | 12 fact ids cite a path resolvable nowhere. | `git log --all --diff-filter=D` for each: `ckpt_cost.py`, `bench_short_conv2.py` exist in **no commit, on no machine, and never did**. `kv_cache.py`/`cli.py` are MT-1 (another repo). `bench_eff2.py`→`bench_eff/bench_eff2.py`, `gate_failure_shapes.md`→`docs/lessons/…`, `score_matrix.jsonl`→`runs/…` resolve as bare basenames. Brace-expansion residue (`ckpt_…pt.step{2500`) accounts for 7 of the 12 — same class as the `runs/b0_sd_he_{…}` defect I hit on 2026-09-03. | Severity is S3, not higher, BECAUSE the two facts whose scripts vanished keep their logs: `eff.short_conv_shifted_madd` cites `runs/p02_sc_{base,patched}.log` and `eff.ckpt_resume_16h_interval` cites `runs/t38_{ref,resume}.log`, all four present on main AND the pod. The measurement survives; only re-derivation is lost. |
 | MT-9 | S2 | The two fact files are the repo's record of what it measured. | §4c: of 40 facts sampled at seed 904, **30 cannot be recomputed by a reader on main** — 9 need the pod, 11 need a card, 4 are literature-only (`smelt.*`), 6 cite a script in no commit. Instrument `runs/audit_0904/audit_fact_values.py`. | Nothing is CONTRADICTED — zero wrong values in 40 — but the repo cannot demonstrate its own numbers to anyone who was not there. Pass 1 found 15 facts with an unopenable source; pass 2 puts the sampled rate at 75%, so 15 was a floor and not a measure. |
 | MT-10 | S2 | `sft_math.py:190` asserts a pack's `vocab_id` equals the checkpoint's — "a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match." | The file's OWN comment (:181-187) records that the condition read `"vocab" in d` while `prepare_sft.pack_and_save` writes `"vocab_id"`, so for every pack built by the current packer the assert was skipped and the run took the WARNING branch — "the pack predates vocabulary fingerprinting" printed about a pack that carries the fingerprint. Fixed 2026-09-03. **Nothing has exercised the fix.** `grep -rln pack_vocab --include=*.py` returns `sft_math.py` and `scripts/check_sft_ready.py` and no test; `runs/experiments.jsonl` has **zero** SFT runs after 2026-09-03. | The guard has never fired in either state — not once while broken (the whole point of the comment), and not once since the repair. Its correctness rests on a code reading alone, which is the same shape as `guards-dont-backfill`: the fix is present, the demonstration that it works is not. |
+| MT-11 | S2 | `sft_math.py:496` on a NaN step: `step {step}/{total} NaN — restored last good state`, and the run continues. | `good_state` is initialised at `:413` before the loop and refreshed ONLY at `if step % args.save_every == 0` (`:510`), and `--save_every` defaults to `SAVE_INTERVAL = 200` (`:45`). So the restore target is the last multiple of 200, not the previous step. Nothing records the distance: `grep -c good_step` → **0**, and the log line names neither the step the state came from nor how many steps were discarded. | A NaN at step 399 silently discards 199 optimizer steps and the run reports one line about it. Two runs that both "recovered from a NaN" can differ by 200 steps of training with nothing in the artifact to distinguish them, and the token count the run reports is unaffected because `step` is incremented on the rollback path too (`:501`). Not a correctness bug — the rollback is real and the state is consistent — but the run's own record cannot say what it lost. |
 
 ### 4a. Every pod-only source, with size and committability (MT-2)
 
@@ -232,14 +233,26 @@ measure.
 
 ## 5. Blind spots of this audit
 
-1. **`sft_math.py`: the load path and the vocab_id refusal were read (MT-10), the rest was not.**
-   Read: `:150` `torch.load(args.resume, weights_only=False)`, `:175` the pack load, `:180-198` the
-   vocab_id comparison and its WARNING branch, `:199-212` the holdout-stamp refusal and
-   `--allow_unstamped_pack`. NOT read: the training loop, the masking (`format_agentic`'s
-   per-turn boundaries), the optimizer construction, the rollback buffer at `:518-524`, and the
-   distributed setup. train.py:2228 notes SFT is "the legitimate step-0 case and has its own
-   loader", so the save/load findings above do not automatically transfer to it and I have not
-   checked whether they do.
+1. **`sft_math.py`: load path, vocab_id refusal, training loop and rollback now read
+   (MT-10, MT-11); the masking internals are not.** Read: `:150` the checkpoint load, `:175` the
+   pack load, `:180-212` the vocab_id comparison and the holdout-stamp refusal, `:403-411` the DDP
+   and compile wrap, `:413` the rollback buffer's initialisation, `:445-470` the loss path,
+   `:471-481` the fone auxiliary loss and clip, `:484-501` the NaN health check and restore,
+   `:503-530` the schedule, the optimizer step and the mid-run save.
+
+   Two things checked by RUNNING rather than by reading, because both are the kind of aliasing
+   question a code read gets wrong. `weight = raw_model.head.weight[: cfg.vocab]` is sliced ONCE at
+   `:445` and used every step at `:470`; a slice of a Parameter tracks in-place optimizer updates
+   but NOT a `.data` rebind, so I checked both — the repo rebinds nowhere (`grep '\.data = '` over
+   sft_math.py and train.py: no hits) and the `:491` rollback uses `load_state_dict`, which copies
+   in place. Verified on a toy module: after a rollback the slice sees the restored values and
+   `data_ptr()` still matches. So the loss always uses current weights. SOUND.
+
+   NOT read: `format_agentic`'s per-turn boundary construction in the packer (it is
+   `datagen/prepare_sft_math.py`, outside this file and outside my area's named scope), the
+   prefix-LM mask's `_plens` implementation, and the distributed init. train.py:2228 notes SFT is
+   "the legitimate step-0 case and has its own loader", so the save/load findings above do not
+   automatically transfer and I have not checked whether they do.
 2. **Pass 2 closes the count and not the depth.** 40 values are now checked (§4c), above the
    charter's 30, but the check is a TEXT SEARCH for the number in the artifact. It proves a number
    appears where the fact says it does; it does not prove the artifact's own arithmetic. A median
