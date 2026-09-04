@@ -1,0 +1,263 @@
+{
+ "en_c4": {
+  "shards": 166,
+  "docs": 7767463,
+  "wall_s": 3728,
+  "evals": {
+   "humaneval_164.jsonl": {
+    "question": {
+     "corpus_docs_hit": 11,
+     "hit_rate": 1e-06
+    },
+    "other": {
+     "corpus_docs_hit": 1,
+     "hit_rate": 0.0
+    }
+   },
+   "math_test_500.jsonl": {},
+   "math_hard_eval_v2_1k.jsonl": {},
+   "lambada_test_en.jsonl": {
+    "answer": {
+     "corpus_docs_hit": 2,
+     "hit_rate": 0.0
+    }
+   },
+   "code_holdout_v2_500.jsonl": {}
+  },
+  "hit_list": {
+   "humaneval_164.jsonl": {
+    "question": [
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_005.jsonl:22560",
+      "needle_type": "question",
+      "hit": "Les s233;quences de jeu alternent distribution de cartes et tours d'ench232;res. Le but du jeu est de remporter les jetons … Its a sweltering August evening in Las Vegas, but its cool inside the sports-wagering emporium at the M Resort Spa and Casino. On one of the dozens of TVs around the room, the"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_005.jsonl:31061",
+      "needle_type": "question",
+      "hit": "Learn how to diagnose and troubleshoot your hard drives. Want a reliable laptop. Buy one of saguenat best brands. We have evaluated a list of 10 Best Laptop Brands in assurance casino world for Students, Businessmen, Gaming-enthusiast, and bar casino saguenay regular users who sagjenay a good laptop"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_017.jsonl:6253",
+      "needle_type": "question",
+      "hit": "Thompson, author of the New York Times bestseller King of RPGs and Eisner-Award nominated Manga The … Find a job at William Hill, a top sportsbook with 1000s of jobs in betting and gaming globally. You can search for vacancies and apply online. Jumpstart your career now. The board with its twenty-fo"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_027.jsonl:19419",
+      "needle_type": "question",
+      "hit": "This article explains how to create a custom responsive header for your website. The header consists of a background image and a foreground title and slogan. The header logo image and text are important because they are the first thing your website visitors will notice. The header logo and text will"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_040.jsonl:44159",
+      "needle_type": "question",
+      "hit": "Decimal to binary octal hexadecimal calculator provided on this web page is an effective tool which can be used to convert decimal in to binary, octal and hexadecimal in a fracture of second.\nWhat is decimal, binary, octal and hexadecimal?\nDecimal is nothing but the number we use in our day to day l"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_060.jsonl:44057",
+      "needle_type": "question",
+      "hit": "HP ENVY 15 as120nr Laptop 15. 6 Touch Screen 7th Gen Intel Core i7 12GB Memory 256GB Solid State Drive Windows 10 Home, High performance 7th Gen Intel Core i7 processor at Office Depot amp; OfficeMax. A century ago the Calumet Depot was the gateway to a metropolitan Calumet, a regal structure found "
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_086.jsonl:19369",
+      "needle_type": "question",
+      "hit": "Der Nintendo DS (kurz NDS) ist eine von Nintendo entwickelte und produzierte Handheld-Konsole, die 252;ber zwei LC-Displays, ein eingebautes Mikrofon und eine Reihe weiterer technischer Neuerungen verf252;gt, die eine gegen252;ber fr252;heren Konsolen vereinfachte Spielsteuerung erm246;glichen solle"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_095.jsonl:25848",
+      "needle_type": "question",
+      "hit": "Top Quoten und rasche Auszahlung. Jetzt anmelden, bis zu 50 Euro Neukundenbonus kassieren und gewinnen. Ein Leser fragte mich zu meiner Meinung bez252;glich der Niiio Finance Group und da mich immer mehr Fragen zu Kryptow228;hrungen bzw. dem Investieren in entsprechende Unternehmen erreichen, m246;c"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_114.jsonl:29020",
+      "needle_type": "question",
+      "hit": "Supreme quality, innovative technologies and a breathtaking racing atmosphere attract fans of all ages to Carrera circuits and promise an unbeatable level of racing fun in homes everywhere. Online shopping for over 200 slot cars, saving you up to 70. Discount pricing on ho slotcars, 132 battery slot"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_123.jsonl:41631",
+      "needle_type": "question",
+      "hit": "Read 68 reviews of Main Street Casino in Las Vegas, Nevada. View amenities of Main Street Casino and see other nearby camping options. Looking for immediate assistance with Facebook Login. Missing friend and want to proceed with facebook. com log in. We can help with that. Best Free Penny Slot Machi"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_143.jsonl:40640",
+      "needle_type": "question",
+      "hit": "If youve got a little one tagging along with you this weekend, theres plenty for you to do to keep them happy and entertained. Blogging about People, Music, Politics and Everything. Ive always thought renewable energy was the way to go. When it comes to the environment, Ive always been an … Zillow h"
+     }
+    ],
+    "answer": [],
+    "other": [
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_011.jsonl:13189",
+      "needle_type": "other",
+      "hit": "This prime numbers generator is used to generate the list of prime numbers up to number your specify.\nA prime number (or a prime) is a natural number that has exactly two distinct natural number divisors: 1 and itself. For example, there are 25 prime numbers from 1 to 100: 2, 3, 5, 7, 11, 13, 17, 19"
+     }
+    ]
+   },
+   "math_test_500.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   },
+   "math_hard_eval_v2_1k.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   },
+   "lambada_test_en.jsonl": {
+    "question": [],
+    "answer": [
+     {
+      "gold_file": "data/eval/lambada_en/lambada_test_en.jsonl",
+      "gold_records": 5153,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_040.jsonl:3382",
+      "needle_type": "answer",
+      "hit": "Артур Конан Дойль. \"Собака Баскервилей\"\nTHE fresh beauty of the following morning did something to efface from our minds the grim and grey impression (свежая прелесть следующего утра несколько удалила из нашей памяти зловещий и мрачный осадок«впечатление»; mind — разум память) which had been left up"
+     },
+     {
+      "gold_file": "data/eval/lambada_en/lambada_test_en.jsonl",
+      "gold_records": 5153,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4/en_c4_114.jsonl:14920",
+      "needle_type": "answer",
+      "hit": "There are many reasons why I write: to tell my unfiltered story, to bond with others dealing with craniofacial differences, and to educate those who are not.\nI have always wished that strangers knew more about Treacher Collins syndrome so they could see me the way I see myself. I think people forget"
+     }
+    ],
+    "other": []
+   },
+   "code_holdout_v2_500.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   }
+  }
+ },
+ "en_c4_stage2": {
+  "shards": 83,
+  "docs": 3887759,
+  "wall_s": 1940,
+  "evals": {
+   "humaneval_164.jsonl": {
+    "question": {
+     "corpus_docs_hit": 7,
+     "hit_rate": 2e-06
+    }
+   },
+   "math_test_500.jsonl": {},
+   "math_hard_eval_v2_1k.jsonl": {},
+   "lambada_test_en.jsonl": {
+    "answer": {
+     "corpus_docs_hit": 1,
+     "hit_rate": 0.0
+    }
+   },
+   "code_holdout_v2_500.jsonl": {}
+  },
+  "hit_list": {
+   "humaneval_164.jsonl": {
+    "question": [
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_025.jsonl:26572",
+      "needle_type": "question",
+      "hit": "Full text of the Charitable Games 780 ti slot in Illinois. Charitable Games Act in Illinois. GAMING (230 ILCS poker rtl9 Charitable Games Act. Arcade Quality Poker rtl9 Real Arcade Joystick amp; Buttons Numeric KeyPad Sturdy Acrylic Case Removable 5ft non-coiled hacme casino tutorial Two (2) Side Bu"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_038.jsonl:8322",
+      "needle_type": "question",
+      "hit": "I bet you have some questions about the app, so lets dive in to some QA. Q: … Here are the best cases to personalize and protect your iPhone 6s Plus or 6 Plus. King Arthur for iPad, iPhone, Android, Gossip slots casino bonus codes amp; PC. Follow Arthurs rise from boy to king. Listen to Casino gratu"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_061.jsonl:12875",
+      "needle_type": "question",
+      "hit": "Geometry Dash is a fantastically addictive game that is mainly based on rhythm and beats that play in the background. Toutes les informations sur les g238;tes et locations de vacances en Vall233;e d'Argel232;s-Gazost. Hautes-Pyr233;n233;es (65) See the show, meet the guys… break the rules. Let Chipp"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_063.jsonl:32365",
+      "needle_type": "question",
+      "hit": "Com. Tauche ein in die Multiplayer Action. Automatenspiele Kostenlos Spielen. Sehr geehrter Besucher unseres Portals. Spielen Sie auch so gerne Automatenspiele wie wir. Falls ja, dann freuen wir uns Sie auf unserer Website automatenspielex. com begr252;223;en zu d252;rfen. Holdem starting hands odds"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_064.jsonl:6521",
+      "needle_type": "question",
+      "hit": "Features such as these can be hard to find for the similar products. Are you looking for this goods?Make sure … Table tops can be in virtually any shape, although rectangular, square, round (e. the round table), and oval tops are the most frequent. Others have higher surfaces for personal use while "
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_067.jsonl:45002",
+      "needle_type": "question",
+      "hit": "How a PC's memory is \"put together\" ... by Tom S. Bair Jr.\nLogical memory is the way your computer's physical memory (its RAM) is \"put together\" for your operating system. Physical memory must be organized in a logical manner for your computer to use it. To better understand this concept, let's disc"
+     },
+     {
+      "gold_file": "data/eval/humaneval/humaneval_164.jsonl",
+      "gold_records": 164,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_068.jsonl:44286",
+      "needle_type": "question",
+      "hit": "Photography Class deals in Phoenix, AZ: 50 to 90 off deals in Phoenix. iPhone and Android Beginners Photography Class for One or Two at Parkwood gt;Photographylt;stronggt; Studios (Up to 80 Off). lt;stronggt;Photographylt;stronggt; Workshop with Optional Membership for 1 or 2 at Photographers Advent"
+     }
+    ],
+    "answer": [],
+    "other": []
+   },
+   "math_test_500.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   },
+   "math_hard_eval_v2_1k.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   },
+   "lambada_test_en.jsonl": {
+    "question": [],
+    "answer": [
+     {
+      "gold_file": "data/eval/lambada_en/lambada_test_en.jsonl",
+      "gold_records": 5153,
+      "corpus_doc": "/work/aupai/data/corpus/en_c4_stage2/en_c4_011.jsonl:23859",
+      "needle_type": "answer",
+      "hit": "Our theme this month is unity and diversity, and we are thinking, singing, celebrating, this morning love and faith, qualities and expressions of love and faith that offer unity amidst diversity. When we reach for those who love, whose spirits shine like stars, among all those saints, some we’ve kno"
+     }
+    ],
+    "other": []
+   },
+   "code_holdout_v2_500.jsonl": {
+    "question": [],
+    "answer": [],
+    "other": []
+   }
+  }
+ }
+}

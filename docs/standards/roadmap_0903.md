@@ -34,7 +34,7 @@ Supply against the 30B contracts (tokens, `facts/corpus_supply.json`):
 | code_rp1t | 8.0B | 7.57B, unstamped | re-stamp |
 | code_tests | 2.0B | 0. Mined set is a subset of code_py_starcoder by construction (same 59 shards, pairing is a repo property applied after ast.parse): kept 97.1%, content-hash overlap 99.999%, 15 novel rows of 1,474,440, about 28K new tokens (tilerl-23, runs/ct_overlap.json). NOT BUILT: a build would double-count starcoder rows under a second domain name. Real supply needs repo-shaped fetching (pair rate rises with files/repo: 1.7→0.10%, 10.2→3.81%; ~52M rows, 150-200 GB, does not fit the 150 GB emptyDir; tilerl f6e90bfa, runs/cs_probe.json). USER DECISION 2026-09-04 (option A): the 2.0B moved into code_rp1t (0.26667 → 0.33334, 8.0B → 10.0B; tilerl 40e907af); code_tests left `_blocked`; no fetch. The entry's 5.6B-mineable claim cited a fact id (ds.code_exec_supply) that never existed | 0, resolved by weight move |
 | math_owm | 5.5B | 6.51B | none |
-| cot | 4.5B | 0.42B | 4.1B |
+| cot | 4.5B | 0.42B (OT3: 32 slices manifest ready; the block was the fetcher probe judging a 302 as failure, not the mirrors; 3b fixes the probe, fetch after size vs df, 2026-09-04) | 4.1B |
 | en_c4 | 5.5B | 7.844B exact across three directories: en_c4/ 4.801B, en_c4_stage2/ 2.397B, en_c4_30b/ 0.646B (tilerl 2026-09-04, frozen tokenizer full pass; build_corpus's own 1.51B was chars/1.5, ratio 2.34, §155 second instance) | surplus 2.34B; en_c4_30b stats stamp pending (3b) |
 | textbook | 1.0B | 1.61B | surplus (the 3.3B written here earlier was zh_web's contract) |
 | code_py_starcoder | — | 8.78B | surplus |
