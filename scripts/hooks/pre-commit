@@ -577,6 +577,18 @@ def main():
         # stale -- following the docstring drops seqlen_info and breaks the call at mask.py:232.
         "eval/prefix_mask.py",
         "scripts/test_exp_done_started.py",
+        # run_ddp.sh's end-of-run chain: exit codes, the two score notes, and the row close
+        # (de-47). It is registered LATE and that is the finding, not a footnote -- it has
+        # been unguarded since it was written, and the commit adding the row close printed
+        # `selftests 0.03s`, i.e. ran zero of them, while changing the exact script it tests.
+        # It carries no `--selftest` string, so check_selftests_are_gated could not see it:
+        # that check's population is flag-carrying files, and a test_*.py with a main() is
+        # outside it by construction. Measured 2026-09-04: 19 runnable test_*.py are ungated
+        # the same way. The invoker at :1009 passes `--selftest` to every entry without a
+        # SELFTEST_FLAG override; this file takes no arguments and ignores it, verified by
+        # running it with the flag. A test that PARSED argv strictly would need an entry
+        # there instead, so the tolerance is the reason it needs none, not an accident.
+        "scripts/test_score_exit.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
         # 2-layer 2-step toy model on CPU and READS IT BACK, because every source-level
         # criterion for the defect it guards was already true of the broken code: the snapshot
