@@ -1184,7 +1184,18 @@ def main():
     # which flag makes a failure fatal" -- putting scripts/test_recipe_required.py in
     # PARTIAL would have recorded it as data-exempt, which is false and would mislead
     # the next reader of NEEDS_DATA.
-    SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict"}
+    SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict",
+                     # POSITIONAL, not a flag. file_claim.py (3d65ec86) takes an argparse
+                     # SUBCOMMAND -- {acquire,release,release-all,status,selftest} with
+                     # required=True -- so `--selftest` makes argparse exit 2 on a missing
+                     # positional and the hook reads that as the selftest FAILING. It blocked
+                     # every commit in every worktree, including merges, within minutes of
+                     # landing. The file is fine: `python3 scripts/file_claim.py selftest`
+                     # prints PASS (6 worlds). test_score_exit.py's comment at :706 records
+                     # the tolerance this relies on -- a script that IGNORES an unknown
+                     # argument needs no entry, and one that PARSES argv strictly needs one
+                     # here. file_claim is the first strict parser in the map.
+                     "scripts/file_claim.py": "selftest"}
     # A TEST ALSO RUNS WHEN ITS SUBJECT IS STAGED, not only when the test file itself is.
     #
     # MEASURED 2026-09-04, by staging a real defect and running this hook: dropping `demo_lang`
