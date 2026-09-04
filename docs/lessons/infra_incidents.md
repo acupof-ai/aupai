@@ -1,7 +1,7 @@
 ---
 question: What are the surviving pod/infra gate-failure incidents, what would close each, and which are already closed?
 status: open
-source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents removed (10 sampled: 8 confirmed machine-closed, 2 gated this commit, 23 unsampled), 141 survive here and in gate_failure_incidents.md
+source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents removed (33/33 confirmed machine-gated, list in gate_failure_shapes.md), 141 survive here and in gate_failure_incidents.md
 ---
 
 # Gate failure incidents — pod/infra layer
@@ -49,6 +49,10 @@ open: a check that verifies a log line's process is still alive before quoting i
 ### §139 (2026-09-03, R1)
 A source was cited from a draft that had been superseded; the published version said something different. Evidence: docs/standards/state_0904.md.
 open: a check that flags citations to superseded drafts; none exists.
+
+### §175 (2026-09-04, R1)
+A merge was killed by a 2-minute command timeout after resolution; MERGE_HEAD was gone and the staged tree was main's content — 18 files of peers' work. `git status` says "still merging" only while MERGE_HEAD exists; after that the same staged tree looks like ordinary authored work and a commit records it single-parent under the committer's name. Caught by checking parents, not status; discarded and remerged. Evidence: tilerl session 2026-09-04.
+open: a pre-commit hook that refuses a commit whose staged tree is byte-identical to main's tree while the commit would be single-parent (`git write-tree` vs `git rev-parse main^{tree}`); broken world = the scenario replayed in a temp repo. Proposed to de.
 
 ## R2. A criterion must express the property asked
 
