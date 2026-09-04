@@ -173,6 +173,15 @@ def _pipe_holders(inode, live_pids, me):
 
 
 _WAIT_RE = re.compile(r"(?:until|while)\s+(?:!\s*)?\[+\s*-([fed])\s+([^\s\]]+)\s*\]+")
+#: The SECOND form of class (b) (env_hygiene 0314a2d6 §2(b)): `until grep -q PAT F; do sleep N`.
+#: Same class, different test -- no mtime reasoning is needed, because a target that cannot
+#: resolve against the loop's OWN cwd can never satisfy the condition however the loop is
+#: ordered. tilerl measured two live instances at 17 h, both `bash -lc until grep -q ... runs/x.log`
+#: with cwd /sgl-workspace/sglang: their `cd` never took, so the path they poll cannot exist as
+#: they resolve it, whatever a same-named file under /work/aupai holds.
+_GREP_WAIT_RE = re.compile(
+    r"(?:until|while)\s+(?:!\s*)?grep\s+(?:-\w+\s+)*(?:-e\s+)?"
+    r"(?:'[^']*'|\"[^\"]*\"|[^\s]+)\s+([^\s;|&]+)")
 
 
 def _closed_runs(root):
@@ -247,11 +256,19 @@ def classify(procs, zombies, root=ROOT, now=None, me=None, gpu_pids=None):
             verdicts.append((p, UNCLASSIFIED,
                              f"cwd {cwd} is on a never-in-scope filesystem (env_hygiene §2)"))
             continue
-        if cwd and not cwd.startswith(IN_SCOPE_PREFIXES):
-            verdicts.append((p, UNCLASSIFIED,
-                             f"cwd {cwd} is outside {IN_SCOPE_PREFIXES[0]}; scope is a positive "
-                             f"test, so a cwd this tool cannot place is never swept"))
-            continue
+        # THE CWD SCOPE GATE IS GONE (tilerl's ruling, env_hygiene 0314a2d6 §2 "Scope, and the
+        # paths that are never in it"). It rejected two of our own dead loops before class (b)
+        # could evaluate them, and the cwd that rejected them -- /sgl-workspace/sglang, the
+        # container's default -- IS the reason they are stuck. Scope is decided by paths a process
+        # actually HOLDS (an fd, or an argv path that resolves), never by cwd: the default cwd
+        # cannot show a process is foreign (PR-11's error, 307 processes) and cannot show one is
+        # ours (mine, in the other direction). The defect was ORDERING, not narrowness, so the fix
+        # is to let each class decide. The NEVER_IN_SCOPE test above stays: /data00../data03 are
+        # named by path, not inferred.
+        #
+        # What replaces it is each class's own positive test -- (b) resolvability, (c) an
+        # experiments row, (a) a lonely pipe -- and UNCLASSIFIED is still never killed, which is
+        # what makes dropping the gate safe rather than merely permissive.
 
         # (b) first: a wait loop's args are unambiguous and cheap to read.
         m = _WAIT_RE.search(args)
@@ -279,6 +296,49 @@ def classify(procs, zombies, root=ROOT, now=None, me=None, gpu_pids=None):
                 verdicts.append((p, UNCLASSIFIED,
                                  f"waits on {full}, which EXISTS -- the condition is satisfied "
                                  f"and the loop is stuck for another reason (cwd {cwd})"))
+            continue
+
+        # (b) SECOND FORM: `until grep -q PAT F; do sleep N; done`, resolved against the loop's
+        # OWN cwd. No mtime reasoning: a target that does not exist AS THE LOOP RESOLVES IT can
+        # never satisfy the condition, whatever a same-named file elsewhere holds. That is a fact
+        # about the filesystem, not an inference about intent -- which is why this form is
+        # decidable while "argv names a relative runs/ path" is not (tilerl's ruling: 30 live
+        # processes, 0 naming an absolute /work/aupai path, 2 naming a relative one, so the
+        # zero false-positive rate came from the population size, not from the predicate).
+        #
+        # A cwd this tool cannot read is UNCLASSIFIED, not swept: without the cwd there is no
+        # resolution and therefore no test.
+        g = _GREP_WAIT_RE.search(args)
+        if g:
+            target = g.group(1)
+            if target.startswith("/"):
+                full, base = target, "/"
+            elif not cwd:
+                verdicts.append((p, UNCLASSIFIED,
+                                 f"greps for a RELATIVE target {target!r} and its cwd is "
+                                 f"unreadable -- the target cannot be resolved, so the loop's "
+                                 f"condition cannot be judged"))
+                continue
+            else:
+                full, base = os.path.join(cwd, target), cwd
+            if os.path.exists(full):
+                verdicts.append((p, UNCLASSIFIED,
+                                 f"greps {full}, which EXISTS -- the condition can still be "
+                                 f"satisfied and the loop is waiting on content, not on a "
+                                 f"missing file"))
+            else:
+                elsewhere = ""
+                if not target.startswith("/"):
+                    alt = os.path.join(ROOT, target)
+                    if alt != full and os.path.exists(alt):
+                        # CONTEXT FOR THE REPORT, NEVER PART OF THE TEST (env_hygiene §2(b)).
+                        # A same-named file under /work/aupai is what makes these loops look
+                        # alive to a reader; it is not what the loop polls.
+                        elsewhere = f"; {alt} exists but is NOT what this loop polls"
+                verdicts.append((p, B,
+                                 f"greps {target!r} resolved against its own cwd {base} -> {full}, "
+                                 f"which does not exist, so the condition can never be satisfied "
+                                 f"as the loop resolves it{elsewhere}"))
             continue
 
         fd1 = _fd1(pid)
@@ -479,6 +539,31 @@ def _selftest():
         case(v[999001][0] == UNCLASSIFIED and "younger" in v[999001][1],
              f"a young process is out of scope whatever its shape: {v[999001][1][:50]}")
 
+        # (b) SECOND FORM -- tilerl's two live loops, 17 h each (env_hygiene 0314a2d6 §2(b)).
+        # ABSOLUTE targets here, because the real instances are relative and resolve against
+        # /proc/<pid>/cwd, which no fixture can fabricate without testing the fake. The property
+        # the form asserts is the same either way: a target that does not exist as the loop
+        # resolves it can never satisfy the condition.
+        gone = os.path.join(d, "runs", "count_en_c4_both.log")   # never created
+        here = os.path.join(d, "runs", "live_run.log")           # created above
+        procs_b2 = [
+            {"pid": 3739001, "ppid": 0, "age": 61976, "stat": "S",
+             "args": f"bash -lc until grep -q 'lines' {gone}; do sleep 10; done"},
+            {"pid": 3739002, "ppid": 0, "age": 61720, "stat": "S",
+             "args": f"bash -lc until grep -q done {here}; do sleep 5; done"},
+        ]
+        v2 = {p["pid"]: (cls, why) for p, cls, why in classify(procs_b2, 0, root=d,
+                                                              gpu_pids=set())}
+        case(v2[3739001][0] == B and "can never be satisfied" in v2[3739001][1],
+             f"a grep-wait on an unresolvable target classifies (b): {v2[3739001][0]} -- "
+             f"{v2[3739001][1][:80]}")
+        # THE NEGATIVE CONTROL, and the code path it guards: the `os.path.exists(full)` branch of
+        # the _GREP_WAIT_RE block. Delete that branch and this case fails while the positive above
+        # still passes -- which is the whole difference between a classifier and a shape matcher.
+        case(v2[3739002][0] == UNCLASSIFIED and "EXISTS" in v2[3739002][1],
+             f"a grep-wait whose target EXISTS is unclassified -- it is waiting on content: "
+             f"{v2[3739002][0]} -- {v2[3739002][1][:70]}")
+
         # SCOPE AND THE GPU EXCLUSION, both of which must beat a matching shape. env_hygiene §2
         # puts /data0* and any GPU process permanently out of scope, so a process that would
         # otherwise classify (b) must come back unclassified on either ground. The cwd cases can
@@ -494,13 +579,34 @@ def _selftest():
         case(NEVER_IN_SCOPE == ("/data00", "/data01", "/data02", "/data03")
              and IN_SCOPE_PREFIXES == ("/work/aupai",),
              "scope constants match env_hygiene.md §2 verbatim (/work/aupai in, /data0* never)")
-        # A cwd this tool cannot place must NOT sweep. Asserted through the real reader on this
-        # very process, whose cwd is the repo and not /work/aupai -- so on a laptop the scope
-        # test is what makes every verdict unclassified, which is the correct inert behaviour.
+        # THE CWD SCOPE GATE IS GONE, and this case is what used to assert it: "this checkout's
+        # cwd is outside scope, so a laptop run sweeps nothing". That was true and is now the
+        # wrong property -- per env_hygiene 0314a2d6, cwd places nothing in either direction, and
+        # the gate rejected two of our own dead loops before class (b) could evaluate them. What
+        # replaces it is each class's own positive test, so the assertion becomes: a process whose
+        # cwd is outside /work/aupai and which matches NO class is still unclassified. Asserted
+        # through the real reader on THIS process, whose cwd is the repo.
         own = _cwd(os.getpid())
+        # THE PREMISE CASE NEEDS A READABLE CWD, and this box has no /proc, so `own` is None here
+        # and BOTH cases below were skipped in silence -- a 14-ok run that had quietly stopped
+        # asserting two of its properties. Same shape as the pipe case ten lines down, which
+        # already prints its skip. The unclassified case does NOT need the real cwd, only a pid
+        # whose cwd is unreadable, which is every pid on this platform: run it either way and say
+        # which arm was taken.
+        _self = [{"pid": os.getpid(), "args": "python3 scripts/sweep.py --selftest",
+                  "age": MIN_AGE_S + 1, "etime": "1:00", "stat": "S", "ppid": 0}]
+        _sv = {p["pid"]: (cls, why) for p, cls, why in classify(_self, 0, root=d,
+                                                               gpu_pids=set())}
+        case(_sv[os.getpid()][0] == UNCLASSIFIED,
+             f"a process matching no class is unclassified without the cwd gate: "
+             f"{_sv[os.getpid()][0]} -- {_sv[os.getpid()][1][:70]}")
         if own is not None:
             case(not own.startswith(IN_SCOPE_PREFIXES),
-                 f"this checkout's cwd {own} is outside scope, so a laptop run sweeps nothing")
+                 f"this checkout's cwd {own} is outside /work/aupai")
+        else:
+            case(True, "no /proc/<pid>/cwd here (not Linux) -- the outside-scope premise is "
+                       "unreadable, so it is skipped rather than faked; the case above holds "
+                       "without it")
 
         # THE SCANNER MUST NOT COUNT ITS OWN FD. b0's first two runs reported "1 shared" for a
         # genuinely lonely pipe because of this, and the pid differed between runs.
