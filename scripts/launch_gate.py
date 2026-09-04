@@ -1039,15 +1039,28 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
     allocates past it. An arm that allocates more, or runs longer, starts reading into the
     region the probe calls never-seen, and the readout silently becomes seen-vs-seen.
 
-    Three conditions, and the third is not about UNSEEN at all (e1):
+    Three conditions, and only the first is load-bearing for UNSEEN (e1, measured):
 
-      alloc      an arm whose mix moves code_py_starcoder's weight moves the boundary itself,
-                 so the item file's indices stop meaning what they say.
-      max_steps  the arms reuse the control's line, so 3815 steps keeps every read below alloc.
-      seed       UNSEEN survives a seed change (it is past the allocation either way), but the
-                 READ SET does not: the plan's shuffle is seeded, so an arm at another seed
-                 reads different rows inside the same allocation and SEEN stops describing what
-                 it trained on. That breaks delta_seen, not delta_unseen.
+      mix name   the header records the mix the regions were computed against. A later stage
+                 pointed at the same cache with a different mix is the real residual risk:
+                 nothing else in the file notices, because the cache and its fingerprint are
+                 unchanged -- only the ALLOCATION moves.
+      alloc      the boundary itself. int(total_tokens/seq x weight) must equal the probe's
+                 unseen_lo. This is a statement about the MIX, not about the run: the plan is
+                 built for the WHOLE budget (train.py:1692 rows = total_tokens/seq, :1798
+                 want = int(rows x frac x weight) -- no step term anywhere), so stopping early
+                 consumes a PREFIX of that plan. On mix_200m_8b starcoder gets 643,969 rows =
+                 0.301 epochs of its 2,139,719-row pool, and pool [643969, 2139719) is never
+                 allocated to ANY run on this mix, wherever it stops.
+      seed       does not protect UNSEEN at all -- UNSEEN sits past the allocation under every
+                 seed. It protects SEEN: the plan's shuffle is seeded, so an arm at another
+                 seed reads different rows INSIDE the same allocation and SEEN stops describing
+                 what it trained on. That breaks delta_seen, not delta_unseen.
+
+    NO max_steps TERM. The first version had one, on the reasoning that a longer run reads
+    further; it does not read PAST the allocation, because the allocation never depended on
+    the step count. A longer arm reads more of SEEN, which is a different property -- worth
+    recording, not refusing, since the arms are meant to run the control's line unchanged.
 
     The boundary is READ FROM THE ITEM FILE's header, never hardcoded. A constant here and a
     number in the file are two copies of one quantity, and the failure this gate exists to
@@ -1099,12 +1112,11 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
                    f"allocation int(rows x weight)={alloc:,} != the probe's unseen_lo="
                    f"{unseen_lo:,}: the boundary moved, so the item file's row indices no "
                    f"longer mean what its header says")
-    ms = re.search(r"--max_steps\s+(\d+)", cmd)
-    max_steps = int(ms.group(1)) if ms else None
-    want_steps = head.get("control_max_steps")
-    if want_steps is not None and (max_steps is None or max_steps > int(want_steps)):
-        bad.append(f"--max_steps {max_steps} > the control's {int(want_steps)}: a longer run "
-                   f"consumes more of the plan and reads past the boundary")
+    want_mix = head.get("mix")
+    if want_mix and os.path.normpath(want_mix) != os.path.normpath(launch_mix):
+        bad.append(f"--mix {launch_mix} != the probe's {want_mix}: the regions were computed "
+                   f"against that mix, and another one moves the allocation while the cache "
+                   f"and its fingerprint stay identical -- nothing else would notice")
     sd = re.search(r"--seed\s+(\d+)", cmd)
     seed = int(sd.group(1)) if sd else None
     if seed != want_seed:
@@ -1113,8 +1125,8 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
                    f"describing what it trained on (delta_seen, not delta_unseen)")
     if bad:
         return NOGO, f"cloze regions ({src}): " + "; ".join(bad)
-    return GO, (f"cloze regions hold ({src}): {dom} alloc {alloc:,} == unseen_lo, "
-                f"--max_steps {max_steps} <= {want_steps}, --seed {seed}")
+    return GO, (f"cloze regions hold ({src}): {dom} alloc {alloc:,} == unseen_lo on "
+                f"{launch_mix}, --seed {seed}")
 
 
 GATES = [
@@ -1408,7 +1420,7 @@ def selftest():
         with open(os.path.join(dd, "data", "eval", "api_cloze.jsonl"), "w",
                   encoding="utf-8") as f:
             f.write(json.dumps({"domain": "code_py_starcoder", "seq": 4096, "seed": 42,
-                                "unseen_lo": _unseen_lo, "control_max_steps": 3815,
+                                "unseen_lo": _unseen_lo, "mix": _CLOZE_MIX,
                                 "n_seen_rows": 80280}) + "\n")
         os.makedirs(os.path.join(dd, "runs"), exist_ok=True)
         with open(os.path.join(dd, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
@@ -2013,13 +2025,14 @@ def selftest():
         _alloc = int((_mix0["total_tokens"] / 4096)
                      * _mix0["domains"]["code_py_starcoder"]["weight"])
         _hdr = {"domain": "code_py_starcoder", "unseen_lo": _alloc, "seed": 42, "seq": 4096,
-                "control_max_steps": 3815, "n_seen_rows": 80280}
+                "mix": "data/mix_200m_8b.json", "n_seen_rows": 80280}
         for _label, _mut, _cmd, _want in (
             ("the control's own line", None, _CTRL, GO),
             ("a mix whose starcoder weight is nudged up",
              ("weight", _mix0["domains"]["code_py_starcoder"]["weight"] * 1.01), _CTRL, NOGO),
-            ("a run 500 steps longer", None, _CTRL.replace("--max_steps 3815",
-                                                           "--max_steps 4315"), NOGO),
+            ("a launch on another mix", None,
+             _CTRL.replace("--mix data/mix_200m_8b.json", "--mix data/mix_scale_3.24b.json"),
+             NOGO),
             ("an arm at another seed", None, _CTRL.replace("--seed 42", "--seed 43"), NOGO),
         ):
             with tempfile.TemporaryDirectory(prefix="cloze_selftest_") as _d:
