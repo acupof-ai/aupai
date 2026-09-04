@@ -1492,29 +1492,35 @@ def _agents_coverage_table(root):
 
 
 def check_shapes_table_covers_doc(root):
-    """Every surviving incident § in gate_failure_incidents.md appears exactly once in
-    AGENTS.md's rule table, and every row's count equals the §refs it lists.
+    """Every surviving incident § in gate_failure_incidents.md (model-project) and
+    infra_incidents.md (pod/infra) appears exactly once in AGENTS.md's rule table, and
+    every row's count equals the §refs it lists.
 
     2026-09-04 restructure: gate_failure_shapes.md became the rules doc (no per-incident
-    headings); incidents moved to gate_failure_incidents.md with '### §N' headings. 33
-    closed incidents were deleted, so the surviving set is intentionally non-contiguous.
-    The gap check (1..max contiguous) was dropped: a hole now means a closed incident was
-    deleted, not a shape lost. The duplicate check and the table-vs-doc comparison stand.
+    headings); incidents split into two layer files with '### §N' headings. 33 closed
+    incidents were deleted, so the surviving set is intentionally non-contiguous. The
+    gap check (1..max contiguous) was dropped. The duplicate check (within and across
+    files) and the table-vs-doc comparison stand.
 
     Same ceiling as before: this proves an incident is REFERENCED, not that it sits under
     the right rule. Which rule an incident belongs to is a judgement only a person
     re-reading the pair can make."""
-    p = os.path.join(root, "docs", "lessons", "gate_failure_incidents.md")
-    if not os.path.exists(p):
-        return FAIL, "docs/lessons/gate_failure_incidents.md missing"
-    nums = [int(m) for m in re.findall(r"^### §(\d+)", open(p, encoding="utf-8").read(), re.M)]
-    if not nums:
-        return FAIL, "no '### §N' incident headings found -- the doc's heading style changed"
-    dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
-    if dupes:
-        return FAIL, "incident heading number(s) used more than once: " + ", ".join(
-            f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
-    doc = set(nums)
+    doc = set()
+    for fname in ("gate_failure_incidents.md", "infra_incidents.md"):
+        p = os.path.join(root, "docs", "lessons", fname)
+        if not os.path.exists(p):
+            return FAIL, f"docs/lessons/{fname} missing"
+        nums = [int(m) for m in re.findall(r"^### §(\d+)", open(p, encoding="utf-8").read(), re.M)]
+        if not nums:
+            return FAIL, f"no '### §N' incident headings in {fname} -- the doc's heading style changed"
+        dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
+        if dupes:
+            return FAIL, f"incident heading number(s) used more than once in {fname}: " + ", ".join(
+                f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
+        overlap = doc & set(nums)
+        if overlap:
+            return FAIL, f"incident §s in both layer files: {sorted(overlap)} -- an incident belongs to one layer"
+        doc |= set(nums)
 
     a = os.path.join(root, "AGENTS.md")
     if not os.path.exists(a):
@@ -1598,6 +1604,11 @@ def _broken_shapes_table_doc_grew():
     nums = [int(m) for m in re.findall(r"^### §(\d+)", text, re.M)]
     if not nums:
         raise SelftestSkip("no incident headings to extend; update _broken_shapes_table_doc_grew")
+    # Use a number above every § in BOTH layer files so the overlap check does not fire.
+    infra_p = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_p):
+        nums += [int(m) for m in re.findall(r"^### §(\d+)", open(infra_p, encoding="utf-8").read(), re.M)]
+    new_n = max(nums) + 1
     # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
     # fixture to the REAL incidents doc. Replace the link with a real directory holding a
     # real copy of the one file this world mutates.
@@ -1607,7 +1618,12 @@ def _broken_shapes_table_doc_grew():
     dst = os.path.join(d, "docs", "lessons", "gate_failure_incidents.md")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
-        text + f"\n\n### §{max(nums) + 1} (2026-09-04, R1) an incident added without touching the table (fixture)\nopen: none.\n")
+        text + f"\n\n### §{new_n} (2026-09-04, R1) an incident added without touching the table (fixture)\nopen: none.\n")
+    # The check reads both layer files; copy the unmutated one so the FAIL is about the
+    # new incident, not a missing file.
+    infra_src = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_src):
+        _sh.copy2(infra_src, os.path.join(d, "docs", "lessons", "infra_incidents.md"))
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -1635,6 +1651,9 @@ def _broken_shapes_table_duplicate_heading():
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
         text + f"\n\n### §{nums[-1]} (2026-09-04, R1) a duplicate heading number (fixture)\nopen: none.\n")
+    infra_src = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_src):
+        _sh.copy2(infra_src, os.path.join(d, "docs", "lessons", "infra_incidents.md"))
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
