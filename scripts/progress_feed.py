@@ -267,6 +267,37 @@ def friction_section():
             "</div>")
 
 
+# 98-7: memory layers section (user order via 4c, 2026-09-05).
+# Design from docs/standards/memory_layers_0905.md; status updated as steps complete.
+# Plot appears when runs/*.log have val lines for M1/M2.
+MEM_STATUS = {
+    "model": "b0 实现中",
+    "smoke": "未跑",
+    "m1": "未跑",
+    "m2": "未跑",
+    "scored": "未打分",
+}
+
+def memory_section():
+    s = MEM_STATUS
+    return (
+        "<h2>记忆层实验</h2>"
+        '<div class=head style="border-left-color:var(--purple)">'
+        '<div class=su>记忆层是一个大查找表，模型每 token 读几行。'
+        '有参数、几乎无计算。</div>'
+        '<div class=su>对照：ckpt_b0_headmix_armA（d1024 L12，10 亿 token）。'
+        'M1：100 万值（+10.7 亿参数）。M2：26 万值（+2.7 亿参数）。</div>'
+        '<div class=su>五把尺子：① doc_cu 配对差值 ≤ −0.010 nat 才采用，|Δ| &lt; 0.003 算无差异；'
+        '② 知识探针 vs 推理探针，知识差值超推理差值 2 个 SE 才算「记忆买知识」；'
+        '③ M2 vs M1 给斜率，两点加对照是线不是定律；'
+        '④ 诊断：step 1000 触及率 &lt; 20% 就停；'
+        '⑤ 吞吐：step 30 低于 70K tok/s 就停。</div>'
+        f'<div class=su>状态：模型 {s["model"]} · smoke {s["smoke"]} · '
+        f'M1 {s["m1"]} · M2 {s["m2"]} · 打分 {s["scored"]}</div>'
+        "</div>"
+    )
+
+
 def queue_section():
     tasks_p = os.path.join(REPO, "runs", "tasks.jsonl")
     roster_p = os.path.join(REPO, "runs", "roster.json")
@@ -382,6 +413,7 @@ def render(rows):
             parts.append('</div>')
     parts.append(control_section())
     parts.append(roadmap_section())
+    parts.append(memory_section())
     # 98-6: importance split. Decisions/measurements/warnings shown; the run/note
     # flow and per-member process detail collapsed. The user reads this page
     # instead of the terminal, so the top half answers "what concluded, what
