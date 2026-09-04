@@ -335,8 +335,9 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
+| `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-52 rules: 17 checked, 35 manual. The count is regenerated from `harness check`'s
+53 rules: 17 checked, 36 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
@@ -371,6 +372,7 @@ itself had before the check began reading it.
 
 **One worktree per session (from 2026-08-31 evening).** Six sessions in one working tree share one index: a file left dirty blocked others' moves four times in one afternoon, staged files were swept into other sessions' commits four times, and a hook built the manifest from another session's staged move. Rules replace none of this; isolation does.
 
+- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04).
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `scripts/merge_main.sh <name>` (a mkdir lock serialises merges into the shared integration worktree; two bare `git merge` calls in one tree raced on HEAD and the index, 2026-09-04); if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
 - **Never `git stash` in this repository.** `.git/refs/stash` is one stack shared by every worktree — not per-worktree like HEAD and the index — so two sessions stashing in the same window each pop the other's entry, applying a diff they never wrote to a tree it was not made against (e1 and b0, 2026-09-02; nothing was lost, and that was luck). `no_shared_stash` reports a non-empty stack.

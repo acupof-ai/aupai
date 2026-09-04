@@ -287,6 +287,9 @@ _MANUAL_RULES = {
     "A conflicting path needs a commit first, and read which path it is":
         "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
         "commit lands on the branch where dirty_aged and the behind-main hook see it",
+    "`harness task` and `harness friction` write the ledger of the tree they are invoked from":
+        "the invoking directory is a shell fact no artifact records; the integration tree's "
+        "pre-commit hook refuses the resulting non-controller commit, which is the consequence",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -353,7 +356,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 35
+_MANUAL_BASELINE = 36
 
 
 def _norm_rule(text):
