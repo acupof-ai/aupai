@@ -64,7 +64,7 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | id | sev | claim as published | evidence (path/cmd) | what contradicts it |
 |---|---|---|---|---|
 | MT-1 | S1 | `eff.kv_pool_undersized_for_serving`: "REFUTED… the pool holds 256 x 16 = 4096 tokens — HALF the declared budget", `boundary`: "Raising num_blocks is the fix… **Not done**: the line was paused before restart." | The two cited files are not in this repo and not in `git log --all`; they live in a DIFFERENT repository, `/work/tilerl/src/tilerl/{cli,kv_cache}.py` (found by `find /work/tilerl -name kv_cache.py`). Opened there: `kv_cache.py:19 BLOCK_TOKENS = 16` still holds, but `cli.py:57` now reads `num_blocks=max(256, (ctx * 8) // BLOCK_TOKENS)` — the hardcoded 256 is GONE. At ctx=8192 that is 4096 blocks = 65,536 tokens against a declared 8192: **8× the budget, not half.** `cmd_serve:75` → `_build_engine` → that line, so it is the serve path the fact is about. cli.py mtime 2026-09-02 13:08, three days AFTER the fact's `measured: 2026-08-30`. | The fact's `value` describes code that no longer exists and its `boundary` asserts the fix is "not done" when it is done. A reader deciding serving concurrency today would read "safe concurrency is 1, not 4" off a file provisioning 8× headroom. |
-| MT-2 | S2 | 15 fact ids cite artifacts as their evidence. | `audit_fact_sources.py` + a batched pod `ls`: all 15 cite at least one path **present on the pod and absent from this checkout**. Full list in §4a. Two verified by opening: `runs/trace_p200m_3step.json` (cited by FIVE facts) is 59,446,282 bytes on the pod, absent here; `runs/warmup_smoke*.log` globs to zero here, three files on the pod. | A fact's source is a promise a later reader can open it. These cannot be opened from where the facts are read, and `facts_well_formed` runs on main, so nothing reports it. The 57 MB trace explains why one was never pulled — this is a real constraint, not an oversight, which is why it needs a decision rather than a fix. |
+| MT-2 | S2 | 15 fact ids cite artifacts as their evidence. | `audit_fact_sources.py` + a batched pod `ls`: all 15 cite at least one path **present on the pod and absent from this checkout**. Full list in §4a. Every one stat'd on the pod — see the §4a table. `bench_eff/ddp_trace_rank0.json` is cited by five facts and is **415,798,937 bytes**; `runs/trace_p200m_3step.json` by four at 59,446,282; `runs/warmup_smoke*.log` globs to zero here and to three files totalling 17,781 bytes there. | A fact's source is a promise a later reader can open it. These cannot be opened from where the facts are read, and `facts_well_formed` runs on main, so nothing reports it. The 57 MB trace explains why one was never pulled — this is a real constraint, not an oversight, which is why it needs a decision rather than a fix. |
 | MT-3 | S2 | `data/corpus/*/build_corpus_stats.json` conforms to `CANONICAL_STATS_KEYS` (15 keys), enforced by `_assert_canonical_stats`. | Four writers of that filename: `datagen/build_corpus.py` (asserts, :687), `datagen/build_cot.py:97`, `datagen/code_dedup_build.py:162`, `datagen/build_code_tests_v1.py:408`. `grep -c _assert_canonical_stats` → **0, 0, 0** for the latter three. `build_cot.py:90-96` writes `srcfp`/`criterion`/`schema`/`docs_in`/`docs_kept`/`reject_checks`/`tokens_kept`/`check4`, of which only `n_shards` and `filters` are canonical keys. | The schema governs one writer in four. A reader consulting it to learn what a stamp guarantees learns nothing about three quarters of the writers. Cross-referenced: this corrects 3b's CD-1 mechanism in `corpus_data.md` (which cited `build_corpus.py:664` as *requiring* `tokens_config`; :678-681 writes tokens/tokens_status/tokens_config in ONE branch, so zh_web's stamp — `tokens` + `"measured"`, no `tokens_config` — cannot have come from the conforming writer at all). |
 | MT-4 | S2 | `runs/launch_tests.json` records that the arch tests passed on the shape being launched. | One row per test FILE, last write wins (`scripts/launch_tests.py:105`, `rows[key] = {...}` keyed on the test's repo path). Measured live, three writes in sequence: `test_arch_L32` at d768 **L12** (03:0xZ), then at d768 **L16** (recorded 03:04Z) — which ERASED the L12 row, verified by reading the file and finding only `{'d':768,'ffn_hidden':2304,'heads':6,'layers':16}` — then at **L12** again (03:14Z) immediately before launching arm 2, which erased the L16 row in turn. | Two arms at two depths cannot both hold a certificate; certifying one erases the other, and whichever launches second launches on a green describing the other model. Stage E runs exactly that shape pair. |
 | MT-5 | S2 | Same file: a `pass` row means the run passed. | `scripts/test_e2e.py` calls `record_launch_test` at the end of its `try` block (:402) while stage 11 runs in the `finally` (:423). Observed: `runs/b0_se_e2e_L12.log` ends `AssertionError: resume from step-less … did not refuse (rc=0)`, and `launch_tests.json` holds `result: pass` for that same run. | The gate's record asserts green for a run that exited on an AssertionError — the class of thing the gate exists to prevent. Would clear `arch_tests` for the next launcher who does not read the log. |
@@ -72,18 +72,64 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | MT-7 | S2 | `runs/recipe_provenance.json` gives every launched value a source. | No group matched `d768 L12 h6 ffn2304` until I added one (`fd6a382a`), and **four completed Stage D runs had already used that shape** (`b0_sd_unlooped`, `b0_sd_looped`, `b0_sd_equalcompute`, `b0_n8_fixed`). `gate_launch_command` reconciles argv against these keys. | Twelve values were passed on the command line across four runs with no recorded source, and the gate read GO because `_recipe_for_shape` found *a* recipe. Same defect the shape partition was built to remove, one shape later. |
 | MT-8 | S3 | 12 fact ids cite a path resolvable nowhere. | `git log --all --diff-filter=D` for each: `ckpt_cost.py`, `bench_short_conv2.py` exist in **no commit, on no machine, and never did**. `kv_cache.py`/`cli.py` are MT-1 (another repo). `bench_eff2.py`→`bench_eff/bench_eff2.py`, `gate_failure_shapes.md`→`docs/lessons/…`, `score_matrix.jsonl`→`runs/…` resolve as bare basenames. Brace-expansion residue (`ckpt_…pt.step{2500`) accounts for 7 of the 12 — same class as the `runs/b0_sd_he_{…}` defect I hit on 2026-09-03. | Severity is S3, not higher, BECAUSE the two facts whose scripts vanished keep their logs: `eff.short_conv_shifted_madd` cites `runs/p02_sc_{base,patched}.log` and `eff.ckpt_resume_16h_interval` cites `runs/t38_{ref,resume}.log`, all four present on main AND the pod. The measurement survives; only re-derivation is lost. |
 
-### 4a. Every fact id citing a pod-only path (MT-2)
+### 4a. Every pod-only source, with size and committability (MT-2)
 
-`eff.bf16_updates_discarded` (ckpt_p324.pt) · `eff.clip_and_sync_cost_p200m`,
-`eff.optimizer_step_gpu_cost_p200m`, `eff.step_class_breakdown_p200m_4card`,
-`eff.step_roofline_p200m_4card` (runs/trace_p200m_3step.json) ·
-`eff.dynamo_recompile_not_a_lever`, `eff.fusion_and_elementwise_are_disjoint_but_the_trace_is_off_config`,
-`eff.quant_tax_is_the_elementwise_group`, `eff.steady_state_composition`,
-`eff.step_remainder_attribution` (bench_eff/ddp_trace_rank0.json) ·
-`eff.kda_mla_growth_ratio_l12` (ckpt_p200m_4b_0902.pt.interrupt.step832) ·
-`eff.light_profile_wall` (runs/milestone_p324_v2.jsonl) ·
-`eff.padded_vocab_table_no_pay_200m`, `eff.tied_head_does_not_inflate_tok_200m`
-(ckpt_ab_*.pt.ep1) · `eff.warmup_absolute_not_fractional` (runs/warmup_smoke*.log)
+Sizes are `stat -c %s` on the pod in this pass. "committable" = under 5 MB, the threshold the
+controller asked for; it is a size judgement only, not a ruling that the artifact belongs in git.
+
+| path (pod, repo-relative) | bytes | <5 MB | cited by |
+|---|---:|---|---|
+| `bench_eff/ddp_trace_rank0.json` | 415,798,937 | no | `eff.dynamo_recompile_not_a_lever`, `eff.fusion_and_elementwise_are_disjoint_but_the_trace_is_off_config`, `eff.quant_tax_is_the_elementwise_group`, `eff.steady_state_composition`, `eff.step_remainder_attribution` |
+| `ckpt_ab_untiehead_untiehead.pt.ep1` | 2,187,661,555 | no | `eff.tied_head_does_not_inflate_tok_200m` |
+| `ckpt_ab_untieheadlr_untieheadlr.pt.ep1` | 2,187,664,147 | no | `eff.tied_head_does_not_inflate_tok_200m` |
+| `ckpt_ab_valueembed_valueembed.pt.ep1` | 2,053,519,923 | no | `eff.padded_vocab_table_no_pay_200m` |
+| `ckpt_ab_shapelr_base.pt.ep1` | 1,784,216,707 | no | `eff.padded_vocab_table_no_pay_200m`, `eff.tied_head_does_not_inflate_tok_200m` |
+| `ckpt_p200m_4b_0902.pt.interrupt.step832` | 959,435,257 | no | `eff.kda_mla_growth_ratio_l12` |
+| `ckpt_p324.pt` | 412,319,307 | no | `eff.bf16_updates_discarded` |
+| `runs/trace_p200m_3step.json` | 59,446,282 | no | `eff.clip_and_sync_cost_p200m`, `eff.optimizer_step_gpu_cost_p200m`, `eff.step_class_breakdown_p200m_4card`, `eff.step_roofline_p200m_4card` |
+| `runs/n7_domain.jsonl` | 55,804 | **YES** | `docs/standards/roadmap_0903.md:24` (Stage A) — a DOC citation, not a fact; supplied by e1 |
+| `runs/warmup_smoke*.log` (3 files) | 17,781 | **YES** | `eff.warmup_absolute_not_fractional` |
+| `runs/milestone_p324_v2.jsonl` | 1,882 | **YES** | `eff.light_profile_wall` |
+| `runs/p500m_20b_0902.log` | 65,990 | no | `eff.p500m_20b_throughput_and_dips` (config) — from 58's sweep |
+| `runs/eval_p500m_step1500_base.log` | 5,247 | **YES** | `eff.p500m_20b_throughput_and_dips` (config) — from 58's sweep |
+| `runs/eval_p500m_step1500_l1.log` | 40 | **YES** | `eff.p500m_20b_throughput_and_dips` (value + config) — from 58's sweep |
+| `runs/ppl_step1500_v2.log` | **0** | **YES** | `eff.p500m_20b_throughput_and_dips` (value + config) — from 58's sweep |
+
+**Six of the fifteen rows are committable, and they are 80,754 bytes together.** The other eight are
+checkpoints and profiler traces — 9.9 GB in total, one of them 415 MB — so "pull them into the
+repo" is not available for the paths that matter most. That asymmetry is the finding: the
+citations that CANNOT be committed are exactly the ones carrying five, four and two facts each,
+because a big artifact is what an expensive measurement produces.
+
+What the small three cost to fix is one commit. What the large eight need is a decision: a hash
+and a size recorded beside the path so a later reader can verify the artifact they open is the one
+that was measured, or an explicit convention that a pod path is a legitimate citation and
+`facts_well_formed` reports it as pod-resident rather than staying silent. Right now a reader on
+main cannot distinguish "this artifact is on the pod" from "this artifact is gone", and MT-8 shows
+both cases exist.
+
+
+**MT-2b (S3, and it corrects a stronger claim).** 58's sweep — over `source`, `config`,
+`uncertainty` AND `boundary`, where mine read `source` only — found four paths mine missed, all
+four confirmed by my own `stat` on the pod. Two are near-empty: `runs/ppl_step1500_v2.log` is
+**0 bytes** and `runs/eval_p500m_step1500_l1.log` is **40 bytes** (one header line, no result).
+58 reads the zero-byte one as a citation that "cannot be satisfied anywhere". **It can, and this
+is worth stating precisely because the opposite reading would retract a sound fact.**
+`eff.p500m_20b_throughput_and_dips` cites these two files for their **mtime**, not their contents:
+it attributes throughput dips to eval jobs contending for the cards, and the evidence is *that a
+job wrote a file at that instant*. I read both: `ppl_step1500_v2.log` mtime **07:25:52** and
+`eval_p500m_step1500_l1.log` mtime **06:29:12**, exactly the two timestamps the fact's `value`
+names, and the l1 log's single line is verbatim the string the fact quotes
+(`L1 few-shot: 3 demos, 497 eval problems`). An empty file with a trustworthy mtime is sufficient
+evidence for a contention claim. So the finding here is narrower than 58's: the two files are
+**pod-only**, which is MT-2, and separately the l1 eval **produced no result** — a fact about that
+eval, not about this fact's support.
+
+Also recording 58's instrument defect because it is the same class as my own tokeniser problem: a
+regex alternating `json|jsonl` matches `.json` first and truncates every `.jsonl` path, which
+reported 21 absent paths of which 15 were ledgers sitting in the repo. Their published 7 is the
+corrected count. Two independent sweeps, two tokeniser defects, both over-reporting — the
+enumeration step is where this class of audit fails, not the checking step.
 
 ### 4b. Checked and SOUND — recorded so absence of a finding is not read as absence of a check
 
