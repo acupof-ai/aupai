@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Seventeen entries: two S1, eleven S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Eighteen entries: two S1, twelve S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -122,6 +122,7 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E15 | S2 | Six timestamps in THIS report carried a `Z` suffix asserting UTC. | `TZ=UTC git log` on `bfa1a846`/`e970c343`; the commits that first wrote each `~HH:MMZ` note; `date -u` == `date` on the pod. | All six were local +0800. E13's and E14's stated collection times (12:30Z, 12:40Z) fall NINE HOURS AFTER the commit that published them, so the claim preceded its own evidence. The `Z` was typed by me; no command emitted it. E3 and E4 survive by a wider margin after correction (3.4 h and 4.3 h gaps). |
 | E16 | S2 | 59 of 62 credential-bearing episodes in the v14 build were invisible to the old detector, so they were in v13's admission set and every pack before it — which checkpoints trained on them? | 297 ledger lines folded by `name` to 152 distinct, every `--sft_path` in every `cmd` (11 SFT runs, 4 packs); all 60 `score_matrix` rows (55 distinct `ckpt`); `ls` on the pod's `data/sft/` (41 entries, 21 `.pt`); `torch.load` on all 21 reading `sources`/`source`/`meta.sources`. | NONE. Zero agentic packs in all four populations, and the training path cannot reach one: the builder writes JSONL and nothing converts a JSONL to the `.pt` that `sft_math.py --sft_path` consumes. Held at S2 because 20 of 21 `.pt` packs carry NO `sources` field, so provenance came from the producers' code, not the packs' own metadata. |
 | E17 | S2 | The v14 build's log certifies that the secret scan gated the rename. | `runs/e1_v14_agentic_build_2026-09-04.log` lines 95-102 and 122; the three background-task output files. | The log holds a `FileNotFoundError` on `os.replace` AND `build exit=0`, and LACKS the `wrote 4823 rows` line both Monitors reported: two processes wrote it concurrently, one won the rename, the other died on it, and the loser's traceback interleaves mid-report. The gate verdict is sound but the log cannot certify it — the pack was verified independently (4,823 rows, 0 unparseable, 0 wrong-shape, 0 byte-identical duplicates). The two-writer origin is UNRESOLVED, not guessed. |
+| E18 | S2 | `eval/score_matrix.py`'s failure records name the cause of a scorer's refusal. | Three runners read: `_run_eval_json:304` and `metric_minimal_pairs:281` use `(r.stderr or r.stdout)`; `_run:387` uses `(r.stdout + r.stderr)`. Refusal stream read per script for all 7. Mechanism reproduced with a 4-line program through line 304's expression verbatim. | Two of three runners discard stdout entirely whenever stderr is non-empty, and `domain_bpb.py` is the one script whose every refusal is on stdout, so a single `vocab_id` UserWarning replaces the cause. **6 of 10** `domain_bpb` rows are blinded this way (not 10 as MT-12 reports: 3 carry a real stderr cause, 1 carries a bare source line from the truncation shape the code comment calls fixed). `l1_fewshot` adds 8 rows of a second shape: exit -15 SIGTERM, cause recorded as a progress line. `_run` already holds the correct form eleven lines below the second defective site. |
 
 ## 5. Blind spots of this audit
 
@@ -429,3 +430,86 @@ this audit.
 command, and armed two Monitors on the log — Monitors read, they do not run the builder. The
 second writer's identity is unresolved and I am not going to guess it. What is established:
 two processes, one log, one surviving rename, and a pack that validates.
+
+### E18 (S2): the stream expression that discards a refusal — three runner paths, two defective, and b0's count is 6 of 10 not 10 of 10
+
+6e's assignment from b0's MT-12, read independently. b0's finding is real and the mechanism
+reproduces; two of its specifics do not survive an independent read, and the population is wider
+than one call site.
+
+**score_matrix drives its scorers through THREE runners, not one.** Enumerated from
+`eval/score_matrix.py`, every `subprocess.run` in the file:
+
+| runner | line | expression | scripts driven | defective? |
+|---|---|---|---|---|
+| `_run_eval_json` | 304 | `(r.stderr or r.stdout)` | `domain_bpb.py`, `lambada_en.py`, `humaneval_bpb.py`, `lambada_zh.py`, `math_v2_like.py`, `l1_fewshot.py` | **yes** — stderr shadows stdout entirely |
+| `metric_minimal_pairs` | 281 | `(r.stderr or r.stdout)`, `[-1:]` | `base_matrix.py` | **yes**, and worse: one line, no exception-line search |
+| `_run` | 387 | `(r.stdout + r.stderr)` | `run_eval.py`, `eval_hard.sh`, `eval_math.sh`, `eval_code.sh` | no — concatenates, keeps both |
+
+So `_run` is the correct form and it is already in the same file, eleven lines below the second
+defective site. The fix is not a design question; two call sites disagree with a third.
+
+**Which stream each driven script uses for its refusal**, read per file (`sys.exit(str)` and
+`raise SystemExit(str)` write to stderr; `print()` writes to stdout):
+
+| script | refusal on stderr | refusal on stdout | affected by the shadowing |
+|---|---|---|---|
+| `domain_bpb.py` | 0 | 2 (`REFUSING: no domain produced a number` :292, `SKIPPED (round-trip …)` :267) | **YES — every refusal it has** |
+| `humaneval_bpb.py` | 11 (6 `sys.exit`, 5 `raise SystemExit`) | 1 | mostly safe; the 1 stdout refusal is shadowed |
+| `lambada_en.py` | 1 | 0 | no |
+| `lambada_zh.py` | 1 | 0 | no |
+| `l1_fewshot.py` | 1 | 0 | no |
+| `math_v2_like.py` | 0 | 0 | n/a — has no refusal path at all |
+| `base_matrix.py` | 0 | 0 | n/a, but its runner truncates to one line |
+
+`domain_bpb.py` is the confirmed case for the reason b0 gives: it is the ONE script whose refusals
+are all on stdout, driven by the ONE runner that discards stdout whenever stderr is non-empty.
+
+**Broken-world test of the mechanism, run rather than reasoned.** A 4-line program that warns on
+stderr and prints `REFUSING: no domain produced a number` on stdout, then exits 1, passed through
+line 304's expression verbatim:
+
+```
+RECORDED  -> domain_bpb.py exited 1: <string>:2: UserWarning: checkpoint has no vocab_id (old
+             format); cannot cross-check tokenizer
+REFUSAL PRESENT IN RECORD? False
+```
+
+The refusal is gone and the record names a warning as the cause.
+
+**Where I differ from b0, both directions.** b0 reports 10 of 10 `domain_bpb` rows as error
+objects carrying only the vocab_id warning. Reading all 10 in `runs/score_matrix.jsonl`:
+
+- **6 of 10** carry the warning as their whole recorded cause (`ckpt_data_leg_206m_8b.pt` and its
+  step7000/step7500, `ckpt_params_leg_438m_3p76b.pt`, `ckpt_b0_n8_fixed.pt`,
+  `ckpt_b0_sd_equalcompute.pt`).
+- **3 of 10** carry a real cause that survived: "Retokenizing here would overwrite caches the live
+  run reads…" (`ckpt_ab_untiehead_untiehead.pt.ep1`, `ckpt_ab_untieheadlr_untieheadlr.pt.ep1`,
+  `pythia-160m-step2000`). Those failures wrote their cause to stderr, so the shadowing cost
+  nothing.
+- **1 of 10** is a third shape b0's description does not cover: `ckpt_data_leg_206m_8b.pt.step10000`
+  records `ours_tok = load_tokenizer(a.tokenizer, None)` — `eval/domain_bpb.py:221`, a SOURCE LINE,
+  no exception, no warning. That is the truncation failure the code's own comment at :299-303
+  describes as already fixed. It is not fixed for this row; the row predates the fix.
+
+So the count is 6, the mechanism is confirmed, and the defect has a shape neither b0's summary nor
+the code comment names.
+
+**A second affected metric b0's list omits.** `l1_fewshot` has 8 error rows, all of the form
+`l1_fewshot.py exited -15:   448/497 acc=0.0%`. Exit **-15** is SIGTERM — killed, not crashed —
+and what got recorded is a progress line, because a killed process writes no exception anywhere
+and the tail-3 fallback grabs whatever stdout last held. Not the stream-shadowing bug; the same
+consequence (a record that names progress as a cause), and it makes `l1_fewshot` the second metric
+whose failures are unreadable from the ledger.
+
+**Affected metrics, stated as the assignment asks:** `domain_bpb` (6 rows blinded by shadowing,
+1 by truncation), `humaneval_bpb` (1 refusal path of 12), `base_matrix`/`minimal_pairs` (all
+failures, one-line truncation), `l1_fewshot` (8 rows, SIGTERM shape). Unaffected: `lambada_en`,
+`lambada_zh`, `math_v2_like`, and everything on the `_run` path.
+
+**What normally writes to stderr on a clean run** — the precondition that makes the shadowing
+fire. Verified: importing `scripts/loader.py` alone writes **0 bytes** to both streams, so the
+warning is not unconditional at import; `loader.py:136` fires it per checkpoint via
+`warnings.warn` when `vocab_id` is absent. Every old-format checkpoint therefore puts one line on
+stderr and shadows all of stdout. Not verified, and named rather than assumed: whether torch/NCCL
+banners reach stderr on the pod's GPU path. That needs a GPU run, which the audit forbids.
