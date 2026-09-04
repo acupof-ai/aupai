@@ -51,6 +51,7 @@ ALLOWED = [
     # that validate against it -- the opposite of the 234 MB corpus blob this list exists
     # to keep out.
     "data/ledger_schema.json",
+    "data/ledger_transport_schema.json",
 ]
 
 
@@ -933,6 +934,7 @@ def main():
         "scripts/mem_nobk_cell.py",
         "scripts/mem_grad_bench.py",
         "scripts/mem_master_cell.py",
+        "scripts/gen_ledger_transport_schema.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
