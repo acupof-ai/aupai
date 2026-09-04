@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Nineteen entries: three S1, twelve S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Twenty entries: four S1, twelve S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -124,6 +124,7 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E17 | S2 | The v14 build's log certifies that the secret scan gated the rename. | `runs/e1_v14_agentic_build_2026-09-04.log` lines 95-102 and 122; the three background-task output files. | The log holds a `FileNotFoundError` on `os.replace` AND `build exit=0`, and LACKS the `wrote 4823 rows` line both Monitors reported: two processes wrote it concurrently, one won the rename, the other died on it, and the loser's traceback interleaves mid-report. The gate verdict is sound but the log cannot certify it — the pack was verified independently (4,823 rows, 0 unparseable, 0 wrong-shape, 0 byte-identical duplicates). The two-writer origin is UNRESOLVED, not guessed. |
 | E18 | S2 | `eval/score_matrix.py`'s failure records name the cause of a scorer's refusal. | Three runners read: `_run_eval_json:304` and `metric_minimal_pairs:281` use `(r.stderr or r.stdout)`; `_run:387` uses `(r.stdout + r.stderr)`. Refusal stream read per script for all 7. Mechanism reproduced with a 4-line program through line 304's expression verbatim. | Two of three runners discard stdout entirely whenever stderr is non-empty, and `domain_bpb.py` is the one script whose every refusal is on stdout, so a single `vocab_id` UserWarning replaces the cause. **6 of 10** `domain_bpb` rows are blinded this way (not 10 as MT-12 reports: 3 carry a real stderr cause, 1 carries a bare source line from the truncation shape the code comment calls fixed). `l1_fewshot` adds 8 rows of a second shape: exit -15 SIGTERM, cause recorded as a progress line. `_run` already holds the correct form eleven lines below the second defective site. |
 | E19 | S1 | `domain_bpb` is a published metric of this project: it is the control arm's cross-tokenizer reading, `runs/score_matrix.jsonl` carries it as a field on 60 rows, and `facts/*.json` cite it. | Ran domain_bpb's whole pre-forward half on the pod with `CUDA_VISIBLE_DEVICES=""` (no model, no card): `val_seqs` + `roundtrip_fraction` over all 9 domains of `data/mix_200m_4b.json`. Round-trip fractions math_owm_stage2 0.1094, en_c4_stage2 0.0156, cot 0.0000, textbook_30b 0.0156, chatml 0.0000, chat_qa 0.0000, zh_web 0.1094, code_py_starcoder 0.2188, code_py_rp1t 0.3594 — every one below `MIN_ROUNDTRIP = 0.98`. | **All 9 domains are skipped, `out` is empty, and `domain_bpb.py:317` prints `REFUSING: no domain produced a number` and returns 1. The metric has NEVER produced a number for any checkpoint and cannot on the current data path** — the 10 error rows in E18 are this one cause, not a per-checkpoint problem. Cause is one line: `tok.decode([EOS_ID])` returns `''`, and every val row from `train._domain_seqs` is packed and EOS-delimited (cot row 0 holds 8), so decode drops the delimiters and re-encode cannot reproduce the ids. The gate measures the tokenizer's special-token handling, not whether the two arms score the same bytes. |
+| E20 | S1 | `ds.n2_params_vs_data_matched_compute` = −0.010770 nat, block-paired over 576 blocks, t −6.51, sign test 227 up / 349 down p 2.10e-07 — the params-vs-data verdict behind the 30B shape decision. | `eval/block_paired.py --from runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt#cu ckpt_params_leg_438m_3p76b.pt#cu`, the same instrument the fact's `source` names, same 576 blocks / 2,359,296 tokens, same orientation. | On doc_cu the mean is **−0.000920** (t **−0.55**, 1/43 of its own SE) and **the sign test REVERSES: 329 up / 247 down, p 3.62e-04** — a significant majority of blocks where params is WORSE, opposite to the mean, with median **+0.003204** also opposite. On cu_none both statistics agreed. The surviving negative mean rides on chatml/chat_qa/textbook_30b, and chatml+chat_qa are the two domains the mask moved most (−0.2364, −0.1695), so it is E2's non-uniformity inside the pair rather than an advantage. Domain count is 9 in all four rows, unchanged between the published number and the re-score. |
 
 ## 5. Blind spots of this audit
 
@@ -574,3 +575,80 @@ every our-vs-Pythia comparison in byte terms is unmeasured — E6 recorded the t
 a systematic gap without knowing the gap is total. Nothing published is WRONG because of this; a
 metric that always refused never entered a number anywhere. The S1 is for a published metric that
 does not exist.
+
+### E20 (S1): on doc_cu the N2 verdict's block-paired sign test REVERSES, and the mean is 1/43 of its own SE
+
+6e's assignment after C11 landed: run the block-paired delta on the two `#cu` rows with the same
+instrument the published exit number used, and state the domain count. The answer is stronger than
+the shrinking mean I reported: the paired test does not merely weaken, it changes direction.
+
+**The instrument is the published one.** `eval/block_paired.py`, 576 blocks (9 domains x 64), the
+same command the fact's `source` names. Arms: B = params leg, A = data leg, so a NEGATIVE delta
+favours the params leg, which is the fact's own orientation.
+
+| | published (cu_none) | doc_cu (`#cu` rows) |
+|---|---|---|
+| paired mean | **−0.010770** | **−0.000920** |
+| sd | 0.039713 | 0.039866 |
+| SE | 0.001655 | 0.001661 |
+| t | **−6.51** | **−0.55** |
+| sign test | 227 up, 349 down, p 2.10e-07 | **329 up, 247 down, p 3.62e-04** |
+| n tokens | 2,359,296 | 2,359,296 |
+
+**Two independent statistics now disagree in direction, which neither did before.** The mean stays
+negative (params better) at −0.000920 while the sign test's majority flips to 329 of 576 blocks
+where params is WORSE, at p 3.62e-04 — a significant majority pointing the opposite way from the
+mean. The median confirms it: **+0.003204**, opposite in sign to the mean. On cu_none both agreed
+(mean negative, 349 of 576 blocks negative). So the doc_cu mean is carried by a minority of
+large-magnitude blocks, not by a consistent advantage: the extremes are symmetric (most negative
+−0.2023, most positive +0.2187) and the typical block favours the data leg.
+
+|t| = 0.55 is the compact statement: the delta is **1/43 of its own sampling SE** where it was
+6.51 SEs before. Against `ds.seed_variance_0p2b`'s 0.0516 sd it is 1/56 of one seed sd, and against
+the 0.24 nat `readable_move` it is 1/261.
+
+**Per-domain, the split is by format, not noise.** Six of nine domains have a majority of blocks
+where params is worse:
+
+| domain | mean | median | blocks params-worse / better |
+|---|---|---|---|
+| cot | +0.0091 | +0.0113 | 52 / 12 |
+| code_py_rp1t | +0.0031 | +0.0066 | 44 / 20 |
+| en_c4_stage2 | +0.0044 | +0.0081 | 43 / 21 |
+| code_py_starcoder | +0.0025 | +0.0031 | 42 / 22 |
+| math_owm_stage2 | −0.0001 | +0.0034 | 36 / 28 |
+| zh_web | −0.0042 | −0.0021 | 30 / 34 |
+| chat_qa | −0.0084 | −0.0055 | 29 / 35 |
+| chatml | −0.0119 | −0.0124 | 28 / 36 |
+| textbook_30b | −0.0027 | −0.0022 | 25 / 39 |
+
+The three domains that still favour the params leg by mean AND median are chatml, chat_qa and
+textbook_30b — and chatml/chat_qa are exactly the two whose cu_none-to-doc_cu gain was largest
+(−0.2364 and −0.1695, against −0.0157 for code_py_rp1t). The verdict's surviving margin comes from
+the domains most affected by the mask, which is E2's non-uniformity showing up inside the pair
+rather than cancelling.
+
+**The domain count is 9, not 11.** 6e's message reported 11 and that is not what the rows carry:
+all four rows (`ckpt_data_leg_206m_8b.pt`, its `#cu`, `ckpt_params_leg_438m_3p76b.pt`, its `#cu`)
+carry exactly 9 named domains — chat_qa, chatml, code_py_rp1t, code_py_starcoder, cot,
+en_c4_stage2, math_owm_stage2, textbook_30b, zh_web — enumerated from the `domain_loss` dict with
+`unweighted_mean` and `_`-prefixed keys excluded. The N2 fact's `config` says "9 domains x 64
+blocks", block_paired reports "576 blocks over 9 domain(s)", and 9 x 64 = 576 with no room for two
+more. **The denominator is unchanged between the published number and the re-score**, so the
+comparison above is like-for-like. Nothing in the repo produces an 11-domain count for these rows;
+`data/mix_200m_4b.json` has 9 domains.
+
+**A limit on this comparison, and it is mine to state.** The cu_none block-paired figures in the
+table come from the fact's `config`, not from a re-run: `block_paired.py --arms
+ckpt_data_leg_206m_8b.pt ckpt_params_leg_438m_3p76b.pt` REFUSES on the published rows with "no
+per-block data ... A record scored before --per-block existed carries only the domain mean". The
+cu_none per-block data lives in `runs/b0_23_blocks.jsonl` (present, 27,910 B), which is what the
+fact's source pairs. I did not re-derive the published sd/SE/t from it; they are quoted. The doc_cu
+column is measured by me end to end.
+
+**What this does and does not say.** It does not say the params leg is worse. It says that on the
+path that matches training, the two statistics that agreed on cu_none now point in opposite
+directions and the mean is inside its own noise — so the N2 result is not a measurement of a
+direction at this resolution. E3 recorded that the verdict rested on an instrument with a defect
+7.6x the delta; this is that defect removed, and what remains is unresolved rather than reversed.
+The decision belongs to 6e and b0.
