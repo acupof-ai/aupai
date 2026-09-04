@@ -68,7 +68,29 @@ No fixed-seed sample was needed: every population here is small enough to read w
 | contamination facts | 36 | 36 | n/a |
 | facts citing score_matrix | 18 | 18 | n/a |
 | corpus domains on the pod | 321 | 321 | n/a |
-| eval scorers under eval/ | 46 | 4 in this report | see §5 |
+| eval scorers under eval/ | 46 | 2 in this report | see §5 |
+
+### Which corpus domains were built against which holdout population
+
+Asked by the area's scope. Answered empirically rather than from the builders' source, because
+the scan measures the outcome and the source only shows the intent:
+
+| domain (mix_200m_4b) | alone hits | built | guard population at build time |
+|---|---|---|---|
+| chatml | 1,515 | 2026-09-01 | 4-file `EVAL_FILES`, no `control_sft_text_heldout` |
+| chat_qa | 1,515 | 2026-09-01 | same |
+| math_owm_stage2 | 542 | 2026-08-31 | same |
+| cot | 334 | 2026-08-31 | same |
+| code_py_starcoder | 239 | 2026-09-01 | same |
+| textbook_30b | 185 | 2026-08-31 | same |
+| zh_web | 81 | 2026-08-31 | same |
+| code_py_rp1t | 57 | 2026-09-01 | same |
+| en_c4_stage2 | 22 | 2026-08-31 | same |
+
+**Nine of nine.** No domain in this mix was built against a population containing the
+held-out file, and none was built against the 13-entry registry (E4: it landed 2026-09-04
+08:50Z, after the newest domain). Hit counts from `runs/e1_28/e1_28_per_domain_alone.json`,
+build dates from `stat` on the pod, population from `datagen/holdout.py`'s history.
 
 ## 4. Findings
 
@@ -80,12 +102,18 @@ No fixed-seed sample was needed: every population here is small enough to read w
 | E4 | S2 | The holdout guard's population, post-fix: `datagen/holdout.py` REGISTRY, 13 entries, replacing the 4-path `EVAL_FILES`. | `git log -1 e970c343` → `2026-09-04 08:50:45 +0800`. Pod `stat` over all 321 corpus directories: the newest is `2026-09-03` (`cot_open_thoughts`, `en_c4_30b`, `rp1t_arxiv_papers`); every one of the 9 domains in `data/mix_200m_4b.json` is dated 2026-08-31 or 2026-09-01. | **Every corpus domain that exists was built before the registry existed.** The registry fixes what the NEXT build excludes and cannot retroactively protect any current domain. The 13-entry population is correct and no corpus has been built against it. `cont.heldout_in_pretrain_corpus` records this for its own scan; no other contamination fact does. |
 | E5 | S2 | `runs/score_matrix.jsonl` folds rows on `ckpt`, and `domain_loss.py` appends `#cu` to the ckpt name so a doc_cu row does not collide with a cu_none one (`eval/domain_loss.py:770-775`, comment). | 0 of 60 rows have `#cu` in the ckpt name. `runs/b0_final_blocks.jsonl` has 2 rows that DO (`ckpt_b0_sd_equalcompute.pt#cu`, `ckpt_b0_n8_fixed.pt#cu`, both `path: doc_cu`). | The collision guard exists only on the path that writes the blocks ledger. `score_matrix.py` neither labels the path nor suffixes the name, so when a doc_cu re-score is written there it will fold onto the cu_none row of the same checkpoint and silently replace it — the exact outcome the comment at `domain_loss.py:770` was written to prevent. Nothing wrong yet: no doc_cu row has been written to score_matrix. |
 | E6 | S3 | 14 `score_matrix` rows appear to carry a `path` field. | The 14 are `"path": "/work/aupai/data/eval/preds_l1_d3.jsonl"` on rows 16-19 and 24 — a predictions-file location, not a forward path. | Cosmetic, but it is why a grep for `path` in this ledger reads as partially labelled when the cu label is absent everywhere. Noted so the next reader does not repeat my first mistake. |
+| E7 | S2 | The holdout guard runs per row in both corpus builders and is fail-closed and fingerprinted, so a domain that went through it is protected. | `datagen/build_corpus.py:28` imports `is_holdout`; it is called at `:86`, `:89`, `:93`, `:448`, `:717`. All 9 domains of `data/mix_200m_4b.json` are reachable through its generic `--domain` path (`:1585`). And `runs/e1_28/e1_28_per_domain_alone.json` gives every one of those 9 domains a non-zero alone-hit count: chatml 1515, chat_qa 1515, math_owm_stage2 542, cot 334, code_py_starcoder 239, textbook_30b 185, zh_web 81, code_py_rp1t 57, en_c4_stage2 22. | The guard ran, on every domain, and excluded none of these items — because the population it was checking against did not contain `data/sft/control_sft_text_heldout.jsonl`. **This is the empirical form of E4 and it is stronger than the date argument:** 9 of 9 domains carry hits, so no domain in the 200M mix was built against a population containing the held-out file. The per-domain spread also shows the guard is not uniformly blind — it is blind to one file, and the hit count tracks how much of that file's material each domain contains (chatml and chat_qa at 1515 each are two renders of one source). |
+| E8 | S3 | `datagen/build_cot.py` and `datagen/build_code_tests_v1.py` are corpus builders. | `grep -c 'is_holdout\|holdout'` returns 0 for both. | Neither consults the guard at all. This is NOT a finding about the `cot` domain in the current mix — E7 shows `cot`'s 334 hits, so the domain that exists was built through the guarded `build_corpus.py` path. It is a finding about the builders: two scripts that can write corpus material have no holdout check, so whether a future domain is guarded depends on which script someone reaches for. No consequence found in current data. |
 
 ## 5. Blind spots of this audit
 
 - **The 46-scorer prompt-format sweep is not in this report.** Whether any eval hands ChatML
   to a base checkpoint is therefore UNANSWERED here, and it is one of the three questions the
-  area was assigned. It is running; a follow-up section will carry it.
+  area was assigned. Running count: **2 of 46 scorers read** — `eval/domain_loss.py` and
+  `eval/score_matrix.py`, both line by line. `block_paired.py` and `humaneval_bpb.py` I have
+  only seen NAMED in fact sources and roadmap rows, which is not reading them.
+  The sweep is delegated and will be appended with the count updated; 6e ruled 2026-09-04 that
+  it stays in this area's report rather than moving.
 - I read no scorer's behaviour, only its source. A file that passes `doc_cu` in the line I
   quoted may still be reached through a wrapper that does not.
 - E3 says the N2 verdict's instrument was defective by 7.6× its own size. It does NOT say the
