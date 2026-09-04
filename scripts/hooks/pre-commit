@@ -542,6 +542,12 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # The gate_cards lane mutation sweep. Its --selftest resolves the six anchors it
+        # patches, which is the one thing that rots: an anchor that no longer matches makes the
+        # sweep SKIP that mutation and still print a count, so a refactor of gate_cards would
+        # silently reduce it to measuring nothing. The sweep itself runs two full selftests six
+        # times over and is too slow for a commit hook; the anchor check is instant.
+        "runs/audit_0904/mutate_gate_cards.py",
         # pod_sh_offset: the byte-offset gate behind POD_PUSH_ALLOW_RUNNING_SH. Its selftest
         # is pure arithmetic over fixture bytes and fixture ps/fdinfo text -- no pod, no card
         # -- so it runs here. Gated because the file's job is deciding whether overwriting a
