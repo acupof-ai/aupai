@@ -3848,6 +3848,119 @@ def check_coresident_cache_refusal(root):
     GUARDS = {"assert_caches_fresh", "guard", "val_seqs", "assert_not_co_resident"}
     bypass = []
     scanned = 0
+    # THE SECOND WAY INTO A CACHE, and the one this check was blind to when it landed
+    # (38af3d47). The rule's quantity is HOST BYTES OFF /data00, and _domain_seqs is only one
+    # door to them: a file can `torch.load("/data00/tokens_<domain>.pt")` by path and read the
+    # same 35 GB with neither guard in the stack. e1 walked into it the next day building
+    # eval/api_cloze.py, whose whole job is reading that cache -- a 35.1 GB mmap read that
+    # this check called green because the file never mentions _domain_seqs. Two more were
+    # already in the tree: scripts/replay_cursor.py (mmap) and scripts/measure_mix_startup.py,
+    # which does a FULL non-mmap torch.load of every cache in a mix, i.e. the 166 GB ppl.py
+    # shape the rule was written for.
+    #
+    # The population is a load whose path argument mentions a cache: the literal
+    # `tokens_<name>.pt` or `/data00`, or train's own _domain_cache_path/TOKEN_CACHE. Matched
+    # on the path EXPRESSION and one hop through a local name, because every real site builds
+    # the path first and loads it a few lines later. Loose in the safe direction: a false
+    # positive is one guard call to add, a false negative is a 35 GB read beside a live run.
+    PATH_MARK = re.compile(r"tokens_[a-z0-9_]*\.pt|tokens_\{|/data00|_domain_cache_path|TOKEN_CACHE")
+    path_bypass = []
+    path_readers = 0
+    for sub in ("eval", "scripts", "probes", "datagen", "algorithms"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".py") or fn == "cache_guard.py":
+                continue
+            p = os.path.join(d, fn)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+            except OSError:
+                continue
+            if "load" not in src or not PATH_MARK.search(src):
+                continue
+            try:
+                tree = _ast.parse(src)
+            except SyntaxError:
+                continue
+
+            def _cachey(node):
+                """Does this expression name a token cache?
+
+                A SUBTREE SCAN, not ast.get_source_segment. The first version called
+                get_source_segment per candidate node, which re-splits the whole file each
+                call: measured 125 s over 19 candidate files against 0.7 s here. A check that
+                costs two minutes gets run with --skip.
+
+                AN F-STRING IS REBUILT BEFORE MATCHING, which is the whole difference between
+                the two implementations and cost two of the four real findings when it was
+                missing. `f"tokens_{name}.pt"` parses to JoinedStr(["tokens_", FormattedValue,
+                ".pt"]) -- neither constant matches `tokens_<x>.pt` on its own, so the scan
+                read three of the four by-path readers as clean while get_source_segment,
+                seeing the raw text, caught them. Every real site builds its path this way, so
+                this branch is the common case rather than an edge one.
+                """
+                for n in _ast.walk(node):
+                    if isinstance(n, _ast.JoinedStr):
+                        lit = "".join(
+                            v.value if isinstance(v, _ast.Constant) and isinstance(v.value, str)
+                            else "{}" for v in n.values)
+                    elif isinstance(n, _ast.Constant):
+                        lit = n.value if isinstance(n.value, str) else ""
+                    elif isinstance(n, _ast.Name):
+                        lit = n.id
+                    elif isinstance(n, _ast.Attribute):
+                        lit = n.attr
+                    else:
+                        continue
+                    if PATH_MARK.search(lit):
+                        return True
+                return False
+
+            names, calls, redirects = set(), set(), False
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Assign):
+                    if _cachey(node.value):
+                        for t in node.targets:
+                            if isinstance(t, _ast.Name):
+                                names.add(t.id)
+                            elif isinstance(t, _ast.Attribute):
+                                names.add(t.attr)
+                    for t in node.targets:
+                        # A file that points TOKEN_CACHE at its own tree reads its own
+                        # fixture, same exclusion the _domain_seqs half already makes.
+                        if isinstance(t, _ast.Attribute) and t.attr in ("TOKEN_CACHE", "DATA"):
+                            redirects = True
+                if isinstance(node, _ast.Call):
+                    f = node.func
+                    nm = f.attr if isinstance(f, _ast.Attribute) else (
+                        f.id if isinstance(f, _ast.Name) else None)
+                    if nm:
+                        calls.add(nm)
+                    if nm == "add_argument":
+                        dest = next((a.value[2:].replace("-", "_") for a in node.args
+                                     if isinstance(a, _ast.Constant)
+                                     and isinstance(a.value, str) and a.value.startswith("--")),
+                                    None)
+                        for kw in node.keywords:
+                            if kw.arg == "default" and dest and _cachey(kw.value):
+                                names.add(dest)
+            loads = []
+            for node in _ast.walk(tree):
+                if (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)
+                        and node.func.attr == "load" and node.args):
+                    a0 = node.args[0]
+                    if (_cachey(a0)
+                            or (isinstance(a0, _ast.Name) and a0.id in names)
+                            or (isinstance(a0, _ast.Attribute) and a0.attr in names)):
+                        loads.append(node.lineno)
+            if not loads or redirects:
+                continue
+            path_readers += 1
+            if not (calls & GUARDS):
+                path_bypass.append(f"{sub}/{fn}:{loads[0]}")
     for sub in ("eval", "scripts", "probes"):
         d = os.path.join(root, sub)
         if not os.path.isdir(d):
@@ -3905,9 +4018,18 @@ def check_coresident_cache_refusal(root):
             f"they read a token cache with no co-residency or freshness refusal: "
             f"{', '.join(bypass[:4])}. Call eval.domain_loss.val_seqs, or "
             f"cache_guard.guard(cfg, domains) before the read")
+    if path_bypass:
+        return FAIL, (
+            f"{len(path_bypass)} file(s) torch.load a token cache BY PATH with no co-residency "
+            f"refusal in the call stack, so they read tens of GB off /data00 beside a live "
+            f"training run: {', '.join(path_bypass[:4])}. Call "
+            f"cache_guard.assert_not_co_resident([domain, ...]) before the load. Reading by "
+            f"path skips train._domain_seqs, which is where the other half of this check "
+            f"looks -- the bytes are the same and so is the rule")
     return PASS, (f"assert_caches_fresh refuses co-resident reads before the freshness loop "
                   f"(statement {co_at} of {loop_at}); {scanned} real _domain_seqs caller(s) "
-                  f"reach it (files that stub it or redirect TOKEN_CACHE are not counted)")
+                  f"and {path_readers} by-path cache reader(s) reach a refusal (files that "
+                  f"stub it or redirect TOKEN_CACHE are not counted)")
 
 
 def _broken_coresident_call_removed():
@@ -3962,6 +4084,37 @@ def _broken_coresident_bypass():
             "def main(tok):\n"
             "    rows = train._domain_seqs('zh_web', tok, True, False)\n"
             "    return len(rows)\n"
+        )
+    return d
+
+
+def _broken_coresident_path_read():
+    """A NEW eval that torch.loads a token cache BY PATH, reaching no guard.
+
+    THE WORLD THE FIRST VERSION OF THIS CHECK HAD NO ANSWER FOR. Its population was
+    train._domain_seqs callers, and a file that builds `/data00/tokens_<domain>.pt` itself
+    calls nothing in that set -- so 35 GB of host IO beside a live run read as green. Not
+    hypothetical: e1 wrote exactly this file (eval/api_cloze.py) the day after landing the
+    check, and two more were already in the tree, one of them a FULL non-mmap read of every
+    cache in a mix. The fixture mirrors that shape, path built one line above the load,
+    because that is how every real site is written.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    with open(os.path.join(ed, "zz_path_read_probe.py"), "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env python3\n"
+            '"""A new eval that opens the token cache by path."""\n'
+            "import torch\n\n\n"
+            "def main(domain):\n"
+            "    cache = f'/data00/tokens_{domain}.pt'\n"
+            "    stream = torch.load(cache, map_location='cpu', mmap=True)\n"
+            "    return stream.numel()\n"
         )
     return d
 
@@ -10810,6 +10963,31 @@ def _broken_no_ghost_close():
     return d
 
 
+def _arm_id(name):
+    """'m1' from b0_mem_m1, m1_probe, mem_m1_resume; None from anything that is not an arm.
+
+    Delegates to memory_diag._arm_key, which the launch monitor also calls. Two copies of
+    this predicate is how the run side and the monitor side end up disagreeing about which
+    names are arms, and a disagreement here is silent: both sides return a plausible answer.
+    Falls back to the local pattern only if memory_diag is unimportable, which happens in a
+    partial selftest world.
+    """
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import memory_diag as _md
+        return _md._arm_key(name)
+    except Exception:
+        m = _ARM_RE.search(str(name or ""))
+        if not m:
+            return None
+        return re.search(r"m[123]", m.group(0), re.I).group(0).lower()
+
+
+# Anchored on an arm SUFFIX or an explicit mem_ marker, never on a leading m1: see the note
+# in check_memory_diag_fresh. Module-level so the check and _arm_id share one definition.
+_ARM_RE = re.compile(r"(^|_)mem_m[123]([_-]|$)|(^|_)m[123]([_-]|$)", re.I)
+
+
 def check_memory_diag_fresh(root):
     """A running memory arm must be writing runs/memory_diag.jsonl, keyed by arm.
 
@@ -10857,8 +11035,16 @@ def check_memory_diag_fresh(root):
     # A memory arm is named by the charter's own arm ids. Matched on the name rather than on
     # the command line: the flags are b0's to choose inside the charter's bounds, so a
     # --memory_values match would rot the moment they pick a different flag name.
+    #
+    # SEARCHED, NOT ANCHORED AT THE START, and this is the whole bug the first version had.
+    # `^m[123]` matched the m1_probe fixture and NONE of b0_mem_m1/m2/m3, the names the arms
+    # actually launch under (4c, 2026-09-05) -- so the check would have SKIPped "no memory arm
+    # is running" through all three live arms and never fired once. A gate that cannot see its
+    # subject is worse than no gate: it prints a reason that reads like an answer. Verified on
+    # the three real names plus six near misses that must NOT match: p200m_control,
+    # b0_headmix_armA, b0_memoir_m1x, ckpt_m1x, sm1_run, b0_mem_m4.
     arms = [r for r in rows
-            if _exp_open(r) and re.match(r"^m[123]([_-]|$)", str(r.get("name") or ""), re.I)]
+            if _exp_open(r) and _ARM_RE.search(str(r.get("name") or ""))]
     if not arms:
         return SKIP, "no memory arm (m1/m2/m3) is running"
 
@@ -10878,10 +11064,14 @@ def check_memory_diag_fresh(root):
     stale, silent, tripped, fresh = [], [], [], []
     for r in named:
         nm = str(r.get("name"))
-        # The arm id, not the full run name: a launch is named m1_0905 and its rows carry
-        # the arm. Matched case-insensitively on the prefix for the same reason.
-        key = next((k for k in latest if str(nm).lower().startswith(str(k).lower())
-                    or str(k).lower().startswith(str(nm).lower())), None)
+        # JOIN ON THE ARM ID, extracted from both sides, not on a prefix of either. The run
+        # is named b0_mem_m1 and the diag rows may be named either that or plain m1 (b0 owns
+        # the call), and neither string is a prefix of the other -- the prefix join this
+        # replaced returned None for exactly the live case and would have reported every
+        # healthy arm as "no diagnostics row at all". One canonical key, so the two sides
+        # cannot disagree about spelling.
+        want = _arm_id(nm)
+        key = next((k for k in latest if _arm_id(str(k)) == want), None)
         if key is None:
             silent.append(nm)
             continue
@@ -10964,6 +11154,13 @@ def _broken_memory_diag_fresh():
 
     The tripped rule is chosen over the simpler "no rows at all" world on purpose: that
     one returns WARN, and a broken world must produce FAIL.
+
+    NAMED b0_mem_m1, the name the arms actually launch under (4c, 2026-09-05), not a
+    convenient fixture name. The first version of this check anchored its matcher at the
+    start of the name and so matched an `m1_probe` fixture while matching NONE of
+    b0_mem_m1/m2/m3 -- green selftest, and a SKIP reading "no memory arm is running"
+    through all three live arms. A world that uses a name the real system never produces
+    verifies the check against itself.
     """
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -10975,13 +11172,15 @@ def _broken_memory_diag_fresh():
     rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
     template = dict(rows[-1])
     with open(dst, "a", encoding="utf-8") as f:
-        f.write(json.dumps(dict(template, name="m1_probe", status="running",
+        f.write(json.dumps(dict(template, name="b0_mem_m1", status="running",
                                 started="2026-09-05 03:00", result="", ended=""),
                            ensure_ascii=False) + "\n")
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import memory_diag as md
-    # Step 500 at 41K tok/s/gpu: past readout 5's step-30 gate and well under its 70K floor.
-    md.log_diag("m1_probe", 500, 0.83, 3.1, 0.30, 41000.0,
+    # Rows named by the bare arm id while the run is named b0_mem_m1: the live shape, where
+    # neither string is a prefix of the other. Step 500 at 41K tok/s/gpu is past readout 5's
+    # step-30 gate and well under its 70K floor.
+    md.log_diag("m1", 500, 0.83, 3.1, 0.30, 41000.0,
                 path=os.path.join(d, "runs", "memory_diag.jsonl"))
     return d
 
@@ -12618,6 +12817,88 @@ def _selftest_milestone_selection():
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
 
 
+def _selftest_monitor_stop_rules():
+    """The monitor announces a tripped stop rule once, writes one row, and never kills.
+
+    Runs the REAL generated monitor source, for the reason the suppression selftest gives:
+    the code under test is a string built by an f-string, so a reimplementation would test
+    different code. Two defects here were only visible this way -- the JSON dict braces in
+    the stop-rule block were read as format specifiers and the template did not render at
+    all, and the arm flag has to be resolved at build time because the monitor has no
+    import path of its own.
+
+    Five worlds, in one pass each: the loop is cut to a single iteration and the liveness
+    branch bypassed, so the stop-rule block at the bottom is reached without waiting 60
+    seconds or signalling anything.
+    """
+    import re
+    import shutil
+    import subprocess as sp
+    import tempfile
+
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import memory_diag as md
+
+    template = re.search(r"monitor_code = f'''(.*?)'''",
+                         inspect.getsource(_arm_monitor), re.S).group(1)
+
+    def one_pass(name, diag_rows):
+        d = tempfile.mkdtemp(prefix="monstop_")
+        try:
+            scripts, runs = os.path.join(d, "scripts"), os.path.join(d, "runs")
+            os.makedirs(scripts)
+            os.makedirs(runs)
+            os.makedirs(os.path.join(d, "data"))
+            for f in ("exp.py", "card_claim.py", "memory_diag.py"):
+                shutil.copy(os.path.join(ROOT, "scripts", f), os.path.join(scripts, f))
+            shutil.copy(os.path.join(ROOT, "data", "ledger_schema.json"),
+                        os.path.join(d, "data", "ledger_schema.json"))
+            log = os.path.join(runs, f"{name}.log")
+            with open(log, "w") as f:
+                f.write("step 500\n")
+            for kw in diag_rows:
+                md.log_diag(path=os.path.join(runs, "memory_diag.jsonl"), **kw)
+            with open(os.path.join(runs, "experiments.jsonl"), "w") as f:
+                f.write(json.dumps({"name": name, "started": "2026-09-05 03:00",
+                                    "status": "running"}) + "\n")
+            code = eval("f'''" + template + "'''", {}, {  # noqa: S307 -- the real template
+                "pid": 1, "log_path": log, "name": name, "os": os,
+                "output_repr": "None", "rc_repr": repr(os.path.join(runs, f"{name}.rc")),
+                "arm_repr": repr(bool(_arm_id(name))), "HERE": scripts})
+            code = code.replace("while True:\n    time.sleep(60)", "for _ONCE in [0]:\n    pass")
+            code = code.replace("    if settled():", "    if False:")
+            code = code.replace("os.kill(pid, 0)", "None")
+            code = code.replace("    if not alive:", "    if False:")
+            r = sp.run([sys.executable, "-c", code], capture_output=True, text=True,
+                       cwd=d, timeout=180)
+            sp_path = os.path.join(runs, "memory_stop.jsonl")
+            stops = [json.loads(x) for x in open(sp_path)] if os.path.exists(sp_path) else []
+            return open(log).read(), stops, r.returncode, r.stderr[-300:]
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+
+    OK = dict(name="m1", step=500, pool_touched_frac=0.83, topk_entropy=3.1,
+              key_gini=0.30, tok_s_gpu=81000.0)
+    for label, name, rows, want in (
+        ("healthy", "b0_mem_m1", [OK], False),
+        ("readout 5", "b0_mem_m1", [dict(OK, tok_s_gpu=41000.0)], True),
+        ("readout 4", "b0_mem_m1", [dict(name="m1", step=1000, pool_touched_frac=0.05,
+                                         topk_entropy=0.4, key_gini=0.97,
+                                         tok_s_gpu=81000.0)], True),
+        ("no rows yet", "b0_mem_m1", [], False),
+        # A non-arm run must not even reach the check: `arm` is False at build time.
+        ("control run", "p200m_control", [dict(OK, tok_s_gpu=41000.0)], False),
+    ):
+        text, stops, rc, err = one_pass(name, rows)
+        assert rc == 0, f"{label}: the monitor itself died rc={rc}: {err}"
+        got = "STOP RULE TRIPPED" in text
+        assert got == want, f"{label}: warned={got}, want {want}"
+        assert len(stops) == (1 if want else 0), f"{label}: {len(stops)} stop row(s)"
+        if want:
+            assert "not killed" in stops[0]["action"], stops[0]
+    print("  monitor: stop rules announced once, one row, never a kill (5 worlds)")
+
+
 def _selftest_monitor_suppression():
     """The monitor writes no row once a run has a terminal one.
 
@@ -14115,6 +14396,29 @@ def _demo(only=None):
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
 
+    # coresident_cache_refusal has THREE halves and CHECKS carries one world per row, so the
+    # two population halves were written and never run -- the §71 shape, in the commit that
+    # added the check (e1, 38af3d47, caught 2026-09-05 while using it). The registered world
+    # breaks the CHOKEPOINT (call deleted); these break the POPULATIONS, which is where the
+    # check's real coverage lives:
+    #   bypass    a new eval calling train._domain_seqs itself
+    #   path_read a new eval building /data00/tokens_<domain>.pt and torch.loading it -- the
+    #             world the first version of the check could not fail, and the one e1 then
+    #             walked into by writing eval/api_cloze.py
+    # Each is measured here rather than asserted to work: a world nobody runs is
+    # indistinguishable from one that cannot fail.
+    for _w, _label in ((_broken_coresident_bypass, "a new eval calling _domain_seqs"),
+                       (_broken_coresident_path_read, "a new eval loading the cache by path")):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_coresident_cache_refusal(_d)
+                if _st != FAIL:
+                    untested.append(f"coresident_cache_refusal reported {_st} on {_label} "
+                                    f"({_why[:70]})")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
+
     # shapes_table_covers_doc has two halves its registered world does not exercise: an
     # incident that reaches the doc but not the table, and a heading number written twice.
     # _broken_shapes_table_doc_grew existed but nothing ran it -- a broken world nobody
@@ -14584,6 +14888,7 @@ def _demo(only=None):
     _selftest_killpg_reaps_children()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
+    _selftest_monitor_stop_rules()
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
@@ -14840,6 +15145,12 @@ _UNFROZEN_ALLOWLIST = {
     # declare settled a number nobody has measured. The architecture keys that DO decide what the
     # model is -- mem_values, mem_top_k, mem_layers, mem_sparse -- are frozen.
     "mem_lr", "mem_wd",
+    # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
+    # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
+    # it would refuse the second arm's launch, which is the opposite of the intent. It is also the
+    # one field here whose value is checked elsewhere: train.py refuses an empty mem_arm whenever
+    # mem_values is set, so it cannot be quietly omitted the way an unfrozen key usually can.
+    "mem_arm",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
@@ -15532,6 +15843,9 @@ def _arm_monitor(name, pid, log_path, output_path=None):
     score_matrix_present read that stale fail's predecessor as an unscored ok."""
     output_repr = repr(output_path) if output_path else "None"
     rc_repr = repr(os.path.join(ROOT, "runs", f"{name}.rc"))
+    # Resolved at launch, not in the monitor: _arm_id reads memory_diag, and the monitor
+    # runs as a bare `python -c` string with no import path of its own.
+    arm_repr = repr(bool(_arm_id(name)))
     monitor_code = f'''
 import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
@@ -15540,6 +15854,11 @@ rc_file = {rc_repr}
 exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
 silent_limit = 600
 last_size, last_grow = 0, time.time()
+# Set once at startup: whether this run is a memory arm, and whether its stop rule has
+# already been announced. `arm` is computed HERE rather than tested each pass so a
+# non-arm run costs nothing per minute.
+arm = {arm_repr}
+warned = False
 
 def settled():
     """True once this run has a terminal row: someone closed it, or harness kill did."""
@@ -15652,6 +15971,52 @@ while True:
         except OSError:
             pass
         last_grow = time.time()  # re-arm: one note per silent window, not one per minute
+    # THE PRE-REGISTERED STOP RULES (memory_layers_0905 readouts 4 and 5). Only for a
+    # memory arm; every other run skips this block entirely.
+    #
+    # The thresholds are NOT here. memory_diag.check_arm owns them and this asks it, exit
+    # 1 meaning a rule tripped, 2 meaning there is no row yet -- which is the normal state
+    # before step 100 and must never read as a stop. A monitor carrying its own copy of
+    # 70000 and 0.20 is a second definition of the charter that drifts silently, because
+    # both numbers look right in isolation.
+    #
+    # IT DOES NOT KILL. The charter gives the stop decision to the controller; a monitor
+    # that killed a run would be making that call from a background process at 60-second
+    # resolution, on one row, with no way to weigh a transient. It warns into the run's own
+    # log -- the file the operator is already tailing -- and writes one line naming the rule.
+    # One warning per rule per run, not one per minute: a rule that has tripped stays
+    # tripped, and re-announcing it every minute buries the launch it is about.
+    if arm:
+        rc = subprocess.run(
+            [sys.executable, os.path.join(os.path.dirname(exp_py), "memory_diag.py"),
+             "--check-arm", name],
+            capture_output=True, text=True).returncode
+        if rc == 1 and not warned:
+            warned = True
+            out = subprocess.run(
+                [sys.executable, os.path.join(os.path.dirname(exp_py), "memory_diag.py"),
+                 "--check-arm", name], capture_output=True, text=True).stdout.strip()
+            try:
+                with open(log, "a", encoding="utf-8") as lf:
+                    lf.write(
+                        f"\\n[monitor {{time.strftime('%H:%M:%S', time.gmtime())}}] "
+                        f"PRE-REGISTERED STOP RULE TRIPPED for {{name}}:\\n{{out}}\\n"
+                        f"The charter stops and reports this arm; the monitor does not kill "
+                        f"it. The stop decision is the controller's. Row left open.\\n"
+                    )
+            except OSError:
+                pass
+            try:
+                with open(os.path.join(os.path.dirname(exp_py), "..", "runs",
+                                       "memory_stop.jsonl"), "a", encoding="utf-8") as sf:
+                    sf.write(json.dumps({{
+                        "name": name,
+                        "ts": time.strftime("%Y-%m-%d %H:%M:%S", time.gmtime()),
+                        "rule": out,
+                        "action": "reported, not killed: the stop decision is the controller's",
+                    }}, ensure_ascii=False) + "\\n")
+            except OSError:
+                pass
 '''
     monitor_proc = subprocess.Popen(
         [sys.executable, "-c", monitor_code],
