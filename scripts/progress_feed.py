@@ -273,7 +273,7 @@ def friction_section():
 MEM_STATUS = {
     "model": "实现完",
     "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "在跑：step 10/3815，loss 7.361，26K tok/s（预热中，停跑线看 step 30）",
+    "m1": "step 83 被 SIGTERM 杀，interrupt ckpt 已存，原因在查",
     "m2": "未跑",
     "scored": "未打分",
 }
