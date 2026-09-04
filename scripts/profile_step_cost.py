@@ -28,6 +28,14 @@ WHAT EACH NUMBER IS:
   loader_wait   index_select into pinned memory plus the H2D copy, bracketed by
                 cuda.synchronize -- the copy is async and a wall-clock read there returns
                 launch cost, not transfer.
+  forward       model + FLCE, summed over the step's accum micro-batches. CUDA events, so no
+                synchronize is added and step_total measures the same step it did before.
+  backward      loss.backward(), summed the same way. Under DDP this INCLUDES the overlapped
+                gradient reduction -- it is what backward costs, not what compute costs, and
+                nccl_floor below is the separate bound on the reduction.
+  opt_step      clip_grad_norm_ + every optimizer's step() and zero_grad().
+                forward + backward + opt_step is less than step_total by the loader wait and
+                the host-side gaps between regions; the residual is not attributed.
   save          torch.save of this model's real state dict, at the run's --save_every cadence.
   val           train.validate at the run's own Cfg.val_batches, on the same shapes.
   nccl_floor    an all_reduce of the whole gradient set, timed alone. A FLOOR on the exposed
@@ -68,6 +76,33 @@ def _stats(xs):
     ms = [x * 1000 for x in xs]
     return {"median_ms": round(statistics.median(ms), 2), "min_ms": round(min(ms), 2),
             "max_ms": round(max(ms), 2), "n": len(ms)}
+
+
+def _mark(marks):
+    """Record a CUDA event into `marks`, or nothing at all when marks is None (a warmup
+    step). None rather than a flag so the call sites carry no condition. torch is imported
+    here, as everywhere in this file above main(): --selftest runs on a machine without it."""
+    if marks is None:
+        return
+    import torch  # noqa: PLC0415
+
+    e = torch.cuda.Event(enable_timing=True)
+    e.record()
+    marks.append(e)
+
+
+def _regions(marks, n_mb):
+    """(forward, backward, opt_step) in SECONDS from one step's marks: 3 per micro-batch
+    (enter fwd, enter bwd, leave bwd) then 1 after the optimizer. Forward and backward are
+    summed over micro-batches -- one step is accum of each, and reporting a single
+    micro-batch's forward against a whole step's total understates it by exactly accum,
+    which is the same error that would have decided the b32a1 vs b16a2 A/B backwards.
+    A function, not inline arithmetic, so the selftest reads THIS and not a copy of it."""
+    assert len(marks) == 3 * n_mb + 1, f"{len(marks)} marks for {n_mb} micro-batches"
+    f = sum(marks[3 * i].elapsed_time(marks[3 * i + 1]) for i in range(n_mb))
+    b = sum(marks[3 * i + 1].elapsed_time(marks[3 * i + 2]) for i in range(n_mb))
+    o = marks[3 * n_mb - 1].elapsed_time(marks[3 * n_mb])
+    return f / 1000.0, b / 1000.0, o / 1000.0
 
 
 def fmt_row(name, st, world, total=None):
@@ -418,7 +453,34 @@ def _selftest():
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} FLCE is still imported into train's namespace")
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1
+
+    # _regions on a fake clock. accum=2 with distinguishable durations, so summing over
+    # micro-batches is separable from taking one of them: forward is 1+3=4 ms and NOT 1, and
+    # opt_step reads from the LAST backward's end mark rather than the first's.
+    class _E:
+        def __init__(self, t):
+            self.t = t
+
+        def elapsed_time(self, o):
+            return o.t - self.t
+    # fwd 1, bwd 10 | fwd 3, bwd 30 | opt 7  -> marks at 0,1,11, 14,17,47, 54
+    m = [_E(x) for x in (0, 1, 11, 14, 17, 47, 54)]
+    f, b, o = _regions(m, 2)
+    ok = (round(f, 6), round(b, 6), round(o, 6)) == (0.004, 0.040, 0.007)
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} regions sum over micro-batches "
+          f"(fwd {f * 1000:.0f} bwd {b * 1000:.0f} opt {o * 1000:.0f} ms, want 4/40/7)")
+
+    try:
+        _regions(m, 1)
+        ok = False
+    except AssertionError:
+        ok = True
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a mark count that disagrees with accum raises "
+          "rather than reporting a shifted region")
+
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -579,6 +641,7 @@ def main():
     assert eos is not None, "the tokenizer has no <eos>; the document mask would be wrong"
 
     loader, steps, nccl = [], [], []
+    fwds, bwds, opts = [], [], []
     losses = []
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
@@ -626,6 +689,12 @@ def main():
         torch.cuda.synchronize()
         t_step = time.perf_counter()
         t_fwd = None
+        # CUDA events, not perf_counter: a wall-clock read between forward and backward returns
+        # launch cost, and inserting a synchronize to fix that changes the step being measured.
+        # Events are recorded in-stream and read after the step's existing synchronize, so the
+        # regions cost nothing that step_total does not already pay.
+        timed = st >= a.warmup
+        marks = [] if timed else None
         step_loss = torch.zeros((), device=dev)
         # ACCUM micro-batches per optimizer step, as train.py:2212 does: its loop strides by
         # Cfg.batch and steps the optimizer every Cfg.accum-th iteration, so one "step" is
@@ -645,6 +714,7 @@ def main():
                 t_fwd = time.perf_counter()
 
             cu = train.doc_cu_seqlens(xb, eos) if train.Cfg.doc_mask else None
+            _mark(marks)
             with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=amp):
                 hidden, _ = model(xb, yb, cu, None)
             Bt, Tt, D = hidden.shape
@@ -652,6 +722,7 @@ def main():
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             loss = loss / train.Cfg.accum
             step_loss += loss.detach()
+            _mark(marks)
             # train.py:2246 -- no_sync on every micro-batch but the last, or DDP all-reduces
             # accum times per step and the NCCL cost of the b16a2 arm doubles for no reason.
             if ddp and train.Cfg.accum > 1 and micro + 1 != train.Cfg.accum:
@@ -659,11 +730,13 @@ def main():
                     loss.backward()
             else:
                 loss.backward()
+            _mark(marks)
         torch.nn.utils.clip_grad_norm_(raw.parameters(), train.Cfg.clip)
         for opt in optimizers:
             opt.step()
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
+        _mark(marks)
         torch.cuda.synchronize()
         # EVERY step's loss, warmup included. The A/B's correctness condition is that the two
         # arms compute the same thing, and the arms differ from step 0 -- comparing only the
@@ -672,6 +745,11 @@ def main():
         if st >= a.warmup:
             loader.append(t_fwd - t_step)
             steps.append(time.perf_counter() - t_step)
+            n_mb = train.Cfg.accum
+            f, b, o = _regions(marks, n_mb)
+            fwds.append(f)
+            bwds.append(b)
+            opts.append(o)
 
         # NOT under --peak-only: this allocates n_par floats (1.75 GB at 438M) inside the
         # window whose peak is the answer, so the probe would measure itself.
@@ -727,6 +805,16 @@ def main():
                   f"--steps {a.trace_steps}", flush=True)
 
     if a.peak_only:
+        # The regions print HERE too, not only in the full report below: --peak-only is the
+        # mode the memory arms run in, and a peak without the forward/backward split cannot
+        # say whether a slow arm is the lookup or the world. Same numbers, printed earlier.
+        if is_main:
+            tot = _stats(steps)
+            tot_ms = tot["median_ms"] if tot else None
+            for k, v in (("step_total", tot), ("loader_wait", _stats(loader)),
+                         ("forward", _stats(fwds)), ("backward", _stats(bwds)),
+                         ("opt_step", _stats(opts))):
+                print("  " + fmt_row(k, v, world, tot_ms), flush=True)
         if ddp:
             torch.distributed.destroy_process_group()
         return 0
@@ -770,6 +858,7 @@ def main():
            "peak_gib": round(torch.cuda.max_memory_allocated() / 2**30, 2),
            "loss_per_step": losses,
            "step_total": med, "loader_wait": _stats(loader),
+           "forward": _stats(fwds), "backward": _stats(bwds), "opt_step": _stats(opts),
            "nccl_floor": _stats(nccl) if ddp else None,
            "save": _stats(saves) if is_main else None, "val": _stats(vals)}
     if is_main:
@@ -777,7 +866,8 @@ def main():
         print(f"\n{rec['params_m']}M host-side per-step cost  (mix {a.mix}, world {world}, "
               f"batch {B} x accum {train.Cfg.accum} x seq {SEQ}, "
               f"fp8={fp8} grad_ckpt={a.grad_ckpt} compile={rec['compile']})")
-        for k in ("step_total", "loader_wait", "nccl_floor", "save", "val"):
+        for k in ("step_total", "loader_wait", "forward", "backward", "opt_step",
+                  "nccl_floor", "save", "val"):
             print("  " + fmt_row(k, rec[k], world, tot))
         print(f"  {'tok/s/gpu':16s} {rec['tok_s_per_gpu']:,}   "
               f"({tok_step:,} tok/step/gpu over the median step)")
