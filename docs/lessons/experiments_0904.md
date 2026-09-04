@@ -27,7 +27,7 @@ Resolution: one more leg per arm at a different seed (task e1-36, card job).
 
 What this cannot say:
 - Whether the sign holds on any other instrument. Only domain_loss was re-scored; ppl and the four other cu-blind scorers were plumbed and none re-run.
-- Whether a reseeded pair reproduces the sign. n=1 seed per arm; `ds.seed_variance_0p2b` is 0.24 nat at 0.2B, 260× the doc_cu delta, so the SE is over blocks for this pair and says nothing about reseeding.
+- Whether a reseeded pair reproduces the sign. n=1 seed per arm; `ds.seed_variance_0p2b` is 0.0516 nat at 0.2B, ~56× the doc_cu delta, so the SE is over blocks for this pair and says nothing about reseeding.
 
 ## N7: middle-layer loop
 
@@ -67,7 +67,7 @@ Equal compute (third arm: unlooped, 4824 steps = 1.2646B tokens, 26% more, same 
 Three rulers, one sign: the equal-compute arm beats the looped arm. The loop captures about a third of what the plain token spend captures (equalcompute − unlooped = −0.066 nat; the loop bought −0.022 of it for the same FLOPs).
 
 What this cannot say:
-- Whether a reseeded pair reproduces the sign. n=1 seed; `ds.seed_variance_0p2b` is 0.24 nat, 10× the delta.
+- Whether a reseeded pair reproduces the sign. n=1 seed; `ds.seed_variance_0p2b` is 0.0516 nat, ~2.3× the delta.
 - Whether the loop wins at larger scale. 122M, 1B tokens; SMELT's from-scratch claim has its own 1e20 interval reaching 1%, and this does not confirm or refute it.
 - Whether the loop wins under a latency or memory constraint. The comparison is equal FLOP by the 6N accounting, not equal wall clock (0.962×) or memory (looped peaked 47.78 GiB vs 37.02).
 
@@ -102,7 +102,9 @@ Design (`runs/prereg.jsonl` b0_head_hybrid_3to1, registered 2026-09-04T08:29Z, a
 - Arm B: head_mixed=3 — both mixers in every block on a 3:1 KDA:MLA head split (KDA h=6 inner=768, MLA h=2 inner=256, latent 256). Both read the full residual; outputs summed (o(concat(a,b)) == o1(a)+o2(b), verified max|diff| 1.43e-06).
 - Question: does putting attention in every layer at 1/4 width beat concentrating it in every fourth layer at full width, at equal depth and near-equal parameters.
 
-Parameter counts (recomputed on 2bc3fe6f): Arm A 206,128,200; Arm B 208,552,008; +2,423,808 = **+1.18%** of the model, +4.10% of mixer parameters. An earlier draft said −1.91%: computed for a layout where each mixer read only its own slice, and does not survive the change to full-residual projections. The sign flipped.
+Latent asymmetry (read from the running checkpoints' tensor shapes, 2026-09-04): kv_down is 1024→256 in both arms, but kv_up differs — Arm A (2048, 256) reconstructs k|v at the full residual width, Arm B (512, 256) at the MLA half's 256-wide inner width. Both cache 256 numbers per token per layer, but Arm B's latent is sized for a 1024-wide attention while running a 256-wide one: under-compressed relative to what it feeds (2:1 on the up side vs Arm A's 8:1). This is an asymmetry between the arms, not an equivalence; it spends parameters rather than starving the path, so it is the conservative direction.
+
+Parameter counts (recounted from the checkpoints on disk, 2026-09-04, no tied weights in either): delta +2,423,808 = **+1.01% of total** (242,171,976 vs 239,748,168, head untied 33.6M) and **+1.18% of non-embedding** (208,552,008 vs 206,128,200). The prereg's +1.18% is the non-embedding figure and does not name its population. An earlier draft said −1.91%: computed for a layout where each mixer read only its own slice, and does not survive the change to full-residual projections. The sign flipped.
 
 What +1.18% buys at 1B: unmeasured. A B advantage smaller than the unmeasured quantity is undecidable: it cannot be attributed to the topology rather than to the extra parameters.
 
