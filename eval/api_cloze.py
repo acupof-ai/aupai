@@ -317,6 +317,21 @@ def cluster_se(correct, groups):
     correctness grouped by source row. Free once per-item outcomes exist, which
     score_mc_items already returns.
 
+    THREE EFFECTIVE SIZES, THREE JOBS, AND ONE OF THEM HAS NO JOB (3b, 2026-09-05). Stated on
+    the fixture world (f) actually uses, so the comment and the assertions describe one shape:
+    on 3x10 + 7x1 (n=37, k=10) the numbers are mean 3.7000, with NO STATISTICAL ROLE AT ALL;
+    Kish 8.2973, the design effect's multiplier; ANOVA's m0 = (n - sum(s^2)/n)/(k-1) = 3.1892,
+    the ICC denominator's. The mean is written down precisely because it is the obvious
+    summary and the wrong one -- using it instead of Kish understates the SE by 1.097x at ICC
+    .05, 1.167x at .10 and 1.264x at .20, which at the prereg's decision boundary is the
+    difference between "beyond both SEs" firing and not.
+
+    m0 AND KISH ARE NOT INTERCHANGEABLE and this code used each correctly before anyone
+    checked that it did -- written from each definition without noticing they were a
+    swappable pair. Selftest world (f) is what closes that: its two sizes differ 2.60x with
+    the ICC at 0.3444, mid-range rather than near a boundary, so all four swap combinations
+    land far apart and none of them sits where a small change in the fixture would flip it.
+
     WHY BOTH ARE REPORTED RATHER THAN ONE CHOSEN (3b, 2026-09-05, correcting me): I argued
     the clustering cancels in a paired difference. That is true for the ARM pairing -- the
     same items scored by two models share their cluster effects -- and FALSE across regions,
@@ -971,6 +986,58 @@ def _selftest():
     _r3 = {"acc": 0.25, "se": 0.0, "se_cluster": float("nan")}
     _u3, _w3 = is_undefined_vs_chance(_r3, 0.25)
     assert _u3 and _w3 == 0.0, (_u3, _w3)
+
+    #    (f) THE TWO EFFECTIVE SIZES ARE NOT INTERCHANGEABLE, and no world above can tell.
+    #        cluster_se uses KISH's m_eff = sum(s^2)/n for the design effect and ANOVA's
+    #        m0 = (n - sum(s^2)/n)/(k-1) for the ICC denominator. Different quantities for
+    #        different jobs, and swapping either in for the other is a plausible-looking
+    #        error that every case (a)-(e) passes: (a) and (b) have EQUAL cluster sizes, where
+    #        m0 and Kish nearly coincide, and (c) has ICC exactly 1 or 0, where the deff is
+    #        pinned by m_eff alone. 3b found this correct by inspection (2026-09-05) and it
+    #        was correct by luck rather than by design -- I wrote each from its own definition
+    #        without noticing they were a swappable pair, so the code was right and my worlds
+    #        did not prove it.
+    #
+    #        THIS FIXTURE DISCRIMINATES all four combinations. Unequal sizes (three rows of 10
+    #        beside seven singletons) with 80% within-row agreement, so 0 < ICC < 1 and
+    #        Kish 8.297 against m0 3.189, a 2.6x gap. Computed, not asserted from memory:
+    #             ICC via m0,   deff via Kish   -> ICC 0.3444  deff 3.5135   (correct)
+    #             ICC via m0,   deff via m0     -> ICC 0.3444  deff 1.7541
+    #             ICC via Kish, deff via Kish   -> ICC 0.1680  deff 2.2261
+    #             ICC via Kish, deff via m0     -> ICC 0.1680  deff 1.3678
+    #        Four distinct answers, so either swap moves a number this asserts.
+    #
+    #        WHY THIS SHAPE AND NOT 20+80x1, which was the other candidate: NOT because that
+    #        one is degenerate -- I claimed it was and 3b's count refuted me. Of its 105
+    #        correct-count assignments, 57 give ICC 0, 8 give ICC 1, and 40 are strictly
+    #        interior across two broad bands (big-row counts 1-7 and 13-19), so it discriminates
+    #        over most of its range. My "degenerate" reading came from a sweep that printed only
+    #        the maximum-ICC case, i.e. one row of output taken for the distribution.
+    #        The real reason to prefer this fixture: its two sizes differ 2.60x with the ICC at
+    #        0.3444, MID-RANGE, so all four combinations land far apart and none sits where a
+    #        small change would flip it. 20+80x1's interior cases run up to ICC 0.80, close
+    #        enough to 1 that only one of the two swaps separates comfortably.
+    #        THE ALTERNATION IS LOAD-BEARING and not decoration: `round(s*0.8)` on even rows
+    #        and its complement on odd ones is what puts the ICC interior. 3b reproduced this
+    #        fixture from the commit and got ICC 0.0745 on a first attempt that arranged the
+    #        rows uniformly -- the arrangement cannot be inferred from the description.
+    _sizes = [10, 10, 10, 1, 1, 1, 1, 1, 1, 1]
+    _v, _g = [], []
+    for _r_i, _s in enumerate(_sizes):
+        _ones = round(_s * 0.8) if _r_i % 2 == 0 else _s - round(_s * 0.8)
+        _v += [1.0] * _ones + [0.0] * (_s - _ones)
+        _g += [_r_i] * _s
+    _sn, _sc, _icc, _me, _k = cluster_se(torch.tensor(_v), _g)
+    _n = sum(_sizes)
+    _kish = sum(s * s for s in _sizes) / _n
+    _m0 = (_n - _kish) / (_k - 1)
+    assert _k == len(_sizes) and _n == 37, (_k, _n)
+    assert abs(_kish - 8.297) < 0.001 and abs(_m0 - 3.189) < 0.001, (_kish, _m0)
+    assert abs(_me - _kish) < 1e-9, f"m_eff is not the Kish size: {_me} vs {_kish}"
+    assert 0.0 < _icc < 1.0, f"the fixture no longer discriminates (ICC {_icc})"
+    assert abs(_icc - 0.3444) < 0.001, _icc          # dies if the ICC uses Kish (0.1680)
+    _deff = (_sc / _sn) ** 2
+    assert abs(_deff - 3.5135) < 0.001, _deff        # dies if the deff uses m0 (1.7541)
 
     print("api_cloze selftest OK: the region pair on the control's real numbers "
           f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "

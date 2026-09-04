@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-66 incidents (34 infra, 32 model), ~4h each, 264h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+67 incidents (34 infra, 33 model), ~4h each, 268h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -116,24 +116,26 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (27 incidents)
+### R2-g Criterion answers an adjacent question (28 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
 - §110: a pre-registered branch collapsed two worlds into one; the criterion (branch taken) did not isolate the property (which world).
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 - §177: an arm's flags said it carried a 1.07B-parameter memory table; the criterion (the flags the run was given) did not measure the property (which of two code paths consumed them), and the arm would have trained as the control and reported a clean null.
+- §184: excluding a parameter from the fp32 master copy would have left it read every forward and never updated; the criterion (is the exclusion correct) did not measure the property (who clears its gradient), and the diagnostics would have shown a healthy pool.
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176, §177, §178).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176, §177, §178, §184).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
-32 incidents (12 infra, 20 model), ~2h each, 64h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
+33 incidents (12 infra, 21 model), ~2h each, 66h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
 
 - §1: a number was quoted without its source type; the source type (measured / extrapolated / inferred) determined whether the number could be compared to another.
 - §55: a number's resolution was finer than its basis; the extra digits were noise, not precision.
+- §185: a memory budget was costed at 6 bytes per parameter from a bf16 table nobody had set; the tensors are fp32 and the gradient was omitted, so the real figure is 12 and the 2048^2 arm OOMed after construction succeeded.
 
-Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172).
+Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185).
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
