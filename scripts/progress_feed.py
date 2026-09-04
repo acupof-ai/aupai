@@ -19,6 +19,7 @@ import calendar
 import html
 import json
 import os
+import subprocess
 import sys
 import time
 
@@ -414,6 +415,13 @@ def main():
             rows = [json.loads(ln) for ln in fh if ln.strip()]
     with open(PAGE, "w", encoding="utf-8") as fh:
         fh.write(render(rows[::-1][:KEEP]))
+    audit_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "runs", "audit_0904")
+    if os.path.isdir(audit_dir):
+        subprocess.run(
+            [sys.executable, os.path.join(audit_dir, "..", "..", "scripts", "audit_render.py"), "--compose"],
+            cwd=os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."),
+            capture_output=True,
+        )
     print(PAGE)
 
 
