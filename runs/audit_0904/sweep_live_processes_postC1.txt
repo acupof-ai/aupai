@@ -1,0 +1,54 @@
+# Live (non-zombie) container processes, /work/aupai pod, 2026-09-04
+#
+# POST-C1. tilerl's sweep (ff035f77, 13:35 +0800) killed 306 orphaned `tail -F
+# runs/events.jsonl`, 3 `until [ -f data/code_supply/measure_*.json ]` loops and 5 stale
+# `tail -f runs/*.log` roughly 90 minutes before this capture. Do NOT read the absence of
+# those shapes here as evidence about the classes -- that is the mistake
+# runs/audit_0904/sweep_population.md corrects at its top. The pre-sweep populations are
+# recorded in ff035f77 and PR-11, and those are the fixtures for the matchers.
+#
+# Also on this box at capture time: 3,975 ZOMBIES (PID 1 is `sleep infinity` and reaps
+# nothing). They are not listed here and are not sweepable -- a zombie has already exited.
+#
+# Command: ps -eo pid,ppid,etimes,stat,args | awk '$4 !~ /^Z/', args truncated to 200 cols.
+# ppid 0 is the crictl exec entry point in this namespace, not init.
+#
+    PID    PPID ELAPSED STAT COMMAND
+      1       0  415893 Ss   sleep infinity
+ 296249       1    6584 S    bash -lc cat > /work/grpo.sh <<"SH" set -x cd /work/tl-rl export PATH=/work/tl013/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr
+ 296251  296249    6584 Ss   bash /work/grpo.sh
+ 296253  296251    6584 S    timeout 43200 python3 -u -c import sys; from tilerl.cli import main; sys.argv=["tilerl","train","--recipe","grpo-gsm8k-27b","--data","/work/gsm8k_train.jsonl","--eval-gsm8
+ 296254  296253    6584 Rl   python3 -u -c import sys; from tilerl.cli import main; sys.argv=["tilerl","train","--recipe","grpo-gsm8k-27b","--data","/work/gsm8k_train.jsonl","--eval-gsm8k","/work/gsm8
+ 305377       1    6037 S    bash -lc sed "s/CUDA_VISIBLE_DEVICES=1/CUDA_VISIBLE_DEVICES=3/; s/grpo-gsm8k-27b/opd-gsm8k-27b/" /work/grpo.sh > /work/opd.sh grep -nE "CUDA_VISIBLE|recipe" /work/opd.sh; 
+ 305379  305377    6037 Ss   bash /work/opd.sh
+ 305381  305379    6037 S    timeout 43200 python3 -u -c import sys; from tilerl.cli import main; sys.argv=["tilerl","train","--recipe","opd-gsm8k-27b","--data","/work/gsm8k_train.jsonl","--eval-gsm8k
+ 305382  305381    6037 Rl   python3 -u -c import sys; from tilerl.cli import main; sys.argv=["tilerl","train","--recipe","opd-gsm8k-27b","--data","/work/gsm8k_train.jsonl","--eval-gsm8k","/work/gsm8k
+ 363717       0      37 Ss   bash -lc cd /work/aupai && CUDA_VISIBLE_DEVICES=5 timeout 400 python3 runs/audit_0904/b0_headmix_bitwise_gate.py --record --ckpt ckpt_b0_sd_unlooped.pt 2>&1 | tail -6
+ 363728  363717      37 S    timeout 400 python3 runs/audit_0904/b0_headmix_bitwise_gate.py --record --ckpt ckpt_b0_sd_unlooped.pt
+ 363729  363717      37 S    tail -6
+ 363730  363728      37 Rl   python3 runs/audit_0904/b0_headmix_bitwise_gate.py --record --ckpt ckpt_b0_sd_unlooped.pt
+ 364090 3876880       9 S    sleep 10
+ 364213 3874083       2 S    sleep 5
+ 364221       0       0 Ss   bash -lc ps -eo pid,ppid,etimes,stat,args 2>/dev/null | awk 'NR==1 || $4 !~ /^Z/' | cut -c1-200
+ 364232  364221       0 R    ps -eo pid,ppid,etimes,stat,args
+ 364233  364221       0 S    awk NR==1 || $4 !~ /^Z/
+ 364234  364221       0 S    cut -c1-200
+3588730       0   82807 Ss   tail -f /work/wlad.log
+3620869       0   80126 Ss   tail -f /work/rec.log
+3623340       0   79949 Ss   tail -f /work/rec.log
+3626929       0   79680 Ss   tail -f /work/rec2.log
+3628845       0   79418 Ss   tail -f /work/rec512.log
+3629467       0   79339 Ss   tail -f /work/price512.log
+3637690       0   78584 Ss   tail -f /work/mcc.log
+3638323       0   78504 Ss   tail -f /work/mcc.log
+3641056       0   78200 Ss   tail -f /work/mcc2.log
+3646249       0   77645 Ss   tail -f /work/fus.log
+3675856       0   76575 Ss   tail -f /work/fusk.log
+3731629       0   75807 Ss   tail -f /work/amp.log
+3836445       0   64877 Ss   tail -f /work/scalemmlu.log
+3841579       0   64204 Ss   tail -f /work/scalefloor.log
+3874083       0   61127 Ss   bash -lc until grep -q ALL-DONE runs/count_en_c4_both.log 2>/dev/null; do sleep 5; done; echo DONE; cat runs/count_en_c4_both.log
+3876880       0   60870 Ss   bash -lc until grep -qE 'FETCH_DONE|FAILED|ERROR|Traceback' runs/fetch_skywork.log 2>/dev/null; do sleep 10; done; echo SKYWORK_TERMINAL; cat runs/fetch_skywork.log | tail
+3950656       0   53741 Ss   tail -f /work/widthjit.log
+3958905       0   53168 Ss   tail -f /work/widthjit6.log
+3962579       0   52871 Ss   tail -f /work/widthclean.log
