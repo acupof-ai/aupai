@@ -287,6 +287,9 @@ _MANUAL_RULES = {
     "A conflicting path needs a commit first, and read which path it is":
         "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
         "commit lands on the branch where dirty_aged and the behind-main hook see it",
+    "`harness task` and `harness friction` write the ledger of the tree they are invoked from":
+        "the invoking directory is a shell fact no artifact records; the integration tree's "
+        "pre-commit hook refuses the resulting non-controller commit, which is the consequence",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -353,7 +356,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 35
+_MANUAL_BASELINE = 36
 
 
 def _norm_rule(text):
@@ -2398,7 +2401,7 @@ def _parse_ckpt_listing(path):
     return date, keep, cands
 
 
-def _noted_gone(entry, name):
+def _noted_gone(entry, name, tier=None):
     """Whether the entry's uncertainty/boundary already names this checkpoint as
     deleted/pruned. A stale source with an honest note is a WARN, not a FAIL:
     b0's eff.kda_mla_growth_ratio_l32 keeps step1500 in its source (provenance) and
@@ -2412,14 +2415,33 @@ def _noted_gone(entry, name):
     9420c8b, measured True). Semicolons stay inside a sentence -- they join an aside
     to the disclosure that owns it (e1's recal note names the ckpt, then "; its
     siblings ARE listed", then the pruning). ASCII "." is no boundary: checkpoint
-    names are built from it."""
+    names are built from it.
+
+    A QUOTED TIER LABEL ONLY DISCLOSES ITS OWN TIER (de, 2026-09-04, measured). Accepting
+    the check's vocabulary was right, and tier-blind it downgrades a different complaint
+    than the one the note answers. ds.n2_params_vs_data_matched_compute says both legs
+    POSTDATE the listing, "and therefore read [absent]", and that they were verified
+    present on the pod at 19:10Z, 892,199,291 and 1,854,896,463 bytes. Against the newer
+    09-03 22:56Z listing the two legs are [deletion-candidate] -- on the prune plan,
+    unclaimed -- and the single word `[absent]` was the whole credit: strip the bracket
+    labels from that sentence and zero gone-words survive, so the FAIL AGENTS.md requires
+    read WARN, on a fact whose own note asserts the files exist. A note answering "not in
+    the snapshot" is not a note answering "scheduled for deletion"; the second needs a
+    KEEP claim or prose, and a checkpoint deleted at 12:03Z takes its evidence with it.
+    Prose disclosure is unrestricted -- the 12 other credited notes keep their WARN, 10 on
+    prose that survives the strip and 2 on a label matching their own tier."""
     note = f"{entry.get('uncertainty') or ''} {entry.get('boundary') or ''}"
     if not note.strip():
         return False
     tail = name.split(".pt", 1)[-1].lstrip(".")
     for seg in re.split(r"[。！？!?]+", note):
-        if (name in seg or (len(tail) >= 5 and tail in seg)) and re.search(
-                r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
+        if not (name in seg or (len(tail) >= 5 and tail in seg)):
+            continue
+        # A label for a tier OTHER than the one being reported is not a disclosure of it.
+        if tier:
+            seg = re.sub(r"\[(?:zeroed|absent|deletion-candidate)\]",
+                         lambda m: m.group(0) if m.group(0) == f"[{tier}]" else " ", seg)
+        if re.search(r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
             return True
     return False
 
@@ -2749,14 +2771,17 @@ def check_ckpt_facts_sources_present(root):
                     if name in keep:
                         continue
                     if section == "A":
+                        tier = "zeroed"
                         msg = f"[zeroed] {fid} -> {name} (section A, zeroed by the reset)"
                     else:
+                        tier = "deletion-candidate"
                         msg = f"[deletion-candidate] {fid} -> {name} (candidate {mtime}, not KEEP-claimed)"
                 elif name not in keep:
+                    tier = "absent"
                     msg = f"[absent] {fid} -> {name} (not in pod listing {date}; pruned, misnamed, or newer than the snapshot)"
                 else:
                     continue
-                (warned if _noted_gone(e, name) else bad).append(msg)
+                (warned if _noted_gone(e, name, tier) else bad).append(msg)
     if bad:
         both = "; ".join(bad + warned)
         return FAIL, f"{len(bad)} FAIL + {len(warned)} WARN: fact source(s) name doomed/gone " \
@@ -11716,6 +11741,29 @@ def _demo():
                            "ckpt_x.pt.step1500")
     assert not _noted_gone({"uncertainty": "step1000 was fine"}, "ckpt_x.pt.ep1")
     assert not _noted_gone({"uncertainty": "nothing here"}, "ckpt_x.pt.step1500")
+
+    # A QUOTED TIER LABEL ONLY DISCLOSES ITS OWN TIER (de-53, the N2 legs, 2026-09-04).
+    # `_n2` is ds.n2_params_vs_data_matched_compute's own shape: it quotes [absent] to
+    # explain that the checkpoints POSTDATE the listing and asserts they exist. Against a
+    # newer listing they are deletion candidates, and that word was the entire credit.
+    _n2 = {"uncertainty": "BOTH CHECKPOINTS POSTDATE THE LISTING and therefore read "
+                          "[absent] to ckpt_facts_sources_present: ckpt_data_leg_206m_8b.pt "
+                          "was verified present on the pod at 19:10Z, 892,199,291 bytes"}
+    assert _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt", "absent"), \
+        "a note quoting [absent] must still disclose the absent tier it answers"
+    assert not _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt", "deletion-candidate"), \
+        "[absent] credited a deletion-candidate: a FAIL for a doomed ckpt read WARN"
+    # Tier-blind is the pre-fix behaviour; keep the untiered call answering the old question.
+    assert _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt"), "untiered call changed meaning"
+    # Prose disclosure is unrestricted -- the tier does not narrow a real statement.
+    _prose = {"uncertainty": "ckpt_z.pt was pruned on the 09-04 plan before this reading"}
+    for _t in ("absent", "deletion-candidate", "zeroed", None):
+        assert _noted_gone(_prose, "ckpt_z.pt", _t), f"prose disclosure lost at tier {_t}"
+    # A matching label still counts, and the two other labels in one sentence do not leak.
+    assert _noted_gone({"uncertainty": "ckpt_q.pt is [deletion-candidate], unclaimed"},
+                       "ckpt_q.pt", "deletion-candidate")
+    assert not _noted_gone({"uncertainty": "ckpt_q.pt reads [zeroed] and [absent] here"},
+                           "ckpt_q.pt", "deletion-candidate")
 
     # run dispatch: a missing or unknown step is a usage error, not a silent exit 0
     assert run_dispatch([]) == 2 and run_dispatch(["bogus"]) == 2
