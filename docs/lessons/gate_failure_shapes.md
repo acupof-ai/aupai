@@ -12,41 +12,41 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Closed incidents (33/33 confirmed machine-gated, 2026-09-04)
 
-10 sampled by 6e, 23 sampled by 44. Each line: §N: gate file:line.
+10 sampled by 6e, 23 sampled by 44, 5 reviewed by e1 (4c). Each line: §N: gate `file::function`.
 
 §27: launch_tests degrade-string check (6e sample)
-§33: check_no_shared_stash scripts/harness.py:9884
-§42: check_frozen_paths scripts/harness.py:9578
+§33: `scripts/harness.py::check_no_shared_stash`
+§42: `scripts/harness.py::check_frozen_paths`
 §43: vocab_id_on_load_path (6e sample)
-§47: test_vocab_stamp --selftest scripts/test_vocab_stamp.py:1
-§60: check_launch_line_vs_oom_facts scripts/harness.py:2589
-§74: _selftest_flagless_test_is_gated odd-quote arm scripts/harness.py:12407
-§78: domain_loss --selftest eval/domain_loss.py:289
-§82: test_ledger_predicates --selftest scripts/test_ledger_predicates.py:1
-§83: sft_hf_control.py source-level scan scripts/sft_hf_control.py:700
-§87: alignment_sentinel scripts/eval_heldout.py:346
-§88: ledger_audit.py --selftest scripts/ledger_audit.py:580
+§47: `scripts/test_vocab_stamp.py` selftest
+§60: `scripts/harness.py::check_launch_line_vs_oom_facts`
+§74: `scripts/harness.py::_selftest_flagless_test_is_gated` (odd-quote arm)
+§78: `eval/domain_loss.py` selftest (0-rows refusal)
+§82: `scripts/test_ledger_predicates.py` selftest
+§83: `scripts/sft_hf_control.py` source-level pre-shift scan
+§87: `scripts/eval_heldout.py::alignment_sentinel`
+§88: `scripts/ledger_audit.py` selftest (index-first read)
 §92: ledger_audit.duplicates (6e sample)
-§93: check_tasks_closed_by_commit scripts/harness.py:5881
-§95: _check_call_sites scripts/test_cursor_sum.py:127
+§93: `scripts/harness.py::check_tasks_closed_by_commit`
+§95: `scripts/test_cursor_sum.py::_check_call_sites`
 §101: launch_gate mix/UNRECORDED (6e sample)
-§107: check_ckpt_facts_sources_present scripts/harness.py:3095
-§113: check_keep_claim_reasons_live scripts/harness.py:3190
+§107: `scripts/harness.py::check_ckpt_facts_sources_present`
+§113: `scripts/harness.py::check_keep_claim_reasons_live`
 §120: card_claim basename wait (6e sample)
-§122: test_sft_lr_provenance.py case 4 scripts/test_sft_lr_provenance.py:159
-§123: test_sft_lr_provenance.py case 4b scripts/test_sft_lr_provenance.py:211
+§122: `scripts/test_sft_lr_provenance.py` case 4 (AST interpolation)
+§123: `scripts/test_sft_lr_provenance.py` case 4b (exec shipped block)
 §129: fp_dir import (6e sample)
-§130: head_path_rows.py _selftest case 5 scripts/head_path_rows.py:187
-§138: test_shard_glob.py scripts/test_shard_glob.py:111
+§130: `scripts/head_path_rows.py` selftest case 5
+§138: `scripts/test_shard_glob.py` selftest
 §144: a2a selftest (6e sample)
-§145: test_l1_fewshot_2x2.py group 9 eval/test_l1_fewshot_2x2.py:205
-§154: check_card_held_without_claim scripts/harness.py:8999
+§145: `eval/test_l1_fewshot_2x2.py` group 9 (answer_marker disjunction)
+§154: `scripts/harness.py::check_card_held_without_claim`
 §160: card_claim _cvd selftests (6e sample)
-§162: check_milestone_ckpt_pinned scripts/harness.py:786
-§163: _selftest_commit_delivers_fact_ref scripts/harness.py:12466
-§167: test_e1_28_leak_scan.py scripts/test_e1_28_leak_scan.py:152
-§168: check_eval_registry_complete scripts/harness.py:4958
-§174: _selftest world 8 scripts/hooks/pre-commit:1824
+§162: `scripts/gen_ckpt_listing.py::build` (inode pin + refusal on missing claimed file; e1 correction: not check_milestone_ckpt_pinned, which reads milestones.jsonl only)
+§163: `scripts/harness.py::_selftest_commit_delivers_fact_ref`
+§167: `scripts/test_e1_28_leak_scan.py` selftest (units refusal)
+§168: `scripts/harness.py::check_eval_registry_complete`
+§174: `scripts/hooks/pre-commit` world 8 (stale __pycache__ fix)
 
 ## Checks to write (top 5 by product)
 
