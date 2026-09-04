@@ -271,8 +271,8 @@ def friction_section():
 # Design from docs/standards/memory_layers_0905.md; status updated as steps complete.
 # Plot appears when runs/*.log have val lines for M1/M2.
 MEM_STATUS = {
-    "model": "b0 实现中",
-    "smoke": "崩了（dtype）",
+    "model": "实现完",
+    "smoke": "PASS（77K tok/s，93.9%）",
     "m1": "未跑",
     "m2": "未跑",
     "scored": "未打分",
