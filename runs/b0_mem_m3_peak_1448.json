@@ -1,0 +1,79 @@
+{
+  "id": "b0_mem_m3_peak_1448",
+  "written": "2026-09-04T20:56Z",
+  "by": "b0",
+  "what": "world-1 --peak-only of the M3 shape at 1448^2, and the table's bytes per parameter measured off the live tensors. The M3 prerequisite in 4c's assignment of 2026-09-05.",
+  "run": {
+    "name": "b0_mem_m3_peak",
+    "started": "2026-09-04 20:40",
+    "status": "ok (rc 0)",
+    "card": "5 (lane), claim recorded against pid 862196, the python descendant",
+    "world": 1,
+    "cmd": "scripts/profile_step_cost.py --mix data/mix_200m_8b.json --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 16 --accum 2 --steps 30 --peak-only --mem_values 2096704 --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse",
+    "log": "/work/aupai/runs/b0_mem_m3_peak.log",
+    "code": "6c5dbab1"
+  },
+  "measured": {
+    "peak_reserved_GiB": 88.15,
+    "peak_allocated_GiB": 78.14,
+    "startup_reserved_GiB": 88.15,
+    "startup_allocated_GiB": 78.12,
+    "card_usable_GiB": 95.22,
+    "headroom_GiB": 7.07,
+    "params_M": 2357.78,
+    "table_params": 2147024896,
+    "tok_s_gpu": 28000,
+    "step_ms": {"total": 2348.9, "forward": 791.89, "backward": 1475.82, "opt_step": 79.11,
+                "loader_wait": 0.61},
+    "note": "reserved, not allocated, is what OOM is raised against. STARTUP equals PEAK here to 0.00 GiB, so this shape has no compile transient above its steady state -- unlike the d1536 probe, where nvidia-smi read 72.5 GiB during compile against a 36.56 steady state."
+  },
+  "table_bytes_per_param": {
+    "measured": 6,
+    "dtype": "torch.bfloat16",
+    "weight_B": 2,
+    "grad_B": 2,
+    "grad_layout": "dense",
+    "opt_state_B": 2,
+    "table_tensors_GiB": 12.0,
+    "how": "profile_step_cost.py reads element_size() off raw.memory.values.weight, off its .grad captured inside the step loop before zero_grad(set_to_none=True) drops it, and off Adagrad's own `sum` found by identity in o.state after the first step() allocates it.",
+    "overturns": "the charter's 12 B/param (fp32 weight 4 + fp32 dense grad 4 + fp32 Adagrad moment 4), and the same claim in MasterWeights' own comment at train.py:844. Both were derived from the construction site -- nn.Embedding is built in the default dtype -- and train.py:2435 `raw_model.to(torch.bfloat16)` under --fp8 casts every floating parameter, the value table included.",
+    "consequence_for_the_2048_OOM": "unchanged as a verdict. At 6 B/param 2048^2 is 24.00 GiB of table tensors, not 48.00; against this run's 76.15 GiB of non-table reserved that is 100.15 GiB, still over 95.22, and it still dies in backward where the gradient is allocated. The observation stood on its own; only the arithmetic was wrong."
+  },
+  "non_table_reserved_GiB": {
+    "value": 76.15,
+    "how": "88.15 peak reserved minus 12.00 GiB of table tensors",
+    "covers": "backbone weights, activations, and the caching allocator's fragmentation at world 1",
+    "warning": "this is the residual of one reading, not an independently measured quantity. It is used below to extrapolate other table sizes, which assumes the non-table part does not move with table size. Fragmentation is the part of that assumption most likely to be wrong: allocated is 78.14 and reserved is 88.15, a 10.01 GiB gap, and that gap is itself a function of the allocation pattern the table produces."
+  },
+  "verdict_on_1448_at_6_B_per_param": "FITS. 88.15 reserved against 95.22 usable, 7.07 GiB headroom, no compile transient above steady state.",
+  "verdict_on_the_fp32_master_fix": {
+    "ruling_it_answers": "4c's provisional ruling of 2026-09-05: the fix for bf16 update rounding is an fp32 master copy for the table (MasterWeights stops excluding _is_mem_fqn), not an fp32 table, and 'if the probe's peak at 6 B/param leaves less than 12.0 GiB of headroom under 95.22, M3 at 1448^2 does not fit with the fix and gets resized again before launch'.",
+    "headroom_measured_GiB": 7.07,
+    "requirement_GiB": 12.0,
+    "verdict": "1448^2 DOES NOT FIT with the fix. Resize before launch.",
+    "bytes_per_param_with_the_fix": {
+      "steady_state": 14,
+      "steady_state_breakdown": "model bf16 weight 2 + fp32 master 4 + fp32 master.grad 4 + fp32 Adagrad sum 4",
+      "at_pull_grads": 16,
+      "at_pull_grads_breakdown": "the same 14 plus the model's own bf16 grad 2, which is alive from backward until MasterWeights.pull_grads() copies it to the master and sets p.grad = None",
+      "correction_to_4c": "4c costed the fix at 12 B/param (2 weight + 2 grad + 4 master + 4 state). That omits the master's OWN gradient: pull_grads sets m.grad = p.grad.float(), a second fp32 tensor the size of the table. Measured, not derived -- MasterWeights was constructed at 64^2 with _is_mem_fqn stubbed to False to simulate the fix, and the master's grad read torch.float32, 4 B/element, with Adagrad's state allocated on the master in fp32. So 14 steady and 16 at the moment both gradients are live.",
+      "peak_is_the_16_number": "the 16 B/param moment is inside the step, so it is what a peak must accommodate, not the 14."
+    },
+    "largest_side_that_fits_with_the_fix": {
+      "at_14_B_per_param": {"side": 1195, "values": 1428025, "table_GiB": 19.07, "total_GiB": 95.22,
+                            "margin_GiB": 0.0},
+      "at_16_B_per_param": {"side": 1117, "values": 1247689, "table_GiB": 19.04, "total_GiB": 95.19,
+                            "margin_GiB": 0.03},
+      "at_16_with_real_margin": {"side": 1024, "values": 1048576, "table_GiB": 16.0,
+                                 "total_GiB": 92.15, "margin_GiB": 3.07,
+                                 "note": "1024^2 is M1's own table size. An M3 resized to 1024^2 would BE M1 and readout 3's scaling slope would lose its third point."},
+      "these_are_arithmetic_not_measurements": "each row extrapolates from the single 76.15 GiB non-table residual above and assumes fragmentation does not move with table size. 1195 and 1117 carry 0.0 and 0.03 GiB of margin against a reserved figure whose allocator gap is 10.01 GiB, so neither should be launched on this arithmetic alone -- the resized side needs its own --peak-only."
+    }
+  },
+  "what_this_does_NOT_answer": [
+    "the world-2 residual. This is world 1; the arms run world 2, whose NCCL buffers and DDP bucket are absent here and are not recoverable from a ratio. The M1 pair gives one data point on that residual (world-1 probe vs world-2 run) but for a different table size.",
+    "whether the table's updates actually land. That is readout 6 (write effectiveness), adopted by 4c on 2026-09-05 and not yet implemented: rows of the table whose storage changed between step 10 and step 200, as a fraction of touched rows, stopping the arm below 0.50. Nothing in this run measures it -- 30 steps at lr warmup would not be informative even if it did.",
+    "the throughput cost of the fix. An fp32 master doubles the bytes the optimizer moves for the table but leaves the lookup and the DDP exchange in bf16, which is why 4c chose it over an fp32 table. Unmeasured either way.",
+    "the ~15 unexplained throughput points from the M1 comparison. This run's fwd/bwd/opt split (33.7/62.8/3.4) is a memory-ON reading with no memory-OFF control at the same shape, so it locates nothing on its own. opt_step at 3.4% of the step does bound one suspect: the dense Adagrad update over all 2,096,704 rows costs 79 ms of a 2349 ms step."
+  ]
+}
