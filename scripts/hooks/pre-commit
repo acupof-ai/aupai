@@ -550,6 +550,13 @@ def main():
         # ignored, zombies counted as live, inverted comparison, truncation read as
         # identical, gate always passes).
         "scripts/pod_sh_offset.py",
+        # de-50's three-point registry test: (a) eval_path raises on an unregistered name,
+        # (b) de-registering drops that file's hashes, (c) eval_registry_complete FAILs naming
+        # the file. Runs here because its worlds are built from the real holdout.py plus the
+        # repo's own data/eval + data/synthetic -- no pod, no card. A registry whose removal
+        # changes nothing enforces nothing, which is how the old four-entry EVAL_FILES passed
+        # every check while missing the file that let 1,199 held-out rows into the corpus.
+        "scripts/test_eval_registry.py",
         # gen_ckpt_listing: its selftest builds listings from hand-made scans and judges them
         # with harness._parse_ckpt_listing, the real reader -- no pod, no card. It is gated
         # because the file's whole job is protecting five sessions' KEEP claims through a
