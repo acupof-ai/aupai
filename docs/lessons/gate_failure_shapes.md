@@ -95,7 +95,7 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 
 - §61: a substring/word match read a comment mentioning the symbol as evidence the symbol was used.
 - §94: a symbol's name was present in the file, read as "assigned"; the name appeared in a string, not an assignment.
-- §194: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
+- §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
 
 Cannot see: whether a text match is reading behavior or prose (§56, §77, §141).
 
