@@ -38,6 +38,14 @@ open: a check that a probe's premise is verified against the code that produces 
 A fix for the bf16 table was to remove MasterWeights' table exclusion, but MasterWeights is constructed only under `--fp32_master` — 8 of 113 ledger launches passed it, and neither the arms nor the control did. The fix would have landed in a class the callers never construct and changed nothing on the runs it was meant to fix. The premise "MasterWeights is the active class" was accepted without checking which class the arms actually build. Evidence: train.py `class MasterWeights`, `--fp32_master` flag, prereg amendment_9 (7183e7bb).
 open: a check that a fix's target class is constructed on the runs it targets; none exists.
 
+### §198 (2026-09-05, R1)
+A profiling probe measured the wrong world: `scripts/profile_step_cost.py` never constructs `TableMaster` (train.py:2612 does, unconditional on `--fp32_master`), so the 1195 `--peak-only` run measured the without-master table at 6 B/param while the arm runs at 14/16 — 13.62 GiB short. The planned "with master" cell would have measured the without-master world and reported a null as "the master is free." The premise "the probe constructs the same classes as the arm" was accepted without reading the probe's construction code. Caught by b0 by grep after launch, before any decision was taken. Evidence: b0_mem_m3_peak_1195 on the pod, amendments 7-10, train.py `table_master = TableMaster(`.
+open: a check that a profiling probe's class construction matches the arm's; none exists.
+
+### §199 (2026-09-05, R1)
+A refused commit was reported as landed. A charter edit was refused by the behind-main hook; the worktree looked identical to a success (the change was staged and the tree was correct), and it was reported as on main. "I made the change" and "the change is on main" are different claims; `git status` on one's own tree is not evidence for the second. Verified later with `git show main:<path>` (c82ef127). Evidence: c82ef127.
+open: a check that a "landed" claim is verified against the integration tree, not the worktree; none exists.
+
 ### §31 (2026-08-31, R2-a)
 A verdict was not asserted; the check printed the verdict but did not fail on it. Evidence: scripts/harness.py.
 open: a check that every CHECKS entry asserts its verdict (raise/exit, not print); the --selftest contract partially covers this.
