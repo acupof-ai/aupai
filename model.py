@@ -83,38 +83,48 @@ def rms_scale(x, eps=1e-6):
 class DeltaRecurrence(nn.Module):
     """Kimi Delta Attention: bounded decay + ShortConv + QK-norm, via fla.ops.kda.chunk_kda.
 
-    `inner` is the width this mixer WORKS AT, which is not necessarily the residual width it
-    reads and writes. `inner=None` means cfg.d -- today's behaviour, and the gate in
-    runs/audit_0904/b0_headmix_bitwise_gate.py holds that path bitwise-identical at bf16
-    resolution on both live shapes. A smaller `inner` is what the head-level hybrid needs: two
-    mixers side by side inside one block, KDA on 3/4 of the heads and MLA on 1/4, each projecting
-    from d and back to d.
+    `inner` is the width this mixer WORKS AT, which is not the residual width it reads and
+    writes. It always reads the full residual (cfg.d) and always writes cfg.d back; `inner` sets
+    the width in between -- the head count times head_dim. `inner=None` means cfg.d, today's
+    behaviour, and the gate in runs/audit_0904/b0_headmix_bitwise_gate.py holds that path
+    identical at bf16 resolution on both live shapes.
+
+    THE INPUT PROJECTIONS READ cfg.d, NOT inner, and that is the whole point. Two mixers side by
+    side in one block must each see the entire residual -- a mixer fed only its own slice cannot
+    attend to what the other half carries, which would be a different architecture from the
+    3:1 head split being tested. So qkv is [cfg.d -> 3*inner] and o is [inner -> cfg.d]. No extra
+    matrices appear: the existing projections change shape, so at inner = 3/4 * d the mixer costs
+    3/4 of its parameters instead of adding a down-projection.
 
     WHY THE ARGUMENT AND NOT x.shape. The width used to be read off the input
-    (`B, T, D = x.shape`), which silently ties it to the residual: hand this module a slice and
-    every reshape below is wrong by the ratio. `heads` comes in the same way and for the same
-    reason -- head_dim must stay 128 (train.py:2058, the FlashKDA CUTLASS kernel), so a mixer at
-    inner=768 carries 6 heads while its sibling at inner=256 carries 2, and neither can be
-    derived from cfg alone.
+    (`B, T, D = x.shape`), which silently ties the working width to the residual: hand this
+    module a slice and every reshape below is wrong by the ratio. `heads` comes in the same way
+    and for the same reason -- head_dim must stay 128 (train.py:2058, the FlashKDA CUTLASS
+    kernel), so a mixer at inner=768 carries 6 heads while its sibling at inner=256 carries 2,
+    and neither can be derived from cfg alone.
     """
 
     def __init__(self, cfg, inner=None, heads=None):
         super().__init__()
-        self.d = inner if inner is not None else cfg.d
+        self.d_in = cfg.d                                  # the residual: read and written
+        self.d = inner if inner is not None else cfg.d     # the working width
         self.h = heads if heads is not None else cfg.heads
         self.hd = self.d // self.h
+        if self.hd * self.h != self.d:
+            raise ValueError(f"inner={self.d} is not divisible by heads={self.h}")
         self.chunk_size = cfg.chunk_size
-        self.qkv = nn.Linear(self.d, 3 * self.d, bias=False)
-        self.o = nn.Linear(self.d, self.d, bias=False)
+        self.qkv = nn.Linear(self.d_in, 3 * self.d, bias=False)
+        self.o = nn.Linear(self.d, self.d_in, bias=False)
         # fused gate|beta GEMM; beta padded to a multiple of 16 output rows so FP8 (_scaled_mm) applies
         self.beta_pad = (-self.h) % 16
-        self.gb = nn.Linear(self.d, self.d + self.h + self.beta_pad, bias=False)
+        self.gb = nn.Linear(self.d_in, self.d + self.h + self.beta_pad, bias=False)
         self.A_log = nn.Parameter(torch.zeros(self.h))
         # fla KDA init: dt ~ logU[1e-3, 0.1] -> mean retention ~0.9 per token. Zero init gave
         # softplus(0)=0.69 log-decay per token (retention ~0.1), erasing the recurrent state.
         dt = torch.exp(torch.rand(self.h * self.hd) * (math.log(0.1) - math.log(1e-3)) + math.log(1e-3))
         self.dt_bias = nn.Parameter(dt + torch.log(-torch.expm1(-dt)))
-        self.short_conv = nn.Conv1d(self.d, self.d, kernel_size=4, padding=0, groups=self.d)
+        # The conv sits BEFORE qkv, so it runs at the residual width, not at inner.
+        self.short_conv = nn.Conv1d(self.d_in, self.d_in, kernel_size=4, padding=0, groups=self.d_in)
         # Document isolation for the conv (eff.kda_document_isolation_violated). Read from cfg so it
         # travels in the checkpoint; see forward() for what it changes and scripts/loader.py for why
         # a checkpoint without the key must get False rather than the live default.
@@ -122,11 +132,11 @@ class DeltaRecurrence(nn.Module):
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
-        if D != self.d:
+        if D != self.d_in:
             raise ValueError(
-                f"DeltaRecurrence built for inner={self.d} got x with width {D}. The mixer no "
-                f"longer reads its width from x.shape, so a mismatch is a construction error, "
-                f"not something to reshape around.")
+                f"DeltaRecurrence reads the residual at width {self.d_in}, got x with width {D}. "
+                f"The mixer no longer takes its width from x.shape, so a mismatch is a "
+                f"construction error, not something to reshape around.")
         # causal: left-pad only, so output[t] sees only input[:t+1] (padding=2 leaks the next token)
         # K shifted multiply-adds, not nn.Conv1d: ATen routes a depthwise k=4 conv to
         # conv_depthwise2d_generic at ~6% of bandwidth; inductor fuses the arithmetic form
@@ -171,8 +181,12 @@ class DeltaRecurrence(nn.Module):
         k = k.reshape(B, T, self.h, self.hd).contiguous()
         v = v.reshape(B, T, self.h, self.hd).contiguous()
         gb = self.gb(x)
-        g = gb[..., :D].reshape(B, T, self.h, self.hd).contiguous()
-        beta = gb[..., D : D + self.h].contiguous()  # raw logits, sigmoid in kernel
+        # SLICE AT self.d, THE WORKING WIDTH, NOT AT D. gb is [d_in -> d + h + pad], so the gate
+        # occupies [:self.d] and beta [self.d : self.d + h]. These read D before inner existed,
+        # when D and self.d were the same number; at inner < d_in that would take d_in columns
+        # from a d-wide gate and read beta out of the gate's own tail.
+        g = gb[..., : self.d].reshape(B, T, self.h, self.hd).contiguous()
+        beta = gb[..., self.d : self.d + self.h].contiguous()  # raw logits, sigmoid in kernel
         if cu is not None:  # varlen: fla wants a single flattened sequence + cu_seqlens
             q, k, v, g = (t.reshape(1, B * T, self.h, self.hd) for t in (q, k, v, g))
             beta = beta.reshape(1, B * T, self.h)
@@ -194,43 +208,62 @@ class DeltaRecurrence(nn.Module):
             disable_recompute=True,  # save w/u/qg/kg/v_new rather than recompute: +3GB, 8-15% faster
             chunk_size=self.chunk_size,
         )
-        return self.o(out.reshape(B, T, D).to(x.dtype))
+        return self.o(out.reshape(B, T, self.d).to(x.dtype))
 
 
 class GatedMLA(nn.Module):
     """Gated MLA: latent KV compression + full causal attention (NoPE, KDA handles position).
 
-    `inner` / `heads`: see DeltaRecurrence. `latent` is the third free parameter and it is NOT
-    derivable from inner: today it is cfg.d // 4, which at inner < cfg.d would shrink twice over
-    (once with inner, once through the //4) and change the arm's capacity for a reason nobody
-    chose. Default None keeps cfg.d // 4 -- the value every existing checkpoint holds.
+    `inner` / `heads`: see DeltaRecurrence. The projections read the full residual (cfg.d) and o
+    writes it back; `inner` is only the width in between. `latent` is the third free parameter and
+    it is NOT derivable from inner: today it is cfg.d // 4, which at inner < cfg.d would shrink
+    twice over (once with inner, once through the //4) and change the arm's KV capacity for a
+    reason nobody chose. Default None keeps cfg.d // 4 -- the value every existing checkpoint
+    holds.
     """
 
     def __init__(self, cfg, inner=None, heads=None, latent=None):
         super().__init__()
-        self.d = inner if inner is not None else cfg.d
+        self.d_in = cfg.d                                  # the residual: read and written
+        self.d = inner if inner is not None else cfg.d     # the working width
         self.h = heads if heads is not None else cfg.heads
         self.hd = self.d // self.h
+        if self.hd * self.h != self.d:
+            raise ValueError(f"inner={self.d} is not divisible by heads={self.h}")
         self.latent = latent if latent is not None else cfg.d // 4
-        self.kv_down = nn.Linear(self.d, self.latent, bias=False)
+        self.kv_down = nn.Linear(self.d_in, self.latent, bias=False)
         self.kv_up = nn.Linear(self.latent, 2 * self.d, bias=False)  # fused k_up|v_up
-        self.qg = nn.Linear(self.d, 2 * self.d, bias=False)  # fused q|gate
-        self.o = nn.Linear(self.d, self.d, bias=False)
+        self.qg = nn.Linear(self.d_in, 2 * self.d, bias=False)  # fused q|gate
+        self.o = nn.Linear(self.d, self.d_in, bias=False)
         # A/B (4): the GATE is per layer (3 * 12 * d params, negligible); the TABLE is ONE
         # [vocab, d] shared by every MLA layer and owned by HybridLM. Three separate tables
         # would be +48.9% parameters at this config against +16.3% for one, and the mechanism
         # (token identity reaching V, gated, only in attention layers) is intact either way.
         # `_ve` is the per-forward lookup, stashed by HybridLM.forward; None means the arm is off.
+        #
+        # The gate outputs self.d because it is added to V, which lives at the working width; the
+        # table itself is [vocab, cfg.d] and owned by HybridLM, so a sub-width MLA would need a
+        # projection here. Arm B does not exercise this path (value_embed is off), and adding an
+        # untested projection for a combination nobody is running is how a second variable enters
+        # an A/B: refuse instead.
         self._ve = None
-        self.ve_gate = nn.Linear(12, self.d, bias=True) if getattr(cfg, "value_embed", False) else None
+        if getattr(cfg, "value_embed", False):
+            if self.d != self.d_in:
+                raise ValueError(
+                    f"value_embed with inner={self.d} != cfg.d={self.d_in} is unimplemented: the "
+                    f"shared [vocab, {self.d_in}] table would need a projection to reach V at "
+                    f"width {self.d}, which no measurement has ever run. Turn one of them off.")
+            self.ve_gate = nn.Linear(12, self.d, bias=True)
+        else:
+            self.ve_gate = None
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
-        if D != self.d:
+        if D != self.d_in:
             raise ValueError(
-                f"GatedMLA built for inner={self.d} got x with width {D}. The mixer no longer "
-                f"reads its width from x.shape, so a mismatch is a construction error, not "
-                f"something to reshape around.")
+                f"GatedMLA reads the residual at width {self.d_in}, got x with width {D}. The "
+                f"mixer no longer takes its width from x.shape, so a mismatch is a construction "
+                f"error, not something to reshape around.")
         latent = self.kv_down(x)
         k, v = self.kv_up(latent).chunk(2, dim=-1)
         # A/B (4) value embeddings: a token-indexed vector added to V, gated per position.
@@ -280,7 +313,7 @@ class GatedMLA(nn.Module):
             y = y.transpose(1, 2)
         if isinstance(y, tuple):
             y = y[0]  # flash-attn 4 returns (out, lse); v2 and the fallback return a tensor
-        y = y.reshape(B, T, D)
+        y = y.reshape(B, T, self.d)
         return self.o(y * torch.sigmoid(gate))
 
 class SwiGLU(nn.Module):
