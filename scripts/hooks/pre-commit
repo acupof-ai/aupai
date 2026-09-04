@@ -589,6 +589,16 @@ def main():
         # running it with the flag. A test that PARSED argv strictly would need an entry
         # there instead, so the tolerance is the reason it needs none, not an accident.
         "scripts/test_score_exit.py",
+        # The row cursor across all three cfg shapes, plus the known-answer PAIR from
+        # ds.second_resume_rereads_one_segment: p200m_4b_0902.interrupt.step1192 reads
+        # 305,152 = 1192 x 256 absolute after a resume at origin 832, and the
+        # segment-only 92,160 at the same checkpoint must be REFUSED. It was in
+        # NEEDS_DATA as "RED, and the test is right" for part of 2026-09-04 and that
+        # reading was WRONG: train.py:1134 writes counts x world + _base, an absolute
+        # cursor, so the guard's absolute _want is correct and the resumed FIXTURE was
+        # the defect -- it declared origin 16000 with no _row_cursor_base, a run that
+        # consumed 512,000 rows and remembered none. 28s, no card, no data.
+        "scripts/test_cursor_save.py",
         # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
         # check_selftests_are_gated's population widened from "contains the string
         # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE
@@ -899,7 +909,6 @@ def main():
         # an exemption, so the broken one says so and names its first error line.
         "scripts/test_e2e.py": "asserts `set E2E_GPU=<idx>` at import; the pod's cards are shared and it will not pick one",
         "datagen/test_scan_math_contamination.py": "needs data/corpus/math/ape210k_000.jsonl at import (gitignored corpus); IndexError on the glob",
-        "scripts/test_cursor_save.py": "RED, and the test is right: it dies at line 143 before printing a single case. Its resumed fixture sets _plan_step_origin=16000 and writes 3200 rows = 100 RELATIVE steps x 16 x 2, which is correct; train.py:1163 computes step x batch x accum x world from the ABSOLUTE step, ignores _plan_step_origin, gets 515200 and raises. That is the exact absolute-vs-relative confusion this test was written to catch (c35f66fd, committed as -- FAILS today), now blocking it with a raise instead of a comparison. Not registered as a passing gate because it cannot pass until train.py is fixed, and train.py is frozen for the running pretrain",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         # The sandbox itself. 17 known answers, every one of which needs root plus unshare,
