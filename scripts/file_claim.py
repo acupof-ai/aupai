@@ -119,11 +119,15 @@ def release_all(owner, paths=None):
 
 def main(argv=None):
     ap = argparse.ArgumentParser(prog="file_claim")
-    ap.add_argument("cmd", choices=["acquire", "release", "release-all", "status", "selftest"])
+    # The pre-commit hook's SELFTEST_FILES invoker passes `--selftest` (the repo-standard
+    # flag); keep a positional `selftest` too so a bare `file_claim.py selftest` works by hand.
+    ap.add_argument("cmd", choices=["acquire", "release", "release-all", "status", "selftest"],
+                    nargs="?")
+    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--path", help="the shared file (relative to the repo root)")
     ap.add_argument("--owner", default=None)
     a, _ = ap.parse_known_args(argv)
-    if a.cmd == "selftest":
+    if a.selftest or a.cmd == "selftest":
         return _selftest()
     if a.cmd == "acquire":
         assert a.path, "acquire needs --path"

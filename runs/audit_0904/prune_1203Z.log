@@ -1,0 +1,214 @@
+Fri Sep  4 12:03:19 UTC 2026
+prune of /work/aupai checkpoints, run by b0, plan taken fresh at this minute
+operator: scripts/gen_ckpt_listing.py --plan-deletion (deletes nothing itself)
+=== df BEFORE ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda2       2.0T  1.9T   79G  96% /work
+=== fresh plan ===
+plan: 189 rm line(s); # 189 file(s), 150.9 GB
+=== guard: live A/B + Stage E absent from the rm list ===
+ok: no headmix / se_16lnew / se_looped name on any rm line
+=== guard: pin classes protected (present in the skip list) ===
+ok: ckpt_0830v1_3.24b.pt.ep1 -> a live KEEP line claims it
+ok: ckpt_sft_p324_v4.pt -> named in be.sft_v4_code500 -- a fact's subject, whose deletion makes that number unrecomputable
+ok: ckpt_w7_b32a1.pt -> named in eff.w7_peak_memory_b32_fits -- a fact's subject, whose deletion makes that number unrecomputable
+validated 189 name(s) for deletion
+=== rm, one file at a time (remote loop) ===
+rm ckpt_0830v1_0.2b.pt.ep1    892196723 B
+rm ckpt_0830v1_0.3b.pt.ep1    892196723 B
+rm ckpt_0830v1_0.4b.pt.ep1    892196723 B
+rm ckpt_0830v1_0.8b.pt.ep1    892196723 B
+rm ckpt_0830v1_1.6b.pt.ep1    892196723 B
+rm ckpt_0830v1_1.6b.pt.step1000    959426941 B
+rm ckpt_0830v1_3.24b.pt.step1000    959427522 B
+rm ckpt_0830v1_3.24b.pt.step2000    959427522 B
+rm ckpt_0830v1_3.24b.pt.step3000    959427522 B
+rm ckpt_0830v1_repeat4.pt.step1000    959428748 B
+rm ckpt_0830v1_repeat4.pt.step2000    959428748 B
+rm ckpt_ablation_base.pt.ep1    412201647 B
+rm ckpt_b4_no_bv.pt    412320031 B
+rm ckpt_b4_no_bv.pt.ep1    892195367 B
+rm ckpt_b4_no_sg.pt    412320031 B
+rm ckpt_b4_no_sg.pt.ep1    892195367 B
+rm ckpt_b4_profile.pt    412320393 B
+rm ckpt_b4_profile.pt.ep1    892196527 B
+rm ckpt_b7_bucket25.pt    412320574 B
+rm ckpt_b7_bucket25.pt.ep1    892197043 B
+rm ckpt_b7_bucket50.pt    412320574 B
+rm ckpt_b7_bucket50.pt.ep1    892197043 B
+rm ckpt_b_b16.pt.ep1    412200791 B
+rm ckpt_b_b16_ar.pt.ep1    412321214 B
+rm ckpt_b_b24.pt.ep1    412200791 B
+rm ckpt_b_b32.pt.ep1    412200791 B
+rm ckpt_c_b32_ar4.pt.ep1    412321395 B
+rm ckpt_combo_b50_simple.pt    412321479 B
+rm ckpt_combo_b50_simple.pt.ep1    892200007 B
+rm ckpt_d_g6_dm.pt.ep1    412201053 B
+rm ckpt_d_g8_nodm.pt.ep1    412201315 B
+rm ckpt_dm_docmask.pt.ep1    412201382 B
+rm ckpt_dm_nodocmask.pt.ep1    412201644 B
+rm ckpt_f_b32_base.pt.ep1    412201446 B
+rm ckpt_fullmla_0.2b_0830.pt    412321660 B
+rm ckpt_fullmla_0.2b_0830.pt.ep1    892200523 B
+rm ckpt_g_b24_ar4.pt.ep1    412320243 B
+rm ckpt_k4_11b_lr05.pt.ep1    412320605 B
+rm ckpt_k5_arith_bpe.pt.step200    479552349 B
+rm ckpt_k5_clean_0827.pt.ep1    892197755 B
+rm ckpt_k5_clean_0827.pt.step1000    959427975 B
+rm ckpt_k5_clean_0827.pt.step10000    959427975 B
+rm ckpt_k5_clean_0827.pt.step11000    959427975 B
+rm ckpt_k5_clean_0827.pt.step12000    959427975 B
+rm ckpt_k5_clean_0827.pt.step2000    959427975 B
+rm ckpt_k5_clean_0827.pt.step3000    959427975 B
+rm ckpt_k5_clean_0827.pt.step4000    959427975 B
+rm ckpt_k5_clean_0827.pt.step5000    959427975 B
+rm ckpt_k5_clean_0827.pt.step6000    959427975 B
+rm ckpt_k5_clean_0827.pt.step7000    959427975 B
+rm ckpt_k5_clean_0827.pt.step8000    959427975 B
+rm ckpt_k5_clean_0827.pt.step9000    959427975 B
+rm ckpt_k6_arith2.pt.step200    479617931 B
+rm ckpt_k6_arith2.pt.step400    479617931 B
+rm ckpt_k6_arith3.pt.step200    479617931 B
+rm ckpt_k6_arith4.pt.step200    479617931 B
+rm ckpt_k6_arith4.pt.step400    479617931 B
+rm ckpt_k6_arith5.pt.step200    479617931 B
+rm ckpt_k6_arith5.pt.step400    479617931 B
+rm ckpt_k6_fone.pt.ep1    892360007 B
+rm ckpt_k6_fone.pt.step10000    959590157 B
+rm ckpt_k6_fone.pt.step11000    959590157 B
+rm ckpt_k6_fone.pt.step12000    959590157 B
+rm ckpt_k7_v3.pt.ep1    892193179 B
+rm ckpt_k7_v3.pt.step1000    959423455 B
+rm ckpt_k7_v3.pt.step2000    959423455 B
+rm ckpt_k7_v3.pt.step3000    959423455 B
+rm ckpt_k8_v3_fone.pt.ep1    892361829 B
+rm ckpt_k8_v3_fone.pt.step1000    959591982 B
+rm ckpt_k8_v3_fone.pt.step2000    959591982 B
+rm ckpt_k8_v3_fone.pt.step3000    959591982 B
+rm ckpt_lrprobe_0.85.pt    987440475 B
+rm ckpt_lrprobe_0.85.pt.ep1    2042952165 B
+rm ckpt_lrprobe_1.2.pt    987440009 B
+rm ckpt_lrprobe_1.2.pt.ep1    2042950655 B
+rm ckpt_nccl_ab_baseline.pt    412321415 B
+rm ckpt_nccl_ab_baseline.pt.ep1    892200007 B
+rm ckpt_nccl_bucket25.pt    412320936 B
+rm ckpt_nccl_bucket25.pt.ep1    892198203 B
+rm ckpt_nccl_bucket50.pt    412320872 B
+rm ckpt_nccl_bucket50.pt.ep1    892198203 B
+rm ckpt_p02_a1_s2.pt    388313165 B
+rm ckpt_p02_a1_s2.pt.ep1    844051899 B
+rm ckpt_p02_fp32m_s0.pt    412320819 B
+rm ckpt_p02_fp32m_s0.pt.ep1    1371959031 B
+rm ckpt_p02_fp32m_s1.pt    412320819 B
+rm ckpt_p02_fp32m_s1.pt.ep1    1371959031 B
+rm ckpt_p02_fp32m_s2.pt    412320819 B
+rm ckpt_p02_fp32m_s2.pt.ep1    1371959031 B
+rm ckpt_p02_fp32m_s3.pt    412320819 B
+rm ckpt_p02_fp32m_s3.pt.ep1    1371959031 B
+rm ckpt_p02_probe_s0.pt    412320819 B
+rm ckpt_p02_probe_s0.pt.ep1    892197751 B
+rm ckpt_p02_rep_s2.pt    412320393 B
+rm ckpt_p02_rep_s2.pt.ep1    892196527 B
+rm ckpt_p02_s0.pt    412319669 B
+rm ckpt_p02_s0.pt.ep1    892194207 B
+rm ckpt_p02_s1.pt    412319669 B
+rm ckpt_p02_s1.pt.ep1    892194207 B
+rm ckpt_p02_s2.pt    412319669 B
+rm ckpt_p02_s2.pt.ep1    892194207 B
+rm ckpt_p02_s3.pt    412319669 B
+rm ckpt_p02_s3.pt.ep1    892194207 B
+rm ckpt_p02_sc_base.pt    412320638 B
+rm ckpt_p02_sc_base.pt.ep1    892197171 B
+rm ckpt_p02_sc_patched.pt    412321181 B
+rm ckpt_p02_sc_patched.pt.ep1    892198975 B
+rm ckpt_p03.pt    412319126 B
+rm ckpt_p03.pt.ep1    892192467 B
+rm ckpt_p04.pt    412319126 B
+rm ckpt_p04.pt.ep1    892192467 B
+rm ckpt_p08.pt    412319126 B
+rm ckpt_p08.pt.ep1    892192467 B
+rm ckpt_p16.pt    412319126 B
+rm ckpt_p16.pt.ep1    892192467 B
+rm ckpt_p16.pt.step1000    959422741 B
+rm ckpt_p324.pt.ep1    892193047 B
+rm ckpt_p324.pt.step1000    959423322 B
+rm ckpt_p324.pt.step2000    959423322 B
+rm ckpt_p324.pt.step3000    959423322 B
+rm ckpt_p47_s1.pt    412319733 B
+rm ckpt_p47_s1.pt.ep1    892194271 B
+rm ckpt_p47_s1.pt.step25    959424548 B
+rm ckpt_p47_s1.pt.step50    959424548 B
+rm ckpt_p47_s2.pt    412319733 B
+rm ckpt_p47_s2.pt.ep1    892194271 B
+rm ckpt_p47_s2.pt.step100    959424548 B
+rm ckpt_p47_s2.pt.step75    959424548 B
+rm ckpt_pretrain_15b_s1.pt.ep1    892199619 B
+rm ckpt_pretrain_15b_s1.pt.step15500    959429841 B
+rm ckpt_pretrain_30b_s2.pt.step25500    959429905 B
+rm ckpt_pretrain_30b_s2.pt.step26000    959429905 B
+rm ckpt_proberesume.pt    987440137 B
+rm ckpt_proberesume.pt.ep1    2042950783 B
+rm ckpt_proberesume.pt.step20    2110164874 B
+rm ckpt_proberesume.pt.step40    2110164874 B
+rm ckpt_proberesume.pt.step60    2110164874 B
+rm ckpt_profile_noattn.pt    412202025 B
+rm ckpt_profile_noattn.pt.ep1    891831831 B
+rm ckpt_profile_probe.pt    412320808 B
+rm ckpt_profile_probe.pt.ep1    892198139 B
+rm ckpt_rehearse_join.pt    412321064 B
+rm ckpt_rehearse_join.pt.ep1    892198395 B
+rm ckpt_rehearse_resume.pt    412321426 B
+rm ckpt_rehearse_resume.pt.ep1    892199619 B
+rm ckpt_sft_p324_v1.pt    412320574 B
+rm ckpt_sft_p324_v1.pt.step200    479552615 B
+rm ckpt_sft_p324_v1.pt.step400    479552615 B
+rm ckpt_sft_p324_v2.pt.step200    479552679 B
+rm ckpt_sft_p324_v2.pt.step400    479552679 B
+rm ckpt_sft_p324_v3.pt.step200    479552679 B
+rm ckpt_sft_p324_v3.pt.step400    479552679 B
+rm ckpt_sft_p324_v4.pt.step200    479552679 B
+rm ckpt_sft_p324_v4.pt.step400    479552679 B
+rm ckpt_sft_p324_v5.pt.step200    479552679 B
+rm ckpt_sft_p324_v5.pt.step400    479552679 B
+rm ckpt_shape500_b32.pt    987440411 B
+rm ckpt_shape500_b32.pt.ep1    2042952037 B
+rm ckpt_shape500_probe.pt    987441343 B
+rm ckpt_shape500_probe.pt.ep1    2042955185 B
+rm ckpt_single_gpu.pt    412320393 B
+rm ckpt_single_gpu.pt.ep1    892196463 B
+rm ckpt_sw_ar4_72.pt.ep1    412321395 B
+rm ckpt_sw_base72.pt.ep1    412201315 B
+rm ckpt_t38_kill.pt.step20    959425710 B
+rm ckpt_t38_kill.pt.step40    959425710 B
+rm ckpt_t38_ref.pt    412319914 B
+rm ckpt_t38_ref.pt.ep1    892194851 B
+rm ckpt_t38_ref.pt.step20    959425129 B
+rm ckpt_t38_ref.pt.step40    959425129 B
+rm ckpt_t38_ref.pt.step60    959425129 B
+rm ckpt_t38_resume.pt    412320457 B
+rm ckpt_t38_resume.pt.ep1    892196591 B
+rm ckpt_t38_resume.pt.step60    959426872 B
+rm ckpt_t52_p1_base.pt    412320638 B
+rm ckpt_t52_p1_base.pt.ep1    892197171 B
+rm ckpt_tb05.pt.ep1    892358313 B
+rm ckpt_tb36.pt.ep1    892358313 B
+rm ckpt_twin_nocursor.pt    412321064 B
+rm ckpt_twin_nocursor.pt.ep1    892198395 B
+rm ckpt_w7_b16a2.pt    987438547 B
+rm ckpt_w7_b16a2.pt.ep1    2042945997 B
+rm ckpt_w7_b32a1.pt.ep1    2042945997 B
+rm ckpt_warmup_smoke.pt    412320691 B
+rm ckpt_warmup_smoke.pt.ep1    892197623 B
+rm ckpt_warmup_smoke_w20.pt    412321415 B
+rm ckpt_warmup_smoke_w20.pt.ep1    892200007 B
+rm ckpt_warmup_smoke_w3.pt    412321234 B
+rm ckpt_warmup_smoke_w3.pt.ep1    892199427 B
+=== totals ===
+deleted 189 file(s), 150930703582 B
+absent already: 0
+errors: 0
+Fri Sep  4 12:03:24 PM UTC 2026
+=== df AFTER ===
+Filesystem      Size  Used Avail Use% Mounted on
+/dev/vda2       2.0T  1.7T  219G  89% /work
+next: regenerate the listing, then commit the after-state
