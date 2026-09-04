@@ -107,9 +107,15 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/zh_web/build_corpus_stats.json",
    "config": {
-    "note": "zh_web/ dir (ladder web_hq domain, FROZEN); filters=light"
+    "note": "zh_web/ dir (ladder web_hq domain, FROZEN); filters=light",
+    "tokens_config": "data/tokenizer.json; FULL pass over all 909/909 shards, every document encoded, no extrapolation; 32 worker processes, order-independent sum. Convention: ids + one <eos> per document (scripts/count_tokens.py CONVENTION, matching train.py encode).",
+    "rederived": "2026-09-05",
+    "rederived_bare_ids": 21279926542,
+    "rederived_docs": 13477403,
+    "rederived_bytes": 89846923401,
+    "rederived_total": 21293403945
    },
-   "uncertainty": "frozen-ladder dir cannot feed 30b in place; must copy to a NEW dir data/corpus/zh_web_30b/ and restamp. 21.3B is available supply, not the 3.3B 30b allocation",
+   "uncertainty": "frozen-ladder dir cannot feed 30b in place; must copy to a NEW dir data/corpus/zh_web_30b/ and restamp. 21.3B is available supply, not the 3.3B 30b allocation | Re-derived 2026-09-05 by a full 909/909-shard pass: 21,279,926,542 bare ids + 13,477,403 <eos> = 21,293,403,945, matching the stamp EXACTLY. The stamp's basis is now reproducible; before this it carried tokens_status=measured with no tokens_config at all (the CD-1 defect).",
    "status": "measured",
    "boundary": "frozen-ladder rule: new 30b corpus goes to data/corpus/zh_web_30b/, never written into data/corpus/zh_web/",
    "guard_phrases": [
@@ -285,9 +291,9 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/rp1t_arxiv_papers (RedPajama-1T arxiv slice via data.together.xyz; exact frozen-tokenizer count, 97 shards, 169,593 docs)",
    "config": {
-    "note": "role UNATTRIBUTED \u2014 60-doc read: full arXiv papers (avg 57K chars, \\section 98%, proof env 22%, step-markers 2%); this is math-reasoning prose, NOT CoT. The _comment in mix_30b suspended arxiv/stackexchange role attribution until a content read, which did not exist; now it does. cot gap stays OPEN. fetch_stats first-in-repo: /work/aupai/data/raw/rp1t_arxiv/fetch_stats.json, 15 files 13.99GB, all data.together.xyz. filters_fp 88ee503b38941bf4, tier reproducible."
+    "note": "role UNATTRIBUTED — 60-doc read: full arXiv papers (avg 57K chars, \\section 98%, proof env 22%, step-markers 2%); this is math-reasoning prose, NOT CoT. The _comment in mix_30b suspended arxiv/stackexchange role attribution until a content read, which did not exist; now it does. cot gap stays OPEN. fetch_stats first-in-repo: /work/aupai/data/raw/rp1t_arxiv/fetch_stats.json, 15 files 13.99GB, all data.together.xyz. filters_fp 88ee503b38941bf4, tier reproducible."
    },
-   "uncertainty": "exact count 3.104B; the earlier sampled estimate 0.3461 tok/byte overshot the exact 0.329 by +3.74% (sample biased to shard-head longer docs) \u2014 next slice-extrapolations on this source should expect that +~3.7% bias",
+   "uncertainty": "exact count 3.104B; the earlier sampled estimate 0.3461 tok/byte overshot the exact 0.329 by +3.74% (sample biased to shard-head longer docs) — next slice-extrapolations on this source should expect that +~3.7% bias",
    "status": "measured",
    "role": "unattributed",
    "boundary": "not a CoT supply; does not fill the cot gap. CoT needs visible intermediate steps; viable paths in order: (1) stackexchange 80GB (same host, sample-read 60 first), (2) extract \\begin{proof} envs from this arxiv (20-22% of docs, order-of-magnitude smaller, no new fetch), (3) true CoT set",

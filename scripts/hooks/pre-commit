@@ -47,6 +47,10 @@ ALLOWED = [
     "data/rl/*",
     "data/rl_tasks/*",
     "data/sft_contamination_baseline.json",
+    # The row schemas for runs/*.jsonl ledgers. Text, kilobytes, and read by the writers
+    # that validate against it -- the opposite of the 234 MB corpus blob this list exists
+    # to keep out.
+    "data/ledger_schema.json",
 ]
 
 
@@ -642,6 +646,14 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # The memory-arm diagnostics ledger (readouts 4 and 5 of memory_layers_0905). 0.3s,
+        # no card and no data: temp dirs and JSON. Registered because it is the ONLY reader
+        # of the two pre-registered stop rules -- a validator that stops refusing bad rows
+        # makes both rules silent, and silence is indistinguishable from a healthy arm.
+        # Eleven mutants verified red, two of which were found blind on the first pass: the
+        # unknown-field case omitted a required field as well, so it passed on the wrong
+        # rule and said nothing about typos.
+        "scripts/memory_diag.py",
         # The selftest temp-root redirect. 0.4s, no card and no data: it makes a directory,
         # spawns one `python -c`, and removes both. Registered because its subject is the
         # cleanup every OTHER selftest depends on and nothing else can observe: if scoped()
