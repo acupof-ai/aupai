@@ -1002,7 +1002,7 @@
    },
    "uncertainty": "counts are exact over this pack, not estimates. The 0.49% turn rate is the quantity redaction's cost depends on and it is a full count, not a sample. What is NOT measured: how many of the 863 opaque-only spans are credentials rather than identifiers (SWE-bench instance ids and log filenames sit in the same set) -- redaction is chosen precisely because it does not need that judgment.",
    "status": "measured",
-   "boundary": "says nothing about whether a redacted episode trains as well as an unredacted one; the placeholder is a token sequence the model will see 5,342 times. Also silent on the 9,134 non-opaque episodes' provider-credential rate, which was not scanned."
+   "boundary": "says nothing about whether a redacted episode trains as well as an unredacted one; the placeholder is a token sequence the model will see 5,342 times. Also silent on the 9,134 non-opaque episodes' provider-credential rate, which was not scanned. Instrument blind spot (E16/F10, audit 2026-09-04): the REAL_CREDENTIAL instrument named in config (find_secrets) is blind to CLI-flag and env-assignment credential forms; a recount on the v14 population found 62 REAL_CREDENTIAL episodes where this fact reports 3, 59 of them invisible to find_secrets. The 3 stands as what the named instrument could see, not as the credential count."
   }
  ]
 }
