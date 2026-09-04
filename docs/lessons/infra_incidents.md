@@ -1,7 +1,7 @@
 ---
 question: What are the surviving pod/infra gate-failure incidents, what would close each, and which are already closed?
 status: open
-source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents deleted (see commit), 141 survive here and in gate_failure_incidents.md
+source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents removed (10 sampled: 8 confirmed machine-closed, 2 gated this commit, 23 unsampled), 141 survive here and in gate_failure_incidents.md
 ---
 
 # Gate failure incidents — pod/infra layer
