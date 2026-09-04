@@ -881,6 +881,11 @@ def main():
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.d,
            "fp8": fp8, "grad_ckpt": a.grad_ckpt,
+           # The memory config IN THE ROW, for the same reason the print line carries it:
+           # rows that differ only by --mem_values are otherwise indistinguishable in the JSONL,
+           # and a decomposition table keyed on nothing is a table of one config repeated.
+           "mem_values": train.Cfg.mem_values, "mem_top_k": train.Cfg.mem_top_k,
+           "mem_layers": train.Cfg.mem_layers, "mem_sparse": train.Cfg.mem_sparse,
            "compile": bool(train.Cfg.compile and amp), "steps_timed": len(steps),
            "tokens_per_step_per_gpu": tok_step,
            "tok_s_per_gpu": round(tok_step / (med["median_ms"] / 1000.0)) if med else None,
