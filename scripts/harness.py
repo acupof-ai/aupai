@@ -16,6 +16,7 @@ python scripts/harness.py --selftest # every check must fail on its broken world
 
 import argparse
 import ast
+import errno
 import functools
 import glob
 import importlib.machinery
@@ -13071,6 +13072,87 @@ def _brief_kind_matches(kind, hay):
     return any(w in hay for w in _BRIEF_WORDS.get(kind, ()))
 
 
+def cmd_monitor(argv):
+    """`harness monitor --attach <name> --started <ts> --wrapper-pid <pid> [--log <path>]`.
+
+    ARMS A MONITOR ON A RUN THAT IS ALREADY GOING. The only reason this exists: on 2026-09-05 the
+    relaunched b0_mem_m1 lost its monitor to the name-only settled() match, and the alternative to
+    this command was a human watching a log to step 3815 by hand. A run without a monitor gets no
+    end row and never releases its cards, so the next job reads the card as held forever -- and
+    nobody finds out until someone needs the card.
+
+    IT VERIFIES BEFORE IT ARMS, because every argument here is supplied by hand and a monitor
+    pointed at the wrong pid is worse than none: it will write a terminal row for a job that is
+    still running, or release a card that is still in use.
+      - the wrapper pid must be alive
+      - (name, started) must name a row that is OPEN, or the monitor would settle immediately
+      - --started must be exact; a name with several rows and no matching stamp refuses rather
+        than guessing, which is the defect this whole change is about
+
+    Deliberately NOT a claim: the claim belongs to whoever launched the job, and re-acquiring here
+    could take a card from a live claim under a different name. This arms supervision only."""
+    ap = argparse.ArgumentParser(prog="harness monitor")
+    ap.add_argument("--attach", required=True, help="the run name, as in runs/experiments.jsonl")
+    ap.add_argument("--started", required=True, help="that run's exact started stamp")
+    ap.add_argument("--wrapper-pid", required=True, type=int,
+                    help="the pid the monitor should watch (the launch wrapper, or torchrun)")
+    ap.add_argument("--log", default=None, help="log path (default runs/<name>.log)")
+    a = ap.parse_args(argv)
+
+    try:
+        os.kill(a.wrapper_pid, 0)
+    except OSError as e:
+        # EPERM means the pid EXISTS and is not ours to signal -- another user's process, or root's.
+        # That is a live job and a legitimate thing to supervise, so it must not refuse: the same
+        # distinction card_claim._alive makes. Only ESRCH says the pid is absent.
+        if e.errno != errno.EPERM:
+            print(f"REFUSING: pid {a.wrapper_pid} is not signalable here ({e.strerror}). A monitor "
+                  f"on a pid this namespace cannot see would report the job dead at once -- read "
+                  f"the pid in the namespace you are arming from (AGENTS.md: a PID is only "
+                  f"meaningful in the namespace that read it).", file=sys.stderr)
+            return 2
+
+    p_exp = os.path.join(ROOT, "runs", "experiments.jsonl")
+    rows, stamps = [], set()
+    try:
+        with open(p_exp, encoding="utf-8") as f:
+            for ln in f:
+                if not ln.strip():
+                    continue
+                try:
+                    r = json.loads(ln)
+                except ValueError:
+                    continue
+                if r.get("name") == a.attach:
+                    rows.append(r)
+                    stamps.add(str(r.get("started") or ""))
+    except OSError as e:
+        print(f"REFUSING: cannot read {p_exp}: {e}", file=sys.stderr)
+        return 2
+    if not rows:
+        print(f"REFUSING: no experiments row named {a.attach!r}", file=sys.stderr)
+        return 2
+    if a.started not in stamps:
+        print(f"REFUSING: {a.attach} has no row started {a.started!r}. Its stamps are: "
+              f"{', '.join(sorted(s for s in stamps if s))}. The stamp must be exact -- a monitor "
+              f"armed on the wrong run writes that run's end row.", file=sys.stderr)
+        return 2
+    mine = [r for r in rows if str(r.get("started") or "") == a.started]
+    if any(r.get("status") in ("ok", "fail", "retracted") for r in mine):
+        st = next(r.get("status") for r in mine if r.get("status") in ("ok", "fail", "retracted"))
+        print(f"REFUSING: {a.attach} started {a.started} already has a terminal row ({st}), so a "
+              f"monitor would settle and exit on its first pass.", file=sys.stderr)
+        return 2
+
+    log_path = a.log or os.path.join(ROOT, "runs", f"{a.attach}.log")
+    mpid = _arm_monitor(a.attach, a.wrapper_pid, log_path, started=a.started)
+    print(f"monitor {mpid} attached to {a.attach} (started {a.started}), watching pid "
+          f"{a.wrapper_pid}, log {os.path.relpath(log_path, ROOT)}")
+    print("  it will write the end row and release the claim when the job ends; it does NOT "
+          "acquire a claim, because the claim belongs to whoever launched the job")
+    return 0
+
+
 def cmd_board(as_json=False, html_path=None):
     """harness board [--json | --html <path>]. Renders harness state as JSON or HTML.
     Default: writes runs/board.html. Every number is read at render time — nothing typed."""
@@ -13468,25 +13550,35 @@ def _selftest_diag_closed_arms():
       - a closed arm WITH a diag row -> SKIP, so the FAIL is about absence and not about
         being closed.
     """
-    import shutil
-
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import memory_diag as md
 
-    real = os.path.join(ROOT, "runs", "experiments.jsonl")
-    rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
-    template = dict(rows[-1])
+    # A LITERAL ROW, not the live ledger's newest one. `dict(rows[-1])` was the second way this
+    # world read live state: whatever another session appended last became the fixture's template,
+    # so a row missing a field these worlds do not override changes the verdict. Only the fields
+    # the check reads are here (name, status, started/ended, commit, cmd) plus the ones exp.py
+    # requires, and every one of them is set below.
+    template = {"name": "", "status": "", "started": "", "ended": "", "commit": "", "cmd": "",
+                "hypothesis": "fixture", "result": "", "finding": "fixture", "decision": "fixture"}
     head = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
                           capture_output=True, text=True).stdout.strip()
     old = subprocess.run(["git", "-C", ROOT, "rev-parse", f"{md.DIAG_CADENCE_COMMIT}~1"],
                          capture_output=True, text=True).stdout.strip()
 
     def _world(commit, cmd, with_row):
+        # THE FIXTURE IS THE ONLY LEDGER. The first version copied ROOT's real
+        # runs/experiments.jsonl and appended its rows to it, so the verdict depended on what was
+        # live at run time: once b0_mem_m1 was launched and OPEN, `arms` was non-empty, the check
+        # took the running-arm path instead of the closed-arm branch these four worlds exist to
+        # test, and the FAIL world returned `WARN 1 open memory arm(s) with no diagnostics row at
+        # all: b0_mem_m1`. CI red on ed6f5f5d and e9a96103 (4c, 2026-09-05). The copy bought
+        # nothing -- the check reads only arm-named rows, and every one it should see is written
+        # here. A test whose answer moves with the pod is the shape check_fixture_not_live_state
+        # gates for; this one built the fixture and then handed it the live file's contents.
         d = _tmp_repo()
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         dst = os.path.join(d, "runs", "experiments.jsonl")
-        shutil.copy(real, dst)
-        with open(dst, "a", encoding="utf-8") as f:
+        with open(dst, "w", encoding="utf-8") as f:
             f.write(json.dumps(dict(template, name="b0_mem_m2", status="ok",
                                     started="2026-09-05 06:00", ended="2026-09-05 07:00",
                                     commit=commit, cmd=cmd, result="done"),
@@ -13510,7 +13602,17 @@ def _selftest_diag_closed_arms():
     st, ev = check_memory_diag_fresh(_world(head, train, True))
     assert st == SKIP and "b0_mem_m2" not in ev, \
         f"a closed arm WITH a row is not a defect: {st} {ev}"
-    print("  ok   memory_diag closed-arm states separate (4 worlds)")
+
+    # AND THE WORLD IS SELF-CONTAINED, asserted rather than assumed. This is the regression, not a
+    # tidiness check: with ROOT's ledger copied in, a live OPEN b0_mem_m1 row put the check on the
+    # running-arm path and the FAIL world above returned WARN instead -- so every assertion here
+    # was a statement about the pod's current state. One row in, one row readable.
+    w = _world(head, train, False)
+    with open(os.path.join(w, "runs", "experiments.jsonl"), encoding="utf-8") as f:
+        n = sum(1 for x in f if x.strip())
+    assert n == 1, f"the fixture ledger holds {n} rows -- it is reading live state again"
+
+    print("  ok   memory_diag closed-arm states separate (4 worlds, fixture ledger self-contained)")
 
 
 def _selftest_brief():
@@ -13590,6 +13692,30 @@ def _selftest_monitor_stop_rules():
     template = re.search(r"monitor_code = f'''(.*?)'''",
                          inspect.getsource(_arm_monitor), re.S).group(1)
 
+    # EVERY SLOT THE TEMPLATE USES MUST BE IN THE NAME MAP BELOW, checked here rather than
+    # discovered by the NameError. Measured 2026-09-05: adding `started = "{started}"` to the
+    # template broke this selftest at the eval, not at the assertion -- `NameError: name
+    # 'started' is not defined`, harness.py:13714 -- and it survived the commit because the
+    # pre-commit hook runs the SCOPED selftest, which changes nothing for a template edit and
+    # said so ("no CHECK function is changed ... THIS IS NOT A PASS"). A template with N slots
+    # has one obligation per slot per evaluator, and only the production path is exercised by
+    # running the tool; the failure mode is a crash in a DIFFERENT selftest, which reads as that
+    # selftest being broken. Named up front so the message says which slot, not which line.
+    # DOUBLED BRACES FIRST. The template is an f-string that GENERATES f-strings: the monitor's
+    # own log lines are written `{{time.strftime(...)}}` so the inner code gets one brace at
+    # runtime. Scanning the raw template counts those as slots -- measured, it reported `out` and
+    # `silent_limit`, both runtime names of the monitor process and neither interpolated at build
+    # time -- so an assertion on the raw scan would demand names this selftest must NOT supply.
+    _flat = template.replace("{{", "\x00").replace("}}", "\x01")
+    _slots = set(re.findall(r"\{([A-Za-z_][A-Za-z_0-9]*)[}:!]", _flat))
+    _supplied = {"pid", "log_path", "name", "os", "output_repr", "rc_repr", "started",
+                 "arm_repr", "HERE"}
+    _missing = _slots - _supplied
+    assert not _missing, (
+        f"the monitor template interpolates {sorted(_missing)}, which this selftest's name map "
+        f"does not supply -- add them to the dict below, or the eval raises NameError and reads "
+        f"as this selftest being broken rather than as an unsupplied slot")
+
     def one_pass(name, diag_rows):
         d = tempfile.mkdtemp(prefix="monstop_")
         try:
@@ -13612,6 +13738,7 @@ def _selftest_monitor_stop_rules():
             code = eval("f'''" + template + "'''", {}, {  # noqa: S307 -- the real template
                 "pid": 1, "log_path": log, "name": name, "os": os,
                 "output_repr": "None", "rc_repr": repr(os.path.join(runs, f"{name}.rc")),
+                "started": "2026-09-05 03:00",
                 "arm_repr": repr(bool(_arm_id(name))), "HERE": scripts})
             code = code.replace("while True:\n    time.sleep(60)", "for _ONCE in [0]:\n    pass")
             code = code.replace("    if settled():", "    if False:")
@@ -13668,7 +13795,7 @@ def _selftest_monitor_suppression():
     src = _arm_monitor.__doc__ and None  # keep the reference explicit for readers
     code = inspect.getsource(_arm_monitor)
     body = code[code.index("def settled():"):code.index("while True:")]
-    ns = {"os": os, "json": json, "exp_log": exp_log, "name": "r1"}
+    ns = {"os": os, "json": json, "exp_log": exp_log, "name": "r1", "started": ""}
     exec(compile(body, "<monitor>", "exec"), ns)  # noqa: S102 -- the real source, by design
     settled = ns["settled"]
     assert settled() is False, "a running row is not settled"
@@ -13683,9 +13810,44 @@ def _selftest_monitor_suppression():
         f.write(json.dumps({"name": "r1", "started": "x", "status": "fail",
                             "result": "killed by harness kill"}) + "\n")
     assert settled() is True, "a kill record must silence the monitor too"
+
+    # A RELAUNCH UNDER THE SAME NAME MUST NOT BE SILENCED BY THE PREVIOUS RUN'S ROW.
+    # Measured 2026-09-05: b0_mem_m1 was launched at 19:41, failed, relaunched at 22:35. The
+    # relaunch's monitor matched on `name` alone, read the 19:45 `fail` row, released the claim of
+    # a job at step 300 and exited -- M1 then ran from step 420 with no monitor at all, and a
+    # stale monitor watched the wrapper of a drift-refused M3 attempt. The failure is silent by
+    # construction: a monitor that exits leaves nothing behind to notice.
+    with open(exp_log, "w", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-09-04 19:41",
+                            "status": "running"}) + "\n")
+        f.write(json.dumps({"name": "r1", "started": "2026-09-04 19:41", "status": "fail",
+                            "result": "vanished"}) + "\n")
+        f.write(json.dumps({"name": "r1", "started": "2026-09-04 22:35",
+                            "status": "running"}) + "\n")
+    ns2 = {"os": os, "json": json, "exp_log": exp_log, "name": "r1",
+           "started": "2026-09-04 22:35"}
+    exec(compile(body, "<monitor>", "exec"), ns2)  # noqa: S102
+    assert ns2["settled"]() is False, (
+        "the older run's terminal row silenced the relaunch's monitor -- this is the defect: "
+        "the live job loses its monitor and its claim while it is still training")
+
+    # And the POSITIVE half, or the case above would pass for a settled() that never returns True:
+    # this run's OWN terminal row must still silence it.
+    with open(exp_log, "a", encoding="utf-8") as f:
+        f.write(json.dumps({"name": "r1", "started": "2026-09-04 22:35", "status": "ok",
+                            "result": "3815 steps"}) + "\n")
+    assert ns2["settled"]() is True, "this run's own terminal row must still settle it"
+
+    # EMPTY started DEGRADES TO NAME-ONLY, deliberately: the launcher prints a note when it cannot
+    # read the stamp, and silently matching nothing would be worse than matching too much.
+    ns3 = {"os": os, "json": json, "exp_log": exp_log, "name": "r1", "started": ""}
+    exec(compile(body, "<monitor>", "exec"), ns3)  # noqa: S102
+    assert ns3["settled"]() is True, "with no stamp, any terminal row of the name still settles"
+
     shutil.rmtree(d, ignore_errors=True)
     del src, sp
-    print("  monitor: no row after a run reaches ok or fail")
+    print("  monitor: no row after a run reaches ok or fail; a relaunch is not silenced by the "
+          "previous run's row")
 
 
 def _selftest_gate_timeout():
@@ -16583,7 +16745,7 @@ def _wait_for_startup(log_path, timeout):
     return False, "timeout"
 
 
-def _arm_monitor(name, pid, log_path, output_path=None):
+def _arm_monitor(name, pid, log_path, output_path=None, started=""):
     """Start a background monitor that marks the exp row when the process dies
     or the log (and declared output) goes silent for 10 minutes.
 
@@ -16600,6 +16762,7 @@ def _arm_monitor(name, pid, log_path, output_path=None):
     monitor_code = f'''
 import json, os, subprocess, sys, time
 pid, log, name, exp_py = {pid}, "{log_path}", "{name}", "{os.path.join(HERE, "exp.py")}"
+started = "{started}"
 output = {output_repr}
 rc_file = {rc_repr}
 exp_log = os.path.join(os.path.dirname(exp_py), "..", "runs", "experiments.jsonl")
@@ -16619,8 +16782,20 @@ def settled():
                 if not line.strip():
                     continue
                 r = json.loads(line)
-                if r.get("name") == name and r.get("status") in ("ok", "fail", "retracted"):
-                    return True
+                if r.get("name") != name:
+                    continue
+                if r.get("status") not in ("ok", "fail", "retracted"):
+                    continue
+                # (name, started), NOT name alone. Names repeat: a relaunch under the same
+                # name is normal, and on 2026-09-05 the relaunched b0_mem_m1's monitor read
+                # the PREVIOUS run's terminal row, released the claim of a job at step 300
+                # and exited -- M1 then ran from step 420 unmonitored. Row identity is
+                # (name, started) everywhere else here. An empty `started` degrades to the
+                # old behaviour on purpose: the launcher says so out loud when it cannot
+                # read the stamp, rather than matching silently.
+                if started and str(r.get("started") or "") != started:
+                    continue
+                return True
     except (OSError, ValueError):
         pass
     return False
@@ -17117,6 +17292,36 @@ def cmd_launch(rest):
          "--hypothesis", args.hypothesis],
         check=True,
     )
+    # READ BACK THE started STAMP THIS RUN JUST OPENED. The monitor must match its own run and
+    # nothing else: settled() compared on `name` alone, so the relaunched b0_mem_m1's monitor saw
+    # the PREVIOUS run's 19:45 `fail` row, released the claim of a job at step 300 and exited --
+    # measured 2026-09-05, M1 ran from step 420 with no monitor while a stale one watched the
+    # drift-refused M3 attempt. Names repeat by design: a relaunch under the same name is the
+    # normal case, and (name, started) is the row identity everywhere else in this file
+    # (_exp_fold, exp.py's own fold). The stamp is exp.py's to mint, so it is read back rather
+    # than guessed -- a clock read here can differ from the one in the row by a second.
+    launch_started = ""
+    _p = os.path.join(ROOT, "runs", "experiments.jsonl")
+    try:
+        with open(_p, encoding="utf-8") as _f:
+            for _ln in _f:
+                if not _ln.strip():
+                    continue
+                try:
+                    _r = json.loads(_ln)
+                except ValueError:
+                    continue
+                if _r.get("name") == args.name and _r.get("status") == "running":
+                    launch_started = str(_r.get("started") or "")
+    except OSError:
+        pass
+    if not launch_started:
+        # No stamp means the monitor cannot distinguish this run from an older one of the same
+        # name. Said out loud rather than silently falling back to name-only matching, which is
+        # the defect being fixed.
+        print(f"note   no started stamp read back for {args.name}: the monitor will match on "
+              f"name alone and an older terminal row of this name would silence it",
+              file=sys.stderr)
 
     # 2b. Training jobs: verify training-scope drift before launch.
     # A corpus-scope drift (e.g. fetch_corpus.py mid-push) must not stop a training launch.
@@ -17222,10 +17427,13 @@ def cmd_launch(rest):
             else:
                 print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
         elif _proc_readable():
+            _w = _dev_wait()
+            _why = (f"within {int(_w)}s" if _w else
+                    "before the job itself ended -- the poll waits while the wrapper lives, so "
+                    "this means the job exited")
             print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
-                  f"device within {int(_dev_wait())}s. The job may still be running -- read the "
-                  f"log. A claim on a process that is not on a card protects nothing (b0_mem_m1).",
-                  file=sys.stderr)
+                  f"device {_why}. A claim on a process that is not on a card protects nothing "
+                  f"(b0_mem_m1). Read the log.", file=sys.stderr)
         else:
             print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
                   f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
@@ -17256,7 +17464,8 @@ def cmd_launch(rest):
             return 1
 
     # 5. Arm monitor
-    monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
+    monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
+                               started=launch_started)
 
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")
@@ -17266,7 +17475,7 @@ def cmd_launch(rest):
     # Blocking by design -- the supervisor must outlive the child, so the caller
     # detaches this whole command (setsid nohup), exactly as it detaches training.
     if args.auto_resume:
-        return _supervise(args, cmd, proc, cards, log_path, pid_path)
+        return _supervise(args, cmd, proc, cards, log_path, pid_path, started=launch_started)
     return 0
 
 
@@ -17300,11 +17509,14 @@ def _latest_step_ckpt(name):
     return best, best_step
 
 
-def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None):
+def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""):
     """Wait on a launched job; on a crash relaunch it with --resume, up to N times.
 
     `root` redirects the exp row and suppresses the monitor: the selftest must not
-    write into the real ledger (see _close_row)."""
+    write into the real ledger (see _close_row).
+
+    `started` is the launching row's stamp, threaded through so a resumed run's monitor
+    answers to the SAME row -- see the _arm_monitor call below."""
     resumes = []
     for attempt in range(args.auto_resume + 1):
         rc = proc.wait()
@@ -17371,7 +17583,11 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None):
         with open(pid_path, "w") as f:
             f.write(f"{proc.pid}\n{' '.join(rcmd)}\n")
         if not root:
-            _arm_monitor(args.name, proc.pid, log_path, output_path=args.output)
+            # SAME started: an auto-resume continues the SAME run, so its monitor must answer to
+            # the same row. Passing "" here would re-open the name-only match on the path most
+            # likely to have an older terminal row of this name.
+            _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
+                         started=started)
     return 0
 
 
@@ -18139,6 +18355,8 @@ def main():
         return cmd_launch(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "kill":
         return cmd_kill(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "monitor":
+        return cmd_monitor(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "milestone":
         return cmd_milestone(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "free-card":
