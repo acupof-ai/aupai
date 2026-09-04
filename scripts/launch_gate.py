@@ -252,6 +252,66 @@ LAUNCH_SHAPE = _launch_shape_from_env()
 LAUNCH_MIX = "data/mix_500m.json"
 
 
+def _cards_set(raw):
+    """"5" / "0-3" / "0,2,5" -> {"5"} / {"0","1","2","3"} / {"0","2","5"}. ValueError otherwise.
+
+    ONE parser for both sides. The request and the grant are expanded by the same code on
+    purpose: two expanders is how "0-3" comes to mean four cards on one side and one key
+    named "0-3" on the other, which is the divergence this whole item is about.
+    """
+    out = set()
+    for part in str(raw).split(","):
+        part = part.strip()
+        if not part:
+            continue
+        m = re.fullmatch(r"(\d+)\s*-\s*(\d+)", part)
+        if m:
+            a, b = int(m.group(1)), int(m.group(2))
+            if a > b or b - a > 63:
+                raise ValueError(f"{part!r} is not a card range")
+            out |= {str(i) for i in range(a, b + 1)}
+        elif part.isdigit():
+            out.add(part)
+        else:
+            raise ValueError(f"{part!r} is neither a card index nor a range")
+    return out
+
+
+def _launch_cards_from_env():
+    """The cards this launch wants, as a sorted list of index strings, or None if unstated.
+
+    Same route as LAUNCH_SHAPE and LAUNCH_MIX: one module-level source the launch side sets and
+    the gate reads, rather than a parameter every call site must remember. None means "the
+    launcher did not say", and gate_cards then answers about the BLOCK, which is the launch it
+    was written for. A lane launch says LAUNCH_CARDS=5 and gets an answer about card 5.
+
+    A malformed value RAISES for the same reason LAUNCH_SHAPE_JSON does: a gate that fell back
+    here would confirm a grant for cards nobody asked for.
+    """
+    raw = os.environ.get("LAUNCH_CARDS", "").strip()
+    if not raw:
+        return None
+    try:
+        out = _cards_set(raw)
+    except ValueError as e:
+        raise SystemExit(f"LAUNCH_CARDS={raw!r}: {e}") from None
+    return sorted(out, key=int) or None
+
+
+LAUNCH_CARDS = _launch_cards_from_env()
+
+
+def _launch_owner(root):
+    """Who is launching, as the name the grant would use. LAUNCH_OWNER wins; else the
+    worktree's own name, since one session per worktree is the standing rule (`aupai-de` -> de).
+    """
+    o = os.environ.get("LAUNCH_OWNER", "").strip()
+    if o:
+        return o
+    base = os.path.basename(os.path.abspath(root))
+    return base[len("aupai-"):] if base.startswith("aupai-") else base
+
+
 def _sha256(p):
     """Chunked sha256. RAISES on a missing file, matching launch_tests._sha256 exactly.
 
@@ -575,17 +635,97 @@ def gate_memory_measured(root, mix_path, world):
 
 
 def gate_cards(root, mix_path, world):
-    """7. The block is free, or a controller assignment says otherwise."""
+    """7. The cards this launch wants are granted to it, by name.
+
+    Two launches ask two different questions and the first version of this gate only ever
+    answered one. A BLOCK launch asks "is the block mine": `launch_block_granted` plus
+    `block_cards`. A LANE launch asks "is card N mine for this job", and the old gate returned
+    GO to it off `launch_block_granted` alone -- a lane job on a card held by someone else got
+    the block's grant read back as its own. Measured on the live grant 2026-09-04: cards 1 and 2
+    are HELD by tileRL jobs and card 6 by a foreign occupant, and every one of those returned GO.
+
+    So: LAUNCH_CARDS states what is wanted. Cards outside the grant refuse, naming the card and
+    its recorded owner. A lane card must ALSO be granted to this launch by name, and the name is
+    read from `lane_to`, a FIELD -- not from the prose. MEASURED on the live grant 2026-09-04:
+    matching a session name inside `cards[N]`/`lane_note` text says the lane is de's, because
+    "de" occurs inside "excluded"; adding word boundaries then says it is b0's and fb's too,
+    out of "ckpt_b0_sd_equalcompute" and the granter's own name. A two-character session name
+    cannot be recovered from prose at all, so the gate refuses to try. `card_claim.grant_lane`
+    is the writer that sets `lane_to` with the prose, and a lane grant without it is UNKNOWN
+    naming that command -- not a guess, because a guessed owner is what makes a card gate
+    believable and wrong.
+    """
     p = os.path.join(root, "runs", "card_assignment.json")
-    if os.path.exists(p):
-        try:
-            a = json.load(open(p, encoding="utf-8"))
-        except (OSError, ValueError) as e:
-            return NOGO, f"card_assignment.json unreadable: {e}"
+    if not os.path.exists(p):
+        return UNKNOWN, ("no runs/card_assignment.json -- card ownership cannot be read from "
+                         "an artifact and needs the controller")
+    try:
+        a = json.load(open(p, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return NOGO, f"card_assignment.json unreadable: {e}"
+    cards = a.get("cards") or {}
+    if not isinstance(cards, dict):
+        cards = {}
+
+    def owner(idx):
+        """cards[N] as prose, from an exact key or from a range key that covers N."""
+        if idx in cards:
+            return str(cards[idx])
+        for k, v in cards.items():
+            try:
+                if idx in _cards_set(k) and len(_cards_set(k)) > 1:
+                    return str(v)
+            except ValueError:
+                continue
+        return ""
+
+    try:
+        block = _cards_set(a.get("block_cards") or "")
+        lane = _cards_set(a.get("lane_card") or "")
+    except ValueError as e:
+        return NOGO, f"card_assignment.json: block_cards/lane_card unparseable: {e}"
+
+    if LAUNCH_CARDS is None:
         if a.get("launch_block_granted"):
-            return GO, f"controller granted the block: {a.get('note', '')[:60]}"
-    return UNKNOWN, ("no runs/card_assignment.json with launch_block_granted -- card "
-                     "ownership cannot be read from an artifact and needs the controller")
+            return GO, (f"controller granted the block {a.get('block_cards')!r}: "
+                        f"{a.get('note', '')[:60]}")
+        return UNKNOWN, ("no launch_block_granted -- and LAUNCH_CARDS is unset, so this gate "
+                         "cannot tell which cards to ask about. Set LAUNCH_CARDS for a lane job")
+
+    want = set(LAUNCH_CARDS)
+    shown = ",".join(sorted(want, key=int))
+    granted = block | lane
+    ungranted = sorted(want - granted, key=int)
+    if ungranted:
+        detail = "; ".join(f"card {c}: {owner(c)[:70] or 'no cards[] entry'}" for c in ungranted)
+        return NOGO, (f"LAUNCH_CARDS={shown} wants card(s) {','.join(ungranted)} that "
+                      f"block_cards={a.get('block_cards')!r} and lane_card="
+                      f"{a.get('lane_card')!r} do not grant -- {detail}")
+
+    in_block = sorted(want & block, key=int)
+    if in_block and not a.get("launch_block_granted"):
+        return NOGO, (f"LAUNCH_CARDS={shown} wants block card(s) {','.join(in_block)} but "
+                      f"launch_block_granted is false")
+
+    who = _launch_owner(root)
+    in_lane = sorted(want & lane, key=int)
+    lane_to = str(a.get("lane_to") or "").strip()
+    if in_lane and not lane_to:
+        return UNKNOWN, (f"lane card(s) {','.join(in_lane)} are granted, but card_assignment.json "
+                         f"carries no lane_to, so this gate cannot say WHOSE the lane is. The "
+                         f"prose does not answer it: matching a name in cards[N]/lane_note reads "
+                         f"'de' out of 'excluded'. Re-grant with card_claim.py grant-lane")
+    if in_lane and lane_to != who:
+        detail = "; ".join(f"card {c}: {owner(c)[:60] or 'no cards[] entry'}" for c in in_lane)
+        return NOGO, (f"lane card(s) {','.join(in_lane)} are granted to {lane_to!r}, not to "
+                      f"{who!r} -- {detail}. A lane grant names one job; ask the controller")
+    parts = []
+    if in_block:
+        parts.append(f"block {','.join(in_block)} granted ({a.get('note', '')[:40]})")
+    if in_lane:
+        parts.append(f"lane {','.join(in_lane)} granted to {lane_to} "
+                     f"({str(a.get('lane_note') or owner(in_lane[0]))[:60]})")
+    return GO, f"LAUNCH_CARDS={shown}: " + "; ".join(parts)
 
 
 def gate_vocab_id(root, mix_path, world):
@@ -1503,6 +1643,67 @@ def selftest():
         if st != GO:
             bad.append(f"{name} still {st} after the defect was UNDONE ({why[:70]}) -- "
                        f"the world was failing on something other than its planted defect")
+
+    # LAUNCH_CARDS, the lane path (de, 2026-09-04). The nine worlds above all run with
+    # LAUNCH_CARDS unset, i.e. the BLOCK question, so they certify nothing about a lane launch --
+    # this selftest was green on the old ownership-blind gate and would stay green on it. The
+    # world is the REAL grant file, unmutated: cards 1, 2 and 6 in it are held by jobs that are
+    # not ours, and the old gate returned GO for a lane launch on every one of them.
+    _real_grant = os.path.join(ROOT, "runs", "card_assignment.json")
+    if os.path.exists(_real_grant):
+        _g = json.load(open(_real_grant, encoding="utf-8"))
+        _lane = sorted(_cards_set(_g.get("lane_card") or ""), key=int)
+        _block = _cards_set(_g.get("block_cards") or "")
+        _held = sorted({c for c in _g.get("cards") or {}
+                        if c.isdigit() and c not in _block and c not in _lane}, key=int)
+        _dcards = os.path.dirname(_real_grant)
+        _dcards = os.path.dirname(_dcards)
+        _saved_cards = globals()["LAUNCH_CARDS"]
+        _saved_owner = os.environ.get("LAUNCH_OWNER")
+        try:
+            for _c in _held:
+                globals()["LAUNCH_CARDS"] = [_c]
+                st, why = gate_cards(_dcards, None, 1)
+                if st == GO:
+                    bad.append(f"gate_cards reported GO for a lane launch on card {_c}, which "
+                               f"the real grant gives to neither the block nor the lane: "
+                               f"{why[:70]}")
+                elif _c not in why:
+                    bad.append(f"gate_cards refused card {_c} without naming it: {why[:70]}")
+            # The positive, in the same world: the lane card IS granted, to the name `lane_to`
+            # gives it. Without a positive the three cases above are satisfied by a gate that
+            # refuses everything. The owner is read from the FIELD -- see gate_cards' docstring
+            # for why the prose cannot answer it -- so a grant written before `lane_to` existed
+            # must show as UNKNOWN naming the writer, never as a guess and never as silence.
+            if _lane:
+                _c = _lane[0]
+                _to = str(_g.get("lane_to") or "").strip()
+                globals()["LAUNCH_CARDS"] = [_c]
+                if _to:
+                    os.environ["LAUNCH_OWNER"] = _to
+                    st, why = gate_cards(_dcards, None, 1)
+                    if st != GO:
+                        bad.append(f"gate_cards refused lane card {_c} to {_to!r}, whom the real "
+                                   f"grant's lane_to names: {st} {why[:70]} -- a gate that "
+                                   f"refuses every lane launch passes the negatives for free")
+                    os.environ["LAUNCH_OWNER"] = "nobody_in_this_grant"
+                    st, why = gate_cards(_dcards, None, 1)
+                    if st == GO:
+                        bad.append(f"gate_cards granted lane card {_c} to a session lane_to does "
+                                   f"not name: {why[:70]}")
+                else:
+                    os.environ["LAUNCH_OWNER"] = "anyone"
+                    st, why = gate_cards(_dcards, None, 1)
+                    if st != UNKNOWN or "grant-lane" not in why:
+                        bad.append(f"the real grant carries no lane_to, so a lane launch on card "
+                                   f"{_c} must be UNKNOWN naming card_claim grant-lane; got "
+                                   f"{st} {why[:70]}")
+        finally:
+            globals()["LAUNCH_CARDS"] = _saved_cards
+            if _saved_owner is None:
+                os.environ.pop("LAUNCH_OWNER", None)
+            else:
+                os.environ["LAUNCH_OWNER"] = _saved_owner
 
     # WHERE a gate refuses, not only whether. All nine worlds above were green on a
     # tree that had lost AUTHORITY: a gate answering from the wrong filesystem still

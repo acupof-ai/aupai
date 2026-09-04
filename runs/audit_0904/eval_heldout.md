@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Twenty entries: four S1, twelve S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Twenty-one entries: four S1, thirteen S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -125,6 +125,7 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E18 | S2 | `eval/score_matrix.py`'s failure records name the cause of a scorer's refusal. | Three runners read: `_run_eval_json:304` and `metric_minimal_pairs:281` use `(r.stderr or r.stdout)`; `_run:387` uses `(r.stdout + r.stderr)`. Refusal stream read per script for all 7. Mechanism reproduced with a 4-line program through line 304's expression verbatim. | Two of three runners discard stdout entirely whenever stderr is non-empty, and `domain_bpb.py` is the one script whose every refusal is on stdout, so a single `vocab_id` UserWarning replaces the cause. **6 of 10** `domain_bpb` rows are blinded this way (not 10 as MT-12 reports: 3 carry a real stderr cause, 1 carries a bare source line from the truncation shape the code comment calls fixed). `l1_fewshot` adds 8 rows of a second shape: exit -15 SIGTERM, cause recorded as a progress line. `_run` already holds the correct form eleven lines below the second defective site. |
 | E19 | S1 | `domain_bpb` is a published metric of this project: it is the control arm's cross-tokenizer reading, `runs/score_matrix.jsonl` carries it as a field on 60 rows, and `facts/*.json` cite it. | Ran domain_bpb's whole pre-forward half on the pod with `CUDA_VISIBLE_DEVICES=""` (no model, no card): `val_seqs` + `roundtrip_fraction` over all 9 domains of `data/mix_200m_4b.json`. Round-trip fractions math_owm_stage2 0.1094, en_c4_stage2 0.0156, cot 0.0000, textbook_30b 0.0156, chatml 0.0000, chat_qa 0.0000, zh_web 0.1094, code_py_starcoder 0.2188, code_py_rp1t 0.3594 — every one below `MIN_ROUNDTRIP = 0.98`. | **All 9 domains are skipped, `out` is empty, and `domain_bpb.py:317` prints `REFUSING: no domain produced a number` and returns 1. The metric has NEVER produced a number for any checkpoint and cannot on the current data path** — the 10 error rows in E18 are this one cause, not a per-checkpoint problem. Cause is one line: `tok.decode([EOS_ID])` returns `''`, and every val row from `train._domain_seqs` is packed and EOS-delimited (cot row 0 holds 8), so decode drops the delimiters and re-encode cannot reproduce the ids. The gate measures the tokenizer's special-token handling, not whether the two arms score the same bytes. |
 | E20 | S1 | `ds.n2_params_vs_data_matched_compute` = −0.010770 nat, block-paired over 576 blocks, t −6.51, sign test 227 up / 349 down p 2.10e-07 — the params-vs-data verdict behind the 30B shape decision. | `eval/block_paired.py --from runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt#cu ckpt_params_leg_438m_3p76b.pt#cu`, the same instrument the fact's `source` names, same 576 blocks / 2,359,296 tokens, same orientation. | On doc_cu the mean is **−0.000920** (t **−0.55**, 1/43 of its own SE) and **the sign test REVERSES: 329 up / 247 down, p 3.62e-04** — a significant majority of blocks where params is WORSE, opposite to the mean, with median **+0.003204** also opposite. On cu_none both statistics agreed. The surviving negative mean rides on chatml/chat_qa/textbook_30b, and chatml+chat_qa are the two domains the mask moved most (−0.2364, −0.1695), so it is E2's non-uniformity inside the pair rather than an advantage. Domain count is 9 in all four rows, unchanged between the published number and the re-score. |
+| E21 | S2 | E18's own numbers: `l1_fewshot` "has 8 error rows, all of the form `l1_fewshot.py exited -15`", over "the 18 score_matrix error entries". | All 8 `l1_fewshot` error values read verbatim from `runs/score_matrix.jsonl`; the population recounted at E18's own commit `2c87a493` under both counting rules; `TZ=UTC git log` against bare `--date=format-local:...Z`. | **1 of 8 is the SIGTERM shape, not 8** — the other 7 name `eval_artifacts.ArtifactExists` and are readable as published. I read one row and wrote "all of the form". The population is 19 by E18's own rule or 25 by the plainer one, never 18: "18" was 10 `domain_bpb` + 8 `l1_fewshot`, the two metrics I had looked at, stated as the population. And dating the E18 commit I printed `12:38:11Z` from `--date=format-local:'...Z'` — +0800 with a `Z` I typed into the format string, the exact defect E15 records, reproduced while checking E15's neighbour; true UTC is `04:38:11Z`. E18's MECHANISM survives intact, including the 6-of-10 count. |
 
 ## 5. Blind spots of this audit
 
@@ -497,17 +498,20 @@ objects carrying only the vocab_id warning. Reading all 10 in `runs/score_matrix
 So the count is 6, the mechanism is confirmed, and the defect has a shape neither b0's summary nor
 the code comment names.
 
-**A second affected metric b0's list omits.** `l1_fewshot` has 8 error rows, all of the form
-`l1_fewshot.py exited -15:   448/497 acc=0.0%`. Exit **-15** is SIGTERM — killed, not crashed —
-and what got recorded is a progress line, because a killed process writes no exception anywhere
-and the tail-3 fallback grabs whatever stdout last held. Not the stream-shadowing bug; the same
-consequence (a record that names progress as a cause), and it makes `l1_fewshot` the second metric
-whose failures are unreadable from the ledger.
+**A second affected metric b0's list omits — and my first count of it was wrong; see the
+correction under E21.** `l1_fewshot` has 8 error rows. **ONE** is
+`l1_fewshot.py exited -15:   448/497 acc=0.0%`: exit −15 is SIGTERM, killed not crashed, and what
+got recorded is a progress line, because a killed process writes no exception anywhere and the
+tail-3 fallback grabs whatever stdout last held. That is not the stream-shadowing bug but the same
+consequence, a record naming progress as a cause. The other **7** name a real exception
+(`eval_artifacts.ArtifactExists`) and are readable as published — I wrote "all of the form exited
+-15" from reading one row and generalising, which is the aggregate-adjective error, in a finding
+whose subject is records that misname their cause.
 
 **Affected metrics, stated as the assignment asks:** `domain_bpb` (6 rows blinded by shadowing,
 1 by truncation), `humaneval_bpb` (1 refusal path of 12), `base_matrix`/`minimal_pairs` (all
-failures, one-line truncation), `l1_fewshot` (8 rows, SIGTERM shape). Unaffected: `lambada_en`,
-`lambada_zh`, `math_v2_like`, and everything on the `_run` path.
+failures, one-line truncation), `l1_fewshot` (**1** row of the SIGTERM shape, not 8 — see E21).
+Unaffected: `lambada_en`, `lambada_zh`, `math_v2_like`, and everything on the `_run` path.
 
 **What normally writes to stderr on a clean run** — the precondition that makes the shadowing
 fire. Verified: importing `scripts/loader.py` alone writes **0 bytes** to both streams, so the
@@ -652,3 +656,61 @@ directions and the mean is inside its own noise — so the N2 result is not a me
 direction at this resolution. E3 recorded that the verdict rested on an instrument with a defect
 7.6x the delta; this is that defect removed, and what remains is unresolved rather than reversed.
 The decision belongs to 6e and b0.
+
+### E21 (S2): E18's own `l1_fewshot` count was one row generalised to eight, and the E15 defect recurred while I was checking it
+
+Found by starting e1-38, whose first item was "re-read the 18 score_matrix error entries and record
+which now have a readable cause, since C6a changed the record and nobody has checked what it
+produced". The re-read's first result was that two of E18's published numbers do not survive it.
+
+**Correction 1: `l1_fewshot` is 1 SIGTERM row, not 8.** E18 says the metric "has 8 error rows, all
+of the form `l1_fewshot.py exited -15: 448/497 acc=0.0%`". Read verbatim, all 8:
+
+| ckpt | recorded cause |
+|---|---|
+| `ckpt_p02_fp32m_s0.pt` | `exited -15:   448/497 acc=0.0%` — the SIGTERM shape |
+| `ckpt_pretrain_15b_s1.pt` | `exited 1: eval_artifacts.ArtifactExists: …preds_l1_d3.jsonl exists (454238 bytes)` |
+| `ckpt_rehearse_resume.pt` | same `ArtifactExists` |
+| `ckpt_rehearse_join.pt` | same |
+| `ckpt_lrprobe_1.2.pt` | same |
+| `ckpt_proberesume.pt` | same |
+| `ckpt_p500m_20b_0902.pt.step1500` | same |
+| `ckpt_b0_sd_equalcompute.pt` | `exited 1: File ".../eval_artifacts.py", line 79 … eval_artifacts.ArtifactExists: …` |
+
+Seven of eight name a real exception and are readable exactly as published; one is the SIGTERM
+shape. I read one row, saw `exited -15`, and wrote "all of the form" — the aggregate-adjective
+error (`memory/aggregate-adjective-fakes-replication.md`), committed inside a finding whose whole
+subject is failure records that misname their cause. E18's affected-metrics line said "`l1_fewshot`
+(8 rows, SIGTERM shape)"; corrected in place to 1.
+
+The 7 also change what e1-38 should fix. A SIGTERM cause line is worth adding, but it would improve
+**one** row, not eight. The `ArtifactExists` seven point somewhere else entirely: the same
+`preds_l1_d3.jsonl` path collides across six different checkpoints, so the artifact name does not
+carry the checkpoint — the 8th row's path (`preds_l1_d3_ckpt_b0_sd_equalcompute.pt.zh.jsonl`) shows
+the naming was later fixed. That is a real defect and it is not E18's.
+
+**Correction 2: the population is 19 entries, not 18, on two different counting rules.** E18 says
+"the 18 score_matrix error entries". Counting at E18's own commit (`2c87a493`, 60 rows): 19 by the
+rule I used then (`'exited' or 'ERROR' in the serialized value`) and 25 by the plainer rule (an
+`error` key exists). The 25 includes entries whose value carries an error key without the word
+"exited" — `math_500`, `mc_ceval`, `code_500`, a degeneration entry. So "18" was neither rule; it
+was the sum of 10 `domain_bpb` and 8 `l1_fewshot`, which is the two metrics I had looked at, stated
+as if it were the population. Two rules, both defensible, neither giving 18.
+
+**Correction 3, and it is the same defect E15 documents, made while investigating E15's neighbour.**
+To date the E18 commit I ran `git log -1 --format='%ad' --date=format-local:'%Y-%m-%dT%H:%M:%SZ'`
+and it printed **2026-09-04T12:38:11Z**. That is +0800 with a `Z` I supplied in the format string
+myself: `--date=format-local` formats in the SHELL's zone, and `...Z` inside the format is a literal
+character, not an assertion. Under `TZ=UTC` the same command gives **2026-09-04T04:38:11Z**. E15
+recorded exactly this — "the `Z` was my own annotation, never output by any command" — and the fix
+E15 named (`TZ=UTC` on the command) is the one I did not apply, because I put the `Z` in the format
+string instead, which looks like the fix and is not. The correct form is `TZ=UTC git log ...`; a
+`format-local` string ending in `Z` is a way to reproduce the defect while appearing to have fixed
+it.
+
+**What survives of E18.** Everything about the mechanism: three runners, two defective, the
+`(r.stderr or r.stdout)` shadowing, `domain_bpb` as the one script whose refusals are all on stdout,
+the broken-world test, and the 6-of-10 count (verified again here: at E18's commit exactly 10
+`domain_bpb` error entries, 6 warning-as-cause; now 11 and 7, the growth being
+`ckpt_b0_se_16lnew_1b.pt`). What does not survive is the `l1_fewshot` count and the population size —
+both mine, both stated with more confidence than the reading behind them supported.
