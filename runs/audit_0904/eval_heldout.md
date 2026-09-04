@@ -152,6 +152,12 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 - The pod's `data/` is gitignored, so every corpus fact rests on a `stat` I ran once at
   2026-09-04 ~03:30Z (E15: my working note said "11:40Z", which was +0800). A directory mtime is when it was last written, not when its contents
   were built; a domain rebuilt in place would read as newer than its data.
+- **A loose pattern read as a population, twice, both mine and both published before I counted the
+  matches.** E21: `l1_fewshot` "has 8 error rows, all of the form `exited -15`" was one row
+  generalised to eight (1 of 8). e1-26: the MFU-basis count "17 of 18" came from
+  `re.search('MFU|mfu')`, which matched `harMFUl` and `neutral`; the count is 15 of 16, caught by
+  44's pair check, not by me. Every count in this report that came from a regex rather than from
+  reading the matched lines carries this risk.
 
 ## 6. Open questions for the controller
 
@@ -733,6 +739,23 @@ the broken-world test, and the 6-of-10 count (verified again here: at E18's comm
 `domain_bpb` error entries, 6 warning-as-cause; now 11 and 7, the growth being
 `ckpt_b0_se_16lnew_1b.pt`). What does not survive is the `l1_fewshot` count and the population size —
 both mine, both stated with more confidence than the reading behind them supported.
+
+**E21 did not delete `runs/redaction_handread_v14.tsv`, and neither did the commit that says so.**
+44's restore commit `72ba3c92` reads "dropped from main by `bbf1e354` (E21)"; the file is already
+absent at `bbf1e354^1`, so E21's commit removed nothing. Raised by 6e from b0's check, and the site
+is one commit earlier than either of us named: enumerating every commit reachable from e1 HEAD that
+lacks the path while a parent carries it gives seven, all merges but one, and the earliest is
+**`d9c9614f`** (`tasks(b0): 9 open rows bucketed`, 2026-09-04 05:34:30Z, `TZ=UTC`) — a two-parent
+commit whose second parent `acbdbdd1` is the one that added the file, and whose own diff against
+that parent shows `runs/redaction_handread_v14.tsv | 51 -------`. `acbdbdd1` is on no branch's
+first-parent line, so the file entered main only through that merge and left in the same commit. The
+six later losses (`d42e766c`, `3f3568ad`, `26e060af`, `0c787961`, `74b67ca3`, `c2cc8bba`) each
+re-lost it from a parent that still had it. `74b67ca3` ("Merge branch 'de'") is the clearest case:
+neither parent deleted the path and the merge result lacks it, so a guard against this class has to
+compare a merge to **every** parent, not to the first. My own restore is `8f13f5a8`, on e1's and
+44's first-parent lines, blob `d0907586` — identical to `acbdbdd1`'s and to HEAD's; `72ba3c92` is
+44's, on no first-parent line, and restores the same blob. A commit message cannot be edited, so
+this paragraph is the correction of record for both.
 
 ### E22 (S2): the seven `l1_fewshot` "failures" are a guard working, and one of them hides a real measurement nobody read
 
