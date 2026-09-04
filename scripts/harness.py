@@ -1492,49 +1492,29 @@ def _agents_coverage_table(root):
 
 
 def check_shapes_table_covers_doc(root):
-    """Every § in the shapes doc appears exactly once in AGENTS.md's rule table, and every
-    row's count equals the §refs it lists.
+    """Every surviving incident § in gate_failure_incidents.md appears exactly once in
+    AGENTS.md's rule table, and every row's count equals the §refs it lists.
 
-    The table is a hand-maintained compression of docs/lessons/gate_failure_shapes.md and
-    nothing read it: three sessions added shapes on 2026-09-02 and the numbering collided
-    twice (b0 and I both wrote §62, 44 and I both wrote §63), each caught only by a merge
-    conflict. A conflict catches a collision on the same LINE; it does not catch a shape
-    that never reaches the table, or a count that says 14 next to fifteen refs.
+    2026-09-04 restructure: gate_failure_shapes.md became the rules doc (no per-incident
+    headings); incidents moved to gate_failure_incidents.md with '### §N' headings. 33
+    closed incidents were deleted, so the surviving set is intentionally non-contiguous.
+    The gap check (1..max contiguous) was dropped: a hole now means a closed incident was
+    deleted, not a shape lost. The duplicate check and the table-vs-doc comparison stand.
 
-    Same reason as agents_rules_covered one section up, and the same ceiling: this proves
-    a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
-    belongs to is a judgement only a person re-reading the pair can make.
-
-    A heading number written twice is also FAIL: two sessions appending shapes in
-    parallel collided on §62, §63, §69, and §70, and a merge conflict only catches a
-    collision on the same line, not the same NUMBER.
-
-    §65's own subject, applied to §65: the table and the doc must agree, and until this
-    check existed nothing verified it."""
-    p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
+    Same ceiling as before: this proves an incident is REFERENCED, not that it sits under
+    the right rule. Which rule an incident belongs to is a judgement only a person
+    re-reading the pair can make."""
+    p = os.path.join(root, "docs", "lessons", "gate_failure_incidents.md")
     if not os.path.exists(p):
-        return FAIL, "docs/lessons/gate_failure_shapes.md missing"
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)]
+        return FAIL, "docs/lessons/gate_failure_incidents.md missing"
+    nums = [int(m) for m in re.findall(r"^### §(\d+)", open(p, encoding="utf-8").read(), re.M)]
     if not nums:
-        return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
+        return FAIL, "no '### §N' incident headings found -- the doc's heading style changed"
     dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
     if dupes:
-        return FAIL, "shape heading number(s) used more than once: " + ", ".join(
+        return FAIL, "incident heading number(s) used more than once: " + ", ".join(
             f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
     doc = set(nums)
-    # A GAP is invisible to every assertion above and below. Duplicates are caught, coverage
-    # is caught, arithmetic is caught -- but a SKIPPED number passes all three, because a
-    # number nobody wrote is in neither the doc nor the table and the two therefore agree.
-    # tilerl renumbered to 156/157 on 2026-09-03 and left 155 empty; that read as green
-    # (6e). The doc is a numbered sequence, so 1..max must be contiguous: a hole means a
-    # shape was written and lost, or a renumber dropped one, and the reader who follows a
-    # §ref chain finds nothing there.
-    gaps = [i for i in range(1, max(nums) + 1) if i not in doc]
-    if gaps:
-        return FAIL, (f"shape numbering has {len(gaps)} gap(s) in 1..{max(nums)}: "
-                      + ", ".join(f"§{g}" for g in gaps[:12])
-                      + " -- a skipped number is a shape that was written and lost, or a "
-                        "renumber that dropped one; renumber to close it")
 
     a = os.path.join(root, "AGENTS.md")
     if not os.path.exists(a):
@@ -1568,7 +1548,7 @@ def check_shapes_table_covers_doc(root):
         problems.append(f"count disagrees with refs: {miscount[:3]}")
     if problems:
         return FAIL, "; ".join(problems)
-    return PASS, (f"{len(doc)} shapes (max §{max(doc)}) each referenced exactly once across "
+    return PASS, (f"{len(doc)} incidents (max §{max(doc)}) each referenced exactly once across "
                   f"{len(rows)} rules; every row's count matches")
 
 
@@ -1587,7 +1567,7 @@ def _broken_shapes_table_covers_doc():
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "AGENTS.md")
     if not os.path.exists(src) or not os.path.exists(
-            os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")):
+            os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")):
         return None
     text = open(src, encoding="utf-8").read()
     # Drop the LAST §ref of the first rule row that has more than one, so the row keeps a
@@ -1606,62 +1586,28 @@ def _broken_shapes_table_covers_doc():
 
 
 def _broken_shapes_table_doc_grew():
-    """The REAL docs with a new shape appended and the table left alone -- exactly what
+    """The REAL docs with a new incident appended and the table left alone -- exactly what
     happened twice on 2026-09-02, and what a merge conflict does not catch."""
     import shutil as _sh
 
     d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")
     if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
         return None
     text = open(src, encoding="utf-8").read()
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    nums = [int(m) for m in re.findall(r"^### §(\d+)", text, re.M)]
     if not nums:
-        raise SelftestSkip("no shape headings to extend; update _broken_shapes_table_doc_grew")
+        raise SelftestSkip("no incident headings to extend; update _broken_shapes_table_doc_grew")
     # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
-    # fixture to the REAL shapes doc. Replace the link with a real directory holding a
+    # fixture to the REAL incidents doc. Replace the link with a real directory holding a
     # real copy of the one file this world mutates.
     link = os.path.join(d, "docs")
     if os.path.islink(link):
         os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_incidents.md")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
-        text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
-    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
-    return d
-
-
-def _broken_shapes_table_gap():
-    """The REAL doc with one section RENUMBERED past its neighbour, leaving a hole.
-
-    tilerl's near-miss (6e, 2026-09-03): renumbered to 156/157 and left 155 empty, and the
-    check was green. It has to be a renumber and not a deletion, because a deletion also
-    removes the §ref's target from coverage and would fail the coverage half instead -- the
-    world would then prove nothing about the gap assertion. Renumbering the LAST heading to
-    max+2 keeps every other property intact: no duplicate, and the table's refs still resolve
-    to a heading that exists (the old number's row is now dangling, which is a second FAIL
-    reason, so the assertion below reads the message rather than only the state).
-    """
-    import shutil as _sh
-
-    d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
-    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
-        return None
-    text = open(src, encoding="utf-8").read()
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
-    if not nums:
-        raise SelftestSkip("no shape headings; update _broken_shapes_table_gap")
-    top = max(nums)
-    # Same symlink hazard as the neighbours: docs/ is a link into the real repo.
-    link = os.path.join(d, "docs")
-    if os.path.islink(link):
-        os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    open(dst, "w", encoding="utf-8").write(
-        re.sub(rf"^## {top}\.", f"## {top + 2}.", text, count=1, flags=re.M))
+        text + f"\n\n### §{max(nums) + 1} (2026-09-04, R1) an incident added without touching the table (fixture)\nopen: none.\n")
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -1674,21 +1620,21 @@ def _broken_shapes_table_duplicate_heading():
     import shutil as _sh
 
     d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")
     if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
         return None
     text = open(src, encoding="utf-8").read()
-    nums = re.findall(r"^## (\d+)\.", text, re.M)
+    nums = re.findall(r"^### §(\d+)", text, re.M)
     if not nums:
-        raise SelftestSkip("no shape headings to duplicate; update _broken_shapes_table_duplicate_heading")
+        raise SelftestSkip("no incident headings to duplicate; update _broken_shapes_table_duplicate_heading")
     # Same symlink hazard as _broken_shapes_table_doc_grew: docs/ is a link into the repo.
     link = os.path.join(d, "docs")
     if os.path.islink(link):
         os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_incidents.md")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
-        text + f"\n\n## {nums[-1]}. a duplicate heading number (fixture)\n")
+        text + f"\n\n### §{nums[-1]} (2026-09-04, R1) a duplicate heading number (fixture)\nopen: none.\n")
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -10348,7 +10294,7 @@ CHECKS = [
     ),
     (
         "shapes_table_covers_doc",
-        "every shape in the shapes doc is referenced exactly once in AGENTS.md's rule table",
+        "every incident in the incidents doc is referenced exactly once in AGENTS.md's rule table",
         "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
         check_shapes_table_covers_doc,
         _broken_shapes_table_covers_doc,
@@ -12928,8 +12874,8 @@ def _demo(only=None):
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
 
-    # shapes_table_covers_doc has two halves its registered world does not exercise: a
-    # shape that reaches the doc but not the table, and a heading number written twice.
+    # shapes_table_covers_doc has two halves its registered world does not exercise: an
+    # incident that reaches the doc but not the table, and a heading number written twice.
     # _broken_shapes_table_doc_grew existed but nothing ran it -- a broken world nobody
     # runs is the §71 shape itself.
     for _w, _label in ((_broken_shapes_table_doc_grew, "doc grew, table stood still"),
@@ -12942,22 +12888,6 @@ def _demo(only=None):
                     untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
-
-    # The gap world asserts the REASON, not only the state. A renumber leaves a hole AND a
-    # dangling table ref, so the check would FAIL on this world even with no gap assertion at
-    # all -- reading only the state would certify a check that cannot see gaps (6e's near-miss
-    # is precisely a world where the other halves stayed green).
-    _d = _broken_shapes_table_gap()
-    if _d:
-        try:
-            _st, _why = check_shapes_table_covers_doc(_d)
-            if _st != FAIL:
-                untested.append(f"shapes_table_covers_doc reported {_st} on a numbering gap")
-            elif "gap" not in _why:
-                untested.append("shapes_table_covers_doc FAILs on a numbering gap for the wrong "
-                                f"reason -- it does not name the gap: {_why[:70]}")
-        finally:
-            shutil.rmtree(_d, ignore_errors=True)
 
     # score_matrix_present gained two branches on 2026-09-04 and its registered world exercises
     # neither. Both are worlds where the check could SILENTLY PASS, which is the shape it was just
