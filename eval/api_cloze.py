@@ -317,6 +317,19 @@ def cluster_se(correct, groups):
     correctness grouped by source row. Free once per-item outcomes exist, which
     score_mc_items already returns.
 
+    THREE EFFECTIVE SIZES, THREE JOBS, AND ONE OF THEM HAS NO JOB (3b, 2026-09-05). On the
+    20+80x1 shape the numbers are: mean 1.2346, with NO STATISTICAL ROLE AT ALL; Kish
+    4.8000, which is the design effect's multiplier; ANOVA's m0 = (n - sum(s^2)/n)/(k-1) =
+    1.1900, which is the ICC denominator's. The mean is stated here precisely because it is
+    the obvious summary and the wrong one -- using it instead of Kish understates the SE by
+    1.085x at ICC .05, 1.161x at .10 and 1.297x at .20, which at the prereg's decision
+    boundary is the difference between "beyond both SEs" firing and not.
+
+    m0 AND KISH ARE NOT INTERCHANGEABLE and this code used each correctly before anyone
+    checked that it did -- written from each definition without noticing they were a
+    swappable pair. Selftest world (f) is what closes that: a fixture where the two differ
+    2.6x with ICC strictly interior, so either swap moves an asserted number.
+
     WHY BOTH ARE REPORTED RATHER THAN ONE CHOSEN (3b, 2026-09-05, correcting me): I argued
     the clustering cancels in a paired difference. That is true for the ARM pairing -- the
     same items scored by two models share their cluster effects -- and FALSE across regions,
