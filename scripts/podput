@@ -1,0 +1,20 @@
+#!/usr/bin/env bash
+# podput <local> <remote-abs-path>  — gzip+base64 a file into the pod.
+set -euo pipefail
+L=$1; R=$2
+case "$R" in /*) ;; *) echo "podput: remote path must be absolute (got '$R'; a relative path lands in the container's default cwd, another project's tree)"; exit 1;; esac
+case "$R" in /work/aupai/*)
+  rel=${R#/work/aupai/}
+  if [ -z "${PODPUT_TRACKED_OK:-}" ] && git -C /Users/bytedance/code/aupai ls-files --error-unmatch -- "$rel" >/dev/null 2>&1; then
+    echo "podput: $rel is tracked on main -- merge, then scripts/pod_push.sh (a bare podput leaves the pod on a version no commit matches and run_ddp.sh's drift gate refuses every launch; 3b 2026-09-03 and 2026-09-04). For a scratch copy use a path under /work/aupai/runs/ or /tmp; PODPUT_TRACKED_OK=1 overrides."
+    exit 1
+  fi;;
+esac
+B=$(gzip -9c "$L" | base64 | tr -d '\n')
+n=${#B}
+# 100000, not 180000: the real limit is the remote argv (tn exec -> crictl exec ->
+# bash -lc), which failed at 133KB base64 and passed at 80KB (2026-08-30). It depends on
+# ARG_MAX and the environment at call time, so it is not a constant -- 100000 is a
+# conservative ceiling, not a measured boundary.
+if [ "$n" -gt 100000 ]; then echo "podput: $L too big ($n b64 chars)"; exit 1; fi
+~/bin/pod "mkdir -p \$(dirname $R) && echo '$B' | base64 -d | gunzip > $R && wc -c $R"

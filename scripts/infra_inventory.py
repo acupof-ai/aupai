@@ -9,23 +9,30 @@ would be wrong about, and the cost of being wrong is a file that compiles in
 neither repo. Every classification below is a count of matched symbols, so the
 output is checkable by re-running it rather than by trusting the author.
 
-Five classes, and the four non-`mixed` ones exist to keep `mixed` honest:
+Five classes, and the four non-`mixed` ones exist to keep `mixed` honest. Counts
+move with the tree — run the script, do not quote these:
 
-  infra-only      transport/allocation only; names no project concept        13
-  mixed           implements a verb AND knows project concepts — the seam    29
-  contract-caller calls a verb, implements none; no function carries it      28
-  project-only    one or two mentions inside a project file                  24
-  reference       a doc or ledger that NAMES the compute without calling it  58
+  infra-only      transport/allocation only; names no project subject          7
+  mixed           implements a verb AND knows project concepts — the seam     29
+  contract-caller calls a verb, implements none; no function carries it       26
+  project-only    one or two mentions inside a project file                   25
+  reference       a doc or ledger that NAMES the compute without calling it   48
 
 The last three were all `mixed` in the first version, which put 103 of 152 files
-there — a number that is not a plan. Two corrections, both measured:
+there — a number that is not a plan. Three corrections, each measured:
 
   A `runs/*.jsonl` row saying "card 5" creates no import and splits at no
   function boundary. Only code can be a seam, so only code is classified as one.
 
-  `export CUDA_VISIBLE_DEVICES=3` uses a verb; it does not own it. 28 files
+  `export CUDA_VISIBLE_DEVICES=3` uses a verb; it does not own it. 26 files
   looked like seams on symbol count alone and have nothing to cut. They stay in
   the project and depend on the contract, which is what a contract is for.
+
+  A keyword count is not a subject, in EITHER direction. `run_pretrain.sh` read
+  infra-only on alloc:3 proj:0, where proj:0 meant "the vocabulary does not speak
+  launcher" (6e caught it) — so the vocabulary widened. That immediately pushed
+  three transport files into `mixed` on one incidental `torchrun`, so the rule is
+  symmetric: mostly-transport plus a passing mention is still transport.
 
 `mixed` is the answer that costs work, so among code the rule stays biased: a
 code file lands there unless it is unambiguously one side. An over-large mixed
@@ -48,13 +55,59 @@ INFRA = {
     "hygiene": r"sweep\.py|env_hygiene|disk_inventory|_gpu_descendants",
 }
 # The project's vocabulary: what the compute is being used FOR.
-PROJECT = r"\b(mix_|corpus|tokeniz|checkpoint|ckpt|eval|score_matrix|grpo|sft|ladder|domain|vocab|milestone|anneal|lr_schedule)"
+#
+# The DATA half was here from the start. The other two halves were missing, and their
+# absence put four launcher/tooling files in infra-only on a proj=0 that meant "my regex
+# does not speak this dialect", not "this file has no project subject" (6e, 2026-09-04):
+#   run_pretrain.sh   alloc:3 proj:0 -- a training launcher, subject is the run
+#   n8_conv_cost.py   alloc:1 proj:0 -- a throughput experiment
+#   merge_main.sh / merge_drivers.py  sync:1 proj:0 -- git tooling, not transport
+# This is the same reasoning I rejected for the 24 harness checks, applied to files:
+# a keyword count is not a subject. Widening the vocabulary fixes the cause; an
+# override list would have hidden it behind a name.
+PROJECT = "|".join((
+    # what is trained on
+    r"\b(mix_|corpus|tokeniz|checkpoint|ckpt|eval|score_matrix|grpo|sft|ladder|domain"
+    r"|vocab|milestone|anneal|lr_schedule)",
+    # how a run is launched -- a launcher's subject is the run it starts. Only terms
+    # that START one: `run_ddp` and `worktree` are how the SYNC tooling refers to what
+    # it guards, so including them put pod_push.sh itself in project territory (caught
+    # by the selftest, which is what it is for).
+    r"\b(torchrun|train\.py|exp\.py|nproc_per_node|HYP=|throughput|tok/s)",
+    # repository tooling: it manipulates git, not the compute
+    r"\b(merge_main|merge-driver)",
+))
+
+# One-day artifacts, not a layer. runs/audit_0904/*.py were written for a single audit
+# and will not exist in either repo (6e, 2026-09-04).
+EXCLUDE = ("runs/audit_0904/",)
+
+
+TEXT_EXT = (".md", ".json", ".jsonl", ".yml", ".yaml")
+
+
+def is_code(path):
+    """Extension, or a shebang. `scripts/pod` and `scripts/podput` are executables
+    with NO suffix -- the two most infra files in the tree -- and an extension test
+    classified them `reference`, i.e. prose that merely names the compute. Caught
+    2026-09-04 when they were vendored. A classifier keyed on filenames misses the
+    files whose whole job is to have no filename ceremony."""
+    if path.endswith((".py", ".sh")):
+        return True
+    if path.endswith(TEXT_EXT):
+        return False
+    try:
+        with open(os.path.join(ROOT, path), "rb") as f:
+            return f.read(2) == b"#!"
+    except OSError:
+        return False
 
 
 def tracked():
     out = subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout
-    keep = (".py", ".sh", ".md", ".json", ".jsonl", ".yml", ".yaml")
-    return [f for f in out.split("\n") if f.endswith(keep)]
+    return [f for f in out.split("\n")
+            if f and not f.startswith(EXCLUDE)
+            and (f.endswith((".py", ".sh")) or f.endswith(TEXT_EXT) or is_code(f))]
 
 
 def carriers(path, text):
@@ -91,13 +144,21 @@ def classify(path):
         return None
     proj = len(re.findall(PROJECT, text, re.I))
     carrier_names = carriers(path, text)
-    code = path.endswith((".py", ".sh"))
+    code = is_code(path)
     if not code:
         # A doc or ledger NAMES the compute; it never calls it. No import, no
         # function boundary, nothing to cut -- so it cannot be a seam, and calling
         # it one buried the 13 real seams under 90 rows of prose. These move by a
         # topic decision, which is a person's call, not a regex's.
         cls = "reference"
+    elif proj <= 2 and total >= 4:
+        # Mostly transport, with a passing mention. `pod_sh_offset.py` says "torchrun"
+        # once while doing nothing but byte offsets; `test_pod_drift_root.py` tests
+        # drift. One incidental token is not a subject -- the same rule that keeps a
+        # keyword count from deciding, applied symmetrically. Without this, widening
+        # the project vocabulary moved three transport files into `mixed` on a single
+        # word, which is the original error pointed the other way.
+        cls = "infra-only"
     elif proj == 0:
         cls = "infra-only"
     elif total <= 2 and proj > 20:
@@ -172,4 +233,15 @@ if __name__ == "__main__":
     # have called 28 contract callers seams. eval_math.sh does not test it -- one
     # hit and 27 project hits makes it project-only two branches earlier.
     assert classify("eval/eval_all.sh")["class"] == "contract-caller"
+    # 6e's catch, 2026-09-04: a training launcher is project by SUBJECT however many
+    # allocate calls it makes. It read infra-only on alloc:3 proj:0, where proj:0 meant
+    # "the vocabulary does not speak launcher", not "no project subject".
+    assert classify("scripts/run_pretrain.sh")["class"] == "contract-caller"
+    # ...and the symmetric case, which widening the vocabulary then created: mostly
+    # transport plus one incidental token is still transport.
+    assert classify("scripts/pod_sh_offset.py")["class"] == "infra-only"
+    # An extensionless executable is still code. `scripts/pod` and `scripts/podput`
+    # are the two most infra files in the tree and read as `reference` -- prose that
+    # merely names the compute -- until is_code() learned to check for a shebang.
+    assert classify("scripts/pod")["class"] == "infra-only"
     sys.exit(main())
