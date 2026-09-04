@@ -230,6 +230,81 @@ def artifact_cases():
     return bad
 
 
+def retract_cases():
+    """`retract` withdraws a CLOSED row's result without deleting it (de, 2026-09-04).
+
+    The load-bearing case is 4: a retraction must survive a union merge that orders the
+    original `ok` AFTER it. fold()'s terminal-wins rule only ever guarded `running` events, so
+    an `ok` in that position UN-RETRACTED the run -- found on a three-event fixture the moment
+    retract was written, and it is the worse direction, because the row then reads as a
+    standing result with the retraction invisible rather than as a lost note."""
+    bad = 0
+
+    def _retract(d, *args):
+        r = subprocess.run([sys.executable, EXP, "--root", d, "retract", "--name", "zz_probe",
+                            *args], capture_output=True, text=True)
+        return r.returncode, (r.stdout + r.stderr)
+
+    # 1. One closed row: retracts, keeps the withdrawn result, and the fold shows it.
+    d = _world(0, n_closed=1)
+    rc, out = _retract(d, "--reason", "measured on the wrong val set")
+    f = _folded(d)
+    ok = (rc == 0 and len(f) == 1 and f[0]["status"] == "retracted"
+          and f[0].get("retracted_result") == "oom"
+          and f[0].get("retracted_reason", "").startswith("measured on"))
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} one closed row retracts, keeping the withdrawn result "
+          f"(rc={rc}, status={f[0]['status'] if f else None}, "
+          f"was={f[0].get('retracted_result') if f else None})")
+
+    # 2. A RUNNING row is not retractable: that is `done --status fail`, and saying so beats
+    #    silently retracting a live run's absent result.
+    d = _world(1)
+    rc, out = _retract(d, "--reason", "nope")
+    ok = rc != 0 and "still running" in out and "done --status fail" in out
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a running row refuses, naming the right command (rc={rc})")
+
+    # 3. Two closed rows, no --started: refuse rather than pick.
+    d = _world(0, n_closed=2)
+    rc, out = _retract(d, "--reason", "ambiguous")
+    ok = rc != 0 and "--started" in out and not [r for r in _folded(d) if r["status"] == "retracted"]
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} two closed rows refuse and write nothing (rc={rc})")
+
+    # 4. THE MERGE-ORDER CASE. Append the original `ok` AFTER the retraction, as a union merge
+    #    of two branches can, and the run must STAY retracted.
+    d = _world(0, n_closed=1)
+    rc, _ = _retract(d, "--reason", "withdrawn")
+    p = os.path.join(d, "runs", "experiments.jsonl")
+    evs = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    orig = next(r for r in evs if r.get("name") == "zz_probe" and r.get("status") == "fail")
+    with open(p, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps(dict(orig, status="ok", result="3.6%"), ensure_ascii=False) + "\n")
+    f = _folded(d)
+    ok = rc == 0 and len(f) == 1 and f[0]["status"] == "retracted"
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a terminal event ordered AFTER the retraction does not "
+          f"un-retract it (status={f[0]['status'] if f else None})")
+
+    # 5. --superseded_by must name a row that exists, or the pointer is a dead end that reads
+    #    as diligence.
+    d = _world(0, n_closed=1)
+    rc, out = _retract(d, "--reason", "r", "--superseded_by", "2099-01-01 00:00")
+    ok = rc != 0 and "names no row" in out
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} --superseded_by naming no row refuses (rc={rc})")
+
+    # 6. Double retraction refuses: the second reason would overwrite the first.
+    d = _world(0, n_closed=1)
+    _retract(d, "--reason", "first")
+    rc, out = _retract(d, "--reason", "second")
+    ok = rc != 0 and "already retracted" in out
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} re-retracting refuses, keeping the first reason (rc={rc})")
+    return bad
+
+
 def main():
     bad = 0
 
@@ -303,7 +378,9 @@ def main():
     print(f"test_exp_note: {6 - bad_note}/6 pass")
     bad_art = artifact_cases()
     print(f"test_exp_reading_artifact: {3 - bad_art}/3 pass")
-    return 1 if (bad or bad_note or bad_art) else 0
+    bad_ret = retract_cases()
+    print(f"test_exp_retract: {6 - bad_ret}/6 pass")
+    return 1 if (bad or bad_note or bad_art or bad_ret) else 0
 
 
 if __name__ == "__main__":

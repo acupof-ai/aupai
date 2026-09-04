@@ -62,6 +62,20 @@ def fold(evs):
         prev = out.get(key)
         if prev is not None and prev.get("status") != "running" and r.get("status") == "running":
             continue
+        # A RETRACTION IS TERMINAL BY KIND, NOT BY POSITION, for the same reason a close beats
+        # a later start: a union merge concatenates two branches in whatever order it likes, so
+        # file position is not evidence of sequence. Without this, an `ok` event ordered after a
+        # `retracted` one UN-RETRACTS the run -- measured on a three-event fixture the moment
+        # `retract` was written, and it is the worse direction of the two, because the row then
+        # reads as a standing result with the retraction invisible rather than as a lost note.
+        #
+        # The docstring above says "two terminal events for one run: the later one wins", which
+        # was written when `ok` and `fail` were the only terminals and disagreed only about
+        # outcome. Retraction disagrees about VALIDITY: it is a statement about the other event,
+        # so it cannot be outvoted by it. Un-retracting takes an explicit `done`, which appends
+        # a new event a human chose to write.
+        if prev is not None and prev.get("status") == "retracted" and r.get("status") != "retracted":
+            continue
         out[key] = r
     return list(out.values())
 
@@ -240,6 +254,46 @@ def pick_open_row(name, started, verb):
     return open_rows[-1] if open_rows else None
 
 
+def pick_closed_row(name, started, verb):
+    """The CLOSED row a command acts on. The mirror of pick_open_row, and separate on purpose.
+
+    `retract` acts on a finished run, so pick_open_row cannot serve it: that function's whole
+    subject is rows whose last event is `running`, and a retraction of a run that never closed
+    is a `done --status fail`, not a retraction. Keeping them apart means neither can silently
+    answer the other's question.
+
+    CLOSED means "the last event for this (name, started) is terminal", which is what rows()
+    returns after folding. The ambiguity refusal is the same shape as pick_open_row's and for
+    the same reason: a name with two finished runs has two candidates, and choosing the newest
+    silently retracts a result the caller may not have meant. Unlike the open case, there is no
+    live-run hazard here -- the cost is a wrong row edited, not a running job misreported --
+    but the tool still cannot make the choice.
+    """
+    closed = [r for r in rows() if r["name"] == name and r["status"] not in ("running",)]
+    if started:
+        base = next((r for r in closed if r.get("started") == started), None)
+        if base is None:
+            seen = [r.get("started") for r in closed]
+            sys.exit(f"no closed row for {name} started {started!r}. Closed rows: {seen or 'none'}")
+        return base
+    if not closed:
+        open_now = [r for r in rows() if r["name"] == name and r["status"] == "running"]
+        if open_now:
+            sys.exit(
+                f"{name} has no closed row; it is still running (started "
+                f"{open_now[-1].get('started')!r}). A run that never finished is closed with "
+                f"`done --status fail`, not retracted -- retraction withdraws a RESULT."
+            )
+        sys.exit(f"no row for {name} at all. Nothing to retract.")
+    if len(closed) > 1:
+        seen = [(r.get("started"), r.get("status")) for r in closed]
+        sys.exit(
+            f"{name} has {len(closed)} closed rows ({seen}); {verb} the newest by default "
+            f"would withdraw a result the caller may not mean. Pass --started <value>."
+        )
+    return closed[-1]
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--root", help="repo root to log into (tests only; default this checkout)")
@@ -274,6 +328,17 @@ def main():
     n.add_argument("--quiet-if-absent", action="store_true",
                    help="exit 0 without writing when the name has no open row. For automation "
                         "that annotates a row it did not create")
+    r = sub.add_parser("retract", help="withdraw a CLOSED row's result; appends, never rewrites")
+    r.add_argument("--name", required=True)
+    r.add_argument("--reason", required=True,
+                   help="why the result does not stand. Required: a retraction whose reason is "
+                        "absent is indistinguishable from a lost row")
+    r.add_argument("--superseded_by", default="",
+                   help="the 'started' value of the run that replaces this one, when one does. "
+                        "Checked: it must name a row that exists, or the pointer is a dead end")
+    r.add_argument("--started", default=None,
+                   help="retract THIS row (its 'started' value). Required when a name has more "
+                        "than one closed row")
     m = sub.add_parser("merge", help="merge another experiments.jsonl into this one (pod sync)")
     m.add_argument("--from", dest="src", required=True)
     sub.add_parser("render")
@@ -382,6 +447,47 @@ def main():
         notes = base.get("notes") or ""
         append(dict(base, notes=f"{notes} | {stamped}" if notes else stamped))
         print(f"logged note: {a.name} ({base.get('started')}) -> {a.text}")
+    elif a.action == "retract":
+        # WITHDRAWING A RESULT, not deleting a run. The row keeps its cmd, hypothesis, commit
+        # and original result: what is being said is "this number does not stand", and a
+        # reader who cannot see the number that was withdrawn cannot check the retraction.
+        # Same discipline as facts/*.json's retracted_value, which exists because rewriting
+        # `value` into a narration leaves one field holding both the dead number and its
+        # replacement, separated by prose.
+        #
+        # APPENDS, like done and note. A rewrite means two branches retracting two different
+        # runs keep both versions of each after a union merge.
+        base = pick_closed_row(a.name, a.started, "retracting")
+        if base.get("status") == "retracted":
+            sys.exit(
+                f"{a.name} ({base.get('started')}) is already retracted: "
+                f"{str(base.get('retracted_reason', ''))[:100]!r}. Re-retracting would "
+                f"overwrite the first reason with the second; append a note instead."
+            )
+        if a.superseded_by:
+            # CHECKED, because an unchecked pointer is the defect this whole tool exists
+            # against: a retraction saying "superseded by X" where X is not a row sends the
+            # next reader looking for a run that does not exist, and reads as diligence.
+            known = {r.get("started") for r in rows() if r["name"] == a.name}
+            allk = {r.get("started") for r in rows()}
+            if a.superseded_by not in allk:
+                sys.exit(
+                    f"--superseded_by {a.superseded_by!r} names no row in the ledger. "
+                    f"Rows for {a.name}: {sorted(x for x in known if x)}"
+                )
+            if a.superseded_by == base.get("started"):
+                sys.exit("--superseded_by names the row being retracted; a run cannot "
+                         "supersede itself")
+        append(dict(
+            base,
+            status="retracted",
+            retracted_reason=a.reason,
+            retracted_result=base.get("result", ""),
+            superseded_by=a.superseded_by,
+            retracted_at=now(),
+        ))
+        print(f"logged retract: {a.name} ({base.get('started')}) -- was "
+              f"{str(base.get('result', ''))[:60]!r}")
     elif a.action == "merge":
         incoming = [json.loads(l) for l in open(a.src, encoding="utf-8") if l.strip()]
         out, idx = [], {}

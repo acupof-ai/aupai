@@ -2031,6 +2031,14 @@ def _exp_fold(evs):
             if (prev is not None and prev.get("status") != "running"
                     and r.get("status") == "running"):
                 continue
+            # Kept in step with exp.fold's retraction rule: a retracted row is terminal by
+            # KIND, so an `ok` ordered after it by a union merge must not un-retract the run.
+            # This fallback only runs when the import above fails, and a fallback that folds
+            # differently from the real one is the divergence this function exists to end --
+            # so the rule is duplicated deliberately rather than left to drift.
+            if (prev is not None and prev.get("status") == "retracted"
+                    and r.get("status") != "retracted"):
+                continue
             out[key] = r
         return list(out.values())
 
@@ -13250,7 +13258,7 @@ def settled():
                 if not line.strip():
                     continue
                 r = json.loads(line)
-                if r.get("name") == name and r.get("status") in ("ok", "fail"):
+                if r.get("name") == name and r.get("status") in ("ok", "fail", "retracted"):
                     return True
     except (OSError, ValueError):
         pass
