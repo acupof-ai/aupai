@@ -250,6 +250,30 @@ measure.
   likelihood, so document bleed does not enter the statistic. If it is ever repurposed to report a
   loss, it inherits the −0.082 nat/token artifact.
 
+
+- **The fp8 path: which linears it converts, at two shapes.** `train.py:384` `_fp8_ok` excludes by
+  NAME (`head`, `num_proj`, `num_head`) and by `all(d % 16 == 0 for d in mod.weight.shape)`, and
+  `convert_to_float8_training`'s filter passes `fqn.rsplit(".", 1)[-1]` — the LAST FQN segment, so a
+  nested module whose own name collided with an excluded one would be skipped silently. Enumerated
+  by constructing the real model rather than reading the traversal. Stage E shape (d768 L12 h6
+  ffn2304): **64 `nn.Linear`, 63 converted, 1 excluded** — `head`, by name, which is
+  `eff.lm_head_is_compute_bound`'s deliberate choice — and NO tail-name collision (`head` occurs
+  once). FoNE arm (`fone=True`): 66 linears, 3 excluded, all three by name and all three at depth 0.
+  So the name filter's population is exactly its intent at both shapes, and the `rsplit` hazard is
+  latent rather than live. SOUND.
+- **The fp8 forward/backward's scale handling** (`train.py:316-362`, the legacy `FP8LinearFunction`).
+  Forward computes per-tensor absmax scales, caches `x_fp8`/`w_fp8` AND both scales for backward
+  (`:334`) — the comment's "5 quants → 3" — and backward re-derives only `go_scale` from the
+  incoming gradient. `grad_b = go2d.sum(0)` stays in bf16, never quantised, which is right: a bias
+  gradient is a reduction, not a matmul. What I did NOT verify is the numerics, and `:375-377`
+  records why that matters: Inductor's min-cut partitioner recomputes the saved fp8 tensors,
+  re-dividing already-scaled values into NaN grads at step 1 without `grad_ckpt`, which is why this
+  module is kept out of the compiled graph. That failure and its guard are load-bearing and
+  untested by me — it needs a card. **Note this is not the live path**: `convert_to_fp8_compute`
+  prefers torchao's `Float8Linear` and reaches the legacy class only when torchao is missing or
+  `FP8_RECIPE=legacy`. Arm 1's log says `FP8 compute enabled` with torchao present, so every Stage D
+  and Stage E number was measured on the torchao path, not this one.
+
 ## 5. Blind spots of this audit
 
 1. **`sft_math.py`: load path, vocab_id refusal, training loop and rollback now read
@@ -283,8 +307,13 @@ measure.
    the same filtering is not answered by the hash and not by me.
 4. **`train.py`'s cursor arithmetic** is checked only where a fact cites it. The `row_cursor`
    as_of_step semantics that MT-4b touches are one field of a larger mechanism.
-5. **fp8 was not exercised.** `eff.fp8_transpose_cast_no_config_lever` cites a torchao path
-   (third-party, correctly outside the repo), and I neither ran nor read the fp8 code.
+5. **fp8: the conversion population and the scale plumbing were read (§4b), the NUMERICS were
+   not.** I did not run an fp8 step, so the claim I cannot check is the one that matters — that
+   e4m3 tensorwise scaling with grad_output in e4m3 is stable where stock `tensorwise` (e5m2
+   backward) was not. `train.py:485-487` asserts both that and a torchao failure mode
+   (`aten.clone.default with axiswise scaling`) from experience; neither is reproducible without a
+   card. Nor did I verify the NaN-at-step-1 partitioner interaction at `:375-377`, which is the
+   reason the legacy module is dynamo-disabled.
 6. **MT-1's history is unreconstructible.** `/work/tilerl` has no `.git`, so I cannot date the
    `num_blocks` change or see whether the 256 was ever there — only that the file post-dates the
    fact by three days and does not contain it now.
