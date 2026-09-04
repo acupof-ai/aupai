@@ -507,6 +507,14 @@ class ProductKeyMemory(nn.Module):
         # checkpoints of the same weights differ.
         self.register_buffer("touched", torch.zeros(n_values, dtype=torch.bool), persistent=False)
         self.register_buffer("last_entropy", torch.zeros(()), persistent=False)
+        # KEY USAGE COUNTS, which `touched` cannot supply. The ledger's key_gini is required and
+        # is a real Gini over how OFTEN each half-key is selected; a bool "was it reached" tells
+        # us reached-or-not and cannot produce one. The two diagnostics separate the two collapse
+        # shapes: a pool can be 90% touched (pool_touched_frac healthy) while one key wins every
+        # lookup (key_gini near 1), and readout 4 exists to catch exactly that. 2 x side counts,
+        # so 4096 int32 at M1 against the 1.07B-parameter table -- free.
+        self.register_buffer("key_hits", torch.zeros(2, side, dtype=torch.long), persistent=False)
+        self.register_buffer("windows", torch.zeros((), dtype=torch.long), persistent=False)
 
     def forward(self, x):
         B, T, d = x.shape
@@ -530,11 +538,25 @@ class ProductKeyMemory(nn.Module):
             with torch.no_grad():
                 self.touched[flat.reshape(-1)] = True
                 p = w.float().clamp_min(1e-9)
-                self.last_entropy = -(p * p.log()).sum(-1).mean()
+                # MEAN OVER THE WINDOW, accumulated, not the last batch's value. The ledger field
+                # says "mean over the window"; writing the last micro-batch's entropy under that
+                # name would report one batch as if it were 100 steps.
+                self.last_entropy += -(p * p.log()).sum(-1).mean()
+                self.windows += 1
+                # Counted on the SELECTED pairs (i0/i1 gathered through `sel`), not on the
+                # per-half topk. The per-half topk keeps top_k of each side unconditionally, so
+                # counting there would report every half-key as used top_k/side of the time by
+                # construction and the Gini would measure the constant, not the model.
+                _s0 = sel // self.top_k
+                _s1 = sel % self.top_k
+                self.key_hits[0] += torch.bincount(
+                    i0.gather(1, _s0).reshape(-1), minlength=self.side)
+                self.key_hits[1] += torch.bincount(
+                    i1.gather(1, _s1).reshape(-1), minlength=self.side)
         return self.out(F.silu(self.gate(h)) * read)
 
     def diagnostics(self, reset=True):
-        """Charter readout 4: (touched_fraction, topk_entropy, key_usage_gini) for the window.
+        """Charter readout 4: touched fraction, top-k entropy and key-usage Gini for the window.
 
         Reset by default because the readout is "fraction touched IN THE WINDOW": a cumulative
         counter converges to 1.0 and stops being able to see a collapse, which is the one thing
@@ -542,15 +564,31 @@ class ProductKeyMemory(nn.Module):
         """
         n = int(self.touched.sum())
         frac = n / self.n_values
-        ent = float(self.last_entropy)
-        # Gini over the two key sub-tables' usage is not derivable from `touched` (a bool tells
-        # us reached-or-not, not how often), so it is reported as the row-count concentration we
-        # CAN see: how far the touched set is from uniform coverage of the product space. Named
-        # honestly rather than called a Gini it is not.
+        nwin = max(1, int(self.windows))
+        ent = float(self.last_entropy) / nwin
+        # THE GINI IS OVER KEY-USAGE COUNTS, and it is the reason key_hits exists. `touched` is a
+        # bool -- reached or not -- and no Gini follows from it; the ledger field is a real
+        # concentration measure and the two diagnostics separate the two collapse shapes: a pool
+        # can be 90% touched while one key wins every lookup. Computed on the pooled 2*side
+        # counts, sorted, by the standard formula G = (2*sum(i*x_i)/(n*sum(x))) - (n+1)/n. Zero
+        # counts are kept: a key never used is the observation, not a missing datum.
+        c = self.key_hits.reshape(-1).float().sort().values
+        tot = float(c.sum())
+        if tot <= 0:
+            gini = 0.0   # nothing was read this window; touched_fraction 0 is the finding
+        else:
+            k = c.numel()
+            i = torch.arange(1, k + 1, dtype=torch.float32, device=c.device)
+            gini = float((2.0 * (i * c).sum() / (k * tot)) - (k + 1) / k)
+            gini = min(1.0, max(0.0, gini))
         if reset:
             self.touched.zero_()
+            self.key_hits.zero_()
+            self.last_entropy.zero_()
+            self.windows.zero_()
         return {"touched_fraction": frac, "touched_rows": n, "n_values": self.n_values,
-                "topk_entropy": ent, "topk_entropy_max": math.log(self.top_k)}
+                "topk_entropy": ent, "topk_entropy_max": math.log(self.top_k),
+                "key_gini": gini, "windows": nwin}
 
 
 def _mem_layers(cfg):
