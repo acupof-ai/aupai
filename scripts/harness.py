@@ -231,7 +231,6 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
     "A PID is only meaningful in the namespace that read it.":
