@@ -8466,6 +8466,22 @@ def check_lane_respected(root):
     only validation of the real read path is a manual run on the pod.
 
     Cardless machines SKIP. A GPU machine with a broken nvidia-smi FAILs.
+
+    THE LANE CARD IS NOT A TRAINING CARD (de-49 / DL-10). The frozen config's `cards` is the
+    ladder recipe's full set -- "0,1,2,3,4,5,6" -- and the controller narrows it per round in
+    runs/card_assignment.json, which also names the lane. Deriving the training set from the
+    frozen config alone counted the lane as one of ours, so a foreign process on the lane read
+    as our own training and the check called the state healthy. MEASURED on the pod 2026-09-04
+    from this check's own output: `[PASS] lane_respected training cards [0, 5]: 2/7 busy
+    (training in progress)` while `lane_card` was "5" and card 5 held 2000 MiB from another
+    container. That inverts the rule the check exists for -- a foreign process on the lane is
+    exactly what made the controller move the lane off card 6 the day before.
+
+    So: `block_cards` and `lane_card` from card_assignment.json take precedence when present,
+    the frozen config is the fallback, and the lane is subtracted either way. No foreign/ours
+    process test is added: nvidia-smi reports HOST pids the container resolves for nothing --
+    our own train.py is not in compute-apps at all -- so any namespace split marks every card
+    foreign including ones running our training (6e withdrew that proposal on this measurement).
     """
     if not _gpu_present():
         return SKIP, "no GPUs on this machine"
@@ -8478,39 +8494,104 @@ def check_lane_respected(root):
         world = int(config.get("world", len(train_cards)))
     except (json.JSONDecodeError, KeyError, ValueError):
         return SKIP, "cannot read cards/world from mix_scale_run_config.json"
+    lane, src = set(), "frozen config"
+    apath = os.path.join(root, "runs", "card_assignment.json")
+    if os.path.isfile(apath):
+        try:
+            grant = json.load(open(apath, encoding="utf-8"))
+        except (OSError, ValueError):
+            grant = {}
+        # _expand_cards (harness.py:13180) returns ints and handles both spellings -- the grant
+        # file writes ranges ("0-3"), the frozen config writes lists. The card sets here are
+        # strings because that is what nvidia-smi indices are compared as.
+        block = {str(c) for c in _expand_cards(grant.get("block_cards"))}
+        if block:
+            train_cards, world, src = block, len(block), "card_assignment.block_cards"
+        lane = {str(c) for c in _expand_cards(grant.get("lane_card"))}
+        if lane:
+            # The lane is whichever card is not in `cards` (AGENTS.md), so a lane that appears
+            # in the training set is the defect, not a conflict to resolve either way.
+            train_cards = train_cards - lane
+            world = min(world, len(train_cards)) if train_cards else 0
+    if not train_cards:
+        return SKIP, f"no training card left after removing the lane {sorted(lane)}"
     busy, err = _busy_training_cards(train_cards)
     if err == "not_found":
         return SKIP, "nvidia-smi not installed"
     if err is not None:
         return FAIL, f"nvidia-smi broken: {err}"
+    lane_busy = []
+    if lane:
+        lb, lerr = _busy_training_cards(lane)
+        if lerr is None:
+            lane_busy = lb
+    where = f"{sorted(train_cards)} (from {src}, lane {sorted(lane) if lane else 'unknown'} excluded)"
+    lane_note = ""
+    if lane_busy:
+        lane_note = (f"; LANE {','.join(sorted(lane_busy))} is occupied -- one job at a time, and "
+                     f"whose it is cannot be read here (host pids)")
     if not busy:
-        return PASS, f"training cards {sorted(train_cards)}: idle"
+        return (WARN, f"training cards {where}: idle{lane_note}") if lane_busy else \
+               (PASS, f"training cards {where}: idle")
     if len(busy) >= world:
-        return PASS, f"training cards {sorted(busy)}: all {world} busy (block used as block)"
+        return (WARN if lane_busy else PASS), \
+            f"training cards {sorted(busy)}: all {world} busy (block used as block){lane_note}"
     if _has_training_process():
-        return PASS, f"training cards {busy}: {len(busy)}/{world} busy (training in progress)"
+        return (WARN if lane_busy else PASS), \
+            f"training cards {busy}: {len(busy)}/{world} busy (training in progress){lane_note}"
     return FAIL, (
         f"training cards {busy}: {len(busy)}/{world} busy but no training process — "
         f"a small job is tearing the block. Small jobs go on the lane card "
-        f"(the one not in {sorted(train_cards)})."
+        f"({sorted(lane) if lane else 'the one not in ' + str(sorted(train_cards))}).{lane_note}"
     )
 
 
 def _broken_lane_respected():
-    """Training cards busy, no training process — the violation this check catches."""
+    """The MEASURED pod state of 2026-09-04: block 0-3, lane 5, cards 0 and 5 busy, no
+    training process. This exact world printed PASS before de-49 -- "training cards [0, 5]:
+    2/7 busy (training in progress)" -- because card 5 was counted as one of ours.
+
+    The positive is asserted here too, in the same world, because an assertion that only
+    demands FAIL passes on an implementation that never returns PASS.
+    """
     import shutil
 
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     # Real config so the training card set is real, not hand-written.
     shutil.copy(
         os.path.join(ROOT, "data", "mix_scale_run_config.json"),
         os.path.join(d, "data", "mix_scale_run_config.json"),
     )
-    config = json.load(open(os.path.join(ROOT, "data", "mix_scale_run_config.json"), encoding="utf-8"))
-    first_card = config["cards"].split(",")[0].strip()
-    os.environ["HARNESS_BUSY_CARDS"] = first_card
+    # The REAL grant file with its block and lane kept, so the lane the check subtracts is the
+    # controller's, not one this world invented.
+    real_grant = os.path.join(ROOT, "runs", "card_assignment.json")
+    if os.path.isfile(real_grant):
+        shutil.copy(real_grant, os.path.join(d, "runs", "card_assignment.json"))
+        grant = json.load(open(real_grant, encoding="utf-8"))
+        lane = [str(c) for c in _expand_cards(grant.get("lane_card"))]
+        block = [str(c) for c in _expand_cards(grant.get("block_cards"))]
+    else:
+        lane, block = [], []
+    if not lane or not block:
+        # No grant to mutate: fall back to the frozen config's first card, the pre-de-49 world.
+        config = json.load(open(os.path.join(ROOT, "data", "mix_scale_run_config.json"),
+                                encoding="utf-8"))
+        os.environ["HARNESS_BUSY_CARDS"] = config["cards"].split(",")[0].strip()
+        os.environ["HARNESS_TRAINING_PROC"] = "0"
+        return d
+    # One block card plus the lane, no training process: the lane must not make up the count.
+    os.environ["HARNESS_BUSY_CARDS"] = f"{block[0]},{lane[0]}"
     os.environ["HARNESS_TRAINING_PROC"] = "0"
+    # The positive, in this same world: every block card busy with a training process is
+    # healthy, and if that does not PASS the FAIL above proves nothing.
+    _saved = os.environ["HARNESS_BUSY_CARDS"], os.environ["HARNESS_TRAINING_PROC"]
+    os.environ["HARNESS_BUSY_CARDS"] = ",".join(block)
+    os.environ["HARNESS_TRAINING_PROC"] = "1"
+    st, ev = check_lane_respected(d)
+    assert st == PASS, f"the positive world does not PASS ({st}: {ev}) -- the FAIL below is empty"
+    os.environ["HARNESS_BUSY_CARDS"], os.environ["HARNESS_TRAINING_PROC"] = _saved
     return d
 
 
