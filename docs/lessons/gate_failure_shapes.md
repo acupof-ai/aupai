@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (77 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (164 = 77 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (80 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (167 = 80 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -52,7 +52,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 - **R2** (66 incidents, 264h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
-- **R1** (18 incidents, 54h): verify premises before acting, sources before citing. Owner: blank.
+- **R1** (20 incidents, 60h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
 - **R4** (11 incidents, 33h): failures must be loud. Owner: blank.
 
@@ -96,7 +96,7 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §61: a substring/word match read a comment mentioning the symbol as evidence the symbol was used.
 - §94: a symbol's name was present in the file, read as "assigned"; the name appeared in a string, not an assignment.
 - §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
-- §198: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
+- §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 
 Cannot see: whether a text match is reading behavior or prose (§56, §77, §141).
 
@@ -141,12 +141,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-18 incidents (11 infra, 7 model), ~3h each, 54h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+20 incidents (11 infra, 9 model), ~3h each, 60h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139, §175, §179, §190).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 
