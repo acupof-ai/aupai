@@ -258,7 +258,7 @@
     "config": {
       "arm": "ckpt_b0_sd_equalcompute.pt, 4824 steps x 262,144 tok, world 2, seed 42, mix data/mix_200m_8b.json, warmup 300 absolute, warmdown 0.1 and anneal_frac 0 as fractions of total",
       "competitor": "ckpt_b0_sd_looped.pt (--loop 4 7, 3815 steps)",
-      "token_ratio": 1.264582,
+      "token_ratio": 1.264482,
       "compute_ratio_6N": 1.264604,
       "corpus_delta": -0.043905,
       "corpus_se": 0.001351,
