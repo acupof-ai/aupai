@@ -31,6 +31,12 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
+# Captured HERE, at import, because main() pops every GIT_* from os.environ before anything
+# runs (see the comment there: an inherited GIT_DIR let a selftest's `git init` reconfigure
+# the shared repository). One reader needs this one variable back: _funcs_in_diff, whose
+# `git diff --cached` must see the temporary index a path-scoped commit builds. Read via
+# _staged_index_env(), never by putting it back in os.environ.
+_ORIG_GIT_INDEX_FILE = os.environ.get("GIT_INDEX_FILE") or ""
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
 import corpus_fingerprint as cfp  # noqa: E402
@@ -11519,6 +11525,104 @@ def _selftest_merge_reverted_content():
           "deliberate deletion not flagged")
 
 
+def _selftest_scoped_index_is_read():
+    """A path-scoped commit's staged diff is visible to _funcs_in_diff.
+
+    THE NEGATIVE CONTROL, named: the code path whose removal makes this fail is
+    _staged_index_env()'s use in _funcs_in_diff -- pass env=None there and case 2 below
+    selects zero functions. (tilerl's rule, 2026-09-04: a negative selftest must name the
+    path it guards, or it is an assertion that cannot fail.)
+
+    Real commits in a throwaway repo, because the whole defect is a variable git exports only
+    to a hook it invokes -- no fixture can produce GIT_INDEX_FILE=.git/next-index-<pid>.lock,
+    and a test that stages with `git add` first is exactly the test that missed this: under a
+    plain staged commit both index reads agree.
+    """
+    import shutil
+    import tempfile
+
+    global _ORIG_GIT_INDEX_FILE, ROOT
+    d = tempfile.mkdtemp(prefix="scoped_index_")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+
+    def g(*a):
+        return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
+
+    g("init", "-q")
+    g("config", "user.email", "t@t")
+    g("config", "user.name", "t")
+    src = os.path.join(d, "m.py")
+    with open(src, "w") as f:
+        f.write("def alpha():\n    return 1\n\n\ndef beta():\n    return 2\n")
+    with open(os.path.join(d, "other.txt"), "w") as f:
+        f.write("x\n")
+    g("add", "m.py", "other.txt")
+    g("commit", "-q", "-m", "base")
+    if g("rev-parse", "HEAD").returncode:
+        shutil.rmtree(d, ignore_errors=True)
+        print("  scoped index: SKIP (cannot create a git repo here)")
+        return
+
+    # Edit ONE function; the selector must name it and not the other.
+    with open(src, "w") as f:
+        f.write("def alpha():\n    return 1\n\n\ndef beta():\n    return 99\n")
+    saved_root, saved_idx = ROOT, _ORIG_GIT_INDEX_FILE
+    try:
+        ROOT = d
+        # 1. plain staged commit: .git/index, both forms agree. This is the case that
+        #    passed while the scoped one was blind.
+        g("add", "m.py")
+        _ORIG_GIT_INDEX_FILE = ""
+        assert _funcs_in_diff(["m.py"]) == {"beta"}, "staged diff must select the edited function"
+        g("commit", "-q", "-m", "staged")
+
+        # 2. path-scoped commit: git builds a temp index and names it ONLY in
+        #    GIT_INDEX_FILE. Captured from a real hook run rather than constructed.
+        with open(src, "w") as f:
+            f.write("def alpha():\n    return 7\n\n\ndef beta():\n    return 99\n")
+        with open(os.path.join(d, "other.txt"), "w") as f:
+            f.write("y\n")
+        hooks = os.path.join(d, ".git", "hooks")
+        os.makedirs(hooks, exist_ok=True)
+        stamp = os.path.join(d, "idxvar")
+        hp = os.path.join(hooks, "pre-commit")
+        with open(hp, "w") as f:
+            f.write(f'#!/bin/sh\nprintf %s "$GIT_INDEX_FILE" > {stamp}\n')
+        os.chmod(hp, 0o755)
+        r = subprocess.run(["git", "-C", d, "commit", "-m", "scoped", "--", "m.py"],
+                           capture_output=True, text=True, env=env)
+        assert not r.returncode, f"the scoped commit failed: {r.stderr[:200]}"
+        captured = open(stamp, encoding="utf-8").read().strip()
+        assert captured, "git exported no GIT_INDEX_FILE to the hook -- the premise is gone"
+        assert "index" in os.path.basename(captured), captured
+
+        # The lock index is deleted when the commit completes, so replay the same shape:
+        # a temp index holding the staged path, named only in the variable.
+        idx = os.path.join(d, "replay-index")
+        subprocess.run(["git", "-C", d, "read-tree", "HEAD"], capture_output=True,
+                       env=dict(env, GIT_INDEX_FILE=idx))
+        with open(src, "w") as f:
+            f.write("def alpha():\n    return 7\n\n\ndef beta():\n    return 42\n")
+        subprocess.run(["git", "-C", d, "add", "m.py"], capture_output=True,
+                       env=dict(env, GIT_INDEX_FILE=idx))
+        _ORIG_GIT_INDEX_FILE = idx
+        got = _funcs_in_diff(["m.py"])
+        assert got == {"beta"}, (
+            f"a path-scoped commit's staged diff selected {sorted(got)}: with GIT_INDEX_FILE "
+            f"stripped, `git diff --cached` reads .git/index, which that commit never touches "
+            f"-- this is 7fd8bc68's 'no CHECK function is changed'")
+        # and the guard itself: without the env, the same world selects nothing.
+        _ORIG_GIT_INDEX_FILE = ""
+        assert _funcs_in_diff(["m.py"]) == set(), (
+            "the world does not reproduce the defect -- the default index sees the scoped "
+            "staging, so case 2's pass proves nothing")
+    finally:
+        ROOT, _ORIG_GIT_INDEX_FILE = saved_root, saved_idx
+        shutil.rmtree(d, ignore_errors=True)
+    print("  scoped index: a path-scoped commit's staged diff selects the edited function; "
+          "with GIT_INDEX_FILE dropped the same world selects nothing")
+
+
 def _selftest_batched_git_probes():
     """The three batched git probes agree with the per-item form they replaced, on the
     REAL repository, and the properties the zip depends on hold.
@@ -12293,6 +12397,34 @@ def _selftest_auto_resume():
           "the scene is archived and a newer interrupt save wins")
 
 
+def _staged_index_env():
+    """The env for a `git diff --cached` that must see what THIS commit is staging.
+
+    main() strips GIT_INDEX_FILE from os.environ, and it must: a selftest running `git init`
+    under an inherited GIT_DIR reconfigured the shared repository twice on 2026-09-02. But
+    a path-scoped commit -- `git commit <paths>` -- builds a TEMPORARY index and names it
+    only in GIT_INDEX_FILE. With the variable gone, `git diff --cached` reads .git/index,
+    which for that commit holds nothing.
+
+    MEASURED 2026-09-04 in a throwaway repo: under `git commit -- a.txt`, the hook sees
+    GIT_INDEX_FILE=.git/next-index-<pid>.lock, `git diff --cached` names a.txt, and the same
+    command with the variable unset names NOTHING. Under a plain staged `git commit` the
+    variable is .git/index and both forms agree, which is why the defect was invisible:
+    every test of the scoped selftest had staged with `git add` first.
+
+    The consequence was real. 7fd8bc68 rewrote check_tasks_well_formed and added a broken
+    world, was committed path-scoped, and the hook printed "no CHECK function is changed by
+    the staged diff" -- zero of 80 verified, reported as nothing-to-do. That is the shape the
+    scoped substitute exists to prevent, in the substitute itself.
+
+    So: keep os.environ clean, and pass the captured value back only to the git calls that
+    ask what is staged. _ORIG_GIT_INDEX_FILE is read once at import, before main() strips it.
+    """
+    if not _ORIG_GIT_INDEX_FILE:
+        return None
+    return dict(os.environ, GIT_INDEX_FILE=_ORIG_GIT_INDEX_FILE)
+
+
 def _funcs_in_diff(paths, rev=None):
     """Top-level function names whose body the staged diff of `paths` touches.
 
@@ -12300,6 +12432,10 @@ def _funcs_in_diff(paths, rev=None):
     file-level filter selects all 79 and saves nothing -- measured, which is why the first
     version of this was useless for the only caller it has. Reads the changed line numbers from
     `git diff` and maps each to the enclosing `def` by AST line span.
+
+    The --cached read carries _staged_index_env(): under a path-scoped commit the index is a
+    temporary file named only in GIT_INDEX_FILE, which main() has stripped, and without it this
+    selected zero functions for a commit that rewrote a check.
     """
     import ast
     import bisect
@@ -12308,7 +12444,8 @@ def _funcs_in_diff(paths, rev=None):
     for rel in paths:
         args = ["git", "diff", "--unified=0"]
         args += [rev] if rev else ["--cached"]
-        r = subprocess.run(args + ["--", rel], capture_output=True, text=True, cwd=ROOT)
+        r = subprocess.run(args + ["--", rel], capture_output=True, text=True, cwd=ROOT,
+                           env=None if rev else _staged_index_env())
         lines = set()
         for line in r.stdout.splitlines():
             m = re.match(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
@@ -13031,6 +13168,7 @@ def _demo(only=None):
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
     _selftest_batched_git_probes()
+    _selftest_scoped_index_is_read()
     _selftest_peer_stalled_names_the_fixture()
     _selftest_review_present_legacy()
 
