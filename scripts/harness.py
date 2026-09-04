@@ -4076,7 +4076,7 @@ def merge_drops(root, rev="HEAD"):
     m, parents = parts[0], parts[1:]
 
     def paths(x):
-        # stdin=DEVNULL on every git call here: lessons-62's own first attempt piped rev-list
+        # stdin=DEVNULL on every git call here: b0's own first attempt piped rev-list
         # into a `while read` loop whose body ran `git cat-file -e`, which consumed the loop's
         # stdin, so it printed nothing and reported "no transitions" for a path already proven
         # deleted. A silent empty result is the failure mode this whole predicate exists for.
