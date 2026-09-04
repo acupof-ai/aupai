@@ -56,57 +56,61 @@ def bj_str(utc):
     return time.strftime("%m-%d %H:%M", time.gmtime(t + BJ))
 
 CSS = """
-:root{--bg:#fff;--fg:#1a1a19;--dim:#6b7280;--line:#e7e5e4;--card:#fff}
-@media (prefers-color-scheme:dark){:root{--bg:#131312;--fg:#e8e6e3;--dim:#8b8b86;--line:#2a2a28;--card:#1b1b1a}}
+:root{--bg:#f5f5f4;--fg:#1c1917;--dim:#78716c;--line:#e7e5e4;--card:#fff;
+ --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--purple:#7c5cff}
+@media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#e7e5e4;--dim:#a8a29e;
+ --line:#292524;--card:#1c1917;--accent:#3b82f6;--good:#22c55e;--warn:#f59e0b;--bad:#ef4444;--purple:#8b7cff}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
- font:14px/1.55 ui-sans-serif,-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
- padding:20px 18px 40px;max-width:720px}
-header{display:flex;align-items:baseline;gap:10px;margin-bottom:14px}
-h1{font-size:13px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
- color:var(--dim);margin:0}
+ font:14px/1.6 ui-sans-serif,-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+ padding:24px 20px 60px;max-width:760px}
+header{display:flex;align-items:baseline;gap:10px;margin-bottom:20px}
+h1{font-size:15px;font-weight:700;margin:0;letter-spacing:-.01em}
 .live{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;
  display:flex;align-items:center;gap:5px}
-.live i{width:7px;height:7px;border-radius:50%;background:#10b981;display:inline-block;
+.live i{width:7px;height:7px;border-radius:50%;background:var(--good);display:inline-block;
  animation:beat 2s infinite}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:10px;margin-bottom:18px}
-.card{background:var(--card);border:1px solid var(--line);border-top:3px solid;
- border-radius:8px;padding:11px 13px}
-.card .ti{font-size:11px;color:var(--dim);letter-spacing:.05em}
-.card .bi{font-size:22px;font-weight:700;margin:3px 0 2px;font-variant-numeric:tabular-nums}
+h2{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
+ color:var(--dim);margin:28px 0 10px}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:8px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
+ padding:14px 16px;border-top:3px solid;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.card .ti{font-size:11px;color:var(--dim);letter-spacing:.04em;font-weight:500}
+.card .bi{font-size:20px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums;
+ letter-spacing:-.02em}
 .card .su{font-size:12.5px;color:var(--dim);line-height:1.5}
-.bar{height:6px;background:var(--line);border-radius:3px;margin-top:8px;overflow:hidden}
+.bar{height:5px;background:var(--line);border-radius:3px;margin-top:10px;overflow:hidden}
 .bar i{display:block;height:100%;border-radius:3px}
-h2{font-size:11px;font-weight:600;letter-spacing:.08em;text-transform:uppercase;
- color:var(--dim);margin:0 0 4px}
+.head{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);
+ border-radius:10px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.head .bi{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
+.head .su{font-size:12.5px;color:var(--dim);margin-top:3px;line-height:1.5}
+.card.stale{opacity:.5}
+.card .as{font-size:10px;color:var(--dim);margin-top:8px}
+.important{background:var(--card);border:1px solid var(--line);border-radius:10px;
+ padding:6px 16px 10px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+.important h2{margin-top:12px}
 ol{list-style:none;margin:0;padding:0}
-li{padding:7px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;
- font-size:13px;line-height:1.5}
+li{padding:8px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;
+ font-size:13px;line-height:1.55;align-items:baseline}
 li:last-child{border-bottom:0}
-.t{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;
- padding-top:2px;min-width:34px}
-.k{font-weight:600;font-size:11px;padding-top:2px;min-width:26px}
-.s{font-size:10px;padding-top:3px;min-width:14px;font-weight:700}
+.t{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:34px;flex-shrink:0}
+.k{font-weight:600;font-size:11px;min-width:26px;flex-shrink:0}
+.s{font-size:10px;min-width:14px;font-weight:700;flex-shrink:0}
 .m{flex:1}
-details{margin-top:10px}
-summary{font-size:12px;color:var(--dim);cursor:pointer}
+details{margin-top:12px}
+summary{font-size:12px;color:var(--dim);cursor:pointer;padding:6px 0}
 details li{font-size:12.5px;color:var(--dim)}
-table{border-collapse:collapse;font-size:12.5px;margin:2px 0 18px}
+table{border-collapse:collapse;font-size:12.5px;margin:4px 0 12px}
 th{font-size:10px;color:var(--dim);letter-spacing:.06em;text-align:left;
  font-weight:600;padding:2px 14px 4px 0;border-bottom:1px solid var(--line)}
-td{padding:3px 14px 3px 0;border-bottom:1px solid var(--line);
+td{padding:4px 14px 4px 0;border-bottom:1px solid var(--line);
  font-variant-numeric:tabular-nums;white-space:nowrap}
 td.n{font-weight:700}
-td.zero{color:#d97706;font-weight:700}
+td.zero{color:var(--warn);font-weight:700}
 td.ex{color:var(--dim)}
 tr.stale td{opacity:.5}
-.head{background:var(--card);border:1px solid var(--line);border-top:3px solid #2563eb;
- border-radius:8px;padding:11px 13px;margin-bottom:18px}
-.head .bi{font-size:22px;font-weight:700;font-variant-numeric:tabular-nums}
-.head .su{font-size:12.5px;color:var(--dim);margin-top:2px}
-.card.stale{opacity:.5}
-.card .as{font-size:10px;color:var(--dim);margin-top:6px}
 """
 
 
@@ -153,7 +157,7 @@ def control_section():
         return ""
     d = json.load(open(CONTROL, encoding="utf-8"))
     out = ["<h2>对照实验</h2>",
-           '<div class=head style="border-top-color:#0d9488">',
+           '<div class=head style="border-left-color:var(--good)">',
            f'<div class=bi>{html.escape(d["title"])}</div>']
     for r in d["rows"]:
         pending = "" if r.get("final") else ' <b style="color:#d97706">（待定）</b>'
@@ -187,7 +191,7 @@ def roadmap_section():
             t = json.loads(ln)
             state[t["id"]] = t.get("state", "?")
     out = ["<h2>路线图（09-03 裁定）</h2>",
-           '<div class=head style="border-top-color:#2563eb">']
+           '<div class=head style="border-left-color:var(--accent)">']
     for tid, node, owner, exit_no, date in ROADMAP_NODES:
         st = state.get(tid, "无任务行")
         mark = {"done": "完成", "open": "未完成", "blocked": "卡住"}.get(st, st)
@@ -230,7 +234,7 @@ def liveness_section():
 
     rows = sorted(live.items(),
                   key=lambda kv: (not stalled(kv[1]), -min(ages_of(kv[1])) if ages_of(kv[1]) else 1))
-    out = ["<h2>每人动静</h2>", '<div class=head style="border-top-color:#d97706">']
+    out = ["<h2>每人动静</h2>", '<div class=head style="border-left-color:var(--warn)">']
     for name, d in rows:
         tag = ' <b style="color:#dc2626">两小时没动静</b>' if stalled(d) else ""
         out.append(f'<div class=su><b>{html.escape(name)}</b>：交代码 {_age_cn(d["commit_min"])}、'
@@ -257,7 +261,7 @@ def friction_section():
     short = cause.split(",")[0][:60]
     ncauses = len({r.get("cause", "") for r in rows})
     return ("<h2>摩擦记录</h2>"
-            '<div class=head style="border-top-color:#d97706">'
+            '<div class=head style="border-left-color:var(--warn)">'
             f'<div class=su>{len(rows)} 条、{ncauses} 种原因；最多的是{kind_cn}（{n} 条）：{html.escape(short)}'
             ' <a href="file:///Users/bytedance/code/aupai/docs/standards/friction_review.md">复盘全文</a></div>'
             "</div>")
@@ -385,9 +389,9 @@ def render(rows):
     IMPORTANT = {"rule", "find", "warn"}
     important = [r for r in rows if r.get("kind") in IMPORTANT][:20]
     if important:
-        parts.append("<h2>结果与裁定</h2><ol>")
+        parts.append('<div class=important><h2>结果与裁定</h2><ol>')
         parts.extend(_row(r) for r in important)
-        parts.append("</ol>")
+        parts.append("</ol></div>")
     process = [liveness_section(), friction_section(), queue_section()]
     process.append("<h2>时间线</h2><ol>")
     process.extend(_row(r) for r in rows[:SHOWN])
