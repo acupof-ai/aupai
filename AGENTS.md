@@ -291,7 +291,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Rule | Enforced by |
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
-| Vocabulary identity | manual: enforced at load since 7aacbac (2026-09-03): sft_math.py refuses a vocab_id mismatch and prints the matching id; before 7aacbac the guard key was `vocab` and the assert key `vocab_id`, so the check never fired (shape §70) |
+| Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
@@ -324,7 +324,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | `cd` inside a backgrounded chain stays in it | manual: a shell fact; no artifact records the mistake |
 | The pod is frozen from a training launch until that run | manual: the window is defined by two events in different places -- a launch timestamp on the pod and a push from a laptop -- and nothing records the second. `pod_drift` sees the drift that results, which is the consequence; whether a push landed inside someone's startup window is not recoverable from any artifact |
 | cfg_default raises rather than returning None: an annotation | manual: a note on how checks are written, not a rule to enforce |
-| The ledger takes names from the scores: --name X attributes | manual: a note on how the ledger reads, not a rule to enforce |
+| The ledger takes names from the scores: --name X attributes | manual: MEASURED 2026-09-04, and the check 6e proposed ("a score row names a checkpoint that exists") would be permanent-red. `produced_checkpoint` (harness.py:2315) mints `ckpt_<name>` from `--name` when no path is in the cmd: 92 of the register's rows get their name that way, and **35 of those 92 name a checkpoint absent from the newest pod listing** — `ckpt_0830v1_*` are the 0830v1 reset, `ckpt_t38_kill`/`t52_*` are finished probes. Every one was legitimately pruned, so an existence check FAILs on correct history and its only remedy would be un-pruning or an exception list that grows forever. The attribution hazard the rule names is real and already enforced from the other end: `recorded_scores` returns orphans (a score matching no checkpoint) and `produced_checkpoint` excludes `--resume`/`--ckpt` inputs after crediting `ckpt_k4` with its own output's score. Orphans measured today: 0 of 1 resolved score. What stays manual is that `SCORE_RE` matches only `math-hard <n>%`, so every other metric's rows are outside both this rule and its enforcement |
 | Each session works in its own worktree on its own branch: gi | manual: worktree topology is per-machine, not in the repo |
 | Commit in your worktree as soon as a change works, at most 3 | manual: same deadline as above, enforced by dirty_aged |
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
