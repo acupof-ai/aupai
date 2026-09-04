@@ -325,6 +325,18 @@ class Cfg:
     scalar_lr = 0.15
     scalar_betas = (0.8, 0.95)
     scalar_wd = 0.0
+    # Sparse memory: its OWN lr, on its own optimizer (charter memory_layers_0905.md). Not a
+    # tuning knob picked by taste -- a value row is updated only on the steps whose tokens
+    # happened to read it, so its effective update count is a small fraction of the step count
+    # (6.0% of rows per micro-batch at the toy scale, probes/mem_toy.py). At the shared muon_lr
+    # a rarely-read row would barely move; at embed_lr the frequently-read rows would be the
+    # only thing learning. 0.02 is a STARTING VALUE, not a measured optimum: it is 2x muon_lr,
+    # which is where Lample et al. put the memory lr relative to the backbone, and the smoke is
+    # not a test of it. Whatever the arms run is recorded in the checkpoint's cfg.
+    mem_lr = 0.02
+    mem_wd = 0.0  # weight decay on a sparsely-updated table decays the rows nobody read, which
+    # is a slow uniform pull toward zero applied unevenly -- the rows read least are decayed
+    # most, relative to their own update count. Adagrad also takes wd densely.
 
 
 # The class-body defaults, snapshotted BEFORE any flag is applied. This is what the cfg-diff
@@ -408,6 +420,37 @@ def _fp8_ok(mod, name):
     # FoNE heads excluded by NAME: num_head runs on hidden[nmask], whose row count is the batch's
     # [NUM] count -- rarely a multiple of 16, and not visible from the weight shape.
     return name not in ("head", "num_proj", "num_head") and all(d % 16 == 0 for d in mod.weight.shape)
+
+
+def _fp8_filter(mod, fqn):
+    """The module_filter_fn passed to torchao, and it takes the FULL fqn on purpose.
+
+    _fp8_ok above sees only the leaf name, which is enough for the three it excludes -- `head`,
+    `num_proj` and `num_head` are unique leaves. It is NOT enough for the sparse memory, and this
+    function exists because of that. Inside ProductKeyMemory the linears are named `query`, `gate`
+    and `out`: nothing in those leaf names says "memory", and at d1024 all three are 16-aligned,
+    so `_fp8_ok` returns True and torchao converts every one of them. Measured on the toy
+    (probes/mem_toy.py): all three pass the leaf test. Adding "query"/"gate"/"out" to _fp8_ok's
+    tuple is not the fix -- `gate` and `out` are ordinary leaf names elsewhere in the model and
+    excluding them everywhere would silently drop unrelated layers out of FP8.
+
+    So the memory is excluded by its PATH. The charter's line is that memory keys and values are
+    outside FP8; the query projection is the thing that reads the keys, and casting it to e4m3
+    changes which values a token retrieves -- a discrete change in the top_k set, not a small
+    numerical one, which is why it is excluded with them rather than treated as one more linear.
+    """
+    return not _is_mem_fqn(fqn) and _fp8_ok(mod, fqn.rsplit(".", 1)[-1])
+
+
+def _is_mem_fqn(fqn):
+    """Is this fully-qualified module/parameter name inside the sparse memory pool?
+
+    ONE definition, used by both the FP8 filter and build_optimizers' group test, because the two
+    exclusions have to name the same set. If FP8 excluded the memory by path while the optimizer
+    grouped it by a substring, the two could disagree about a parameter and nothing would say so
+    -- the arm would train with a table half in one regime and half in the other.
+    """
+    return fqn == "memory" or fqn.startswith("memory.") or ".memory." in fqn
 
 
 _FP8_WSCALE = {}  # id(weight) -> scale, cleared per step; the head weight is constant within a
@@ -539,19 +582,28 @@ def convert_to_fp8_compute(model):
         cfg = Float8LinearConfig(
             cast_config_input=cc(), cast_config_weight=cc(), cast_config_grad_output=cc()
         )
-    convert_to_float8_training(
-        model, config=cfg, module_filter_fn=lambda m, fqn: _fp8_ok(m, fqn.rsplit(".", 1)[-1])
-    )
+    convert_to_float8_training(model, config=cfg, module_filter_fn=_fp8_filter)
     return model
 
 
-def _convert_to_fp8_legacy(model):
-    """Replace nn.Linear with FP8Linear (skip tied LM head and tiny layers not divisible by 16)."""
+def _convert_to_fp8_legacy(model, prefix=""):
+    """Replace nn.Linear with FP8Linear (skip tied LM head and tiny layers not divisible by 16).
+
+    `prefix` threads the fully-qualified path down the recursion so the sparse memory can be
+    excluded here too. Without it this path saw only leaf names -- `query`, `gate`, `out` inside
+    ProductKeyMemory, all 16-aligned at d1024 -- and would have converted the memory's linears
+    even while the torchao path excluded them. Two conversion paths disagreeing about which
+    parameters are FP8 is worse than either choice: FP8_RECIPE=legacy is an env var, so the
+    difference would not appear in the launch line or the checkpoint's cfg.
+    """
     for name, module in model.named_children():
+        fqn = f"{prefix}{name}"
+        if _is_mem_fqn(fqn):
+            continue
         if isinstance(module, nn.Linear) and _fp8_ok(module, name):
             setattr(model, name, FP8Linear(module))
         else:
-            _convert_to_fp8_legacy(module)
+            _convert_to_fp8_legacy(module, prefix=f"{fqn}.")
     return model
 
 
@@ -808,10 +860,28 @@ def build_optimizers(model, cfg, master=None):
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
     muon, embed, scalar, arq, head = [], [], [], [], []
+    mem = []
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
         q = p if master is None else master[p]
+        # SPARSE MEMORY FIRST, before the shape branches, and the order is the point. The value
+        # table is 2D and named `memory.values.weight`, so `p.ndim == 2` below would put it in
+        # MUON -- which orthogonalises a matrix via Newton-Schulz, an operation with no meaning
+        # for a table read by index, and which would densify the sparse gradient on the way in.
+        # The keys are 3D (2 x side x key_dim) and would land in `arq` beside the AttnRes
+        # pseudo-queries at attn_res_lr. Both are silent: the run trains, the loss moves, and
+        # nothing says the memory was optimised as if it were something else. Charter: keys and
+        # values are excluded from Muon and get their own sparse-capable optimizer at their own
+        # lr.
+        #
+        # MATCHED VIA _is_mem_fqn, the same predicate the FP8 filter uses, so the two exclusions
+        # cannot name different sets -- a table half outside Muon and half outside FP8 would
+        # train under two regimes with nothing recording it. NOT a substring test on "mem": that
+        # would quietly widen to any future parameter whose name contains those three letters.
+        if _is_mem_fqn(n):
+            mem.append(q)
+            continue
         # THE THIRD ARM LIVES OR DIES HERE. An untied head that still lands in `embed` trains at
         # embed_lr 0.1 -- which is exactly arm 2 (untied, embed lr) and is a legitimate arm, but it
         # is NOT arm 3. The two differ only in this branch, and their logs are otherwise identical,
@@ -871,6 +941,21 @@ def build_optimizers(model, cfg, master=None):
                 fused=True,
             )
         )
+    if mem:
+        # ADAGRAD, NOT SPARSEADAM, and the reason is memory rather than convergence. Both accept
+        # a sparse gradient; AdamW raises on one (measured, probes/mem_toy.py). Both allocate
+        # their state DENSELY, over the whole table, so at M3 (2048^2 x 1024 = 2^32 params, 8.00
+        # GiB in bf16) SparseAdam's two fp32 moments are 32 GiB and Adagrad's single one is 16
+        # GiB -- 40 GiB against 24 GiB of a 95.58 GiB card whose control peak is already 49.53
+        # GiB. That is the whole difference between a shape that fits with 22 GiB of slack and
+        # one that fits with 6. 4c's ruling 2026-09-05.
+        opts.append(
+            torch.optim.Adagrad(
+                mem,
+                lr=getattr(cfg, "mem_lr", 0.02),
+                weight_decay=getattr(cfg, "mem_wd", 0.0),
+            )
+        )
     for opt in opts:
         for g in opt.param_groups:
             g["initial_lr"] = g["lr"]
@@ -881,7 +966,8 @@ def build_optimizers(model, cfg, master=None):
     # bench_eff/*, probes/, scripts/test_arch_*), and returning a tuple would break every one.
     # `arq` is present only when the model has attn_res pseudo-queries, so the zip below must
     # not assume four.
-    _names = ["muon", "embed", "scalar"] + (["head"] if head else []) + (["arq"] if arq else [])
+    _names = (["muon", "embed", "scalar"] + (["head"] if head else [])
+              + (["arq"] if arq else []) + (["mem"] if mem else []))
     for opt, nm in zip(opts, _names, strict=False):
         opt.aupai_group = nm
     return opts
@@ -1940,6 +2026,8 @@ def main():
     for name, help_ in {
         "warmdown": "fraction of total steps for the cosine warmdown tail (WSD; 0 keeps lr at stable for a stage-1 join)",
         "anneal_frac": "fraction of tokens using each domain's anneal weight (0 = no anneal, for a WSD stage-1)",
+        "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
+        "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
     }.items():
         parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
