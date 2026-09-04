@@ -17,9 +17,9 @@
 {"id": "DL-11", "ruling": "accepted", "by": "fb", "note": "accepted S1; one transport for every runs/*.jsonl, union by event, second on queue"}
 {"id": "DL-4", "ruling": "accepted", "by": "fb", "note": "accepted S1; fix already on main via merge (c8f9f25f), recorded as freeze breach"}
 {"id": "DL-5", "ruling": "accepted", "by": "fb", "note": "accepted S1; inverted on main at b98cd784"}
-{"id": "MT-1", "ruling": "accepted", "by": "fb", "note": "accepted S1; post-audit tilerl rewrites as retracted + new fact against cli.py current line"}
-{"id": "PR-1", "ruling": "returned", "by": "fb", "note": "returned: restate S2, label conflation not a wrong decision; card 7 question put to the user"}
-{"id": "PR-3", "ruling": "returned", "by": "fb", "note": "returned: restate S2, same as PR-1"}
+{"id": "MT-1", "ruling": "accepted", "by": "fb", "note": "accepted S1; superseded-not-wrong: correct at 2026-08-30, hardcoded 256 removed 48ae458 2026-09-02; post-audit tilerl retracts + refits against current line, citing commit"}
+{"id": "PR-1", "ruling": "accepted", "by": "fb", "note": "accepted S2 after restatement (label conflation; card 7 ownership put to the user)"}
+{"id": "PR-3", "ruling": "accepted", "by": "fb", "note": "accepted S2 after restatement"}
 {"id": "CD-7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
 {"id": "DL-1", "ruling": "accepted", "by": "fb", "note": "accepted S2; first on post-audit fix queue, cost is the variable"}
 {"id": "DL-10", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
@@ -70,7 +70,7 @@
 {"id": "MT-8", "ruling": "accepted", "by": "fb", "note": "accepted S3; logs are the measurement"}
 {"id": "PR-10", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
 {"id": "PR-5", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
-{"id": "PR-6", "ruling": "accepted", "by": "fb", "note": "accepted after dual-rule publication (197 vs 130, manifest sha pinned)"}
+{"id": "PR-6", "ruling": "accepted", "by": "fb", "note": "accepted after dual-rule reconciliation (197 incl. data/hf etc. vs 135/130 without; manifest revision must be named)"}
 {"id": "PR-7", "ruling": "accepted", "by": "fb", "note": "accepted, same as PR-6"}
 {"id": "E9", "ruling": "accepted", "by": "fb", "note": "no defect: assigned question answered, no eval hands ChatML to a base checkpoint"}
 {"id": "F5", "ruling": "accepted", "by": "fb", "note": "not a defect: AGENTS.md documents [] as the deliberate retracted_value; withdrawn by 44 on return"}
