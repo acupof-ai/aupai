@@ -265,14 +265,14 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
-Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 141 survive.
+Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 148 survive.
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 16 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 64 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 17 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 §179 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 65 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §180 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 3 | §4 §24 §44 |
-| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 7 | §7 §13 §25 §51 §59 §136 §166 |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 8 | §7 §13 §25 §51 §59 §136 §166 §178 |
 | State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 32 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 §109 §111 §115 §117 §118 §124 §127 §133 §143 §152 §155 §156 §157 §159 §161 §164 §172 |
 | Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §58 §68 §102 §119 |
