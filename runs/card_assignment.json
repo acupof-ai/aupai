@@ -35,6 +35,11 @@
    "when": "2026-09-04T06:05Z",
    "by": "fb",
    "what": "cards 1 and 2 recorded as held by tileRL jobs from /work/tl-rl (not aupai); block grant 0-3 is not usable while they run; card 5 e1 C11; card 7 idle (user's)"
+  },
+  {
+   "when": "2026-09-04T06:20Z",
+   "by": "fb",
+   "what": "lane card 5 -> b0 for C10.2 L16 arch test row; e1 C11 grant ended"
   }
  ],
  "granted": "2026-09-03",
@@ -51,7 +56,7 @@
  "cards": {
   "0-3": "params leg params_leg_438m_3p76b, 438.4M x 3.761775B, world 4, launched 12:52Z after the gate (PEAK/STARTUP 76.36 GiB, code_fp NONE). Data leg done 12:40Z, val 1.836.",
   "4": "e1: N8 attention-kernel control and the conv fix gates; then free",
-  "5": "lane: e1 C11 doc_cu domain_loss re-score (granted 2026-09-04 05:40Z fb); returns to free when the row lands",
+  "5": "lane: b0 C10.2 (docs/standards/cleanup_0904.md) — one test_arch_L32.py run at the L16 shape to write the launch_tests row via the real-kernel branch, ~2 min; granted 2026-09-04 06:20Z fb after e1's C11 finished (rows landed, process gone, card 0 MiB). Returns to free when the row lands.",
   "6": "FOREIGN OCCUPANT since ~12:5xZ 2026-09-03: host-namespace pids 2278278/2291027 (not in our container), 0.5-12.7 GB, 92-100%. harness launch refused bench_final_score_matrix twice on it. Lane jobs do not queue behind another container: the lane moved to card 5 for bench_final_score_matrix (read-and-launch in one command, 0 MiB). Card 6 returns to lane duty only when its compute-apps list is empty of foreign pids.",
   "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so.",
   "0": "b0 Stage D equal-compute arm (unlooped, 5085 steps = 1.333B tok), world 2 with card 1",
@@ -59,7 +64,7 @@
   "2": "HELD by a tileRL bench (decode-kv,prefill, Qwen3.8-27B-NVFP4, --gpu 2, 28.9 GB) in our container; not ours to kill (fb 2026-09-04 06:05Z)",
   "3": "reserved: N8 fixed arm, world 2 with card 2"
  },
- "lane_note": "2026-09-04 05:40Z fb: lane card 5 granted to e1 for C11 (docs/standards/cleanup_0904.md): one score_matrix run, --metrics domain_loss --cu_path doc_cu over ckpt_data_leg_206m_8b, ckpt_params_leg_438m_3p76b, ckpt_b0_sd_equalcompute, ckpt_b0_n8_fixed; domain_bpb excluded (round-trip gate defect, C12). Grant ends when the job's row lands. Cards 0-3: Stage E arm 1 finished; no grant. Card 7: the user's.",
+ "lane_note": "2026-09-04 06:20Z fb: C11 done (four #cu domain_loss rows), lane card 5 -> b0 for C10.2 (L16 launch_tests row). Cards 1,2,3: tileRL jobs from /work/tl-rl, not aupai. Card 7: the user's.",
  "superseded_2026_09_02": {
   "block_cards": "0-7",
   "note": "Granted for the 500M/20B run on ALL EIGHT cards, user ruling 2026-09-02. The lane is gone by that ruling and the cost was stated before it was taken: in-run milestone generation sweeps cannot run, because the scorer needs a whole 95 GiB card and not a gap -- observed, not derived, when the probe's scorer took card 7 alone after training exited. End-of-run scoring is unaffected: run_ddp.sh scores after torchrun exits, when all eight are free. Second cost: the 200M comparison axis loses its free pin at step 17,500 and needs 15,313 plus conversion. Both were on the table before the decision. Resume was PROVEN before this grant, per the user's order of 2026-09-02: six conditions, nine domains character-for-character, plus a reverse test that made the guard fire. --auto-resume is 1 and not more: the cursor is per-segment, so a second resume re-reads 10,240 rows and nothing has ever tested it.",
