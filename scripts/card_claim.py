@@ -569,11 +569,30 @@ def claim_file(name, cards):
     return f"{name}.{tag}.json" if tag else f"{name}.json"
 
 
-def acquire(name, cards, wait=0, note="", pid=None):
+def acquire(name, cards, wait=0, note="", pid=None, require_device=False):
     """Claim `cards` for `name`, waiting up to `wait` seconds. Returns (ok, message).
 
     Refuses rather than sharing: this is a lock, not a message. The previous arrangement was a
-    message -- two sessions each announced a launch and both proceeded."""
+    message -- two sessions each announced a launch and both proceeded.
+
+    require_device: refuse a holder that holds no GPU device fd. DEFAULT FALSE, and the default
+    is the design. There are two claim shapes and only one of them can honour that predicate:
+
+      harness launch    claims ANOTHER process, AFTER wait_for_device proved it is on a card
+      claim_my_cards    claims ITSELF, BEFORE it opens the device it just named through CVD
+
+    The second is scripts/loader.py's acquire point for every GPU entry point that is not
+    `harness launch`, and it claims the card it is about to use precisely so nothing else takes
+    it in between -- so at claim time it holds zero device fds by construction. Refusing there
+    unconditionally broke `python scripts/loader.py selftest` on every Linux host (CI red on main
+    at 121a865d for two hours; reproduced on the pod: "demo_set: pid 902861 holds no GPU device
+    fd") while passing on macOS, where no /proc means the predicate has no opinion.
+
+    A process claiming ITSELF by CVD cannot claim the wrong pid -- CVD is the only thing it could
+    name. The refusal was written for a launcher that bound the wrong pid (b0_mem_m1: the claimed
+    842204 held 0 fds while rank 842276 held 52), so it belongs to the launcher path, where
+    wait_for_device has already established the fact it asserts."""
+
     os.makedirs(CLAIM_DIR, exist_ok=True)
     mine = os.path.join(CLAIM_DIR, claim_file(name, cards))
     deadline = time.time() + wait
@@ -665,7 +684,7 @@ def acquire(name, cards, wait=0, note="", pid=None):
             #
             # None (no /proc, e.g. macOS) proceeds -- see nvidia_fds.
             devs = nvidia_fds(holder)
-            if devs == 0:
+            if devs == 0 and require_device:
                 holders = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
                 holders = [(p, a, n) for p, a, n in holders if n]
                 msg = (f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
@@ -1213,7 +1232,13 @@ def _selftest():
     proot = tempfile.mkdtemp(prefix="proc_")
 
     def _fake_proc(pid, nvidia=0, other=0):
-        fd = os.path.join(proot, str(pid), "fd")
+        # REBUILT, not appended to. Several cases give the SAME pid a different device count in
+        # sequence -- the self-claim world sets `me` to 0 fds and W1 later sets it to 36 -- and an
+        # additive version raises FileExistsError on the second call, which reads as a crash in
+        # whichever case happens to run second rather than as a fixture defect.
+        d = os.path.join(proot, str(pid))
+        shutil.rmtree(d, ignore_errors=True)
+        fd = os.path.join(d, "fd")
         os.makedirs(fd, exist_ok=True)
         for i in range(nvidia):
             os.symlink(f"/dev/nvidia{i}", os.path.join(fd, str(i)))
@@ -1234,7 +1259,7 @@ def _selftest():
         # reason unrelated to cards. Asserting only "0 refuses" would pass a version that treats
         # unreadable as 0, which is precisely the version that breaks every laptop.
         _case(nvidia_fds(999999) is None, "an unreadable pid reads None, which is not 0")
-        me_ok, me_msg = acquire("w4_noproc", ["4"], pid=me)
+        me_ok, me_msg = acquire("w4_noproc", ["4"], pid=me, require_device=True)
         _case(me_ok, f"W4: a claim proceeds when the device cannot be read ({me_msg[:52]})")
         if me_ok:
             got = _read(os.path.join(CLAIM_DIR, claim_file("w4_noproc", ["4"])))
@@ -1242,11 +1267,36 @@ def _selftest():
                   "and it records no device_fds rather than recording 0")
             release("w4_noproc")
 
+        # THE SELF-CLAIM SHAPE, and it is the world that was missing. CI went red on main for two
+        # hours at 121a865d because `python scripts/loader.py selftest` claims from
+        # CUDA_VISIBLE_DEVICES BEFORE the process opens the device -- zero fds by construction --
+        # and the refusal was unconditional. It passed on macOS, where no /proc means the
+        # predicate abstains, so every local gate was green while every Linux host failed. The
+        # asymmetry IS the defect: a world that only ever runs where /proc is absent cannot see a
+        # refusal that needs /proc to fire.
+        #
+        # Reproduced on the pod: "demo_set: pid 902861 holds no GPU device fd". So the default
+        # must not refuse, and this case is Linux-shaped on purpose -- PROC_ROOT points at a real
+        # directory here, so nvidia_fds returns 0 rather than None on macOS too, which is what
+        # makes this world exercise the CI path at all.
+        _fake_proc(me, nvidia=0, other=5)
+        assert nvidia_fds(me) == 0, "world must look like Linux-with-no-device, not like macOS"
+        ok, msg = acquire("selfclaim", ["4"], pid=me)
+        _case(ok, f"a SELF-CLAIM by a pid not yet on its card is accepted by default ({msg[:44]})")
+        if ok:
+            release("selfclaim")
+        # And the launcher's opt-in still refuses the same pid: the predicate did not weaken, it
+        # moved to the path that can honour it. Without this pair the case above would pass for a
+        # version that deleted the refusal outright.
+        ok, msg = acquire("launchclaim", ["4"], pid=me, require_device=True)
+        _case(not ok and "holds no GPU device fd" in msg,
+              "and require_device=True still refuses it (the launcher path, unweakened)")
+
         # W1: the claimed pid holds nothing while a descendant holds a card. THIS process is the
         # holder, so its real descendants are whatever the selftest spawned -- give it a fake
         # /proc entry with 0 and let the refusal name what it found.
         _fake_proc(me, nvidia=0, other=4)
-        ok, msg = acquire("w1_nodev", ["4"], pid=me)
+        ok, msg = acquire("w1_nodev", ["4"], pid=me, require_device=True)
         _case(not ok and "holds no GPU device fd" in msg,
               f"W1: a pid holding 0 device fds is refused ({msg.splitlines()[0][:58]})")
         _case(not ok and ("--pid" in msg or "No descendant holds one yet" in msg),
@@ -1255,7 +1305,7 @@ def _selftest():
         # And the positive: the same pid with a device is accepted, and the count is recorded.
         # Without this case W1 passes for a version that refuses everything.
         _fake_proc(me, nvidia=36)
-        ok, msg = acquire("w1_dev", ["4"], pid=me)
+        ok, msg = acquire("w1_dev", ["4"], pid=me, require_device=True)
         _case(ok, f"W1 positive: the same pid WITH a device is accepted ({msg[:48]})")
         if ok:
             got = _read(os.path.join(CLAIM_DIR, claim_file("w1_dev", ["4"])))
@@ -1685,6 +1735,12 @@ def main():
                     help="the pid that HOLDS the cards (default: this command's parent, i.e. "
                          "the launcher script). A claim recording this command's own pid is "
                          "stale the instant it is written")
+    ap.add_argument("--require-device", action="store_true",
+                    help="refuse a --pid that holds no GPU device fd. For a LAUNCHER claiming "
+                         "another process after it is on a card (harness launch does this after "
+                         "wait_for_device). NOT for a process claiming itself before it opens "
+                         "the device it named through CUDA_VISIBLE_DEVICES -- that holds zero "
+                         "fds by construction (scripts/loader.py claim_my_cards)")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -1715,7 +1771,8 @@ def main():
     if not a.cards:
         ap.error("--cards is required for acquire")
     cards = [c.strip() for c in a.cards.split(",") if c.strip()]
-    ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note, pid=a.pid)
+    ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note, pid=a.pid,
+                      require_device=a.require_device)
     print(msg, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 
