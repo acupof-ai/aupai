@@ -12,7 +12,7 @@ worktree, 2026-09-04 ~07:0xZ. `bytes` is `du -sb`; `newest mtime` is `stat -c %y
 | path | bytes | files | newest mtime UTC | purpose | referenced by | disposition |
 |---|---|---|---|---|---|---|
 | `runs/owm_dedup_ck` | 8,767,305,884 | 6 | 2026-09-03 15:58 | MinHash signature + location caches for cross-domain near-dedup: `code_py_starcoder.sig.npy` 4.75 GB, `math_owm_stage2.sig.npy` 3.18 GB, `code_py_rp1t.sig.npy` 161 MB, plus three `.loc.json` | **nothing.** Zero repo references to the directory name. Writers are `datagen/near_dedup_scale.py`, `datagen/code_dedup_build.py`, `datagen/code_dedup_handread.py` (by `.sig.npy` suffix, not by this path) | **CANDIDATE, largest single item on the box.** Derived and resumable: it is a checkpoint of a dedup pass, not a result. Deleting costs a re-run of the signature pass over `code_py_starcoder` + `math_owm_stage2`, never data. NOT on fb's 09-03 candidate list (postdates it). Needs the 24h KEEP-claim broadcast — whoever is mid-dedup on starcoder loses their resume point |
-| `runs/scan_math_ws.json` | 6,624,717,572 | 1 | 2026-09-03 23:57 | math-corpus containment scan output | 3 refs, incl. `facts/contamination.json`; no script reads it | CANDIDATE after the fact is confirmed to carry its numbers. Same byte size as the next row **by coincidence** — md5 differs (`9912552c` vs `273282ad`), they are not duplicates |
+| `runs/scan_math_ws.json` | 6,624,717,572 | 1 | 2026-09-03 23:57 | math-corpus containment scan output | 3 refs, incl. `facts/contamination.json`; **no script reads it** | **CANDIDATE** (6e's ruling 2026-09-04, promoted from "candidate after the fact is confirmed"): "no reader" is the same evidence used for `owm_dedup_ck` and `ddp_trace_rank1..6`, so it belongs in the same column. Same byte size as the next row **by coincidence** — md5 differs (`9912552c` vs `273282ad`), they are not duplicates, and that line stays here so nobody deletes one as a dup of the other |
 | `runs/scan_eval_golds.json` | 6,624,717,572 | 1 | 2026-09-03 20:05 | eval-gold containment scan output | 7 refs, incl. `datagen/holdout.py`, `datagen/scan_eval_golds.py`, `facts/contamination.json` | **KEEP while `holdout.py` reads it.** Code reference, not just prose |
 | `runs/control_lr_scan_v2` | 1,641,216,027 | 37 | 2026-09-02 21:33 | LR-scan arm outputs (v2) | 5 refs, docs only | CANDIDATE if the scan's conclusion is in `facts/`; no code reads it |
 | `runs/control_lr_scan` | 656,499,403 | 18 | 2026-09-02 18:57 | LR-scan arm outputs (v1) | 11 refs incl. `scripts/eval_heldout.py`, `scripts/heldout_crossarm.sh` | KEEP — two scripts name it |
@@ -31,7 +31,12 @@ and every `runs/*/` subdirectory other than the two LR scans and `owm_dedup_ck` 
 **`runs/claims` is EMPTY on the pod** — 0 bytes, 0 entries. Not a disk finding; recorded because
 the standing rule is that a claim lives in the tree the job runs from, so an empty claims dir on
 the box where jobs run means either nothing holds a card through `card_claim` right now, or
-claims are being written somewhere else. Worth one look from whoever owns card accounting.
+claims are being written somewhere else.
+
+ADJUDICATED (6e, 2026-09-04): expected right now — nothing aupai holds a card (arm 1 done, arm 2
+killed, b0's card-5 rescore not yet launched). The open half is that "no claim" and "claims land
+somewhere else" produce the same empty directory, so b0 was asked to confirm a claim row appears
+**on the pod** when the rescore starts. If it does not, the second reading is the true one.
 
 **No `.REFUSED` sidecars exist under `/work/aupai/runs`** (`find -name '*.REFUSED*'` → 0). The
 inventory request listed them; they are not there.
