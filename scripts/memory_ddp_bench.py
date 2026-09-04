@@ -77,8 +77,13 @@ def dense_allreduce(table_grad, world):
 
 def run(rank, a):
     dist.init_process_group("nccl", rank=rank, world_size=a.world)
-    torch.cuda.set_device(a.device)
-    dev = torch.device("cuda", a.device)
+    # LOCAL_RANK, not a flag: torchrun gives each rank its own device index, and pinning
+    # every rank to --device put both on one GPU -- which NCCL rejects as "invalid usage"
+    # at the first all_gather, not at init. Under CUDA_VISIBLE_DEVICES=5 this needs two
+    # visible cards, so the launcher exposes the lane plus one spare rather than one card.
+    local = int(os.environ.get("LOCAL_RANK", rank))
+    torch.cuda.set_device(local)
+    dev = torch.device("cuda", local)
     n_vals = a.n_side ** 2
     n_tok = a.batch * a.seq
     torch.manual_seed(42 + rank)
@@ -145,7 +150,6 @@ def main():
     ap.add_argument("--batch", type=int, default=16)
     ap.add_argument("--seq", type=int, default=4096)
     ap.add_argument("--world", type=int, default=2)
-    ap.add_argument("--device", type=int, default=0)
     ap.add_argument("--iters", type=int, default=10)
     ap.add_argument("--concentration", type=float, default=0.0,
                     help="0 = uniform (worst case for sparsity); >0 = power-law peaked")
