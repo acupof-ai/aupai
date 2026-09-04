@@ -77,3 +77,5 @@
 {"id": "F10", "ruling": "accepted", "by": "fb", "note": "accepted S2; points at E16; post-audit boundary note on the fact, no value edit"}
 {"id": "E16", "ruling": "accepted", "by": "fb", "note": "accepted S2; no checkpoint trained on an agentic pack (experiments.jsonl has zero agentic occurrences); provenance came from producer code, 20 of 21 packs carry no sources field"}
 {"id": "E17", "ruling": "accepted", "by": "fb", "note": "accepted S2; two concurrent log writers, origin unresolved; pack verified independently; two one-line fixes queued post-audit"}
+{"id": "MT-12", "ruling": "accepted", "by": "fb", "note": "accepted S1 (verified score_matrix.py:304 stderr-or-stdout, domain_bpb.py:292 REFUSING to stdout, loader.py:136 unconditional warn; 10/10 domain_bpb rows are error objects); post-audit fix at all three sites, enumeration of other affected scorers assigned to e1"}
+{"id": "MT-13", "ruling": "accepted", "by": "fb", "note": "accepted S3; unconditional vocab_id warning when cfg=None"}
