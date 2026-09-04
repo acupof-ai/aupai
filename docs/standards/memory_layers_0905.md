@@ -25,10 +25,10 @@ identical and block-paired scoring applies.
 
 ## Arms
 
-| arm | memory values | value dim | params added | FLOP vs control |
+| arm | memory values | value dim | params added | wall time vs control |
 |---|---|---|---|---|
-| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | <= +3% |
-| M2 | 262,144 (512 x 512) | 1024 | 0.27B | <= +3% |
+| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | measured lower bound +6.5% (tilerl, lookup alone, 2026-09-05); readout 5 is the constraint |
+| M2 | 262,144 (512 x 512) | 1024 | 0.27B | unmeasured; readout 5 is the constraint |
 
 Design fixed for both arms; b0 chooses the rest inside these bounds:
 - one memory pool shared by layers 3, 6, 9 (0-indexed), added in parallel to the FFN,
@@ -40,6 +40,12 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
 - sparse gradients across DDP: gather touched indices, never all-reduce the dense 1B table.
 - `test_arch_compat.py` gains: memory fwd/bwd on CPU, save/load round-trip, and a legacy
   checkpoint (no memory) still loads.
+
+The `<= +3% FLOP` bound that stood in this table was struck 2026-09-05: the lookup is
+memory-bound, not FLOP-bound, and its wall cost at M1 is 51.6 ms of a 799 ms step (6.5%) while
+throughput stays at 93.9% of the control. Readout 5 (tok/s/gpu at step 30, stop below 70K) is
+the only cost constraint. Sparse-vs-dense gradient exchange is chosen per arm by measured
+bytes per step, not by rule: at M1 a uniform draw touches ~86% of the table per step.
 
 ## Pre-registered readouts (runs/prereg.jsonl#memory_layers_0905)
 
