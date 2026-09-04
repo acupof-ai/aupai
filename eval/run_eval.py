@@ -157,10 +157,48 @@ ALL_BENCHMARKS = [b for b in MC_BENCHMARKS if b not in ("hellaswag", "piqa")] + 
 
 @torch.no_grad()
 def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
-    """Score multiple-choice items by continuation log-likelihood.
+    """Mean accuracy over multiple-choice items. See score_mc_items for the contract.
+
+    A MEAN AND NOTHING ELSE, which is why score_mc_items exists beside it: a standard
+    error needs the per-item outcomes, and every caller of this function was throwing
+    them away inside the return statement. Kept as the name three existing callers use
+    (lambada_zh, math_v2_like, run_eval's own benchmarks) and now a thin wrapper, so the
+    per-item path and the mean path cannot disagree -- the alternative was a second copy
+    of the batching loop, which is the shape §95 names (a test or reader that
+    reimplements the shipped function defends nothing against the two diverging).
+    """
+    preds, labels, scored = score_mc_items(model, tok, items, device, batch_size, num_id)
+    if not len(labels):
+        return 0.0
+    n_bad = int((~scored).sum())
+    if n_bad:
+        # NOT counted as wrong and NOT counted as right: an item whose options all failed to
+        # tokenize was never scored. Printed because a mean over a silently smaller set is a
+        # different metric wearing the same name.
+        print(f"score_mc: {n_bad} of {len(labels)} item(s) had no scoreable option and are "
+              f"excluded from the mean (they would otherwise count CORRECT whenever "
+              f"label == 0)", flush=True)
+    keep = scored
+    if not int(keep.sum()):
+        return 0.0
+    return (preds[keep] == labels[keep]).float().mean().item()
+
+
+def score_mc_items(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
+    """Score multiple-choice items by continuation log-likelihood: (preds, labels).
+
+    Per-item tensors, so a caller can compute a standard error, a per-stratum mean, or a
+    paired difference. score_mc is the mean of this.
 
     Each item: {"prompt": str, "options": [str, ...], "label": int}.
     Prediction = argmax over options of sum log-prob(option tokens | prompt).
+
+    SUMMED, NOT LENGTH-NORMALISED, and a caller building its own items has to know:
+    options of unequal token length are not comparable here, because a longer option
+    accumulates more negative log-prob. Every existing caller equalises length itself
+    (lambada_zh requires len(distractor) == len(target); math_v2_like uses a
+    same-token-length digit edit). A 4-way item whose options differ in token count is
+    measuring length, not knowledge.
 
     All (item, option) pairs are flattened into jobs, sorted by total length
     (length bucketing minimizes padding), and scored `batch_size` sequences per
@@ -168,7 +206,12 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
     pad tokens never affect logits at real positions.
     """
     if not items:
-        return 0.0
+        # EMPTY TENSORS, not 0.0. This branch belonged to the mean and the split left it
+        # behind, so score_mc_items([]) returned a float and the caller's unpack raised
+        # TypeError. Caught by the equivalence test, not by reading: the two returns are 60
+        # lines apart and each looked right in isolation.
+        z = torch.zeros(0, dtype=torch.long)
+        return z, z, torch.zeros(0, dtype=torch.bool)
 
     # Pre-tokenize once; flatten (item, option) pairs into jobs.
     # A FoNE checkpoint has only ever seen numbers as [NUM] carrying a value, so its
@@ -231,7 +274,18 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
 
     preds = scores.argmax(dim=1).cpu()
     labels = torch.tensor([it["label"] for it in items], dtype=torch.long)
-    return (preds == labels).float().mean().item()
+    # AN ITEM WHOSE OPTIONS ALL FAILED TO TOKENIZE IS NOT A CORRECT ANSWER. Its whole row of
+    # `scores` stays at the -1e9 fill (:198), argmax returns the FIRST maximum, so preds is 0
+    # and the item counts CORRECT whenever label == 0 -- a silent free point, biased toward
+    # whichever slot the caller happens to put the gold in. Measured 2026-09-05 with a
+    # tokenizer that returns [] for every option: preds [0,0] against labels [0,2] scored 1 of
+    # 2 correct, and the one it "got right" was never scored at all.
+    #
+    # Returned as a mask rather than dropped, so the caller decides: score_mc excludes them
+    # from the mean (an unscoreable item is not a wrong answer either), and a caller building
+    # its own items can refuse outright. Silence is the one option that is wrong.
+    scored = (scores > -1e9).any(dim=1).cpu()
+    return preds, labels, scored
 
 
 # --- GSM8K: the only generation benchmark (batched greedy decoding) ---
