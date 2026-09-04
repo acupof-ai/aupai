@@ -90,6 +90,31 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
+    # Measured on this checkout, 2026-09-04. Solo hand runs: 1.81s, 5.20s, 4.92s -- all PASS
+    # against the 5s default, the worst shape a gate can have (passes when run, times out
+    # under the deadline, then prints "has not actually run since" and reads as broken rather
+    # than slow). It had banked 5 strikes and FAILed commits it has nothing to say about.
+    #
+    # 20s WAS ALSO NOT ENOUGH, and the first fix here set exactly that -- corrected after
+    # watching it time out at 20.0s inside the full check set while passing solo. The reason
+    # is that the solo measurement was the wrong measurement: runs/pod_sync_stamp.txt does
+    # not exist in this checkout, so the check reads the stamp through `~/bin/pod`
+    # (tn exec -> crictl exec), and that call alone measures 3.70/5.00/4.96/4.08/4.37s bare
+    # and 8.20s once. Several pod-auth checks make such calls in one run and contend for the
+    # same tunnel, so the cost under the check set is a multiple of the cost alone. A deadline
+    # picked from an idle machine does not describe the run that has to pass.
+    #
+    # NOT fixed by caching the stamp locally: the check's claim is that the POD's stamp names
+    # main, and a cached answer is the stale reading it exists to catch.
+    "pod_stamp_is_main": 60,
+    # Measured on this checkout, 2026-09-04: 3.97s, 7.21s, 6.43s over three consecutive solo
+    # hand runs, all PASS, scanning 85 tracked logs; 15.8s inside the full check set, which is
+    # the number that matters and is 2.2x the solo worst case -- it is auth=pod and contends
+    # for the same tunnel as every other pod check. Same straddle as the entry above, found in
+    # the same session: it banked 2 strikes and FAILed with "has not actually run since" while
+    # passing every time it ran. The cost grows with the number of tracked logs, which only
+    # goes up. 60s is ~4x the in-set measurement.
+    "snapshot_logs_say_so_at_the_tail": 60,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
