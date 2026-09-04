@@ -10,15 +10,15 @@ no deletes. Sizes/mtime from `du -sb` + `stat` on the pod (output read, not hand
 | data/corpus | 362.49G | 4209 | 09-03 21:01 | the mix-named domains + dead dirs (see C3) | the 5 mixes + facts | keep (=C3 list for dead dirs) |
 | data/raw | 281.75G | 1563 | 09-03 14:59 | source manifests + fetched zh sources | `datagen/fetch_corpus.py` SOURCES + facts | keep |
 | data/sft | 11.85G | 42 | 09-03 06:38 | SFT packs / expanded | sft_math / prepare_sft sources | keep |
-| data/hf | 2.38G | 29 | 09-03 13:43 | HF-epoch model files | — | keep |
-| data/cci | 2.00G | 3 | 08-29 15:30 | CCI3-HQ intermediate? | — | keep (verify) |
-| data/mix | 1.89G | 12 | 08-24 05:39 | Mix JSON resid? | — | keep (verify) |
+| data/hf | 2.38G | 29 | 09-03 13:43 | HF model weights: pythia-160m, Qwen2.5-0.5B, SmolLM2 | **unreferenced** — literal `data/hf` cited nowhere in datagen/scripts/eval/facts; the live Pythia control is `data/controls/pythia-160m-step2000` (scripts/sft_hf_control.py:9), so data/hf/pythia-160m is a stale duplicate | **deletion candidate** (next broadcast) |
+| data/cci | 2.00G | 3 | 08-29 15:30 | cot_synthesis_math-high scratch | **unreferenced** — `data/cci` cited nowhere in datagen/scripts/eval/facts | **deletion candidate** (next broadcast) |
+| data/mix | 1.89G | 12 | 08-24 05:39 | legacy pre-0830v1 mixing jsonl (mixed_v3, pretrain_v4, cosmopedia...) | `datagen/make_mixed.py:14` PRETRAIN_PATH=data/mix/mixed_v3.jsonl (legacy script) | keep (legacy) |
 | data/_audit | 289.54M | 9 | 08-29 15:15 | audit scratch (pre-0904) | — | archive |
-| data/controls | 377.15M | 4 | 09-02 15:05 | control-arm heldout / sft | `cont.heldout_in_pretrain_corpus` | keep |
+| data/controls | 377.15M | 4 | 09-02 15:05 | control-arm heldout / sft | `scripts/sft_hf_control.py:9`, `cont.heldout_in_pretrain_corpus` | keep |
 | data/math | 323.36M | 5 | 08-26 16:44 | math batch cards | cont facts | keep |
-| data/workbatch | 299.62M | 5 | 08-26 08:24 | sft workbatch | — | keep (verify) |
+| data/workbatch | 299.62M | 5 | 08-26 08:24 | sft workbatch | `datagen/prep_math_data.py:12` (writer of school_math_train/gsm8k_zh/coig into it) | keep |
 | data/synthetic | 229.52M | 20 | 08-30 04:13 | eval golds (math_hard_v2 etc.) | cont.math_hard_v2, holdout REGISTRY | keep |
-| data/vocab_sweep | 27.74M | 9 | 08-29 11:44 | tokenizer-vocab sweep | `facts/tokenizer.json` | keep (verify) |
+| data/vocab_sweep | 27.74M | 9 | 08-29 11:44 | tokenizer-vocab sweep | `scripts/tokenizer_eval.py:12` reads data/vocab_sweep/v16384.json | keep |
 | data/rl | 85.24M | 9 | 09-03 14:31 | RL task-data trial | 3b-9 (parked) | keep (parked) |
 | data/code_supply | 0 | 2 | 08-30 14:47 | code supply counts | — | archive |
 | data/_quarantine | 39.86M | 1 | 08-25 17:20 | quarantined corrupt file | — | archive |
@@ -31,8 +31,13 @@ math_owm_stage2 21G, en_c4_stage2 8.1G, cot 1.3G, zh_web (~21G? flag: no kept/ke
 textbook_30b 7.6G, wiki_chat (~0.3G), chatml 0.16G, chat_qa 0.16G.
 
 Dead / no mix (reference C3 — cleanup.jsonl broadcast, 24h then delete, stamps stay, ~84 GB):
-24 `web_cci3_p*` dirs, 115 loose `batch_*.jsonl`. Superseded `textbook`/`wiki`/`chat`/`math`/
-`math_seed`/`en_c4`/`en_c4_30b`/`math_owm`(pre-stage2)/`code_owm` stage-prep variants may exist.
+24 `web_cci3_p*` dirs, 115 loose `batch_*.jsonl`. Real `ls data/corpus` (2026-09-04): chat, chatml,
+chat_qa, code, code_dedup08, code_py_rp1t, code_py_starcoder, code_rp1t, code_rp1t_rest, cot,
+cot_open_thoughts, cot_seed, en, en_c4, en_c4_30b, en_c4_stage2, math, math_owm, math_owm_stage2,
+math_seed, rp1t_arxiv_papers, sample, textbook, textbook_30b, web_cci3_p0..p23, web_hq, wiki,
+wiki_chat, zh_web (+ 115 loose batch_*.jsonl). Superseded pre-stage2 variants actually present:
+`math_seed`, `math`, `cot_seed`, `wiki` (plain), `textbook` (plain), plus `code`, `chat`,
+`code_rp1t_rest` (0-shard stub) — all mix-unreferenced, candidates for a later broadcast.
 
 ## data/raw per-source (281.75G)
 
