@@ -37,7 +37,7 @@ AREA_ORDER = list(AREAS)
 
 # A report's filename may differ from the charter's area stem. b0's model_code
 # report landed as model_training.md.
-STEM_ALIAS = {"model_training": "model_code"}
+STEM_ALIAS = {"model_training": "model_code", "pod_repo_state": "pod_repo"}
 
 SEV_ORDER = {"S1": 0, "S2": 1, "S3": 2}
 ID_RE = re.compile(r"^[A-Z]{1,3}-?\d+$")
@@ -112,12 +112,21 @@ def read_report(path):
     findings, unparsed = [], []
     in_findings = False
     header_seen = False
+    table_done = False
     for line in text.splitlines():
         if line.startswith("## "):
             in_findings = "finding" in line.lower()
             header_seen = False
+            table_done = False
             continue
-        if not in_findings or not line.startswith("|"):
+        if not in_findings or table_done:
+            continue
+        if not line.startswith("|"):
+            # The findings table ends at its first non-table line; a later table
+            # in the same section (b0's §4a pod-source list) is not findings and
+            # is listed nowhere, per controller ruling 2026-09-04.
+            if header_seen and findings:
+                table_done = True
             continue
         cells = _split_row(line)
         if not header_seen:
@@ -394,8 +403,10 @@ def render_page(reports, findings, unparsed, old_html):
         "<th>证据</th><th>复核</th><th>裁定</th></tr>" + "".join(rows_html) + "</table>"
     )
 
-    # what this means: one sentence per S1, capped at 5
-    s1s = [f for f in findings if f["severity"] == "S1"][:5]
+    # what this means: the curated five S1s, in MEANING's order -- with 8 S1s on the
+    # page an alphabetical cut would drop the user-facing ones for CD's.
+    by_id = {f["id"]: f for f in findings}
+    s1s = [by_id[i] for i in MEANING if i in by_id and by_id[i]["severity"] == "S1"][:5]
     meaning = "".join(
         f"<li>{MEANING.get(f['id'], '[' + f['id'] + '] ' + _esc(f['claim'][:120]))}</li>"
         for f in s1s
@@ -492,6 +503,12 @@ pair: u
 | T-2 | S2 | another | facts/t.json#t | none |
 | T-3 | S3 | pipe in code | `grep -c 'a\\|b'` returns 0 | none |
 
+A non-finding table later in the same section must be ignored, not unparsed:
+
+| path | bytes |
+|---|---|
+| x.json | 100 |
+
 ## 5. Blind spots
 
 - nothing
@@ -511,6 +528,7 @@ pair: u
         assert len(rep["findings"]) == 3, rep["findings"]
         assert rep["findings"][0]["id"] == "T-1"
         assert rep["findings"][2]["evidence"] == "`grep -c 'a\\|b'` returns 0"
+        assert not rep["unparsed"], rep["unparsed"]
         assert rep["blind_spots"] == ["nothing"]
         assert rep["open_qs"] == ["decide something"]
         open(ap, "w").write(shuffled)
@@ -539,6 +557,14 @@ def main():
     write_findings_jsonl(findings, unparsed)
     if args.compose or os.path.exists(PAGE):
         old_html = open(PAGE, encoding="utf-8").read() if os.path.exists(PAGE) else ""
+        # Idempotent recompose: a previous compose left the page as
+        # AUDIT <section class="old">OLD</section>, possibly nested. The true old
+        # page is the innermost wrapper's content; progress_feed's page has no
+        # <section>, so the first </section> after the innermost open is its close.
+        while '<section class="old">' in old_html:
+            start = old_html.rindex('<section class="old">') + len('<section class="old">')
+            end = old_html.index('</section>', start)
+            old_html = old_html[start:end]
         with open(PAGE, "w", encoding="utf-8") as fh:
             fh.write(render_page(reports, findings, unparsed, old_html))
     print(
