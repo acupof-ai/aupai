@@ -400,6 +400,7 @@ def main():
         src = sys.argv[-1] if len(sys.argv) >= 4 and sys.argv[-1] in SRC_TAG else None
         text_args = sys.argv[2:-1] if src else sys.argv[2:]
         row = {
+            "date": time.strftime("%Y-%m-%d", time.gmtime()),
             "at": time.strftime("%H:%M", time.gmtime()),
             "kind": sys.argv[1],
             "text": " ".join(text_args),
