@@ -27,9 +27,14 @@ identical and block-paired scoring applies.
 
 | arm | memory values | value dim | params added | wall time vs control |
 |---|---|---|---|---|
-| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | measured lower bound +6.5% (tilerl, lookup alone, 2026-09-05); readout 5 is the constraint |
-| M2 | 262,144 (512 x 512) | 1024 | 0.27B | unmeasured; readout 5 is the constraint |
+| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | measured end-to-end: 0.79 at three layers, 0.90 at one (amendment 10). The +6.5% that stood here was the lookup in isolation and is a lower bound, not the arm's cost |
+| M2 | 262,144 (512 x 512) | 1024 | 0.27B | measured 0.81 at three layers (`runs/mem_decomp_0905.jsonl`, m2 cell) — below the 0.85 gate, and 92% of M1's cost at a quarter of the table, which is why the table size is not the lever |
 | M3 | 2,096,704 (1448 x 1448) | 1024 | 2.15B | --peak-only before launch; 2048x2048 OOMs (48 GiB of table tensors + 47.6 GiB baseline > 95.2) |
+
+The M1 and M2 figures above are three-layer measurements, taken before amendment 10 moved the
+arms to one pooled layer. Each arm's own one-layer ratio is measured at its launch, not
+predicted from these: applying M1's per-layer fraction (382 of 424 ms) to M2's 392 ms excess
+gives 0.91, but that is arithmetic carried from another arm's cells and the launch measures it.
 
 Design fixed for both arms; b0 chooses the rest inside these bounds:
 - one memory pool read by ONE layer, layer 6 (0-indexed), added in parallel to the FFN

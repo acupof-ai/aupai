@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (80 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (167 = 80 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (83 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (170 = 83 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-67 incidents (34 infra, 33 model), ~4h each, 268h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+75 incidents (34 infra, 41 model), ~4h each, 300h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -71,14 +71,15 @@ A check that was never made to fail is decoration; the broken world must be asse
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153).
 
-### R2-b Population narrower than the property (15 incidents)
+### R2-b Population narrower than the property (17 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
 - §134: a unit test measured format compliance, not content correctness; the property asked was content.
 - §171: a perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population.
+- §201: a device-fd refusal verified only where it cannot fire (macOS, no /proc) reported nothing about where it does (pod, /proc present); all ten claim sites would have been refused on the pod.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202).
 
 ### R2-c Mutation did not take (3 incidents)
 
