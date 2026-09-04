@@ -266,7 +266,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 19 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 §106 §131 §139 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 74 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 §153 §158 §160 §163 §165 §167 §168 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 75 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 §153 §158 §160 §163 §165 §167 §168 §169 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 9 | §7 §13 §25 §27 §51 §59 §101 §136 §166 |
 | State the vision before the number; outside it, label unmeasured, not absent | 12 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 §138 |
@@ -335,8 +335,9 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
+| `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-52 rules: 17 checked, 35 manual. The count is regenerated from `harness check`'s
+53 rules: 17 checked, 36 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
@@ -371,6 +372,7 @@ itself had before the check began reading it.
 
 **One worktree per session (from 2026-08-31 evening).** Six sessions in one working tree share one index: a file left dirty blocked others' moves four times in one afternoon, staged files were swept into other sessions' commits four times, and a hook built the manifest from another session's staged move. Rules replace none of this; isolation does.
 
+- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04).
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `scripts/merge_main.sh <name>` (a mkdir lock serialises merges into the shared integration worktree; two bare `git merge` calls in one tree raced on HEAD and the index, 2026-09-04); if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
 - **Never `git stash` in this repository.** `.git/refs/stash` is one stack shared by every worktree — not per-worktree like HEAD and the index — so two sessions stashing in the same window each pop the other's entry, applying a diff they never wrote to a tree it was not made against (e1 and b0, 2026-09-02; nothing was lost, and that was luck). `no_shared_stash` reports a non-empty stack.
