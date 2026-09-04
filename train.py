@@ -834,7 +834,29 @@ class MasterWeights:
     """
 
     def __init__(self, model):
-        self.pairs = [(p, p.detach().float().clone().requires_grad_(True)) for p in model.parameters()]
+        # THE MEMORY TABLE IS EXCLUDED, by name, and it is the only exclusion here.
+        #
+        # WHY IT WOULD BE WRONG TO INCLUDE IT. A master copy exists because a bf16 parameter
+        # cannot absorb an update ~2^-9 below itself, so 91% of updates came back bit-identical
+        # (measured 2026-08-30) and the fp32 copy lets them accumulate. The memory's value table
+        # is ALREADY fp32 -- nn.Embedding is built in the default dtype and nothing casts it,
+        # measured on the pod 2026-09-05 -- so a "master copy" of it is a second fp32 tensor
+        # holding the same numbers to the same precision. It buys exactly nothing.
+        #
+        # WHY IT MATTERS RATHER THAN BEING MERELY REDUNDANT: at M1 that is 4.00 GiB, at 2048^2 it
+        # is 16.00 GiB, on a card with 95.22 GiB usable where the M3 shape already does not fit.
+        # A copy that buys nothing and costs 16 GiB decides whether an arm can be launched at all.
+        # 4c asked whether this was the cause of the M3 OOM; it was not (profile_step_cost never
+        # constructs MasterWeights) but it WOULD have been on a --fp32_master training launch,
+        # which is how the arms actually run.
+        self.pairs, self.unmastered = [], []
+        for n, p in model.named_parameters():
+            if _is_mem_fqn(n):
+                self.unmastered.append(p)
+            else:
+                self.pairs.append((p, p.detach().float().clone().requires_grad_(True)))
+        # The map is what build_optimizers indexes, via master.get(p, p): a parameter absent from
+        # it steps itself, which for an already-fp32 table is correct rather than a fallback.
         self.map = {p: m for p, m in self.pairs}
 
     def pull_grads(self):
@@ -848,6 +870,18 @@ class MasterWeights:
         for p, m in self.pairs:
             m.grad = None if p.grad is None else p.grad.float()
             p.grad = None
+        # UNMASTERED PARAMETERS MUST NOT BE CLEARED HERE, and this comment exists because the
+        # first version of the exclusion left them out of this loop entirely, which is a real bug
+        # in the other direction. A mastered parameter's grad is copied to `m` and then cleared,
+        # because the optimizer holds `m` and its zero_grad() clears m.grad only -- the exact
+        # running-sum bug this docstring records. An UNMASTERED parameter is itself what the
+        # optimizer holds, so opt.zero_grad(set_to_none=True) at the end of the step clears its
+        # grad, and clearing it HERE would delete the gradient before the optimizer had stepped
+        # on it: the table would receive no update at all and the arm would train as the control
+        # while its diagnostics still showed rows being read.
+        #
+        # Verified rather than reasoned: train.py's loop calls opt.zero_grad(set_to_none=True) for
+        # every optimizer after the step, and the mem group is one of those optimizers.
 
     def push(self):
         with torch.no_grad():
@@ -871,7 +905,12 @@ def build_optimizers(model, cfg, master=None):
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
-        q = p if master is None else master[p]
+        # .get(p, p), not [p]: the memory table is deliberately absent from the master map
+        # (MasterWeights.__init__ excludes it -- it is already fp32, so a master copy holds the
+        # same numbers at the same precision and costs 4 GiB at M1, 16 at 2048^2). Absent means
+        # "step the parameter itself", which is correct here rather than a fallback. A bare [p]
+        # would raise KeyError on any --fp32_master run with a memory.
+        q = p if master is None else master.get(p, p)
         # SPARSE MEMORY FIRST, before the shape branches, and the order is the point. The value
         # table is 2D and named `memory.values.weight`, so `p.ndim == 2` below would put it in
         # MUON -- which orthogonalises a matrix via Newton-Schulz, an operation with no meaning
