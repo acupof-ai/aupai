@@ -42,7 +42,7 @@ sys.path.insert(0, HERE)
 from cache_guard import set_vocab_id  # noqa: E402
 from domain_loss import domain_loss_seqs, seqs_fp, val_seqs  # noqa: E402
 
-from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import claim_my_cards, load_checkpoint, load_tokenizer  # noqa: E402
 
 # Type -> the metrics that apply. Generative evals read zero on a base
 # checkpoint, so they are not in base's list: they go under "skipped".
@@ -1731,6 +1731,14 @@ def main():
 
     metrics = PROFILES[a.profile] if a.profile else a.metrics
 
+    # BEFORE _pick_card(), and that ordering is the point (de-55). _pick_card's fallback when
+    # CUDA_VISIBLE_DEVICES is unset is a free-memory poll over every visible card -- an
+    # instantaneous nvidia-smi reading used as an ownership test, which AGENTS.md rejects and
+    # which is how the 2026-09-01 OOM landed on a card a third party held at 95.16/95.22 GiB.
+    # claim_my_cards refuses an unset CVD, so that branch is now unreachable from here: the
+    # caller names its card and the claim protects it. When CVD names several cards the claim
+    # covers all of them and _pick_card uses one, which is conservative in the safe direction.
+    claim_my_cards("score_matrix", note=f"{len(a.ckpt)} ckpt(s), profile {a.profile or 'full'}")
     device = _pick_card()
     records = []
     failed = []
