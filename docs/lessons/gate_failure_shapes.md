@@ -2812,7 +2812,10 @@ MLA 的 `kv_down` 之所以单元素就能 FAIL,只是因为它的行更窄。**
 
 ## 172. 第二个文件里有个叫 doc_cu 的字段,于是它被当成了同一条路径上的一行:侧写文件 schema 不同(顶层 `path`/`unweighted_mean` vs `cu_path`/`metrics.domain_loss`),两个数都是真的,只有一个是门能看见的(b0 当事人自报,6e 用 main 上的行复算后追问,2026-09-04,证据 pod `runs/b0_sd_fixpath.jsonl` 的两行与 `grep -c '#cu' runs/score_matrix.jsonl` = 3)
 
-我向 6e 报了 Stage E arm 1 的三方对比,说"在 ONE path 上、同样 576 个 block":均值 2.2789 / 2.2566 / 2.3101。
+我向 6e 报了一次三方 doc_cu 对比,说"在 ONE path 上、同样 576 个 block":均值 2.2789 / 2.2566 / 2.3101。
+(这三个数所属的那个实验已于 2026-09-04 ~11:05Z 按用户命令整体作废,不作任何结论——**但这条 shape 与结论无关**:
+它讲的是"侧写文件不是行",两个数来自 `runs/b0_sd_fixpath.jsonl` 而非 `score_matrix.jsonl` 这一事实不因实验作废而改变,
+那两个 checkpoint 属于 Stage D 且仍在盘上。保留此条,不保留它当时支撑的任何判断。)
 6e 在 main 上复算,发现前两个数从任何行都算不出来——`score_matrix.jsonl` 里只有 5 条 `#cu` 行,
 unlooped/looped 一条都没有。查下来不是 DL-11 传输丢行(pod 上也只有 3 条 `#cu`),而是:
 
