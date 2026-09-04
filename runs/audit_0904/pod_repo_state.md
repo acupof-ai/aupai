@@ -125,6 +125,49 @@ Named, not silent:
    `be.adjacent_checkpoint_jitter`) is safe only while that run stays dead. Pin it now, or
    leave it and accept that a resume of `pretrain_15b_s1` costs that fact its source?
 
-## Pair check
+## Pair check (b0, 2026-09-04)
 
-To be appended by b0.
+PR-9, PR-4 and PR-6/7 as assigned. Every figure read on the pod in this pass, not taken from the
+report's numbers. **PR-9 and PR-4 hold exactly. PR-6/7 I could not reproduce — my count differs and
+the population rule is not published, so neither number is checkable yet.**
+
+### PR-9 — HOLDS, every number
+Independent enumeration: **153** plain `.stepN`, **12** sharing an inode with one of the 22
+`*milestone*` files, **141** unpinned. Identical to PR-9. `ckpt_pretrain_15b_s1.pt.step15000` read
+`ino=84187898 nlink=1`, 959,429,841 B — unpinned, as claimed. **Now pinned** at tilerl's request:
+`ckpt_pretrain_15b_s1.milestone_keep_tilerl_adjacentjitter.pt`, same inode 84187898, nlink 1 → 2,
+zero extra bytes.
+
+A GLOB RECONCILIATION worth recording, because the next reader will hit it: `ckpt_*.step[0-9]*`
+returns **149**, not 153. The nine `ckpt.pt.stepN` files under the bare prefix are the difference.
+153 is the right population — the roller globs `ckpt_path + ".step*"` and `ckpt_path` varies per
+run — but a reader reaching for `ckpt_*` gets 149 and concludes PR-9 overcounted.
+
+### PR-4 — HOLDS
+`df -h /work` → `2.0T 1.9T 90G 96%`, raw `93331444` KiB available = 89.0 GiB, matching the 03:53Z
+reading. (88G after the pin above and arm 1's 669 MB checkpoint — still 96%.)
+
+### PR-6/7 — NOT REPRODUCED, and the population rule is why
+In-scope code directories plus the repo root, extensions `.py/.sh/.md/.json/.txt`: **538 walked,
+130 outside the manifest's 481 entries.** PR-6 says 197 outside 469. The 130 are dominated by
+untracked scratch — `_b0_*.py`/`_b0_*.sh` (nine of them MINE, from Stage D probes),
+`ab_launch*.sh`, `arith_v*.sh`, `bench_eff/ddp_trace_rank[0-6].json`, plus `CLAUDE.md`,
+`EXPERIMENTS.md`, `README.md`.
+
+Three candidate causes, indistinguishable from here: whether the walk includes `runs/` and `data/`
+(mine excludes them — the manifest omits them by design since the pod writes rows there; including
+them gives 506 or 6442 depending on extension set), whether the extension sets differ, or whether
+PR-6 counts only files TRACKED in main while mine counts everything on disk the manifest does not
+name. **"197 files sit outside the manifest" is not checkable without the population rule beside
+it** — the charter's principle 3 applied to this audit's own reports rather than to the code.
+
+The 469-vs-481 entry count is probably mine to explain: the manifest is rewritten by every
+`pod_push.sh --all` and I ran one at 03:21Z that added `scripts/b0_se_launch_arm2.sh`.
+
+### A defect in MY first attempt, recorded because it is this audit's recurring shape
+My initial manifest parser took `line.split()[-1]` as the path — the format is
+`sha  path  category  mode`, so it read the mode column and found **2 entries in a 481-line file**.
+Printing the entry count is the only reason "529 files outside a 2-entry manifest" did not become a
+published finding. Four enumeration defects across three auditors in this audit now (58's
+`json|jsonl` truncation, my `A/B`-as-path tokeniser, my number-regex boundaries, this) and zero
+checking defects.
