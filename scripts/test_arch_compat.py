@@ -710,12 +710,19 @@ def _gpu_check(cfg, B, T, cu):
     xg = _torch.randn(B, T, cfg.d).cuda().to(_torch.bfloat16)
     mg = _train.GatedMLA(cfg).cuda().to(_torch.bfloat16).eval()
     cug = cu.cuda().to(_torch.int32)
-    real = _train.flash_attn_varlen_func
+    # PATCH THE MODULE THAT OWNS THE SYMBOL. This read `_train.flash_attn_varlen_func`, and
+    # train.py:135 re-exports 14 names from model -- flash_attn_varlen_func is not one of them.
+    # So this line raised AttributeError and _gpu_check NEVER RAN, taking all three asserts
+    # below with it (2026-09-04, found while running this before the head-hybrid edit; the
+    # symbol has never been on train, at 28ae5917 which added this or at any commit since).
+    # GatedMLA.forward resolves it as a model-module global, so model is the only binding that
+    # changes what the mixer calls; patching train would not have counted anything either.
+    real = _model.flash_attn_varlen_func
     n = [0]
     def _shim(*a, **k):
         n[0] += 1
         return real(*a, **k)
-    _train.flash_attn_varlen_func = _shim
+    _model.flash_attn_varlen_func = _shim
     try:
         # autocast, as training does: rms_norm returns fp32 otherwise and flash refuses it.
         with _torch.no_grad(), _torch.autocast("cuda", dtype=_torch.bfloat16):
@@ -726,7 +733,7 @@ def _gpu_check(cfg, B, T, cu):
             naive = mg(xg, None)       # no cu: plain causal, the mask absent
             _train.HAS_FA = _model.HAS_FA = True
     finally:
-        _train.flash_attn_varlen_func = real
+        _model.flash_attn_varlen_func = real
     d = (flash.float() - ref.float()).abs().max().item()
     gap = (ref.float() - naive.float()).abs().max().item()
     assert gap > 10 * d, f"mask barely changes output (gap {gap:.4f} vs diff {d:.4f}) -- test cannot fail"
