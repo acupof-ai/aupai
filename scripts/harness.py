@@ -177,6 +177,7 @@ _RULE_CHECKS = {
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
+    "Vocabulary identity": "vocab_id_on_load_path",
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
@@ -267,7 +268,6 @@ _MANUAL_RULES = {
     "Every delivery has a second reader": "review_present checks the row exists; whether the reviewer actually read the artifact cannot be checked, only that they named one",
     "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
     "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
-    "Vocabulary identity": "enforced at load: sft_math.py refuses a vocab_id mismatch, not a harness check",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
     "pod_push only ever ADDS: a deletion on main needs a second explicit step on the pod":
         "the deletion is an operator SEQUENCE -- delete here, then delete there -- and the "
@@ -2232,6 +2232,20 @@ def read_mix(path):
     return list(doms), None
 
 
+def _exp_open(row):
+    """Is this experiments.jsonl event an OPEN one? exp.py's rule, not a fourth local copy.
+
+    exp.py folds terminal-wins on `status != "running"` (:63) and pick_open_row's docstring states
+    it: OPEN means the last event for this (name, started) is `running`. Every other status is
+    terminal by kind, including the ones that are not `ok`/`fail` -- killed, stopped, retracted,
+    dropped, provisional. Measured on the live ledger 2026-09-04: 18 distinct statuses, of which
+    exactly one is open, and no row carries an empty or absent status. Written as a function rather
+    than a set literal for the reason _exp_fold gives: this file held four re-implementations of
+    exp.py's reduction and three were wrong.
+    """
+    return (row.get("status") or "") == "running"
+
+
 def _exp_fold(evs):
     """The ledger's own fold, from scripts/exp.py. Lazy-imported, like _launch_shape.
 
@@ -3452,6 +3466,156 @@ def check_pinned_ids(root):
 
 
 MAX_TRACKED_MB = 5
+
+
+def check_vocab_id_on_load_path(root):
+    """Every trainer that loads an SFT pack COMPARES the pack's vocab_id to the checkpoint's.
+
+    The rule is AGENTS.md "Vocabulary identity": a pack from another vocabulary trains silently
+    at ~4x the loss, because every id is wrong, in range, and the sizes match. `data/tokenizer.json`
+    is rebuilt in place, so nothing else distinguishes two vocabularies.
+
+    THE ROW THIS CLOSES WAS `manual: enforced at load since 7aacbac`, and reading the tree for it
+    found the enforcement is on ONE of the two pack loaders. 7aacbac fixed sft_math.py, where the
+    guard had been keyed on `"vocab" in d` while the packer writes `vocab_id` -- so the assert never
+    fired and the run printed "the pack predates vocabulary fingerprinting" about a pack that
+    carried the fingerprint. sft.py loads a pack at sft.py:75 and compares nothing: it reads
+    ck["vocab_id"] only to STAMP the checkpoints it writes (sft.py:168, :178), which propagates the
+    id without ever checking it. The narrow fix is the shape memory/cause-named-one-site-too-narrow
+    records: the cause was recorded as "this function read the wrong key" when it was "this repo has
+    two pack loaders and only one asks the question".
+
+    AST, NOT A SUBSTRING, and the reason is this rule's own history. The defect 7aacbac fixed was a
+    guard present in the source, spelled correctly, reading a key that did not exist -- a grep for
+    `vocab_id` was GREEN throughout. So the check requires, per loader: the pack dict is subscripted
+    or .get() for a vocab key, AND that value reaches a comparison. A guard that reads the key and
+    drops the value on the floor is the defect, not the fix.
+
+    WHAT IT CANNOT SEE (the coverage table's manual column, kept here because the table takes only
+    a check name): whether the ids themselves are right -- only that the question is asked at every
+    load site. And the population is trainers taking `--sft_path`, so a third pack reader that
+    invents its own flag is outside it. It also says nothing about `holdout_fp`: sft.py lacks that
+    guard too, which sft_math.py has had since 2026-09-03, and that is a different rule.
+    """
+    import ast as _ast
+
+    # (file, the argparse dest that names the pack) -- a trainer is in scope because it LOADS a
+    # pack, so this list is derived from that, not from a hand-kept roster of trainers.
+    loaders = []
+    for fn in sorted(os.listdir(root)):
+        if not fn.endswith(".py"):
+            continue
+        p = os.path.join(root, fn)
+        try:
+            with open(p, encoding="utf-8") as fh:
+                src = fh.read()
+        except OSError:
+            continue
+        if "--sft_path" not in src:
+            continue
+        loaders.append((fn, src))
+    if not loaders:
+        return SKIP, "no trainer takes --sft_path here"
+
+    bad = []
+    ok = []
+    for fn, src in loaders:
+        try:
+            tree = _ast.parse(src)
+        except SyntaxError as e:
+            bad.append(f"{fn} does not parse: {e}")
+            continue
+        # the name the pack dict is bound to: `<name> = torch.load(args.sft_path...)`
+        pack_names = set()
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Assign) or not isinstance(node.value, _ast.Call):
+                continue
+            call = _ast.unparse(node.value)
+            if "torch.load" in call and "sft_path" in call:
+                for t in node.targets:
+                    if isinstance(t, _ast.Name):
+                        pack_names.add(t.id)
+        if not pack_names:
+            bad.append(f"{fn} names --sft_path but no `x = torch.load(args.sft_path)` was found; "
+                       f"this check can no longer see how the pack is read")
+            continue
+        # The variable the pack's vocab key is READ INTO, and whether THAT NAME reaches a
+        # comparison against something else. Following the name, not the word "vocab": the first
+        # version asked whether any Compare in the file mentioned "vocab", which is satisfied by
+        # `Cfg.vocab == n` or by the checkpoint-side read, so both worlds where the comparison was
+        # removed stayed GREEN. Verified by mutating: `assert pack_vocab == ck_vocab` weakened to
+        # `assert pack_vocab is not None` passed, which is the whole defect this check exists for.
+        read_into, reads = set(), []
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Assign) or not isinstance(node.targets[0], _ast.Name):
+                continue
+            rhs = _ast.unparse(node.value)
+            if "vocab" not in rhs:
+                continue
+            if any(f"{n}[" in rhs or f"{n}.get(" in rhs for n in pack_names):
+                read_into.add(node.targets[0].id)
+                reads.append(f"{node.targets[0].id} = {rhs}"[:70])
+        compared = False
+        for node in _ast.walk(tree):
+            if not isinstance(node, _ast.Compare):
+                continue
+            # the read variable on one side, and something OTHER than a constant on the other:
+            # `pack_vocab is not None` is a presence test, not a vocabulary comparison.
+            sides = [_ast.unparse(node.left)] + [_ast.unparse(c) for c in node.comparators]
+            if not any(s in read_into for s in sides):
+                continue
+            others = [s for s in sides if s not in read_into]
+            if any(s not in ("None", "True", "False", "0", "''", '""') for s in others):
+                compared = True
+        if not reads:
+            bad.append(f"{fn} loads a pack ({', '.join(sorted(pack_names))}) and never reads its "
+                       f"vocab_id -- a pack from another vocabulary trains at ~4x the loss with "
+                       f"every id wrong and in range")
+        elif not compared:
+            bad.append(f"{fn} reads the pack's vocab key ({reads[0]}) but nothing compares that "
+                       f"value against the checkpoint's; a guard that reads the key and drops the "
+                       f"value, or only tests it for presence, is the 7aacbac defect")
+        else:
+            ok.append(fn)
+    if bad:
+        return FAIL, "; ".join(bad)
+    return PASS, (f"{len(ok)} pack loader(s) compare the pack's vocab_id to the checkpoint's "
+                  f"({', '.join(ok)})")
+
+
+def _broken_vocab_id_load_path():
+    """sft_math.py's guard with the KEY RENAMED, which is the 7aacbac defect itself.
+
+    Not a deleted assert: a deleted one is caught by a substring search too, and would prove
+    nothing about why this check reads the AST. The world here keeps the assert, keeps the word
+    vocab_id in the file, and points the read at a key the packer does not write -- exactly the
+    state the repo was in until 2026-09-02, when a grep was green and the check never fired.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    for fn in ("sft.py", "sft_math.py"):
+        src = os.path.join(ROOT, fn)
+        if not os.path.isfile(src):
+            raise SelftestSkip(f"{fn} absent")
+        dst = os.path.join(d, fn)
+        if os.path.islink(dst):
+            os.remove(dst)
+        shutil.copy(src, dst)
+    p = os.path.join(d, "sft_math.py")
+    with open(p, encoding="utf-8") as fh:
+        s = fh.read()
+    # the read that feeds the assert, pointed at a key nothing writes
+    old = 'pack_vocab = d.get("vocab_id", d.get("vocab"))'
+    if old not in s:
+        raise SelftestSkip("sft_math.py no longer reads the pack vocab this way")
+    s = s.replace(old, 'pack_vocab = None  # d.get("vocabulary_identity")', 1)
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(s)
+    return d
+
+
+
 
 
 # Scripts harness.py shells out to, as (path relative to ROOT, what invokes it). A subprocess
@@ -9907,7 +10071,143 @@ def _broken_allocation_reads_the_grant():
     return d
 
 
+GHOST_STARTLESS_CEILING = 180
+
+
+def check_no_ghost_close(root):
+    """A close must fold onto the row it closes, not mint a second identity beside it.
+
+    6e's ruling, 2026-09-04. `exp.py done` resolves its row through pick_open_row and then falls
+    back to `dict(base or {"started": now(), ...})`, so a close that fails to find its start writes
+    a row whose `started` is the CLOSE's timestamp. The result is two keys where the run had one:
+    the real key stays `running` forever and a terminal row sits beside it carrying the measurement.
+    b0_headmix_armA is the incident -- 09:09 stayed `running` while a `fail vanished` row appeared
+    under 11:10, and the number that mattered (val 2.117, scoring rc=1) was on the pod under the
+    09:09 key where nothing local could see it.
+
+    FAIL is the NARROW predicate and WARN is the broad one, because they are different questions and
+    only one has a bounded answer today.
+
+    NARROW: a key with a terminal event whose `started` is later than a still-open key of the SAME
+    name. That is a close which minted an identity while the row it should have folded onto was
+    open. Measured on the live ledger 2026-09-04: 0 today, and exactly 1 -- the armA pair -- if the
+    two events f4d48444 pulled home are removed. So the check goes green the moment the repair
+    lands, which is the property that makes it a gate rather than a standing red.
+
+    POSITION IS NOT IN THE PREDICATE, and this is the part that took three measurements to get
+    right. exp.fold is terminal-wins, so a start event appearing after a close does not reopen the
+    key. Three readings of the same ledger: a position-based scan over raw events found 3 hits (two
+    of them already repaired, because the repair is an APPEND and the original ghost row is still
+    in the file); folding first found 0, since folding collapses each key to its terminal row and
+    destroys the evidence; keying on "is any event under this key terminal" found 1, the real one.
+    A check that folds first cannot see this defect at all, and a check that reads positions
+    reports repaired history as broken.
+
+    BROAD, as a WARN with a dated ceiling: 180 keys hold no open event ever -- rows appended
+    straight to a terminal status, with no start on record. Shipping that as FAIL would turn the
+    whole ledger's history red, so the ceiling is the literal GHOST_STARTLESS_CEILING (180, measured
+    2026-09-04) and only a NEW start-less close raises the count past it. Same only-shrinks pattern
+    as tasks_well_formed's drop_reason grandfather list: the number can go down without a commit and
+    cannot go up without one.
+    """
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    evs = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                evs.append(json.loads(line))
+            except Exception:
+                continue
+    if not evs:
+        return SKIP, "runs/experiments.jsonl is empty"
+
+    by_key = {}
+    for r in evs:
+        by_key.setdefault((r.get("name"), r.get("started")), []).append(r)
+    open_keys = {k for k, v in by_key.items() if all(_exp_open(r) for r in v)}
+
+    ghosts = []
+    for k in sorted(by_key, key=lambda kk: (str(kk[0]), str(kk[1]))):
+        if k in open_keys:
+            continue
+        stole = sorted(ok for ok in open_keys
+                       if ok[0] == k[0] and str(ok[1]) < str(k[1]))
+        if stole:
+            sts = ",".join(sorted({str(r.get("status")) for r in by_key[k]}))
+            ghosts.append(f"{k[0]} closed under {k[1]} [{sts}] while {stole[0][1]} was still open")
+    if ghosts:
+        return FAIL, (
+            f"{len(ghosts)} close(s) minted a new identity instead of folding onto the open row: "
+            f"{'; '.join(ghosts[:4])} -- the run's real key stays `running` forever and its "
+            f"measurement sits under a key no reader joins on (b0_headmix_armA, 2026-09-04). Close "
+            f"with the start row's own `started`, and append a void row for the ghost key")
+
+    startless = [k for k in by_key if k not in open_keys
+                 and not any(_exp_open(r) for r in by_key[k])]
+    if len(startless) > GHOST_STARTLESS_CEILING:
+        return WARN, (
+            f"{len(startless)} keys have a terminal row and NO start event, above the "
+            f"{GHOST_STARTLESS_CEILING} recorded 2026-09-04. The new ones were appended straight "
+            f"to a terminal status, so nothing records that the run began or when. Start rows "
+            f"first, or raise the ceiling in a commit saying which ones are legitimate")
+    return PASS, (
+        f"{len(by_key)} keys, {len(open_keys)} open, 0 ghost closes; {len(startless)} start-less "
+        f"(ceiling {GHOST_STARTLESS_CEILING})")
+
+
+def _broken_no_ghost_close():
+    """The REAL ledger with the two events f4d48444 pulled home removed -- the world as it was.
+
+    Mutated, not hand-written, and the mutation is a DELETION of real rows rather than an edit, so
+    there is no size-preserving-pyc question here (this world runs no python it wrote). Removing
+    armA's `error` and `dropped` events restores exactly the state 6e reported: the pod held the
+    measurement, 09:09 read `running`, and a `fail vanished` row stood under 11:10. Measured
+    2026-09-04: 1 ghost in this world, 0 in the real ledger.
+
+    The check that this world is load-bearing and not merely different: it must hold a terminal row
+    under a LATER `started` than a still-open key of the same name. Asserted here, because a future
+    edit to armA's rows could leave the deletion valid and the property absent.
+    """
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "experiments.jsonl")
+    kept = []
+    for line in open(src, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("name") == "b0_headmix_armA" and str(r.get("status")) in ("error", "dropped"):
+            continue
+        kept.append(r)
+    arm = [r for r in kept if r.get("name") == "b0_headmix_armA"]
+    opens = {str(r.get("started")) for r in arm if _exp_open(r)}
+    closes = {str(r.get("started")) for r in arm if not _exp_open(r)}
+    assert opens and closes and min(opens) < max(closes), (
+        f"b0_headmix_armA no longer holds an open key earlier than a closed one "
+        f"(open {sorted(opens)}, closed {sorted(closes)}); this world would report no ghost and "
+        f"the check would pass on it untested")
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
+        for r in kept:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return d
+
+
 CHECKS = [
+    (
+        "no_ghost_close",
+        "a close folds onto the row it closes; it never mints a second identity beside it",
+        "b0_headmix_armA: exp.py done could not find the 09:09 start, so it wrote a row under "
+        "11:10 -- the run read `running` forever in main while its real result (val 2.117, "
+        "scoring rc=1, no metrics) sat on the pod under the key nothing joined on",
+        check_no_ghost_close,
+        _broken_no_ghost_close,
+    ),
     (
         "mutation_asserted_took",
         "every broken world that mutates a file and runs it proves the mutation took effect",
@@ -10029,6 +10329,13 @@ CHECKS = [
         "four files hardcode these ids and a vocabulary rebuild moves them silently",
         check_pinned_ids,
         lambda: _broken_tokenizer(eos_id=5),
+    ),
+    (
+        "vocab_id_on_load_path",
+        "every trainer that loads an SFT pack compares the pack's vocab_id to the checkpoint's",
+        "a pack from another vocabulary trains silently at ~4x the loss -- every id is wrong, in range, and the sizes match; 7aacbac fixed sft_math.py's guard, which had read a key the packer never writes, and sft.py loads a pack and compares nothing",
+        check_vocab_id_on_load_path,
+        _broken_vocab_id_load_path,
     ),
     (
         "entrypoint_help",
@@ -10516,6 +10823,7 @@ EVIDENCE = {
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
     # exempt from it.
     "mutation_asserted_took": "repo",
+    "no_ghost_close": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
@@ -10531,6 +10839,9 @@ EVIDENCE = {
     "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
     "cache_readers_set_vocab_id": "repo",
+    # repo: sft.py and sft_math.py are tracked, so the AST answers the same anywhere. It does NOT
+    # read a pack or a checkpoint -- the ids themselves are pod-side and outside this check.
+    "vocab_id_on_load_path": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",

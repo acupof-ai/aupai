@@ -112,7 +112,7 @@ Confound: attention count vs per-layer width. Arm B has 12 attention paths of wi
 
 Threshold: val BPB on doc_cu at the shared token budget (1.0001B tokens, 3815 steps, same seed, same data order, 2 cards per arm). B WINS if lower by more than 0.003; LOSES if higher by more than 0.003; between is NO DIFFERENCE and the layer-level form stays.
 
-Status: both arms trained to completion (Arm A: 3815/3815 steps, train 1.768, val 2.117 on the train path, 6968s; Arm B: 3815/3815, train 1.849, val 2.200, 8548s). Arm A is unscored: the scoring chain hit "FATAL: no free lane card in 30min" (`runs/b0_headmix_armA.log`). Arm B's doc_cu scoring has not run either. No doc_cu val BPB exists for either arm. The verdict waits on the doc_cu scoring at step 3815.
+Status: both arms trained to completion (Arm A: 3815/3815 steps, train 1.768, val 2.117 on the train path, 6968s; Arm B: 3815/3815, train 1.849, val 2.200, 8548s). Arm A scored on cu_none (domain_loss mean 2.284, humaneval gold BPB 0.683, lambada_en 18.8%; `runs/score_matrix.jsonl`). Arm B unscored. No doc_cu val BPB exists for either arm — the score_matrix ran its default cu_none path. The verdict waits on the doc_cu scoring at step 3815.
 
 Periodic val (train path, cu_none — NOT the ruler; the ruler is doc_cu at step 3815):
 
