@@ -89,13 +89,14 @@ The mutation never landed or its verification reads the wrong signal.
 
 Cannot see: whether the mutation reached the code path the check exercises (§81).
 
-### R2-d Parser reads prose as code (6 incidents)
+### R2-d Parser reads prose as code (7 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
 - §61: a substring/word match read a comment mentioning the symbol as evidence the symbol was used.
 - §94: a symbol's name was present in the file, read as "assigned"; the name appeared in a string, not an assignment.
 - §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
+- §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 
 Cannot see: whether a text match is reading behavior or prose (§56, §77, §141).
 
