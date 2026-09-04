@@ -11185,7 +11185,170 @@ def _broken_memory_diag_fresh():
     return d
 
 
+#: Live-state files a subject resolves ROOT-relatively. Enumerated, not pattern-matched: the
+#: list is the check's scope and a reader has to be able to see it. card_assignment.json and
+#: nvidia-smi are the d9ba571d incident; the rest are the same shape.
+FIXTURE_LIVE_NAMES = ("card_assignment.json", "nvidia-smi", "pod_synced_head",
+                      "pod_head_manifest.txt")
+
+
+def _fixture_leak(src):
+    """(fires, why) for one file's source. AST only -- see check_fixture_not_live_state.
+
+    Returns (False, reason) for a clean file, so the caller can report what it verified
+    rather than only what it rejected."""
+    import ast as _ast
+
+    try:
+        tree = _ast.parse(src)
+    except SyntaxError as e:
+        return False, f"does not parse: {e}"
+
+    if not any(isinstance(n, _ast.Call)
+               and (getattr(n.func, "attr", "") in ("mkdtemp", "TemporaryDirectory")
+                    or getattr(n.func, "id", "") in ("mkdtemp", "TemporaryDirectory"))
+               for n in _ast.walk(tree)):
+        return False, "no fixture built"
+
+    # The matched BASENAME, never the literal: a literal here can be a whole embedded shell
+    # script (test_free_card writes a fake nvidia-smi), which makes the evidence unreadable.
+    live = sorted({b for s in _ast.walk(tree)
+                   if isinstance(s, _ast.Constant) and isinstance(s.value, str)
+                   for b in FIXTURE_LIVE_NAMES if b in s.value})
+    if not live:
+        return False, "builds a fixture but names no live-state file"
+
+    leaks = []
+    for n in _ast.walk(tree):
+        if not isinstance(n, _ast.Call) or not n.args:
+            continue
+        at_root = any(
+            kw.arg == "cwd" and (
+                (isinstance(kw.value, _ast.Name) and kw.value.id == "ROOT")
+                or (isinstance(kw.value, _ast.Call)
+                    and getattr(kw.value.func, "attr", "") == "join"
+                    and any(isinstance(x, _ast.Name) and x.id == "ROOT"
+                            for x in kw.value.args)))
+            for kw in (n.keywords or []))
+        if not at_root:
+            continue
+        a = n.args[0]
+        argv0 = (_ast.unparse(a.elts[0]) if isinstance(a, _ast.List) and a.elts
+                 else _ast.unparse(a))
+        # A `git` call at ROOT reads repo state ON PURPOSE: the test is ABOUT the repo, so
+        # ROOT is its subject. Six files do this and every one is correct.
+        if "git" in argv0:
+            continue
+        leaks.append(f":{n.lineno} {argv0[:34]}")
+    if not leaks:
+        return False, f"fixture in effect (names {live[0]}, no non-git subject at ROOT)"
+    return True, f"names {live[0]} but runs a subject at ROOT ({'; '.join(leaks[:2])})"
+
+
+def check_fixture_not_live_state(root):
+    """A test that builds a fixture must not then run its subject against the live tree.
+
+    d9ba571d: test_free_card.py built a fake nvidia-smi in a mkdtemp, then invoked the
+    subject with cwd=ROOT and no allocation override -- so it read the LIVE
+    runs/card_assignment.json and its verdict moved with today's grant. It went red when
+    2eccf977 cleared the head-hybrid grant. The test had a fixture AND reached past it, which
+    is worse than having no fixture: the fixture is what makes a reader believe the test is
+    isolated.
+
+    AST ONLY, AND THIS IS THE REQUIREMENT RATHER THAN A REFINEMENT. The REPAIRED file still
+    contains the string `cwd=ROOT` twice, both times in a comment explaining the bug it
+    fixed. A substring predicate goes red on the repair -- punishing the fix and teaching
+    people to delete the explanation to get a commit through. ast drops comments.
+
+    THREE INNOCENT SHAPES, each found by reading the call sites rather than reasoning about
+    them, and each excluded for a different reason:
+      - `cwd=ROOT` on a `git` call: the test is ABOUT the repo, so ROOT is the subject.
+      - the subject IS repo code (test_e2e runs train.py, test_sft_lr_provenance runs
+        sft_math.py): it must run where its imports and its mix file are, and the temp dir
+        holds OUTPUTS, not a replacement repo.
+      - PRODUCTION paths: harness.py's own _exp() writes the REAL experiments ledger and
+        merge_drivers regenerates a real derived file. Running those at ROOT is their job,
+        and not scoping the rule to test files would have made this check permanently red.
+
+    FOUR LIMITS (4c ruled these travel with the code, 2026-09-05):
+      1. It reads the ROOT name syntactically. A test that computes the same path some other
+         way -- os.getcwd(), a module constant, an env var read at import -- is invisible.
+         Widening is possible but each widening costs a false-positive class, so cases get
+         added as they occur rather than pre-emptively.
+      2. FIXTURE_LIVE_NAMES is an enumerated list. Network reads and untracked-file reads are
+         NOT covered: network needs a socket/urllib/curl predicate, and an untracked-file read
+         has no syntactic signature worth trusting yet. Each is its own gate with its own
+         control when a second incident names it.
+      3. It sees the invocation, not the effect. A test that passes the fixture correctly and
+         then asserts on a number which came from live state anyway still passes.
+      4. 0 refusals over 65 test files today, which is the point -- it lands green and fires
+         only on new work -- but it is also the weak spot: the only evidence it fires on a
+         real defect is the d9ba571d control. One historical positive, not a population.
+    """
+    fired, scanned = [], 0
+    for sub in ("scripts", "eval", "probes", "datagen", "algorithms", "filters", "mathbank"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".py"):
+                continue
+            if not (fn.startswith("test_") or fn.endswith("_test.py")):
+                continue
+            scanned += 1
+            try:
+                with open(os.path.join(d, fn), encoding="utf-8") as fh:
+                    src = fh.read()
+            except OSError:
+                continue
+            hit, why = _fixture_leak(src)
+            if hit:
+                fired.append(f"{sub}/{fn}: {why}")
+    if not scanned:
+        return SKIP, "no test files in this tree"
+    if fired:
+        return FAIL, (
+            f"{len(fired)} test(s) build a fixture and then run the subject against the live "
+            f"tree, so the verdict moves with today's state: {'; '.join(fired[:3])} -- pass "
+            f"the fixture (cwd=<tree>, and the env var the subject reads for its root)")
+    return PASS, (f"{scanned} test file(s): none builds a fixture and then hands ROOT to a "
+                  f"non-git subject")
+
+
+def _broken_fixture_not_live_state():
+    """The RED sha's own text: scripts/test_free_card.py at d9ba571d.
+
+    Not hand-written and not a mutation of today's file -- the actual artifact that was red in
+    CI, read out of git. A hand-written world would share this check's assumptions about what
+    the defect looks like; this one is the defect, as committed.
+    """
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    old = subprocess.run(["git", "-C", ROOT, "show", "d9ba571d:scripts/test_free_card.py"],
+                         capture_output=True, text=True)
+    if old.returncode != 0 or not old.stdout.strip():
+        raise SelftestSkip("d9ba571d:scripts/test_free_card.py unreadable in this clone")
+    # The world holds ONLY that file, so a PASS cannot come from some other test file.
+    for fn in list(os.listdir(os.path.join(d, "scripts"))):
+        if fn.startswith("test_") or fn.endswith("_test.py"):
+            os.remove(os.path.join(d, "scripts", fn))
+    with open(os.path.join(d, "scripts", "test_free_card.py"), "w", encoding="utf-8") as f:
+        f.write(old.stdout)
+    return d
+
+
 CHECKS = [
+    (
+        "fixture_not_live_state",
+        "a test that builds a fixture does not then run its subject against the live tree",
+        "d9ba571d: test_free_card.py faked nvidia-smi in a mkdtemp and then invoked the subject "
+        "at cwd=ROOT, so it read the LIVE runs/card_assignment.json -- its verdict moved with "
+        "today's grant and it went red when 2eccf977 cleared the head-hybrid allocation. A "
+        "fixture that is reached past is worse than no fixture: it is what makes a reader "
+        "believe the test is isolated",
+        check_fixture_not_live_state,
+        _broken_fixture_not_live_state,
+    ),
     (
         "memory_diag_fresh",
         "a running memory arm has a diagnostics row within the last 300 steps, carrying its arm name",
@@ -11856,6 +12019,8 @@ EVIDENCE = {
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
     # exempt from it.
     "mutation_asserted_took": "repo",
+    # repo: it reads tracked test files with ast and answers the same anywhere.
+    "fixture_not_live_state": "repo",
     # pod: the diagnostics ledger and the run log are both WRITTEN on the training box, so a
     # laptop sees neither for a live arm. SKIP here is the honest answer, not a pass -- and
     # the run-log reader degrades to "log step unread" rather than a false red when the log
