@@ -579,25 +579,51 @@ def gate_cards(root, mix_path, world):
 
 
 def gate_vocab_id(root, mix_path, world):
-    """8. The tokenizer's identity matches what the caches were built against."""
+    """8. The tokenizer's identity matches what the caches were built against.
+
+    OURS ONLY. The question is whether the checkpoints THIS REPO TRAINED share one
+    vocabulary; a foreign control legitimately carries another one, and counting it made
+    the gate NO-GO for the control's existence. Measured 2026-09-04: 54 checkpoints at
+    0bce3584bc24f255 and one row `hf` -- pythia-160m-step2000, the Pythia-160M control
+    (e1-25), which has a different vocabulary by definition and cannot be made to agree.
+
+    The partition is the row's checkpoint name, not its vocab_id: a `ckpt_*.pt` this repo
+    wrote is ours, anything else is not. Keying on the vocab_id VALUE would be circular --
+    `hf` is exactly the string being excluded, so the gate would pass by declaring the
+    disagreeing value uninteresting. The excluded rows are NAMED in the evidence either
+    way, because a gate that silently drops rows to go green is the shape this file exists
+    to avoid: an excluded row must stay readable, so a real foreign checkpoint cannot hide
+    behind a control's exemption."""
     tokp = os.path.join(root, "data", "tokenizer.json")
     if not os.path.exists(tokp):
         return NOGO, "data/tokenizer.json is absent"
-    ids = set()
+    ids, foreign = {}, {}
     for r in glob.glob(os.path.join(root, "runs", "score_matrix.jsonl")):
         for line in open(r, encoding="utf-8"):
-            if line.strip():
-                try:
-                    v = json.loads(line).get("vocab_id")
-                except ValueError:
-                    continue
-                if v:
-                    ids.add(v)
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except ValueError:
+                continue
+            v = row.get("vocab_id")
+            if not v:
+                continue
+            ck = str(row.get("ckpt") or row.get("checkpoint") or "?")
+            bucket = ids if os.path.basename(ck).startswith("ckpt_") else foreign
+            bucket.setdefault(v, set()).add(ck)
+    excl = ""
+    if foreign:
+        named = sorted(c for cks in foreign.values() for c in cks)
+        excl = (f"; excluded {len(named)} non-ckpt_* row(s) as foreign models, named so they "
+                f"cannot hide: {', '.join(named[:4])}")
     if not ids:
-        return UNKNOWN, "no vocab_id recorded anywhere to compare the tokenizer against"
+        return UNKNOWN, "no vocab_id recorded on any ckpt_* row to compare the tokenizer against" + excl
     if len(ids) > 1:
-        return NOGO, f"{len(ids)} distinct vocab_id in the ledger: {sorted(ids)[:3]}"
-    return GO, f"one vocab_id across the ledger: {ids.pop()}"
+        detail = "; ".join(f"{v}: {', '.join(sorted(cks)[:2])}" for v, cks in sorted(ids.items()))
+        return NOGO, f"{len(ids)} distinct vocab_id among our checkpoints: {detail}{excl}"
+    v, cks = next(iter(ids.items()))
+    return GO, f"one vocab_id across {len(cks)} of our checkpoints: {v}{excl}"
 
 
 def gate_checks_and_drift(root, mix_path, world):
@@ -1045,8 +1071,13 @@ def selftest():
             f.write('{"model":{"vocab":{}}}')
         p = os.path.join(d, "runs", "score_matrix.jsonl")
         with open(p, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"ckpt": "x.pt", "vocab_id": "0" * 16}) + "\n")
-            f.write(json.dumps({"ckpt": "y.pt", "vocab_id": "1" * 16}) + "\n")
+            # ckpt_-PREFIXED, both of them. The gate partitions by whether the row's
+            # checkpoint is ours (2026-09-04), so the old names `x.pt` and `y.pt` were both
+            # foreign and this world went GREEN with two vocab_ids in it -- a world whose
+            # mutation the gate is now right to ignore, which certifies nothing. The
+            # property is "OUR checkpoints disagree", so the fixture has to be ours.
+            f.write(json.dumps({"ckpt": "ckpt_x.pt", "vocab_id": "0" * 16}) + "\n")
+            f.write(json.dumps({"ckpt": "ckpt_y.pt", "vocab_id": "1" * 16}) + "\n")
     d = world(_two)
     broken["vocab_id"] = (d, os.path.join(d, mix_rel))
     # 9: harness.py removed, so the check cannot report 0 FAIL
@@ -1552,6 +1583,44 @@ def selftest():
         bad.append(f"mixed FAILs on pod did not NO-GO on the env-state one ({s})")
     # Declaration completeness lives next to the declarations: harness's own
     # selftest asserts every CHECKS entry is in EVIDENCE and vice versa.
+
+    # gate_vocab_id partitions by whether the row's checkpoint is OURS, and the exclusion
+    # must not become a way to go green. Built on the REAL ledger with one row appended,
+    # because the population is what matters: 54 of our checkpoints at one vocab_id and one
+    # `hf` row (pythia-160m-step2000, the e1-25 control) is the state that made this NO-GO.
+    #
+    # The third case is the load-bearing one. Keying the exclusion on the vocab_id VALUE
+    # would be circular -- `hf` is exactly the string being excused -- so a ckpt_* claiming
+    # vocab_id `hf` must still NO-GO. The second asserts an excluded row stays NAMED: a gate
+    # that silently drops rows to pass is how a real foreign checkpoint hides behind a
+    # control's exemption.
+    _real = os.path.join(ROOT, "runs", "score_matrix.jsonl")
+    _tok = os.path.join(ROOT, "data", "tokenizer.json")
+    if os.path.exists(_real) and os.path.exists(_tok):
+        import shutil
+        import tempfile
+        _src = open(_real, encoding="utf-8").read()
+        for _label, _row, _want, _named in (
+            ("a ckpt_* with a second vocab_id", {"ckpt": "ckpt_rebuilt_vocab.pt",
+                                                 "vocab_id": "deadbeefdeadbeef"}, NOGO, None),
+            ("a second foreign model", {"ckpt": "qwen3-1.7b", "vocab_id": "hf2"},
+             GO, "qwen3-1.7b"),
+            ("a ckpt_* claiming vocab_id 'hf'", {"ckpt": "ckpt_sneaky.pt", "vocab_id": "hf"},
+             NOGO, None),
+        ):
+            with tempfile.TemporaryDirectory(prefix="vocab_selftest_") as _d:
+                os.makedirs(os.path.join(_d, "runs"))
+                os.makedirs(os.path.join(_d, "data"))
+                shutil.copy(_tok, os.path.join(_d, "data", "tokenizer.json"))
+                with open(os.path.join(_d, "runs", "score_matrix.jsonl"), "w",
+                          encoding="utf-8") as _f:
+                    _f.write(_src)
+                    _f.write(json.dumps(_row) + "\n")
+                _s, _why = gate_vocab_id(_d, "data/mix_scale_3.24b.json", 7)
+                if _s != _want:
+                    bad.append(f"gate_vocab_id on {_label}: {_s}, wanted {_want} ({_why[:70]})")
+                elif _named and _named not in _why:
+                    bad.append(f"gate_vocab_id excluded {_named} without naming it: {_why[:90]}")
 
     if bad:
         raise AssertionError("gates that cannot fail:\n  " + "\n  ".join(bad))
