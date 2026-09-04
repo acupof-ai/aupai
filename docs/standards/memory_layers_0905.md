@@ -29,6 +29,7 @@ identical and block-paired scoring applies.
 |---|---|---|---|---|
 | M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | measured lower bound +6.5% (tilerl, lookup alone, 2026-09-05); readout 5 is the constraint |
 | M2 | 262,144 (512 x 512) | 1024 | 0.27B | unmeasured; readout 5 is the constraint |
+| M3 | 2,096,704 (1448 x 1448) | 1024 | 2.15B | --peak-only before launch; 2048x2048 OOMs (48 GiB of table tensors + 47.6 GiB baseline > 95.2) |
 
 Design fixed for both arms; b0 chooses the rest inside these bounds:
 - one memory pool shared by layers 3, 6, 9 (0-indexed), added in parallel to the FFN,
@@ -102,3 +103,15 @@ with no NaN and diagnostics within bounds.
 | prereg review within 15 min, shapes | 44 | -- |
 | progress page section with the two curves | 98 | -- |
 | controller: grants, rulings, stop decisions | fb | 44 |
+
+## Memory cost per table parameter (measured 2026-09-05, b0, card 5)
+
+The table is fp32 (nn.Embedding in the default dtype, nothing casts it), its dense gradient is
+fp32, and Adagrad holds one fp32 moment: 12 bytes per parameter, not the 6 the arms table
+assumed. M1 = 12.0 GiB of table tensors; measured peak 68.46 GiB reserved against a 59.64 GiB
+prediction, so activations are 8.82 GiB. M3 at 2048x2048 = 48.0 GiB of table tensors on a
+47.64 GiB memoryless baseline: does not fit before an activation is allocated, and died in
+backward allocating the gradient. M3 is 1448x1448 (2.10M values, 2.15B params, 24 GiB of
+tensors) so every tensor dtype is identical across the three arms; a bf16 table for one arm
+would confound readout 3's slope with a precision change. Memory's own throughput ratio at
+world 1: 30.6K / 38.1K = 0.803 (mem-off baseline in the identical config), above the 0.70 bar.
