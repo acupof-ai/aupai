@@ -51,7 +51,7 @@ from scripts.loader import claim_my_cards, load_checkpoint, load_tokenizer  # no
 # gets ceval only as a z-score tripwire.
 APPLIES = {
     "base": ["domain_loss", "minimal_pairs", "mc_ceval", "lambada_zh", "math_v2_like",
-             "l1_fewshot", "domain_bpb", "lambada_en", "humaneval_bpb"],
+             "l1_fewshot", "domain_bpb", "lambada_en", "humaneval_bpb", "api_cloze"],
     # A FOURTH TYPE, for a foreign-tokenizer control (Pythia-160m). Only the per-BYTE metrics
     # are DEFINED here -- not "not run", defined. minimal_pairs is Chinese minimal pairs whose
     # premise is that the edit does not change tokenization, which is a statement about OUR
@@ -99,6 +99,10 @@ SKIP_REASON = {
     "lambada_zh": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #3)",
     "math_v2_like": "base-panel metric (frozen panel, docs/lessons/base_eval_panel.md #4)",
     "l1_fewshot": "reasoning panel L1 (docs/lessons/reasoning_panel.md §2); few-shot continuation math",
+    "api_cloze": ("readout 2 of the memory-layers program (prereg memory_layers_0905, "
+                  "amendment_2/_4): 4-way API-name cloze over the read and never-allocated "
+                  "regions of code_py_starcoder. Half an estimator per row -- readout 2 is the "
+                  "arm-minus-control difference of the seen/unseen gap"),
 }
 
 # Per-KIND skip reasons, consulted before SKIP_REASON. Keyed by (kind, metric) because
@@ -371,6 +375,39 @@ def metric_domain_bpb(ckpt_path, mix_path, hf=False):
     domain_loss's units, so both live side by side."""
     extra = ["--mix", mix_path] + (["--hf"] if hf else [])
     return _run_eval_json("domain_bpb.py", ckpt_path, extra, timeout=5400)
+
+
+def metric_api_cloze(ckpt_path):
+    """eval/api_cloze.py: readout 2 of the memory-layers program, the recall half.
+
+    A 4-way API-name cloze over two regions of the code_py_starcoder cache: SEEN, the pool
+    rows this control actually read, and UNSEEN, the pool beyond the phase allocation that no
+    run on this mix reaches. Both accuracies plus their gap, per checkpoint.
+
+    THE ROW IS HALF AN ESTIMATOR AND SAYS SO. Readout 2 is delta_seen - delta_unseen with
+    each delta arm-minus-control (prereg memory_layers_0905 amendment_2/_4), so one row
+    carries two accuracies and a within-model gap, never a knowledge number. `gap_note` is
+    written into the row rather than into this docstring because the row is what a reader
+    finds in the ledger: seen-minus-unseen on one model is contaminated by anything that
+    makes the seen region intrinsically easier, and only the difference of two models' gaps
+    removes it. A row read as "memorisation = 0.03" would be the §114 shape again.
+
+    ABSOLUTE SEEN ACCURACY IS TRAINING-SET ACCURACY. It is in the row because the difference
+    needs it, and it is not a capability number on its own -- the defect tilerl measured in
+    domain_loss on 2026-09-01.
+
+    REFUSES RATHER THAN BUILDS. --build reads the 35.1 GB token cache, which is a
+    co-residency decision (the guard in api_cloze.build refuses beside a live claim) and not
+    something a scoring run may take on its own. An absent item file is a refusal naming the
+    build command, so a missing artifact cannot turn into 35 GB of host IO during a
+    milestone score.
+    """
+    data = os.path.join(ROOT, "data", "eval", "api_cloze.jsonl")
+    if not os.path.exists(data):
+        return None, ("data/eval/api_cloze.jsonl not built (pod-only, gitignored). Build it "
+                      "deliberately: eval/api_cloze.py --build --cache_tokens <N> -- it reads "
+                      "the 35.1 GB cache and its co-residency guard refuses beside a live run")
+    return _run_eval_json("api_cloze.py", ckpt_path, ["--data", data], timeout=5400)
 
 
 def metric_lambada_en(ckpt_path, hf=False):
@@ -1660,6 +1697,8 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
         _metric("humaneval_bpb", metric_humaneval_bpb, record, ckpt_path, hf)
     if "l1_fewshot" in wanted:
         _metric("l1_fewshot", metric_l1_fewshot, record, ckpt_path)
+    if "api_cloze" in wanted:
+        _metric("api_cloze", metric_api_cloze, record, ckpt_path)
     if "mc_full" in wanted:
         # hellaswag/piqa excluded: pod HF egress broken, datasets unreachable.
         # Run run_eval.py --benchmarks hellaswag piqa on a box with egress.
