@@ -1,0 +1,10 @@
+  math_owm_stage2        alone   542   21.55 GB  100.0% of shards
+  en_c4_stage2           alone    22    8.69 GB  100.0% of shards
+  cot                    alone   334    1.33 GB  100.0% of shards
+  textbook_30b           alone   185    8.12 GB  100.0% of shards
+  chatml                 alone  1515    0.17 GB  100.0% of shards
+  chat_qa                alone  1515    0.16 GB  100.0% of shards
+  zh_web                 alone    81   89.85 GB  100.0% of shards
+  code_py_starcoder      alone   239   29.58 GB  100.0% of shards
+  code_py_rp1t           alone    57    1.51 GB  100.0% of shards
+union 2114  sum-of-alone 4490

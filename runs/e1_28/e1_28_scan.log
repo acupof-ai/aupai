@@ -1,0 +1,20 @@
+population: 10421 rows from 10421 ids in runs/heldout_v2/ids_shared.txt, fingerprint c3895c21973bf49b
+  NOTE: fingerprint c3895c21973bf49b != the audit's cae4daf7ad59388c. The audit's sha is over its own id serialisation, which this script does not reproduce byte for byte; the ROW COUNT matching 10421 is the check that carries weight here.
+index: 1,068,308 distinct answer 13-grams, 117,938 question 13-grams
+  2898 item(s) have answers under 13 words and CANNOT hit at this n; they are excluded from the measurable denominator below, not counted as clean.
+scanning with 48 worker process(es) over shards (serial was 4.18 MB/s measured, 10.7 h for the corpus)
+  math_owm_stage2         21.30 GB  4,135,793 lines  +542 new answer-hit item(s)  (running 542)
+  en_c4_stage2             8.65 GB  3,887,759 lines  +2 new answer-hit item(s)  (running 544)
+  cot                      1.32 GB    851,965 lines  +92 new answer-hit item(s)  (running 636)
+  textbook_30b             3.14 GB    920,692 lines  +56 new answer-hit item(s)  (running 692)
+  chatml                   0.09 GB    160,415 lines  +1398 new answer-hit item(s)  (running 2090)
+  chat_qa                  0.08 GB    160,415 lines  +0 new answer-hit item(s)  (running 2090)
+  zh_web                  33.18 GB 13,477,403 lines  +0 new answer-hit item(s)  (running 2090)
+  code_py_starcoder       29.48 GB  6,180,175 lines  +24 new answer-hit item(s)  (running 2114)
+  code_py_rp1t             1.51 GB    209,669 lines  +0 new answer-hit item(s)  (running 2114)
+
+ANSWER-GRAM HITS: 2114 of 7523 measurable (28.100%)
+question-gram hits: 2364 (reported for completeness; the floor scores answers)
+scanned 98.75 GB over 9 domain(s), 29,984,286 lines
+wrote /work/aupai/runs/e1_28_heldout_contamination.json
+READING: the floor and the lead must be recomputed on the non-overlapping subset and reported beside the full-set values; hit_ids in the JSON is that exclusion list.
