@@ -10810,7 +10810,194 @@ def _broken_no_ghost_close():
     return d
 
 
+def check_memory_diag_fresh(root):
+    """A running memory arm must be writing runs/memory_diag.jsonl, keyed by arm.
+
+    Two pre-registered stop rules read that file (docs/standards/memory_layers_0905.md
+    readouts 4 and 5), and both are silent when the writer stops. A pool below 20% touched
+    at step 1000 is a collapse, and the arm is stopped and reported rather than tuned; a
+    hook that died at step 300 produces the same output as an arm that never collapsed --
+    no rows either way.
+
+    WHICH RUNS COUNT. Only experiments rows that are OPEN by exp.py's own fold and whose
+    name marks a memory arm. Any other running job -- the control, a probe, an eval -- has
+    no memory pool and no diagnostics to write, so including it would make the check
+    permanently red on every non-memory run and a permanent red is the same as no signal.
+
+    THE ARM NAME IS PART OF THE ASSERTION, not decoration. Readout 3 is M2 against M1
+    against the control and 98 draws three curves, so a ledger whose rows do not name their
+    arm folds three lines into one -- unrecoverably, because the file is append-only and
+    nothing else records which arm a row came from. A row present but nameless is therefore
+    reported as loudly as a row absent.
+
+    STEP DISTANCE, NEVER WALL CLOCK. A stalled run keeps its last step while the clock
+    advances, so a time-based freshness window goes red on a healthy paused run and green
+    on a hung one. The window is 300 steps against a 100-step cadence: two missed writes
+    tolerated, three is a dead hook.
+
+    WARN, not FAIL, when the run is open but the ledger holds nothing at all: a launch that
+    has not reached step 100 legitimately has no row, and this check cannot see the step a
+    run is on from here -- only what the ledger says. FAIL is reserved for a row that
+    exists and is stale, which is unambiguous.
+    """
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    evs = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                evs.append(json.loads(line))
+            except Exception:
+                continue
+    folded = _exp_fold(evs)
+    rows = folded.values() if isinstance(folded, dict) else folded
+    # A memory arm is named by the charter's own arm ids. Matched on the name rather than on
+    # the command line: the flags are b0's to choose inside the charter's bounds, so a
+    # --memory_values match would rot the moment they pick a different flag name.
+    arms = [r for r in rows
+            if _exp_open(r) and re.match(r"^m[123]([_-]|$)", str(r.get("name") or ""), re.I)]
+    if not arms:
+        return SKIP, "no memory arm (m1/m2/m3) is running"
+
+    try:
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import memory_diag as md
+    except Exception as e:
+        return FAIL, f"cannot import scripts/memory_diag.py, which owns the ledger: {e}"
+
+    drows, derrs = md.read_rows(root=root)
+    if derrs:
+        return FAIL, (f"runs/memory_diag.jsonl has {len(derrs)} unreadable line(s): "
+                      f"{derrs[0]} -- a damaged ledger reads as a short one to any tool "
+                      f"that skips bad lines")
+    latest = md.latest_by_arm(drows)
+    named = [r for r in arms]
+    stale, silent, tripped, fresh = [], [], [], []
+    for r in named:
+        nm = str(r.get("name"))
+        # The arm id, not the full run name: a launch is named m1_0905 and its rows carry
+        # the arm. Matched case-insensitively on the prefix for the same reason.
+        key = next((k for k in latest if str(nm).lower().startswith(str(k).lower())
+                    or str(k).lower().startswith(str(nm).lower())), None)
+        if key is None:
+            silent.append(nm)
+            continue
+        row = latest[key]
+        for rule, why in md.stop_rules(row):
+            tripped.append(f"{nm}: {rule} -- {why}")
+        # THE WINDOW NEEDS A SECOND READER. The ledger cannot answer "is this row recent":
+        # its own newest step is the only step it knows, so comparing the ledger against
+        # itself always passes and the window would be decoration -- measured 2026-09-05, a
+        # step-100 row on a run at step 3000 read PASS. The run log is the independent
+        # source, and it is namespace- and reap-independent, unlike a pid or an mtime.
+        log_step = _last_log_step(root, nm)
+        diag_step = row.get("step")
+        if (log_step is not None and isinstance(diag_step, int)
+                and log_step - diag_step > md.FRESH_WITHIN_STEPS):
+            stale.append((nm, diag_step, log_step))
+        else:
+            fresh.append((nm, diag_step, log_step))
+
+    if stale:
+        return FAIL, (
+            "; ".join(f"{nm}: newest diag row is step {ds} but the run log is at step {ls} "
+                      f"({ls - ds} steps behind, window {md.FRESH_WITHIN_STEPS})"
+                      for nm, ds, ls in sorted(stale))
+            + " -- the hook stopped writing while the run kept going, so readouts 4 and 5 "
+              "are silent and silence is what a healthy arm looks like")
+
+    if tripped:
+        # Reported, never acted on: the charter gives the stop decision to the controller
+        # (fb) and the monitor's job is to say the rule fired. A check that killed a run
+        # would be making that decision from a cron slot.
+        return FAIL, ("a pre-registered stop rule has fired and the arm is still open: "
+                      + "; ".join(tripped) + " -- the charter stops and reports the arm; "
+                      "this check does not kill it")
+    if silent:
+        return WARN, (f"{len(silent)} open memory arm(s) with no diagnostics row at all: "
+                      f"{', '.join(sorted(silent))} -- expected before step 100, a dead "
+                      f"hook after it. Rows must carry the arm name or the three curves "
+                      f"cannot be separated")
+    return PASS, ("; ".join(f"{nm} diag at step {ds}"
+                            + (f", log at {ls}" if ls is not None else ", log step unread")
+                            for nm, ds, ls in sorted(fresh))
+                  + f" (window {md.FRESH_WITHIN_STEPS} steps)")
+
+
+def _last_log_step(root, name):
+    """The highest `step N` in runs/<name>.log, or None if there is no log to read.
+
+    None, not 0: "the log is absent" and "the run is at step 0" are different facts, and
+    treating the first as the second would make every arm without a local log read as
+    infinitely stale. A run on the pod has no log here at all, which is the normal case
+    from a laptop -- so an unread step degrades to not enforcing the window rather than to
+    a false red.
+
+    Reads the LAST 200 KB, not the whole file: a 17-hour run's log is hundreds of MB and
+    the newest step is at the end.
+    """
+    p = os.path.join(root, "runs", f"{name}.log")
+    if not os.path.exists(p):
+        return None
+    try:
+        size = os.path.getsize(p)
+        with open(p, "rb") as f:
+            if size > 200_000:
+                f.seek(size - 200_000)
+            tail = f.read().decode("utf-8", "replace")
+    except OSError:
+        return None
+    steps = [int(m) for m in re.findall(r"^step\s+(\d+)", tail, re.M)]
+    return max(steps) if steps else None
+
+
+def _broken_memory_diag_fresh():
+    """An open m1 arm whose newest diag row trips readout 5, built from the REAL ledger.
+
+    Mutated, not hand-written: the experiments file is a copy of the live one with one
+    appended open row, so the fold, the status vocabulary and the field set are the real
+    ones. A hand-written ledger would share this check's own assumptions about what an
+    event looks like -- the failure mode the repo has paid for four times.
+
+    The tripped rule is chosen over the simpler "no rows at all" world on purpose: that
+    one returns WARN, and a broken world must produce FAIL.
+    """
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    import shutil
+
+    real = os.path.join(ROOT, "runs", "experiments.jsonl")
+    dst = os.path.join(d, "runs", "experiments.jsonl")
+    shutil.copy(real, dst)
+    rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
+    template = dict(rows[-1])
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(json.dumps(dict(template, name="m1_probe", status="running",
+                                started="2026-09-05 03:00", result="", ended=""),
+                           ensure_ascii=False) + "\n")
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import memory_diag as md
+    # Step 500 at 41K tok/s/gpu: past readout 5's step-30 gate and well under its 70K floor.
+    md.log_diag("m1_probe", 500, 0.83, 3.1, 0.30, 41000.0,
+                path=os.path.join(d, "runs", "memory_diag.jsonl"))
+    return d
+
+
 CHECKS = [
+    (
+        "memory_diag_fresh",
+        "a running memory arm has a diagnostics row within the last 300 steps, carrying its arm name",
+        "readout 4 of memory_layers_0905 stops an arm whose pool falls below 20% touched at step "
+        "1000, and readout 5 stops one below 70K tok/s/gpu at step 30. Both rules read "
+        "runs/memory_diag.jsonl, so a hook that stops writing makes them silent -- and silence is "
+        "exactly what a healthy arm looks like. The 1B-parameter table can also collapse to a "
+        "handful of hot keys while loss still falls, which no other instrument would show",
+        check_memory_diag_fresh,
+        _broken_memory_diag_fresh,
+    ),
     (
         "no_ghost_close",
         "a close folds onto the row it closes; it never mints a second identity beside it",
@@ -11470,6 +11657,11 @@ EVIDENCE = {
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
     # exempt from it.
     "mutation_asserted_took": "repo",
+    # pod: the diagnostics ledger and the run log are both WRITTEN on the training box, so a
+    # laptop sees neither for a live arm. SKIP here is the honest answer, not a pass -- and
+    # the run-log reader degrades to "log step unread" rather than a false red when the log
+    # is absent, which from a laptop is always.
+    "memory_diag_fresh": "pod",
     "no_ghost_close": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
@@ -14642,6 +14834,12 @@ _UNFROZEN_ALLOWLIST = {
     # b0-17's lr knob, same reasoning as fp32_master: freezing it would declare settled the very
     # thing arms 2 and 3 are run to settle. MOVE IT INTO _FROZEN_KEYS if an untied head ships.
     "head_lr",
+    # The sparse memory's lr and weight decay. Here rather than in _FROZEN_KEYS for head_lr's
+    # reason: they are optimizer knobs, not architecture. mem_lr 0.02 is a starting value taken
+    # from Lample et al.'s ratio to the backbone lr and not a measurement, so freezing it would
+    # declare settled a number nobody has measured. The architecture keys that DO decide what the
+    # model is -- mem_values, mem_top_k, mem_layers, mem_sparse -- are frozen.
+    "mem_lr", "mem_wd",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
