@@ -300,7 +300,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
-| Shared files | manual: announcing an edit happens in conversation, outside the repo |
+| Shared files | `shared_file_claim` |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
 | Card claims live where the job runs | manual: the claim files sit in the tree the job runs from and no check reads the pod's runs/claims from here; scripts/test_launch_claims.py asserts the launch path acquires and the monitor releases, card_claim.py --selftest asserts a shell pid is refused |
