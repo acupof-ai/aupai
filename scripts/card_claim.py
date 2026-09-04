@@ -295,7 +295,17 @@ def claims():
     """Every live claim, plus the stale ones and why they are stale.
 
     A claim whose process is gone is reclaimable -- a crash must not lock the cards forever,
-    which is the failure mode that makes people delete lock files by hand and then race."""
+    which is the failure mode that makes people delete lock files by hand and then race.
+
+    A ZOMBIE IS DELIBERATELY NOT STALE HERE, and the reason is `acquire`: it deletes every
+    file this function calls stale, inside its wait loop (:425-428). So filing a zombie as
+    stale would delete a claim and hand its cards to the next caller, and `_is_zombie` cannot
+    distinguish "the job ended" from a corpse observed while a job is still coming up. The
+    disagreement is REPORTED instead, by `status()` at :575, which is 6e's ruling of
+    2026-09-03 with e1 as reviewer: a human releases, and `acquire` keeps refusing until they
+    do. `_is_zombie`'s docstring says a caller meaning "is the job running" must ask both --
+    that caller is `status()`, not this one, because this one's answer is also a deletion
+    (de-51; corrects DL-9 in runs/audit_0904/instruments_ledgers.md)."""
     live, stale = [], []
     if not os.path.isdir(CLAIM_DIR):
         return live, stale
