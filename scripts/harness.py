@@ -16664,7 +16664,33 @@ def cmd_launch(rest):
     # NOT A CHECK AGAINST THE FROZEN `world`: the grant is 4 cards and the ladder's world is 7,
     # and `world` is deliberately un-editable because the six points ran at 7 (the config's own
     # _comment). The rank-vs-card check below is the one that can be made -- two live quantities.
+    # ONLY FOR A LADDER-MIX LAUNCH (4c's ruling, option B, 2026-09-05). The two files answer
+    # different questions and the disagreement is only a contradiction for a job the ladder
+    # config governs: `cards` in data/mix_scale_run_config.json is the RECORD of what the six
+    # mix_scale_* points ran on, and it stays as it is. A memory arm on mix_200m_8b is bound by
+    # the grant alone, so comparing it against the ladder's record refuses a launch over a
+    # difference that means nothing to it.
+    #
+    # MEASURED COST OF NOT MAKING THIS DISTINCTION: M1 was refused for ~40 minutes with all
+    # eight cards idle, on a grant (1,2,4,6) that was correct and a ladder record (0-6) that was
+    # also correct. The refusal was right about the ambiguity and wrong about whose it was.
+    #
+    # The same _is_ladder_mix distinction check_ladder_config already makes, so there is one
+    # definition of "governed by the frozen recipe" rather than a second local rule.
     if args.training and not args.no_gpu:
+        _mix = ""
+        _cmdv = list(rest or [])
+        for _i, _a in enumerate(_cmdv):
+            if _a == "--mix" and _i + 1 < len(_cmdv):
+                _mix = _cmdv[_i + 1]
+            elif _a.startswith("--mix="):
+                _mix = _a.split("=", 1)[1]
+        # No --mix in the command means train.py's default. MEASURED, not assumed: that
+        # default is data/mix_500m.json, which is NOT a ladder point, so an absent flag leaves
+        # the gate off. Stated because the conservative reading -- "absent means the ladder" --
+        # is wrong here, and a future reader changing cfg_default("mix") to a ladder point
+        # would silently turn this gate on for every flagless launch.
+        _governed = _is_ladder_mix(_mix) if _mix else _is_ladder_mix(cfg_default("mix"))
         _gp = os.path.join(ROOT, "runs", "card_assignment.json")
         _lp = os.path.join(ROOT, "data", "mix_scale_run_config.json")
         try:
@@ -16675,14 +16701,14 @@ def cmd_launch(rest):
         except (OSError, ValueError):
             _grant, _ladder = {}, []
         _granted = _expand_cards(_grant.get("block_cards", "")) if _grant.get("launch_block_granted") else []
-        if _granted and _ladder and set(_granted) != set(_ladder):
+        if _governed and _granted and _ladder and set(_granted) != set(_ladder):
             print(f"REFUSING: {args.name} -- two allocation sources disagree, so which cards a "
                   f"training job owns depends on which file the reader trusts.\n"
                   f"  runs/card_assignment.json grants {_csv(_granted)}  <- the authority\n"
                   f"  data/mix_scale_run_config.json says {_csv(_ladder)}  <- the ladder's record\n"
-                  f"The ladder config's `cards` records what the six mix_scale_* points ran on, "
-                  f"not today's allocation. If today's block is {_csv(_granted)}, narrow `cards` "
-                  f"there too; the launch then agrees with both files. No ledger row written.",
+                  f"This launch's mix ({_mix or cfg_default('mix')}) IS a ladder point, so the "
+                  f"ladder config governs it and the two must agree. If today's block is "
+                  f"{_csv(_granted)}, narrow `cards` there too. No ledger row written.",
                   file=sys.stderr)
             return 2
 
