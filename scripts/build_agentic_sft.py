@@ -782,6 +782,118 @@ OPAQUE_EXCLUSIONS = (
 )
 
 
+#: A credential passed as a COMMAND-LINE FLAG or a shell assignment, which both existing
+#: detectors miss. 44's hand read of v13 found one: a docker registry password of 18 chars in
+#: `--password=<value>`, 10 occurrences in one episode, and the same value in v12. Verified
+#: 2026-09-04 against synthetic values of the same shape:
+#:
+#:   docker login --username=x --password=<18 chars>   find_secrets -> []
+#:   docker login -p <18 chars> reg.example.com        find_secrets -> []
+#:   --token=<18 chars>                                find_secrets -> []
+#:   export PASSWORD=<18 chars>                        find_secrets -> ['Secret Keyword']
+#:
+#: TWO independent misses, which is why neither existing tier catches it. detect_secrets'
+#: KeywordDetector wants an assignment shape (`password = x`, `PASSWORD=x`) and a CLI flag is
+#: not one, so it returns nothing at all for the flag forms. And redact_opaque cannot see it
+#: either: OPAQUE_TOKEN needs 32+ characters and this is 18, so the span is below the floor.
+#: A short credential in a flag falls through the gap BETWEEN the two mechanisms. The one form
+#: that does fire, `PASSWORD=`, fires only as Secret Keyword, which is deliberately NOT in
+#: REAL_CREDENTIAL -- so it reported and kept the episode.
+#:
+#: 8 CHARS, not 32. The length floor here is a credential-usability bound rather than an
+#: entropy one: the left context already establishes that the value IS a credential, so the
+#: question is only whether it is a real one or a placeholder, and shortening the floor costs
+#: false positives that PLACEHOLDERS names rather than missed secrets. This is the opposite
+#: trade from OPAQUE_TOKEN, where no context is available and entropy has to carry the whole
+#: judgement.
+#:
+#: DROPS THE EPISODE, like every REAL_CREDENTIAL hit: masking leaves the surrounding turns
+#: teaching the model that a credential belongs after `--password=` (fb's ruling 2026-09-02).
+CLI_CREDENTIAL = (
+    # --password=x, --password x, --token=x, --api-key=x, --secret=x, --apikey=x. The flag name
+    # is the context. `[= ]` rather than `=` alone: `--password x` is equally common in docker
+    # and curl invocations.
+    ("cli-credential-flag",
+     re.compile(r"--(?:password|passwd|token|api[-_]?key|secret|access[-_]?key)[= ]"
+                r"(?P<v>[^\s'\"\\]{8,})")),
+    # -p <value> ONLY after a login verb. `-p` alone is far too common (docker run -p 8080:80,
+    # grep -p, tar -p), so the verb is what makes it a credential: `docker login -p`,
+    # `helm registry login -p`, `crictl ... login -p`. Anchored on the verb, not on the flag.
+    ("cli-credential-login-p",
+     re.compile(r"\blogin\b[^\n]{0,80}?\s-p[= ]\s?(?P<v>[^\s'\"\\]{8,})")),
+    # PASSWORD=x / TOKEN=x / API_KEY=x as a shell assignment or env line. detect_secrets DOES
+    # flag some of these, but only as Secret Keyword, which is not in the drop tier.
+    ("env-credential-assignment",
+     re.compile(r"(?:^|[\s;&|(])(?:export\s+)?"
+                r"(?:[A-Z][A-Z0-9_]*_)?(?:PASSWORD|PASSWD|TOKEN|API_?KEY|SECRET|ACCESS_KEY)"
+                r"(?:_[A-Z0-9_]+)?=(?P<v>[^\s'\"\\]{8,})")),
+)
+
+#: Values that look like credentials by position but carry nothing. A flag's left context says
+#: "a credential goes here", so without this every documentation example and every `$VAR`
+#: indirection would drop its episode -- and dropping on a placeholder is how a corpus gets
+#: quietly emptied by a guard nobody measured.
+#:
+#: Each entry must match the WHOLE value; a partial match is not a placeholder.
+CLI_CREDENTIAL_PLACEHOLDERS = re.compile(
+    r"(?:"
+    r"\$\{?[A-Za-z_][A-Za-z0-9_]*\}?"          # $PASSWORD, ${TOKEN}, $1
+    r"|%[A-Za-z_][A-Za-z0-9_]*%"                # %PASSWORD% (Windows)
+    r"|<[^>]{1,40}>"                            # <your-password>, <TOKEN>
+    r"|\[[^\]]{1,40}\]"                         # [password]
+    r"|\{\{?[A-Za-z0-9_\-. ]{1,40}\}?\}"        # {{password}}, {password}
+    r"|(?:x{3,}|\*{3,}|\.{3,}|-{3,}|_{3,})"     # xxxx, ****, ----, ____
+    r"|\[?REDACTED[A-Za-z0-9_\-]*\]?"           # our own placeholder, and REDACTED-CREDENTIAL
+    r"|(?:your|my|the|some|a)[-_]?(?:password|passwd|token|key|secret)[a-z0-9_\-]*"
+    # A value that ANNOUNCES ITSELF as not real. Measured on the quarantined v13 pack: 9 of its
+    # 24 flagged rows are `dummy-...` API keys in setup instructions, and dropping those episodes
+    # would remove ordinary documentation while removing nothing secret. Prefix rather than exact
+    # match, because these appear as dummy-key-123, fake_token_abc, test-api-key.
+    r"|(?:fake|dummy|dumb|invalid|revoked|expired|notreal|not[-_]?a[-_]?real)[a-z0-9_\-]*"
+    r"|(?:password|passwd|token|secret|apikey|api[-_]key|changeme|placeholder|example|"
+    r"dummy|sample|test|testing|hunter2|letmein|secretsecret|notarealpassword)"
+    r"[0-9_\-]*"
+    r")\Z",
+    re.IGNORECASE,
+)
+
+#: A value containing a shell/markup indirection is a reference, not a credential: the secret
+#: lives wherever the variable is resolved and is not in this text. Checked as CONTAINMENT, not
+#: as a whole-value match, because the real forms are compounds -- `${ANTHROPIC_API_KEY:-dummy}`
+#: (a default-substitution, measured in v13) and `<token>` inside a prose sentence. Both were
+#: reported as live credentials by the whole-value placeholder list, which anchors with \Z.
+CLI_CREDENTIAL_INDIRECTION = re.compile(r"\$[{(]?[A-Za-z_]|%[A-Za-z_][A-Za-z0-9_]*%|<[^>]{1,40}>")
+
+
+def cli_credentials(text):
+    """Names of CLI/env credential classes whose value in `text` is not a placeholder.
+
+    Returns a set of class names so the report can say WHICH shape fired, the same way the
+    provider detectors report a type. The VALUE is never returned, logged or printed.
+    """
+    out = set()
+    for name, pat in CLI_CREDENTIAL:
+        for m in pat.finditer(text):
+            raw = m.group("v")
+            # A trailing shell/markup character is punctuation, not part of the credential:
+            # "--password=$VAR," must not read as a non-placeholder because of the comma.
+            #
+            # BOTH FORMS ARE TESTED, and the selftest is what forced it. Stripping ">" and "}"
+            # also strips a placeholder's own closing delimiter -- `<your-password>` became
+            # `<your-password` and stopped matching `<[^>]{1,40}>`, so two documentation
+            # examples were reported as live credentials. The strip is right for `$VAR,` and
+            # wrong for `<x>`, and there is no single spelling that is right for both.
+            stripped = raw.rstrip(",;)]}>`.")
+            if any(CLI_CREDENTIAL_PLACEHOLDERS.match(v) for v in (raw, stripped)):
+                continue
+            if CLI_CREDENTIAL_INDIRECTION.search(raw):
+                continue
+            if len(stripped) < 8:
+                continue
+            out.add(name)
+    return out
+
+
 def _excluded(text, start, end):
     """The exclusion class covering the span at [start, end), or None.
 
@@ -880,6 +992,10 @@ def drop_credential_rows(rows):
         real, n_red, n_long = set(), 0, 0
         for m in r["messages"]:
             real.update(t for t in (find_secrets(m["content"]) or []) if t in REAL_CREDENTIAL)
+            # CLI/env credential shapes, which find_secrets structurally cannot see: below the
+            # 32-char opaque floor and not detect_secrets' assignment shape. Same tier as a
+            # provider hit -- the episode drops. See CLI_CREDENTIAL.
+            real.update(cli_credentials(m["content"]))
         # REAL FIRST, and no redaction on a row that is about to drop: redacting a dropped
         # episode's turns is work whose result is discarded, and it would make the counts read
         # as if a kept row had been cleaned.
@@ -934,12 +1050,19 @@ def real_credential_rows(rows):
     they fire on example values, log lines and shas, so gating on them would refuse every
     pack while removing nothing real. Those are counted and printed instead, which is the
     allowlist -- an allowed type is one the gate names and passes, not one it cannot see.
+
+    CLI_CREDENTIAL classes are returned TOO, and the gate is why. 44's hand read found a
+    `--password=<18 chars>` in v13 that this function's first version could not see, because
+    it asked only find_secrets -- the same detectors that missed it during the build. A gate
+    built on the mechanism that produced the miss re-confirms the miss and calls it clean.
     """
     out = []
     for i, r in enumerate(rows):
-        h = find_secrets("\n".join(m["content"] for m in r["messages"]))
-        if h and set(h) & REAL_CREDENTIAL:
-            out.append((i, sorted(set(h) & REAL_CREDENTIAL)))
+        text = "\n".join(m["content"] for m in r["messages"])
+        h = find_secrets(text)
+        types = sorted(set(h or []) & REAL_CREDENTIAL) + sorted(cli_credentials(text))
+        if types:
+            out.append((i, types))
     return out
 
 
@@ -1111,6 +1234,95 @@ def _selftest():
         if len(kept) != 1 or dropped:
             fails.append("an episode with only a heuristic hit was discarded -- dropping every "
                          "heuristic hit empties the pack while removing nothing real")
+
+    # 4a2. THE CLI-FLAG CREDENTIAL, the class both detectors miss. 44's hand read of v13 found a
+    #      docker registry password of 18 chars in `--password=<value>`, 10 occurrences in one
+    #      episode, and the same value in v12. EVERY VALUE HERE IS SYNTHETIC: the real one is not
+    #      copied into this file, this repository, or any message. The shape is what is under test.
+    #
+    #      The two misses are independent, which is the whole reason this tier exists:
+    #        detect_secrets  KeywordDetector wants an assignment (`password = x`); a CLI flag is
+    #                        not one, so the flag forms return [] -- verified below, not assumed.
+    #        redact_opaque   OPAQUE_TOKEN needs 32+ chars and this is 18, so the span is under
+    #                        the floor.
+    #      A short credential in a flag falls through the gap BETWEEN them.
+    V = "7q2wselkjhasdfQWE1"   # 18 chars, mixed case + digit: 44's reported shape, synthetic value
+    for probe, want in (
+        (f"docker login --username=x --password={V} reg.example.com", "cli-credential-flag"),
+        (f"docker login --password {V} reg.example.com", "cli-credential-flag"),
+        # `http --token=...` rather than curl: curl_ipv4 greps this file for "curl" without -4
+        # and cannot tell a fixture string from a call. The flag form is what is under test, so
+        # the tool name is free to be one the gate does not scan for.
+        (f"http --token={V} https://api.example.com", "cli-credential-flag"),
+        (f"helm registry login -p {V} reg.example.com", "cli-credential-login-p"),
+        (f"export PASSWORD={V}", "env-credential-assignment"),
+        (f"REGISTRY_TOKEN={V} make push", "env-credential-assignment"),
+    ):
+        got = cli_credentials(probe)
+        if want not in got:
+            fails.append(f"cli_credentials missed {want} in {probe[:40]!r}: got {sorted(got)}")
+    # AND the detector it routes around really is blind to it, asserted rather than believed.
+    # If find_secrets ever learns this shape, this assertion fires and the comment above is
+    # what needs revising -- a stale "the detector misses this" is how a tier outlives its reason.
+    if find_secrets("x") is not None:
+        blind = f"docker login --username=x --password={V} reg.example.com"
+        if find_secrets(blind):
+            fails.append(f"find_secrets now flags the CLI-flag form ({find_secrets(blind)}); "
+                         "CLI_CREDENTIAL's justification is stale, re-read it")
+        if redact_opaque(blind)[1]:
+            fails.append("redact_opaque now touches an 18-char flag value; the under-the-floor "
+                         "half of CLI_CREDENTIAL's justification is stale")
+
+    # PLACEHOLDERS MUST NOT FIRE. A flag's left context says "a credential goes here", so
+    # without this list every doc example drops its episode -- and a guard that empties the
+    # corpus is a worse outcome than the leak, because nobody measures what is missing.
+    for probe in (
+        "docker login --password=$REGISTRY_PASSWORD reg.example.com",
+        "docker login --password=${DOCKER_PASS} reg.example.com",
+        "docker login --password=<your-password> reg.example.com",
+        "docker login --password=xxxxxxxxxxxx reg.example.com",
+        "docker login --password=[REDACTED-CREDENTIAL] reg.example.com",
+        "export PASSWORD=changeme",
+        "--token={{api_token}}",
+        "docker login --password=$PASSWORD, then push",
+        # MEASURED ON THE QUARANTINED v13 PACK, not invented: 9 of its 24 flagged rows are
+        # `dummy-...` keys in setup instructions, and two are indirections the whole-value
+        # placeholder list could not match because they are COMPOUNDS -- a default-substitution
+        # and a token named inside prose. Dropping these episodes removes documentation and no
+        # secret.
+        "export ANTHROPIC_API_KEY=dummy-value",
+        "export OPENAI_API_KEY=dummy-key-123",
+        "export ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-dummy}",
+        "set SCM_TOKEN=<token> in the environment first",
+        "--token=fake_token_abcdefgh",
+    ):
+        got = cli_credentials(probe)
+        if got:
+            fails.append(f"cli_credentials fired on a placeholder: {probe[:44]!r} -> {sorted(got)}")
+    # AND the placeholder list must not be so wide it eats the real shape. Same value, one
+    # character of context different -- if this passes while the assertions above pass, the
+    # list is discriminating rather than merely permissive.
+    if not cli_credentials(f"docker login --password={V}xy reg"):
+        fails.append("the placeholder list swallows a real value; it is matching too widely")
+
+    # AND the episode DROPS, in the same tier as a provider hit. cli_credentials returning a
+    # name proves the pattern fires; only this proves the pack loses the row.
+    if find_secrets("x") is not None:
+        cli_row = [{"project": "p", "messages": [
+            {"role": "user", "content": "push the image"},
+            {"role": "assistant", "content": f"docker login --password={V} reg.example.com"}]}]
+        _k, _d, _r = drop_credential_rows(cli_row)
+        if _k or len(_d) != 1:
+            fails.append(f"a CLI-flag credential episode was KEPT: {len(_k)} kept, {len(_d)} dropped")
+        if _d and "cli-credential-flag" not in _d[0].get("types", []):
+            fails.append(f"the drop report does not name the class: {_d[0].get('types')} -- a human "
+                         "reading the report must be able to tell which shape fired")
+        # And the GATE sees it, not just the builder. real_credential_rows' first version asked
+        # only find_secrets, i.e. the mechanism that produced the miss, so a rebuilt pack would
+        # have passed its own gate carrying this credential.
+        if not real_credential_rows(cli_row):
+            fails.append("real_credential_rows does not see a CLI-flag credential; the gate would "
+                         "pass a pack carrying one")
 
     # 4b. THE OPAQUE TOKEN, which is the case find_secrets cannot answer. The fixture is
     #     SYNTHETIC and its structure is the assertion: 4.5+ entropy over the urlsafe charset
