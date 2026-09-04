@@ -151,7 +151,7 @@ Design: one memory pool shared by layers 3, 6, 9, added in parallel to the FFN (
 Pre-registered readouts (`runs/prereg.jsonl#memory_layers_0905`):
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if ≤ −0.010 nat (the N2 params effect size); null if |Δ| < 0.003; in between is "measured, not adopted".
-2. Split: closed-book fact probe (cloze over a held-out encyclopedic slice, registered before launch) vs reasoning probe (l1_fewshot answer-present, 3 demos). "Memory buys knowledge, not reasoning" requires the fact delta to exceed the reasoning delta by more than both SEs.
+2. Split: seen-vs-unseen difference-in-differences over code_py_starcoder API-name cloze (4-way, real names from the same module; SEEN rows the arms train on, UNSEEN rows in the never-read tail; row boundary and sample seed pinned into the item file). Claim "memory buys knowledge" = delta_seen − delta_unseen > 0 beyond both SEs. Reasoning probe (l1_fewshot answer-present, 3 demos) unchanged. Chance and control floors and the UNDEFINED rule apply to both regions. Amended twice (2026-09-04T17:04Z, 17:07Z): the mix has no encyclopedic domain, and a closed-book cloze over unread rows measures generalisation, which readout 1 already covers.
 3. Scaling: M2 vs M1 gives the slope of loss against memory size; two points plus the control are a line, not a law.
 4. Diagnostics, logged every 100 steps to `runs/memory_diag.jsonl`: fraction of values touched, top-k weight entropy, key-usage Gini. A pool below 20% touched at step 1000 is a collapse — the arm is stopped and reported, not tuned in place.
 5. Throughput: tok/s/gpu at step 30 against the control's 82K. Below 70K the arm is stopped: a memory that costs 15% of throughput is not near-zero FLOPs on this hardware.
@@ -159,6 +159,6 @@ Pre-registered readouts (`runs/prereg.jsonl#memory_layers_0905`):
 Cards: M1 on cards 1+2, M2 on cards 4+6, world 2 each; lane card 5 for smoke and probes; card 3 foreign; card 7 the user's. M2 launches after M1 prints step 100 with no NaN and diagnostics within bounds.
 
 What this cannot say (pre-registered):
-- Whether the effect is knowledge or reasoning until both probes are scored.
+- Whether the effect is recall of training content or generalisation until the seen-vs-unseen diff-in-diff is scored.
 - Whether the slope generalises beyond two memory sizes.
 - Whether the throughput cost holds at 30B, where the recipe decision applies.

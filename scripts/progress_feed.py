@@ -56,56 +56,56 @@ def bj_str(utc):
     return time.strftime("%m-%d %H:%M", time.gmtime(t + BJ))
 
 CSS = """
-:root{--bg:#f5f5f4;--fg:#1c1917;--dim:#78716c;--line:#e7e5e4;--card:#fff;
+:root{--bg:#faf9f7;--fg:#1c1917;--dim:#78716c;--line:#e7e5e4;--card:#fff;
  --accent:#2563eb;--good:#16a34a;--warn:#d97706;--bad:#dc2626;--purple:#7c5cff}
 @media (prefers-color-scheme:dark){:root{--bg:#0c0a09;--fg:#e7e5e4;--dim:#a8a29e;
  --line:#292524;--card:#1c1917;--accent:#3b82f6;--good:#22c55e;--warn:#f59e0b;--bad:#ef4444;--purple:#8b7cff}}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--fg);
- font:14px/1.6 ui-sans-serif,-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
- padding:24px 20px 60px;max-width:760px}
-header{display:flex;align-items:baseline;gap:10px;margin-bottom:20px}
-h1{font-size:15px;font-weight:700;margin:0;letter-spacing:-.01em}
-.live{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;
- display:flex;align-items:center;gap:5px}
-.live i{width:7px;height:7px;border-radius:50%;background:var(--good);display:inline-block;
+ font:15px/1.7 ui-sans-serif,-apple-system,"PingFang SC","Helvetica Neue",sans-serif;
+ padding:32px 24px 80px;max-width:720px}
+header{margin-bottom:28px}
+h1{font-size:22px;font-weight:700;margin:0 0 4px;letter-spacing:-.02em}
+.live{font-size:13px;color:var(--dim);font-variant-numeric:tabular-nums;
+ display:flex;align-items:center;gap:6px}
+.live i{width:8px;height:8px;border-radius:50%;background:var(--good);display:inline-block;
  animation:beat 2s infinite}
 @keyframes beat{0%,100%{opacity:1}50%{opacity:.25}}
-h2{font-size:12px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;
- color:var(--dim);margin:28px 0 10px}
-.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(220px,1fr));gap:12px;margin-bottom:8px}
-.card{background:var(--card);border:1px solid var(--line);border-radius:10px;
- padding:14px 16px;border-top:3px solid;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-.card .ti{font-size:11px;color:var(--dim);letter-spacing:.04em;font-weight:500}
-.card .bi{font-size:20px;font-weight:700;margin:4px 0 2px;font-variant-numeric:tabular-nums;
- letter-spacing:-.02em}
-.card .su{font-size:12.5px;color:var(--dim);line-height:1.5}
-.bar{height:5px;background:var(--line);border-radius:3px;margin-top:10px;overflow:hidden}
-.bar i{display:block;height:100%;border-radius:3px}
+h2{font-size:13px;font-weight:600;letter-spacing:.05em;color:var(--dim);
+ margin:36px 0 12px;padding-bottom:6px;border-bottom:1px solid var(--line)}
+.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:10px;margin-bottom:4px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;
+ padding:16px 18px;border-top:3px solid;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.card .ti{font-size:12px;color:var(--dim);font-weight:500;margin-bottom:4px}
+.card .bi{font-size:22px;font-weight:700;margin:2px 0;font-variant-numeric:tabular-nums;
+ letter-spacing:-.02em;line-height:1.3}
+.card .su{font-size:13px;color:var(--dim);line-height:1.55;margin-top:4px}
+.bar{height:4px;background:var(--line);border-radius:2px;margin-top:12px;overflow:hidden}
+.bar i{display:block;height:100%;border-radius:2px}
 .head{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);
- border-radius:10px;padding:14px 16px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-.head .bi{font-size:18px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.01em}
-.head .su{font-size:12.5px;color:var(--dim);margin-top:3px;line-height:1.5}
+ border-radius:12px;padding:16px 18px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.head .bi{font-size:17px;font-weight:600;font-variant-numeric:tabular-nums;letter-spacing:-.01em;line-height:1.5}
+.head .su{font-size:13px;color:var(--dim);margin-top:6px;line-height:1.6}
 .card.stale{opacity:.5}
-.card .as{font-size:10px;color:var(--dim);margin-top:8px}
-.important{background:var(--card);border:1px solid var(--line);border-radius:10px;
- padding:6px 16px 10px;margin-bottom:8px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
-.important h2{margin-top:12px}
+.card .as{font-size:11px;color:var(--dim);margin-top:10px}
+.important{background:var(--card);border:1px solid var(--line);border-radius:12px;
+ padding:8px 18px 12px;margin-bottom:10px;box-shadow:0 1px 3px rgba(0,0,0,.03)}
+.important h2{margin-top:14px;border-bottom:none;padding-bottom:0}
 ol{list-style:none;margin:0;padding:0}
-li{padding:8px 0;border-bottom:1px solid var(--line);display:flex;gap:8px;
- font-size:13px;line-height:1.55;align-items:baseline}
+li{padding:10px 0;border-bottom:1px solid var(--line);display:flex;gap:10px;
+ font-size:14px;line-height:1.6;align-items:baseline}
 li:last-child{border-bottom:0}
-.t{font-size:11px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:34px;flex-shrink:0}
-.k{font-weight:600;font-size:11px;min-width:26px;flex-shrink:0}
-.s{font-size:10px;min-width:14px;font-weight:700;flex-shrink:0}
+.t{font-size:12px;color:var(--dim);font-variant-numeric:tabular-nums;min-width:36px;flex-shrink:0}
+.k{font-weight:600;font-size:12px;min-width:28px;flex-shrink:0}
+.s{font-size:11px;min-width:14px;font-weight:700;flex-shrink:0}
 .m{flex:1}
-details{margin-top:12px}
-summary{font-size:12px;color:var(--dim);cursor:pointer;padding:6px 0}
-details li{font-size:12.5px;color:var(--dim)}
-table{border-collapse:collapse;font-size:12.5px;margin:4px 0 12px}
-th{font-size:10px;color:var(--dim);letter-spacing:.06em;text-align:left;
- font-weight:600;padding:2px 14px 4px 0;border-bottom:1px solid var(--line)}
-td{padding:4px 14px 4px 0;border-bottom:1px solid var(--line);
+details{margin-top:16px}
+summary{font-size:13px;color:var(--dim);cursor:pointer;padding:8px 0}
+details li{font-size:13px;color:var(--dim)}
+table{border-collapse:collapse;font-size:13px;margin:6px 0 14px}
+th{font-size:11px;color:var(--dim);letter-spacing:.05em;text-align:left;
+ font-weight:600;padding:4px 16px 6px 0;border-bottom:1px solid var(--line)}
+td{padding:6px 16px 6px 0;border-bottom:1px solid var(--line);
  font-variant-numeric:tabular-nums;white-space:nowrap}
 td.n{font-weight:700}
 td.zero{color:var(--warn);font-weight:700}
@@ -288,7 +288,7 @@ def memory_section():
         '<div class=su>对照：ckpt_b0_headmix_armA（d1024 L12，10 亿 token）。'
         'M1：100 万值（+10.7 亿参数）。M2：26 万值（+2.7 亿参数）。</div>'
         '<div class=su>五把尺子：① doc_cu 配对差值 ≤ −0.010 nat 才采用，|Δ| &lt; 0.003 算无差异；'
-        '② 知识探针 vs 推理探针，知识差值超推理差值 2 个 SE 才算「记忆买知识」；'
+        '② 见过 vs 没见过的 API 名填空差值（code_py_starcoder），差值为正才算「记忆买知识」；'
         '③ M2 vs M1 给斜率，两点加对照是线不是定律；'
         '④ 诊断：step 1000 触及率 &lt; 20% 就停；'
         '⑤ 吞吐：step 30 低于 70K tok/s 就停。</div>'
