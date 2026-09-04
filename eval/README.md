@@ -46,6 +46,25 @@ leading space (`" A"`); the rest score the full option text with a leading space
 **GSM8K:** autoregressive greedy generation (up to 256 new tokens), take the
 last number in the output, compare against `#### N`.
 
+## Predictions artifacts and `.REFUSED` sidecars
+
+A generative eval's predictions are the only copy of what a checkpoint produced, so
+`scripts/eval_artifacts.open_artifact` refuses to overwrite an existing one and leaves the reason in
+a sidecar **beside the artifact** — `data/eval/<name>.jsonl.REFUSED`, never under `runs/`. Looking
+for them in `runs/` returns nothing and proves nothing; six exist under `data/eval/` on the pod. The
+sidecar is named after the artifact, so several refusals on one artifact name share one file, and a
+successful write clears it.
+
+A refusal is the guard working, not a failure. Seven `l1_fewshot` rows in `runs/score_matrix.jsonl`
+read `eval_artifacts.ArtifactExists` and were audited as failures twice before anyone opened the
+files (`runs/audit_0904/eval_heldout.md` E18, E21, E22) — one of them had a complete 497-row result
+on disk. `eval/l1_fewshot.py` now writes an identity header as row 0 of every predictions file
+(checkpoint basename and file sha256, vocab_id, tokenizer fingerprint, demos, demo_lang, arm,
+rep_stop, UTC), and `score_matrix.metric_l1_fewshot` transcribes an existing artifact only when that
+sha matches the checkpoint on disk. No header, or a mismatch, records "artifact unverifiable, not
+re-run" rather than re-running or forcing. **Every reader of a predictions file must skip the header
+row**, identified by its `_header` key.
+
 ## Speed characteristics
 
 The runner is built around one batched log-likelihood scorer:
