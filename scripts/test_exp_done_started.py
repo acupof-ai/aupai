@@ -306,6 +306,18 @@ def retract_cases():
 
 
 def main():
+    # 21 worlds per run, each a copy of the ~550 KB real ledger: 22 directories and 12 MB
+    # left behind, the largest single producer of the 1,470 stale worlds measured on this
+    # laptop 2026-09-05. _world() cannot clean up -- every case reads its world after the
+    # call -- so the root goes here and dies with the process.
+    sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+    import tmpworld
+
+    with tmpworld.scoped("aupai_expdone_st_"):
+        return _main()
+
+
+def _main():
     bad = 0
 
     # 1. One open row: the default still works, no --started needed.
