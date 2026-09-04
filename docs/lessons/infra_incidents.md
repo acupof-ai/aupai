@@ -184,6 +184,10 @@ open: a check that liveness reads STAT=Z, not kill -0; none exists.
 "NOT KEPT" was read as "CLAIMED"; the absence of a KEEP claim was read as a claim. Evidence: runs/pod_ckpt_candidates_*.txt.
 open: a check that distinguishes "not kept" from "claimed"; none exists.
 
+### §174 (2026-09-04, R2-g)
+A guard was green by hand and red under automation, and three of us looked in the environment. Cause was TIME: a same-length mutation (3565 -> 3565 bytes) landing in the same wall-clock second as the preceding run reuses a stale `.pyc`, because Python invalidates on (whole-second mtime, size) -- so the interpreter ran the pre-mutation code and the mutation test passed on a defect it never executed. Confirmed by the shape of the failure: 6 replicas gave rc 1,1,1,0,0,1, which is a race, not a configuration. Two of my own diagnoses (a TZ artifact, then a resolving symlink) and one of 6e's (GIT_INDEX_FILE) were all refuted. Evidence: de's world-8 replica run.
+open: manual -- a mutation test must change the file's SIZE or force a `.pyc` invalidation; "green by hand, red under automation" is a race's signature and the environment is the wrong place to look first.
+
 ## R3. Artifacts carry their producer's identity
 
 ### §2 (2026-08-30, R10)

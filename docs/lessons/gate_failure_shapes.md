@@ -116,14 +116,14 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (23 incidents)
+### R2-g Criterion answers an adjacent question (24 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
 - §110: a pre-registered branch collapsed two worlds into one; the criterion (branch taken) did not isolate the property (which world).
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
