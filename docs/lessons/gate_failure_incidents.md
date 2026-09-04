@@ -86,6 +86,10 @@ open: a check that the runner can execute every registered test type; none exist
 A check only rejected one side; the property was symmetric. Evidence: scripts/harness.py.
 open: a check that symmetric properties have symmetric checks; none exists.
 
+### §201 (2026-09-05, R2-b)
+A predicate verified only where it cannot fire reports nothing about where it does. The device-fd refusal in `card_claim.acquire()` was made unconditional at 121a865d, written for a launcher that bound the wrong pid. It was applied to every claim shape without asking which shapes exist: all ten `claim_my_cards` call sites claim the card they are ABOUT to use (the documented contract, and the reason it reads `CUDA_VISIBLE_DEVICES`), so all ten would have been refused on the pod. Every local gate was green because macOS has no /proc and the predicate abstains there; CI (Linux, /proc present, no GPU) caught it in two hours. Fix: `acquire(require_device=False)` with the launcher opting in after `wait_for_device` has already established the fact (4f4e9175). Evidence: 121a865d, 4f4e9175, the ten call sites (probes/fone_digit_acc.py:39, scripts/eval_heldout_ours.py:95, scripts/test_arch_L32.py:53, scripts/test_arch_compat.py:85, scripts/n7c_gates.py:124, scripts/n7c_grad_check.py:63, scripts/test_e2e.py:190, scripts/eval_heldout.py:567, eval/nan_probe.py:24, eval/score_matrix.py:1789).
+open: a check that a platform-conditional predicate is tested on every platform where it can fire; none exists.
+
 ### §81 (2026-09-02, R2-c)
 A mutation check grepped for a keyword instead of reading the exit code; the keyword appeared in a comment. Evidence: scripts/harness.py.
 open: a check that mutation verification reads exit codes, not text; none exists.
