@@ -525,6 +525,23 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
             missing = missing + events_pod_lacks(pod_rows, local_rows, keys[rel])
         else:
             missing, coll = diff_rows(pod_rows, local_rows, keys[rel])
+            # THE SAME UNION, MIRRORED. The event union was added for --push and never given to
+            # the pull, so an event the POD holds under a key the repository already has could not
+            # come home -- the exact defect --push was written to fix, surviving in the direction
+            # this file is named after.
+            #
+            # MEASURED 2026-09-04 (6e's report): the pod held two events for
+            # (b0_headmix_armA, 2026-09-04 11:10) -- `fail vanished` from the ghost monitor, then
+            # `dropped` with "ghost: monitor invoked with the wrong repo root, void". Two
+            # pod_push --all runs pulled the first and then nothing, because diff_rows compares
+            # each side's LAST row per key: once the repo had any row for that key, the key was no
+            # longer `missing` and the void event was unreachable. A void that cannot travel leaves
+            # the ghost row standing as the current state in main while the pod says it is void.
+            #
+            # Not a second implementation: events_pod_lacks with the arguments in pull order, so
+            # its "only events AFTER the receiving side's last one for that key" rule applies
+            # unchanged and an older event still cannot fold a closed row back open.
+            missing = missing + events_pod_lacks(local_rows, pod_rows, keys[rel])
         kept = []
         for k, why, lrow, prow in coll:
             ok, stale = settled(rel, k, lrow, prow, idx)
@@ -874,6 +891,64 @@ def _selftest():
         f"(the event union) and the whole new key (diff_rows), each exactly once -- if the "
         f"close is missing the wiring is gone; if a name appears twice the two sources overlap "
         f"and the pod gets a duplicate event"
+    )
+
+    # THE SAME WIRING IN THE PULL DIRECTION, which is what this file is named after and is
+    # where the union was missing for a day. The broken world is the real pair 6e reported:
+    # the pod holds `fail` and then `dropped` for one (name, started); the repository holds
+    # only `fail`. Two pod_push --all runs brought the first row home and then nothing,
+    # because the pull branch called diff_rows alone -- and diff_rows compares each side's
+    # LAST row per key, so once the repo held any row for that key the void event had no way
+    # across. The consequence is not cosmetic: main keeps showing the ghost row as current
+    # state while the pod says it is void.
+    _pull_pod = [dict(start, name="b0_headmix_armA", started="2026-09-04 11:10",
+                      status="fail", result="vanished"),
+                 dict(close, name="b0_headmix_armA", started="2026-09-04 11:10",
+                      status="dropped", result="ghost: wrong repo root, void")]
+    _pull_loc = [_pull_pod[0]]
+
+    def _fake_pull(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _pull_pod), None
+
+    _tmp2 = __import__("tempfile").mkdtemp(prefix="ledger_pull_union_")
+    os.makedirs(os.path.join(_tmp2, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_tmp2, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                for _r in _pull_loc:
+                    _f.write(json.dumps(_r, ensure_ascii=False) + "\n")
+    _prow = {r[0]: r for r in survey(root=_tmp2, reader=_fake_pull, push=False)}
+    _pmiss = _prow["runs/experiments.jsonl"][3]
+    assert [r.get("status") for r in _pmiss] == ["dropped"], (
+        f"survey(push=False) offered {[r.get('status') for r in _pmiss]}. The pod's SECOND "
+        f"event under a key the repository already has must come home -- diff_rows cannot "
+        f"see it, so removing the event union from the pull branch leaves the void row "
+        f"stranded on the pod and the ghost row standing in main"
+    )
+    # ...and the pull must not run BACKWARDS. The negative control is the mirror world: the
+    # pod holds only the first event and the repository holds both. Nothing is due home, and
+    # a pull that offered the repository's own later event would append it to a file the pod
+    # is the authority for. Swapping the two arguments in the pull branch turns the assertion
+    # above green-to-empty and this one red, so the pair pins the orientation, not just the
+    # presence, of the call.
+    def _fake_pull_back(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return json.dumps(_pull_pod[0], ensure_ascii=False) + "\n", None
+
+    _tmp3 = __import__("tempfile").mkdtemp(prefix="ledger_pull_back_")
+    os.makedirs(os.path.join(_tmp3, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_tmp3, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                for _r in _pull_pod:
+                    _f.write(json.dumps(_r, ensure_ascii=False) + "\n")
+    _brow = {r[0]: r for r in survey(root=_tmp3, reader=_fake_pull_back, push=False)}
+    assert _brow["runs/experiments.jsonl"][3] == [], (
+        f"the pull offered {_brow['runs/experiments.jsonl'][3]} when the repository was the "
+        f"side holding the later event -- the arguments are in push order"
     )
 
     # LINE COUNTS ARE NOT THE ANSWER, and this is the property that decides whether the
