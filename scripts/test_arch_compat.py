@@ -214,8 +214,8 @@ Cfg.grad_ckpt = False
 # plain path would have been green through all of that, which is why both are here and why
 # each asserts TOUCHED ROWS rather than just a finite loss: the silent-skip world produces a
 # perfectly finite loss. Measured then: 0 rows touched on the attn_res path.
-for _ar_on in (True, False):
-    Cfg.attn_res = _ar_on
+for _ar_on, _sp_on in ((True, True), (True, False), (False, True), (False, False)):
+    Cfg.attn_res, Cfg.mem_sparse = _ar_on, _sp_on
     torch.manual_seed(5)
     _mm = HybridLM(Cfg).to(DEV)
     assert _mm.memory is not None and _mm.mem_layers == [1, 3], (_mm.mem_layers,)
@@ -223,14 +223,20 @@ for _ar_on in (True, False):
         _mh, _ = _mm(x, y)
     _mh.float().sum().backward()
     _md = _mm.memory.diagnostics()
-    assert torch.isfinite(_mh).all(), f"memory forward not finite (attn_res={_ar_on})"
+    assert torch.isfinite(_mh).all(), f"memory forward not finite (attn_res={_ar_on} mem_sparse={_sp_on})"
     assert _md["touched_rows"] > 0, (
-        f"attn_res={_ar_on}: the memory was reached by NO token, so this arm trains as the "
+        f"attn_res={_ar_on} mem_sparse={_sp_on}: the memory was reached by NO token, so this arm trains as the "
         f"control while its flags say otherwise -- the 2026-09-05 sublayers() defect")
     assert _mm.memory.values.weight.grad is not None, "value table got no gradient"
-    assert _mm.memory.values.weight.grad.is_sparse, (
-        "mem_sparse=True must give a COO grad: the dense one is 4.3B rows at M3 and defeats "
-        "the index-exchange DDP path entirely")
+    # THE GRAD KIND MUST FOLLOW THE FLAG, in both directions. Asserting is_sparse
+    # unconditionally would have gone red the moment the arms switched to mem_sparse=False, and
+    # asserting nothing would let the flag mean nothing. M1/M2 run FALSE (measured on the pod
+    # 2026-09-05: NCCL raises "does not support all_reduce with sparse tensors" on a COO grad, so
+    # DDP has no sparse path here); the sparse form stays supported for the single-process case
+    # and for M3, which is measured both ways.
+    assert _mm.memory.values.weight.grad.is_sparse == bool(Cfg.mem_sparse), (
+        f"mem_sparse={Cfg.mem_sparse} but grad.is_sparse="
+        f"{_mm.memory.values.weight.grad.is_sparse}: the flag does not describe what ran")
     assert _mm.memory.keys.grad is not None and _mm.memory.keys.grad.abs().sum() > 0, (
         "the keys got no gradient, so the lookup can never learn WHICH values to read and the "
         "table is a fixed random projection")
@@ -317,8 +323,8 @@ _a = HybridLM(Cfg).mem_layers
 Cfg.mem_layers = [1, 3]
 assert HybridLM(Cfg).mem_layers == _a == [1, 3], "list and comma-string forms disagree"
 Cfg.mem_values, Cfg.mem_layers = 0, "3,6,9"
-print("memory layers: fwd/bwd on BOTH _body paths (attn_res on and off), COO value grad, "
-      "keys learn, one shared pool registered once, round-trip exact, legacy ckpt loads, "
+print("memory layers: fwd/bwd on all 4 (attn_res, mem_sparse) combinations, grad kind follows the "
+      "flag, keys learn, one shared pool registered once, round-trip exact, legacy ckpt loads, "
       "bad mem_layers raises OK")
 
 # ------------------------------------------------- memory optimizer group and FP8 exclusion

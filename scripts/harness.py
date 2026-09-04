@@ -14840,6 +14840,12 @@ _UNFROZEN_ALLOWLIST = {
     # declare settled a number nobody has measured. The architecture keys that DO decide what the
     # model is -- mem_values, mem_top_k, mem_layers, mem_sparse -- are frozen.
     "mem_lr", "mem_wd",
+    # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
+    # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
+    # it would refuse the second arm's launch, which is the opposite of the intent. It is also the
+    # one field here whose value is checked elsewhere: train.py refuses an empty mem_arm whenever
+    # mem_values is set, so it cannot be quietly omitted the way an unfrozen key usually can.
+    "mem_arm",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
