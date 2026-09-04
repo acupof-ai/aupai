@@ -247,13 +247,25 @@ def _manifest_cot_skywork_or1():
     return _manifest_hf_tree("Skywork/Skywork-OR1-RL-Data")
 
 
+def _ot3_probe_ok(url):
+    """True if the URL resolves to a final 200, following redirects (hf-mirror and
+    modelscope both 302 to a CDN -- a HEAD probing the FIRST response line calls
+    an available mirror 'down'). curl -4 (pod IPv6 egress broken), 10 s timeout
+    (the mirror-rule floor), final status judged after -L. 2026-09-04: hf-mirror
+    302->AWS CDN, modelscope 302->cdn-lfs-cn, both final 200; the pre-fix -sI
+    rejected the 302 and REFUSEd a fetchable source."""
+    import subprocess
+    p = subprocess.run(["curl", "-4", "-sIL", "-o", "/dev/null", "-w", "%{http_code}", "-m", "10", url],
+                       capture_output=True, text=True, timeout=12)
+    return p.returncode == 0 and p.stdout.strip() == "200"
+
+
 def _manifest_cot_ot3():
     """32 of 120 slices for the cot_ot3 role (aupai-6e 2026-09-03): depends on
     NO tree API -- the filenames follow the pattern train-000NN-of-00120.parquet,
     so the list is built from the pattern, then each resolve path is probed
-    (curl -4 -I, hf-mirror first, modelscope second) and the one that answers 200
-    is used. fetch_stats records which host served each file during the download."""
-    import subprocess
+    (hf-mirror first, modelscope second) and the one that answers a final 200
+    (redirects followed) is used. fetch_stats records which host served each file."""
     base_hf = "https://hf-mirror.com/datasets/open-thoughts/OpenThoughts3-1.2M/resolve/main/data/"
     base_ms = "https://www.modelscope.cn/api/v1/datasets/open-thoughts/OpenThoughts3-1.2M/repo?FilePath=data/"
     out = []
@@ -261,13 +273,11 @@ def _manifest_cot_ot3():
         name = f"train-{i:05d}-of-00120.parquet"
         for base, host in ((base_hf, "hf-mirror.com"), (base_ms, "www.modelscope.cn")):
             url = f"{base}{name}"
-            probe = subprocess.run(["curl", "-4", "-sI", "-m", "10", url],
-                                   capture_output=True, text=True, timeout=12)
-            if probe.returncode == 0 and probe.stdout.startswith("HTTP/") and " 200" in probe.stdout.split("\r\n")[0]:
+            if _ot3_probe_ok(url):
                 out.append((name, url, 0))
                 break
         else:
-            print(f"  {name}: no host answered 200 (hf-mirror/modelscope) -- skipped", file=__import__("sys").stderr, flush=True)
+            print(f"  {name}: no host answered a final 200 (hf-mirror/modelscope) -- skipped", file=__import__("sys").stderr, flush=True)
     if not out:
         raise SystemExit("REFUSING: none of the 32 OT3 slices resolved on hf-mirror or modelscope")
     return out
@@ -392,12 +402,31 @@ def _selftest():
             self.send_header("Connection", "close")
             self.end_headers()
 
+        def _ok(self):
+            self.send_response(200)
+            self.send_header("Content-Type", "application/octet-stream")
+            self.send_header("Content-Length", str(len(payload)))
+            self.send_header("Connection", "close")
+            self.end_headers()
+
+        def _route(self, body):
+            if self.path == "/red":
+                self.send_response(302)
+                self.send_header("Location", "/x.jsonl")
+                self.send_header("Connection", "close")
+                self.end_headers()
+            elif self.path == "/missing":
+                self.send_error(404)
+            else:
+                self._ok()
+                if body:
+                    self.wfile.write(payload)
+
         def do_HEAD(self):
-            self._ok()
+            self._route(body=False)  # probe uses curl -I; the 302/404 must answer on HEAD
 
         def do_GET(self):
-            self._ok()
-            self.wfile.write(payload)
+            self._route(body=True)
 
         def log_message(self, *a):
             pass
@@ -408,9 +437,15 @@ def _selftest():
     d = tempfile.mkdtemp()
     part = os.path.join(d, "shard.part")
     good = f"http://127.0.0.1:{port}/x.jsonl"
+    red = f"http://127.0.0.1:{port}/red"      # 302 -> /x.jsonl: fetchable behind a redirect
+    missing = f"http://127.0.0.1:{port}/missing"  # 404: must be judged down
     closed_a = "http://127.0.0.1:9/x.jsonl"  # discard port: refused, fails fast
     closed_b = "http://127.0.0.1:8/y.jsonl"
     try:
+        # (a1) the OT3-style redirect probe judges the FINAL status, not the 302 first line
+        assert _ot3_probe_ok(red) is True, f"302->200 probe must be True, got {_ot3_probe_ok(red)}"
+        assert _ot3_probe_ok(missing) is False, "404 probe must be False"
+        assert _ot3_probe_ok(closed_a) is False, "closed port probe must be False"
         # (a) failover: closed first host abandoned, server host serves the bytes
         r, server = _fetch_one([closed_a, good], part, "t37selftest", None)
         assert r.returncode == 0, f"failover did not serve: rc {r.returncode}"
