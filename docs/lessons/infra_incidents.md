@@ -96,6 +96,10 @@ open: a check that perturbations reach the target path; none exists.
 A perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population. Evidence: scripts/test_*.py.
 open: a check that perturbation scale exceeds instrument resolution; none exists.
 
+### §180 (2026-09-05, R2-b)
+A co-residency refusal check's population was narrower than the rule's quantity. `check_coresident_cache_refusal` (38af3d47) guarded `train._domain_seqs` callers, but the rule's quantity is host bytes off /data00 — any file that `torch.load`s `/data00/tokens_<domain>.pt` by path read 35 GB with no refusal. The check's author's own new probe was that file. In the same commit, `_broken_coresident_bypass` was written as the broken world but never wired to a selftest — a check that cannot fail, in the commit that added the check. Evidence: scripts/harness.py:3752,3943, 38af3d47.
+open: a check that the population of a refusal check matches the rule's quantity (all readers of a resource, not callers of one function); none exists.
+
 ### §61 (2026-09-02, R2-d)
 A substring/word match read a comment mentioning the symbol as evidence the symbol was used. Evidence: scripts/harness.py.
 open: a check that text matches exclude comments and strings; none exists.
