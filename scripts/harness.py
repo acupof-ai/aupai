@@ -90,32 +90,97 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
-    # Measured by hand on this checkout, 2026-09-04 (load avg 6.5, 24 users): pod_stamp_is_main
-    # WARN in 2.9s, snapshot_logs_say_so_at_the_tail PASS in 9.3s over 84 tracked logs. Both
-    # banked 3 consecutive strikes and FAILed a commit with "has not actually run since", and
-    # neither has anything to do with what the commit changed -- the fifth and sixth instance of
-    # the same shape as the four entries above.
+    # FOUND TWICE, INDEPENDENTLY, THE SAME HOUR: b0 hit these two on the head-hybrid closes and
+    # tilerl hit them on their own commit, each measuring separately. Both sets of numbers are
+    # kept because they disagree in a way that decides the value.
     #
-    # WHAT THEY ACTUALLY SPEND, because the fix has to match the cause: pod_stamp_is_main shells
-    # out to the pod to read data/pod_synced_head, so its wall time is a network round trip and
-    # cannot be optimised locally at all. snapshot_logs reads the last 5 lines of every tracked
-    # log and compares against the pod's copies; 9.3s over 84 files is ~0.11s each, so it grows
-    # with the log count and will cross any fixed deadline as runs/ fills. That is cost growth,
-    # not a hang, which is the distinction the strike mechanism cannot make on its own.
+    # tilerl, by hand (load avg 6.5, 24 users): pod_stamp_is_main WARN in 2.9s,
+    # snapshot_logs_say_so_at_the_tail PASS in 9.3s over 84 tracked logs; 3 strikes each; ~4x the
+    # measured wall gives 20s and 40s. Also measured `pod 'echo ok'` at 2.8-4.7s for a BARE round
+    # trip, which is the floor under pod_stamp_is_main and the reason no local change can help it.
     #
-    # ~4x the measured wall, the same ratio every entry here uses. Not larger: the deadline still
-    # has to catch a real hang, and a network call that takes 40s IS a hang worth reporting.
-    # Independently measured the same hour (tilerl): `pod 'echo ok'` is 2.8-4.7s for a
-    # BARE round trip, which is the floor under pod_stamp_is_main and the reason no local
-    # change can help it.
-    "pod_stamp_is_main": 20,
-    "snapshot_logs_say_so_at_the_tail": 40,
+    # b0, solo hand runs: pod_stamp_is_main 1.81/5.20/4.92s, snapshot 3.97/7.21/6.43s -- all PASS,
+    # 5 strikes and 2 strikes. Then the measurement that changes the answer: INSIDE THE FULL CHECK
+    # SET, snapshot took 15.8s (2.2x its solo worst) and pod_stamp_is_main TIMED OUT AT 20.0s while
+    # still passing solo. So 20s is observed to be insufficient, not predicted to be; b0's first
+    # fix set exactly 20s and had to be corrected after watching it fail.
+    #
+    # WHY THE HIGHER VALUES WIN. Both entries used the right ratio on the wrong sample: a solo run
+    # on an idle machine does not describe the run that has to pass. Several auth=pod checks make
+    # tunnel calls in one run and contend for the same tunnel, so in-set cost is a multiple of
+    # alone-cost. 60s is ~4x b0's in-set measurement, the same ratio, on the sample that matters.
+    # tilerl's concern is still correct and still satisfied -- the deadline must catch a real hang,
+    # and a pod call that takes 60s IS a hang worth reporting; it is one round trip whose bare
+    # floor both of us measured at 3-8s, so 60s cannot mask a hang while admitting a slow read.
+    #
+    # snapshot's cost grows with the tracked-log count (~0.11s each over 84-85 files), so it will
+    # cross any fixed deadline as runs/ fills. That is cost growth, not a hang -- the distinction
+    # the strike mechanism cannot make on its own.
+    #
+    # NOT fixed by caching the stamp locally: the check's claim is that the POD's stamp names main,
+    # and a cached answer is exactly the stale reading it exists to catch.
+    "pod_stamp_is_main": 60,
+    "snapshot_logs_say_so_at_the_tail": 60,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
 _TIMEOUT_STATE = os.path.join(ROOT, "runs", "check_timeouts.json")
 #: Consecutive timeouts before a TIMEOUT becomes a FAIL.
 _TIMEOUT_STRIKES = 2
+
+#: Cached answer to "can this process reach the pod at all", None until asked.
+_POD_REACHABLE = None
+#: How long the reachability probe may take. Short on purpose: this exists to tell an
+#: unreachable host from a slow check, and a probe that itself hangs answers neither.
+_POD_PROBE_TIMEOUT = 8
+
+
+def pod_reachable():
+    """Whether ~/bin/pod answers at all, measured ONCE per process. (bool, why).
+
+    6e's ruling, 2026-09-04, from a commit refused twice while the tn tunnel flapped: an auth=pod
+    check with the pod unreachable must SKIP naming the reason, never time out and block a commit it
+    has nothing to say about. Three states present identically as a TimeoutError today and the
+    deadline mechanism cannot separate them:
+
+      a hang            what the deadline exists for. Raise nothing, fix the check.
+      cost growth       snapshot_logs_say_so_at_the_tail reads 84 tracked logs at ~0.11s each and
+                        will cross ANY fixed deadline as runs/ fills. A bigger number buys time,
+                        not a fix.
+      unreachable host  nothing to measure. Not the check's fault and not the repo's.
+
+    Raising deadlines is the wrong lever for two of the three, which is why this exists rather than
+    another _CHECK_TIMEOUTS entry. On an unreachable pod the check SKIPs and its strike counter is
+    NOT incremented -- a check that never got to run has not struck out, and banking strikes against
+    a dropped tunnel is what produced "has not actually run since" on two checks that both pass by
+    hand (2.9s and 9.3s, measured at load avg 6.5).
+
+    ONE PROBE PER PROCESS, cached. `harness check` runs 83 checks and ~20 are auth=pod; probing per
+    check would multiply a dead tunnel's timeout by twenty. The cache is per-process on purpose: a
+    tunnel that comes back mid-run is not worth the complexity, and the next run re-probes.
+
+    Cheap by construction -- `true` in the container, not a file read -- so it measures the tunnel
+    and nothing else.
+    """
+    global _POD_REACHABLE
+    if _POD_REACHABLE is not None:
+        return _POD_REACHABLE
+    pod = os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod):
+        _POD_REACHABLE = (False, "~/bin/pod is not installed on this machine")
+        return _POD_REACHABLE
+    try:
+        r = subprocess.run([pod, "true"], capture_output=True, text=True,
+                           timeout=_POD_PROBE_TIMEOUT)
+        ok = r.returncode == 0
+        why = "" if ok else (f"~/bin/pod exited {r.returncode}: "
+                             f"{(r.stderr or r.stdout or '').strip()[:80]}")
+    except subprocess.TimeoutExpired:
+        ok, why = False, f"~/bin/pod did not answer within {_POD_PROBE_TIMEOUT}s (tunnel down)"
+    except OSError as e:
+        ok, why = False, f"~/bin/pod could not be run: {e}"
+    _POD_REACHABLE = (ok, why)
+    return _POD_REACHABLE
 
 
 class SelftestSkip(Exception):
@@ -4138,14 +4203,40 @@ def check_shared_file_claim(root):
     announce is no record. A claim is a file under runs/claims/files/<path>.json; the
     pre-commit hook refuses a staged shared-file commit with no live claim. This check is the
     `harness check` view of the same gate: shared files staged with no claim would FAIL.
-    Runs on staged content, so it SKIPs with nothing staged (the hook is the enforcer)."""
+    Runs on staged content, so it SKIPs with nothing staged (the hook is the enforcer).
+
+    A MERGE IS NOT AN EDIT, and this is measured, not defensive. During a merge `git diff --cached`
+    lists every incoming file, so any session merging main after someone else changed AGENTS.md sees
+    its own commit refused for a change it did not write -- and the merge cannot be split, because
+    git refuses a partial commit during a merge. Measured 2026-09-04, minutes after the check landed:
+    `de` merging main was refused naming AGENTS.md, whose only change came from 38af3d47 on another
+    branch; every worktree merging main was blocked the same way, which is a gate that stops the work
+    it was written to protect.
+
+    THE COMPARISON IS AGAINST MERGE_HEAD, NOT THE MERGE BASE, and the first version of this fix got
+    it backwards. Measured on this merge: `--cached <merge-base>` returns 18 paths, main's incoming
+    changes, AGENTS.md among them -- exactly the wrong set, and it still FAILed. `--cached
+    <MERGE_HEAD>` returns 3, this branch's own files. MERGE_HEAD is the side being merged IN, so
+    diffing the index against it leaves what THIS branch contributes, which is the subject the rule
+    is about. A shared file this branch really did edit is still caught, because its change is in
+    that diff.
+    """
     import subprocess as sp
     shared = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
-    staged = sp.run(["git", "-C", root, "diff", "--cached", "--name-only"],
-                    capture_output=True, text=True).stdout.split()
+    merge_head = sp.run(["git", "-C", root, "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                        capture_output=True, text=True).stdout.strip()
+    args = ["git", "-C", root, "diff", "--cached", "--name-only"]
+    during_merge = ""
+    if merge_head:
+        args.append(merge_head)
+        during_merge = (f" (merge in progress; this branch's own paths, against MERGE_HEAD "
+                        f"{merge_head[:8]})")
+
+    staged = sp.run(args, capture_output=True, text=True).stdout.split()
     touched = [p for p in staged if p in shared]
     if not touched:
-        return SKIP, "no staged shared-file edit; the pre-commit hook enforces staged claims"
+        return SKIP, ("no staged shared-file edit; the pre-commit hook enforces staged claims"
+                      + during_merge)
     claims_dir = os.path.join(root, "runs", "claims", "files")
     missing = []
     for p in touched:
@@ -4161,8 +4252,8 @@ def check_shared_file_claim(root):
             missing.append(p)
     if missing:
         return FAIL, (f"shared-file edit(s) without a live claim: {', '.join(missing)} -- "
-                      "claim first via `harness claim-file acquire --path <file>`")
-    return PASS, f"{len(touched)} shared-file edit(s) claimed"
+                      f"claim first via `harness claim-file acquire --path <file>`{during_merge}")
+    return PASS, f"{len(touched)} shared-file edit(s) claimed{during_merge}"
 
 
 def _broken_shared_file_claim():
@@ -7574,7 +7665,18 @@ def check_score_matrix(root):
             # that resolves it (6e's ruling: make the escape visible, do not fix it by accident).
             unverifiable.append(str(r.get("name", "?")))
             continue
-        if f"{cand}.pt" not in scored:
+        # THE `#cu` SUFFIX IS A SCORE, NOT A DIFFERENT CHECKPOINT. score_matrix.py:1602 writes
+        # `<ckpt>.pt#cu` when cu_path == "doc_cu", deliberately, so a doc_cu re-score cannot silently
+        # REPLACE the cu_none row it exists to be compared against -- rows fold on (ckpt, profile)
+        # and the two differ by up to 0.28 nat. This check matched the bare name exactly, so a run
+        # scored ONLY on doc_cu read as never scored: b0 hit it on armB, and measured on the live
+        # matrix 2026-09-05, 7 of 69 rows carry the suffix and ckpt_b0_headmix_armB.pt is scored
+        # under `#cu` alone. A gate that calls a scored run unscored is the mirror of one that calls
+        # an unscored run fine, and it costs a card to satisfy.
+        #
+        # Split on "#" rather than matching "#cu" literally: the suffix is the cu_path, which the
+        # producer interpolates, so a second path added there stays covered without touching this.
+        if not any(str(s).split("#", 1)[0] == f"{cand}.pt" for s in scored):
             missing.append(cand)
     if missing:
         return FAIL, f"ok training run(s) with no score-matrix record: {sorted(set(missing))[:5]}"
@@ -7621,6 +7723,38 @@ def _broken_score_matrix_no_ckpt():
             [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
             check=True, capture_output=True,
         )
+    return d
+
+
+def _broken_score_matrix_cu_only():
+    """An ok training row scored ONLY under the `#cu` suffix -- must PASS, and did not.
+
+    The world armB was in, and the only one of these three tiers where the check was WRONG rather
+    than merely incomplete: score_matrix.py:1602 writes `<ckpt>.pt#cu` for a doc_cu score, on purpose
+    (rows fold on (ckpt, profile), so an unsuffixed doc_cu row would REPLACE the cu_none row it
+    exists to be compared against, and the two differ by up to 0.28 nat). This check matched the bare
+    name exactly, so a run scored only on doc_cu read as never scored and the fix was to spend a card
+    re-scoring something already measured. Measured on the live matrix 2026-09-05: 7 of 69 rows carry
+    the suffix, and ckpt_b0_headmix_armB.pt appears under `#cu` alone.
+
+    A PASS-expecting world, unlike its two siblings. The registered `_broken_score_matrix` covers the
+    FAIL tier; what this pins is that a real score is not read as its absence. Reverting the split to
+    an exact match turns it red.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "cuonly", "--cmd", "./run_ddp.sh --name cuonly"],
+        ["done", "--name", "cuonly", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    # The suffix spelled by the producer, not by hand: score_matrix.py interpolates cu_path, so a
+    # literal here would be a second copy of that convention to keep in step.
+    with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_cuonly.pt#cu", "cu_path": "doc_cu", "profile": "full",
+                             "measured": "2026-09-05", "metrics": {}}) + "\n")
     return d
 
 
@@ -10610,41 +10744,68 @@ def check_no_ghost_close(root):
 
 
 def _broken_no_ghost_close():
-    """The REAL ledger with the two events f4d48444 pulled home removed -- the world as it was.
+    """The REAL ledger, with every TERMINAL event under armA's 09:09 key removed.
 
-    Mutated, not hand-written, and the mutation is a DELETION of real rows rather than an edit, so
-    there is no size-preserving-pyc question here (this world runs no python it wrote). Removing
-    armA's `error` and `dropped` events restores exactly the state 6e reported: the pod held the
-    measurement, 09:09 read `running`, and a `fail vanished` row stood under 11:10. Measured
-    2026-09-04: 1 ghost in this world, 0 in the real ledger.
+    Mutated, not hand-written: the ledger is the real file and the mutation is a deletion of real
+    rows, so there is no size-preserving-pyc question (this world runs no python it wrote). What it
+    restores is the state 6e reported -- 09:09 open, a terminal row standing under the later 11:10
+    key -- which is a ghost close by this check's predicate.
 
-    The check that this world is load-bearing and not merely different: it must hold a terminal row
-    under a LATER `started` than a still-open key of the same name. Asserted here, because a future
-    edit to armA's rows could leave the deletion valid and the property absent.
+    KEYED, NOT ROW-FILTERED, and that correction is why this world exists in its second form. The
+    first version deleted armA's `error` and `dropped` rows by status and asserted the property with
+    a per-ROW test: some open row earlier than some closed row. That was true of the ledger it was
+    written against and stopped being true hours later, when two `ok` rows for 09:09 arrived from
+    b0's doc_cu pass -- the key was then closed, the world held no ghost, and the check PASSED on its
+    own broken world. CI caught it as `no_ghost_close reported PASS on its broken world` (run
+    33890047643); locally it had been green all along, because a repair that lands between writing a
+    world and running it is invisible to a per-row assertion. So the deletion is now defined by the
+    property: every terminal event under the chosen key goes, whatever its status, which leaves the
+    key open by construction.
+
+    The assertion uses check_no_ghost_close's OWN predicate rather than restating it. A world that
+    re-implements what it is testing can agree with a broken check, and this world's whole failure
+    mode was an assertion that disagreed with the check it guards.
     """
     d = _tmp_repo()
     src = os.path.join(ROOT, "runs", "experiments.jsonl")
-    kept = []
+    rows = []
     for line in open(src, encoding="utf-8"):
         if not line.strip():
             continue
         try:
-            r = json.loads(line)
+            rows.append(json.loads(line))
         except Exception:
             continue
-        if r.get("name") == "b0_headmix_armA" and str(r.get("status")) in ("error", "dropped"):
+    # The key to open: one that has BOTH an earlier key of the same name and terminal events of its
+    # own, so deleting those events leaves a ghost. armA is the incident and is tried first; any
+    # other name with two keys works identically, so the world survives armA being pruned.
+    by_name = {}
+    for r in rows:
+        by_name.setdefault(r.get("name"), set()).add(str(r.get("started")))
+    victim = None
+    for name in ["b0_headmix_armA"] + sorted(k for k in by_name if k != "b0_headmix_armA"):
+        starts = sorted(by_name.get(name) or [])
+        if len(starts) < 2:
             continue
-        kept.append(r)
-    arm = [r for r in kept if r.get("name") == "b0_headmix_armA"]
-    opens = {str(r.get("started")) for r in arm if _exp_open(r)}
-    closes = {str(r.get("started")) for r in arm if not _exp_open(r)}
-    assert opens and closes and min(opens) < max(closes), (
-        f"b0_headmix_armA no longer holds an open key earlier than a closed one "
-        f"(open {sorted(opens)}, closed {sorted(closes)}); this world would report no ghost and "
-        f"the check would pass on it untested")
+        # open the EARLIEST key; a later key of the same name then stands as the ghost close
+        if any(not _exp_open(r) for r in rows
+               if r.get("name") == name and str(r.get("started")) == starts[0]):
+            victim = (name, starts[0])
+            break
+    assert victim, ("no experiments name holds two keys with a terminal event under the earlier "
+                   "one; this world cannot construct a ghost close and the check would pass "
+                   "untested")
+    vname, vstart = victim
+    kept = [r for r in rows
+            if not (r.get("name") == vname and str(r.get("started")) == vstart
+                    and not _exp_open(r))]
     with open(os.path.join(d, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
         for r in kept:
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    st, ev = check_no_ghost_close(d)
+    assert st == FAIL, (
+        f"opening {vname} at {vstart} did not produce a ghost close: the check reports {st} "
+        f"({ev[:120]}). The world must hold the property before it is allowed to judge the check")
     return d
 
 
@@ -11451,9 +11612,30 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
         except TimeoutError:
-            # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
-            # is what separates "this machine was busy" from "this check never runs".
-            n = prev_strikes.get(name, 0) + 1
+            # AN UNREACHABLE POD IS NOT A TIMEOUT, and the strike counter must not move for one.
+            # 6e's ruling 2026-09-04, from a commit refused twice while the tn tunnel flapped: a
+            # deadline hit on an auth=pod check off-pod can mean the check hangs OR that there was
+            # nothing on the other end, and only the first is the check's fault. Banking strikes
+            # against a dropped tunnel is what produced "has not actually run since" on
+            # pod_stamp_is_main and snapshot_logs, both of which pass by hand in 2.9s and 9.3s, and
+            # a FAIL there blocks commits the check has nothing to say about.
+            unreachable = ""
+            if EVIDENCE.get(name) == "pod" and not pod_drift.is_pod(root):
+                ok, why = pod_reachable()
+                unreachable = "" if ok else why
+            limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
+            if unreachable:
+                # `strikes[name]` deliberately NOT set: only checks that timed out THIS run keep a
+                # count (see after the loop), so leaving it unset RESETS the counter, which is right
+                # -- a check that never got to run has not struck out.
+                state = SKIP
+                evidence = (f"pod-authoritative check, and the pod is unreachable from here: "
+                            f"{unreachable}. Not a timeout in the check -- rerun when the tunnel "
+                            f"is up")
+            else:
+                # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
+                # is what separates "this machine was busy" from "this check never runs".
+                n = prev_strikes.get(name, 0) + 1
             strikes[name] = n
             limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
             if n >= _TIMEOUT_STRIKES:
@@ -13761,11 +13943,18 @@ def _demo(only=None):
     # fixed for: reading_artifact is an escape hatch, so a path that does not exist must FAIL rather
     # than wave the row through; and a cmd that names no checkpoint used to be skipped outright,
     # which is how e1_31_middle_layer_loop passed while its honestly-written sibling did not.
+    #
+    # The third expects PASS, which is why it is listed here rather than left to the registered
+    # world: a run scored only under the `#cu` suffix must not read as unscored (4c's report, b0 hit
+    # it on armB). A check that calls a scored run unscored costs a card to satisfy, so the wrong
+    # answer is expensive in the opposite direction from the other two.
     for _w, _want, _label, _needle in (
         (_broken_score_matrix_dangling_artifact, FAIL, "reading_artifact at a missing path",
          "does not exist"),
         (_broken_score_matrix_no_ckpt, WARN, "an ok training row whose cmd names no checkpoint",
          "names no checkpoint"),
+        (_broken_score_matrix_cu_only, PASS, "a run scored only under the #cu suffix",
+         "score-matrix record"),
     ):
         _d = _w()
         if _d:
@@ -14071,13 +14260,18 @@ def _demo(only=None):
     os.makedirs(os.path.join(d2, "scripts"), exist_ok=True)
     os.makedirs(os.path.join(d2, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "scripts", "pod_drift.py"), os.path.join(d2, "scripts", "pod_drift.py"))
-    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d2, "AGENTS.md"))
+    # NOT AGENTS.md. This world's subject is what the hook does to the manifest on a scoped edit,
+    # and AGENTS.md was only a convenient file to edit -- but it is one of the four SHARED files, so
+    # the claim gate (2026-09-04) refuses the commit and the world fails for a reason that has
+    # nothing to do with manifests. Any tracked non-shared file makes the same point; scripts/exp.py
+    # is real, in pod_drift's scope, and nobody's shared file.
+    shutil.copy(os.path.join(ROOT, "scripts", "exp.py"), os.path.join(d2, "scripts", "exp.py"))
     subprocess.run(["git", "add", "-A"], cwd=d2, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=d2, capture_output=True)
     # Stage a scoped edit
-    with open(os.path.join(d2, "AGENTS.md"), "a") as f:
+    with open(os.path.join(d2, "scripts", "exp.py"), "a") as f:
         f.write("\n# test edit\n")
-    subprocess.run(["git", "add", "AGENTS.md"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "add", "scripts/exp.py"], cwd=d2, capture_output=True)
     r = subprocess.run([hook_dst2], cwd=d2, capture_output=True)
     assert r.returncode == 0, f"hook must pass on scoped edit: {r.stdout} {r.stderr}"
     # THE HOOK MUST LEAVE THE MANIFEST ALONE (shape A, 2026-09-04). This world used to assert
@@ -15030,7 +15224,23 @@ def cmd_free_card(argv):
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
     a = ap.parse_args(argv)
-    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    # ROOT, EXPLICITLY, and it is the reason CI red #4 could not be tested. _allocation_cards
+    # defaults `root` to ROOT -- the harness's own tree -- so free-card read the live grant no
+    # matter what directory it ran in, and scripts/test_free_card.py could fake nvidia-smi but had
+    # no way to fake the allocation. Its verdict therefore moved with whatever the controller
+    # granted an hour ago: 2eccf977 cleared the head-hybrid grant and the test went red on CI while
+    # passing on any checkout that predated the clear. AUPAI_ALLOC_ROOT names the tree to read the
+    # two allocation files from, so a caller can supply a fixture; unset it stays ROOT, which is the
+    # production behaviour and the only correct one for a real launch (a job must not get its cards
+    # from whatever directory it was started in).
+    alloc_root = os.environ.get("AUPAI_ALLOC_ROOT") or ROOT
+    # raise_on_false STAYS SET. free-card hands a card to a job that is about to allocate on it, so
+    # it is a launch-side caller in _grant_cards' sense: an explicit launch_block_granted=false is
+    # the controller saying the block is not available, and falling back from it is what put a launch
+    # on cards 0-6 with a false grant sitting right there. A check reads with it clear; this is not
+    # a check. The refusal reaching stderr and rc=1 is the correct behaviour and is what
+    # test_free_card's no-grant case asserts.
+    lane = [c.strip() for c in _allocation_cards(False, root=alloc_root).split(",") if c.strip()]
     if not lane:
         print("no lane card in the allocation", file=sys.stderr)
         return 1
