@@ -421,7 +421,25 @@ def check_reported_path_is_written(root):
     Source-level, because it is a wiring defect: in a function that binds out_path from
     an open_artifact handle, a later `preds_path` in a print or a dict value is the
     stale name. Only the same function is examined, so a runner that never versions is
-    not implicated."""
+    not implicated.
+
+    THE MARKER IS THE DEFECT'S SHAPE, NOT THE NAME (6e, from e1's 29b31367). This matched any
+    LOAD of a Name called `preds_path`, so it refused a correct CALL to a function of that name
+    -- and e1 renamed a new function to `artifact_path` to get past it, recording the rename's
+    reason in its own docstring. A rename to satisfy a check is the check making the codebase
+    worse: the identifier was never the defect. The defect is a variable ASSIGNED IN THIS
+    FUNCTION and then reported instead of out_path, so both halves are now required:
+
+      - the name must be BOUND somewhere in the same function (assignment, with-as, for
+        target, walrus). `preds_path(...)` calls a function defined elsewhere and binds
+        nothing here, so it is not the shape; `preds_path = build(...)` then
+        `print(preds_path)` is.
+      - it must be LOADED outside the open_artifact call that would version it.
+
+    A module-level or imported `preds_path` reads as unbound here and passes, which is
+    correct: it cannot hold this function's stale versioned name. Verified against both worlds
+    -- the historical defect still FAILs, and e1's call form passes without a rename.
+    """
     bad = []
     files = 0
     for fp in sorted(glob.glob(os.path.join(root, "eval", "*.py"))
@@ -441,6 +459,20 @@ def check_reported_path_is_written(root):
             body = ast.dump(fn)
             if "open_artifact" not in body or "out_path" not in body:
                 continue
+            # Is `preds_path` a LOCAL VARIABLE of this function? Every binding form, because a
+            # walrus or a with-as holds a versioned name just as an assignment does.
+            bound = False
+            for node in ast.walk(fn):
+                if isinstance(node, ast.Name) and node.id == "preds_path" \
+                        and isinstance(getattr(node, "ctx", None), ast.Store):
+                    bound = True
+                elif isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name) \
+                        and node.optional_vars.id == "preds_path":
+                    bound = True
+            if not bound:
+                # A call to a function named preds_path, or an import, binds nothing here and
+                # cannot carry a stale versioned path. e1's 29b31367 is this case.
+                continue
             for node in ast.walk(fn):
                 # print(f"... {preds_path}") and {"preds_path": preds_path}
                 if isinstance(node, ast.Name) and node.id == "preds_path":
@@ -452,6 +484,12 @@ def check_reported_path_is_written(root):
                                 and getattr(anc.func, "id", "") == "open_artifact" \
                                 and any(a is node for a in anc.args):
                             parent_is_call = True
+                        # ALSO not the defect: `preds_path(...)`, where the Name is the callee
+                        # rather than a value being reported. Without this, a function that both
+                        # binds the name and calls something of that name would be flagged at the
+                        # call site -- the same false positive one level in.
+                        if isinstance(anc, ast.Call) and anc.func is node:
+                            parent_is_call = True
                     if not parent_is_call:
                         bad.append(f"{os.path.relpath(fp, root)}:{node.lineno} in "
                                    f"{fn.name}() reports preds_path, not out_path")
@@ -461,10 +499,58 @@ def check_reported_path_is_written(root):
 
 
 def _broken_reported_path():
-    """The REAL eval/l1_fewshot.py with the defect put back: the print reverted from
-    out_path to preds_path. That exact edit is the historical bug, applied to the
-    historical file, not a synthetic runner -- and it was run against the fix before
-    this world existed: FAIL naming l1_fewshot.py:208, then PASS restored."""
+    """eval/l1_fewshot.py AS IT WAS AT 47cb01c2~1 -- the historical defect itself, read out of
+    git rather than reconstructed.
+
+    THE PREVIOUS WORLD STOPPED REPRODUCING THE DEFECT AND STAYED GREEN (found 2026-09-04 while
+    fixing the Name-vs-Call false positive). It took today's file and reverted the print from
+    out_path to preds_path. That was the whole edit in 47cb01c2, so it was a faithful world at
+    the time -- but e1's 29b31367 deleted the `preds_path` VARIABLE, moving the name into a
+    function called artifact_path. Reverting only the print then leaves `preds_path` unbound: a
+    NameError at runtime, not the stale-name defect, and once the check required the name to be
+    a local variable that world reported PASS. The mutation was still applied, the assert on
+    the fixed string still held, and nothing was red.
+
+    The real shape, at 47cb01c2~1: `preds_path` assigned (:168), passed to open_artifact which
+    versions it (:174), the versioned name captured into out_path (:176), attest(out_path)
+    correct (:201), and then :208/:215 print and record preds_path. The correct value was
+    computed and then not used, which is why nothing caught it for a day.
+
+    Read from git, so it cannot drift with the live file again -- the failure above was a world
+    coupled to code that moved underneath it.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    os.remove(os.path.join(d, "eval"))
+    os.makedirs(os.path.join(d, "eval"))
+    for f in glob.glob(os.path.join(ROOT, "eval", "*.py")):
+        shutil.copy(f, os.path.join(d, "eval", os.path.basename(f)))
+    r = subprocess.run(["git", "-C", ROOT, "show", "47cb01c2~1:eval/l1_fewshot.py"],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode or not r.stdout:
+        raise SelftestSkip("47cb01c2~1 is not in this repository; the historical defect is "
+                           "unavailable and a reconstructed world is what just failed")
+    src = r.stdout
+    # The world must hold the defect, not merely an old file: assert the three parts.
+    assert "preds_path = os.path.join(" in src, "the historical file does not bind preds_path"
+    assert "out_path = fout.name" in src, "the historical file does not capture the versioned name"
+    assert 'print(f"preds saved: {preds_path}")' in src, "the historical file does not report it"
+    with open(os.path.join(d, "eval", "l1_fewshot.py"), "w", encoding="utf-8") as f:
+        f.write(src)
+    return d
+
+
+def _positive_reported_path():
+    """THE FALSE POSITIVE, as a world: e1's shape, where `preds_path` is a FUNCTION being
+    called. Returns a tmp root the check must report PASS on.
+
+    Not a broken world -- CHECKS holds one per row and that slot carries the defect. This is
+    the other half, and without it the fix is unverified in the direction it was made: the
+    check refused a correct call to a function of this name (e1's commit 29b31367 records
+    renaming to artifact_path to get past it), so the world that matters asserts the call form
+    is accepted. A check made permissive by a mistake would pass the FAIL world too.
+    """
     import shutil
 
     d = _tmp_repo_shaped()
@@ -475,10 +561,12 @@ def _broken_reported_path():
     p = os.path.join(d, "eval", "l1_fewshot.py")
     with open(p, encoding="utf-8") as f:
         src = f.read()
-    fixed = 'print(f"preds saved: {out_path}")'
-    assert fixed in src, "the fix is gone; this world no longer reinstates anything"
+    # e1's own code with artifact_path renamed BACK to the name the check used as its marker.
+    # Nothing else changes, so if this FAILs, the marker is still the name.
+    assert "def artifact_path(" in src, "l1_fewshot no longer defines artifact_path"
+    src = src.replace("artifact_path(", "preds_path(").replace("def preds_path(", "def preds_path(")
     with open(p, "w", encoding="utf-8") as f:
-        f.write(src.replace(fixed, 'print(f"preds saved: {preds_path}")'))
+        f.write(src)
     return d
 
 
@@ -12772,6 +12860,25 @@ def _demo(only=None):
                     untested.append(f"tasks_well_formed still reported {_st} after the drop_reason "
                                     f"was filled back in, so its FAIL was not caused by the "
                                     f"mutation ({_why[:70]})")
+        finally:
+            shutil.rmtree(_d, ignore_errors=True)
+
+    # reported_path_is_written needs a POSITIVE world, and it is the only reason the fix is
+    # verified in the direction it was made. The check used to match any LOAD of a Name called
+    # preds_path, so it refused a correct CALL to a function of that name and e1 renamed to
+    # artifact_path to get past it (29b31367 records the rename's reason in its own docstring).
+    # A rename to satisfy a check is the check making the codebase worse. MEASURED both ways on
+    # 2026-09-04: on the call-form world the pre-fix logic FAILs at l1_fewshot.py:518 and the
+    # fixed logic PASSes, while on the defect world both FAIL -- so the fix is not merely a
+    # loosening. The FAIL world alone could not tell those apart.
+    _d = _positive_reported_path()
+    if _d:
+        try:
+            _st, _why = check_reported_path_is_written(_d)
+            if _st != PASS:
+                untested.append(f"reported_path_is_written reported {_st} on a CALL to a "
+                                f"function named preds_path -- the marker is still the name, "
+                                f"not the defect ({_why[:80]})")
         finally:
             shutil.rmtree(_d, ignore_errors=True)
 
