@@ -428,7 +428,10 @@ def claim_my_cards(name, note="", wait=0):
     ok, msg = card_claim.acquire(name, cards, wait=wait, note=note, pid=os.getpid())
     if not ok:
         raise SystemExit(f"{name}: {msg}")
-    atexit.register(lambda: card_claim.release(name))
+    # RELEASE THIS PROCESS'S OWN CARDS, not every claim under the name. One name now holds several
+    # disjoint claims -- two score_matrix passes on cards 2 and 4 -- so a name-wide release at
+    # exit would free the other arm's card while its job is still running (b0, 2026-09-04).
+    atexit.register(lambda: card_claim.release(name, cards))
     print(f"[card_claim] {msg}", flush=True)
     return cards
 
@@ -465,11 +468,18 @@ def _demo_claim():
             raise AssertionError("unset CUDA_VISIBLE_DEVICES must refuse, not claim nothing")
         except SystemExit as e:
             assert "CUDA_VISIBLE_DEVICES is unset" in str(e), str(e)
-        assert not os.path.exists(os.path.join(d, "demo_unset.json")), "a refusal wrote a claim"
+        # Through card_claim.claim_file, never a hand-written filename. The claim is keyed on the
+        # name AND the cards since b0's 2026-09-04 defect (one name could hold only one claim, so
+        # two score_matrix passes on disjoint cards excluded each other), and a literal here would
+        # be a second copy of that convention to keep in step -- this assertion is what caught the
+        # rename, so it stays joined to the function that decides it.
+        assert not os.path.exists(os.path.join(d, card_claim.claim_file("demo_unset", ["6"]))), (
+            "a refusal wrote a claim")
 
         os.environ["CUDA_VISIBLE_DEVICES"] = "6"
         assert claim_my_cards("demo_set") == ["6"]
-        rec = json.load(open(os.path.join(d, "demo_set.json"), encoding="utf-8"))
+        rec = json.load(open(os.path.join(d, card_claim.claim_file("demo_set", ["6"])),
+                             encoding="utf-8"))
         assert rec["cards"] == ["6"], rec
         assert rec["pid"] == os.getpid(), (
             f"the claim names pid {rec['pid']}, not this process ({os.getpid()}) -- with "
@@ -478,6 +488,28 @@ def _demo_claim():
         # Two cards, and the set is what CVD says -- not a range, not a count.
         os.environ["CUDA_VISIBLE_DEVICES"] = "2,5"
         assert claim_my_cards("demo_two") == ["2", "5"]
+
+        # ONE NAME, TWO DISJOINT CARDS, BOTH HELD -- b0's production case, 2026-09-04: armA's
+        # score_matrix pass on card 4 and armB's doc_cu pass on card 2 excluded each other because
+        # the claim was keyed on the name alone. Asserted through claim_my_cards and not only in
+        # card_claim's own selftest, because this is the caller that produced the defect and the
+        # one whose atexit hook has to release the right half.
+        os.environ["CUDA_VISIBLE_DEVICES"] = "4"
+        assert claim_my_cards("demo_arms") == ["4"]
+        os.environ["CUDA_VISIBLE_DEVICES"] = "3"
+        assert claim_my_cards("demo_arms") == ["3"], (
+            "a second claim under the same name on a DISJOINT card was refused -- the claim is "
+            "keyed on the name plus its cards precisely so two arms of one script can run")
+        held = sorted(sum((c.get("cards", []) for c in card_claim.claims()[0]
+                           if c.get("name") == "demo_arms"), []))
+        assert held == ["3", "4"], f"both arms must be live at once, got {held}"
+        # And releasing one arm's cards leaves the other's held: the atexit hook passes its own
+        # card list for this reason, since a name-wide release at one arm's exit would free a card
+        # whose job is still running.
+        card_claim.release("demo_arms", ["4"])
+        left = sorted(sum((c.get("cards", []) for c in card_claim.claims()[0]
+                           if c.get("name") == "demo_arms"), []))
+        assert left == ["3"], f"releasing arm 4 must leave arm 3 held, got {left}"
     finally:
         card_claim.CLAIM_DIR = saved_dir
         if saved_cvd is None:
