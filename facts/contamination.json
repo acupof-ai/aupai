@@ -604,7 +604,8 @@
     "min_bigrams": 20
    },
    "uncertainty": null,
-   "status": "measured"
+   "status": "measured",
+   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
   },
   {
    "id": "cont.gsm8k_zh_webhq_scan",
@@ -625,7 +626,8 @@
     "holdout": "data/eval/gsm8k_zh_holdout.jsonl"
    },
    "uncertainty": null,
-   "status": "measured"
+   "status": "measured",
+   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
   },
   {
    "id": "cont.math500_webhq_fp_explained",
@@ -643,7 +645,8 @@
     "instrument": "unweighted + IDF-weighted containment"
    },
    "uncertainty": null,
-   "status": "measured"
+   "status": "measured",
+   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
   },
   {
    "id": "cont.code_holdout_carved",
@@ -669,7 +672,8 @@
     "instrument": "random.sample over eligible (non-hardcode) unique rows"
    },
    "uncertainty": null,
-   "status": "measured"
+   "status": "measured",
+   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
   },
   {
    "id": "cont.code_crawl_scan",
