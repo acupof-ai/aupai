@@ -38,8 +38,18 @@ killed, b0's card-5 rescore not yet launched). The open half is that "no claim" 
 somewhere else" produce the same empty directory, so b0 was asked to confirm a claim row appears
 **on the pod** when the rescore starts. If it does not, the second reading is the true one.
 
-**No `.REFUSED` sidecars exist under `/work/aupai/runs`** (`find -name '*.REFUSED*'` → 0). The
-inventory request listed them; they are not there.
+**`.REFUSED` sidecars: 6 files, 2,262 bytes total, all under `data/eval/`** — not under `runs/`.
+Measured 2026-09-04: `find /work/aupai -name '*.REFUSED*'` returns 6, sizes 335–396 bytes
+(`preds_l1_d3.jsonl.REFUSED`, `hard_ckpt_sft_p324_v5.pt.jsonl.REFUSED`, and four
+`preds_l1_d3_ckpt_*.zh.jsonl.REFUSED`). `open_artifact` writes `path + ".REFUSED"` beside the
+artifact and l1 artifacts live in `data/eval/`, so that is where they are. **KEEP** — refusal
+evidence (E22/E23), and 2 KB is not a disk question.
+
+The first version of this line said only "no `.REFUSED` sidecars exist under
+`/work/aupai/runs`". That was true and it was also the wrong sentence to publish: the inventory
+request named them as if they lived in `runs/` (6e's error, corrected by e1), and a scope-limited
+negative reads as "none exist" to anyone who does not re-derive the scope. A `find` that returns
+nothing is a statement about where you looked.
 
 ## `bench_eff` — 3.04 GB, and the split is by rank
 
