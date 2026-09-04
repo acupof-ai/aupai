@@ -80,3 +80,4 @@
 {"id": "MT-12", "ruling": "accepted", "by": "fb", "note": "accepted S1; count corrected by E18 to 6 of 10 domain_bpb rows shadowed (3 real causes survived on stderr, 1 truncated source line); two defective runners (:304, :281), correct form at :387; fix post-audit"}
 {"id": "MT-13", "ruling": "accepted", "by": "fb", "note": "accepted S3; unconditional vocab_id warning when cfg=None"}
 {"id": "E18", "ruling": "accepted", "by": "fb", "note": "accepted S2 (verified :281/:304 stderr-or-stdout, :387 correct; 6/10 domain_bpb rows vocab-warning-only); affected: domain_bpb, humaneval_bpb 1 path, minimal_pairs all failures, l1_fewshot SIGTERM rows"}
+{"id": "PR-11", "ruling": "accepted", "by": "fb", "note": "accepted S3 (verified 3958 zombies of 4305, 3 endless until-loops); unaccounted list actioned post-audit by exact PID; host-vs-container PID namespace generalisation to shapes doc post-audit"}
