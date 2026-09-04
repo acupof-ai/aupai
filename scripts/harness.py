@@ -281,6 +281,10 @@ _RULE_CHECKS = {
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
+    "The wrappers are scripts/pod and scripts/podput": "test_pod_wrappers",
+    "pod refuses a cd": "test_pod_wrappers",
+    "pod --view prints which filesystem": "test_pod_wrappers",
+    "`cd` inside a backgrounded chain stays in it": "test_pod_wrappers",
     "uv sync after dependency changes": "env_importable",
     "Shared files": "shared_file_claim",
 }
@@ -328,7 +332,6 @@ _MANUAL_RULES = {
         "the 100KB cap is enforced by podput itself, which refuses",
     "tn exec and ~/bin/pod are two different filesystem views":
         "a fact about the environment; the mistakes it prevents are interactive",
-    "cd inside a backgrounded chain stays in it": "a shell fact; no artifact records the mistake",
     "The pod is frozen from a training launch until that run prints its first step":
         "the window is bounded by two events in different places -- a launch timestamp on the "
         "pod and a push from a laptop -- and nothing records the second. pod_drift sees the "
@@ -455,7 +458,7 @@ _MANUAL_RULES = {
 #: Set to the count measured on this tree, not to an arithmetic guess -- three of the four
 #: steps landed in other sessions while this one was verifying, and each re-merge moved it.
 #: The ETA rule beside #1 stays manual until train.py unfreezes.
-_MANUAL_BASELINE = 32
+_MANUAL_BASELINE = 31
 
 
 def _norm_rule(text):
@@ -2118,6 +2121,50 @@ def _broken_curl_ipv4():
     open(os.path.join(d, "datagen", "fetch_corpus.py"), "w", encoding="utf-8").write(
         text.replace('"-4",', "", 1)
     )
+    return d
+
+
+def check_test_pod_wrappers(root):
+    """The vendored wrappers' own gate actually runs, and its refusals still hold.
+
+    scripts/pod and scripts/podput were untracked until 2026-09-04 while every
+    session and five tracked scripts depended on them. Vendoring them put the
+    entry points in the tree; this makes their test a gate rather than a file
+    somebody might remember to run.
+
+    Runs the suite rather than reading it: the refusal is a regex over command
+    strings, and the six ACCEPT cases are the load-bearing half -- a guard that
+    fired on every `cd` would pass a refusal-only test while breaking the most
+    common thing anyone types at this tool."""
+    p = os.path.join(root, "scripts", "test_pod_wrappers.sh")
+    if not os.path.exists(p):
+        return FAIL, "scripts/test_pod_wrappers.sh is missing; the vendored wrappers have no gate"
+    r = subprocess.run(["bash", p], capture_output=True, text=True, timeout=60)
+    if r.returncode != 0:
+        out = (r.stdout + r.stderr).strip().split("\n")
+        return FAIL, "; ".join(l for l in out if l.startswith("FAIL"))[:300] or "the suite failed"
+    return PASS, r.stdout.strip().split("\n")[-1][:120]
+
+
+def _broken_test_pod_wrappers():
+    """The REAL wrappers with the refusal neutered -- the same negative control the
+    suite documents, run here so the gate proves the refusal and not just the file's
+    existence. Deleting the test would also fail, but that is the trivial half."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts")
+    if not os.path.exists(os.path.join(src, "pod")):
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    for name in ("pod", "podput", "test_pod_wrappers.sh"):
+        s = open(os.path.join(src, name), encoding="utf-8").read()
+        if name == "pod":
+            marker = '  [ -n "${POD_ALLOW_BG_CD:-}" ] || exit 1'
+            if marker not in s:
+                return None
+            s = s.replace(marker, "  : # refusal neutered")
+        dst = os.path.join(d, "scripts", name)
+        open(dst, "w", encoding="utf-8").write(s)
+        os.chmod(dst, 0o755)
     return d
 
 
@@ -11253,6 +11300,13 @@ CHECKS = [
         _broken_curl_ipv4,
     ),
     (
+        "test_pod_wrappers",
+        "the vendored pod/podput wrappers' refusals hold, verified by running their suite",
+        "scripts/pod and scripts/podput were untracked while every session depended on them; vendoring put the entry points in the tree, and this makes their gate run instead of being a file somebody remembers (2026-09-04)",
+        check_test_pod_wrappers,
+        _broken_test_pod_wrappers,
+    ),
+    (
         "refusal_precedes_push",
         "pod_push's main-reachability refusal is decided before the first file ships",
         "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
@@ -11440,6 +11494,7 @@ EVIDENCE = {
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
     "refusal_precedes_push": "repo",
+    "test_pod_wrappers": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
 "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "shared_file_claim": "repo",
