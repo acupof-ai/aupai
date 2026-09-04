@@ -94,6 +94,14 @@ SCOPE = [
     "AGENTS.md",
     "docs/standards/*.md",
     ":!scripts/pod_sync_check.sh",
+    # The wrappers' own gate is LAPTOP-ONLY, and shipping it without its subject is §182's shape
+    # in a new place. `scripts/pod` and `scripts/podput` have no file extension, so `*.py`/`*.sh`
+    # never matched them -- and they should not: they are the transport TO the pod, and a
+    # container running them would `tn exec` into itself. But `scripts/test_pod_wrappers.sh` DID
+    # match `*.sh`, so the validator shipped where its subject cannot exist and failed by
+    # construction there: "line 86: /work/aupai/scripts/pod: No such file or directory", measured
+    # 2026-09-05. A test that can only fail on the pod trains people to ignore it.
+    ":!scripts/test_pod_wrappers.sh",
 ]
 # workflows/ only: it holds no code the pod runs. filters/ and mathbank/ were excluded
 # with it and should not have been -- datagen reads filters/ to BUILD the corpus, so a
