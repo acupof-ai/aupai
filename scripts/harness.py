@@ -90,10 +90,23 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
-    # Measured by hand 2026-09-04: 2.7s (shells out to ~/bin/pod). Under hook load
-    # it crosses 5s and banked 6 consecutive timeout strikes, FAILing a commit whose
-    # changes it has nothing to say about. 30s is ~11x the by-hand wall time.
-    "pod_stamp_is_main": 30,
+    # Measured by hand on this checkout, 2026-09-04 (load avg 6.5, 24 users): pod_stamp_is_main
+    # WARN in 2.9s, snapshot_logs_say_so_at_the_tail PASS in 9.3s over 84 tracked logs. Both
+    # banked 3 consecutive strikes and FAILed a commit with "has not actually run since", and
+    # neither has anything to do with what the commit changed -- the fifth and sixth instance of
+    # the same shape as the four entries above.
+    #
+    # WHAT THEY ACTUALLY SPEND, because the fix has to match the cause: pod_stamp_is_main shells
+    # out to the pod to read data/pod_synced_head, so its wall time is a network round trip and
+    # cannot be optimised locally at all. snapshot_logs reads the last 5 lines of every tracked
+    # log and compares against the pod's copies; 9.3s over 84 files is ~0.11s each, so it grows
+    # with the log count and will cross any fixed deadline as runs/ fills. That is cost growth,
+    # not a hang, which is the distinction the strike mechanism cannot make on its own.
+    #
+    # ~4x the measured wall, the same ratio every entry here uses. Not larger: the deadline still
+    # has to catch a real hang, and a network call that takes 40s IS a hang worth reporting.
+    "pod_stamp_is_main": 20,
+    "snapshot_logs_say_so_at_the_tail": 40,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -218,7 +231,6 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "Language": "no automatic judge of whether prose is English or Chinese-for-the-user",
     "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
     "A PID is only meaningful in the namespace that read it.":
@@ -7850,27 +7862,42 @@ def _broken_pod_drift():
     happened to have open. Regenerating over the copies makes the world self-consistent,
     and then the appended line is the only difference there is (de, 2026-09-01).
 
+    THE FILE LIST COMES FROM pod_drift.scoped_paths, NOT from reading the real manifest, and that
+    is a CI fix rather than a refactor. `data/pod_head_manifest.txt` stopped being tracked on
+    2026-09-04 -- pod_push generates it from the HEAD it ships -- so every machine that has run
+    pod_push has one on disk and this world was green there, while a fresh clone has none and the
+    open() raised FileNotFoundError before any check ran. That is how `harness.py --selftest` came
+    to tell CI nothing at all for every commit in that window: not "some worlds failed", nothing
+    ran. scoped_paths is the same `git ls-files SCOPE` that pod_push feeds the generator, so the
+    world now derives its population from the same place the real artifact does and cannot go
+    absent again.
+
     The CI branch cannot be exercised here -- the selftest world has no .git."""
     import shutil
 
     d = _tmp_repo()
     man_rel = os.path.join("data", "pod_head_manifest.txt")
     rels = []
-    for line in open(os.path.join(ROOT, man_rel), encoding="utf-8"):
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        rel = parts[1]
+    for rel in pod_drift.scoped_paths(ROOT):
         src = os.path.join(ROOT, rel)
         if not os.path.isfile(src):
             continue
         dst = os.path.join(d, rel)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
         shutil.copy(src, dst)
-        rels.append((rel, parts[2] if len(parts) > 2 else "docs"))
+        rels.append(rel)
+    # FOUR COLUMNS, from pod_drift's own classifier and mode reader. read_manifest tolerates a
+    # missing class or mode (defaulting docs/644), so a three-column world would have PASSED while
+    # asserting less than the real artifact does -- the mode column landed 2026-09-03 and a world
+    # that omits it cannot notice a mode drift at all. sha_disk over the COPIES, not sha_head:
+    # the point of regenerating here is that the world is self-consistent against its own files,
+    # which is what makes the appended line the only difference.
+    _classes = pod_drift._classify_files()
+    _modes = pod_drift.git_modes(ROOT, "HEAD")
     with open(os.path.join(d, man_rel), "w", encoding="utf-8") as f:
-        for rel, tag in rels:
-            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  {tag}\n")
+        for rel in rels:
+            f.write(f"{pod_drift.sha_disk(os.path.join(d, rel))}  {rel}  "
+                    f"{_classes.get(rel, 'docs')}  {_modes.get(rel, '644')}\n")
     with open(os.path.join(d, "scripts", "harness.py"), "a", encoding="utf-8") as f:
         f.write("\n# broken world drift\n")
     return d
