@@ -62,6 +62,13 @@ if HAS_FA:
 # Applied identically in training (Liger FLCE) and inference; SOFTCAP=0 disables it.
 SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 
+#: Seed for readout 6's row-checksum probe vector (ProductKeyMemory.row_probe). A CONSTANT, not
+#: Cfg.seed: the projection must be identical on every rank and across a resume so the checksums
+#: are comparable, and Cfg.seed varies by arm, which would make two arms' counts incomparable and
+#: a resumed run's first count meaningless. Not persistent in the checkpoint either -- the vector
+#: is recomputed from this number, so it is the same after a reload.
+_ROW_PROBE_SEED = 20260905
+
 
 class RMSNorm(nn.Module):
     def __init__(self, d, eps=1e-6):
@@ -515,6 +522,81 @@ class ProductKeyMemory(nn.Module):
         # so 4096 int32 at M1 against the 1.07B-parameter table -- free.
         self.register_buffer("key_hits", torch.zeros(2, side, dtype=torch.long), persistent=False)
         self.register_buffer("windows", torch.zeros((), dtype=torch.long), persistent=False)
+        # READOUT 6, WRITE EFFECTIVENESS (4c's ruling 2026-09-05). The four diagnostics above are
+        # all functions of the SELECTION distribution, which the keys produce -- and the keys are
+        # a normal Linear with an fp32 master. So a table whose every update rounds away in bf16
+        # reads 100% healthy on all four: touched counts reads, not effective writes. This is the
+        # instrument that sees the difference.
+        #
+        # A PER-ROW CHECKSUM, NOT A COPY OF THE ROWS. The direct form -- keep the previous diag
+        # step's table and diff it -- is 2 bytes per PARAMETER: 4 GiB at M1. The dot of each row
+        # with one fixed random vector is 4 bytes per ROW: 4 MiB at M1, 8 MiB at 1448^2, three
+        # orders of magnitude less for the same question. It misses only an update whose elements
+        # cancel in that projection exactly, which for a real gradient is measure zero.
+        #
+        # fp32 CHECKSUM OVER A bf16 TABLE ON PURPOSE: the sum of 1024 bf16 products accumulated in
+        # bf16 would round away the very small change this exists to detect, so the reduction is
+        # the one place the precision must not follow the table's.
+        #
+        # SEEDED, so the projection is the same on every rank and across a resume. A per-rank
+        # vector would make the checksums incomparable, and the DDP reduction below compares them.
+        _g = torch.Generator().manual_seed(_ROW_PROBE_SEED)
+        self.register_buffer("row_probe", torch.randn(d, generator=_g, dtype=torch.float32),
+                             persistent=False)
+        self.register_buffer("row_sum_prev", torch.zeros(n_values, dtype=torch.float32),
+                             persistent=False)
+        # -1 rather than 0: "no previous checksum yet" and "no row changed" are different
+        # findings, and a 0 here would report the first diag row as 0.0 changed -- the same
+        # number a frozen table gives.
+        self.register_buffer("rows_changed", torch.full((), -1, dtype=torch.long),
+                             persistent=False)
+        # An EXPLICIT armed flag, not "is row_sum_prev still all zeros". That test would be a
+        # second, weaker definition of the same state, and it reads wrong in the one case that
+        # matters: if a table ever produced an all-zero projection, the baseline would be taken
+        # twice and the first real comparison silently skipped.
+        self.register_buffer("row_probe_armed", torch.zeros((), dtype=torch.bool),
+                             persistent=False)
+
+    @torch.no_grad()
+    def row_checksums(self):
+        """Per-row fp32 projection of the value table onto the fixed probe vector.
+
+        BOTH OPERANDS FORCED TO fp32 HERE, not assumed from the buffer's dtype. `row_probe` is a
+        buffer, so `model.to(torch.bfloat16)` -- which train.py:2435 applies to the whole model
+        under --fp8 -- casts it along with everything else. The projection would then accumulate in
+        bf16, where each partial sum over d terms is ~d times the size of a one-ULP change, and the
+        smallest real updates would round out of the checksum: readout 6 would report a frozen
+        table as unchanged and a barely-moving one as frozen, which is the failure it exists to
+        detect. Caught by the one-ULP case in test_arch_compat, on a module cast to bf16 exactly as
+        the arms cast it.
+        """
+        return self.values.weight.detach().float() @ self.row_probe.float()
+
+    @torch.no_grad()
+    def note_row_changes(self):
+        """Count rows whose checksum moved since the last call; arm the next comparison.
+
+        Called at diag steps only, on every rank (the caller reduces the count across ranks).
+        The FIRST call establishes the baseline and returns -1: with no previous checksum there
+        is nothing to compare, and returning 0 would be indistinguishable from a table that
+        changed in no row -- which is exactly the failure this measures.
+
+        THE STORE IS RE-FLOATED for the same reason row_checksums forces its operands: `to(bfloat16)`
+        casts row_sum_prev as well, and copy_ into a bf16 buffer would round every stored checksum
+        back to bf16 precision -- discarding the resolution the fp32 projection was computed for and
+        leaving the comparison exactly as blind as a bf16 accumulator.
+        """
+        cur = self.row_checksums()
+        if self.row_sum_prev.dtype is not torch.float32:
+            self.row_sum_prev = self.row_sum_prev.float()
+        if not bool(self.row_probe_armed):
+            self.row_sum_prev.copy_(cur)
+            self.row_probe_armed.fill_(True)
+            return -1
+        n = int((cur != self.row_sum_prev).sum())
+        self.row_sum_prev.copy_(cur)
+        self.rows_changed.fill_(n)
+        return n
 
     def forward(self, x):
         B, T, d = x.shape
