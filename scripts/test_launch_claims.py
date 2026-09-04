@@ -154,8 +154,13 @@ def selftest():
           "nvidia_fds on an unreadable pid is None, which never refuses (macOS has no /proc)")
     _case(results, isinstance(CC.nvidia_fds(os.getpid()), (int, type(None))),
           "and on this process it is an int or None, never a raise")
-    _case(results, CC.DEVICE_WAIT_S >= 30,
-          f"the wait deadline covers a slow interpreter start ({CC.DEVICE_WAIT_S}s vs 1.33s measured)")
+    # NO CEILING BY DEFAULT. The 90s constant this replaces abandoned a live M1 launch's cards
+    # (4c, 2026-09-05): run_ddp.sh's drift gate, mix assertion and 155 GiB cache load all precede
+    # the ranks, and that run's own startup gate was 793 s. The poll must end on the JOB, not on a
+    # clock -- W2 below asserts the job-ended exit still works, which is what makes an unbounded
+    # wait safe rather than a hang.
+    _case(results, CC.DEVICE_WAIT_S is None,
+          f"the device wait has no default ceiling (got {CC.DEVICE_WAIT_S!r})")
 
     # THE DEADLINE MUST BE BOUNDED AND MUST END EARLY ON A DEAD WRAPPER. A launch whose job died
     # at once must not block for the full 90s; without this case the poll passes for a version
@@ -212,6 +217,19 @@ def selftest():
              if "card_claim.py" in ln and not ln.strip().startswith("#")]
     _case(results, len(calls) >= 2,
           f"the monitor releases on both exit paths ({len(calls)} release calls in its body)")
+
+    # THE ROW IDENTITY MUST REACH THE TEMPLATE. settled() is checked against real ledger states by
+    # harness._selftest_monitor_suppression; what that world cannot see is the JOIN -- the template
+    # is a string, so a refactor that stops interpolating the stamp leaves settled() correct and
+    # every monitor back to name-only matching, which is the 2026-09-05 M1 defect verbatim (its
+    # relaunch's monitor read the previous run's 19:45 `fail` row, released the claim of a job at
+    # step 300 and exited). Assert the interpolation is present, and that _arm_monitor takes the
+    # parameter it interpolates.
+    _case(results, 'started = "{started}"' in body,
+          "the monitor template carries the launching row's started stamp")
+    _case(results, mon_fn is not None and any(
+        a.arg == "started" for a in (mon_fn.args.args if mon_fn else [])),
+          "_arm_monitor takes started, so the stamp comes from the caller rather than a clock read")
 
     for p, _a in CC._descendants(proc.pid):
         try:
