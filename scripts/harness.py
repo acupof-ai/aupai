@@ -14155,13 +14155,18 @@ def _demo(only=None):
     os.makedirs(os.path.join(d2, "scripts"), exist_ok=True)
     os.makedirs(os.path.join(d2, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "scripts", "pod_drift.py"), os.path.join(d2, "scripts", "pod_drift.py"))
-    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d2, "AGENTS.md"))
+    # NOT AGENTS.md. This world's subject is what the hook does to the manifest on a scoped edit,
+    # and AGENTS.md was only a convenient file to edit -- but it is one of the four SHARED files, so
+    # the claim gate (2026-09-04) refuses the commit and the world fails for a reason that has
+    # nothing to do with manifests. Any tracked non-shared file makes the same point; scripts/exp.py
+    # is real, in pod_drift's scope, and nobody's shared file.
+    shutil.copy(os.path.join(ROOT, "scripts", "exp.py"), os.path.join(d2, "scripts", "exp.py"))
     subprocess.run(["git", "add", "-A"], cwd=d2, capture_output=True)
     subprocess.run(["git", "commit", "-m", "init"], cwd=d2, capture_output=True)
     # Stage a scoped edit
-    with open(os.path.join(d2, "AGENTS.md"), "a") as f:
+    with open(os.path.join(d2, "scripts", "exp.py"), "a") as f:
         f.write("\n# test edit\n")
-    subprocess.run(["git", "add", "AGENTS.md"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "add", "scripts/exp.py"], cwd=d2, capture_output=True)
     r = subprocess.run([hook_dst2], cwd=d2, capture_output=True)
     assert r.returncode == 0, f"hook must pass on scoped edit: {r.stdout} {r.stderr}"
     # THE HOOK MUST LEAVE THE MANIFEST ALONE (shape A, 2026-09-04). This world used to assert
