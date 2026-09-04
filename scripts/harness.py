@@ -4348,6 +4348,22 @@ def _broken_spawned_scripts_importable():
     return d
 
 
+def _merging_no_merge_head():
+    """Is a merge in progress that has not written MERGE_HEAD yet?
+
+    ONE SIGNAL, because only one crosses into this process. The hook's `_merging()` reads three
+    -- MERGE_HEAD, `argv[0] == pre-merge-commit`, and GIT_REFLOG_ACTION -- and measured in a
+    scratch repo on 2026-09-05: `harness check` is a SUBPROCESS of the hook, so argv[0] is
+    harness.py and the second signal cannot reach here at all, while MERGE_HEAD is absent by
+    definition in the case this function exists for. GIT_REFLOG_ACTION is inherited through the
+    environment and reads 'merge <branch>' during a clean merge and None otherwise.
+
+    Copying all three would have looked more thorough and two of them would have been dead code:
+    a guard whose signals cannot fire is the shape §137 names.
+    """
+    return os.environ.get("GIT_REFLOG_ACTION", "").startswith("merge")
+
+
 def check_shared_file_claim(root):
     """Editing a listed shared file needs a live claim (AGENTS.md "Shared files", T0).
 
@@ -4385,6 +4401,27 @@ def check_shared_file_claim(root):
         args.append(merge_head)
         during_merge = (f" (merge in progress; this branch's own paths, against MERGE_HEAD "
                         f"{merge_head[:8]})")
+    elif _merging_no_merge_head():
+        # A CLEAN MERGE HAS NO MERGE_HEAD YET, and the branch above cannot see it. git calls
+        # pre-merge-commit BEFORE writing MERGE_HEAD, so `git diff --cached` with no second
+        # argument lists every INCOMING file and each reads as a local edit -- the check refuses
+        # a session for a change another branch wrote, on a command it cannot split (git refuses
+        # a partial commit mid-merge). Measured three times in one piece of work on 2026-09-05:
+        # refused naming train.py, which was main's change; run by hand one second later it
+        # returned PASS. The workaround each time was to finish the merge with `git commit
+        # --no-edit`, by which point MERGE_HEAD exists -- so the gate was passed by repeating the
+        # command, which is the shape of a rule people learn to route around.
+        #
+        # WHICH SIGNAL, measured in a scratch repo rather than inferred (the hook's own
+        # _merging() lists three and only one of them crosses this boundary): `harness check` runs
+        # as a SUBPROCESS of the hook, so sys.argv[0] is harness.py and can never be
+        # pre-merge-commit; MERGE_HEAD is absent by construction here. GIT_REFLOG_ACTION is
+        # inherited through the environment and reads 'merge <branch>' -- the only one of the
+        # three available. The conflicted path is unaffected and still enforces: at the finishing
+        # commit MERGE_HEAD IS on disk (measured), so the branch above runs and diffs against it.
+        return SKIP, ("clean merge in progress and MERGE_HEAD is not written yet, so the staged "
+                      "set is the incoming diff and not this session's edits; the finishing "
+                      "commit of a conflicted merge does have MERGE_HEAD and is still checked")
 
     staged = sp.run(args, capture_output=True, text=True).stdout.split()
     touched = [p for p in staged if p in shared]
@@ -13319,6 +13356,100 @@ def _selftest_milestone_selection():
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
 
 
+def _selftest_clean_merge_claim():
+    """A clean merge that has not written MERGE_HEAD must not read as a local shared-file edit.
+
+    4c's ruling 2026-09-05, after the mis-fire cost three retries in one piece of work. THE WORLD
+    IS A REAL GIT REPOSITORY with a real merge in it, not a directory with a fabricated index:
+    the whole defect lives in what git has and has not written at hook time, so a hand-built
+    world would share the check's own assumption about that.
+
+    FOUR STATES, and the two negatives are the load-bearing half:
+      1. clean merge, no MERGE_HEAD, AGENTS.md incoming -> SKIP (the bug: it FAILed)
+      2. the same staged set with NO merge in progress   -> FAIL, or the fix has simply
+         disabled the gate. This is the case that makes state 1 mean something.
+      3. conflicted merge finishing, MERGE_HEAD present  -> unaffected, still diffs against it
+      4. clean merge, no shared file staged              -> SKIP either way
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="de_cleanmerge_")
+    try:
+        def _git(*a, **kw):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, **kw)
+
+        _git("init", "-q", "-b", "main", ".")
+        _git("config", "user.email", "t@t")
+        _git("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "runs", "claims", "files"), exist_ok=True)
+        for name in ("AGENTS.md", "other.txt"):
+            with open(os.path.join(d, name), "w") as f:
+                f.write("base\n")
+        _git("add", "-A")
+        _git("commit", "-qm", "base", "--no-verify")
+
+        _git("checkout", "-q", "-b", "theirs")
+        with open(os.path.join(d, "AGENTS.md"), "w") as f:
+            f.write("their change to a shared file\n")
+        _git("commit", "-q", "AGENTS.md", "-m", "theirs", "--no-verify")
+
+        _git("checkout", "-q", "main")
+        with open(os.path.join(d, "other.txt"), "w") as f:
+            f.write("my unrelated change\n")
+        _git("commit", "-q", "other.txt", "-m", "mine", "--no-verify")
+
+        # A clean merge, stopped before the commit: `git merge --no-commit` leaves the index
+        # holding the incoming change with NO MERGE_HEAD written -- the exact hook-time state.
+        _git("merge", "--no-commit", "--no-ff", "theirs")
+        mh = os.path.join(d, ".git", "MERGE_HEAD")
+        if os.path.exists(mh):
+            os.unlink(mh)
+        staged = _git("diff", "--cached", "--name-only").stdout.split()
+        assert "AGENTS.md" in staged, f"world must stage the incoming shared file: {staged}"
+
+        saved = os.environ.get("GIT_REFLOG_ACTION")
+        try:
+            os.environ["GIT_REFLOG_ACTION"] = "merge theirs"
+            st, ev = check_shared_file_claim(d)
+            assert st == SKIP and "MERGE_HEAD is not written yet" in ev, \
+                f"state 1: a clean merge must not read as a local edit: {st} {ev}"
+
+            # STATE 2, the negative control. Same index, no merge: the gate must still bite, or
+            # state 1 passing would only prove the check was switched off.
+            os.environ.pop("GIT_REFLOG_ACTION", None)
+            st, ev = check_shared_file_claim(d)
+            assert st == FAIL and "AGENTS.md" in ev, \
+                f"state 2: the same staged set with no merge must still FAIL: {st} {ev}"
+
+            # STATE 3: MERGE_HEAD back on disk, the conflicted-merge finishing commit. The
+            # pre-existing branch handles it and must keep doing so.
+            head = _git("rev-parse", "theirs").stdout.strip()
+            with open(mh, "w") as f:
+                f.write(head + "\n")
+            os.environ["GIT_REFLOG_ACTION"] = "merge theirs"
+            st, ev = check_shared_file_claim(d)
+            assert "MERGE_HEAD" in ev and "not written yet" not in ev, \
+                f"state 3: with MERGE_HEAD present the old path must run: {st} {ev}"
+            os.unlink(mh)
+
+            # STATE 4: a clean merge staging nothing shared is a SKIP on either path, so the new
+            # branch must not be the only reason it passes.
+            _git("reset", "-q")
+            _git("add", "other.txt")
+            os.environ["GIT_REFLOG_ACTION"] = "merge theirs"
+            st, _ev = check_shared_file_claim(d)
+            assert st == SKIP, f"state 4: no shared file staged is a SKIP: {st}"
+        finally:
+            if saved is None:
+                os.environ.pop("GIT_REFLOG_ACTION", None)
+            else:
+                os.environ["GIT_REFLOG_ACTION"] = saved
+        print("  ok   clean-merge shared-file claim: 4 states, gate still bites without a merge")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _selftest_diag_closed_arms():
     """The closed-arm branch: three states that used to print as one SKIP.
 
@@ -15507,6 +15638,7 @@ def _demo(only=None):
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
     _selftest_diag_closed_arms()
+    _selftest_clean_merge_claim()
     _selftest_brief()
     _selftest_gate_timeout()
     _selftest_register_union()
