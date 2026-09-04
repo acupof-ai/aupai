@@ -16552,6 +16552,54 @@ def _job_pids_for(pid):
         return []
 
 
+def _device_pid_for(pid, deadline=None):
+    """(pid, device_fds) of the descendant that HOLDS a card, or None. Blocks up to `deadline`.
+
+    WHY THIS BLOCKS. "not a shell" is necessary and not sufficient: measured on the pod in this
+    exact wrapper shape, the first non-shell descendant appears 0.11s after Popen holding ZERO
+    device fds, and the first fd appears at 1.33s. b0_mem_m1's claim landed in that 1.22s window,
+    so `card_claim.py status` reported STALE plus "ORPHAN card 1 holds 1179 MiB with no claim" for
+    a correctly running arm and any sweep could have reclaimed two cards from under it.
+
+    4c's ruling 2026-09-05: block here rather than poll from the monitor. harness launch returning
+    now means "the job holds a card and the claim names it". The monitor variant leaves the card
+    unclaimed for ~1.3s, which is the exact window a sweep reads.
+
+    Returns None both when nothing ever opens a device and when /proc cannot be read (macOS).
+    The caller distinguishes them, because one is a timeout and the other is "this predicate has
+    no opinion here"."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return None
+    try:
+        return card_claim.wait_for_device(
+            pid, deadline=card_claim.DEVICE_WAIT_S if deadline is None else deadline)
+    except Exception:  # noqa: BLE001 -- a claim helper must never take the launch down
+        return None
+
+
+def _dev_wait():
+    """card_claim's device-wait deadline, or 90.0 if it is not importable."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return 90.0
+    return card_claim.DEVICE_WAIT_S
+
+
+def _proc_readable():
+    """Whether the device predicate can answer at all here. False on macOS: no /proc."""
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return False
+    return card_claim.nvidia_fds(os.getpid()) is not None
+
+
 def _acquire_cards(name, cards, pid, note):
     """(ok, message). Claim `cards` for `name` on behalf of `pid`."""
     r = subprocess.run(
@@ -16840,19 +16888,42 @@ def cmd_launch(rest):
     # WHICH PID. Not proc.pid: that is `bash -c 'set -o pipefail; "$@"; ...'`, a shell by
     # construction, and card_claim refuses a shell because a claim on one fails both ways (de-34,
     # measured 2026-09-03 on both of tonight's incidents). The claim must name the process that
-    # dies WITH the job, so acquire on the job descendant. Measured on harness's own wrapper
-    # shape: the descendant exists by the time Popen returns, both for a python payload and for a
-    # shell script that execs one, as run_ddp.sh does. If it has not appeared yet -- a slow
-    # interpreter start -- claim nothing and say so rather than claim the wrapper.
+    # dies WITH the job.
+    #
+    # AND IT MUST HOLD A CARD, which "not a shell" does not establish. Measured on the pod in this
+    # wrapper shape: the first non-shell descendant appears at t=0.11s with ZERO device fds, the
+    # first fd at t=1.33s. b0_mem_m1's claim bound a pid in that window, so status read STALE plus
+    # ORPHAN for a live arm. 4c's ruling 2026-09-05: block here for up to card_claim.DEVICE_WAIT_S
+    # until a descendant holds a device, then claim that pid. Nothing may sequence two launches on
+    # this command's return -- AGENTS.md already says a `for` loop over harness launch is not a
+    # queue.
+    #
+    # On a machine with no /proc (macOS) the predicate has no opinion, so fall back to the
+    # first non-shell descendant rather than blocking 90s for an answer that cannot arrive.
     claim_name = None
     if cards and not args.no_gpu:
-        job_pids = _job_pids_for(proc.pid)
-        if job_pids:
-            ok_claim, claim_msg = _acquire_cards(args.name, cards, job_pids[0], f"harness launch {args.name}")
+        claim_pid, claim_dev = None, None
+        if _proc_readable():
+            got = _device_pid_for(proc.pid)
+            if got:
+                claim_pid, claim_dev = got
+        else:
+            job_pids = _job_pids_for(proc.pid)
+            claim_pid = job_pids[0] if job_pids else None
+        if claim_pid:
+            note = f"harness launch {args.name}"
+            ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note)
             if ok_claim:
                 claim_name = args.name
+                held = f" ({claim_dev} device fds)" if claim_dev else ""
+                print(f"claim  cards {cards} -> pid {claim_pid}{held}")
             else:
                 print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+        elif _proc_readable():
+            print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
+                  f"device within {int(_dev_wait())}s. The job may still be running -- read the "
+                  f"log. A claim on a process that is not on a card protects nothing (b0_mem_m1).",
+                  file=sys.stderr)
         else:
             print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
                   f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
