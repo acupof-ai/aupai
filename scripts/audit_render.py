@@ -589,8 +589,8 @@ table.findings {{ width:100%; border-collapse:collapse; margin-top:8px;
 .old {{ border-top:2px solid var(--line); margin-top:28px; }}
 </style></head>
 <body>
-{state_block(ROOT)}{cleanup_block(ROOT)}{audit}
 <section class="old">{old_body}</section>
+{state_block(ROOT)}{cleanup_block(ROOT)}{audit}
 </body></html>
 """
 

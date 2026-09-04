@@ -378,18 +378,27 @@ def render(rows):
             parts.append('</div>')
     parts.append(control_section())
     parts.append(roadmap_section())
-    parts.append(liveness_section())
-    parts.append(friction_section())
-    parts.append(queue_section())
-    rest = rows
-    parts.append("<h2>时间线</h2><ol>")
-    parts.extend(_row(r) for r in rest[:SHOWN])
-    parts.append("</ol>")
-    older = rest[SHOWN:]
+    # 98-6: importance split. Decisions/measurements/warnings shown; the run/note
+    # flow and per-member process detail collapsed. The user reads this page
+    # instead of the terminal, so the top half answers "what concluded, what
+    # needs my call" and the bottom half is the record.
+    IMPORTANT = {"rule", "find", "warn"}
+    important = [r for r in rows if r.get("kind") in IMPORTANT][:20]
+    if important:
+        parts.append("<h2>结果与裁定</h2><ol>")
+        parts.extend(_row(r) for r in important)
+        parts.append("</ol>")
+    process = [liveness_section(), friction_section(), queue_section()]
+    process.append("<h2>时间线</h2><ol>")
+    process.extend(_row(r) for r in rows[:SHOWN])
+    process.append("</ol>")
+    older = rows[SHOWN:]
     if older:
-        parts.append(f'<details><summary>更早的 {len(older)} 条</summary><ol>')
-        parts.extend(_row(r) for r in older)
-        parts.append("</ol></details>")
+        process.append(f'<details><summary>更早的 {len(older)} 条</summary><ol>')
+        process.extend(_row(r) for r in older)
+        process.append("</ol></details>")
+    parts.append('<details><summary>过程记录（每人动静、摩擦、队列、完整时间线）</summary>'
+                 + "".join(process) + "</details>")
     parts.append("<script>setTimeout(function(){location.reload()},15000)</script>")
     parts.append("</body></html>")
     return "".join(parts)
