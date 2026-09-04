@@ -11026,6 +11026,51 @@ def _selftest_batched_git_probes():
     )
 
 
+def _selftest_repo_auth_mirror():
+    """An auth=repo FAIL becomes SKIP on the pod's shape, and NOWHERE else.
+
+    THE MIRROR LIVES IN run_checks, WHICH THE BROKEN-WORLD LOOP NEVER CALLS. That loop invokes
+    each check function directly -- check_x(d) -- so nothing above this exercises the scoping at
+    all, and the first version of this commit shipped with the mirror unguarded while the
+    selftest read green. A guard placed where no test looks is the shape this file exists to
+    catch (de, 2026-09-04).
+
+    Three directions, because a scoping rule that fires too widely is worse than the blanket red
+    it replaces: it would silently disable every repo check in CI.
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="authmirror_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        assert pod_drift.is_pod(d), "a tree with no .git must read as the pod's shape"
+        res = run_checks(d, quiet=True, persist_timeouts=False)
+        by = {n: (s, e) for n, s, e, _a, _i in res}
+        repo = [n for n, v in EVIDENCE.items() if v == "repo"]
+        pod = [n for n, v in EVIDENCE.items() if v == "pod"]
+        bad = [n for n in repo if by.get(n, ("", ""))[0] == FAIL]
+        assert not bad, f"auth=repo check(s) still FAIL on the pod's shape: {bad[:4]}"
+        mirrored = [n for n in repo if "not authoritative here" in (by.get(n, ("", ""))[1] or "")]
+        assert mirrored, "no auth=repo check was mirrored -- the rule did not fire at all"
+        # The original evidence is kept, or a SKIP reads as "checked and fine".
+        sample = by[mirrored[0]][1]
+        assert len(sample) > len("repo check, not authoritative here"), (
+            f"the mirrored SKIP dropped its evidence: {sample!r}")
+        # auth=pod checks are NOT mirrored: the pod stays strict about itself.
+        wrong = [n for n in pod if "not authoritative here" in (by.get(n, ("", ""))[1] or "")]
+        assert not wrong, f"auth=pod check(s) wrongly mirrored on the pod: {wrong[:4]}"
+        # THE POSITIVE, and the one that matters: on a real checkout nothing is mirrored, so CI
+        # keeps every repo check. Without this every assertion above passes on a rule that
+        # silences repo checks everywhere.
+        res2 = run_checks(ROOT, quiet=True, persist_timeouts=False)
+        here = [n for n, _s, e, _a, _i in res2 if "not authoritative here" in (e or "")]
+        assert not here, f"the mirror fired on a real checkout, disabling repo checks: {here[:4]}"
+        print(f"  repo-auth mirror: {len(mirrored)} auth=repo FAIL(s) -> SKIP on the pod's shape, "
+              f"0 on a checkout, 0 auth=pod mirrored")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _selftest_commit_delivers_fact_ref():
     """_commit_delivers understands facts/<f>.json#<id>: the fragment is stripped for the
     touched-file comparison and the id must exist in that file at HEAD (44-26).
@@ -11771,6 +11816,8 @@ def _demo():
             shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
+
+    _selftest_repo_auth_mirror()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
