@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Fifteen entries: two S1, nine S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Seventeen entries: two S1, eleven S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -322,3 +322,105 @@ published, 09-03, is the correct UTC one). No other date in the report is affect
 **Not checked:** whether the same `Z` habit is in my earlier ledger rows, facts, or board posts
 outside this audit. That is a wider sweep than this area and the audit forbids the fix; recorded
 here so the class is on the record with its cause, not just this file's six instances.
+
+### E16 (S2): which checkpoints trained on a credential-bearing agentic pack — none, and the packs are unreachable from training
+
+6e's question, 2026-09-04, turning the v14 build's count into the question a user asks: 59 of 62
+credential-bearing episodes were caught only by the new CLI/env tier, so they were in v13's
+admission set and every pack before it. Which checkpoints trained on them?
+
+**Answer: no checkpoint in this repository trained on any agentic pack, and no published number
+rests on one.** Four independent readings, each over a whole population:
+
+| population | how enumerated | agentic packs found |
+|---|---|---|
+| SFT runs in `runs/experiments.jsonl` | 297 lines folded by `name` → 152 distinct; every `--sft_path` in every `cmd` | 0 of 11 |
+| `runs/score_matrix.jsonl` | all 60 rows, 55 distinct `ckpt`, whole-row grep | 0 |
+| SFT packs on the pod | `ls /work/aupai/data/sft/` — 41 entries, 21 `.pt` | 0 |
+| `.pt` pack provenance | `torch.load` on all 21, read `sources`/`source`/`meta.sources` | 0 (no pack has an agentic source; see the caveat below) |
+
+The 11 SFT runs name exactly four packs: `control_sft_ours.pt` (5 runs), `sft_all.pt` (4),
+`proc_v1.pt` (1), `sft_all_family_clean.pt` (1). Their producers are
+`datagen/pack_control_sft_ours.py` (reads `control_sft_text_train.jsonl`) and
+`datagen/prepare_sft.py`/`make_mixed.py`/`fetch_sft_data.py` (a 10-entry literal `SOURCES` list of
+instruction datasets). None of the three reads `~/.claude/projects/` or any `agentic_v*` path.
+
+**The mechanism, which is stronger than the count.** `build_agentic_sft.py` writes JSONL and
+nothing converts a JSONL to the `.pt` that `sft_math.py --sft_path` consumes: the only
+`format_agentic` callers are the builder itself, its own selftest, `scripts/test_sft_pack.py`, and
+three files that merely mention it in comments (`n7c_gates.py:452`, `eval/prefix_mask.py:177`,
+`:288`). `prepare_sft.py`'s `SOURCES` is a literal list and does not include an agentic path. So
+the agentic packs are not one commit away from training — the conversion step does not exist.
+
+**S2 not S1, and the caveat is the reason.** Rated S2 because no published number is affected.
+The caveat that keeps it from being S1-clean in the other direction: **20 of 21 `.pt` packs carry
+no `sources` field at all** — keys are `input_ids`/`labels`/`vocab_id`, sometimes `holdout_fp` and
+`sources_fp`, and `sources_fp` is a fingerprint, not a list. So pack provenance was established
+from the producers' source code, not from the packs' own metadata. A pack built from an
+undocumented path would look exactly like these. `control_sft_ours.pt` and
+`sft_all_family_clean.pt`/`sft_all_v5.pt` are the only ones carrying `sources_fp`.
+
+**What this does NOT clear.** The 59 episodes are still real, still in
+`~/.claude/projects/*/*.jsonl`, and still in whatever v13 pack existed before 6e deleted it. E16
+says the training path never reached them; it says nothing about the source sessions, which is
+where a rotation has to act (list delivered separately, no values).
+
+**A published fact this contradicts, and it is not mine.**
+`facts/data_quality.json#dq.agentic_credential_split`, status `measured`, states: "of the 866, 863
+are opaque-ONLY and **3** also carry a REAL_CREDENTIAL (GitHub Token 1, IBM Cloud IAM Key 1,
+Private Key 1)". Those three types are exactly the three my build found via the legacy detector —
+and my build found **62** REAL_CREDENTIAL episodes over a comparable population, 59 of them
+invisible to the instrument that fact used. The fact's `config` names that instrument in its own
+words: "find_secrets (detect_secrets, chunk=1) types intersected with REAL_CREDENTIAL's 22
+provider rules". So the number 3 is what that instrument could see, not the credential count. The
+fact's `boundary` names a different silence ("silent on the 9,134 non-opaque episodes'
+provider-credential rate") and does not name this one. **The 3 is an undercount by a factor of
+~20, and the fact does not say so.** Not corrected here (audit rule 5); the population is not
+byte-identical to mine (its 10,000-episode cache vs my 9,060 admitted rows), so the ratio is
+approximate while the direction is not. Owner: 44's area (facts), same class as E14.
+
+### E17 (S2): the v14 build's own log contradicts itself, and the log is the only record of the gate
+
+Found while reading the v14 log to report the gate verdict. Not a defect in the pack — the
+artifact validates — but the log that certifies it cannot be read as a sequence.
+
+`runs/e1_v14_agentic_build_2026-09-04.log`, 122 lines, contains BOTH of these:
+
+```
+ 95 secret scan gate: 0 real-credential row(s), 2 allowed type(s) [...] over 16,288,781 chars
+ 96 Traceback (most recent call last):
+100     os.replace(staged, a.out)
+102 FileNotFoundError: ... 'data/sft/agentic_v14.jsonl.unscanned' -> 'data/sft/agentic_v14.jsonl'
+...
+122 build exit=0
+```
+
+A `FileNotFoundError` on the rename and `exit=0` in the same file, and the `wrote 4823 rows` line
+that both Monitors reported is not in the file at all. Cause, established from the three
+background-task output files rather than guessed: **two processes wrote this log concurrently.**
+`tasks/blhm5f4k4.output` (the background command) ends at the traceback and reports
+`[exited with code 0]` — the wrapper's own exit, not python's. `tasks/bsp31waas.output` and
+`tasks/b8pod829l.output` both carry `wrote 4823 rows -> data/sft/agentic_v14.jsonl`. One process
+renamed the staged file; the second reached `os.replace` after the name was already gone and died
+on it. Both were appending to the same path with `>>`-style shared descriptors, so the surviving
+file interleaves them and the loser's traceback lands mid-report (line 102 is followed by line 103
+`251 opener the model cannot act on`, part of the winner's dropped-rows table).
+
+**Consequence for the gate.** The gate verdict is `0 real-credential row(s), 2 allowed type(s)
+['Base64 High Entropy String', 'Secret Keyword'] over 16,288,781 chars`, and it is trustworthy on
+its own terms — but not because the log says so. The log is a record two writers can garble, and
+the line that says the pack was written is missing from it. I verified the pack independently:
+`data/sft/agentic_v14.jsonl`, 21,602,682 B, **4,823 rows, 0 unparseable, 0 wrong-shape, 0
+byte-identical duplicates**, every row a dict carrying `messages`.
+
+**Why this is E17 and not a fix.** Audit rule 5. The defect is that a build whose whole discipline
+is "the scan gates the rename" writes its certificate to a file that a second concurrent process
+can corrupt, and nothing in the build detects a second writer. The `.unscanned` staging survives a
+kill; it does not survive a race. Two one-line changes would close it (an exclusive-create lock on
+the out path, and `os.replace` guarded by the staged file still existing) and neither belongs in
+this audit.
+
+**How the second process arose is not established.** I launched the build once, as a background
+command, and armed two Monitors on the log — Monitors read, they do not run the builder. The
+second writer's identity is unresolved and I am not going to guess it. What is established:
+two processes, one log, one surviving rename, and a pack that validates.
