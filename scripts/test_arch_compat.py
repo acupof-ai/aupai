@@ -757,14 +757,20 @@ else:
 # move when it regresses -- 81K in both arms of the lane test -- so nothing else in the suite
 # would catch it. This asserts the wrap by its effect on a traced function, not by looking for
 # an attribute name that a torch bump could rename.
-if _train.HAS_FA:
-    _f = _train.flash_attn_varlen_func
+#
+# ON _model, NOT _train, and this site was broken the same way as _gpu_check's: train.py:135
+# re-exports 14 names from model and flash_attn_varlen_func is not one of them, so this raised
+# AttributeError and the assert never ran (2026-09-04). Its own message pointed at "train.py's
+# flash import block", which is where the wrap is NOT -- model.py:52-60 holds it. Two sites in
+# one file reading the same nonexistent attribute is why this is a ruling and not a typo.
+if _model.HAS_FA:
+    _f = _model.flash_attn_varlen_func
     _marker = getattr(_f, "_torchdynamo_disable", None)
     assert _marker, (
         "flash_attn_varlen_func is not wrapped in torch._dynamo.disable. Its shape asserts "
         "(cute/interface.py:376/381/384) specialise dynamo on the unbounded document count, "
         "which reopens permanent recompilation at ~54.9 ms/step with NO tok/s signal. "
-        "Restore the wrap at train.py's flash import block."
+        "Restore the wrap at model.py's flash import block."
     )
     print("flash_attn_varlen_func is dynamo-disabled OK")
 else:
