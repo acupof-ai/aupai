@@ -4254,6 +4254,12 @@ _NON_EVAL_PREFIXES = {
     # registered. Bare ids leak nothing; the passages they name are the surface, and those are
     # covered by the lambada_zh_src entry.
     "lambada_zh_ids": "523 rows of bare {id} for lambada_zh_src, which is itself registered",
+    # fetch_stats.json records WHICH MIRROR served each file (AGENTS, Pod: every HF-hosted source
+    # lists [hf-mirror, modelscope, huggingface.co] and the fetcher writes which host answered).
+    # It sits inside data/eval/humaneval/ and data/eval/lambada_en/ beside the eval files it
+    # describes, so the glob finds it; it holds hosts and byte counts, no questions. Flagged on
+    # the pod's first run of this check (6e, 2026-09-04) -- the laptop has neither directory.
+    "fetch_stats": "the fetcher's per-host record (which mirror served each file), not eval data",
 }
 
 
@@ -9798,6 +9804,24 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
             signal.alarm(0)
+        # THE MIRROR OF THE auth=pod SKIP. A pod-authoritative check SKIPs on a laptop because the
+        # thing it reads is not here; a repo-authoritative check must SKIP on the POD for the same
+        # reason, and until now it FAILed instead. Measured on the pod 2026-09-04 (6e): 8 FAILs
+        # and launch_gate reading NO-GO, five of them auth=repo checks failing only because
+        # /work/aupai is not a git checkout -- tasks_closed_by_commit reported 86 of 86 commits
+        # "not a commit in this repo", shapes_table_covers_doc reported §75+ missing from a stale
+        # partial copy of the doc, ckpt_facts_sources_present found no listing because those files
+        # are outside the push scope. None of that is a defect in the repo; it is a check reading
+        # a tree that does not hold its subject.
+        #
+        # A blanket red is worse than no red: launch_gate weighs these, so five structural FAILs
+        # made every real signal on the pod unreadable, which is the permanent-red rule in AGENTS.
+        # SKIP names the reason so nobody reads it as "checked and fine".
+        if (state in (FAIL, WARN, TIMEOUT) and pod_drift.is_pod(root)
+                and EVIDENCE.get(name) == "repo"):
+            state = SKIP
+            evidence = (f"repo check, not authoritative here: {evidence[:110]}"
+                        if evidence else "repo check, not authoritative here")
         dur = time.time() - t0
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
@@ -11002,6 +11026,51 @@ def _selftest_batched_git_probes():
     )
 
 
+def _selftest_repo_auth_mirror():
+    """An auth=repo FAIL becomes SKIP on the pod's shape, and NOWHERE else.
+
+    THE MIRROR LIVES IN run_checks, WHICH THE BROKEN-WORLD LOOP NEVER CALLS. That loop invokes
+    each check function directly -- check_x(d) -- so nothing above this exercises the scoping at
+    all, and the first version of this commit shipped with the mirror unguarded while the
+    selftest read green. A guard placed where no test looks is the shape this file exists to
+    catch (de, 2026-09-04).
+
+    Three directions, because a scoping rule that fires too widely is worse than the blanket red
+    it replaces: it would silently disable every repo check in CI.
+    """
+    import shutil
+    import tempfile
+    d = tempfile.mkdtemp(prefix="authmirror_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        assert pod_drift.is_pod(d), "a tree with no .git must read as the pod's shape"
+        res = run_checks(d, quiet=True, persist_timeouts=False)
+        by = {n: (s, e) for n, s, e, _a, _i in res}
+        repo = [n for n, v in EVIDENCE.items() if v == "repo"]
+        pod = [n for n, v in EVIDENCE.items() if v == "pod"]
+        bad = [n for n in repo if by.get(n, ("", ""))[0] == FAIL]
+        assert not bad, f"auth=repo check(s) still FAIL on the pod's shape: {bad[:4]}"
+        mirrored = [n for n in repo if "not authoritative here" in (by.get(n, ("", ""))[1] or "")]
+        assert mirrored, "no auth=repo check was mirrored -- the rule did not fire at all"
+        # The original evidence is kept, or a SKIP reads as "checked and fine".
+        sample = by[mirrored[0]][1]
+        assert len(sample) > len("repo check, not authoritative here"), (
+            f"the mirrored SKIP dropped its evidence: {sample!r}")
+        # auth=pod checks are NOT mirrored: the pod stays strict about itself.
+        wrong = [n for n in pod if "not authoritative here" in (by.get(n, ("", ""))[1] or "")]
+        assert not wrong, f"auth=pod check(s) wrongly mirrored on the pod: {wrong[:4]}"
+        # THE POSITIVE, and the one that matters: on a real checkout nothing is mirrored, so CI
+        # keeps every repo check. Without this every assertion above passes on a rule that
+        # silences repo checks everywhere.
+        res2 = run_checks(ROOT, quiet=True, persist_timeouts=False)
+        here = [n for n, _s, e, _a, _i in res2 if "not authoritative here" in (e or "")]
+        assert not here, f"the mirror fired on a real checkout, disabling repo checks: {here[:4]}"
+        print(f"  repo-auth mirror: {len(mirrored)} auth=repo FAIL(s) -> SKIP on the pod's shape, "
+              f"0 on a checkout, 0 auth=pod mirrored")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _selftest_commit_delivers_fact_ref():
     """_commit_delivers understands facts/<f>.json#<id>: the fragment is stripped for the
     touched-file comparison and the id must exist in that file at HEAD (44-26).
@@ -11747,6 +11816,8 @@ def _demo():
             shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
+
+    _selftest_repo_auth_mirror()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
