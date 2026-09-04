@@ -272,7 +272,7 @@ def friction_section():
 # Plot appears when runs/*.log have val lines for M1/M2.
 MEM_STATUS = {
     "model": "b0 实现中",
-    "smoke": "未跑",
+    "smoke": "崩了（dtype）",
     "m1": "未跑",
     "m2": "未跑",
     "scored": "未打分",
