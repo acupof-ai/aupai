@@ -17,7 +17,7 @@
   "host": "iv-yeozpb5g5cbw80bls64e",
   "mix": null,
   "real_kernel": true,
-  "recorded": "2026-09-04 08:38",
+  "recorded": "2026-09-04 09:02",
   "result": "pass",
   "shape": {
    "d": 1024,
@@ -26,7 +26,7 @@
    "layers": 12
   },
   "stages": null,
-  "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
+  "test_sha256": "845d0f5bc7fd005a4f1aaece2a576c8f5bff221de6a8ad30de16da3f8ed3cca2"
  },
  "scripts/test_arch_L32.py@d768L16h6f2304": {
   "host": "iv-yeozpb5g5cbw80bls64e",
