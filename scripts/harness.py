@@ -349,8 +349,8 @@ _MANUAL_RULES = {
         "header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators "
         "a name scan reads as unreferenced (near-miss, 2026-08-31)",
     "Every delivery has a second reader": "review_present checks the row exists; whether the reviewer actually read the artifact cannot be checked, only that they named one",
-    "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
-    "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
+    "cfg_default raises rather than returning None": "selftest contract, not an operational rule; documented in AGENTS.md 'Two failure modes specific to the harness'",
+    "The ledger takes names from the scores": "selftest contract, not an operational rule; documented in AGENTS.md 'Two failure modes specific to the harness'",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
     "pod_push only ever ADDS: a deletion on main needs a second explicit step on the pod":
         "the deletion is an operator SEQUENCE -- delete here, then delete there -- and the "
@@ -14592,6 +14592,18 @@ _FROZEN_KEYS = (
     # unlooped body and the logs would show nothing. Cfg.loop_blocks in the checkpoint is the
     # other half of that guard -- the flag says what was asked for, the metadata says what ran.
     "loop",
+    # ARCHITECTURE, all four, and frozen for zero_init_out's reason rather than attn_every's:
+    # ProductKeyMemory is built in HybridLM.__init__ (model.py:663) and nowhere else, so a
+    # resume that changed any of them would silently keep the weights' own architecture while
+    # the log recorded the new flag -- the exact drift this set catches. mem_values and
+    # mem_layers additionally change the PARAMETER COUNT (M1 adds 1.07B to a 200M backbone),
+    # so tok/s and the loss curve would both move for a reason the log does not carry, and
+    # mem_layers changes WHICH blocks read the pool, which is a different topology under one
+    # name. mem_sparse is here for a second reason on top: it decides whether the value table's
+    # gradient is COO or dense, so it selects which optimizer can take the group at all
+    # (AdamW raises on a sparse grad) -- two segments of one run that disagree on it did not
+    # train the same table the same way.
+    "mem_values", "mem_top_k", "mem_layers", "mem_sparse",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so

@@ -196,6 +196,131 @@ with _amp():
     assert m(x, y, train.doc_cu_seqlens(x, 1))[0].shape == (2, 16, Cfg.d)
 print("test_arch_compat OK")
 
+# ---------------------------------------------------------------- sparse memory layers
+# Charter docs/standards/memory_layers_0905.md asks for three cases: memory fwd/bwd on CPU,
+# save/load round-trip, and a legacy (no-memory) checkpoint still loading. Each one below is
+# followed by the thing it would let through if it were only the obvious assertion.
+_MV, _MK = 64 * 64, 8  # a square value count, and top_k <= side (ProductKeyMemory raises otherwise)
+Cfg.mem_values, Cfg.mem_top_k, Cfg.mem_layers, Cfg.mem_sparse = _MV, _MK, "1,3", True
+Cfg.grad_ckpt = False
+
+# 1. FWD/BWD ON BOTH _body PATHS, and the attn_res one is the reason this case exists rather
+# than a formality. _body has two paths: the plain one calls Block.forward (which adds the
+# memory) and the attn_res one iterates Block.sublayers(), which returns (ar1,n1,mixer) and
+# (ar2,n2,ffn) and NO memory branch. Cfg.attn_res defaults True and the head-hybrid control
+# trained with it True, so before 2026-09-05 every memory arm would have taken that path,
+# skipped the memory, trained as the CONTROL, and reported a null it never tested -- with the
+# flags, the log and the ledger row all saying it carried the table. A test that ran only the
+# plain path would have been green through all of that, which is why both are here and why
+# each asserts TOUCHED ROWS rather than just a finite loss: the silent-skip world produces a
+# perfectly finite loss. Measured then: 0 rows touched on the attn_res path.
+for _ar_on in (True, False):
+    Cfg.attn_res = _ar_on
+    torch.manual_seed(5)
+    _mm = HybridLM(Cfg).to(DEV)
+    assert _mm.memory is not None and _mm.mem_layers == [1, 3], (_mm.mem_layers,)
+    with _amp():
+        _mh, _ = _mm(x, y)
+    _mh.float().sum().backward()
+    _md = _mm.memory.diagnostics()
+    assert torch.isfinite(_mh).all(), f"memory forward not finite (attn_res={_ar_on})"
+    assert _md["touched_rows"] > 0, (
+        f"attn_res={_ar_on}: the memory was reached by NO token, so this arm trains as the "
+        f"control while its flags say otherwise -- the 2026-09-05 sublayers() defect")
+    assert _mm.memory.values.weight.grad is not None, "value table got no gradient"
+    assert _mm.memory.values.weight.grad.is_sparse, (
+        "mem_sparse=True must give a COO grad: the dense one is 4.3B rows at M3 and defeats "
+        "the index-exchange DDP path entirely")
+    assert _mm.memory.keys.grad is not None and _mm.memory.keys.grad.abs().sum() > 0, (
+        "the keys got no gradient, so the lookup can never learn WHICH values to read and the "
+        "table is a fixed random projection")
+    # THE SHARED POOL IS ONE MODULE AND ONE PARAMETER. Assigning it to an attribute per block
+    # would register it once per reading block: three copies in state_dict and the same tensor
+    # handed to the optimizer three times.
+    #
+    # BOTH CHECKS BELOW REPLACE ONES THAT WERE BLIND, and the mutation that exposed them was
+    # registering the pool under a DIFFERENT attribute name (self._mem_registered = memory)
+    # alongside the list. Measured 2026-09-05: the test stayed green.
+    #   - `[k for k in state_dict() if k.endswith("memory.values.weight")]` counted 1, because
+    #     the duplicate's key is blocks.1._mem_registered.values.weight -- a name-suffix test
+    #     only finds a duplicate that the mutation happens to name the same way.
+    #   - `sum(1 for p in parameters() if p is ...)` counted 1, because nn.Module.parameters()
+    #     DEDUPLICATES by identity by default. It answers "is this tensor a parameter", which
+    #     was never the question; the question is how many times the optimizer will be handed it.
+    # So: count by STORAGE across every state_dict entry, and walk parameters with
+    # remove_duplicate=False. Verified both report 4 under the mutant and 1 here.
+    assert _mm.blocks[1]._mem[0] is _mm.blocks[3]._mem[0] is _mm.memory, "pool must be shared"
+    _ptr = _mm.memory.values.weight.data_ptr()
+    _dups = [k for k, v in _mm.state_dict().items() if v.data_ptr() == _ptr]
+    assert len(_dups) == 1, f"the value table's storage appears {len(_dups)} times in state_dict: {_dups}"
+    _opt_hits = [n for n, p in _mm.named_parameters(remove_duplicate=False)
+                 if p is _mm.memory.values.weight]
+    assert len(_opt_hits) == 1, (
+        f"the value table reaches the optimizer {len(_opt_hits)} times: {_opt_hits}")
+    assert not any(k.endswith("touched") or k.endswith("last_entropy") for k in _mm.state_dict()), (
+        "the diagnostics buffers must be non-persistent: saving them makes two checkpoints of "
+        "the same weights differ by a window counter")
+
+# 2. SAVE/LOAD ROUND-TRIP, asserted on the OUTPUT and not only on the key set. A reload that
+# dropped the memory silently would keep every key (the pool is still constructed) and still
+# produce a finite forward; only the numbers differ. eval() both sides so the `touched` write
+# is the only nondeterminism and it touches no output.
+Cfg.attn_res = True
+torch.manual_seed(7)
+_msrc = HybridLM(Cfg).to(DEV).eval()
+_mdst = HybridLM(Cfg).to(DEV).eval()
+with torch.no_grad(), _amp():
+    _before = _msrc(x)[0].clone()
+    assert not torch.allclose(_before, _mdst(x)[0]), (
+        "two fresh models agree before loading, so this case cannot see a load that does nothing")
+_mdst.load_state_dict(_msrc.state_dict())
+with torch.no_grad(), _amp():
+    assert torch.allclose(_before, _mdst(x)[0]), "memory checkpoint round-trip changed the output"
+assert torch.equal(_msrc.memory.values.weight, _mdst.memory.values.weight)
+
+# 3. A LEGACY CHECKPOINT STILL LOADS. Every checkpoint before 2026-09-05 has no memory tensors
+# and no mem_* in its cfg, and the control is one of them -- it must construct bit-identically
+# to how it trained, so mem_values 0 has to mean "no pool at all", not "an empty pool".
+Cfg.mem_values = 0
+_mnone = HybridLM(Cfg).to(DEV)
+assert _mnone.memory is None and _mnone.mem_layers == [], "mem_values 0 must build no pool"
+assert not any("memory" in k for k in _mnone.state_dict()), "no-memory model carries memory keys"
+_legacy_sd = _mnone.state_dict()
+Cfg.mem_values = _MV
+_mwith = HybridLM(Cfg).to(DEV)
+try:
+    _mwith.load_state_dict(_legacy_sd)
+    raise AssertionError(
+        "a memory model accepted a checkpoint with no memory tensors. Then a resume of the "
+        "control under --mem_values would train a RANDOM table and read from it, and nothing "
+        "would say so")
+except RuntimeError as _e:
+    assert "memory" in str(_e), _e
+Cfg.mem_values = 0
+HybridLM(Cfg).to(DEV).load_state_dict(_legacy_sd)  # the real path: cfg says 0, weights have none
+Cfg.mem_values, Cfg.mem_top_k, Cfg.mem_layers = 0, 32, "3,6,9"
+
+# 4. mem_layers OUT OF RANGE MUST RAISE. An index past the last block would attach the pool to
+# nothing, and the arm would train as the control with every flag saying otherwise -- the same
+# silent-null as case 1, reached by a typo in a launch line instead of by a code path.
+Cfg.mem_values, Cfg.mem_layers = _MV, f"0,{Cfg.layers}"
+try:
+    HybridLM(Cfg)
+    raise AssertionError("mem_layers past the last block was accepted; the pool attaches to nothing")
+except ValueError as _e:
+    assert "outside" in str(_e), _e
+# BOTH SPELLINGS OF mem_layers MUST BUILD ONE ARCHITECTURE: the flag arrives as a string and a
+# saved cfg as whatever it was saved as, and two spellings reading as two arms is the shape that
+# made a ledger knob look like a 1/sqrt(L) rule.
+Cfg.mem_layers = "1,3"
+_a = HybridLM(Cfg).mem_layers
+Cfg.mem_layers = [1, 3]
+assert HybridLM(Cfg).mem_layers == _a == [1, 3], "list and comma-string forms disagree"
+Cfg.mem_values, Cfg.mem_layers = 0, "3,6,9"
+print("memory layers: fwd/bwd on BOTH _body paths (attn_res on and off), COO value grad, "
+      "keys learn, one shared pool registered once, round-trip exact, legacy ckpt loads, "
+      "bad mem_layers raises OK")
+
 # --warmdown 0 must land as 0.0, not be skipped as falsy. The generic args->Cfg loop uses
 # `if hasattr(Cfg,k) and v`, which drops 0.0; the WSD stage-1 join sets --warmdown 0 to keep
 # lr at stable, so a skipped 0.0 would silently anneal stage 1. This guards the explicit
