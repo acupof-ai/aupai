@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Eighteen entries: two S1, twelve S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Nineteen entries: three S1, twelve S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -123,6 +123,7 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E16 | S2 | 59 of 62 credential-bearing episodes in the v14 build were invisible to the old detector, so they were in v13's admission set and every pack before it — which checkpoints trained on them? | 297 ledger lines folded by `name` to 152 distinct, every `--sft_path` in every `cmd` (11 SFT runs, 4 packs); all 60 `score_matrix` rows (55 distinct `ckpt`); `ls` on the pod's `data/sft/` (41 entries, 21 `.pt`); `torch.load` on all 21 reading `sources`/`source`/`meta.sources`. | NONE. Zero agentic packs in all four populations, and the training path cannot reach one: the builder writes JSONL and nothing converts a JSONL to the `.pt` that `sft_math.py --sft_path` consumes. Held at S2 because 20 of 21 `.pt` packs carry NO `sources` field, so provenance came from the producers' code, not the packs' own metadata. |
 | E17 | S2 | The v14 build's log certifies that the secret scan gated the rename. | `runs/e1_v14_agentic_build_2026-09-04.log` lines 95-102 and 122; the three background-task output files. | The log holds a `FileNotFoundError` on `os.replace` AND `build exit=0`, and LACKS the `wrote 4823 rows` line both Monitors reported: two processes wrote it concurrently, one won the rename, the other died on it, and the loser's traceback interleaves mid-report. The gate verdict is sound but the log cannot certify it — the pack was verified independently (4,823 rows, 0 unparseable, 0 wrong-shape, 0 byte-identical duplicates). The two-writer origin is UNRESOLVED, not guessed. |
 | E18 | S2 | `eval/score_matrix.py`'s failure records name the cause of a scorer's refusal. | Three runners read: `_run_eval_json:304` and `metric_minimal_pairs:281` use `(r.stderr or r.stdout)`; `_run:387` uses `(r.stdout + r.stderr)`. Refusal stream read per script for all 7. Mechanism reproduced with a 4-line program through line 304's expression verbatim. | Two of three runners discard stdout entirely whenever stderr is non-empty, and `domain_bpb.py` is the one script whose every refusal is on stdout, so a single `vocab_id` UserWarning replaces the cause. **6 of 10** `domain_bpb` rows are blinded this way (not 10 as MT-12 reports: 3 carry a real stderr cause, 1 carries a bare source line from the truncation shape the code comment calls fixed). `l1_fewshot` adds 8 rows of a second shape: exit -15 SIGTERM, cause recorded as a progress line. `_run` already holds the correct form eleven lines below the second defective site. |
+| E19 | S1 | `domain_bpb` is a published metric of this project: it is the control arm's cross-tokenizer reading, `runs/score_matrix.jsonl` carries it as a field on 60 rows, and `facts/*.json` cite it. | Ran domain_bpb's whole pre-forward half on the pod with `CUDA_VISIBLE_DEVICES=""` (no model, no card): `val_seqs` + `roundtrip_fraction` over all 9 domains of `data/mix_200m_4b.json`. Round-trip fractions math_owm_stage2 0.1094, en_c4_stage2 0.0156, cot 0.0000, textbook_30b 0.0156, chatml 0.0000, chat_qa 0.0000, zh_web 0.1094, code_py_starcoder 0.2188, code_py_rp1t 0.3594 — every one below `MIN_ROUNDTRIP = 0.98`. | **All 9 domains are skipped, `out` is empty, and `domain_bpb.py:317` prints `REFUSING: no domain produced a number` and returns 1. The metric has NEVER produced a number for any checkpoint and cannot on the current data path** — the 10 error rows in E18 are this one cause, not a per-checkpoint problem. Cause is one line: `tok.decode([EOS_ID])` returns `''`, and every val row from `train._domain_seqs` is packed and EOS-delimited (cot row 0 holds 8), so decode drops the delimiters and re-encode cannot reproduce the ids. The gate measures the tokenizer's special-token handling, not whether the two arms score the same bytes. |
 
 ## 5. Blind spots of this audit
 
@@ -513,3 +514,63 @@ warning is not unconditional at import; `loader.py:136` fires it per checkpoint 
 `warnings.warn` when `vocab_id` is absent. Every old-format checkpoint therefore puts one line on
 stderr and shadows all of stdout. Not verified, and named rather than assumed: whether torch/NCCL
 banners reach stderr on the pod's GPU path. That needs a GPU run, which the audit forbids.
+
+### E19 (S1): domain_bpb has never produced a number for any checkpoint, and the cause is one line
+
+6e's ruling 2026-09-04 after the C11 launch prep. Found while building C11's launch line rather
+than by auditing the metric: the plan said "domain_bpb first", so I ran its CPU half before asking
+for a card, and it cannot produce a number at all.
+
+**The measurement.** `domain_bpb.py` splits cleanly at the forward pass: everything before it —
+`val_seqs` reading shards, `roundtrip_fraction` tokenizing — is CPU. Ran on the pod with
+`CUDA_VISIBLE_DEVICES=""`, no model loaded, all 9 domains of `data/mix_200m_4b.json`, 64 rows each:
+
+| domain | round-trip | verdict at `MIN_ROUNDTRIP = 0.98` |
+|---|---|---|
+| code_py_rp1t | 0.3594 | skipped |
+| code_py_starcoder | 0.2188 | skipped |
+| math_owm_stage2 | 0.1094 | skipped |
+| zh_web | 0.1094 | skipped |
+| en_c4_stage2 | 0.0156 | skipped |
+| textbook_30b | 0.0156 | skipped |
+| cot | 0.0000 | skipped |
+| chatml | 0.0000 | skipped |
+| chat_qa | 0.0000 | skipped |
+
+Nine of nine. `out` is empty, so `domain_bpb.py:317` prints `REFUSING: no domain produced a
+number` and returns 1. No GPU, no checkpoint and no re-score can change this.
+
+**The 10 E18 error rows are this, not ten problems.** E18 read them as a stream-capture defect and
+that reading holds for the RECORD — C6a makes the cause visible where it was replaced by a
+`UserWarning`. But the metric itself was failing identically every time. C6a fixed what the ledger
+says; it did not make the metric work. Stated plainly because my own E18 could be read as implying
+the numbers were merely unrecorded.
+
+**Cause, one line.** `tok.decode([EOS_ID])` returns `''`. Every val row from
+`train._domain_seqs` is packed and EOS-delimited — `cot` row 0 holds 8 EOS in 4,097 ids — so
+decode drops the delimiters and the re-encode is 4,089 ids, first differing at position 243 exactly
+where an EOS was. `roundtrip_fraction` demands `encode(decode(ids)) == ids`, which no packed row
+can satisfy while decode is lossy on the delimiter.
+
+So the gate measures the tokenizer's special-token handling, not the property it claims: whether
+the two arms would score the same bytes. Its docstring is right about why the check exists ("a
+lossy merge or a normalisation step ... would otherwise turn into a silent difference") and the
+lossiness it caught is its own decode call's.
+
+**Measured fix direction, not a guess** — `decode(ids, skip_special_tokens=False)`:
+
+| domain | before | after |
+|---|---|---|
+| cot | 0.0000 | 0.9688 |
+| code_py_rp1t | 0.3594 | 1.0000 |
+| zh_web | 0.1094 | 0.9375 |
+
+One clears 0.98, two do not, so this is not a one-line fix that opens the gate. That is C12: keep
+the special tokens, then derive the threshold from a known answer (unpacked plain text must
+round-trip 1.0) and give the residual on packed rows a named cause before any number is chosen.
+
+**What this costs downstream.** `domain_bpb` is the control arm's only cross-tokenizer metric, so
+every our-vs-Pythia comparison in byte terms is unmeasured — E6 recorded the three ERROR panels as
+a systematic gap without knowing the gap is total. Nothing published is WRONG because of this; a
+metric that always refused never entered a number anywhere. The S1 is for a published metric that
+does not exist.
