@@ -472,6 +472,12 @@ def main():
         # that missed CJK would scan it as empty and report zero contamination while never having
         # looked at 56% of the corpus.
         "scripts/e1_28_heldout_contamination.py",
+        # The N8 row-edge probe. Its selftest is pure torch on tiny fixtures -- no checkpoint, no
+        # tokenizer, no card -- and it includes the case that decides whether the probe can measure
+        # anything: a constant-logit model gives equal edge/rest means whatever the mask does, so a
+        # position-dependent RAMP fixture sits beside it to prove the offsets select the positions
+        # they name.
+        "scripts/e1_n8_row_edge_probe.py",
         # The cursor scanner's test, which is a TEST FILE rather than a --selftest script and so
         # takes no flag; it is here because selftests_are_gated counts any file carrying the string
         # and because the thing it now asserts is a REFUSAL. That refusal exists because the scan's
