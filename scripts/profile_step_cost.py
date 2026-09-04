@@ -505,6 +505,12 @@ def main():
                     help="how many steps the trace covers. Keep it small: record_shapes holds "
                          "per-kernel shape metadata for the whole window and OOMed the 206M "
                          "shape at 93.8/95.2 GiB over a longer one")
+    ap.add_argument("--skip-save-val", action="store_true",
+                    help="skip the save and val timings and still write the JSON row. Measured "
+                         "on the memory arm: save 33.6 s and val 5.7 s per run against a 2.0 s "
+                         "step, and a multi-config sweep pays that per cell for numbers no cell "
+                         "reads. --peak-only also skips them but returns before the row is "
+                         "written, so it cannot feed a table.")
     ap.add_argument("--peak-only", action="store_true",
                     help="memory probe: run --steps steps, report peak GiB and tok/s/gpu, "
                          "skip save/val/nccl. For the L18 feasibility question.")
@@ -810,6 +816,33 @@ def main():
                   f"opt_state={sb}B{'' if sb else ' (no Adagrad state found)'} "
                   f"-> {wb + gb + sb} B/param x {tw.numel()} params = "
                   f"{tw.numel() * (wb + gb + sb) / 2**30:.2f} GiB of table tensors", flush=True)
+            # READOUT 6'S OWN COST, timed here so the diag cadence cannot hide inside the arm's
+            # throughput reading (4c's condition, 2026-09-05). row_checksums is a (rows x d) @ (d)
+            # matvec over the WHOLE table -- 2 GiB read at M1, 4 at 1448^2 -- and it runs at steps
+            # 10, 20, 30 and every 100 thereafter. If a call costs a material fraction of a step,
+            # then the steps carrying a diag row are slower than the steps around them, and readout
+            # 5 reads tok/s/gpu AT STEP 30, which is one of them.
+            #
+            # CUDA events and a warmed call: the first touches allocate the fp32 result and would
+            # time the allocator rather than the matvec.
+            if hasattr(raw.memory, "row_checksums"):
+                raw.memory.note_row_changes()          # warm: arms the baseline, allocates
+                _e0 = torch.cuda.Event(enable_timing=True)
+                _e1 = torch.cuda.Event(enable_timing=True)
+                _rc = []
+                for _ in range(5):
+                    _e0.record()
+                    raw.memory.note_row_changes()
+                    _e1.record()
+                    torch.cuda.synchronize()
+                    _rc.append(_e0.elapsed_time(_e1))
+                _rcm = statistics.median(_rc)
+                _tot = _stats(steps)
+                _share = f", {100 * _rcm / _tot['median_ms']:.2f}% of a step" if _tot else ""
+                print(f"READOUT6 note_row_changes median {_rcm:.2f} ms over 5 calls{_share} "
+                      f"-- charged only at diag steps (10, 20, 30, then every 100), so those "
+                      f"steps are slower than their neighbours by this much and step 30 is one "
+                      f"of them", flush=True)
         print(f"STARTUP {startup_alloc:.2f} GiB allocated, {startup_res:.2f} GiB reserved "
               f"(construction + compile + {a.warmup} warmup steps, before the reset)", flush=True)
         print("  TWO NUMBERS, TWO QUESTIONS. STARTUP decides whether the shape can be LAUNCHED "
@@ -848,28 +881,35 @@ def main():
             torch.distributed.destroy_process_group()
         return 0
 
-    # vars() on a CLASS returns a mappingproxy, which pickle refuses -- train.py never hits
-    # this because train.py:964 passes vars(cfg) through a dict comprehension first. The save
-    # is the LAST thing this script does, so the timings and the trace were already complete
-    # and correct when it raised; the crash cost the record, not the measurement.
-    cfg_dict = {k: v for k, v in dict(vars(train.Cfg)).items() if not k.startswith("_")}
-    saves = []
-    if is_main:
-        for _ in range(3):
-            t0 = time.perf_counter()
-            torch.save({"model": raw.state_dict(), "cfg": cfg_dict,
-                        "opt": [o.state_dict() for o in optimizers]}, "/tmp/_prof_ckpt.pt")
-            saves.append(time.perf_counter() - t0)
-        os.remove("/tmp/_prof_ckpt.pt")
+    # SKIP SAVE AND VAL, and skip them by measurement rather than by taste: save measured
+    # 33.6 s and val 5.7 s per config on the memory arm, against a 2.0 s step. A five-config
+    # decomposition pays 3+ minutes of that per cell for two numbers no cell reads, and the
+    # 33.6 s save is where the m1 cell's ranks desynchronised -- rank 0 saving while rank 1
+    # waits is a two-minute gap with no collective in it.
+    saves = vals = []
+    if not a.skip_save_val:
+        # vars() on a CLASS returns a mappingproxy, which pickle refuses -- train.py never hits
+        # this because train.py:964 passes vars(cfg) through a dict comprehension first. The save
+        # is the LAST thing this script does, so the timings and the trace were already complete
+        # and correct when it raised; the crash cost the record, not the measurement.
+        cfg_dict = {k: v for k, v in dict(vars(train.Cfg)).items() if not k.startswith("_")}
+        saves = []
+        if is_main:
+            for _ in range(3):
+                t0 = time.perf_counter()
+                torch.save({"model": raw.state_dict(), "cfg": cfg_dict,
+                            "opt": [o.state_dict() for o in optimizers]}, "/tmp/_prof_ckpt.pt")
+                saves.append(time.perf_counter() - t0)
+            os.remove("/tmp/_prof_ckpt.pt")
 
-    vals = []
-    for _ in range(3):
-        torch.cuda.synchronize()
-        t0 = time.perf_counter()
-        train.validate(model, raw, Xva, Yva, train.Cfg.batch, dev, torch.bfloat16,
-                       max_batches=train.Cfg.val_batches)
-        torch.cuda.synchronize()
-        vals.append(time.perf_counter() - t0)
+        vals = []
+        for _ in range(3):
+            torch.cuda.synchronize()
+            t0 = time.perf_counter()
+            train.validate(model, raw, Xva, Yva, train.Cfg.batch, dev, torch.bfloat16,
+                           max_batches=train.Cfg.val_batches)
+            torch.cuda.synchronize()
+            vals.append(time.perf_counter() - t0)
 
     # tok/s/gpu from the MEDIAN step, and peak from the loop only. These two are the A/B's whole
     # output: a config that is faster per GPU and fits is better, and nothing else in this record

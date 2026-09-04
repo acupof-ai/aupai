@@ -412,6 +412,177 @@ _leg_conv = [f for f, mod in _leg.named_modules() if type(mod).__name__ == "FP8L
 assert _leg_conv, "the legacy converter converted nothing -- this case would be vacuous"
 assert not [f for f in _leg_conv if train._is_mem_fqn(f)], (
     f"the legacy FP8 path converted memory linears: {[f for f in _leg_conv if train._is_mem_fqn(f)]}")
+
+# READOUT 6 AND THE TABLE MASTER, as ONE known-answer case with both worlds, because either half
+# alone proves nothing: a checksum probe that never fires cannot show the master works, and a
+# master with no probe cannot show the bf16 table was broken.
+#
+# THE ARITHMETIC IS THE CASE, and it has to be derived rather than guessed. Weights are 1.0, where
+# the bf16 ULP is 2^-8 and anything under half of it (2^-9 = 1.953e-3) rounds back to 1.0 on the
+# add. Adagrad's step for a constant gradient is lr*g/sqrt(k*g^2) = lr/sqrt(k), so it DECAYS: the
+# per-step update is lr and the sum over n steps is lr*sum(1/sqrt(k)), not n*lr. At lr = 2^-11 the
+# per-step update is 4.88e-4, four times under the half-ULP, so every single step rounds away; the
+# sum over 20 steps is 3.71e-3, 1.90 times OVER it, so an fp32 master that keeps the steps crosses
+# the threshold and the bf16 weight moves. Both numbers are needed: a per-step update above the
+# half-ULP would move the table without a master (no negative world) and a 20-step sum below it
+# would move nothing with one (no positive world).
+#
+# NO MODEL, NO FORWARD, NO CARD: the mechanism under test is dtype arithmetic in the optimizer, and
+# a real forward would make the gradient a function of the lookup, so a failure could not be
+# attributed. The gradient is written by hand for exactly that reason.
+_RP = torch.Generator().manual_seed(4242)
+_probe_vec = torch.randn(8, generator=_RP, dtype=torch.float32)
+
+
+def _row_sums(t):
+    return t.detach().float() @ _probe_vec
+
+
+def _rounding_world(with_master, steps=20, lr=2.0 ** -11):
+    """(rows whose checksum moved, the table after `steps` Adagrad steps).
+
+    THE REAL TableMaster, not a re-implementation of it. An earlier version of this case inlined
+    `m.grad = g.float()` and `tbl.copy_(m)` by hand, and a mutant that emptied TableMaster.push
+    left it GREEN: the case was testing its own fixture. Driving the class means the mutant kills
+    it. The module is a stub named to satisfy _is_mem_fqn -- TableMaster selects by fqn, so the
+    name is part of what is under test.
+    """
+    holder = nn.Module()
+    holder.values = nn.Embedding(4, 8)
+    holder.values.weight = nn.Parameter(torch.ones(4, 8, dtype=torch.bfloat16))
+    root = nn.Module()
+    root.memory = holder          # fqn becomes "memory.values.weight"
+    tbl = root.memory.values.weight
+    before = _row_sums(tbl)
+    if with_master:
+        tm = train.TableMaster(root)
+        assert len(tm.pairs) == 1, "TableMaster did not select the stub's value table by fqn"
+        opt = torch.optim.Adagrad([tm.pairs[0][1]], lr=lr)
+    else:
+        tm = None
+        opt = torch.optim.Adagrad([tbl], lr=lr)
+    for _ in range(steps):
+        tbl.grad = torch.ones_like(tbl)        # same sign every step: updates accumulate
+        if tm is not None:
+            tm.pull_grads()
+            opt.step()
+            opt.zero_grad(set_to_none=True)
+            tm.push()
+        else:
+            opt.step()
+            opt.zero_grad(set_to_none=True)
+    return int((_row_sums(tbl) != before).sum()), tbl
+
+
+_neg_moved, _neg_tbl = _rounding_world(with_master=False)
+_pos_moved, _pos_tbl = _rounding_world(with_master=True)
+assert _neg_moved == 0, (
+    f"NEGATIVE world: {_neg_moved} of 4 rows moved in a bf16 table stepped at lr 2^-11 on weights "
+    f"of 1.0. Each Adagrad step is 4.88e-4 against a bf16 half-ULP of 1.95e-3, so every step must "
+    f"round back to 1.0 -- if rows moved, this case can no longer demonstrate the rounding it "
+    f"exists for and the lr must be re-derived before the positive half means anything")
+assert _pos_moved == 4, (
+    f"POSITIVE world: only {_pos_moved} of 4 rows moved WITH an fp32 master. 20 steps of lr/sqrt(k) "
+    f"at lr 2^-11 sum to 3.71e-3, 1.90x the 1.95e-3 half-ULP, so the accumulation does cross it: "
+    f"this failing means the master is not reaching the table (TableMaster.push), not that the "
+    f"sum was too small")
+# The two worlds must differ in the TABLE, not merely in the counter: a probe that reported a
+# change no reader could see in the weights would be measuring itself.
+assert not torch.equal(_pos_tbl.detach(), _neg_tbl.detach()), (
+    "both worlds produced the identical bf16 table, so the checksum difference above cannot be "
+    "coming from the master -- the probe is reporting something other than the weights")
+
+# THE REAL METHODS ON THE REAL MODULE, so the hand-rolled loop above cannot pass while
+# ProductKeyMemory's own accounting is wrong. First call arms and returns -1; a call with nothing
+# changed returns 0; a call after touching one row returns 1.
+Cfg.attn_res = True
+torch.manual_seed(12)
+_rm = HybridLM(Cfg).to(DEV).memory
+assert _rm.note_row_changes() == -1, (
+    "the FIRST note_row_changes must report -1, not 0: with no previous checksum there is nothing "
+    "to compare, and a 0 there is the same number a permanently frozen table reports")
+assert _rm.note_row_changes() == 0, "an untouched table reported a changed row"
+with torch.no_grad():
+    _rm.values.weight[7] += 1.0
+assert _rm.note_row_changes() == 1, (
+    "one row was changed by 1.0 and the checksum probe did not see it")
+# THE BASELINE MUST ADVANCE. Without this call a mutant that counts against the ORIGINAL checksums
+# forever still passes the three above: -1, 0, then 1 for the row it just changed. It is this
+# fourth call -- nothing changed since the third -- that separates "changed since the previous diag
+# step" from "changed since the run began", and the second is the wrong quantity: it converges to
+# every touched row and stops being able to see the table freeze, exactly as a cumulative
+# `touched` would.
+assert _rm.note_row_changes() == 0, (
+    "the row changed in the PREVIOUS window is still counted as changed, so the baseline is not "
+    "advancing and the field reports change-since-start rather than change-since-previous")
+# THE fp32 ACCUMULATION IS ITSELF A CLAIM, and neither a +1.0 change nor a whole-row nudge tests
+# it -- both are visible in any precision. The case has to be the SMALLEST change the table can
+# hold: one ULP in ONE element. That means the table must be bf16 HERE, as it is on the arms
+# (train.py:2435's cast), because the models built above are fp32 and one fp32 ULP is below the
+# resolution of any dot product over 64 terms -- a case written on the fp32 model is red for both
+# the right and the wrong reason. Measured at this d=64: with a bf16 table, a one-element bump moves
+# the fp32 projection and leaves a bf16 one bit-identical, each bf16 partial sum being ~64x the
+# change; at four bumped elements both see it, so the separation is about the accumulator and not
+# the magnitude. THROUGH THE REAL row_checksums: a mutant reducing the probe to bf16 survived every
+# assertion above, and an arithmetic case written beside the method would not have caught it either.
+# THE fp32 ACCUMULATION IS ITSELF A CLAIM, and it can only be tested at the REAL row width. Whether
+# a one-ULP change in one element survives a bf16 accumulator is decided by probe[0] / |sum(probe)|:
+# at d=64 that ratio is order 1 and the answer flips with the seed -- measured, a bf16-probe mutant
+# survived on one row and died on another. At d=1024 the partial sums grow as sqrt(d) while the
+# change does not, so the ratio is ~1/32 and a bf16 accumulator is reliably blind. So this case
+# builds a 64-value pool at d=1024 (tiny: 64 rows) rather than reusing the d=64 test model, and
+# drives ProductKeyMemory's own method.
+_rmb = model.ProductKeyMemory(64, 1024, top_k=8, sparse=False).to(DEV).to(torch.bfloat16)
+assert _rmb.values.weight.dtype is torch.bfloat16, "the cast did not reach the value table"
+# The row is set to a known value: at its init the bump's visibility depends on that row's
+# magnitude, which is the seed dependence this case exists to avoid.
+with torch.no_grad():
+    _rmb.values.weight[13].fill_(1.0)
+assert _rmb.note_row_changes() == -1, "baseline call on the bf16 module"
+with torch.no_grad():
+    _e = _rmb.values.weight[13, :1]
+    _e.copy_(torch.nextafter(_e, torch.full_like(_e, 1e4)))
+assert float(_e) != 1.0, "nextafter did not move the element by one bf16 ULP"
+assert _rmb.note_row_changes() == 1, (
+    "a ONE-ULP change in ONE element of a bf16 row at d=1024 was not resolved by row_checksums, so "
+    "readout 6 under-reports precisely the small updates it exists to detect -- the projection must "
+    "accumulate in fp32 over the bf16 table, not in bf16")
+# NON-PERSISTENT, all four buffers: a window counter in the checkpoint would make two saves of the
+# same weights differ, and row_sum_prev is 4 bytes per row -- 4 MiB at M1 -- of pure scratch.
+_sd = HybridLM(Cfg).state_dict()
+_leaked = [k for k in _sd if k.split(".")[-1] in
+           ("row_probe", "row_sum_prev", "rows_changed", "row_probe_armed")]
+assert not _leaked, f"readout 6 buffers leaked into the checkpoint: {_leaked}"
+
+# TWO MASTERS, DISJOINT. build_optimizers takes ONE merged map, so an overlap would mean a
+# parameter reachable as both the model tensor and a master -- the shape that lets an optimizer
+# step a tensor the model no longer uses.
+_mm = HybridLM(Cfg).to(DEV)
+_mw = train.MasterWeights(_mm)
+_tm = train.TableMaster(_mm)
+assert _tm.pairs, "TableMaster matched no value table -- this case would be vacuous"
+assert len(_tm.pairs) == 1, f"TableMaster took {len(_tm.pairs)} tensors; only the value table"
+_tw = _mm.memory.values.weight
+assert _tm.pairs[0][0] is _tw, "TableMaster's master is not of the value table"
+assert not (set(map(id, _mw.map)) & set(map(id, _tm.map))), (
+    "MasterWeights and TableMaster claim a parameter in common, so the merged map that "
+    "build_optimizers reads depends on insertion order")
+assert _tw not in _mw.map and any(p is _tw for p in _mw.unmastered), (
+    "the value table is in MasterWeights' map: it must be excluded there and mastered by "
+    "TableMaster, or --fp32_master would give it two masters")
+# pull_grads must CLEAR the model's grad, which is the half that was deliberately absent while the
+# table was unmastered. Leaving it would make the next backward accumulate into a running sum.
+_tw.grad = torch.ones_like(_tw)
+_tm.pull_grads()
+assert _tw.grad is None, (
+    "TableMaster.pull_grads left p.grad in place. The optimizer holds the master, so its "
+    "zero_grad clears the master's grad only, and the next backward would accumulate on top of "
+    "this one -- the running-sum bug MasterWeights.pull_grads records")
+assert _tm.pairs[0][1].grad is not None and _tm.pairs[0][1].grad.dtype is torch.float32, (
+    "the master did not receive an fp32 copy of the gradient")
+Cfg.mem_values, Cfg.mem_layers = 0, "3,6,9"
+print("readout 6 + table master: bf16 at lr 2^-11 freezes all 4 rows over 20 steps, an fp32 master "
+      "moves all 4; note_row_changes -1/0/1; buffers non-persistent; the two masters are disjoint OK")
 Cfg.mem_values, Cfg.mem_layers = 0, "3,6,9"
 print(f"memory optimizer: own Adagrad group at mem_lr, keys+values in it and in no other group; "
       f"FP8 excludes {len(_mem_lin)} memory linears on both paths and changes no other verdict OK")

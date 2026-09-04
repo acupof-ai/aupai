@@ -110,8 +110,9 @@ def validate(row, sch=None):
 
 
 def log_diag(name, step, pool_touched_frac, topk_entropy, key_gini, tok_s_gpu,
-             n_values=None, topk=None, root=None, path=None):
-    """Append one row. Called from train.py every 100 steps, rank 0 only."""
+             n_values=None, topk=None, rows_changed_since_prev=None, rows_changed=None,
+             root=None, path=None):
+    """Append one row. Called from train.py at diag steps, rank 0 only."""
     row = {"name": name, "step": int(step),
            "pool_touched_frac": float(pool_touched_frac),
            "topk_entropy": float(topk_entropy),
@@ -122,6 +123,15 @@ def log_diag(name, step, pool_touched_frac, topk_entropy, key_gini, tok_s_gpu,
         row["n_values"] = int(n_values)
     if topk is not None:
         row["topk"] = int(topk)
+    # READOUT 6, both optional and OMITTED rather than defaulted when absent. The first diag step
+    # of a run has no previous checksum to compare against, and writing 0.0 there would be the
+    # same number a completely frozen table produces -- the one reading this field exists to
+    # distinguish. An absent field reads as "not measured yet"; a 0.0 reads as "measured, nothing
+    # moved", and only one of those is true at step 10.
+    if rows_changed_since_prev is not None:
+        row["rows_changed_since_prev"] = float(rows_changed_since_prev)
+    if rows_changed is not None:
+        row["rows_changed"] = int(rows_changed)
     validate(row)
     p = path or os.path.join(root or ROOT, LEDGER)
     os.makedirs(os.path.dirname(p), exist_ok=True)
