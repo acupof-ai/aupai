@@ -379,9 +379,128 @@ def _demo_keys():
     print(f"HybridLM submodules agree across both copies ({len(a)}): {sorted(a)}")
 
 
+def claim_my_cards(name, note="", wait=0):
+    """Claim the cards this process can SEE, for the whole life of this process. Returns the
+    claimed card list.
+
+    THE ACQUIRE POINT FOR EVERY GPU ENTRY POINT THAT IS NOT `harness launch` (de-55).
+    Measured 2026-09-04: 11 files load a checkpoint and name cuda, 10 reference card_claim
+    nowhere, and only harness.py acquires. So `runs/claims/` sat empty on the pod while lane
+    jobs held cards all day, and card_held_without_claim -- which detects exactly that -- reports
+    SKIP off-pod, so nobody saw it.
+
+    IT READS CUDA_VISIBLE_DEVICES AND REFUSES WHEN UNSET, and that refusal is the feature.
+    9 of the 10 never mention the variable: they inherit a card from whoever launched them and
+    cannot name it. card_claim's contract is CVD, not `cuda:N` -- acquire() refuses a claim whose
+    cards disagree with the process's exec-time value -- so a call that had to be handed a card
+    number would have nothing correct to pass at nine sites. Reading the variable is the only
+    thing that works everywhere, and a job that cannot name its card does not get one.
+
+    NOT inside load_checkpoint, which is where it looks like it belongs. Two independent reasons,
+    both measured: only 5 of the 10 call it (all 10 also torch.load directly, 4 use no helper at
+    all), and its `device` defaults to "cpu" with 7 of the 10 passing the literal "cpu" -- an
+    acquire there fires on CPU loads and claims nothing on the runs that matter.
+
+    The three files with a real CPU path (scripts/test_arch_compat.py, scripts/test_arch_L32.py,
+    scripts/test_e2e.py) call this INSIDE their cuda branch. CI runs test_arch_compat on a
+    machine with no fla where DEV == "cpu"; an ungated call would refuse there.
+
+    Claims this process's own pid, not getppid(). card_claim's default is PPID because its normal
+    caller is a launcher that outlives the command; here the caller IS the job, and it dies when
+    the work ends -- which is precisely what a claim must name. `atexit` releases, so a claim
+    never outlives the process that holds it (the ORPHAN half of the 2026-09-03 pair).
+    """
+    import atexit
+    import sys
+
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+
+    cvd = os.environ.get("CUDA_VISIBLE_DEVICES")
+    cards = [t.strip() for t in (cvd or "").split(",") if t.strip()]
+    if not cards:
+        raise SystemExit(
+            f"{name}: CUDA_VISIBLE_DEVICES is unset, so this process cannot name the card it is "
+            f"about to use and cannot claim it. A card taken without a claim reads ORPHAN to "
+            f"card_claim.py status and contends with whatever the controller queued next. "
+            f"Relaunch with CUDA_VISIBLE_DEVICES=<lane card>, or go through "
+            f"`python scripts/harness.py launch`, which allocates and claims for you.")
+    ok, msg = card_claim.acquire(name, cards, wait=wait, note=note, pid=os.getpid())
+    if not ok:
+        raise SystemExit(f"{name}: {msg}")
+    atexit.register(lambda: card_claim.release(name))
+    print(f"[card_claim] {msg}", flush=True)
+    return cards
+
+
+def _demo_claim():
+    """claim_my_cards' three behaviours, each provoked: unset CVD refuses, a set CVD claims the
+    cards it names, and the claim carries THIS pid rather than the parent's.
+
+    The pid assertion is the one that matters and it is not cosmetic. card_claim.acquire's
+    default holder is getppid(), which for these entry points is the launching shell -- and a
+    claim on a shell fails both ways (it exits and the card reads ORPHAN, or it lingers and the
+    card reads held after the job is gone; both happened 2026-09-03). Removing `pid=os.getpid()`
+    is the code path this case exists to catch, and MEASURED 2026-09-04 it does not merely
+    record the wrong pid: acquire() refuses outright with "pid N is a shell, not the job", so
+    dropping the argument breaks the selftest at the claim rather than at the assertion. Both
+    outcomes are caught -- the assertion covers the case where the parent happens not to be a
+    shell (a python launcher), which is where a silently-wrong holder would otherwise survive.
+    """
+    import json
+    import shutil
+    import sys
+    import tempfile
+
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import card_claim
+
+    d = tempfile.mkdtemp(prefix="claim_demo_")
+    saved_dir, saved_cvd = card_claim.CLAIM_DIR, os.environ.get("CUDA_VISIBLE_DEVICES")
+    try:
+        card_claim.CLAIM_DIR = d
+        os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        try:
+            claim_my_cards("demo_unset")
+            raise AssertionError("unset CUDA_VISIBLE_DEVICES must refuse, not claim nothing")
+        except SystemExit as e:
+            assert "CUDA_VISIBLE_DEVICES is unset" in str(e), str(e)
+        assert not os.path.exists(os.path.join(d, "demo_unset.json")), "a refusal wrote a claim"
+
+        os.environ["CUDA_VISIBLE_DEVICES"] = "6"
+        assert claim_my_cards("demo_set") == ["6"]
+        rec = json.load(open(os.path.join(d, "demo_set.json"), encoding="utf-8"))
+        assert rec["cards"] == ["6"], rec
+        assert rec["pid"] == os.getpid(), (
+            f"the claim names pid {rec['pid']}, not this process ({os.getpid()}) -- with "
+            f"pid=os.getpid() dropped, acquire() binds getppid(), which for a hand-run probe is "
+            f"the shell")
+        # Two cards, and the set is what CVD says -- not a range, not a count.
+        os.environ["CUDA_VISIBLE_DEVICES"] = "2,5"
+        assert claim_my_cards("demo_two") == ["2", "5"]
+    finally:
+        card_claim.CLAIM_DIR = saved_dir
+        if saved_cvd is None:
+            os.environ.pop("CUDA_VISIBLE_DEVICES", None)
+        else:
+            os.environ["CUDA_VISIBLE_DEVICES"] = saved_cvd
+        shutil.rmtree(d, ignore_errors=True)
+    print("claim_my_cards: unset CVD refuses and writes nothing; CVD=6 claims ['6'] under this "
+          "pid; CVD=2,5 claims both")
+
+
 if __name__ == "__main__":
     import sys
 
-    if len(sys.argv) > 1 and sys.argv[1] == "selftest":
+    # Both spellings. `selftest` is what this file has always taken and what callers type;
+    # `--selftest` is the pre-commit hook's calling convention for every entry in
+    # SELFTEST_FILES, and this file joined that map on 2026-09-04. An unknown argument exits
+    # nonzero rather than running nothing and reporting success -- the shape
+    # test_arch_compat.py's header records, where `--no-such-flag` ran the suite and exited 0.
+    if len(sys.argv) > 1:
+        if sys.argv[1:] not in (["selftest"], ["--selftest"]):
+            sys.exit(f"usage: {os.path.basename(__file__)} [selftest|--selftest]  "
+                     f"(got {sys.argv[1:]})")
         _demo_keys()
         _demo()
+        _demo_claim()
