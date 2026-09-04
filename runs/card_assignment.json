@@ -30,6 +30,11 @@
    "when": "2026-09-04T05:40Z",
    "by": "fb",
    "what": "lane card 5 -> e1 for C11 domain_loss doc_cu re-score; prior lane note (b0 cu probe) superseded, b0 holds no lane job"
+  },
+  {
+   "when": "2026-09-04T06:05Z",
+   "by": "fb",
+   "what": "cards 1 and 2 recorded as held by tileRL jobs from /work/tl-rl (not aupai); block grant 0-3 is not usable while they run; card 5 e1 C11; card 7 idle (user's)"
   }
  ],
  "granted": "2026-09-03",
@@ -50,8 +55,8 @@
   "6": "FOREIGN OCCUPANT since ~12:5xZ 2026-09-03: host-namespace pids 2278278/2291027 (not in our container), 0.5-12.7 GB, 92-100%. harness launch refused bench_final_score_matrix twice on it. Lane jobs do not queue behind another container: the lane moved to card 5 for bench_final_score_matrix (read-and-launch in one command, 0 MiB). Card 6 returns to lane duty only when its compute-apps list is empty of foreign pids.",
   "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so.",
   "0": "b0 Stage D equal-compute arm (unlooped, 5085 steps = 1.333B tok), world 2 with card 1",
-  "1": "b0 Stage D equal-compute arm, world 2 with card 0",
-  "2": "reserved: N8 fixed arm (conv_doc_isolated on) when e1's flag lands, world 2 with card 3",
+  "1": "HELD by a tileRL job (tilerl train grpo-gsm8k-27b, /work/tl-rl, started ~05:55Z, 28.9 GB) in our container; not an aupai job, not ours to kill; user's tileRL work presumed (fb 2026-09-04 06:05Z)",
+  "2": "HELD by a tileRL bench (decode-kv,prefill, Qwen3.8-27B-NVFP4, --gpu 2, 28.9 GB) in our container; not ours to kill (fb 2026-09-04 06:05Z)",
   "3": "reserved: N8 fixed arm, world 2 with card 2"
  },
  "lane_note": "2026-09-04 05:40Z fb: lane card 5 granted to e1 for C11 (docs/standards/cleanup_0904.md): one score_matrix run, --metrics domain_loss --cu_path doc_cu over ckpt_data_leg_206m_8b, ckpt_params_leg_438m_3p76b, ckpt_b0_sd_equalcompute, ckpt_b0_n8_fixed; domain_bpb excluded (round-trip gate defect, C12). Grant ends when the job's row lands. Cards 0-3: Stage E arm 1 finished; no grant. Card 7: the user's.",
