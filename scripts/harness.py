@@ -11636,16 +11636,15 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
                 # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
                 # is what separates "this machine was busy" from "this check never runs".
                 n = prev_strikes.get(name, 0) + 1
-            strikes[name] = n
-            limit = _CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT)
-            if n >= _TIMEOUT_STRIKES:
-                state = FAIL
-                evidence = (f"timed out after {limit}s on {n} consecutive runs -- this check "
-                            f"has not actually run since; raise its deadline or fix it")
-            else:
-                state = TIMEOUT
-                evidence = (f"timed out after {limit}s (strike {n}/{_TIMEOUT_STRIKES}; "
-                            f"the next consecutive timeout FAILs)")
+                strikes[name] = n
+                if n >= _TIMEOUT_STRIKES:
+                    state = FAIL
+                    evidence = (f"timed out after {limit}s on {n} consecutive runs -- this check "
+                                f"has not actually run since; raise its deadline or fix it")
+                else:
+                    state = TIMEOUT
+                    evidence = (f"timed out after {limit}s (strike {n}/{_TIMEOUT_STRIKES}; "
+                                f"the next consecutive timeout FAILs)")
         except Exception as e:  # a check that crashes is a failed check, never a pass
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
