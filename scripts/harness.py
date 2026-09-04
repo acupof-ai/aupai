@@ -4206,6 +4206,190 @@ def check_sft_pack_holdout(root):
     return PASS, f"pack matches holdout {live_fp}"
 
 
+def _holdout_registry(root):
+    """(module, error) from the tree's own datagen/holdout.py, imported by path.
+
+    Returns the MODULE, not just REGISTRY, so a caller can read KNOWN_ABSENT from the same
+    object. My first version returned the dict and then looked KNOWN_ABSENT up in sys.modules
+    under a name built from hash(root) -- which never matched, so every known-absent entry read
+    as a real absence. The fix is not a better lookup; it is not splitting the object.
+
+    Imported rather than mirrored. The mirror below used to be the pattern -- a hand-copied list
+    with the comment "Must match datagen/holdout.py EVAL_FILES" -- and it had already drifted to
+    THREE entries against that file's four, which is what a comment enforces (de, 2026-09-04).
+    """
+    p = os.path.join(root, "datagen", "holdout.py")
+    if not os.path.exists(p):
+        return None, "datagen/holdout.py not present"
+    try:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(f"_holdout_reg_{abs(hash(root))}", p)
+        mod = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(mod)
+    except Exception as e:
+        return None, f"datagen/holdout.py did not import: {type(e).__name__}: {e}"
+    reg = getattr(mod, "REGISTRY", None)
+    if not isinstance(reg, dict) or not reg:
+        return None, "datagen/holdout.py has no non-empty REGISTRY dict"
+    return mod, None
+
+
+# Files under the eval-data locations that are eval OUTPUTS or the guard's own artifacts, not
+# eval SOURCES. An enumerable prefix list with a reason each, never a regex over "looks like
+# predictions": the pod holds ~16 preds_*.jsonl and a large number of hard_ckpt_*.jsonl per-card
+# generation dumps, and a check that flags those gets silenced within a day (e1's point). A
+# prefix is a claim someone can check; a regex over intent is not.
+_NON_EVAL_PREFIXES = {
+    "preds_": "model predictions written by an eval run",
+    "hard_ckpt_": "math-hard per-card generation dumps, named for the checkpoint that made them",
+    "holdout_slice_": "a slice of a holdout file, written by a scan",
+    "holdout_hashes": "the guard's own hash set, derived from the registry",
+    "sft_contamination_baseline": "a ratchet baseline for the SFT contamination check",
+    "template_contamination_baseline": "a ratchet baseline for the template contamination check",
+    # READ BEFORE RULING, both of them, and neither carries an eval question:
+    # code_rp1t_handread50.jsonl is 50 rows of {content, lang} -- a hand-read corpus QUALITY
+    # sample, read only by scripts/test_shard_glob.py, with no question and no answer.
+    "code_rp1t_handread50": "50-row hand-read corpus quality sample ({content, lang}), not an eval",
+    # lambada_zh_ids.jsonl is 523 rows of {id} alone -- the id list of lambada_zh_src, which IS
+    # registered. Bare ids leak nothing; the passages they name are the surface, and those are
+    # covered by the lambada_zh_src entry.
+    "lambada_zh_ids": "523 rows of bare {id} for lambada_zh_src, which is itself registered",
+}
+
+
+def check_eval_registry_complete(root):
+    """Every eval/held-out data file is in datagen/holdout.py's REGISTRY, and every entry exists.
+
+    The bug: EVAL_FILES held four paths, the corpus builders took their exclusion population
+    from it, and data/sft/control_sft_text_heldout.jsonl was not one of them -- so 2,114 of
+    7,523 measurable held-out items reached the pretraining corpus with the guard green,
+    fingerprinted and loud (facts/contamination.json#cont.heldout_in_pretrain_corpus, e1
+    2026-09-04). The guard was correct on its own population. Its population was wrong.
+
+    Both directions, because each hides a different failure: a file absent from the registry is
+    unexcluded corpus contamination, and an entry whose path is gone is a hash set quietly
+    covering less than it claims.
+
+    `data/` is gitignored, so on a laptop this check sees almost nothing and says so rather than
+    passing: the population is only real on the pod, which is where counting it found 10
+    unregistered files against the 8 a laptop glob plus a code grep reported.
+    """
+    mod, err = _holdout_registry(root)
+    if err:
+        return SKIP if "not present" in err else FAIL, err
+    reg = mod.REGISTRY
+    registered = {e["path"] for e in reg.values()}
+    known_absent = getattr(mod, "KNOWN_ABSENT", set())
+    # A REGISTERED PATH THAT IS ABSENT HERE IS NOT NEWS ON A LAPTOP: `data/` is gitignored, so a
+    # dev checkout is missing most of the population by construction and this direction would
+    # FAIL on every clean checkout -- a permanent red, which AGENTS records as the same as no
+    # signal. Measured: 8 of 13 entries read absent here while all 13 are present on the pod.
+    # So the reverse direction only speaks where the data lives, and says so where it does not.
+    data_present = sum(1 for e in reg.values()
+                       if os.path.exists(os.path.join(root, e["path"])))
+    have_population = data_present > len(reg) // 2
+    missing_paths = sorted(
+        f"{n} -> {e['path']}" for n, e in reg.items()
+        if n not in known_absent and not os.path.exists(os.path.join(root, e["path"]))
+    ) if have_population else []
+    found, scanned_dirs = [], 0
+    for sub in ("data/eval", "data/synthetic", "data/sft"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        scanned_dirs += 1
+        for dirpath, _dn, filenames in os.walk(d):
+            for fn in sorted(filenames):
+                if not fn.endswith((".jsonl", ".json")):
+                    continue
+                if any(fn.startswith(p) for p in _NON_EVAL_PREFIXES):
+                    continue
+                rel = os.path.relpath(os.path.join(dirpath, fn), root)
+                found.append((fn, rel))
+    # Name-matched, deliberately wide: a gap hides in whatever a narrow glob excludes, which is
+    # the defect being fixed. `data/synthetic` holds training sources too, so there the test is
+    # the eval-ish name; under data/eval every source counts.
+    evalish = re.compile(r"(holdout|heldout|held_out|_eval|eval_|test_500|humaneval|lambada|ceval)", re.I)
+    unregistered = sorted(
+        rel for fn, rel in found
+        if rel not in registered and (rel.startswith("data/eval/") or evalish.search(fn))
+    )
+    if not scanned_dirs:
+        return SKIP, "no data/eval, data/synthetic or data/sft here -- the population is pod-side"
+    problems = []
+    if unregistered:
+        problems.append(f"{len(unregistered)} file(s) not in the REGISTRY, so no corpus builder "
+                        f"excludes them: {unregistered[:4]}")
+    if missing_paths:
+        problems.append(f"{len(missing_paths)} registry entry(ies) name a path that does not "
+                        f"exist, so the hash set covers less than it claims: {missing_paths[:3]}")
+    if problems:
+        return FAIL, "; ".join(problems)
+    where = ("" if have_population else
+             "; registry paths NOT checked for existence here (data/ is gitignored and "
+             f"only {data_present}/{len(reg)} entries are present -- that direction speaks on the pod)")
+    return PASS, (f"{len(reg)} registry entry(ies); {len(found)} eval-location file(s) scanned, "
+                  f"every eval-ish one registered{where}")
+
+
+def _broken_eval_registry_complete():
+    """The REAL holdout.py with one REAL registry entry removed, over a data tree where that
+    file EXISTS.
+
+    Mutated, never hand-written: a hand-made registry shares this check's assumptions about the
+    schema. The entry removed is the one whose absence caused the incident.
+
+    THE FIXTURE MUST SUPPLY THE FILE, and this is the whole reason the first version passed
+    green: `data/` is gitignored, so data/sft/control_sft_text_heldout.jsonl does not exist on a
+    laptop -- remove its registry entry and there is no file left over for the check to call
+    unregistered. The broken world was "an entry gone AND its file gone", which is a consistent
+    world, not a broken one. Symlinking the real data tree is not enough either; the file has to
+    be present, so the fixture writes a small stand-in beside the real tree's contents.
+    """
+    import shutil as _sh
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "datagen", "holdout.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    key = '    "control_sft_text_heldout": {'
+    if key not in text:
+        return None
+    start = text.index(key)
+    end = text.index("\n    },\n", start) + len("\n    },\n")
+    entry = text[start:end]
+    rel = re.search(r'"path":\s*"([^"]+)"', entry).group(1)
+    os.makedirs(os.path.join(d, "datagen"), exist_ok=True)
+    open(os.path.join(d, "datagen", "holdout.py"), "w", encoding="utf-8").write(
+        text[:start] + text[end:]
+    )
+    # The de-registered file, present. Two rows of the real schema ({question, answer, id, src}),
+    # so the check sees a file under an eval location that no registry entry covers -- the
+    # incident's exact shape.
+    p = os.path.join(d, rel)
+    os.makedirs(os.path.dirname(p), exist_ok=True)
+    with open(p, "w", encoding="utf-8") as fh:
+        for i in (1, 2):
+            fh.write(json.dumps({"id": f"x{i}", "question": f"held out {i}?",
+                                 "answer": str(i), "src": "fixture"}) + "\n")
+    # And the rest of the real eval tree, so the scan is over a realistic population rather
+    # than one planted file. Copied per-file: a symlink at data/ would shadow the file above.
+    for sub in ("data/eval", "data/synthetic"):
+        realsub = os.path.join(ROOT, sub)
+        if not os.path.isdir(realsub):
+            continue
+        for dirpath, _dn, filenames in os.walk(realsub):
+            for fn in filenames:
+                if not fn.endswith((".jsonl", ".json")):
+                    continue
+                s = os.path.join(dirpath, fn)
+                t = os.path.join(d, os.path.relpath(s, ROOT))
+                os.makedirs(os.path.dirname(t), exist_ok=True)
+                if not os.path.exists(t):
+                    _sh.copy(s, t)
+    return d
+
+
 def _broken_sft_pack_holdout():
     """A pack whose holdout_fp does not match the current holdout_hashes.txt."""
     import torch
@@ -9027,6 +9211,13 @@ CHECKS = [
         _broken_score_input_fresh,
     ),
     (
+        "eval_registry_complete",
+        "every eval/held-out data file is in datagen/holdout.py's REGISTRY, and every entry's path exists",
+        "EVAL_FILES held four paths and the corpus builders took their exclusion population from it, so control_sft_text_heldout.jsonl was never excluded and 2,114 of 7,523 held-out items reached the pretraining corpus with the guard green, fingerprinted and loud -- the guard was correct on its own population and its population was wrong (e1, 2026-09-04)",
+        check_eval_registry_complete,
+        _broken_eval_registry_complete,
+    ),
+    (
         "sft_pack_holdout",
         "an SFT pack is built against the current holdout set, not a stale one",
         "a pack built before a holdout regeneration leaks held-out questions into training",
@@ -9442,6 +9633,9 @@ EVIDENCE = {
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
     "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
+    # pod: `data/` is gitignored, so a laptop sees almost none of the population -- counting it
+    # on the pod found 10 unregistered files where a laptop glob plus a code grep reported 8.
+    "eval_registry_complete": "pod",
     "eval_sft_template_contamination": "pod", "corpus_fp_matches": "pod", "pod_drift": "pod",
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
