@@ -21,7 +21,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "eval"))
 
-from scripts.loader import load_checkpoint, load_tokenizer  # noqa: E402
+from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 
 
 def main():
@@ -32,11 +32,16 @@ def main():
     ap.add_argument("--batch", type=int, default=8)
     ap.add_argument("--rows", type=int, default=512, help="val rows scored per domain")
     ap.add_argument("--device", default="cuda:0")
+    ap.add_argument("--cu_path", choices=["cu_none", "doc_cu"], default="cu_none",
+                    help="doc_cu passes the document mask; cu_none is what every published "
+                         "ppl figure was taken with (audit_0904 E10). train._domain_seqs "
+                         "returns PACKED rows, so the two differ.")
     a = ap.parse_args()
 
     import json
 
     import train
+    from train import doc_cu_seqlens
     from cache_guard import guard
 
     model, cfg = load_checkpoint(a.ckpt, device=a.device)
@@ -70,8 +75,13 @@ def main():
         with torch.no_grad():
             for i in range(0, len(X), a.batch):
                 xb, yb = X[i : i + a.batch].to(a.device), Y[i : i + a.batch].to(a.device)
+                # cu REACHES THE FORWARD. train._domain_seqs packs multiple documents per row,
+                # so without the mask attention reads across the boundaries inside a row while
+                # training used doc_cu_seqlens (E10: this file's docstring claimed it "rebuilds
+                # exactly the rows train.py held out" while scoring them on a different path).
+                cu = doc_cu_seqlens(xb, EOS_ID) if a.cu_path == "doc_cu" else None
                 with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-                    logits, _ = model(xb)
+                    logits, _ = model(xb, cu=cu) if cu is not None else model(xb)
                     loss = torch.nn.functional.cross_entropy(
                         logits.reshape(-1, logits.shape[-1]).float(), yb.reshape(-1)
                     )
