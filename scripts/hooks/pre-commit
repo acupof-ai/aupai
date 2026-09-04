@@ -592,6 +592,12 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # The process sweeper. Its selftest is pure classification over fixture ps rows and a
+        # temp tree -- no processes signalled, nothing killed -- so it runs on every commit. It is
+        # gated because the file's job is deciding what to SIGTERM: a classifier that widens by
+        # one shape can kill someone's live job, and its known answers are the recorded
+        # populations of a hand sweep (ff035f77) that cannot be re-run.
+        "scripts/sweep.py",
         # The gate_cards lane mutation sweep. Its --selftest resolves the six anchors it
         # patches, which is the one thing that rots: an anchor that no longer matches makes the
         # sweep SKIP that mutation and still print a count, so a refactor of gate_cards would
