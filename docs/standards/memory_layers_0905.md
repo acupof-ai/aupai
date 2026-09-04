@@ -32,7 +32,9 @@ identical and block-paired scoring applies.
 | M3 | 2,096,704 (1448 x 1448) | 1024 | 2.15B | --peak-only before launch; 2048x2048 OOMs (48 GiB of table tensors + 47.6 GiB baseline > 95.2) |
 
 Design fixed for both arms; b0 chooses the rest inside these bounds:
-- one memory pool shared by layers 3, 6, 9 (0-indexed), added in parallel to the FFN,
+- one memory pool read by ONE layer, layer 6 (0-indexed), added in parallel to the FFN
+  (amendment_10, 2026-09-05: three layers 3, 6, 9 measured 0.79 of control throughput and
+  no gradient-path fix reaches 0.85; one layer measured 0.90),
   `h = h + mem(norm(h))`. The FFN is not replaced, so the dense parameter count equals the
   control's and the arm differs from it only by the memory.
 - product-key lookup, top-k = 32, one query head, output gated (Meta memory+ style: value
@@ -117,3 +119,23 @@ backward allocating the gradient. M3 is 1448x1448 (2.10M values, 2.15B params, 2
 tensors) so every tensor dtype is identical across the three arms; a bf16 table for one arm
 would confound readout 3's slope with a precision change. Memory's own throughput ratio at
 world 1: 30.6K / 38.1K = 0.803 (mem-off baseline in the identical config), above the 0.70 bar.
+
+## Amendment 10 (2026-09-04T21:48Z): one pooled layer, not three
+
+tilerl's five-cell decomposition at the arm shape (`runs/mem_decomp_0905.jsonl`; world 2, fp8,
+compile, `expandable_segments`), tok/s/gpu and ratio to the memory-off control:
+
+| cell | fwd ms | bwd ms | opt ms | step ms | tok/s/gpu | ratio |
+|---|---|---|---|---|---|---|
+| off | 642.4 | 911.8 | 37.2 | 1592.6 | 82,300 | 1.00 |
+| m1 (3 layers, 1024², k32) | 732.1 | 1227.0 | 56.0 | 2016.9 | 64,987 | 0.79 |
+| k16 | 725.1 | 1105.7 | 56.2 | 1888.9 | 69,391 | 0.84 |
+| l1 (layer 6 only) | 672.4 | 1032.4 | 56.3 | 1763.3 | 74,334 | 0.90 |
+| m2 (512²) | 729.9 | 1212.0 | 41.8 | 1984.4 | 66,051 | 0.81 |
+
+Fit cost = 3a + b against l1 = a + b: per-layer 29.9 / 97.3 / -0.1 ms, table-fixed 0.1 / 23.3 /
+19.2 ms (fwd / bwd / opt). 382 of the 424 ms excess is per-layer. Gradient bench at the M1 shape:
+dense embedding backward 40.7 ms, index_add 91.9, sort+segment 98.3; a free scatter would give
+0.841. Ruling: the arms relaunch with `--mem_layers 6`. The 0.85 gate is unchanged. M1's stop at
+0.78 stands as the three-layer result. The table dtype paragraph above is superseded by
+amendments 7-9 (bf16 table, table-owned fp32 master, 14 B/param steady, 16 at the in-step peak).
