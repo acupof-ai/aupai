@@ -1,23 +1,31 @@
 ---
 question: After the 2026-09-04 audit, what is true now — what stands, what is retracted or qualified, what is unmeasured?
 status: measured
-source: joined from the seven reports under runs/audit_0904/ and the area owners' lists (3b, 98 received; other five areas derived from their reports, no new claims); cleanup state per runs/audit_0904/cleanup.jsonl
+source: joined from the seven reports under runs/audit_0904/ and the area owners' lists (3b, 98, b0 received verbatim; other four areas derived from their reports, no new claims); cleanup state per runs/audit_0904/cleanup.jsonl
 ---
 
 # State of record, 2026-09-04
 
 One line per item. `stands` = survives with its fact id or ledger row; `qualified` = survives only with the named boundary (finding id); `unmeasured` = named, not silence.
 
-## model and training code (b0, model_training.md)
+## Decisions
 
-- **stands**: conv document isolation arithmetically correct, bitwise gate 576/576 identical; fp8 conversion population exact at both shapes (64 linears/63 converted, 66/3); `eval/domain_loss.py` cu path fixed, `cu_none` default deliberate; `eff.run_end_cursor_overstates_under_max_steps` reproduces (976,384 / 1,189,548, pinned); 40 seed-904 facts recomputed, **0 contradicted values**; `eff.seam_dynamo_disable` 70→0 and `eff.ckpt_resume_16h_interval` 5.874/5.841 reproduce from logs.
-- **qualified**: MT-1 `eff.kv_pool_undersized_for_serving` — describes code superseded 2026-09-02 (48ae458), refuted by its own criterion (C7 retraction); MT-2 15 facts cite pod-only artifacts, 8 uncommittable (>5 MB) — pod-citation convention needed; MT-3 `CANONICAL_STATS_KEYS` governs 1 of 4 stamp writers; MT-4/MT-5 launch_tests last-write-wins + pass-after-assert — **fixed since** (shape-keyed rows); MT-7 recipe_provenance gap (12 values, 4 runs); MT-9 30/40 sampled facts not recomputable by a reader on main; MT-10 sft vocab_id guard never fired in either state; MT-11 NaN rollback discards up to 199 steps with no record.
-- **unmeasured**: sft_math masking internals; fp8 numerics (needs a card); train.py cursor arithmetic beyond cited facts; the 11 named needs-card facts; filter equivalence vs `filters_fp` hash.
+- N7 middle-layer loop: **NOT ADOPTED** — the equal-compute competitor beats it on three rulers (`repo.loop_not_adopted_equal_compute`).
+- Stage C prefix mask: **NOT ADOPTED** — bidirectional prompt at inference costs 7x what prefix training gains (roadmap_0903.md N7 row; EXPERIMENTS.md n7c_p3/p7; no fact id exists).
+- N8 `conv_doc_isolated` fix: **ENTERS** the recipe for correctness, HumanEval disagreement recorded (`eff.conv_doc_isolation_ab_200m`).
+- N2 "larger params at fixed compute": **SUSPENDED** until the doc_cu re-score (C11) (`ds.n2_params_vs_data_matched_compute`).
+- code_tests: **folded into code_rp1t** — 100.00 % of mined pairs already in code_py_starcoder (`cs.code_tests_supply`).
+
+## model and training code (b0, model_training.md + owner list)
+
+- **stands**: conv document isolation arithmetically sound, bitwise gate 576/576 (`scripts/b0_n8_reuse_gate.py`); the flag-off branch is deliberately not the masked form, so pre-flag checkpoints score bitwise as they trained; `eval/domain_loss.py` cu path fixed, `cu_none` default deliberate; sft_math head-slice aliasing safe — no `.data` rebind anywhere, rollback copies in place, `data_ptr()` matched after rollback; `train.py:2059` head_dim=128 guard makes both Stage E shapes legal by the guard, not luck; 40 of 124 facts sampled, **0 contradicted values** (6 HELD, 21 PARTIAL each hand-classified as a number the cited artifact cannot carry, 13 NO-FILE); `eff.run_end_cursor_overstates_under_max_steps` reproduces exactly (976,384 / 1,189,548); `eff.seam_dynamo_disable` 70→0 and `eff.ckpt_resume_16h_interval` 5.874/5.841 reproduce on main; Stage E arm 1 completed (train 1.860 val 2.218, 669,593,333 B, n_params 154.665288M matching its ledger prediction; score_matrix 8/9 metrics) — its ledger row still reads "running" though it finished 04:13Z (C4).
+- **qualified**: MT-1 `eff.kv_pool_undersized_for_serving` — describes code superseded 2026-09-02 (48ae458), refuted by its own criterion (C7 retraction); MT-2 15 facts cite pod-only artifacts, 8 uncommittable (>5 MB) — pod-citation convention needed; MT-3 `CANONICAL_STATS_KEYS` governs 1 of 4 stamp writers; MT-7 recipe_provenance gap — four Stage D runs ran with no recipe group, twelve argv values sourced only after the fact (group added fd6a382a); MT-9 30/40 sampled facts not recomputable by a reader on main (9 need the pod, 11 a card, 4 literature-only, 6 cite a script in no commit); MT-4/MT-5 launch_tests last-write-wins + pass-after-assert — **fixed since** (shape-keyed rows); any "arch tests passed" claim before C10 needs its shape named.
+- **unmeasured**: domain_bpb for every checkpoint (MT-12, see evaluation area); MT-10 sft pack vocab_id assert never fired in either state, zero SFT runs since 09-03, correctness rests on a code reading; MT-11 NaN rollback discards up to 199 steps with nothing recording the distance (`grep -c good_step` = 0); MT-13 `loader.py:136` vocab_id warning fires on every `load_tokenizer(path, None)` and has never carried information; Stage E arms 2-3 parked, no card, no numbers — the gap-widens question is unanswered; fp8 numerics (conversion population and scale plumbing checked, not the numerics).
 
 ## evaluation and held-out (e1, eval_heldout.md)
 
 - **stands**: no checkpoint trained on any agentic pack — four whole-population readings (E16); the cu fix landed 2026-09-03T22:41:12Z; N2 verdict survives its timestamp correction by a wider margin (E3 pair check); contamination scan populations as enumerated.
-- **qualified**: N2 verdict (`ds.n2_params_vs_data_matched_compute`) measured on **cu_none**, doc_cu pending (E3, C8.1); `eff.eval_path_cu_artifact_ce` cancellation is first-order — 28% residual on the one cross-path rescore (E2, C8.2); four measured contamination facts instrument-lost (E14, C8.4); `dq.agentic_credential_split`'s 3 is what find_secrets could see, recount 62 on v14 (E16, C8.3).
+- **qualified**: N2 verdict (`ds.n2_params_vs_data_matched_compute`) measured on **cu_none**, doc_cu pending (E3, C8.1); `eff.eval_path_cu_artifact_ce` cancellation is first-order — 28% residual on the one cross-path rescore (E2, C8.2); four measured contamination facts instrument-lost (E14, C8.4); `dq.agentic_credential_split`'s 3 is what find_secrets could see, recount 62 on v14 (E16, C8.3); MT-12/E18 `domain_bpb` has never produced a published number (0 of 60 score_matrix rows; 6 shadowed by the stderr-or-stdout capture, 3 refused legibly and unactioned, 1 truncated), so the control-arm cross-tokenizer comparison is UNMEASURED until C6 — the same capture defect touches humaneval_bpb (1 path), minimal_pairs (all failures), l1_fewshot (SIGTERM rows).
 - **unmeasured**: doc_cu re-score of the checkpoints behind published numbers (C11, the one card job, runs last); per-number derivation inside docs (facts area blind spot).
 
 ## instruments and ledgers (de, instruments_ledgers.md)
@@ -35,7 +43,7 @@ One line per item. `stands` = survives with its fact id or ledger row; `qualifie
 ## pod and repository state (tilerl, pod_repo_state.md)
 
 - **stands**: pre-prune baseline 403 checkpoints / 317.3 GB (runs/audit_0904/ckpt_pre_prune_0352Z.tsv); 22 milestone KEEP pins; PR-9 153 rolling `.stepN`, 12 inode-pinned (the one live-fact source now pinned); Stage E arm 1 finished normally into its scoring chain; PR-6/7 drift counts reconciled (population rule named: 197 = 135 + data/ + ext-set).
-- **qualified**: PR-1 "foreign card 7" — in-container, tilerl's own checkout, job ended on its own; PR-2 foreign/ours decided from prose markers, not cgroup; PR-4 /work at 96 %, 90 GB free; PR-8 8 absent fact checkpoints overlap the existing harness WARN; PR-11 3,958 zombies (~300/day, ppid 1 never reaps), 307 foreign `tail -F` holding our events FD, 3 non-terminating wait-loops — C1.
+- **qualified**: PR-1 "foreign card 7" — in-container, tilerl's own checkout, job ended on its own; PR-2 foreign/ours decided from prose markers, not cgroup; PR-4 /work at 96 %, 90 GB free; PR-8 8 absent fact checkpoints overlap the existing harness WARN; PR-11 3,958 zombies (~300/day, ppid 1 never reaps), 307 orphaned `tail -F` on runs/events.jsonl — origin unknown, disposable by the no-reader ruling (C1) — plus 3 non-terminating wait-loops — C1.
 - **unmeasured**: the 168 untracked pod files individually; `/work/tl-ab` repository state; nlink≥2 verification of the 12 pinned inodes.
 
 ## facts and documents (44, facts_docs.md)
