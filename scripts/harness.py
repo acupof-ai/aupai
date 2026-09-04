@@ -4059,6 +4059,151 @@ def _exp_events(root, folded=True):
 _STALE_RUNNING_H = 24
 
 
+def merge_drops(root, rev="HEAD"):
+    """[(parent_sha, path)] for paths a parent of `rev` held that `rev` lacks unlisted.
+
+    THE PREDICATE, in one place, because merge_main.sh needs the paths as data and the check
+    needs them as a sentence -- two copies of a git predicate is how the two answers come to
+    disagree. Returns [] when `rev` is not a merge.
+    """
+    r = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", rev],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL)
+    if r.returncode:
+        return None
+    parts = r.stdout.split()
+    if len(parts) < 3:
+        return []
+    m, parents = parts[0], parts[1:]
+
+    def paths(x):
+        # stdin=DEVNULL on every git call here: lessons-62's own first attempt piped rev-list
+        # into a `while read` loop whose body ran `git cat-file -e`, which consumed the loop's
+        # stdin, so it printed nothing and reported "no transitions" for a path already proven
+        # deleted. A silent empty result is the failure mode this whole predicate exists for.
+        out = subprocess.run(["git", "-C", root, "ls-tree", "-r", "--name-only", x],
+                             capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        return set(out.stdout.split("\n")) - {""}
+
+    here = paths(m)
+    lost = []
+    for p in parents:
+        gone = sorted(paths(p) - here)
+        if not gone:
+            continue
+        # Which of those a NON-MERGE commit on the merge's side actually deleted. `--no-merges`
+        # is the whole discrimination and it took two wrong versions to find (de, 2026-09-04).
+        # A merge commit that drops a path DOES record `D` against the parent that held it --
+        # measured on d9c9614f, whose parent2 acbdbdd1 added the file: `git diff --diff-filter=D
+        # acbdbdd1 d9c9614f` prints the path, and `git log -m --diff-filter=D` lists all seven
+        # merges. So "some commit records a D" is true of the silent drops themselves and rules
+        # every one of them deliberate. What no silent drop has is a deletion someone WROTE: a
+        # single-parent commit removing the path, which is what `git rm` produces. The
+        # distinction is authorship, not the presence of a D record -- and measured across this
+        # repo, `--all --no-merges --diff-filter=D` over the lost file returns NOTHING, while
+        # `-m --diff-filter=D` returns all seven merges.
+        #
+        # One `git log` per parent, not per path: a merge losing hundreds of paths would
+        # otherwise make this the slowest thing in the suite.
+        deleted = subprocess.run(
+            ["git", "-C", root, "log", "--format=", "--no-merges", "--diff-filter=D",
+             "--name-only", m, f"^{p}", "--"] + gone,
+            capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        intended = set(deleted.stdout.split("\n")) - {""}
+        lost += [(p, path) for path in gone if path not in intended]
+    return lost
+
+
+def check_merge_keeps_parent_paths(root):
+    """HEAD, if it is a merge, holds every path EITHER parent held, unless someone deleted it.
+
+    runs/redaction_handread_v14.tsv (44's v14 hand-read, 51 lines, committed acbdbdd1) left main
+    with no written deletion anywhere, and was restored four times because each restore was
+    dropped again: 6f8361ec, 8f13f5a8, 72ba3c92, 8499a3cf. Seven merges dropped it -- d9c9614f
+    (the drop site), d42e766c, 3f3568ad, 26e060af, 0c787961, 74b67ca3, c2cc8bba.
+
+    TWO NAIVE PREDICATES MISS IT, both verified against the real repository 2026-09-04:
+
+      - first-parent only: 74b67ca3's parent1 bbf1e354 already lacked the path, so
+        `git diff --diff-filter=D 74b67ca3^1 74b67ca3` is EMPTY. The loss is against parent2.
+      - "the second parent added it": c2cc8bba's first parent held it instead (6e).
+
+    And the shape that looks decisive is not: a merge that drops a path DOES record a `D`
+    against the parent that held it, so "no commit records a deletion" is false of every one of
+    these seven. What none of them has is a deletion someone WROTE -- `git log --all --no-merges
+    --diff-filter=D` over the path returns nothing at all.
+
+    Discrimination, measured over the 40 most recent merges on main: 33 clean, 7 flagged, and
+    the 7 are exactly the list above, each naming that one file. A guard that flagged every
+    merge would pass a fixture of failing cases; this one does not flag 33 of 40.
+
+    WARN, not FAIL. An inherited absence -- ours already lacked the path before this merge --
+    belongs to the merge that dropped it, and FAILing on inheritance is what put one red on 117
+    merges (fb, 2026-09-02, on merge_complete's sibling). The seven above are all reported
+    because each one really did produce a tree without the file.
+    """
+    lost = merge_drops(root)
+    if lost is None:
+        return SKIP, "cannot read HEAD"
+    if not lost:
+        r = subprocess.run(["git", "-C", root, "rev-list", "--parents", "-n", "1", "HEAD"],
+                           capture_output=True, text=True, stdin=subprocess.DEVNULL)
+        n_par = max(len(r.stdout.split()) - 1, 0)
+        if n_par < 2:
+            return PASS, "HEAD is not a merge (1 commit examined)"
+        n = len(subprocess.run(["git", "-C", root, "ls-tree", "-r", "--name-only", "HEAD"],
+                               capture_output=True, text=True,
+                               stdin=subprocess.DEVNULL).stdout.split("\n")) - 1
+        return PASS, (f"{n} path(s) in the merge; every path each of {n_par} parent(s) held is "
+                      f"present or was deliberately deleted")
+    return WARN, (
+        f"{len(lost)} path(s) a parent held are absent from this merge with nobody deleting "
+        "them: "
+        + "; ".join(f"{path} (held by {p[:8]})" for p, path in lost[:3])
+        + ". Restore: git checkout <parent> -- <path>. A first-parent D-entry walk reports this "
+          "clean, which is how one file was lost seven times."
+    )
+
+
+def _broken_merge_keeps_parent_paths():
+    """THE REAL HISTORY, at the real merge that dropped the file. Not a synthetic sequence.
+
+    A synthetic world was written first and it certified nothing: `git rm --cached` + unlink,
+    committed, records a `D` in a single-parent commit, so the fixed check correctly rules it
+    deliberate and the world PASSes with its "defect" in place. Measured, both directions -- the
+    deliberate-deletion world and the supposed silent-drop world came back identical.
+
+    What separates the real drops from a deliberate deletion is that NOBODY EVER WROTE ONE:
+    `git log --all --no-merges --diff-filter=D -- runs/redaction_handread_v14.tsv` returns
+    nothing across every ref, while `git log -m --diff-filter=D` lists all seven merges. That
+    property cannot be built by running git commands that delete a file, because every such
+    command records the deletion. It has to be taken from the history that has it.
+
+    So the world is a worktree of this repository at d9c9614f -- the drop site, whose second
+    parent acbdbdd1 added the file and whose tree lacks it. The check reads HEAD, so a detached
+    checkout at that commit IS the failing case, with the real object database behind it.
+    """
+    import shutil as _sh
+    import tempfile as _tf
+
+    if subprocess.run(["git", "-C", ROOT, "cat-file", "-e", "d9c9614f^{commit}"],
+                      capture_output=True, stdin=subprocess.DEVNULL).returncode:
+        raise SelftestSkip("d9c9614f is not in this repository; the drop site is unavailable")
+    d = _tf.mkdtemp(prefix="merge_drop_")
+    # A linked worktree would register itself in the shared .git and need removing; a clone of
+    # the local repo is self-contained and cheap (--no-checkout, then a detached read).
+    r = subprocess.run(["git", "clone", "-q", "--no-checkout", "--no-local", "--shared",
+                        ROOT, os.path.join(d, "r")],
+                       capture_output=True, text=True, stdin=subprocess.DEVNULL,
+                       env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+    if r.returncode:
+        _sh.rmtree(d, ignore_errors=True)
+        raise SelftestSkip(f"cannot clone this repository for the world: {r.stderr[:80]}")
+    w = os.path.join(d, "r")
+    subprocess.run(["git", "-C", w, "checkout", "-q", "--detach", "d9c9614f"],
+                   capture_output=True, stdin=subprocess.DEVNULL)
+    return w
+
+
 def check_no_stale_running(root):
     evs = _exp_events(root)  # folded: an appended close must clear its start row
     if evs is None:
@@ -9584,6 +9729,13 @@ CHECKS = [
         _broken_merge_complete,
     ),
     (
+        "merge_keeps_parent_paths",
+        "a merge's tree holds every path either parent held, unless a commit deleted it",
+        "runs/redaction_handread_v14.tsv left main with no deletion commit anywhere and was restored four times, each restore dropped again; `git reset HEAD <path>` on a file that arrived from a merge records a DELETION against the merged parent. A first-parent D-entry walk reports both real merges clean, because the path was already absent in parent 1",
+        check_merge_keeps_parent_paths,
+        _broken_merge_keeps_parent_paths,
+    ),
+    (
         "no_stale_running",
         "no experiments.jsonl row has been 'running' for over 24h",
         "a killed job wrote its checkpoint, never ran its eval, and left the row open",
@@ -10046,6 +10198,7 @@ EVIDENCE = {
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
+    "merge_keeps_parent_paths": "repo",
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "peer_stalled": "repo",
@@ -12250,7 +12403,7 @@ def _demo(only=None):
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
-                 "peer_stalled", "card_held_without_claim"}
+                 "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
         if only is not None and name not in only:
@@ -14994,12 +15147,23 @@ def main():
     ap.add_argument("--tokenizer", help="measure: the vocabulary these checkpoints were trained on")
     ap.add_argument("--dry", action="store_true", help="measure: list what would run")
     ap.add_argument("--full", action="store_true", help="measure: the whole matrix, not just math-hard")
+    ap.add_argument("--merge-drops", action="store_true",
+                    help="print `path<TAB>parent` for every path HEAD's parents held and HEAD "
+                         "lacks with no written deletion; exit 1 if any. For merge_main.sh")
     ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
     ap.add_argument("--selftest-touching", metavar="PATHS",
                     help="comma-separated files: verify only the checks whose run() or broken() "
                          "is defined in them. For the pre-commit hook, which cannot afford the "
                          "full ~4min run; prints what it did NOT cover")
     a = ap.parse_args()
+    if a.merge_drops:
+        _lost = merge_drops(ROOT)
+        if _lost is None:
+            print("cannot read HEAD", file=sys.stderr)
+            return 2
+        for _p, _path in _lost:
+            print(f"{_path}\t{_p}")
+        return 1 if _lost else 0
     if a.selftest_touching:
         _paths = [p.strip() for p in a.selftest_touching.split(",") if p.strip()]
         _names = _checks_touching(_paths)
