@@ -94,7 +94,7 @@ def selftest():
     if jobs:
         ok, msg = CC.acquire("de30_e2e", ["7"], pid=jobs[0][0], note="test_launch_claims")
         _case(results, ok, f"acquire on the job descendant succeeds: {msg[:50]}")
-        rec = CC._read(os.path.join(CC.CLAIM_DIR, "de30_e2e.json")) or {}
+        rec = CC._read(os.path.join(CC.CLAIM_DIR, CC.claim_file("de30_e2e", ["7"]))) or {}
         _case(results, rec.get("pid") == jobs[0][0] and rec.get("pid") != proc.pid,
               f"the claim records the job pid {rec.get('pid')}, not the wrapper {proc.pid}")
         _case(results, bool(rec.get("cmdline")),
@@ -110,7 +110,7 @@ def selftest():
         #    runs. The monitor is the only thing that outlives the job, which is why the release
         #    lives beside the row it writes on death.
         ok, msg = CC.release("de30_e2e")
-        _case(results, ok and not os.path.exists(os.path.join(CC.CLAIM_DIR, "de30_e2e.json")),
+        _case(results, ok and not os.path.exists(os.path.join(CC.CLAIM_DIR, CC.claim_file("de30_e2e", ["7"]))),
               "release removes the claim file")
 
     # 6. The wiring exists at all. NOT by grepping for `_acquire_cards(` -- that name also
@@ -149,15 +149,15 @@ def selftest():
         os.environ["AUPAI_CLAIM_DIR"] = CC.CLAIM_DIR
         try:
             ok, msg = harness._acquire_cards("de30_helper", "7", jobs[0][0], "test")
-            landed = os.path.exists(os.path.join(CC.CLAIM_DIR, "de30_helper.json"))
+            landed = os.path.exists(os.path.join(CC.CLAIM_DIR, CC.claim_file("de30_helper", ["7"])))
             _case(results, ok and landed,
                   f"_acquire_cards writes a real claim via card_claim ({msg[:40]}, landed={landed})")
             harness._release_cards("de30_helper")
-            _case(results, not os.path.exists(os.path.join(CC.CLAIM_DIR, "de30_helper.json")),
+            _case(results, not os.path.exists(os.path.join(CC.CLAIM_DIR, CC.claim_file("de30_helper", ["7"]))),
                   "_release_cards removes it")
         finally:
             os.environ.pop("AUPAI_CLAIM_DIR", None)
-        _case(results, not os.path.exists(os.path.join(ROOT, "runs", "claims", "de30_helper.json")),
+        _case(results, not os.path.exists(os.path.join(ROOT, "runs", "claims", CC.claim_file("de30_helper", ["7"]))),
               "and nothing was written to the repo's real runs/claims/")
 
     mon = re.search(r"monitor_code = f'''(.*?)'''", src, re.S)

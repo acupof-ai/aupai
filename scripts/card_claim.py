@@ -317,9 +317,14 @@ def claims():
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
         if not _alive(int(c.get("pid", -1))):
-            stale.append(dict(c, why=f"pid {c.get('pid')} is gone"))
+            stale.append(dict(c, why=f"pid {c.get('pid')} is gone", file=nm))
         else:
-            live.append(c)
+            # `file` ON EVERY ROW, live as well as stale. acquire excludes its OWN claim from the
+            # clash check by filename now, not by name, so a live row without this field would be
+            # excluded from nothing and a re-acquire of the same name and cards would clash with
+            # itself instead of reaching the rebind path. The stale rows already carried it,
+            # because acquire deletes those by filename.
+            live.append(dict(c, file=nm))
     return live, stale
 
 
@@ -463,13 +468,44 @@ def held_cards(live):
     return held
 
 
+def _card_key(c):
+    """Sort cards numerically where they are numbers, so a set has one filename.
+
+    Plain string sort puts "10" before "2", which would give one set of cards two possible
+    filenames depending on the order the caller passed them -- and the filename is the lock."""
+    s = str(c)
+    return (0, int(s), "") if s.isdigit() else (1, 0, s)
+
+
+def claim_file(name, cards):
+    """The claim's filename: keyed on the name AND the cards, because the CARDS are the lock.
+
+    The bug this fixes, found by b0 in production 2026-09-04: claim_my_cards("score_matrix")
+    wrote runs/claims/score_matrix.json keyed on the name alone, so armB's doc_cu pass on card 2
+    was refused while armA's pass held card 4. Disjoint cards, no possible contention, mutual
+    exclusion by filename. Two jobs that cannot interfere were serialised, and the message said
+    "already holds a live claim" -- true of the file and false of the hardware.
+
+    Cards, not pid, and not a counter. The pid is already in the claim's content and changes on
+    every relaunch, so a pid-keyed file cannot be found again by a human running `release`; a
+    counter makes the name meaningless. The cards are what acquire is protecting, they are what
+    the operator knows, and they make the filename state the same fact the lock enforces.
+
+    An OLD name-only file still reads fine -- claims() globs *.json and never parses the name --
+    so claims live on the pod at the moment of this change keep working and are released by the
+    `cards=None` path in release(). Nothing needs migrating.
+    """
+    tag = "-".join(str(c) for c in sorted(cards, key=_card_key))
+    return f"{name}.{tag}.json" if tag else f"{name}.json"
+
+
 def acquire(name, cards, wait=0, note="", pid=None):
     """Claim `cards` for `name`, waiting up to `wait` seconds. Returns (ok, message).
 
     Refuses rather than sharing: this is a lock, not a message. The previous arrangement was a
     message -- two sessions each announced a launch and both proceeded."""
     os.makedirs(CLAIM_DIR, exist_ok=True)
-    mine = os.path.join(CLAIM_DIR, f"{name}.json")
+    mine = os.path.join(CLAIM_DIR, claim_file(name, cards))
     deadline = time.time() + wait
     while True:
         live, stale = claims()
@@ -477,7 +513,15 @@ def acquire(name, cards, wait=0, note="", pid=None):
             f = os.path.join(CLAIM_DIR, s.get("file") or f"{s.get('name')}.json")
             if os.path.exists(f):
                 os.unlink(f)
-        held = held_cards([c for c in live if c.get("name") != name])
+        # EXCLUDE THIS CLAIM'S OWN FILE, not every claim sharing its name. The old form was
+        # `c.get("name") != name`, and it is the second half of b0's defect: with the name no
+        # longer the lock, a same-name claim on DIFFERENT cards is a different lock and its
+        # cards must still clash. `score_matrix` live on card 2, then `score_matrix` asking for
+        # 2,3 overlaps itself -- the name filter excluded it, O_EXCL saw a new path, and two
+        # live claims would both have held card 2. Keyed on the file, a re-acquire of the same
+        # name AND cards still skips the clash check and falls through to the O_EXCL/rebind
+        # path below, which is where that case belongs.
+        held = held_cards([c for c in live if c.get("file") != os.path.basename(mine)])
         clash = {c: held[c] for c in cards if c in held}
         if not clash:
             # WHOSE pid. os.getpid() is THIS process -- the card_claim.py invocation, which
@@ -581,17 +625,75 @@ def acquire(name, cards, wait=0, note="", pid=None):
                 json.dump(claim, fh, ensure_ascii=False)
             return True, f"claimed {','.join(cards)} for {name}"
         if time.time() >= deadline:
+            # NAME A ZOMBIE HOLDER HERE TOO. 6e's ruling of 2026-09-04 -- acquire's own message
+            # must say the holder is a corpse, because "Queue" reads as "wait for the running
+            # job" and e1 waited ten minutes on a `Zs` pid -- was implemented only on the O_EXCL
+            # path below, which is reached when the SAME name and cards are re-acquired. Every
+            # other case arrives here: a different name wanting the card (armB after armA died),
+            # and now also the same name on a different card set, since the claim is keyed on
+            # both. Measured: without this, a real zombie holding card 4 refused armB with
+            # "claimed by {'4': ['armA']}. Queue" and nothing in the message said the job was
+            # over.
+            corpses = []
+            for c in live:
+                p = c.get("pid")
+                if (isinstance(p, int) and _is_zombie(p)
+                        and any(card in clash for card in c.get("cards", []))):
+                    corpses.append((c.get("name"), p, _proc_stat(p)))
+            if corpses:
+                nm, zp, st = corpses[0]
+                return False, (
+                    f"cards {sorted(clash)} are claimed by {clash}, and {nm}'s pid {zp} is a "
+                    f"ZOMBIE (exited, not reaped; state {st!r}) -- that job is over and its claim "
+                    f"is not, so this is not a queue to wait in. Nothing is auto-broken: "
+                    f"`card_claim.py release --name {nm}`, then acquire again. os.kill(pid,0) and "
+                    f"/proc both report a zombie as alive; `ps -o stat=` is the only reader that "
+                    f"does not.")
             return False, (f"cards {sorted(clash)} are claimed by {clash}. "
                            f"Queue -- do not spill onto a claimed card.")
         time.sleep(min(15, max(2, wait / 20)))
 
 
-def release(name):
-    p = os.path.join(CLAIM_DIR, f"{name}.json")
-    if not os.path.exists(p):
+def release(name, cards=None):
+    """Release `name`'s claim. With `cards`, exactly that claim; without, every claim under the name.
+
+    Two forms because there are two callers and they know different things. loader's atexit hook
+    holds the card list it acquired, so it releases precisely its own -- one arm's exit must not
+    free the other arm's card, which is what a name-wide release would do now that one name can
+    hold several disjoint claims. A human typing `release --name score_matrix` after a crash knows
+    the name and not the cards, so the bare form stays and clears them all.
+
+    It reports WHAT it released, because "released score_matrix" is no longer unambiguous.
+    """
+    if cards:
+        p = os.path.join(CLAIM_DIR, claim_file(name, cards))
+        if not os.path.exists(p):
+            # Fall back to the pre-2026-09-04 name-only filename: a claim acquired by an older
+            # copy of this file is still on the pod and must still be releasable by its owner.
+            legacy = os.path.join(CLAIM_DIR, f"{name}.json")
+            got = _read(legacy)
+            if got and [str(c) for c in got.get("cards", [])] == [str(c) for c in cards]:
+                os.unlink(legacy)
+                return True, f"released {name} (legacy name-only claim) on {','.join(cards)}"
+            return False, f"no claim for {name} on cards {','.join(str(c) for c in cards)}"
+        os.unlink(p)
+        return True, f"released {name} on {','.join(str(c) for c in cards)}"
+    gone = []
+    if os.path.isdir(CLAIM_DIR):
+        for nm in sorted(os.listdir(CLAIM_DIR)):
+            if not nm.endswith(".json"):
+                continue
+            # Match on the claim's OWN `name` field, never on the filename prefix: `score_matrix`
+            # must not release `score_matrix_probe`, and a filename-prefix test cannot tell the
+            # two apart once the cards are appended to the name.
+            c = _read(os.path.join(CLAIM_DIR, nm))
+            if not c or c.get("name") != name:
+                continue
+            os.unlink(os.path.join(CLAIM_DIR, nm))
+            gone.append(",".join(str(x) for x in c.get("cards", [])) or nm)
+    if not gone:
         return False, f"no claim for {name}"
-    os.unlink(p)
-    return True, f"released {name}"
+    return True, f"released {name}: {len(gone)} claim(s) on {'; '.join(gone)}"
 
 
 def status():
@@ -793,8 +895,60 @@ def _selftest():
     _case(good, f"and the original holder can release it "
           f"({r3.stdout.strip() or r3.stderr.strip()})")
 
+    # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
+    # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
+    # refused. Disjoint cards, no possible contention, mutual exclusion by filename, because the
+    # claim was runs/claims/score_matrix.json keyed on the name alone. b0 ran them sequentially
+    # for nothing.
+    okd1, msgd1 = acquire("sameName", ["7"], wait=0, pid=me)
+    okd2, msgd2 = acquire("sameName", ["8"], wait=0, pid=me)
+    _case(okd1 and okd2, f"one name holds two DISJOINT claims ({msgd1} / {msgd2})")
+    live_sn = [c for c in claims()[0] if c.get("name") == "sameName"]
+    _case(sorted(sum((c.get("cards", []) for c in live_sn), [])) == ["7", "8"],
+          f"and both are live at once ({[c.get('cards') for c in live_sn]})")
+
+    # SAME NAME, OVERLAPPING CARDS, REFUSED. The other half, and the one that decides whether
+    # this change weakened the lock: the old clash filter was `c.get("name") != name`, so with
+    # the name no longer the filename a same-name overlapping acquire would have been excluded
+    # from its own clash check, taken a new path via O_EXCL, and produced TWO live claims on one
+    # card. Reverting the filter to the name form fails this case and leaves the two above green.
+    okd3, msgd3 = acquire("sameName", ["8", "9"], wait=0, pid=me)
+    _case(not okd3 and "claimed by" in msgd3,
+          f"the same name is refused on an OVERLAPPING set ({msgd3})")
+
+    # A NAME-SCOPED RELEASE MUST NOT FREE THE OTHER ARM. loader's atexit hook passes the cards
+    # it acquired for exactly this reason: with one name holding two claims, releasing by name
+    # at one arm's exit would drop the other arm's card while its job is still running.
+    okr, msgr = release("sameName", ["7"])
+    left = [c for c in claims()[0] if c.get("name") == "sameName"]
+    _case(okr and [c.get("cards") for c in left] == [["8"]],
+          f"releasing one arm's cards leaves the other's held ({msgr}; left {[c.get('cards') for c in left]})")
+    # ...and the bare form, which is what a human types after a crash, clears them all.
+    acquire("sameName", ["7"], wait=0, pid=me)
+    okr2, msgr2 = release("sameName")
+    _case(okr2 and not [c for c in claims()[0] if c.get("name") == "sameName"],
+          f"the bare release clears every claim under the name ({msgr2})")
+    # A PREFIX IS NOT A NAME. `sameName` must not release `sameNameProbe`: the filename now
+    # begins with the name, so a prefix test would take both and free a card nobody asked about.
+    acquire("sameNameProbe", ["7"], wait=0, pid=me)
+    release("sameName")
+    _case([c.get("cards") for c in claims()[0] if c.get("name") == "sameNameProbe"] == [["7"]],
+          "releasing a name leaves a longer name that starts with it alone")
+    release("sameNameProbe")
+
+    # A LEGACY NAME-ONLY CLAIM STAYS RELEASABLE. Claims written by the copy of this file that is
+    # on the pod right now use `{name}.json`; they must not become unreleasable by their owner
+    # the moment the new code lands. Hand-placed on purpose -- this is the only way that filename
+    # can exist once acquire has changed.
+    with open(os.path.join(d, "legacyClaim.json"), "w", encoding="utf-8") as fh:
+        json.dump({"name": "legacyClaim", "cards": ["4"], "pid": me,
+                   "cmdline": _cmdline(me), "acquired": _now(), "note": ""}, fh)
+    okl, msgl = release("legacyClaim", ["4"])
+    _case(okl and not os.path.exists(os.path.join(d, "legacyClaim.json")),
+          f"a pre-rename name-only claim is still releasable by its owner ({msgl})")
+
     # A dead claimant's cards are reclaimable, or a crash locks the machine forever.
-    p = os.path.join(d, "runA.json")
+    p = os.path.join(d, claim_file("runA", ["0", "1"]))
     c = _read(p)
     c["pid"] = 999999999
     json.dump(c, open(p, "w"))
@@ -902,7 +1056,7 @@ def _selftest():
             # touching the code. A world that leaves the previous case's state behind tests the
             # clash check twice and the rebind never.
             release("de34_job")
-            with open(os.path.join(CLAIM_DIR, "de34_rebind.json"), "w", encoding="utf-8") as fh:
+            with open(os.path.join(CLAIM_DIR, claim_file("de34_rebind", ["7"])), "w", encoding="utf-8") as fh:
                 json.dump({"name": "de34_rebind", "cards": ["7"], "pid": shell_pid,
                            "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
             ok, msg = acquire("de34_rebind", ["7"], pid=job_pid)
@@ -911,7 +1065,7 @@ def _selftest():
             # An UNRELATED live pid must still be refused: rebinding is justified only because a
             # descendant is the same job by construction.
             release("de34_rebind")
-            with open(os.path.join(CLAIM_DIR, "de34_unrel.json"), "w", encoding="utf-8") as fh:
+            with open(os.path.join(CLAIM_DIR, claim_file("de34_unrel", ["7"])), "w", encoding="utf-8") as fh:
                 json.dump({"name": "de34_unrel", "cards": ["7"], "pid": job_pid,
                            "cmdline": _cmdline(job_pid), "acquired": _now()}, fh)
             ok, msg = acquire("de34_unrel", ["7"], pid=os.getpid())
@@ -920,7 +1074,7 @@ def _selftest():
             release("de34_unrel")
 
         # status reports ORPHAN-SHELL once the job is gone but the shell lives.
-        with open(os.path.join(CLAIM_DIR, "de34_orphan.json"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(CLAIM_DIR, claim_file("de34_orphan", ["7"])), "w", encoding="utf-8") as fh:
             json.dump({"name": "de34_orphan", "cards": ["7"], "pid": shell_pid,
                        "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
         _, dup_now, lines_now = status()
@@ -1122,7 +1276,7 @@ def _selftest():
               f"a zombie reads state {st!r} while _alive() says True -- os.kill(pid,0) cannot "
               f"see the difference, which is why claims() filed b0's corpse as live")
 
-        with open(os.path.join(CLAIM_DIR, "zdead.json"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(CLAIM_DIR, claim_file("zdead", ["7"])), "w", encoding="utf-8") as fh:
             json.dump({"name": "zdead", "cards": ["7"], "pid": zpid,
                        "cmdline": "python3 rescore.py", "acquired": _now()}, fh)
         live_z, stale_z = claims()
@@ -1133,6 +1287,16 @@ def _selftest():
         ok_z, msg_z = acquire("zother", ["7"], wait=0, pid=me)
         _case(not ok_z and "claimed by" in msg_z,
               f"and the card is still refused to a second acquirer ({msg_z[:52]})")
+        # ...AND THAT REFUSAL NAMES THE ZOMBIE. This is the case a reader actually hits -- armB
+        # wanting the card armA died holding -- and it arrives at the CLASH path, not the O_EXCL
+        # path the ruling was implemented on. Measured before the fix: "cards ['7'] are claimed
+        # by {'7': ['zdead']}. Queue -- do not spill onto a claimed card", which is what e1 read
+        # as "wait for the running job" while waiting ten minutes on a corpse. Deleting the
+        # corpses loop in acquire fails this case and leaves the same-name one green, which is
+        # exactly how the gap survived the ruling.
+        _case("ZOMBIE" in msg_z and "release --name zdead" in msg_z,
+              f"a DIFFERENT name's refusal names the zombie and the release command too "
+              f"({msg_z[:70]})")
         # ACQUIRE'S OWN MESSAGE must name the zombie, not just status's line. e1 got
         # "already holds a live claim" for a Zs pid in production, where the advice reads as
         # "wait for the running job" (6e, 2026-09-04). Asserted on the SAME name, which is the
@@ -1217,7 +1381,7 @@ def _selftest():
         # status's own line, on a hand-placed claim: acquire refuses this state, so the only way
         # it exists on disk is a launch that changed the variable after the claim -- which is
         # exactly the state status has to report.
-        with open(os.path.join(d, "de_cvd_bad.json"), "w", encoding="utf-8") as fh:
+        with open(os.path.join(d, claim_file("de_cvd_bad", ["6", "7"])), "w", encoding="utf-8") as fh:
             json.dump({"name": "de_cvd_bad", "cards": ["6", "7"], "pid": kid_set.pid,
                        "cmdline": _cmdline(kid_set.pid), "acquired": _now(), "note": ""}, fh)
         _, dup_c2, lines_c2 = status()
