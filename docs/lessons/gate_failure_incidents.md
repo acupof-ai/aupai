@@ -146,6 +146,10 @@ open: manual — statistic selection is a human discipline.
 An unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves). Evidence: docs/lessons/gate_failure_shapes.md (old §170).
 open: check_fact_refs scans only docs/lessons+audits; widening to data/*.json and bare id forms would close it.
 
+### §176 (2026-09-05, R2-g)
+The expression under test supplied the ground truth it was judged against: an awk `substr($0,16)` off-by-three (correct offset 19) printed `ds/e1`, read as "branches are namespaced ds/<name>" — a false mechanism that was actionable and pointed away from the real bug. The artifact of the bug was indistinguishable from a fact about the repo. One independent reader (`git show-ref`) settles it in one command; it was never run. Evidence: scripts/merge_main.sh awk, 60a56434 (3b fix).
+open: a check that findings about an instrument are re-derived from an independent reader; none exists. The general form: the thing being verified cannot also be the source of verification.
+
 ## R3. Artifacts carry their producer identity
 
 ### §24 (2026-08-31, R3)

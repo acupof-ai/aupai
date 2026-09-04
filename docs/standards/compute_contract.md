@@ -11,10 +11,11 @@ a second cluster, or a laptop implements the same five and the project does not
 change.
 
 Written because the split needs a line to cut along. `scripts/infra_inventory.py`
-measured where that line falls today: **13 infra-only files, 29 seams, 28 files
-that call a verb without implementing one, 24 project files with a passing
-mention, 58 docs and ledgers that only name it.** The 28 are the argument for a
-contract — they already use the compute as if these verbs existed.
+measured where that line falls today: **7 infra-only files, 29 seams, 26 files
+that call a verb without implementing one, 25 project files with a passing
+mention, 48 docs and ledgers that only name it.** The 26 are the argument for a
+contract — they already use the compute as if these verbs existed. Re-run the
+script rather than quoting those numbers; they move with the tree.
 
 ## The five verbs
 

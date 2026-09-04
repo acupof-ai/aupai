@@ -25,10 +25,10 @@ identical and block-paired scoring applies.
 
 ## Arms
 
-| arm | memory values | value dim | params added | FLOP vs control |
+| arm | memory values | value dim | params added | wall time vs control |
 |---|---|---|---|---|
-| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | <= +3% |
-| M2 | 262,144 (512 x 512) | 1024 | 0.27B | <= +3% |
+| M1 | 1,048,576 (1024 x 1024 product keys) | 1024 | 1.07B | measured lower bound +6.5% (tilerl, lookup alone, 2026-09-05); readout 5 is the constraint |
+| M2 | 262,144 (512 x 512) | 1024 | 0.27B | unmeasured; readout 5 is the constraint |
 
 Design fixed for both arms; b0 chooses the rest inside these bounds:
 - one memory pool shared by layers 3, 6, 9 (0-indexed), added in parallel to the FFN,
@@ -41,14 +41,23 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
 - `test_arch_compat.py` gains: memory fwd/bwd on CPU, save/load round-trip, and a legacy
   checkpoint (no memory) still loads.
 
+The `<= +3% FLOP` bound that stood in this table was struck 2026-09-05: the lookup is
+memory-bound, not FLOP-bound, and its wall cost at M1 is 51.6 ms of a 799 ms step (6.5%) while
+throughput stays at 93.9% of the control. Readout 5 (tok/s/gpu at step 30, stop below 70K) is
+the only cost constraint. Sparse-vs-dense gradient exchange is chosen per arm by measured
+bytes per step, not by rule: at M1 a uniform draw touches ~86% of the table per step.
+
 ## Pre-registered readouts (runs/prereg.jsonl#memory_layers_0905)
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if <= -0.010 nat (the size of
    the N2 params effect), null if |delta| < 0.003, in between is "measured, not adopted".
-2. Split: a closed-book fact probe (cloze over a held-out slice of an English encyclopedic
-   domain, registered in the holdout registry before launch) against a reasoning probe
-   (l1_fewshot answer-present, 3 demos, existing). The claim "memory buys knowledge, not
-   reasoning" is the fact delta exceeding the reasoning delta by more than both SEs.
+2. Split, a difference-in-differences: an API-name cloze (4-way, real names from the same
+   module) drawn from two regions of the code_py_starcoder cache the arms read -- SEEN rows the
+   arms train on and the never-read tail (74.6% of the pool) as UNSEEN. delta_seen minus
+   delta_unseen, both arm-minus-control block-paired, above both SEs is "memory buys knowledge";
+   delta_unseen alone is generalisation and readout 1 already has it. Region boundaries and
+   seeds are pinned in the item file. No slice is carved, no registry entry is written. Fallback
+   domain textbook_30b (Chinese). The reasoning probe is l1_fewshot answer-present, 3 demos.
 3. Scaling: M2 vs M1 gives the slope of loss against memory size; two points plus the control
    are a line, not a law, and the doc says so.
 4. Diagnostics, logged every 100 steps to `runs/memory_diag.jsonl`: fraction of values
