@@ -181,7 +181,13 @@ def _would_rebuild(dom, vocab_id):
 def main():
     from tokenizers import Tokenizer
 
-    from loader import vocab_fingerprint
+    from loader import claim_my_cards, vocab_fingerprint
+
+    # E2E_GPU is required and line 37 exported it as CUDA_VISIBLE_DEVICES, so this reads the
+    # card the caller named rather than picking one -- which is the same rule the assert above
+    # already enforced, now recorded in runs/claims/ where card_held_without_claim can see it
+    # (de-55). No cuda gate: there is no CPU half, by design.
+    claim_my_cards("test_e2e", note=f"end-to-end joins on card {GPU}")
 
     tmp = tempfile.mkdtemp(prefix="e2e_")
     try:
