@@ -74,3 +74,4 @@
 {"id": "PR-7", "ruling": "accepted", "by": "fb", "note": "accepted, same as PR-6"}
 {"id": "E9", "ruling": "accepted", "by": "fb", "note": "no defect: assigned question answered, no eval hands ChatML to a base checkpoint"}
 {"id": "F5", "ruling": "accepted", "by": "fb", "note": "not a defect: AGENTS.md documents [] as the deliberate retracted_value; withdrawn by 44 on return"}
+{"id": "F10", "ruling": "accepted", "by": "fb", "note": "accepted S2; points at E16; post-audit boundary note on the fact, no value edit"}
