@@ -303,11 +303,68 @@ def _equal_token_length(tok, item):
     return len(lens) == 1
 
 
+def cluster_se(correct, groups):
+    """(se_naive, se_cluster, icc, m_eff, n_clusters): the SE with and without clustering.
+
+    ITEMS FROM ONE SOURCE ROW ARE NOT INDEPENDENT DRAWS. ~2.7 items come from each row on
+    average, sharing a prefix window and an object vocabulary, so the binomial SE understates
+    the real one. The inflation is NOT 2.7: with cluster sizes this unequal (max 20 on one
+    row) the quantity that matters is the KISH effective size,
+    m_eff = sum(size^2) / sum(size), measured 4.23 seen / 4.61 unseen on the shipped item
+    file. deff = 1 + (m_eff - 1) * ICC.
+
+    THE ICC IS COMPUTED FROM THE SCORES, never assumed: one-way ANOVA on the per-item
+    correctness grouped by source row. Free once per-item outcomes exist, which
+    score_mc_items already returns.
+
+    WHY BOTH ARE REPORTED RATHER THAN ONE CHOSEN (3b, 2026-09-05, correcting me): I argued
+    the clustering cancels in a paired difference. That is true for the ARM pairing -- the
+    same items scored by two models share their cluster effects -- and FALSE across regions,
+    because seen and unseen are disjoint clusters, so a seen-minus-unseen difference carries
+    variance from both and the deff compounds rather than cancels. The prereg's rule is
+    "beyond both SEs", and an understated SE makes that rule fire too easily. Reporting both
+    costs nothing and settles it with a number: if the verdict agrees under both, the
+    question never mattered.
+    """
+    n = int(correct.numel())
+    if not n:
+        return float("nan"), float("nan"), float("nan"), float("nan"), 0
+    acc = correct.mean().item()
+    se_naive = math.sqrt(max(acc * (1 - acc), 0.0) / n)
+    if n < 2:
+        # ONE ITEM HAS A BINOMIAL SE AND NO CLUSTER SE. Returning NaN for both would lose a
+        # defined quantity: the naive SE is 0.0 at n=1 by the closed form, and it is the
+        # cluster correction that is undefined (one observation, no within-row variance to
+        # estimate an ICC from). Caught by the mixed-region world, which scores exactly one
+        # item and asserted se == 0.0 before this function existed.
+        return se_naive, float("nan"), float("nan"), 1.0, 1
+    by = {}
+    for c, g in zip(correct.tolist(), groups, strict=True):
+        by.setdefault(g, []).append(c)
+    sizes = [len(v) for v in by.values()]
+    k = len(sizes)
+    m_eff = sum(s * s for s in sizes) / n
+    # One-way ANOVA: ICC = (MSB - MSW) / (MSB + (m0 - 1) * MSW), clamped at 0 because a
+    # negative estimate means "no detectable clustering", not "less than independent".
+    grand = acc
+    ssb = sum(len(v) * (sum(v) / len(v) - grand) ** 2 for v in by.values())
+    ssw = sum(sum((c - sum(v) / len(v)) ** 2 for c in v) for v in by.values())
+    if k < 2 or n - k < 1:
+        return se_naive, se_naive, 0.0, m_eff, k
+    msb, msw = ssb / (k - 1), ssw / (n - k)
+    m0 = (n - sum(s * s for s in sizes) / n) / (k - 1)
+    denom = msb + (m0 - 1) * msw
+    icc = 0.0 if denom <= 0 else max(0.0, (msb - msw) / denom)
+    deff = 1.0 + (m_eff - 1.0) * icc
+    return se_naive, se_naive * math.sqrt(deff), icc, m_eff, k
+
+
 def score_items(model, tok, items, device, batch=32):
-    """(acc, se, n, n_unscoreable) via run_eval.score_mc_items.
+    """(acc, se, n, n_unscoreable, cluster) via run_eval.score_mc_items.
 
     Per-item outcomes, because the prereg's rule is "beyond both SEs" and a mean cannot
-    supply one.
+    supply one. `cluster` carries the cluster-robust SE beside the naive one -- see
+    cluster_se for why both and not one.
 
     UNSCOREABLE ITEMS ARE EXCLUDED AND COUNTED, never scored. An item whose options all
     fail to tokenize keeps its whole `scores` row at the -1e9 fill, argmax returns the
@@ -321,21 +378,46 @@ def score_items(model, tok, items, device, batch=32):
     """
     from eval.run_eval import score_mc_items
 
+    _empty = {"se_cluster": float("nan"), "icc": float("nan"),
+              "m_eff": float("nan"), "n_clusters": 0}
     if not items:
-        return float("nan"), float("nan"), 0, 0
+        return float("nan"), float("nan"), 0, 0, _empty
     preds, labels, scored = score_mc_items(model, tok, items, device, batch_size=batch,
                                            num_id=None)
     n_bad = int((~scored).sum())
+    # The GROUPS must be masked with the same mask as the outcomes, or a dropped
+    # unscoreable item shifts every later item into the wrong cluster.
+    keep = scored.tolist()
+    groups = [it.get("pool_row", i) for i, (it, k) in enumerate(zip(items, keep, strict=True))
+              if k]
     preds, labels = preds[scored], labels[scored]
     correct = (preds == labels).float()
     n = int(correct.numel())
     if not n:
-        return float("nan"), float("nan"), 0, n_bad
+        return float("nan"), float("nan"), 0, n_bad, _empty
     acc = correct.mean().item()
-    # Binomial SE of a proportion: the outcome is Bernoulli, and this closed form is what
-    # the prereg's "beyond both SEs" is read against.
-    se = math.sqrt(max(acc * (1 - acc), 0.0) / n)
-    return acc, se, n, n_bad
+    se, se_cl, icc, m_eff, k = cluster_se(correct, groups)
+    return acc, se, n, n_bad, {"se_cluster": se_cl, "icc": icc, "m_eff": m_eff,
+                               "n_clusters": k}
+
+
+def is_undefined_vs_chance(region, chance):
+    """Is this region's accuracy indistinguishable from chance, on the WIDER of the two SEs?
+
+    "Undefined at this scale" claims the measurement cannot separate the accuracy from
+    chance, so it must be read against the wider interval. Using the naive SE would declare
+    a region MEASURED on the strength of an SE that ignores clustering -- the direction that
+    costs a wrong verdict rather than a missed one.
+
+    A function rather than an inline expression in main() so the rule is testable without a
+    checkpoint: the first version of this case asserted `max(0.0087, 0.0115) == 0.0115`,
+    which tests Python's max() and not this decision.
+    """
+    naive, clust = region.get("se"), region.get("se_cluster", float("nan"))
+    wide = naive if (clust is None or math.isnan(clust)) else max(naive, clust)
+    if wide is None or math.isnan(wide) or math.isnan(region.get("acc", float("nan"))):
+        return False, wide
+    return abs(region["acc"] - chance) <= wide, wide
 
 
 def build(tokenizer_path, ckpt_path, mix_path, cache_path, per_region, seed, out_path,
@@ -555,12 +637,14 @@ def main():
     res = {}
     for region in ("seen", "unseen"):
         sub = [it for it in items if it["region"] == region]
-        acc, se, n, n_bad = score_items(model, tok, sub, a.device, a.batch)
-        res[region] = {"acc": acc, "se": se, "n": n, "unscoreable": n_bad}
+        acc, se, n, n_bad, cl = score_items(model, tok, sub, a.device, a.batch)
+        res[region] = {"acc": acc, "se": se, "n": n, "unscoreable": n_bad, **cl}
         label = ("TRAINING-SET accuracy, not a capability number -- valid only as an "
                  "arm-minus-control difference" if region == "seen"
                  else "never allocated to any run")
-        print(f"  {region:6s} acc {acc:.4f} +- {se:.4f}  n={n}  ({label})")
+        print(f"  {region:6s} acc {acc:.4f} +- {se:.4f} (naive)  "
+              f"+- {cl['se_cluster']:.4f} (cluster, ICC {cl['icc']:.3f}, "
+              f"m_eff {cl['m_eff']:.2f} over {cl['n_clusters']} rows)  n={n}  ({label})")
         if n_bad:
             print(f"        {n_bad} item(s) excluded as unscoreable (no option tokenized); "
                   f"they would have counted CORRECT wherever label == 0")
@@ -569,10 +653,13 @@ def main():
     undefined = []
     for region in ("seen", "unseen"):
         r = res[region]
-        if not math.isnan(r["se"]) and abs(r["acc"] - chance) <= r["se"]:
+        # THE LARGER SE DECIDES -- see is_undefined_vs_chance.
+        undef, wide = is_undefined_vs_chance(r, chance)
+        if undef:
             undefined.append(region)
-            print(f"  {region}: within 1 SE of chance -- readout 2 is UNDEFINED at this "
-                  f"scale on this region, not null (prereg memory_layers_0905)")
+            print(f"  {region}: within 1 SE of chance ({wide:.4f}, the wider of naive and "
+                  f"cluster) -- readout 2 is UNDEFINED at this scale on this region, not "
+                  f"null (prereg memory_layers_0905)")
     # THE HALF-DIFFERENCE THIS ONE CHECKPOINT CAN CARRY, and nothing more. The estimator is
     # delta_seen - delta_unseen where each delta is arm MINUS CONTROL, so a single run
     # produces two accuracies and not a knowledge number. Recorded as the two regions plus
@@ -581,22 +668,40 @@ def main():
     # anything that makes the seen region easier than the unseen one for every model
     # (different files, different API mix). Only the arm-minus-control difference of these
     # gaps removes that.
+    gap = (res["seen"]["acc"] - res["unseen"]["acc"]
+           if not (math.isnan(res["seen"]["acc"]) or math.isnan(res["unseen"]["acc"]))
+           else None)
+    # THE GAP'S OWN SE COMPOUNDS RATHER THAN CANCELS, which is 3b's correction to me: the
+    # two regions are DISJOINT clusters, so a seen-minus-unseen difference carries variance
+    # from both. (The arm-minus-control pairing is the one where cluster effects cancel,
+    # because the same items are scored twice.) Both versions are carried so the prereg's
+    # "beyond both SEs" can be read under each; if the verdict agrees the question never
+    # mattered.
+    def _quad(a_, b_):
+        if math.isnan(a_) or math.isnan(b_):
+            return None
+        return math.sqrt(a_ * a_ + b_ * b_)
+
     out = {
         "regions": res,
         "chance": chance,
-        "within_region_gap": (res["seen"]["acc"] - res["unseen"]["acc"]
-                              if not (math.isnan(res["seen"]["acc"])
-                                      or math.isnan(res["unseen"]["acc"])) else None),
+        "within_region_gap": gap,
+        "gap_se_naive": _quad(res["seen"]["se"], res["unseen"]["se"]),
+        "gap_se_cluster": _quad(res["seen"]["se_cluster"], res["unseen"]["se_cluster"]),
         "gap_note": "seen minus unseen on ONE checkpoint; readout 2 is the ARM MINUS CONTROL "
                     "difference of this gap (prereg memory_layers_0905 amendment_2/_4). This "
-                    "number alone is not evidence of memorisation",
+                    "number alone is not evidence of memorisation. gap_se_* are the two "
+                    "regions' SEs in quadrature -- the regions are disjoint clusters so the "
+                    "design effect compounds here; it cancels only in the arm-vs-control "
+                    "pairing, where the same items are scored twice (3b, 2026-09-05)",
         "undefined_regions": undefined,
         "n_seen_rows": header.get("n_seen_rows"),
         "item_file": os.path.relpath(a.data, ROOT),
         "bounds": header["bounds"],
         "ckpt": a.ckpt,
     }
-    print(f"  gap (seen - unseen, ONE model, not the readout): {out['within_region_gap']}")
+    print(f"  gap (seen - unseen, ONE model, not the readout): {gap}  "
+          f"+- {out['gap_se_naive']} (naive) / {out['gap_se_cluster']} (cluster)")
     if a.json:
         print(json.dumps(out, ensure_ascii=False))
     if a.out:
@@ -764,7 +869,7 @@ def _selftest():
     # Without the mask this is 1 of 2 "correct". With it, both are excluded.
     naive = int((_p == _l).sum())
     assert naive == 1, f"the defect no longer reproduces ({naive}); re-derive before relaxing"
-    acc, se, n, n_bad = score_items(_Flat(), _EmptyTok(), bad, "cpu", batch=4)
+    acc, se, n, n_bad, _cl = score_items(_Flat(), _EmptyTok(), bad, "cpu", batch=4)
     assert n == 0 and n_bad == 2, (n, n_bad)
     assert math.isnan(acc), f"an all-unscoreable region reported acc {acc} rather than NaN"
 
@@ -773,10 +878,99 @@ def _selftest():
     mixed = [{"prompt": "p", "options": ["", "", "", ""], "label": 0},
              {"prompt": "p", "options": ["", "", "", ""], "label": 0},
              {"prompt": "p", "options": ["a", "b", "c", "d"], "label": 0}]
-    acc, se, n, n_bad = score_items(_Flat(), _EmptyTok(), mixed, "cpu", batch=4)
+    acc, se, n, n_bad, _cl = score_items(_Flat(), _EmptyTok(), mixed, "cpu", batch=4)
     assert n == 1 and n_bad == 2, (n, n_bad)
     assert acc == 1.0, acc
     assert se == 0.0, se
+
+    # 9. THE CLUSTER SE, on known answers. The naive binomial SE treats 2500 items from ~929
+    #    source rows as 2500 independent draws; it is not, and the inflation is governed by
+    #    the KISH effective size rather than the mean (3b, 2026-09-05 -- my own reasoning
+    #    that clustering cancels in a paired difference was right for the arm pairing and
+    #    WRONG across regions, which are disjoint clusters).
+    #
+    #    (a) NO CLUSTERING: every item its own row -> ICC 0, both SEs identical. Without this
+    #        case an implementation that always inflates would pass the others.
+    solo = torch.tensor([1.0, 0.0] * 50)
+    g_solo = list(range(100))
+    s_n, s_c, icc, m_eff, k = cluster_se(solo, g_solo)
+    assert k == 100 and abs(m_eff - 1.0) < 1e-9, (k, m_eff)
+    assert abs(s_n - s_c) < 1e-12, (s_n, s_c)
+    #    (b) PERFECT CLUSTERING: rows of 5, all-correct or all-wrong, so ICC is 1 and the
+    #        design effect is the full m_eff. The cluster SE must be sqrt(5) x the naive one.
+    per = 5
+    vals, grp = [], []
+    for r in range(20):
+        v = 1.0 if r % 2 == 0 else 0.0
+        vals += [v] * per
+        grp += [r] * per
+    s_n, s_c, icc, m_eff, k = cluster_se(torch.tensor(vals), grp)
+    assert abs(m_eff - per) < 1e-9, m_eff
+    assert icc > 0.99, icc
+    assert abs(s_c / s_n - math.sqrt(per)) < 0.02, (s_c, s_n, s_c / s_n)
+    #    (c) THE KISH SIZE IS NOT THE MEAN, which is the whole reason this is not a one-line
+    #        correction. One row of 20 beside 80 singletons: mean 1.235, Kish exactly 4.8
+    #        ((20^2 + 80) / 100). The first version of this line asserted 4.84 from mental
+    #        arithmetic and went red -- the fixture's answer is computable, so it is computed.
+    vals = [1.0] * 20 + [0.0] * 80
+    grp = [0] * 20 + list(range(1, 81))
+    _, _, _, m_eff, k = cluster_se(torch.tensor(vals), grp)
+    assert k == 81, k
+    assert abs(len(vals) / k - 1.235) < 0.01, len(vals) / k
+    assert abs(m_eff - 4.8) < 1e-9, m_eff
+    # The RATIO is the point, and it too is computed: 4.8 / (100/81) = 3.888, so the Kish
+    # size is 3.89x the mean on this fixture. An implementation that returned the mean would
+    # give 1.0. Asserted as "much greater than 1", with the measured value in the message --
+    # my first attempt asserted `> 3.9 x mean` from mental arithmetic and went red by 0.012.
+    ratio = m_eff / (len(vals) / k)
+    assert abs(ratio - 3.888) < 0.001, ratio
+    assert ratio > 3.0, f"Kish size collapsed toward the mean (ratio {ratio:.3f})"
+    #    (d) THE GROUPS ARE MASKED WITH THE OUTCOMES. An unscoreable item dropped from the
+    #        scores but not from the group list shifts every later item into the wrong
+    #        cluster -- silent, and it would corrupt the ICC rather than raise.
+    #
+    #        TWO WEAK FIXTURES CAME FIRST AND BOTH WERE VERIFIED USELESS BY MUTATION, which
+    #        is the only reason this world is trustworthy:
+    #          - three items with ONE scoreable: n=1 takes cluster_se's early return, which
+    #            never reaches the zip, so the unmasked variant produced identical output.
+    #          - asserting n_clusters == 1: true under both versions.
+    #        At n >= 2 the strict zip in cluster_se is reached and an over-long group list
+    #        raises ValueError, so the world needs TWO scoreable items. Here the two
+    #        scoreable ones sit on DIFFERENT rows (9 and 11) with two unscoreable on row 7:
+    #        masked gives groups [9, 11] and 2 clusters; unmasked passes 4 ids for 2
+    #        outcomes and cluster_se raises.
+    m2 = [{"prompt": "p", "options": ["", "", "", ""], "label": 0, "pool_row": 7},
+          {"prompt": "p", "options": ["", "", "", ""], "label": 0, "pool_row": 7},
+          {"prompt": "p", "options": ["a", "b", "c", "d"], "label": 0, "pool_row": 9},
+          {"prompt": "p", "options": ["a", "b", "c", "d"], "label": 0, "pool_row": 11}]
+    _a, _s, _n, _nb, cl = score_items(_Flat(), _EmptyTok(), m2, "cpu", batch=4)
+    assert _n == 2 and _nb == 2, (_n, _nb)
+    assert cl["n_clusters"] == 2, cl
+    assert abs(cl["m_eff"] - 1.0) < 1e-9, cl
+    # And the failure the mask prevents, provoked directly: 4 group ids against 2 outcomes.
+    try:
+        cluster_se(torch.tensor([1.0, 1.0]), [7, 7, 9, 11])
+        raise AssertionError("an over-long group list did not raise -- the strict zip is gone")
+    except ValueError:
+        pass
+    #    (e) AND THE UNDEFINED TEST READS THE WIDER SE, through the real predicate rather
+    #        than through an inline max(). The worked case is the one that matters: an
+    #        accuracy 0.009 above chance, naive SE 0.0087, cluster SE 0.0115. The naive
+    #        reading calls the region MEASURED (0.009 > 0.0087) and the cluster reading calls
+    #        it UNDEFINED (0.009 <= 0.0115). A first version of this case asserted
+    #        `max(0.0087, 0.0115) == 0.0115`, which tests Python and not the decision.
+    _r = {"acc": 0.25 + 0.009, "se": 0.0087, "se_cluster": 0.0115}
+    _undef, _wide = is_undefined_vs_chance(_r, 0.25)
+    assert _undef and abs(_wide - 0.0115) < 1e-12, (_undef, _wide)
+    # The separation is real: naive alone would have said measured.
+    assert _r["se"] < 0.009, "the worked example no longer separates the two SEs"
+    # A region genuinely clear of chance stays measured under BOTH SEs.
+    _r2 = {"acc": 0.25 + 0.05, "se": 0.0087, "se_cluster": 0.0115}
+    assert not is_undefined_vs_chance(_r2, 0.25)[0], _r2
+    # And a NaN cluster SE (n=1) falls back to the naive one instead of vanishing.
+    _r3 = {"acc": 0.25, "se": 0.0, "se_cluster": float("nan")}
+    _u3, _w3 = is_undefined_vs_chance(_r3, 0.25)
+    assert _u3 and _w3 == 0.0, (_u3, _w3)
 
     print("api_cloze selftest OK: the region pair on the control's real numbers "
           f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "
@@ -788,7 +982,12 @@ def _selftest():
           "item construction on known text (gold is the attribute, label points at it, prompt "
           "ends at the dot), thin objects and short prefixes dropped, header separated, "
           "binomial SE 0.0087 at n=2500, and an unscoreable item is excluded rather than "
-          "counted correct (the -1e9 tie-toward-slot-0 free point, reproduced then masked)")
+          "counted correct (the -1e9 tie-toward-slot-0 free point, reproduced then masked). "
+          "CLUSTER SE: no-clustering gives ICC 0 and identical SEs, perfect rows of 5 give "
+          "exactly sqrt(5)x, the Kish size on 20+80x1 is 4.8 = 3.888x the mean (not the "
+          "mean), the group list is masked with the outcomes so a dropped unscoreable item "
+          "cannot shift later items into the wrong row, and the undefined-vs-chance test "
+          "reads the WIDER of the two SEs")
     return 0
 
 
