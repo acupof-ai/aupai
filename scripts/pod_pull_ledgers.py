@@ -424,28 +424,53 @@ def append_pod_rows(rel, rows, pod_root=POD_ROOT):
 
 
 def verify_pod_append(rel, rows, pod_root=POD_ROOT, reader=read_pod):
-    """Read the pod back and confirm each row's key now folds to the row we sent.
+    """Read the pod back and confirm every row we sent is there, and that the pod's fold matches.
 
     A write whose success is inferred from rc=0 is not a verified write: the shell pipeline
     above can exit 0 with a truncated payload if base64 -d hits a short read, and a ledger
-    that is silently short reads exactly like one that is correct. So this re-reads and folds
-    -- the same fold every comparison here uses -- and reports which keys did not land."""
+    that is silently short reads exactly like one that is correct. So this re-reads.
+
+    IT USED TO DEMAND EACH SENT ROW BE THE POD'S LAST FOR ITS KEY, and that is wrong whenever a
+    send carries more than one EVENT under one key -- which is the normal case, not an edge one.
+    `missing` is the key-level set PLUS events_pod_lacks (:492), because a close is a second event
+    under an existing key and would otherwise be unreachable. So a key can legitimately receive
+    three events, of which only the last can possibly be last. MEASURED on C4's real push: 52 rows
+    landed correctly, 348 -> 400 with 0 local-only remaining, and the old check reported 6 keys
+    "not the one sent" (e1-21, e1-25, e1-26, e1-27, e1-29, e1-30) -- e1-26 received an `open`, a
+    `done` at 05:57 and a `done` at 06:25, all three of which the pod lacked and all three of which
+    it now has in that order. A verified write reported as failed is the same defect class as an
+    unverified one reported as fine: the message stops meaning anything.
+
+    What is actually required, and is checked here:
+      1. every sent row is PRESENT on the pod -- nothing was truncated away, and
+      2. the pod's fold for each touched key EQUALS the local fold -- the ordering landed such that
+         the current state agrees, which is the property the transport exists to produce.
+    (2) is the one that would catch a scrambled append that (1) alone would pass."""
     keys = _keys()
     text, err = reader(rel, pod_root)
     if err:
         return [f"cannot verify: {err}"]
     pod_rows, _ = parse(text)
     kf = keys[rel]
-    last = {}
-    for r in pod_rows:
-        last[kf(r)] = r
     bad = []
+    present = [json.dumps(r, sort_keys=True, ensure_ascii=False) for r in pod_rows]
+    from collections import Counter
+
+    have = Counter(present)
     for r in rows:
-        k = kf(r)
-        if k not in last:
-            bad.append(f"{k}: absent after the append")
-        elif last[k] != r:
-            bad.append(f"{k}: pod's last row is not the one sent")
+        if not have.get(json.dumps(r, sort_keys=True, ensure_ascii=False)):
+            bad.append(f"{kf(r)}: a sent row is absent after the append")
+    pod_last, local_last = {}, {}
+    for r in pod_rows:
+        pod_last[kf(r)] = r
+    lpath = os.path.join(ROOT, rel)
+    if os.path.exists(lpath):
+        lrows, _ = parse(open(lpath, encoding="utf-8").read())
+        for r in lrows:
+            local_last[kf(r)] = r
+    for k in {kf(r) for r in rows}:
+        if k in local_last and pod_last.get(k) != local_last[k]:
+            bad.append(f"{k}: the pod's current row does not match this repository's after the send")
     return bad
 
 
@@ -910,6 +935,52 @@ def _selftest():
         _sent += _txt
     assert _sent == "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _rows), (
         "the chunks do not reassemble into the payload")
+
+    # THE VERIFIER HAD NO CASES AT ALL, which is how it shipped demanding that every sent row be
+    # the pod's LAST for its key -- true only when a send carries one event per key, and `missing`
+    # is the key-level set PLUS events_pod_lacks, so a key legitimately receives several. On C4's
+    # real push 52 rows landed correctly (348 -> 400, 0 local-only left) and it reported 6 keys as
+    # "not the one sent". A verified write reported as failed is the same defect as an unverified
+    # one reported as fine.
+    _vrel = "runs/experiments.jsonl"
+    _vk = {"name": "vv", "started": "t1"}
+    _open = dict(_vk, status="running")
+    _mid = dict(_vk, status="ok", result="first")
+    _final = dict(_vk, status="ok", result="second")
+
+    def _pod_has(rel, pod_root, _rows=(_open, _mid, _final)):
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _rows), None
+
+    # THREE EVENTS UNDER ONE KEY, all sent, all present: this must pass. Under the old contract
+    # the first two failed as "not the one sent".
+    _saved_root = ROOT
+    try:
+        globals()["ROOT"] = os.path.join(d, "vworld")
+        os.makedirs(globals()["ROOT"], exist_ok=True)
+        os.makedirs(os.path.join(globals()["ROOT"], "runs"), exist_ok=True)
+        with open(os.path.join(globals()["ROOT"], _vrel), "w", encoding="utf-8") as fh:
+            for r in (_open, _mid, _final):
+                fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+        bad = verify_pod_append(_vrel, [_open, _mid, _final], reader=_pod_has)
+        assert bad == [], f"three events under one key, all present, must verify: {bad}"
+        # (1) A ROW THAT NEVER LANDED is caught. The pod holds only the first two.
+        def _pod_short(rel, pod_root):
+            return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in (_open, _mid)), None
+
+        bad = verify_pod_append(_vrel, [_open, _mid, _final], reader=_pod_short)
+        assert any("absent after the append" in b for b in bad), (
+            f"a truncated append must be caught: {bad}")
+        # (2) EVERY ROW PRESENT BUT THE ORDER SCRAMBLED, so the pod's current state disagrees with
+        # this repository's. Presence alone passes; the fold comparison is what catches it.
+        def _pod_scrambled(rel, pod_root):
+            return "".join(json.dumps(r, ensure_ascii=False) + "\n"
+                           for r in (_open, _final, _mid)), None
+
+        bad = verify_pod_append(_vrel, [_open, _mid, _final], reader=_pod_scrambled)
+        assert any("does not match this repository" in b for b in bad), (
+            f"all rows present but folding to a different current state must be caught: {bad}")
+    finally:
+        globals()["ROOT"] = _saved_root
 
     # PROVENANCE-ONLY, from the three real shapes --push found on 2026-09-03. Each pair agrees
     # on status AND result to the character, so none is two measurements disagreeing, and
