@@ -128,7 +128,15 @@ def _empty(v):
 # differing experiments rows differ on `status` alone, all of this shape (de-36,
 # 2026-09-03). Without this, every one of them files as a contradiction and the 53 rows
 # that actually need a human are buried in a list of 155.
-_OPEN = {"running", ""}
+_OPEN = {"running", "open", ""}
+
+# THE SAME PROPERTY, IN THE FIELD EACH LEDGER NAMES IT (C4/DL-11, de, 2026-09-04). experiments
+# rows carry `status: running`; tasks rows carry `state: open`. The clause below knew only the
+# first, so widening the transport to tasks.jsonl reported 53 contradictions -- and MEASURED, 39 of
+# them differ on `state` ALONE and every one is local-closed against pod-open, i.e. exactly the
+# staleness this clause exists to name. Reporting 53 rows as needing a human when 39 need nothing
+# is de-36's 161-vs-14 shape a third time, in a third field.
+_OPEN_FIELDS = ("status", "state")
 
 # Fields that are PROVENANCE, not measurement. A key differing only on these is not two
 # measurements disagreeing, and calling it `contradicts` puts it in the class whose text says
@@ -173,11 +181,10 @@ def classify(local_row, pod_row):
     fb closed 62 of these as killed on 2026-09-01 -- and overwriting it from a stale pod
     copy would be an automated edit to a human's judgement in the direction of the older
     evidence."""
-    pr, lr = pod_row.get("result"), local_row.get("result")
     disagree = [f for f, v in pod_row.items() if not _empty(v) and local_row.get(f) != v]
     if not disagree:
         return "stale"
-    if disagree == ["status"] and pod_row.get("status") in _OPEN:
+    if len(disagree) == 1 and disagree[0] in _OPEN_FIELDS and pod_row.get(disagree[0]) in _OPEN:
         return "stale"
     # Provenance-only, checked against BOTH sides' differing fields rather than the pod's
     # alone: local `notes` explaining an unresolvable sha is absent from the pod entirely, so
@@ -185,7 +192,18 @@ def classify(local_row, pod_row):
     both = {f for f in set(local_row) | set(pod_row) if local_row.get(f) != pod_row.get(f)}
     if both and both <= _PROVENANCE:
         return "provenance_only"
-    if not _empty(pr) and _empty(lr):
+    # WHICH FIELD CARRIES THE CONTENT depends on the ledger, and hardcoding `result` made this
+    # class blind on tasks.jsonl. Measured 2026-09-04 under --push with the widened list: 14 task
+    # rows have a `reading` on the pod and NONE locally, and in 0 of them do both sides carry a
+    # different non-empty value -- so all 14 are content the repository does not have, which is
+    # this class exactly, and every one was reported as `contradicts`: filed as "a human decides
+    # which is right" when there is nothing to decide, only something to copy.
+    _content = [f for f in ("result", "reading", "evidence")
+                if not _empty(pod_row.get(f)) and _empty(local_row.get(f))]
+    _contested = [f for f in ("result", "reading", "evidence")
+                  if not _empty(pod_row.get(f)) and not _empty(local_row.get(f))
+                  and pod_row.get(f) != local_row.get(f)]
+    if _content and not _contested:
         return "result_only_on_pod"
     return "contradicts"
 
@@ -475,9 +493,16 @@ def main(argv=None):
         summary = ", ".join(f"{w} {n}" for w, n in sorted(cls.items())) or "none"
         print(f"{rel:28s} pod {npod:>4} local {nloc:>4}  {side} {len(missing):>3}  differing: {summary}{tag}")
         for k, why, lrow, prow in [c for c in coll if c[1] == "result_only_on_pod"][:3]:
-            print(f"    RESULT ONLY ON POD {k}")
-            print(f"      pod   [{prow.get('status')}] {str(prow.get('result'))[:88]}")
-            print(f"      local [{lrow.get('status')}] {str(lrow.get('result'))[:88]}")
+            # PRINT THE FIELD THAT ACTUALLY DIFFERS, not `status`/`result` by name: on
+            # tasks.jsonl those two are absent from every row, so all 12 of these printed as
+            # "pod [None] None / local [None] None" -- a report naming a row and then showing
+            # nothing about it, which is worse than not printing it.
+            _which = next((f for f in ("result", "reading", "evidence")
+                           if not _empty(prow.get(f)) and _empty(lrow.get(f))), "result")
+            _st = "status" if prow.get("status") is not None else "state"
+            print(f"    CONTENT ONLY ON POD {k}  ({_which})")
+            print(f"      pod   [{prow.get(_st)}] {str(prow.get(_which))[:88]}")
+            print(f"      local [{lrow.get(_st)}] {str(lrow.get(_which))[:88]}")
     print()
     n_res = by_class.get("result_only_on_pod", 0)
     if n_res:
@@ -562,6 +587,40 @@ def _selftest():
     both = {"ckpt": "c5", "profile": "full", "result": "40.0%"}
     other = {"ckpt": "c5", "profile": "full", "result": "2.2%"}
     assert classify(both, other) == "contradicts", classify(both, other)
+
+    # THE SAME TWO CLASSES IN tasks.jsonl's FIELD NAMES (C4/DL-11, 2026-09-04). Widening the
+    # transport to tasks.jsonl reported 53 contradictions, and measurement said 39 differ on
+    # `state` alone (local closed, pod open -- staleness) and 14 have a `reading` on the pod and
+    # none locally (content the repository lacks). Both were `contradicts` because this function
+    # knew only `status`/`running` and only the `result` field, so it filed 53 rows as "a human
+    # decides which is right" when 39 needed nothing and 14 needed copying.
+    t_pod_open = {"id": "de-2", "state": "open", "task": "cap the token cache"}
+    t_local_closed = {"id": "de-2", "state": "dropped", "task": "cap the token cache",
+                      "drop_reason": "parked: experiment"}
+    assert classify(t_local_closed, t_pod_open) == "stale", classify(t_local_closed, t_pod_open)
+    t_pod_reading = {"id": "b0-20", "state": "open",
+                     "reading": "launcher refuses a base with a different recorded hash"}
+    t_local_bare = {"id": "b0-20", "state": "open"}
+    assert classify(t_local_bare, t_pod_reading) == "result_only_on_pod", \
+        classify(t_local_bare, t_pod_reading)
+    # THE NEGATIVE CONTROLS, or the two clauses above would swallow real disagreements.
+    # A pod row that is CLOSED differently from the local one is not staleness: the open-field
+    # clause requires the POD side to be the open one.
+    t_pod_done = {"id": "de-3", "state": "done", "task": "x"}
+    t_local_dropped = {"id": "de-3", "state": "dropped", "task": "x"}
+    assert classify(t_local_dropped, t_pod_done) == "contradicts", \
+        classify(t_local_dropped, t_pod_done)
+    # And two non-empty readings that differ stay a contradiction -- the content clause fires
+    # only when the local side is EMPTY, never when it holds something else.
+    t_both = {"id": "b0-21", "state": "open", "reading": "the gate reads the grant"}
+    t_other = {"id": "b0-21", "state": "open", "reading": "the gate reads the config"}
+    assert classify(t_both, t_other) == "contradicts", classify(t_both, t_other)
+    # A pod row carrying BOTH a new reading and a contested result is a contradiction, not a
+    # copy: `_contested` is what stops one absent field from licensing the whole row.
+    t_mixed_local = {"id": "b0-22", "state": "open", "result": "40.0%"}
+    t_mixed_pod = {"id": "b0-22", "state": "open", "result": "2.2%", "reading": "new"}
+    assert classify(t_mixed_local, t_mixed_pod) == "contradicts", \
+        classify(t_mixed_local, t_mixed_pod)
 
     # THE LAST local row under a key is current, not the first: exp.py done APPENDS a
     # closing row. With setdefault, a closed run reads as still open and its close is
