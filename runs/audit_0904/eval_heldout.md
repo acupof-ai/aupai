@@ -149,3 +149,29 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
    registry" line, or is one statement in one place enough?
 5. Is the 46-scorer sweep still wanted as part of this area's report, given it will land after
    the 3-hour mark?
+
+## Pair check (3b, 2026-09-04)
+
+Recomputed E1 / E3 / E4 independently as e1's pair, per the controller's assignment. Artifacts
+reopened in this pass; numbers read from the artifacts, not from e1's report.
+
+**E1 — HOLDS.** `git show bfa1a846 --name-only` lists only `eval/domain_loss.py`. `eval/score_matrix.py:244`
+calls `domain_loss_seqs(model, rows, device, per_row=True)` with no `cu_path`, so it takes the
+`cu_none` default at `eval/domain_loss.py:194`. `runs/score_matrix.jsonl` = 60 rows; a grep for
+`cu_none|doc_cu|#cu` = **0** rows; 52 carry `domain_loss`. The cu-path fix never reached the
+ledger writer; no published row records which path it used.
+
+**E3 — HOLDS.** The 6 `score_matrix.jsonl` rows dated 2026-09-03 include the N2 arms
+(`ckpt_params_leg_438m_3p76b.pt`, `ckpt_data_leg_206m_8b.pt` step7000/step7500/step10000) plus the
+pythia control. `facts/data_scaling.json#ds.n2_params_vs_data_matched_compute` value = −0.01077.
+`facts/efficiency.json#eff.eval_path_cu_artifact_ce` uncertainty states the pooled artifact is
+**7.59×** N2's delta ("the pooled figure is 7.59x"), matching e1's "7.6×". The cu fix is
+2026-09-04 06:41Z; both measured 09-03, pre-fix. `runs/b0_23_blocks.jsonl` has keys
+[ckpt, domains, unweighted_mean], `path` absent. Verdict rests on a number whose instrument had
+a known defect ~7.6× its size, and the fact does not record the path.
+
+**E4 — HOLDS (same-source as corpus CD-2).** `git log -1 e970c343` = 2026-09-04 08:50:45 +0800.
+Pod `stat`: newest corpus dirs are all 2026-09-03 (`en_c4_30b` 09-03 20:29Z, `cot_open_thoughts`
+09-03 15:23Z, `rp1t_arxiv_papers` 09-03 08:19Z). Every corpus domain predates the registry. This
+matches the corpus audit's CD-2: no stamp records which holdout population it was built against,
+and none could have been built against the registry.
