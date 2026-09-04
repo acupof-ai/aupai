@@ -903,6 +903,9 @@ def main():
         # recursion: the runner copies the staged blob to .hookstaged_pre-commit and
         # git never invokes that name, and the temp repo has no hooks installed.
         "scripts/hooks/pre-commit",
+        # audit 0904 page renderer: its selftest parses fixture reports in a temp dir --
+        # no repo data, no card -- and covers the charter's broken world (shuffled columns).
+        "scripts/audit_render.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
