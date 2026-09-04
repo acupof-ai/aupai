@@ -2457,6 +2457,24 @@ def main():
             print("FP8 compute enabled", flush=True)
     if is_main:
         n_params = sum(p.numel() for p in raw_model.parameters())
+        # MFU'S n_params IS THE DENSE COUNT, which is not the same number. `6 * n_params * tps`
+        # is the dense-FLOPs approximation: every parameter multiplied by every token. A sparse
+        # memory table breaks that premise -- a token reads top_k of V values, 32 of 1,048,576 at
+        # M1 -- so counting the table makes the formula describe a model nobody ran.
+        #
+        # MEASURED, not anticipated: M1's log printed MFU 168%, and a fraction of peak above 100%
+        # is arithmetically impossible, which is the only reason it was noticed. The table inflated
+        # n_params 6.2x (1,284,065,352 against the dense 206,128,200), and 168/6.2 = 27%, which
+        # sits plausibly beside the control's 34%. A smaller table would have produced an inflated
+        # figure UNDER 100% and nothing would have looked wrong.
+        #
+        # The FLOPs the memory does add -- 2*sqrt(V) key dot products and a top_k*top_k combine --
+        # are real but are not `6 * table_params * tokens`, so they are omitted rather than
+        # approximated: an MFU that undercounts a known small term by a stated amount is honest,
+        # while one that overcounts by 6x is not a fraction of peak at all. `params` in the line
+        # below still reports the TOTAL, because that is the model's size.
+        n_dense = n_params - sum(p.numel() for n, p in raw_model.named_parameters()
+                                 if _is_mem_fqn(n))
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
         # runlog, not print: an unrecorded batch size once cost 90 minutes of regression-chasing
@@ -2864,7 +2882,7 @@ def main():
                     now = time.time()
                     dt = now - t_log
                     tps = 10 * Cfg.batch * Cfg.accum * Cfg.seq / dt
-                    mfu = 6 * n_params * tps / (peak_tflops * 1e12)
+                    mfu = 6 * n_dense * tps / (peak_tflops * 1e12)
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
                     eta = (total_steps - step) * dt / 10

@@ -1,0 +1,99 @@
+{
+ "id": "b0_mem_m1_vs_control_tps",
+ "written": "2026-09-04T19:57Z",
+ "by": "b0",
+ "what": "tok/s/gpu per step for memory arm M1 against its control, same recipe and same world. The evidence for readout 5's restatement from an absolute floor to a same-step ratio (4c's amendment_6, 2026-09-05).",
+ "arm": {
+  "name": "b0_mem_m1",
+  "started": "2026-09-04 19:45",
+  "world": 2,
+  "cards": "1,2",
+  "mem_values": 1048576,
+  "mem_top_k": 32,
+  "mem_layers": "3,6,9",
+  "mem_sparse": false,
+  "log": "/work/aupai/runs/b0_mem_m1.log",
+  "steps_run": 83,
+  "ended": "killed by 4c 2026-09-04T19:53:04Z by exact PID at step 83"
+ },
+ "control": {
+  "name": "b0_headmix_armA",
+  "world": 2,
+  "log": "/work/aupai/runs/b0_headmix_armA.log",
+  "note": "same launch line plus the memory flags, so the data order is identical"
+ },
+ "tok_s_gpu": {
+  "10": {
+   "m1": 26000,
+   "control": 34000,
+   "ratio": 0.7647
+  },
+  "20": {
+   "m1": 64000,
+   "control": 82000,
+   "ratio": 0.7805
+  },
+  "30": {
+   "m1": 64000,
+   "control": 82000,
+   "ratio": 0.7805
+  },
+  "40": {
+   "m1": 65000,
+   "control": 82000,
+   "ratio": 0.7927
+  },
+  "50": {
+   "m1": 64000,
+   "control": 82000,
+   "ratio": 0.7805
+  },
+  "60": {
+   "m1": 65000,
+   "control": 82000,
+   "ratio": 0.7927
+  },
+  "70": {
+   "m1": 65000,
+   "control": 80000,
+   "ratio": 0.8125
+  },
+  "80": {
+   "m1": 65000,
+   "control": 82000,
+   "ratio": 0.7927
+  },
+  "200": {
+   "m1": null,
+   "control": 56000,
+   "ratio": null,
+   "why_null": "the arm was killed at step 83; the control's value is here because it is the reason the absolute floor is the wrong criterion"
+  }
+ },
+ "readout_5_as_written": {
+  "rule": "tok/s/gpu at step 30 against the control's 82K; below 70K the arm is stopped",
+  "verdict_on_m1": "STOP: 64K < 70K",
+  "why_the_literal_rule_is_broken": "70K is an absolute floor derived from the control's 82K, and the CONTROL ITSELF reads 56K at step 200 -- below its own floor. Applied literally at step 200 the rule stops the control, so it does not separate 'the memory is too expensive' from 'throughput on this hardware decays with step'. The quantity the rule means is the ratio."
+ },
+ "readout_5_as_amended": {
+  "rule": "the arm's tok/s/gpu over the control's AT THE SAME STEP; stop below 0.85",
+  "verdict_on_m1": "STOP: 0.78 at step 30, 0.79 through step 80",
+  "verdict_unchanged": true
+ },
+ "cost_measured_twice": {
+  "world_2_step_30": {
+   "arm": 64000,
+   "control": 82000,
+   "ratio": 0.7805
+  },
+  "world_1_peak_only_probe": {
+   "arm": 30600,
+   "control": 38100,
+   "ratio": 0.8031,
+   "note": "30 timed steps, identical flags except --mem_values 0"
+  },
+  "conclusion": "the memory costs 20-22% of throughput, measured independently at two world sizes; tilerl's isolated lookup predicted 6.5%, so ~15 points are unexplained and are what the fwd/bwd/opt decomposition has to locate"
+ },
+ "mfu_column_is_invalid_for_memory_arms": "M1's log reports MFU 168%, which is impossible. train.py:2867 computes 6*n_params*tps/peak_tflops with n_params = all 1,284,065,352 parameters, but the memory is a sparse top-k read: a token touches 32 of 1,048,576 values. The table inflates n_params 6.2x, and 168/6.2 = 27%, plausible beside the control's 34%. A reporting defect, not a measurement; fix is to exclude the table from the MFU line's n_params.",
+ "ledger_note": "runs/experiments.jsonl folds THREE identities for b0_mem_m1 and only two runs existed. 19:41 = the world-6 launch 4c killed at ~2 min. 19:45 = THIS run, the one these numbers come from; it folded to fail|vanished because the harness wrapper shell was in the kill set so no .rc was written. 19:55 = a bookkeeping artefact of mine, NOT a run: I called exp.py done without --started after the 19:45 row had already folded closed, and the fold key is (name, started), so it minted a new identity. exp.py correctly refuses to close or annotate an already-closed row, so the correction lives here rather than as a hand-edit to an append-only ledger."
+}
