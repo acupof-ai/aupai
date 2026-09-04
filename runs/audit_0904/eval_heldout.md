@@ -303,8 +303,26 @@ whether a timestamp is reachable.
 which format in the shell's local zone, then typed `Z` because the surrounding convention is UTC.
 The `Z` was my own annotation, never output by any command. Same shape as
 `memory/stat-format-Z-is-not-evidence.md`: the character that makes a timestamp verifiable was
-supplied by the writer. `TZ=UTC` on the command, or `--date=format-local:...Z` under `TZ=UTC`,
-is the only form where the `Z` is produced by the tool.
+supplied by the writer. **`TZ=UTC` on the command is the only form where the `Z` is produced by the
+tool.**
+
+**A SECOND FORM OF THE SAME DEFECT, found 2026-09-04 while checking E18 (E21, 6e's ruling that it
+belongs here).** The first version of this paragraph offered two fixes: `TZ=UTC`, or
+"`--date=format-local:...Z` under `TZ=UTC`". The second half is a trap and I then fell into it.
+Dating E18's commit I ran
+
+```
+git log -1 --format='%ad' --date=format-local:'%Y-%m-%dT%H:%M:%SZ' 2c87a493   ->  2026-09-04T12:38:11Z
+TZ=UTC git log -1 --format='%ad' --date=format-local:'%Y-%m-%dT%H:%M:%SZ' 2c87a493 -> 2026-09-04T04:38:11Z
+```
+
+`format-local` means "the local zone", and the `Z` inside the format string is a literal character
+git copies out. So a `format-local:...Z` string WITHOUT `TZ=UTC` produces a timestamp that looks
+UTC-stamped, is +0800, and carries a `Z` that no tool asserted — identical in effect to typing the
+`Z` by hand, but harder to spot because the `Z` now sits in a format string and reads as machinery.
+The distinction that matters is not where the `Z` appears; it is whether `TZ=UTC` is on the command.
+The two forms of this defect are: typing `Z` after a bare `stat`/`git log`, and putting `Z` in a
+`format-local` string. Both were mine, three hours apart, the second while auditing the first.
 
 **What survives.** Both affected conclusions hold, and both hold by a wider margin than
 published, because the correction moves the two events I was comparing in the same direction:
