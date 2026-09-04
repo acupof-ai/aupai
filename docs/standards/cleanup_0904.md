@@ -26,7 +26,7 @@ the finding it closes.
 
 | id | owner | item | from |
 |---|---|---|---|
-| C1 | tilerl | kill by exact PID: 3 `until [ -f …]` loops, 6 stale aupai `tail -f`, 307 sglang `tail -F` (they hold FDs on our events file); state why the 3,958 zombies cannot be reaped from inside the container and what would | PR-11 |
+| C1 | tilerl | kill by exact PID: 3 `until [ -f …]` loops, 6 stale aupai `tail -f`, 307 orphaned `tail -F runs/events.jsonl` (PR-11 called them another project's on cwd alone; cwd is the container default, so origin is unknown; ruling: a watcher whose stdout pipe has no reader delivers to nobody and is disposable whatever spawned it, verified per PID before the kill); state why the 3,958 zombies cannot be reaped from inside the container and what would | PR-11 |
 | C2 | b0 | 12:03Z prune as scheduled; then delete the 17 stale pod copies and the `_b0_*` scratch files (own), list the other 168 untracked pod files by owner for 24 h broadcast | PR-6/7 |
 | C3 | 3b | broadcast the ~80 GB unreferenced corpus (24 `web_cci3_p*`, 115 loose `batch_*.jsonl`) for 24 h, then delete; stamps stay | CD-6 |
 | C4 | de | one transport for every `runs/*.jsonl`, union by event; then pull the pod's rows and close every `running` row with no process; triage the 62 open tasks (close or re-block on a task id) | DL-11, DL-3 |
