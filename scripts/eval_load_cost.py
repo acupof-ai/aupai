@@ -108,6 +108,20 @@ WALL_SECS = {
 # the boolean column groups a 16,000x range into one bucket. `ppl` over mix_500m reads ~166 GB and
 # `ppl` over a chat-only mix reads 0.3 GB -- the rule "an eval that reads a token cache waits for
 # the run" is right for the first and absurd for the second.
+#
+# THE THRESHOLD IS DECLARED, NOT FITTED, and saying which matters because the table looks like
+# it could supply one. There is no measured bytes->seconds point above ~2 GB: the three 166 GB
+# rows have an empty `measured` column, and ppl.py's 109 s was recorded at the moment it was
+# killed, BEFORE it reached a cache (§50: the kill was 事前止损). So the largest cache read ever
+# allowed to finish beside a live run is unknown, and no regression through the measured points
+# can name a byte bound.
+#
+# 10 GB is this file's own existing line: "that is the >10 GB axis, and it is what separates ppl
+# from score_matrix inside one metric class" (docstring, host_io). Reused rather than invented so
+# the number has one home. It also lands between the two populations with room on both sides --
+# 22 caches, and the gap runs from web_hq at 5.7 GB to en_c4 at 19.2 GB.
+CO_RESIDENCY_BYTES = 10e9
+
 CACHE_BYTES = {
     "zh_web": 85173617415, "code_py_starcoder": 35147667156, "code_rp1t": 30276327900,
     "math_owm_stage2": 26114186246, "en_c4": 19236278784, "math_owm": 16139300949,
@@ -127,6 +141,24 @@ def mix_cache_bytes(mix_path):
     except (OSError, ValueError):
         return None, []
     doms = list((obj.get("domains") or {}).keys())
+    return (sum(CACHE_BYTES.get(d, 0) for d in doms),
+            [d for d in doms if d not in CACHE_BYTES])
+
+
+def domains_cache_bytes(domains):
+    """(bytes, [domains with no recorded cache]) for an explicit domain list.
+
+    The refusal in eval/cache_guard.py calls THIS, not mix_cache_bytes: it is handed the
+    domains an eval is about to read, and those are not always a mix file's whole set --
+    `--mix` narrowed, one domain re-scored, a probe over three. Summing the mix would
+    refuse on bytes the caller was never going to read.
+
+    An unrecorded domain contributes 0 and is RETURNED BY NAME rather than silently
+    skipped, because the caller's decision differs on it: a sum with a hole in it is a
+    lower bound, not a measurement, and cache_guard warns on unknown rather than
+    refusing.
+    """
+    doms = list(domains)
     return (sum(CACHE_BYTES.get(d, 0) for d in doms),
             [d for d in doms if d not in CACHE_BYTES])
 
