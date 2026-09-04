@@ -10,6 +10,7 @@
  "bucket_cap_mb": 50,
  "attn_res_blocks": 0,
  "attn_every": 4,
+ "head_mixed": 0,
  "attn_res": true,
  "attn_res_dyn_q": false,
  "attn_res_fp32_logits": false,
