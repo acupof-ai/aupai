@@ -69,6 +69,12 @@ SOFTCAP = float(os.environ.get("SOFTCAP", 15.0)) or None
 #: is recomputed from this number, so it is the same after a reload.
 _ROW_PROBE_SEED = 20260905
 
+#: Rows per block in ProductKeyMemory.row_checksums. 65,536 rows at d=1024 is a 256 MiB fp32
+#: temporary, fixed regardless of table size -- against 5.45 GiB at side 1195 and 8.00 at 1448 for
+#: the unchunked `weight.float()`, which would put the diagnostic's own allocation into the peak
+#: that decides whether the arm fits (4c's instruction, 2026-09-05).
+_ROW_CHECKSUM_BLOCK = 65536
+
 
 class RMSNorm(nn.Module):
     def __init__(self, d, eps=1e-6):
@@ -561,16 +567,29 @@ class ProductKeyMemory(nn.Module):
     def row_checksums(self):
         """Per-row fp32 projection of the value table onto the fixed probe vector.
 
-        BOTH OPERANDS FORCED TO fp32 HERE, not assumed from the buffer's dtype. `row_probe` is a
+        CHUNKED OVER ROW BLOCKS, and that is a peak-memory requirement rather than a speed one.
+        `weight.float()` on the whole table allocates a full-size fp32 temporary -- verified, not
+        assumed: .float() on a bf16 tensor never shares storage, so it is 4 B/param, which is
+        5.45 GiB at side 1195 and 8.00 at 1448. That allocation would land at the diag step, on
+        top of a peak already measured at 88.15 GiB reserved of 95.22 usable, so the instrument
+        would decide whether the arm fits. A block of 65,536 rows costs 256 MiB at d=1024 instead,
+        independent of table size.
+
+        BOTH OPERANDS FORCED TO fp32, not assumed from the buffer's dtype. `row_probe` is a
         buffer, so `model.to(torch.bfloat16)` -- which train.py:2435 applies to the whole model
         under --fp8 -- casts it along with everything else. The projection would then accumulate in
         bf16, where each partial sum over d terms is ~d times the size of a one-ULP change, and the
-        smallest real updates would round out of the checksum: readout 6 would report a frozen
-        table as unchanged and a barely-moving one as frozen, which is the failure it exists to
-        detect. Caught by the one-ULP case in test_arch_compat, on a module cast to bf16 exactly as
-        the arms cast it.
+        smallest real updates would round out of the checksum: readout 6 would report a barely
+        moving table as frozen, which is the failure it exists to detect. Caught by the one-ULP
+        case in test_arch_compat, on a module cast to bf16 exactly as the arms cast it.
         """
-        return self.values.weight.detach().float() @ self.row_probe.float()
+        w = self.values.weight.detach()
+        probe = self.row_probe.float()
+        out = torch.empty(w.shape[0], dtype=torch.float32, device=w.device)
+        for i in range(0, w.shape[0], _ROW_CHECKSUM_BLOCK):
+            j = min(i + _ROW_CHECKSUM_BLOCK, w.shape[0])
+            out[i:j] = w[i:j].float() @ probe
+        return out
 
     @torch.no_grad()
     def note_row_changes(self):
