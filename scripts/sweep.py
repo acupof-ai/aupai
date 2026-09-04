@@ -67,6 +67,27 @@ SWEEPABLE = (A, B, C)
 IN_SCOPE_PREFIXES = ("/work/aupai",)
 NEVER_IN_SCOPE = ("/data00", "/data01", "/data02", "/data03")
 
+# KNOWN LIMIT, measured on the pod 2026-09-04 and left in place deliberately.
+#
+# The cwd scope test excludes the very shape that motivates class (b). Two loops, ages 61,976s
+# and 61,720s, both `bash -lc until <cond> runs/<x>.log; do sleep N; done`, both with cwd
+# /sgl-workspace/sglang -- and that cwd IS THE REASON THEY ARE STUCK: their `cd` never took, so
+# `runs/...` resolves under the container default where no runs/ exists, while the real logs have
+# said ALL-DONE since Sep 3 14:38 and FETCH_DONE since 14:27. They are ours, they are dead
+# weight, and this tool reports them as out of scope.
+#
+# PR-11 made the mirror-image error -- it called 307 processes "not ours" from the same cwd -- and
+# the correction (C1.5) is that the container's default cwd carries NO ownership information. It
+# cannot prove foreignness and it cannot prove ours. My scope test then used it as a positive
+# ownership signal from the safe side, which is the same unfounded inference with a harmless
+# consequence instead of a destructive one.
+#
+# Not widened here. Scope is env_hygiene.md §2's ruling, not this file's, and the fix has to say
+# what DOES place a process in /work/aupai when its cwd cannot: probably an fd or an argv path
+# under /work/aupai, which is the positive evidence C1.5 used ("they hold FDs on our events
+# file"). Raised for tilerl/6e rather than decided here, because widening a kill scope on my own
+# reading is how a sweeper kills something it should not.
+
 
 def _run(cmd):
     """Never raises. A missing binary returns empty output, which every caller reads as "this
