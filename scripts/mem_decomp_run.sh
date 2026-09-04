@@ -59,37 +59,58 @@ OUT=runs/mem_decomp_0905.jsonl
 LOG=runs/mem_decomp_0905.log
 : > "$OUT"
 
-# The claim names THIS script's pid, which is the parent of every torchrun and lives exactly
-# as long as the work does. b0_mem_m1's claim named an intermediate shell that exited while
-# the run continued, so status reported a live arm as STALE and its cards as ORPHAN -- a
-# claim is only worth the lifetime of the pid it names.
-python3 scripts/card_claim.py acquire --name tilerl_mem_decomp --cards "$CARDS" --pid $$ \
-  --note "M1 fwd/bwd/opt decomposition, 5 configs, ~45 min" >> "$LOG" 2>&1
-
-release() {
-  python3 scripts/card_claim.py release --name tilerl_mem_decomp >> "$LOG" 2>&1 || true
-}
-trap release EXIT
+# THE CLAIM NAMES torchrun, NOT THIS SHELL, and it is taken per config rather than once for
+# the script. card_claim refuses a shell pid on sight (de-34) and it is right to: a shell
+# either execs away, leaving the card ORPHAN, or outlives the job and holds the card after it
+# ended -- both happened on 2026-09-03, in opposite directions. My first version claimed $$
+# and was refused in three seconds, which is the guard working.
+#
+# Per config, so `card_claim.py status` names the cell that holds the cards rather than a
+# 45-minute block that says nothing about where it is.
+CLAIM=""
+trap '[ -n "$CLAIM" ] && python3 scripts/card_claim.py release --name "$CLAIM" >/dev/null 2>&1 || true' EXIT
 
 run_one() {
-  local tag=$1 rc; shift
+  local tag=$1 rc job a0; shift
   echo "=== $tag ===" >> "$LOG"
   # NOT --peak-only: that mode returns before the JSON record is built, so the regions would
   # print to the log and never land in a row anything can tabulate. The cost is save+val at
   # the end of each config, which is outside the timed steps.
-  #
-  # rc is captured on the line that FOLLOWS the command with nothing between them. `echo "$tag
-  # rc=$?"` reads the preceding echo's status, not torchrun's -- the shape that reported rc=0
-  # over four crashed DDP arms on 2026-09-05. `|| true` would be worse than no capture at all:
-  # it makes $? unconditionally 0. `rc=0; cmd || rc=$?` keeps the real status AND keeps set -e
-  # from taking the other three configs down with one failure.
-  rc=0
   torchrun --nproc_per_node="$NPROC" --master_port=29611 \
     scripts/profile_step_cost.py \
     --mix data/mix_200m_8b.json \
     --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 \
     --batch 16 --accum 2 --steps 20 --warmup 8 \
-    --json "$OUT" "$@" >> "$LOG" 2>&1 || rc=$?
+    --json "$OUT" "$@" >> "$LOG" 2>&1 &
+  job=$!
+
+  # WAIT FOR THE EXEC. `cmd &` forks first and execs second, so for a brief window the child's
+  # cmdline is still this bash and an immediate claim is refused as a shell for a job that is
+  # torchrun a millisecond later. Poll argv[0] and not a substring: pre-exec this shell's
+  # cmdline already CONTAINS "torchrun", so a `case *torchrun*` would match the shell we are
+  # waiting to stop being (run_ab_speedrun.sh:116, card_claim.py:119).
+  for _ in $(seq 1 100); do
+    a0=$(ps -o args= -p "$job" 2>/dev/null | awk '{print $1}')
+    case "$(basename "${a0:-sh}")" in
+      sh|bash|dash|zsh|ksh|"") ;;
+      *) break ;;
+    esac
+    kill -0 "$job" 2>/dev/null || break
+    sleep 0.1
+  done
+  CLAIM="tilerl_mem_decomp_$tag"
+  python3 scripts/card_claim.py acquire --name "$CLAIM" --cards "$CARDS" --pid "$job" \
+    --note "M1 decomposition cell $tag" >> "$LOG" 2>&1 || true
+
+  # rc is captured on the line that FOLLOWS the wait with nothing between them. `echo "$tag
+  # rc=$?"` reads the preceding echo's status, not the job's -- the shape that reported rc=0
+  # over four crashed DDP arms on 2026-09-05. `|| true` would be worse than no capture at all:
+  # it makes $? unconditionally 0. `rc=0; wait || rc=$?` keeps the real status AND keeps set -e
+  # from taking the other configs down with one failure.
+  rc=0
+  wait "$job" || rc=$?
+  python3 scripts/card_claim.py release --name "$CLAIM" >> "$LOG" 2>&1 || true
+  CLAIM=""
   echo "$tag rc=$rc" >> "$LOG"
 }
 
