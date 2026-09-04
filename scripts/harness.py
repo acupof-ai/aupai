@@ -998,10 +998,38 @@ def check_selftests_are_gated(root):
         # the map: a false positive hides wherever the answer is right by accident.
         if "--selftest" in strip_docstrings(body):
             have.add(rel)
+        # A RUNNABLE test_*.py IS A SELFTEST WHETHER OR NOT IT CARRIES THE FLAG (de,
+        # 2026-09-04, measured: 63 test_*.py tracked, 37 runnable, 19 of those in neither
+        # map). The population above is "files containing the string --selftest", so a
+        # test_*.py with a main() and no flag was outside this check by construction --
+        # the third time this check's population has been narrower than its property, after
+        # the four-directory listdir blind to mathbank/ and the argparse-only predicate
+        # blind to nine sys.argv dispatchers. Both earlier widenings are recorded above as
+        # the same lesson, and both times the PASS counted only the files the check already
+        # understood.
+        #
+        # The case that made it concrete: scripts/test_score_exit.py, 13 cases over
+        # run_ddp.sh's exit codes and row close, never run at any commit -- and the commit
+        # that CHANGED run_ddp.sh printed `selftests 0.03s`, which reads as "ran, fast" and
+        # means "ran zero". scripts/test_resume_accumulates.py is the demonstration that the
+        # old population was not merely incomplete but blind on purpose: its docstring
+        # explains that it deliberately carries no flag, so stripping docstrings correctly
+        # excluded it, and it is a runnable test nobody ran.
+        #
+        # `if __name__` and not `def main(`: algorithms/test_rlvr_reward_suite.py asserts at
+        # module scope with no main() at all, so a main()-shaped predicate would have missed
+        # it -- the same defect one more level down. (I first wrote that three files were in
+        # that shape; measured, the other two are already gated. One is enough to decide the
+        # predicate.) The invoker passes --selftest to every entry, so a file here must
+        # tolerate an unknown argument or get a SELFTEST_FLAG override; that is a property of
+        # the file, checked by running it, not something this check can assert.
+        elif (re.search(r"(^|/)test_[\w-]+\.py$", rel)
+                and re.search(r"^if __name__", strip_docstrings(body), re.M)):
+            have.add(rel)
     missing = sorted(have - gated)
     if missing:
-        return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
-                      f"SELFTEST_FILES, so nothing runs them at commit time: "
+        return FAIL, (f"{len(missing)} file(s) carry a selftest but are not in the hook's "
+                      f"SELFTEST_FILES or NEEDS_DATA, so nothing runs them at commit time: "
                       f"{', '.join(missing[:4])}")
     # A NEEDS_DATA entry is a CLAIM about why a selftest cannot run at commit time, and
     # nothing recomputed it. scripts/harness.py's read "the hook already runs `harness
@@ -11051,6 +11079,63 @@ def _selftest_batched_git_probes():
     )
 
 
+def _selftest_flagless_test_is_gated():
+    """The WIDENED arm of selftests_are_gated: a flagless runnable test_*.py must be seen.
+
+    The check's own broken world drops scripts/eval_artifacts.py, which CARRIES the flag, so
+    it exercises the old population only -- the widened arm would be unguarded there while
+    --selftest read green. Same shape as the run_checks mirror above: a guard placed where no
+    test looks. One broken world per check, so this arm asserts here.
+
+    Mutates the REAL hook by removing one REAL registration, and uses a file that is flagless
+    on purpose: scripts/test_resume_accumulates.py, whose docstring explains it deliberately
+    carries no --selftest. Under the old population it was invisible with docstrings stripped,
+    which is exactly the blindness being fixed -- pick a flag-carrying file here and the
+    mutation proves nothing about the widening (measured: 63 test_*.py tracked, 37 runnable,
+    19 in neither map before this).
+
+    Also asserts the NEGATIVE, because a predicate that fires on every test_*.py would pass
+    the positive case for the wrong reason: a test_*.py with no `if __name__` runs nothing when
+    executed and must NOT be demanded."""
+    victim = "scripts/test_resume_accumulates.py"
+    hookp = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    if not (os.path.exists(hookp) and os.path.exists(os.path.join(ROOT, victim))):
+        return
+    text = open(hookp, encoding="utf-8").read()
+    if f'"{victim}",' not in text:
+        return
+    d = _tmp_repo_shaped()
+    # scripts/ is a symlink into the real repo in a shaped world, so the mutated hook needs
+    # its own directory -- but COPYING a handful of files makes the other 96 map entries look
+    # deleted and the check FAILs on the stale-entry assertion instead, which is a world
+    # failing for the wrong reason (the same trap _broken_selftests_are_gated records).
+    # Mirror the real scripts/ by symlinking every entry, then override only hooks/.
+    real_scripts = os.path.join(ROOT, "scripts")
+    if os.path.islink(os.path.join(d, "scripts")):
+        os.unlink(os.path.join(d, "scripts"))
+        os.makedirs(os.path.join(d, "scripts"))
+        for f in os.listdir(real_scripts):
+            if f != "hooks":
+                os.symlink(os.path.join(real_scripts, f), os.path.join(d, "scripts", f))
+    hd = os.path.join(d, "scripts", "hooks")
+    os.makedirs(hd, exist_ok=True)
+    open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(
+        text.replace(f'"{victim}",', "", 1))
+    st, ev = check_selftests_are_gated(d)
+    assert st == FAIL and victim in ev, (
+        f"a flagless runnable test_*.py dropped from the map must FAIL and be named; "
+        f"got {st}: {ev[:200]}")
+    # The negative: a test_*.py that runs nothing when executed is not demanded.
+    inert = os.path.join(d, "scripts", "test_inert_probe.py")
+    open(inert, "w", encoding="utf-8").write("def helper():\n    return 1\n")
+    open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(text)
+    st2, ev2 = check_selftests_are_gated(d)
+    assert "test_inert_probe.py" not in ev2, (
+        f"a test_*.py with no `if __name__` runs nothing and must not be demanded: {ev2[:200]}")
+    print("  selftests_are_gated: a flagless runnable test must be gated; an inert test_*.py "
+          "is not demanded")
+
+
 def _selftest_repo_auth_mirror():
     """An auth=repo FAIL becomes SKIP on the pod's shape, and NOWHERE else.
 
@@ -11866,6 +11951,7 @@ def _demo():
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
     _selftest_repo_auth_mirror()
+    _selftest_flagless_test_is_gated()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
