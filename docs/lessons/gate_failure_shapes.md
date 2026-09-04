@@ -175,12 +175,13 @@ Cannot see: whether a retraction reached every consumer of the original ruling (
 
 ## R3. Artifacts carry their producer's identity; missing identity refuses, never rebuilds
 
-3 incidents (2 infra, 1 model), ~4h each, 12h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
+5 incidents (2 infra, 3 model), ~4h each, 20h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
 
 - §4: an artifact with no producer identity was silently rebuilt; the rebuild used a different producer, and the artifact's meaning changed. Missing identity must refuse, not rebuild.
 - §24: a checkpoint with no recipe provenance was scored; the score was attributed to a recipe the checkpoint did not run.
+- §189: a close written without --started stamped the row with its own write time and minted a third identity for a run that never existed; the ledger's fold key is (name, started), so the verdict and the numbers now sit on a phantom row.
 
-Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44).
+Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44, §189).
 
 ## R10. What happened only on the pod did not happen; bring it back to the repo the same day
 
