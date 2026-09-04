@@ -273,7 +273,7 @@ def friction_section():
 MEM_STATUS = {
     "model": "实现完",
     "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "被 block：前台启动（无 setsid）+ world 6 挤 2 卡，等 b0 杀掉重发",
+    "m1": "重发中：首发 world 6 被 4c 杀掉（无 step），grant 已重切，卡 1+2 即将发车",
     "m2": "未跑",
     "scored": "未打分",
 }
