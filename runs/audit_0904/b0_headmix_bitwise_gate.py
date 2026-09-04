@@ -1,16 +1,17 @@
 #!/usr/bin/env python3
-"""Bitwise gate for the `inner=` edit to DeltaRecurrence and GatedMLA (b0, head-hybrid arm B).
+"""Equivalence gate for the `inner=` edit to DeltaRecurrence and GatedMLA (b0, head-hybrid arm B).
 
 WHY THIS EXISTS. Arm B needs the two mixers to project from the residual width d to an
 explicit INNER width and back, instead of reading their width off `x.shape`
 (DeltaRecurrence.forward:107, GatedMLA.forward:198, and the output reshapes at :175 and
 :248). Those two classes are on the path of every checkpoint in this repo -- the Stage D/E
 arms, both N2 legs, the 15b and 30b runs. The risk is not that arm B fails; it is that arm A
-and every earlier arm change bitwise while the tests still pass, which is exactly the shape
+and every earlier arm change numerically while the tests still pass, which is exactly the shape
 of eff.eval_path_cu_artifact_ce: a number that moved because the instrument moved.
 
-WHAT IT PROVES. `inner=None` must mean "cfg.d", and that path must be the code it is today
-to the last bit. Run before the edit to record logits, after the edit to compare:
+WHAT IT PROVES. `inner=None` must mean "cfg.d", and that path must produce the same logits as
+the code it is today AT BF16 RESOLUTION (see the bound below). Run before the edit to record
+logits, after the edit to compare:
 
     CUDA_VISIBLE_DEVICES=<granted card> python3 runs/audit_0904/b0_headmix_bitwise_gate.py \
         --record --ckpt <ckpt>          # pre-change, once per shape
@@ -25,12 +26,17 @@ the checkpoint holds; run it once per live width.
 
 AND THE PASS IS WORTH NOTHING WITHOUT THE TWO FAILS. This gate was adjusted three times
 before it first passed -- CPU to CUDA, fp32 to bf16, and the summary statistic -- which is the
-shape of an instrument tuned until it agrees. `--perturb` is the answer: it nudges one weight
-by a single ulp and --check must report DIFFERS. Committed beside the PASS.
+shape of an instrument tuned until it agrees. `--perturb` is the answer: it steps one weight by
+one BF16 ulp and --check must report DIFFERS. Committed beside the PASS.
+
+WHAT THE PASS BOUNDS, stated because "bitwise" would overclaim it: identical AT BF16
+RESOLUTION, the precision the training path runs at. A change smaller than one bf16 ulp in a
+weight is invisible here by construction -- the cast erases it before the kernel -- which is
+the defect the first fixture had and the reason the fixture now steps in bf16.
 
 REQUIRES A GPU AND bf16, both learned by running it: see _logits for the two errors.
-A real checkpoint's weights, not random init -- random weights agree bitwise under any edit
-that preserves shapes, which is the failure this gate is aimed at.
+A real checkpoint's weights, not random init -- random weights agree under any edit that
+preserves shapes, which is the failure this gate is aimed at.
 """
 import argparse
 import json
@@ -53,11 +59,12 @@ OUT = os.path.join(ROOT, "runs", "b0_headmix_bitwise.json")
 def _logits(ckpt_path, seed=904, perturb=None):
     """Logits for one checkpoint on fixed input, eager, ON A GPU, in the training dtype.
 
-    `perturb` is the broken-world lever (6e, 2026-09-04): "kda" nudges the first KDA layer's
-    qkv weight by ONE ulp, "mla" nudges the first MLA layer's kv_down. A gate that reports
-    IDENTICAL under a 1-ulp weight change is not measuring what it claims, and this gate was
-    adjusted three times before it passed (CUDA, bf16, the summary statistic) -- which is
-    exactly the history that makes an unperturbed PASS worth nothing on its own.
+    `perturb` is the broken-world lever (6e, 2026-09-04): "kda" steps block 0's KDA qkv by one
+    BF16 ulp, "mla" steps the LAST MLA layer's kv_down. A gate that reports IDENTICAL under a
+    changed weight is not measuring what it claims, and this gate was adjusted three times
+    before it first passed (CUDA, bf16, the summary statistic) -- the history that makes an
+    unperturbed PASS worth nothing on its own. The first fixture DID report IDENTICAL; see the
+    perturb block for why (fp32 ulp erased by the bf16 cast).
 
     CUDA IS NOT OPTIONAL AND CPU IS NOT A FALLBACK. DeltaRecurrence routes through
     fla.ops.kda.chunk_kda, a Triton kernel: on CPU tensors it raises
@@ -97,22 +104,42 @@ def _logits(ckpt_path, seed=904, perturb=None):
     missing, unexpected = m.load_state_dict(sd, strict=False)
     m.eval().to(dev)
     if perturb:
-        # Name the tensor by SUFFIX, and refuse if no tensor matches: a perturbation that
-        # silently hit nothing would print FAIL-expected/PASS-actual and read as the gate
-        # being blind, when in fact the fixture never fired.
-        want = {"kda": "mixer.qkv.weight", "mla": "mixer.kv_down.weight"}[perturb]
+        # PERTURB AT THE RESOLUTION OF THE PATH BEING CERTIFIED. The first version of this
+        # nudged an fp32 weight by one fp32 ulp and BOTH fixtures reported IDENTICAL: weights
+        # are fp32, the forward runs bf16 autocast, and one fp32 ulp at 0.017333984375 is
+        # 0.01733398623764515 while bf16's neighbouring value is 0.0174560546875 -- ~700x
+        # further away. Autocast rounded the perturbation back to the same bf16 value before
+        # the kernel saw it, so the gate was blind to every change below one bf16 step and its
+        # PASS certified nothing (measured 2026-09-04, card 5).
+        #
+        # So: cast to bf16, step one bf16 ulp, cast back. Now the fixture moves the value the
+        # kernel actually receives.
+        #
+        # TWO SITES, and the second is chosen for propagation depth (6e): block 0's KDA qkv is
+        # the deepest path (its change traverses every later block), and the LAST MLA layer's
+        # kv_down is the shallowest -- only the final norm and head follow it. At L12 with
+        # attn_every 4 the MLA blocks are i%4==3, i.e. 3, 7 and 11, so the last MLA is block
+        # 11, NOT a KDA block. If a change there vanishes, everything upstream is untestable.
+        want, pick_last = {"kda": ("mixer.qkv.weight", False),
+                           "mla": ("mixer.kv_down.weight", True)}[perturb]
         hit = [(n, p) for n, p in m.named_parameters() if n.endswith(want)]
         if not hit:
             raise SystemExit(f"REFUSING: --perturb {perturb} matched no tensor ending "
                              f"{want}; the fixture would not have fired.")
-        n, p = hit[0]
+        n, p = hit[-1] if pick_last else hit[0]
         with torch.no_grad():
             flat = p.view(-1)
             before = flat[0].item()
-            flat[0] = torch.nextafter(flat[0], torch.tensor(float("inf"), device=flat.device,
-                                                            dtype=flat.dtype))
+            b16 = flat[0].to(torch.bfloat16)
+            stepped = torch.nextafter(b16, torch.tensor(float("inf"), device=b16.device,
+                                                        dtype=torch.bfloat16))
+            flat[0] = stepped.to(flat.dtype)
             after = flat[0].item()
-        print(f"  perturbed {n}[0]: {before!r} -> {after!r} (1 ulp, {len(hit)} candidate(s))")
+        if before == after:
+            raise SystemExit(f"REFUSING: the bf16 step did not move {n}[0] ({before!r}); a "
+                             f"fixture that changes nothing cannot show the gate discriminates.")
+        print(f"  perturbed {n}[0]: {before!r} -> {after!r} "
+              f"(one BF16 ulp, {'last' if pick_last else 'first'} of {len(hit)})")
     torch.manual_seed(seed)
     x = torch.randint(0, int(getattr(cfg, "vocab_real", cfg.vocab)), (2, 64), device=dev)
     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
@@ -182,7 +209,8 @@ def check(ckpt, perturb=None):
     print(f"{k}: baseline {want['sha256'][:16]}  now {got[:16]}  ->  "
           f"{'IDENTICAL' if same else 'DIFFERS'}")
     if same:
-        print(f"  logits {list(y.shape)}: the inner=None path is bitwise the code it replaced")
+        print(f"  logits {list(y.shape)}: the inner=None path matches the code it replaced "
+              f"at bf16 resolution, the precision the training path runs at")
         return 0
     print(f"  sum over [:{meta['vocab_real']}] was {want['sum_real']!r}, "
           f"now {_sum_real(y, meta)!r}")
