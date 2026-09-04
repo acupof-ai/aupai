@@ -337,6 +337,13 @@ class Cfg:
     mem_wd = 0.0  # weight decay on a sparsely-updated table decays the rows nobody read, which
     # is a slow uniform pull toward zero applied unevenly -- the rows read least are decayed
     # most, relative to their own update count. Adagrad also takes wd densely.
+    mem_arm = ""  # the ARM ID written into runs/memory_diag.jsonl: "m1", "m2", "m3". Empty is
+    # refused at startup whenever mem_values is set (see the check after the flags are applied),
+    # because readout 3 is M2 against M1 against the control and nothing else on a diag row says
+    # which arm wrote it -- a default would fold three curves into one line, unrecoverably, since
+    # the ledger is append-only. Deliberately NOT derived from --name: the run name carries a
+    # prefix and a date, so deriving it would put "b0_mem_m1" in a field the reader expects "m1"
+    # in, and the fold would look like it worked.
 
 
 # The class-body defaults, snapshotted BEFORE any flag is applied. This is what the cfg-diff
@@ -2045,6 +2052,9 @@ def main():
     parser.add_argument("--mem_layers", type=str, default=None,
                         help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
                              "(default: Cfg.mem_layers)")
+    parser.add_argument("--mem_arm", type=str, default=None,
+                        help="sparse memory: the ARM ID for runs/memory_diag.jsonl (m1/m2/m3). "
+                             "Required with --mem_values; not derived from --name")
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
@@ -2175,6 +2185,19 @@ def main():
             setattr(Cfg, k, v)
     if args.no_attn_res:
         Cfg.attn_res = False
+    # THE ARM ID IS REQUIRED WHENEVER THERE IS A MEMORY, refused at startup rather than defaulted.
+    # runs/memory_diag.jsonl is append-only and its row identity is (name, step); `name` is the
+    # only field that says which arm wrote the row. A default would let two arms write rows that
+    # fold together, and because the ledger cannot be rewritten, readout 3's M2-vs-M1 slope would
+    # be unrecoverable rather than merely wrong. Checked here, before the model is built, so the
+    # run dies in a second instead of at the first diag write 100 steps in.
+    if Cfg.mem_values and not str(Cfg.mem_arm).strip():
+        raise SystemExit(
+            "--mem_values is set but --mem_arm is empty. Pass the ARM ID (m1, m2 or m3): it is "
+            "the only field in runs/memory_diag.jsonl that records which arm a row came from, "
+            "the ledger is append-only, and readout 3 compares the arms' curves. Not the run "
+            "name -- that carries a prefix and a date."
+        )
     # --d/--heads off the default pair is a shape experiment; head_dim is not free.
     # The FlashKDA CUTLASS kernel is compiled for head_dim 128 and a mismatch is an
     # illegal memory access deep in the kernel, not a shape error at the boundary.
@@ -2840,6 +2863,40 @@ def main():
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
+                    # MEMORY DIAGNOSTICS, charter readout 4, rank 0 only and inside this block
+                    # because `tps` is computed here and nowhere else -- the ledger's tok_s_gpu is
+                    # the same number the step line prints, not a second estimate of it.
+                    #
+                    # `name` IS THE ARM ID (m1/m2/m3), NOT THE RUN NAME. de's rule, and the reason
+                    # is readout 3: the ledger is append-only and nothing else on the row records
+                    # which arm produced it, so a wrong name folds three curves into one line and
+                    # the M2-vs-M1 slope cannot be recovered afterwards. It comes from --mem_arm,
+                    # a required flag whenever mem_values is set, rather than from --name: the run
+                    # name carries a prefix and a date and would silently become the arm id.
+                    # THE FRACTION IS RANK 0's WINDOW, and it is a LOWER BOUND on the global one,
+                    # which is why it is usable for the stop rule as it stands. Each rank's
+                    # `touched` counts only the rows its own tokens read, and an all-reduce here
+                    # would deadlock: this whole block is inside `if is_main`, so a collective
+                    # would be entered by one rank and waited on by none. The stop rule is "below
+                    # 0.20 at step 1000" -- if rank 0 alone reaches 0.20 the global set is at
+                    # least that, so a pass is a real pass. A FAIL is the case that needs care: at
+                    # world 2 rank 0 sees half the tokens, so a rank-0 reading just under the line
+                    # is not proof of collapse and the arm gets an all-ranks reading before it is
+                    # stopped. Recorded here rather than left for the reader to infer.
+                    if raw_model.memory is not None and step % 100 == 0:
+                        import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+
+                        _md = raw_model.memory.diagnostics(reset=True)
+                        memory_diag.log_diag(
+                            name=Cfg.mem_arm,
+                            step=step,
+                            pool_touched_frac=_md["touched_fraction"],
+                            topk_entropy=_md["topk_entropy"],
+                            key_gini=_md["key_gini"],
+                            tok_s_gpu=tps,
+                            n_values=_md["n_values"],
+                            topk=raw_model.memory.top_k,
+                        )
                 if step >= total_steps:
                     break
 
