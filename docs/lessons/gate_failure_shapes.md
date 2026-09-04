@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents removed 2026-09-04 (141 = 59 + 82); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (60 model-project incidents) and docs/lessons/infra_incidents.md (84 pod/infra incidents); 33 closed incidents removed 2026-09-04 (144 = 60 + 84); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (61 incidents, 244h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (63 incidents, 252h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (32 incidents, 64h): every number carries its basis. Owner: blank.
 - **R1** (16 incidents, 48h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-61 incidents (32 infra, 29 model), ~4h each, 244h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+63 incidents (33 infra, 30 model), ~4h each, 252h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -116,14 +116,14 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (24 incidents)
+### R2-g Criterion answers an adjacent question (25 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
 - §110: a pre-registered branch collapsed two worlds into one; the criterion (branch taken) did not isolate the property (which world).
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
