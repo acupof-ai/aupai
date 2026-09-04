@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Twelve entries: two S1, six S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Thirteen entries: two S1, seven S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -189,3 +189,34 @@ Kept rather than quietly corrected, because it is the same shape as the broken-w
 a loose match reading as presence — arrived at independently by two readers on the same file
 within an hour. Neither pass was careless; the substring is simply not the property. The finding
 E1 rests on is unaffected: 0 rows carry a cu label either way.
+
+### E13 (S2): published numbers whose cited source cannot be opened from the repository
+
+6e's ruling 2026-09-04, same class as b0's `trace_p200m_3step.json`. Enumerated over every
+`runs/*` path cited in any `facts/*.json` entry's `source`, `config`, `uncertainty` or
+`boundary`: **112 cited, 7 absent from the repo, all 7 present on the pod** (`stat` at
+2026-09-04 ~12:30Z).
+
+| cited path | pod size | cited by |
+|---|---|---|
+| `runs/n7_domain.jsonl` | 55,804 | the Stage A roadmap row, `roadmap_0903.md:24` |
+| `runs/trace_p200m_3step.json` | 59,446,282 | `eff.clip_and_sync_cost_p200m` (+3 others) |
+| `runs/p500m_20b_0902.log` | 65,990 | `eff.p500m_20b_throughput_and_dips` (+1) |
+| `runs/eval_p500m_step1500_base.log` | 5,247 | `eff.p500m_20b_throughput_and_dips` |
+| `runs/milestone_p324_v2.jsonl` | 1,882 | `eff.light_profile_wall` |
+| `runs/eval_p500m_step1500_l1.log` | 40 | `eff.p500m_20b_throughput_and_dips` |
+| `runs/ppl_step1500_v2.log` | **0** | `eff.p500m_20b_throughput_and_dips` |
+
+Two of these are worse than "not in the repo". `runs/ppl_step1500_v2.log` is **0 bytes on the
+pod**: it is cited as the source of a published throughput fact and contains nothing, so the
+citation cannot be satisfied anywhere, not just here. And `trace_p200m_3step.json` is 59 MB,
+which is why it is not in git — that is a real constraint, not an oversight, and the fix for it
+is a derived summary committed beside the fact rather than the trace itself.
+
+**Broken-world test of this enumeration, and it failed the first time.** My initial regex was
+`runs/[A-Za-z0-9_./-]+\.(?:json|jsonl|log|txt)` — with `json` before `jsonl` in the
+alternation, so every `.jsonl` path matched as `.json` and truncated. It reported **21 absent
+paths**, 15 of which were ledgers sitting in the repo (`runs/score_matrix.jsonl` read as
+`runs/score_matrix.json`, and so on). Reordering to `jsonl|json` gives 6, plus `n7_domain.jsonl`
+found by hand while pair-checking = 7. The wrong answer was 3.5x too alarming, in the opposite
+direction from §2's error — a loose pattern can fail either way, and neither direction is safe.
