@@ -300,48 +300,35 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else (3) | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
 | Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
-| The lane holds one job at a time | manual: same: lane_respected sees now, not the queue discipline |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
 | Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
-| A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
 | Shared files | `shared_file_claim` |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
-| Card claims live where the job runs | manual: the claim files sit in the tree the job runs from and no check reads the pod's runs/claims from here; scripts/test_launch_claims.py asserts the launch path acquires and the monitor releases, card_claim.py --selftest asserts a shell pid is refused |
 | `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
 | File transfer into the container: `podput <local> <remote-abs-path>` (3) | manual: the 100KB cap is enforced by podput itself, which refuses |
 | The wrappers are `scripts/pod` and `scripts/podput`, tr | `test_pod_wrappers` |
 | pod refuses a cd … & shape: the cd does not reach the b | `test_pod_wrappers` |
 | pod --view prints which filesystem the next command see | `test_pod_wrappers` |
 | pod is at ~/bin/pod — not in the default PATH. A session onc | `pod_drift` |
-| `tn exec` and `~/bin/pod` are two different filesystem views with the same hos | manual: a fact about the environment; the mistakes it prevents are interactive |
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
 | Never `git stash` in this repository ->R8 | `no_shared_stash` |
 | The index must equal HEAD before you merge: commit your (7) | manual: which order a session ran merge and add in is not recoverable from the repo. What IS checked is the consequence: a wip commit lands on the branch where dirty_aged and the behind-main hook see it. The rule's own history is the reason it stays prose -- the previous version was a correct measurement of the wrong branch shape, and no artifact records which shape a merge had |
 | A conflicting path needs a commit first, and read which (4) | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
-| `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
 | Only a `refusing:` line means nothing shipped (2) | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
 | `data/pod_head_manifest.txt` is NOT tracked. `scripts/pod_push.sh` generates it (14) | manual: `pod_drift` gates the pod side and `.gitignore` stops the file being committed by accident, so the tracking half IS enforced -- the harness world that used to assert the hook STAGES the manifest now asserts it does not. What stays manual is the push ORDER, that the manifest ships AFTER the files: pod_drift's selftest asserts it in both directions against a pod-shaped fixture, but whether the real push ran in that order is not recoverable from any artifact it leaves behind |
 | Outbound network: `curl -4`, always | `curl_ipv4` |
-| What is reachable, measured 2026-08-30 with `-4` | manual: a record of a measurement, not a rule to enforce |
-| Reachability changes without notice, so a fetcher carries a mirror chain | manual: fetchers do carry chains; asserting 'a chain is present' would match a comment |
 | `cd` inside a backgrounded chain stays in it | `test_pod_wrappers` |
-| The pod is frozen from a training launch until that run | manual: the window is defined by two events in different places -- a launch timestamp on the pod and a push from a laptop -- and nothing records the second. `pod_drift` sees the drift that results, which is the consequence; whether a push landed inside someone's startup window is not recoverable from any artifact |
 | Each session works in its own worktree on its own branch: gi (2) | manual: worktree topology is per-machine, not in the repo |
-| Commit in your worktree as soon as a change works, at most 3 | manual: same deadline as above, enforced by dirty_aged |
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
-| Run ruff format over a whole file only if you created it. On | manual: reformat scope is a review judgement |
-| Commit as soon as a change works, and never later than 30 mi | manual: dirty_aged/untracked_aged enforce the deadline; 'as soon as' is judgement |
-| Stage by path, never git add -A / git add . / git commit -a | manual: git history cannot show which command staged a commit |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
-| `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-52 rules: 18 checked, 34 manual. The count is regenerated from `harness check`'s
+39 rules: 18 checked, 21 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
