@@ -83,11 +83,31 @@ PROJECT = "|".join((
 EXCLUDE = ("runs/audit_0904/",)
 
 
+TEXT_EXT = (".md", ".json", ".jsonl", ".yml", ".yaml")
+
+
+def is_code(path):
+    """Extension, or a shebang. `scripts/pod` and `scripts/podput` are executables
+    with NO suffix -- the two most infra files in the tree -- and an extension test
+    classified them `reference`, i.e. prose that merely names the compute. Caught
+    2026-09-04 when they were vendored. A classifier keyed on filenames misses the
+    files whose whole job is to have no filename ceremony."""
+    if path.endswith((".py", ".sh")):
+        return True
+    if path.endswith(TEXT_EXT):
+        return False
+    try:
+        with open(os.path.join(ROOT, path), "rb") as f:
+            return f.read(2) == b"#!"
+    except OSError:
+        return False
+
+
 def tracked():
     out = subprocess.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True).stdout
-    keep = (".py", ".sh", ".md", ".json", ".jsonl", ".yml", ".yaml")
     return [f for f in out.split("\n")
-            if f.endswith(keep) and not f.startswith(EXCLUDE)]
+            if f and not f.startswith(EXCLUDE)
+            and (f.endswith((".py", ".sh")) or f.endswith(TEXT_EXT) or is_code(f))]
 
 
 def carriers(path, text):
@@ -124,7 +144,7 @@ def classify(path):
         return None
     proj = len(re.findall(PROJECT, text, re.I))
     carrier_names = carriers(path, text)
-    code = path.endswith((".py", ".sh"))
+    code = is_code(path)
     if not code:
         # A doc or ledger NAMES the compute; it never calls it. No import, no
         # function boundary, nothing to cut -- so it cannot be a seam, and calling
@@ -220,4 +240,8 @@ if __name__ == "__main__":
     # ...and the symmetric case, which widening the vocabulary then created: mostly
     # transport plus one incidental token is still transport.
     assert classify("scripts/pod_sh_offset.py")["class"] == "infra-only"
+    # An extensionless executable is still code. `scripts/pod` and `scripts/podput`
+    # are the two most infra files in the tree and read as `reference` -- prose that
+    # merely names the compute -- until is_code() learned to check for a shebang.
+    assert classify("scripts/pod")["class"] == "infra-only"
     sys.exit(main())
