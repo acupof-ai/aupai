@@ -1,29 +1,29 @@
 site	row	project	role	class	subclass	coherent	note
 1	572	agent-infer	assistant	fp	claude-session-url	y	commit msg trailer URL id
 2	715	agent-infer	assistant	fp	claude-session-url	y	commit msg trailer URL id
-3	2838	aupai	tool	fp	filename	y	arxiv shard jsonl name (uuid shape)
+3	2838	aupai	tool	fp	path	y	arxiv shard jsonl name (uuid shape)
 4	1657	agent-infer	tool	fp	swebench-task-id	y	google__textfsm...__70troej4 shape
-5	3714	lessons	assistant	fp	filename	y	widget html path in lark push script
+5	3714	lessons	assistant	fp	path	y	widget html path in lark push script
 6	1278	agent-infer	assistant	fp	claude-session-url	y	commit msg trailer URL id
 7	4430	tileRL	tool	fp	path	y	/host model dir name among model paths
-8	3664	eli	tool	fp	filename	y	task dir name among chat.*.v1-* dirs
+8	3664	eli	tool	fp	path	y	task dir name among chat.*.v1-* dirs
 9	584	agent-infer	assistant	fp	claude-session-url	y	Agent prompt commit trailer
 10	74	agent-infer	tool	fp	pip-package	y	dist-packages entry among package names
 11	1651	agent-infer	assistant	fp	claude-session-url	y	commit msg trailer URL id
 12	2027	arle-app-demo	tool	fp	arlechat-log-id	y	transcript/session id among log lines
 13	3531	eic	tool	fp	base64-script-blob	y	degraded: base64 payload chunked by redaction; action and result intact
-14	3729	lessons	user	fp	filename	y	_x_*.xml doc filename in session summary
+14	3729	lessons	user	fp	path	y	_x_*.xml doc filename in session summary
 15	1566	agent-infer	tool	fp	hf-repo-id	y	chimingw/<repo> among HF search results
 16	1105	agent-infer	tool	secret	registry-token	y	docker registry anon auth token in token field (short-lived)
 17	3772	lessons	assistant	secret	lark-device-code	y	lark-cli auth login --device-code arg
-18	1654	agent-infer	tool	fp	swebench-task-id-y	cc-harness task instance id
+18	1654	agent-infer	tool	fp	swebench-task-id	y	cc-harness task instance id
 19	461	agent-infer	tool	fp	thinking-signature	y	Anthropic thinking signature blob (cryptographic, not a credential)
 20	587	agent-infer	assistant	fp	claude-session-url	y	commit msg trailer URL id
 21	530	agent-infer	tool	fp	swebench-task-id	y	agent-opd-debug session/task id
-22	1994	arle-app-demo	tool	fp	filename	y	arlechat ndjson filename with hex id
+22	1994	arle-app-demo	tool	fp	path	y	arlechat ndjson filename with hex id
 23	1681	agent-infer	tool	fp	swebench-task-id	y	id field of harness result json
 24	4386	sglang-iaas	tool	fp	cxx-symbol	y	mangled _ZN3eic... symbol in binary dump
-25	410	agent-infer	tool	fp	filename	y	file pattern among eic_kv_benchmark_* names
+25	410	agent-infer	tool	fp	path	y	file pattern among eic_kv_benchmark_* names
 26	4697	tilelang	tool	fp	wheel-filename	y	pip Downloading line (MarkupSafe whl)
 27	3209	aupai	assistant	fp	claude-session-url	y	commit msg trailer URL id
 28	4247	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
@@ -33,19 +33,19 @@ site	row	project	role	class	subclass	coherent	note
 32	1518	agent-infer	tool	fp	path	y	/host sync bundle dir name
 33	4249	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
 34	4012	llmserver	assistant	secret	lark-device-code	y	lark-cli auth login --device-code arg
-35	4130	sglang-iaas	tool	fp	filename	y	log filenames in ls -l output
+35	4130	sglang-iaas	tool	fp	path	y	log filenames in ls -l output
 36	582	agent-infer	assistant	fp	claude-session-url	y	Agent prompt commit trailer
 37	2150	arle-app-demo	tool	fp	macos-tsm-uuid	y	macOS TSM context id in system log
 38	3359	cklxx	tool	fp	npm-integrity-hash	y	package-lock.json sha512 integrity value
-39	78	agent-infer	tool	fp	rust-dep-binary	y	target/release/deps hashed test binary
-40	2073	arle-app-demo	tool	fp	filename	y	workflow script path under workflows/scripts/
-41	325	agent-infer	tool	fp	hf-repo-id-y	nerkyor/<repo> among HF model id table
+39	78	agent-infer	tool	fp	path	y	target/release/deps hashed test binary
+40	2073	arle-app-demo	tool	fp	path	y	workflow script path under workflows/scripts/
+41	325	agent-infer	tool	fp	hf-repo-id	y	nerkyor/<repo> among HF model id table
 42	3329	cha	tool	secret	playwright-token	y	PLAYWRIGHT_MCP_EXTENSION_TOKEN= assignment
-43	3716	lessons	tool	fp	filename	y	widget html filename in lark push log
+43	3716	lessons	tool	fp	path	y	widget html filename in lark push log
 44	4248	sglang-iaas	tool	secret	lark-device-code	y	DEVICE_CODE= in INTERNAL_DOC block
 45	4010	llmserver	tool	secret	lark-device-code	y	device_code field of lark auth json
 46	4380	sglang-iaas	assistant	fp	claude-session-url	y	commit msg trailer URL id
 47	3330	cha	assistant	secret	api-key	y	upstream_api_key = value in config.toml edit
 48	3208	aupai	assistant	fp	claude-session-url	y	commit msg trailer URL id
-49	1404	agent-infer	tool	fp	hf-repo-id	Jackrong/<repo> among HF search results
+49	1404	agent-infer	tool	fp	hf-repo-id	y	Jackrong/<repo> among HF search results
 50	4011	llmserver	tool	secret	lark-device-code	y	device_code field of lark auth json
