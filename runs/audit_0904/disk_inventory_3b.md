@@ -68,3 +68,11 @@ is a mix-build question (flag for tilerl).
 - Supply/facts: `facts/corpus_supply.json#cs.*`, `facts/contamination.json#cont.*`.
 - Others to fill: corpus per-domain exact bytes, raw full per-source bytes, the flagged
   pre-stage2 vs stage2 cache-resolution, and data/raw + data/hf + data/mix exact contents.
+## Refinement (2026-09-04, exact bytes)
+
+- corpus/zh_web = **89.85G** (909 shards — largest domain by bytes AND tokens).
+- The 24 web_cci3_p* dead dirs = **81.9G** (the C3 broadcast, cleanup.jsonl).
+- raw/cci3_hq = **108.03G** — the raw source for zh_web/web_cci3; provenance retained.
+- wiki_chat 1.07G vs wiki 0.91G: the 30b mix names wiki_chat; plain wiki is a separate (superseded?) dir.
+- Other large raw: fineweb2_cmn 33.9G, rp1t_github 31.5G, rp1t_c4 28.1G, ms_starcoder_py 23.2G, hf_finemath_4plus 18.4G, rp1t_arxiv 14.3G, ms_om2 12.6G.
+- The packet-depth-1 `du -sb corpus/*/` here undercounts (156G over the listed dirs) vs the full-walk 362G because the largest code dirs (code_rp1t 23G, code_py_starcoder 28G, math_owm_stage2 21G, en_c4 17G, en_c4_stage2 8.1G) sit at depth-1 of the sub-corpora; the authoritative corpus dir set/bytes is the full walk in the top-level table + the corpus_data audit.
