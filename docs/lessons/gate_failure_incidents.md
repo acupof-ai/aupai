@@ -168,6 +168,11 @@ open: a coverage assertion inside the arm rather than a flag comparison outside 
 A checkpoint with no recipe provenance was scored; the score was attributed to a recipe the checkpoint did not run. Evidence: runs/ckpt_*.pt.
 open: a check that checkpoints carry recipe provenance before scoring; none exists.
 
+### §182 (2026-09-05, R3)
+A validator and the file it validates against were separated at three different boundaries in one day, and each separation produced a writer whose every call opens a file that is not there. `scripts/memory_diag.py` reads `data/ledger_schema.json` at every `log_diag`. (a) COMMIT: the hook refused the new `data/` path because its allow-list entry sat on the branch, unreachable until merge, so the writer was landed first and the schema second -- an intermediate commit that does not stand on its own, and `merge_main.sh` caught it when the hook's own selftest of the staged copy raised FileNotFoundError. (b) MERGE: the same pair, same cause, from the other direction. (c) POD SCOPE: `pod_drift`'s SCOPE listed `scripts/memory_diag.py` and not `data/ledger_schema.json`, so the writer would have shipped to the training box alone; b0's hook calls it every 100 steps and the FIRST row would have raised there, about two minutes into a run holding cards 1+2, while `memory_diag_fresh` read WARN "no diagnostics row at all" -- which is what a launch before step 100 also reads. Evidence: `scripts/pod_drift.py` SCOPE at 14b9a6a1, `runs/friction.jsonl` rows for 95579a06.
+Found by asking which of my files reach the pod, not by a gate: `pod_drift --list-scoped` named the writer and not the schema. Two of the three were caught by existing guards; the pod one had nothing looking at it.
+open: a check that a file read at runtime by a scoped script is itself scoped. `pod_drift` can see SCOPE and can parse the open() calls in the scripts it ships, so the join is available; nothing computes it.
+
 ## R4. Failures must be loud
 
 ### §51 (2026-09-01, R4)
