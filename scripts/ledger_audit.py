@@ -122,6 +122,20 @@ KEYS = {
     "runs/ledger_resolutions.jsonl": lambda r: (r.get("ledger"),
                                                 tuple(r["key"]) if isinstance(r.get("key"), list)
                                                 else r.get("key")),
+    # (when|ts, who, blocked_what|what|supersedes_cause). Measured on main 2026-09-04, 46 rows:
+    # 44 distinct keys, 0 None-rows, and the single remaining collision is THREE BYTE-IDENTICAL
+    # LINES a union merge landed three times -- a real duplicate, so a key that separated them
+    # would be hiding it.
+    #
+    # TWO SCHEMAS IN ONE FILE, which is why each half is an `or`: 43 rows carry `when` and 3 carry
+    # `ts`; 38 carry `blocked_what` and 3 `what`, while the 5 `resolution` rows carry neither and
+    # are identified by `supersedes_cause`. Rejected, with their numbers: (when|ts,) gives 33 of
+    # 46, (when|ts, who) 36, (when|ts, who, kind) 40, and (who,) collapses the file to 9. Dropping
+    # supersedes_cause costs the three resolution rows written in the same minute -- they differ
+    # only in which cause they supersede, so they fold to one key and two real rulings vanish.
+    "runs/friction.jsonl":      lambda r: (r.get("when") or r.get("ts"), r.get("who"),
+                                           r.get("blocked_what") or r.get("what")
+                                           or r.get("supersedes_cause")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -136,6 +150,7 @@ WRITE_STYLE = {
     "runs/board.jsonl":        "append",   # scripts/board.py:66, open(..., "a")
     "runs/milestones.jsonl":   "append",   # scripts/harness.py:11308, open(..., "a")
     "runs/review.jsonl":       "append",   # no in-repo writer; .gitattributes merge=union
+    "runs/friction.jsonl":     "append",   # harness.py:7951 _append_task(FRICTION_PATH), O_APPEND
     "runs/retro.jsonl":        "append",   # no in-repo writer; .gitattributes merge=union
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
@@ -165,6 +180,7 @@ PREDICATE = {
     "runs/board.jsonl":         subsume,      # scripts/board.py:66, open(..., "a")
     "runs/milestones.jsonl":    subsume,      # scripts/harness.py:11308, open(..., "a")
     "runs/review.jsonl":        subsume,      # no in-repo writer; .gitattributes merge=union
+    "runs/friction.jsonl":      subsume,      # harness.py:7951, O_APPEND -- rows accumulate
     "runs/retro.jsonl":         subsume,      # no in-repo writer; .gitattributes merge=union
     "runs/tasks.jsonl":         key_present,  # harness.py:5805 _write_tasks, open(..., "w")
     # score_matrix.py:573 write_records is read-modify-write and replaces same-(ckpt, profile) BY

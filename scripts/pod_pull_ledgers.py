@@ -61,7 +61,27 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 POD_ROOT = "/work/aupai"
-LEDGERS = ("runs/score_matrix.jsonl", "runs/experiments.jsonl", "runs/review.jsonl", "runs/milestones.jsonl")
+
+
+def _ledgers():
+    """Every ledger with a measured row identity -- derived from ledger_audit.KEYS, not listed here.
+
+    DL-11 (S1, audit 2026-09-04) IS THIS FUNCTION'S REASON. The hand-written tuple that stood here
+    named four files, and the audit measured what that cost: `tasks.jsonl` 21 local-only ids,
+    `board.jsonl` 45 local-only keys, `friction.jsonl` 37 local-only, `review.jsonl` 167 local rows
+    against a file that does not exist on the pod, `artifact_refs.jsonl` 21 pod-only. Four ledgers
+    had no transport in EITHER direction, and the divergence was structural rather than accidental:
+    pod_push.sh excludes runs/, so a list that omits a ledger omits it permanently.
+
+    The docstring above already argued that identity must come from KEYS rather than a second copy,
+    for exactly this failure mode -- and then the file kept a second copy of WHICH LEDGERS EXIST,
+    one table lower. A ledger gains a key in ledger_audit and this transport still cannot see it.
+
+    Sorted for a stable report order. `artifact_refs.jsonl` is still absent because it has no
+    KEYS entry (DL-12: two schemas, no row identity) -- and it is absent by that fact rather than by
+    a decision here, so the day it gets a key it gets transport too.
+    """
+    return tuple(sorted(_keys()))
 
 
 def _keys():
@@ -219,9 +239,21 @@ def append_rows(rel, rows, root=ROOT):
     writer REPLACES same-(ckpt, profile) rows and raises when handed a key twice. It is
     given the union, because it rewrites the whole file from what it is passed.
 
-    The other three are append-only ledgers whose writers take command-line arguments
-    (exp.py start/done, harness task) rather than a row, so a row already formed cannot be
-    passed through them; appending the line is what those writers do."""
+    THE OTHER EIGHT ARE APPENDED AS LINES, and that is safe for a reason worth stating rather
+    than assuming, because two of them are rewrite-style. Their writers take command-line
+    arguments (exp.py start/done, harness task/friction) rather than a row, so a row already
+    formed cannot be passed through them -- and appending is what those writers do at the
+    syscall level anyway (harness.py:8114, O_APPEND).
+
+    The rewrite-style pair needs the argument spelled out. tasks.jsonl is written BOTH ways:
+    `harness task` appends an event (harness.py:8106, "Append, never rewrite"), while the
+    pipeline paths fold with _read_tasks and rewrite with _write_tasks. Appending a row whose
+    id already exists would therefore fold to the APPENDED row winning -- last row per id --
+    which for a task closed here and still open on the pod would silently reopen it. That
+    cannot happen: only rows whose KEY is absent on the receiving side are ever passed here.
+    diff_rows classifies a key present on both sides as a collision, and no collision is ever
+    applied. The same argument covers ledger_resolutions.jsonl.
+    """
     path = os.path.join(root, rel)
     if rel == "runs/score_matrix.jsonl":
         sys.path.insert(0, root)
@@ -381,7 +413,7 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
     keys = _keys()
     idx = index()
     out = []
-    for rel in LEDGERS:
+    for rel in _ledgers():
         text, err = reader(rel, pod_root)
         if err:
             out.append((rel, 0, 0, [], [], err))
@@ -498,7 +530,7 @@ def _selftest():
     numbers change every day and an assertion against them would be a permanent red as
     soon as someone pulled the rows (de-35, this morning)."""
     keys = _keys()
-    for rel in LEDGERS:
+    for rel in _ledgers():
         assert rel in keys, f"{rel} has no key in ledger_audit.KEYS"
 
     kf = keys["runs/score_matrix.jsonl"]
@@ -574,7 +606,7 @@ def _selftest():
         return None, "empty or absent on the pod"
 
     rows = survey(reader=_no_files)
-    assert len(rows) == len(LEDGERS)
+    assert len(rows) == len(_ledgers())
     assert all(r[5] for r in rows), f"a missing pod file reported no error: {rows}"
     assert all(not r[3] for r in rows), "a missing file must offer no rows to append"
 
@@ -646,7 +678,7 @@ def _selftest():
 
     _tmp = __import__("tempfile").mkdtemp(prefix="ledger_union_")
     os.makedirs(os.path.join(_tmp, "runs"))
-    for _rel in LEDGERS:
+    for _rel in _ledgers():
         with open(os.path.join(_tmp, _rel), "w", encoding="utf-8") as _f:
             if _rel == "runs/experiments.jsonl":
                 for _r in _ev_loc:
@@ -688,7 +720,7 @@ def _selftest():
 
     d = tempfile.mkdtemp()
     os.makedirs(os.path.join(d, "runs"))
-    for rel in LEDGERS:
+    for rel in _ledgers():
         with open(os.path.join(d, rel), "w", encoding="utf-8") as fh:
             fh.write(json.dumps(loc_only) + "\n")
     try:
@@ -719,7 +751,7 @@ def _selftest():
 
     d2 = tempfile.mkdtemp()
     os.makedirs(os.path.join(d2, "runs"))
-    for rel in LEDGERS:
+    for rel in _ledgers():
         with open(os.path.join(d2, rel), "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"name": "n", "started": "t", "status": "ok", "result": "3.6%"}) + "\n")
     try:
@@ -776,7 +808,7 @@ def _selftest():
     assert classify({**base, "status": "ok"}, {**base, "status": "fail"}) == "contradicts"
 
     print(
-        "pod_pull_ledgers selftest OK: 4 ledgers keyed from ledger_audit.KEYS; "
+        f"pod_pull_ledgers selftest OK: {len(_ledgers())} ledgers keyed from ledger_audit.KEYS; "
         "missing/duplicate-key/identical on known answers; all three difference classes "
         "(stale, result_only_on_pod, contradicts) plus provenance_only on its three real shapes -- corrected sha, sha-to-placeholder with the reason in notes, two monitors closing at different times -- with the negative that a differing result or status stays a contradiction; BOTH sides fold to their last row, "
         "asserted on the case that produced 161 differences where the answer is 14 -- an "
