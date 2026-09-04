@@ -119,7 +119,8 @@ def rows_for(rows, test_rel, shape):
     return rows.get(test_rel)
 
 
-def record_launch_test(test_file, result, shape, real_kernel, mix=None, path=PATH, root=ROOT):
+def record_launch_test(test_file, result, shape, real_kernel, mix=None, stages=None,
+                       path=PATH, root=ROOT):
     """Write this test's verdict. `test_file` is __file__; the key is its repo path.
 
     `mix` is the data the test ran on, and it is the third field a row needs beside shape
@@ -128,7 +129,15 @@ def record_launch_test(test_file, result, shape, real_kernel, mix=None, path=PAT
     data/mix_sample.json, whose corpus dir holds zero holdout slices. The shape was
     pinned and the DATA was a different question (de-10). Optional only so an older row
     keeps parsing -- a row that omits it is reported as mix unknown, never as the launch
-    mix."""
+    mix.
+
+    `stages` is HOW MUCH of the test the pass covers, and it exists because a record
+    written before the last stage is a claim about a run that has not finished:
+    test_e2e.py wrote "pass" before its `finally`, so a stage-11 AssertionError left this
+    file certifying a run that exited nonzero (b0 at the Stage E shape, 6e 2026-09-04).
+    A partial pass is real evidence and must stay readable as partial -- 6e had to rule
+    "arm 2 may launch on stages 1-10" by hand because the row could not say it. Optional
+    for the same reason as mix: an older row keeps parsing, and reads as unstated."""
     missing = [k for k in SHAPE_KEYS if k not in shape]
     if missing:
         raise ValueError(f"shape is missing {missing}: a row that does not state its "
@@ -150,6 +159,7 @@ def record_launch_test(test_file, result, shape, real_kernel, mix=None, path=PAT
         "shape": {k: shape[k] for k in SHAPE_KEYS},
         "real_kernel": bool(real_kernel),
         "mix": mix,
+        "stages": stages,
         "recorded": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
         "host": os.uname().nodename,
         # The fingerprint of what produced it. Without this the row stays valid after

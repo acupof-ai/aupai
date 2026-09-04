@@ -2280,6 +2280,92 @@ def _broken_mix():
     return d
 
 
+def check_test_record_after_last_stage(root):
+    """A launch-test record is written AFTER the last stage, or it certifies an unfinished run.
+
+    test_e2e.py called record_launch_test at the end of its try block while stage 11 ran in
+    the `finally`, so a stage-11 AssertionError left runs/launch_tests.json saying
+    "scripts/test_e2e.py: pass" for a run that exited nonzero (b0 measured it at the Stage E
+    shape, 6e ruled 2026-09-04). The row is what gate_arch_tests believes, so a premature
+    record is a launch cleared by evidence of a run that failed.
+
+    READ FROM THE AST, not by grep: "record_launch_test appears after stage 11 in the file"
+    is a text fact and "it executes after stage 11" is the one that matters. A call inside the
+    try body and a call at the end of the finally are adjacent in the source and opposite in
+    effect.
+
+    Scope is every file that calls record_launch_test AND has a try/finally in the function
+    that calls it -- if there is no finally, there is no later stage for the record to precede,
+    and flagging it would be noise."""
+    bad, seen = [], 0
+    for p, body in walk_tracked(root, (".py",)):
+        if "record_launch_test(" not in body:
+            continue
+        rel = os.path.relpath(p, root)
+        if rel.endswith("launch_tests.py"):
+            continue  # its own definition and selftest
+        try:
+            tree = ast.parse(body)
+        except SyntaxError as e:
+            bad.append(f"{rel}: unparseable ({e.lineno})")
+            continue
+        for fn in [n for n in ast.walk(tree) if isinstance(n, (ast.FunctionDef,))]:
+            tries = [n for n in ast.walk(fn) if isinstance(n, ast.Try) and n.finalbody]
+            if not tries:
+                continue
+            for t in tries:
+                def _calls(nodes, name):
+                    return [x.lineno for n in nodes for x in ast.walk(n)
+                            if isinstance(x, ast.Call) and getattr(x.func, "id", None) == name]
+                in_body = _calls(t.body, "record_launch_test")
+                in_fin = _calls(t.finalbody, "record_launch_test")
+                if not (in_body or in_fin):
+                    continue
+                seen += 1
+                if in_body:
+                    bad.append(f"{rel}:{in_body[0]} records inside the try body while the "
+                               f"finally still runs -- a later failure leaves the row saying "
+                               f"pass")
+                    continue
+                stages = _calls(t.finalbody, "stage")
+                if stages and in_fin[0] < max(stages):
+                    bad.append(f"{rel}:{in_fin[0]} records before the finally's last stage() "
+                               f"at :{max(stages)}")
+    if bad:
+        return FAIL, "; ".join(bad)
+    if not seen:
+        return SKIP, "no file records a launch test inside a try/finally"
+    return PASS, f"{seen} launch-test record(s), each written after the last stage"
+
+
+def _broken_test_record_after_last_stage():
+    """The REAL test_e2e.py with its record moved back into the try body -- the exact shape
+    b0 hit. Mutated from the live file rather than hand-written: a fixture would encode my
+    own idea of where the call sits, and the defect was about where it sits."""
+    import shutil as _sh
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "scripts", "test_e2e.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    if "record_launch_test(__file__" not in text or "    finally:" not in text:
+        return None
+    # Take the real call and re-plant it just before the `return 0` that precedes the finally.
+    call = ('        record_launch_test(__file__, "pass", _record["shape"], real_kernel=True,\n'
+            '                           mix=_record["mix"], stages=_record["stages"])\n')
+    text = text.replace("        return 0\n    finally:", call + "        return 0\n    finally:", 1)
+    real_scripts = os.path.join(ROOT, "scripts")
+    if os.path.islink(os.path.join(d, "scripts")):
+        os.unlink(os.path.join(d, "scripts"))
+        os.makedirs(os.path.join(d, "scripts"))
+        for f in os.listdir(real_scripts):
+            if f != "test_e2e.py":
+                os.symlink(os.path.join(real_scripts, f), os.path.join(d, "scripts", f))
+    open(os.path.join(d, "scripts", "test_e2e.py"), "w", encoding="utf-8").write(text)
+    _sh.copystat(src, os.path.join(d, "scripts", "test_e2e.py"))
+    return d
+
+
 def check_launch_line_vs_oom_facts(root):
     """A launch line whose shape exactly matches a recorded OOM config is a refusal.
     p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had
