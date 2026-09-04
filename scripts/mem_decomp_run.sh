@@ -101,23 +101,20 @@ run_one() {
     --json "$OUT" "$@" >> "$LOG" 2>&1 &
   job=$!
 
-  # WAIT FOR THE EXEC. `cmd &` forks first and execs second, so for a brief window the child's
-  # cmdline is still this bash and an immediate claim is refused as a shell for a job that is
-  # torchrun a millisecond later. Poll argv[0] and not a substring: pre-exec this shell's
-  # cmdline already CONTAINS "torchrun", so a `case *torchrun*` would match the shell we are
-  # waiting to stop being (run_ab_speedrun.sh:116, card_claim.py:119).
-  for _ in $(seq 1 100); do
-    a0=$(ps -o args= -p "$job" 2>/dev/null | awk '{print $1}')
-    case "$(basename "${a0:-sh}")" in
-      sh|bash|dash|zsh|ksh|"") ;;
-      *) break ;;
-    esac
-    kill -0 "$job" 2>/dev/null || break
-    sleep 0.1
-  done
+  # WAIT FOR THE DEVICE, not for the exec. Polling until argv[0] stops being a shell returns
+  # at t=0.11s, and the first GPU device fd appears at t=1.33s -- a 1.22s window in which the
+  # pid passes every test and is not on a card. card_claim now refuses exactly that (main,
+  # 2026-09-05), which is how this loop was found: the claim was rejected and the cards read
+  # ORPHAN for a correctly running job. Retrying acquire is the whole wait -- the refusal IS
+  # the "not on a card yet" signal, so a separate readiness poll would be a second opinion
+  # about the same fact.
   CLAIM="tilerl_mem_decomp_$tag"
-  python3 scripts/card_claim.py acquire --name "$CLAIM" --cards "$CARDS" --pid "$job" \
-    --note "M1 decomposition cell $tag" >> "$LOG" 2>&1 || true
+  for _ in $(seq 1 120); do
+    python3 scripts/card_claim.py acquire --name "$CLAIM" --cards "$CARDS" --pid "$job" \
+      --note "M1 decomposition cell $tag" >> "$LOG" 2>&1 && break
+    kill -0 "$job" 2>/dev/null || break
+    sleep 1
+  done
 
   # rc is captured on the line that FOLLOWS the wait with nothing between them. `echo "$tag
   # rc=$?"` reads the preceding echo's status, not the job's -- the shape that reported rc=0
