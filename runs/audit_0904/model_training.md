@@ -231,6 +231,25 @@ that to anyone who was not there. Pass 1 found this for source EXISTENCE at 15 f
 it for VALUE at 30 of 40, so the sampled rate is 75% and the pass-1 count was a floor, not a
 measure.
 
+
+- **`conv_doc_isolated`'s checkpoint round-trip, and every path that could bypass its guard.**
+  `scripts/loader.py:67` pins `cfg.conv_doc_isolated = False` when the key is absent, rather than
+  letting the generic live-default backfill at `:57-59` supply it — correct, and its comment states
+  why: the flag is NOT numerically neutral, so backfilling it would score a checkpoint in a topology
+  it never trained in. The population question is whether every model build goes through that
+  loader. Enumerated over `git ls-files '*.py'`: five files construct `HybridLM` from a
+  checkpoint's own cfg, three via the loader (`scripts/eval_heldout.py`, `scripts/test_e2e.py`,
+  the loader itself) and **two that bypass it** — `scripts/ve_row_norms.py:302` and
+  `probes/fone_digit_acc.py:39`. Both are harmless, for DIFFERENT reasons, and the reasons are the
+  point: ve_row_norms builds the model only to read `value_embed.weight` at init and never runs a
+  forward, so no mixer executes; fone_digit_acc does forward (`:66`) but passes `cu=None`, and the
+  branch condition is `self.conv_doc_isolated and cu is not None`, so the masked path is
+  unreachable. **No finding, but the second reason is the missing-`cu` shape again** — the same
+  condition that made `eval/domain_loss.py` score packed rows as one undivided sequence for weeks.
+  It is benign here because this probe measures per-digit accuracy on FoNE positions rather than a
+  likelihood, so document bleed does not enter the statistic. If it is ever repurposed to report a
+  loss, it inherits the −0.082 nat/token artifact.
+
 ## 5. Blind spots of this audit
 
 1. **`sft_math.py`: load path, vocab_id refusal, training loop and rollback now read
