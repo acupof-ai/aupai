@@ -321,6 +321,95 @@ print("memory layers: fwd/bwd on BOTH _body paths (attn_res on and off), COO val
       "keys learn, one shared pool registered once, round-trip exact, legacy ckpt loads, "
       "bad mem_layers raises OK")
 
+# ------------------------------------------------- memory optimizer group and FP8 exclusion
+# Every assertion here is about a MIS-ROUTING, which is the failure mode that does not crash: the
+# run trains, the loss moves, and nothing says the table was optimised as if it were a matrix.
+Cfg.mem_values, Cfg.mem_top_k, Cfg.mem_layers, Cfg.mem_sparse = _MV, _MK, "1,3", True
+Cfg.attn_res, Cfg.grad_ckpt = True, False
+_om = HybridLM(Cfg).to(DEV)
+_opts = {o.aupai_group: o for o in build_optimizers(_om, Cfg)}
+assert "mem" in _opts, "no `mem` optimizer group; the memory is being stepped by another group"
+assert isinstance(_opts["mem"], torch.optim.Adagrad), (
+    f"the memory group is {type(_opts['mem']).__name__}. AdamW RAISES on a sparse gradient, and "
+    f"SparseAdam's two fp32 moments are 32 GiB at M3 against Adagrad's 16 -- the difference "
+    f"between 22 GiB of slack on a 95.58 GiB card and 6 (4c 2026-09-05)")
+_memp = [p for g in _opts["mem"].param_groups for p in g["params"]]
+assert any(p is _om.memory.values.weight for p in _memp), "value table is not in the mem group"
+assert any(p is _om.memory.keys for p in _memp), "the keys are not in the mem group"
+# AND NOWHERE ELSE. The value table is 2D, so `p.ndim == 2` would put it in MUON, whose
+# Newton-Schulz orthogonalisation is meaningless for a table read by index; the keys are 3D and
+# would land in `arq` at attn_res_lr beside the AttnRes pseudo-queries. Asserting only "in mem"
+# would pass while it sat in both, and a parameter in two groups is stepped twice per step.
+for _gn, _go in _opts.items():
+    if _gn == "mem":
+        continue
+    _leak = [n for n, p in _om.named_parameters()
+             if train._is_mem_fqn(n) and any(p is q for g in _go.param_groups for q in g["params"])]
+    assert not _leak, f"memory parameter(s) also in the `{_gn}` group: {_leak}"
+assert _opts["mem"].param_groups[0]["lr"] == Cfg.mem_lr, "mem group is not at Cfg.mem_lr"
+
+# THE GROUP MUST ACTUALLY STEP A SPARSE GRADIENT, and the assertion is "every row with a nonzero
+# gradient moved", NOT "the moved set equals the touched set". Measured 2026-09-05: 966 rows were
+# read, 948 moved, and the 18 that did not had a gradient of exactly 0.0 -- their softmax weight
+# underflowed, so there was nothing to apply. Set equality would have failed on a correct step and
+# sent the next reader after Adagrad; row counts would have hidden the opposite defect. The
+# predicate that separates them is the gradient, so that is what this reads.
+# Only the mem optimizer is stepped: Muon's step is torch.compiled and Inductor's C++ backend
+# fails on a laptop toolchain, which has nothing to do with this group.
+Cfg.attn_res = True
+torch.manual_seed(11)
+_sm = HybridLM(Cfg).to(DEV)
+_smopt = {o.aupai_group: o for o in build_optimizers(_sm, Cfg)}["mem"]
+_w0 = _sm.memory.values.weight.detach().clone()
+with _amp():
+    _sh, _ = _sm(x, y)
+_sm.lm_logits(_sh).float().sum().backward()
+_sg = _sm.memory.values.weight.grad.coalesce()
+_rowmag = torch.zeros(_MV, device=_sg.values().device).index_add_(
+    0, _sg.indices()[0], _sg.values().abs().sum(-1).float())
+_smopt.step()
+_moved = (_sm.memory.values.weight.detach() - _w0).abs().sum(-1) > 0
+assert int((_rowmag > 0).sum()) > 0, "no row had a nonzero gradient -- this case would be vacuous"
+_stuck = ((_rowmag > 0) & ~_moved).nonzero().flatten()
+assert _stuck.numel() == 0, (
+    f"{_stuck.numel()} row(s) had a nonzero gradient and did not move: the sparse step is not "
+    f"reaching the table")
+_wrong = ((_rowmag == 0) & _moved).nonzero().flatten()
+assert _wrong.numel() == 0, (
+    f"{_wrong.numel()} row(s) moved with NO gradient -- the update is being applied densely, "
+    f"which at M3 is a 4.3-billion-row write per step")
+
+# FP8: the memory's linears are `query`, `gate`, `out` -- no leaf name says "memory" and all are
+# 16-aligned at d>=128, so the OLD leaf-name filter converted every one of them. This asserts the
+# new full-fqn filter excludes them AND changes no other verdict in the model, because a filter
+# that excluded more than the memory would silently drop unrelated layers out of FP8.
+_mem_lin = [f for f, mod in _om.named_modules()
+            if isinstance(mod, nn.Linear) and train._is_mem_fqn(f)]
+assert _mem_lin, "no nn.Linear inside the memory -- this case would be vacuous"
+assert all(train._fp8_ok(_om.get_submodule(f), f.rsplit(".", 1)[-1]) for f in _mem_lin), (
+    "the leaf-name filter already rejects the memory's linears here, so this case cannot see the "
+    "defect it exists for -- re-derive it at the real d before trusting it")
+assert not any(train._fp8_filter(_om.get_submodule(f), f) for f in _mem_lin), (
+    f"_fp8_filter still converts {_mem_lin}: casting the query projection to e4m3 changes WHICH "
+    f"values a token retrieves -- a discrete change in the top_k set, not a small numerical one")
+_other_lin = [f for f, mod in _om.named_modules()
+              if isinstance(mod, nn.Linear) and not train._is_mem_fqn(f)]
+_changed = [f for f in _other_lin
+            if train._fp8_filter(_om.get_submodule(f), f)
+            != train._fp8_ok(_om.get_submodule(f), f.rsplit(".", 1)[-1])]
+assert not _changed, f"the new filter changed the verdict for non-memory linears: {_changed}"
+# The legacy path (FP8_RECIPE=legacy) is a SECOND converter, and it saw only leaf names too. Two
+# paths disagreeing about which parameters are FP8 is worse than either choice, because the recipe
+# is an env var: the difference appears in neither the launch line nor the checkpoint's cfg.
+_leg = train._convert_to_fp8_legacy(copy.deepcopy(_om))
+_leg_conv = [f for f, mod in _leg.named_modules() if type(mod).__name__ == "FP8Linear"]
+assert _leg_conv, "the legacy converter converted nothing -- this case would be vacuous"
+assert not [f for f in _leg_conv if train._is_mem_fqn(f)], (
+    f"the legacy FP8 path converted memory linears: {[f for f in _leg_conv if train._is_mem_fqn(f)]}")
+Cfg.mem_values, Cfg.mem_layers = 0, "3,6,9"
+print(f"memory optimizer: own Adagrad group at mem_lr, keys+values in it and in no other group; "
+      f"FP8 excludes {len(_mem_lin)} memory linears on both paths and changes no other verdict OK")
+
 # --warmdown 0 must land as 0.0, not be skipped as falsy. The generic args->Cfg loop uses
 # `if hasattr(Cfg,k) and v`, which drops 0.0; the WSD stage-1 join sets --warmdown 0 to keep
 # lr at stable, so a skipped 0.0 would silently anneal stage 1. This guards the explicit
