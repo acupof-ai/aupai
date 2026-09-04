@@ -35,6 +35,10 @@ AREAS = {
 }
 AREA_ORDER = list(AREAS)
 
+# A report's filename may differ from the charter's area stem. b0's model_code
+# report landed as model_training.md.
+STEM_ALIAS = {"model_training": "model_code"}
+
 SEV_ORDER = {"S1": 0, "S2": 1, "S3": 2}
 ID_RE = re.compile(r"^[A-Z]{1,3}-?\d+$")
 
@@ -53,12 +57,36 @@ MEANING = {
     "E3": "[E3] 「同算力下大模型更好」这个结论（-0.0108 nat）全部测在有缺陷的路径上，缺陷本身是差值的 7.6 倍；结论方向对不对，要等两条腿都在 doc_cu 路径上重测，这是审计后第一件排队的活。",
     "UF-1": "[UF-1] 进展页 2026-09-01 那条「94.4% vs 0.3%」的对比在事实库查无出处，项目规范 09-03 已点名移除，页面一直没改。",
     "UF-2": "[UF-2] 进展页 math_owm 扫描的两个命中密度（15614/GB、18106/GB）来自已作废的旧扫描输出，3b 已裁定以日志为准，页面没改。",
-    "UF-3": "[UF-3] 进展页的 Stage A 数字（0.457→0.484、z 13.4）与台账最终行（0.4635/0.4658、z 3.6）对不上，且 e1 自己撤回了原解读——测的是权重与拓扑错配，不是循环。",
+    "MT-1": "[MT-1] 事实库里那条「服务并发 KV 池只有申报预算一半、修复未做」的记录描述的是已经不存在的代码：b0 在另一个仓库打开现状，现在的配置是预算的 8 倍，修复三天前就做了。",
 }
 
 
 # restartable: regenerates findings.jsonl and the page from the seven reports; an
 # interrupt costs one re-run, both outputs are overwrite-only and order-independent.
+def _split_row(line):
+    """Split a markdown table row on |, ignoring pipes inside inline code.
+
+    Evidence cells carry shell snippets (`grep -c 'a\\|b'`, pipelines); a plain
+    str.split("|") reads their pipes as column boundaries (E8 went unparsed that way).
+    """
+    cells, buf, in_code = [], [], False
+    for ch in line.strip():
+        if ch == "`":
+            in_code = not in_code
+            buf.append(ch)
+        elif ch == "|" and not in_code:
+            cells.append("".join(buf).strip())
+            buf = []
+        else:
+            buf.append(ch)
+    cells.append("".join(buf).strip())
+    if cells and cells[0] == "":
+        cells = cells[1:]
+    if cells and cells[-1] == "":
+        cells = cells[:-1]
+    return cells
+
+
 def read_report(path):
     """Return (meta, findings, unparsed, pair_checks, blind_spots, open_qs).
 
@@ -91,7 +119,7 @@ def read_report(path):
             continue
         if not in_findings or not line.startswith("|"):
             continue
-        cells = [c.strip() for c in line.strip().strip("|").split("|")]
+        cells = _split_row(line)
         if not header_seen:
             if len(cells) != 5 or not cells[0].lower() == "id" or not all(
                 pat.match(c) for pat, c in zip(HEADER_ALIASES, cells)
@@ -168,6 +196,10 @@ def collect():
     reports, all_findings, all_unparsed = [], [], []
     for stem in AREA_ORDER:
         path = os.path.join(AUDIT_DIR, stem + ".md")
+        if not os.path.exists(path):
+            alt = next((s for s, t in STEM_ALIAS.items() if t == stem), None)
+            if alt:
+                path = os.path.join(AUDIT_DIR, alt + ".md")
         if not os.path.exists(path):
             reports.append({"stem": stem, "landed": False, **_area_meta(stem)})
             continue
@@ -458,6 +490,7 @@ pair: u
 |---|---|---|---|---|
 | T-1 | S1 | a claim | `eval/x.py:1` | the contradiction |
 | T-2 | S2 | another | facts/t.json#t | none |
+| T-3 | S3 | pipe in code | `grep -c 'a\\|b'` returns 0 | none |
 
 ## 5. Blind spots
 
@@ -475,8 +508,9 @@ pair: u
         ap = os.path.join(td, "test_area.md")
         open(ap, "w").write(good)
         rep = read_report(ap)
-        assert len(rep["findings"]) == 2, rep["findings"]
+        assert len(rep["findings"]) == 3, rep["findings"]
         assert rep["findings"][0]["id"] == "T-1"
+        assert rep["findings"][2]["evidence"] == "`grep -c 'a\\|b'` returns 0"
         assert rep["blind_spots"] == ["nothing"]
         assert rep["open_qs"] == ["decide something"]
         open(ap, "w").write(shuffled)
@@ -489,7 +523,7 @@ pair: u
         # unparsable row
         open(ap, "w").write(good.replace("| T-2 | S2 |", "| T-X | S9 |"))
         rep = read_report(ap)
-        assert len(rep["findings"]) == 1 and len(rep["unparsed"]) == 1
+        assert len(rep["findings"]) == 2 and len(rep["unparsed"]) == 1
     print("selftest ok")
 
 
