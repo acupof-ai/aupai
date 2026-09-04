@@ -101,10 +101,43 @@ def main():
     # 6. EVERY VARIABLE THAT CHANGES THE NUMBER IS IN THE PREDICTIONS PATH. Four cells writing
     #    two filenames is how be.l1_3shot_retracted happened: preds_l1_d3.jsonl was overwritten
     #    by an unlogged run and three published numbers lost their artifact.
-    for tok in ('f".{args.demo_lang}"', '(".hf" if args.hf else "")'):
-        if tok not in src:
-            fails.append(f"the preds path omits {tok} -- two cells of the 2x2 would collide on "
-                         f"one file, and --force would silently overwrite the first")
+    #
+    #    CALLED, NOT GREPPED. This used to search main()'s source for the two sub-expressions, and
+    #    when the path moved into artifact_path() -- one implementation, because metric_l1_fewshot now
+    #    needs the same name to verify an artifact -- all four checks in this group went red on a
+    #    file whose behaviour had not changed. A source-text check on a refactor reports the move,
+    #    not a defect. Asking the function for the names instead makes the axis-separation property
+    #    the thing under test, so any later restructuring is free as long as the paths still differ.
+    _paths = {}
+    for _lang in ("zh", "en"):
+        for _hf in (False, True):
+            _paths[(_lang, _hf)] = L.artifact_path("ckpt_x.pt", 3, _lang, _hf)
+    if len(set(_paths.values())) != 4:
+        fails.append(f"the four 2x2 cells do not write four distinct files: {sorted(_paths.values())} "
+                     f"-- two cells would collide, and --force would silently overwrite the first")
+    if L.artifact_path("ckpt_x.pt", 3, "zh") == L.artifact_path("ckpt_x.pt", 3, "zh", no_rep_stop=True):
+        fails.append("the preds path omits the rep_stop state, so a stop-off rerun overwrites the "
+                     "stop-on rows")
+    if L.artifact_path("ckpt_a.pt", 3, "zh") == L.artifact_path("ckpt_b.pt", 3, "zh"):
+        fails.append("the preds path omits the checkpoint, so every checkpoint writes one file and "
+                     "the second gets ArtifactExists instead of a number (fb, 2026-09-02)")
+    if L.artifact_path("ckpt_x.pt", 3, "zh") == L.artifact_path("ckpt_x.pt", 8, "zh"):
+        fails.append("the preds path omits --demos, and two demo counts score different problem "
+                     "sets (497 at 3 demos, 492 at 8)")
+    # --run versions the name rather than replacing it, so a named rerun cannot eat the first run.
+    _v = L.artifact_path("ckpt_x.pt", 3, "zh", run="r1")
+    if _v == L.artifact_path("ckpt_x.pt", 3, "zh") or ".r1." not in _v:
+        fails.append(f"--run does not version the preds path: {_v}")
+    # AND main() MUST USE THAT FUNCTION. A second copy of the rule in main() would satisfy every
+    # assertion above while still being able to drift from what metric_l1_fewshot verifies.
+    import ast as _ast6
+    _main = next((n for n in _ast6.parse(src).body
+                  if isinstance(n, _ast6.FunctionDef) and n.name == "main"), None)
+    _calls6 = {_ast6.unparse(n.func) for n in _ast6.walk(_main) if isinstance(n, _ast6.Call)} \
+        if _main else set()
+    if "artifact_path" not in _calls6:
+        fails.append("main() does not call artifact_path(); a second copy of the filename rule can "
+                     "drift from the one metric_l1_fewshot verifies against")
 
     # 7. THE RESTARTABILITY MARKER MUST BE TRUE OF THE FILE, NOT JUST THE LOOP. open_artifact's
     #    default mode is "w", so a plain rerun TRUNCATES: "rows are written as they are scored"
@@ -135,8 +168,15 @@ def main():
     # to a file whose contents were never examined. The harness caught this as "reports
     # preds_path, not out_path" -- a second reader finding the same class of bug the ledger
     # already knows about (l1_15b_final attested the file it did not touch).
-    if "out_path = versioned_path(out_path, args.run)" not in src:
-        fails.append("out_path is not versioned before it is used, so --resume would read the "
+    #
+    # THE PROPERTY, NOT THE LINE: --run must reach the path main() actually opens. Asserted as
+    # "main passes args.run to artifact_path", because the versioning now happens inside that function
+    # -- the old check named a specific statement in main() and would go red on any restructuring
+    # that kept the behaviour (group 6 records what that costs).
+    _pp_calls = [n for n in _ast6.walk(_main) if isinstance(n, _ast6.Call)
+                 and _ast6.unparse(n.func) == "artifact_path"] if _main else []
+    if not any("args.run" in _ast6.unparse(n) for n in _pp_calls):
+        fails.append("main() does not pass args.run to artifact_path, so --resume would read the "
                      "unversioned file while open_artifact wrote the versioned one")
     if "run=args.run" in src:
         fails.append("open_artifact still gets run=, but out_path is already versioned -- the "
@@ -159,9 +199,8 @@ def main():
     if '"rep_stop": not args.no_rep_stop' not in src:
         fails.append("the summary JSON does not record whether the stop was on, so two runs "
                      "differing only in the decoder are indistinguishable afterwards")
-    if '".norepstop" if args.no_rep_stop' not in src:
-        fails.append("the preds path omits the rep_stop state, so a stop-off rerun overwrites the "
-                     "stop-on rows")
+    # the rep_stop component of the preds path is asserted in group 6, by calling artifact_path with
+    # the flag both ways rather than by searching for the expression that builds it.
 
     # 9. answer_marker IS THE WHOLE PREDICATE, AND EVERY READER CALLS IT. answer-present is a
     #    DISJUNCTION -- \boxed OR ANS_RE -- and l1_2x2_diagnose imported ANS_RE alone as "the

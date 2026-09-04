@@ -18,6 +18,7 @@ user's. Where a number appears it was measured, not estimated.
 | **zombie processes** | **3,958 of 4,306** (92%) | ~300/day, 2 in a 10-min window | **no** — see §1 |
 | orphaned watchers | 307 `tail -F` + 5 stale `tail -f` | one per ~305 s for 24 h, then stopped | yes — swept, C1 |
 | non-terminating wait-loops | 3, ages 4.58–4.60 d | — | yes — swept, C1 |
+| wait-loops on an unresolvable target | **2, 17 h, still live** | — | yes, once (b) sees them |
 | host leftovers | **none found** | — | n/a — see §4 |
 
 C1 removed 314 processes (`ff035f77`). The zombies remain and cannot be removed by anything
@@ -96,8 +97,9 @@ false "1 shared" twice, and the pid differing between runs is what exposed it), 
 
 ### (b) Wait-loop whose producer is gone
 
-Matches **only** `[ -f X ]`, `[ -e X ]`, `[ -d X ]` with a single literal path. Compound
-conditions are not parseable in general and are `unclassified`.
+Matches `[ -f X ]`, `[ -e X ]`, `[ -d X ]` with a single literal path, and `grep`-condition
+loops per the second form below. Other compound conditions are not parseable in general and
+are `unclassified`.
 
 Test: **X does not exist, and X's parent directory's newest mtime predates the loop's own
 start.** That is positive evidence the producer is gone — anything still producing X would
@@ -106,6 +108,13 @@ have moved the directory since the waiter started.
 **Do not test `ppid == 1`.** A reparented orphan and a legitimate `setsid` job both have
 ppid 1; the parent is not evidence. Measured on today's three: `data/code_supply/` last
 written 2026-08-30T14:47Z, loops polling every 8–12 s for 4.6 days.
+
+**Second form: the target cannot resolve.** `until grep -q PAT F; do sleep N; done` is the
+other shape this class covers, and it needs no mtime reasoning. Resolve `F` against the
+**process's own** `/proc/<pid>/cwd` and `stat` it: if it does not exist there, the loop's
+condition can never be satisfied *as the loop itself resolves it*, whatever a file of the
+same name elsewhere contains. Two live instances, both 17 h; see the section at the end.
+The same-name file under `/work/aupai` is context for the report, never part of the test.
 
 ### (c) Tail on a finished run's log
 
@@ -186,6 +195,12 @@ where b0's glob gave 149; the four-file gap was pure selector, not disagreement.
 ### Scope, and the paths that are never in it
 
 **In scope: `/work/aupai` and the container's tmp/scratch classes only.**
+
+**Scope is decided by paths a process actually holds, never by its cwd.** An fd or an
+argv-named path that resolves under `/work/aupai` places it; the container's default cwd
+places nothing, in either direction — it cannot show a process is foreign (PR-11) and it
+cannot show one is ours. A cwd test used as a scope gate rejected two of our own dead loops
+before class (b) could evaluate them; see "The shape that resists both predicates" below.
 
 **Never in scope, by path:**
 
@@ -273,7 +288,8 @@ fired. The fixtures are the pre-sweep populations:
 | class | instances before C1 | after |
 |---|---|---|
 | (a) pipe-stdout watcher | **307** | 0 |
-| (b) `[ -f X ]` wait-loop | **3** | 0 |
+| (b) wait-loop, `[ -f X ]` form | **3** | 0 |
+| (b) wait-loop, unresolvable-target form | **2** (found by db running the classifier) | live |
 | (c) tail on a finished run's log | **5** (6 reported; one was a grep self-match) | 0 |
 | (d) ours and accounted | n/a — a protection, not a candidate | |
 | (e) foreign / GPU-holding | 17 tileRL `tail -f /work/*.log` + 2 training chains | same |
@@ -281,29 +297,71 @@ fired. The fixtures are the pre-sweep populations:
 **Build matchers against the recorded populations, not against a swept box**, and build no
 matcher for a class with no recorded instance.
 
-### One shape that resists both predicates, recorded rather than matched
+### The shape that resists both predicates — n=2, and it is class (b) all along
 
 ```
-until grep -q ALL-DONE runs/count_en_c4_both.log; do sleep 5; done    16.9 h, ppid 0
+until grep -q ALL-DONE runs/count_en_c4_both.log; do sleep 5; done              17.2 h, ppid 0
+until grep -qE 'FETCH_DONE|FAILED|ERROR|Traceback' runs/fetch_skywork.log; ...  17.1 h, ppid 0
 ```
 
 `runs/count_en_c4_both.log` is 355 bytes, mtime 2026-09-03T14:38Z, and **already contains
-`ALL-DONE`** — the condition is satisfied and the loop is still spinning. It is caught by
-neither the file-existence test (the file exists) nor a "target unwritten since the loop
-started" test (it was written before, and writing is not the point). The likely cause is
-the default-cwd trap again: its `cd` never took, so `runs/…` resolves elsewhere. **n=1 is
-not a class; it stays `unclassified` and is recorded here so the next instance is
-recognised.**
+`ALL-DONE`** — the condition is satisfied and the loop is still spinning. Neither the
+file-existence test (the file exists) nor a "target unwritten since the loop started" test
+(it was written before, and writing is not the point) catches it.
 
 db then measured the mechanism rather than leaving it hypothesised: `/proc/3874083/cwd` is
 **`/sgl-workspace/sglang`**, and `/sgl-workspace/sglang/runs` **does not exist at all**. The
 loop's `cd` never took, so `runs/count_en_c4_both.log` resolves to a path that cannot
 exist, and it polls forever while the real file has read `ALL-DONE` since 2026-09-03T14:38Z.
 
-The general form — **a cwd-relative target that does not resolve from the process's own
-`/proc/<pid>/cwd`** — is worth naming here because this container's default cwd makes it
-common, and `AGENTS.md` already warns about it twice from other directions. **It is named,
-not matched**: one instance does not justify a matcher, and db is not writing one.
+**Two corrections from running the classifier, both of which change the ruling above.**
+
+**n=2, not n=1.** `fetch_skywork` is the same shape, same cwd, same 17 h, and its target has
+said `FETCH_DONE` since 2026-09-03T14:27Z. db found it only by running the classifier over
+the live population — the first instance was found by hand, which is why one instance looked
+like the whole class. A shape that resists both predicates twice is a different argument
+from one that does it once.
+
+**It is not a new class — it is (b), rejected before (b) could evaluate it.** Resolve each
+path-shaped argv token against the process's **own** `/proc/<pid>/cwd` and `stat` it:
+
+| loop | target resolved from its own cwd | exists | same name under `/work/aupai` |
+|---|---|---|---|
+| `count_en_c4_both` | `/sgl-workspace/sglang/runs/count_en_c4_both.log` | **no** | yes |
+| `fetch_skywork` | `/sgl-workspace/sglang/runs/fetch_skywork.log` | **no** | yes |
+
+A loop whose condition names a file that cannot exist *as the loop itself resolves it*
+cannot terminate by its own condition. That is class (b) — "waits on a file that will never
+appear" — stated as a fact about the filesystem rather than a guess about intent. The defect
+was **ordering**: §2's cwd test rejected these two as out of scope before (b) got to look at
+them. **The fix is to drop cwd as a scope gate and let (b) decide on resolvability**, not to
+widen scope. A wait loop whose target does resolve stays `unclassified`, which is the
+existing negative selftest.
+
+**Rejected: "argv names a relative `runs/` path" as an ownership test.** Measured on the pod
+2026-09-04 — of 30 live processes with argv, **0** name an absolute `/work/aupai/` path and
+**2** name a bare relative `runs/` path, i.e. exactly these two. The zero false-positive rate
+comes from the population being 30, not from the predicate discriminating. A relative path in
+argv says nothing about which tree the writer meant, so it is the same unfounded inference as
+PR-11's cwd test, pointed the other way — and in the ownership direction the consequence is
+destructive rather than harmless.
+
+Two facts that bound the risk of acting on these two, both measured: each loop's stdout and
+stderr pipe has exactly **one** reader, and it is that loop's own `sleep` child, so no
+consumer is waiting on the output; and both have **ppid 0**, so no launcher is waiting on
+them either. (A first pass named two other pids as the readers — those were successive
+`sleep` children that had already exited by the time `/proc` was read. Read cmdline and
+status in the same pass as the fd link, or the identity belongs to a different process than
+the one the link found.)
+
+### A negative control that cannot fail is not a negative control
+
+db's zombie selftest handed a fabricated `Z` row to `classify()` and asserted no `Z` came
+back. That is true of **any** list `classify()` builds, so the assertion passes whether or
+not the zombie rule exists — it was caught after it passed, by asking what would make it
+fail. **Every negative selftest must name the code path whose removal makes it fail.** Same rule
+as the negative control on a guard, applied to the test rather than the guard: "it was
+blocked" means nothing without the run where it is not.
 
 ## What this design does not solve
 
