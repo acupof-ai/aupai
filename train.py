@@ -834,7 +834,29 @@ class MasterWeights:
     """
 
     def __init__(self, model):
-        self.pairs = [(p, p.detach().float().clone().requires_grad_(True)) for p in model.parameters()]
+        # THE MEMORY TABLE IS EXCLUDED, by name, and it is the only exclusion here.
+        #
+        # WHY IT WOULD BE WRONG TO INCLUDE IT. A master copy exists because a bf16 parameter
+        # cannot absorb an update ~2^-9 below itself, so 91% of updates came back bit-identical
+        # (measured 2026-08-30) and the fp32 copy lets them accumulate. The memory's value table
+        # is ALREADY fp32 -- nn.Embedding is built in the default dtype and nothing casts it,
+        # measured on the pod 2026-09-05 -- so a "master copy" of it is a second fp32 tensor
+        # holding the same numbers to the same precision. It buys exactly nothing.
+        #
+        # WHY IT MATTERS RATHER THAN BEING MERELY REDUNDANT: at M1 that is 4.00 GiB, at 2048^2 it
+        # is 16.00 GiB, on a card with 95.22 GiB usable where the M3 shape already does not fit.
+        # A copy that buys nothing and costs 16 GiB decides whether an arm can be launched at all.
+        # 4c asked whether this was the cause of the M3 OOM; it was not (profile_step_cost never
+        # constructs MasterWeights) but it WOULD have been on a --fp32_master training launch,
+        # which is how the arms actually run.
+        self.pairs, self.unmastered = [], []
+        for n, p in model.named_parameters():
+            if _is_mem_fqn(n):
+                self.unmastered.append(p)
+            else:
+                self.pairs.append((p, p.detach().float().clone().requires_grad_(True)))
+        # The map is what build_optimizers indexes, via master.get(p, p): a parameter absent from
+        # it steps itself, which for an already-fp32 table is correct rather than a fallback.
         self.map = {p: m for p, m in self.pairs}
 
     def pull_grads(self):
@@ -848,6 +870,18 @@ class MasterWeights:
         for p, m in self.pairs:
             m.grad = None if p.grad is None else p.grad.float()
             p.grad = None
+        # UNMASTERED PARAMETERS MUST NOT BE CLEARED HERE, and this comment exists because the
+        # first version of the exclusion left them out of this loop entirely, which is a real bug
+        # in the other direction. A mastered parameter's grad is copied to `m` and then cleared,
+        # because the optimizer holds `m` and its zero_grad() clears m.grad only -- the exact
+        # running-sum bug this docstring records. An UNMASTERED parameter is itself what the
+        # optimizer holds, so opt.zero_grad(set_to_none=True) at the end of the step clears its
+        # grad, and clearing it HERE would delete the gradient before the optimizer had stepped
+        # on it: the table would receive no update at all and the arm would train as the control
+        # while its diagnostics still showed rows being read.
+        #
+        # Verified rather than reasoned: train.py's loop calls opt.zero_grad(set_to_none=True) for
+        # every optimizer after the step, and the mem group is one of those optimizers.
 
     def push(self):
         with torch.no_grad():
@@ -871,7 +905,12 @@ def build_optimizers(model, cfg, master=None):
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
-        q = p if master is None else master[p]
+        # .get(p, p), not [p]: the memory table is deliberately absent from the master map
+        # (MasterWeights.__init__ excludes it -- it is already fp32, so a master copy holds the
+        # same numbers at the same precision and costs 4 GiB at M1, 16 at 2048^2). Absent means
+        # "step the parameter itself", which is correct here rather than a fallback. A bare [p]
+        # would raise KeyError on any --fp32_master run with a memory.
+        q = p if master is None else master.get(p, p)
         # SPARSE MEMORY FIRST, before the shape branches, and the order is the point. The value
         # table is 2D and named `memory.values.weight`, so `p.ndim == 2` below would put it in
         # MUON -- which orthogonalises a matrix via Newton-Schulz, an operation with no meaning
@@ -2863,40 +2902,87 @@ def main():
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
-                    # MEMORY DIAGNOSTICS, charter readout 4, rank 0 only and inside this block
-                    # because `tps` is computed here and nowhere else -- the ledger's tok_s_gpu is
-                    # the same number the step line prints, not a second estimate of it.
-                    #
-                    # `name` IS THE ARM ID (m1/m2/m3), NOT THE RUN NAME. de's rule, and the reason
-                    # is readout 3: the ledger is append-only and nothing else on the row records
-                    # which arm produced it, so a wrong name folds three curves into one line and
-                    # the M2-vs-M1 slope cannot be recovered afterwards. It comes from --mem_arm,
-                    # a required flag whenever mem_values is set, rather than from --name: the run
-                    # name carries a prefix and a date and would silently become the arm id.
-                    # THE FRACTION IS RANK 0's WINDOW, and it is a LOWER BOUND on the global one,
-                    # which is why it is usable for the stop rule as it stands. Each rank's
-                    # `touched` counts only the rows its own tokens read, and an all-reduce here
-                    # would deadlock: this whole block is inside `if is_main`, so a collective
-                    # would be entered by one rank and waited on by none. The stop rule is "below
-                    # 0.20 at step 1000" -- if rank 0 alone reaches 0.20 the global set is at
-                    # least that, so a pass is a real pass. A FAIL is the case that needs care: at
-                    # world 2 rank 0 sees half the tokens, so a rank-0 reading just under the line
-                    # is not proof of collapse and the arm gets an all-ranks reading before it is
-                    # stopped. Recorded here rather than left for the reader to infer.
-                    if raw_model.memory is not None and step % 100 == 0:
-                        import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+                # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
+                # that placement is the whole correctness argument: the fraction the stop rule
+                # reads must be the GLOBAL one, each rank's `touched` counts only the rows its own
+                # tokens read, and a collective inside `if is_main` would be entered by one rank
+                # and waited on by none -- a hang, not a wrong number (4c's ruling 2026-09-05,
+                # replacing my rank-0 lower bound).
+                #
+                # THE CONDITION MUST BE RANK-INVARIANT or the collective deadlocks. `step % 100`
+                # is; `is_main` is not, which is why the whole block moved rather than just the
+                # all_reduce. raw_model.memory is None identically on every rank (same Cfg), so
+                # that conjunct is safe.
+                #
+                # UNION, NOT SUM, for `touched`: two ranks reading the same row must count once,
+                # so it is a bool OR (MAX over 0/1) -- a SUM would report up to `world` times the
+                # true fraction and a collapsed pool could read as healthy. key_hits is the
+                # opposite: usage COUNTS add, so SUM is right there. Getting these two backwards
+                # is the kind of error that produces a plausible number.
+                if raw_model.memory is not None and step % 100 == 0:
+                    _mem = raw_model.memory
+                    if ddp:
+                        _t = _mem.touched.to(torch.int32)
+                        torch.distributed.all_reduce(_t, op=torch.distributed.ReduceOp.MAX)
+                        _mem.touched.copy_(_t.bool())
+                        torch.distributed.all_reduce(
+                            _mem.key_hits, op=torch.distributed.ReduceOp.SUM)
+                        # last_entropy and windows are per-rank means over the same number of
+                        # windows, so SUM/world is their mean. Summed then divided below rather
+                        # than averaged here, because ReduceOp.AVG is not available on every
+                        # backend build and a silent fallback would be a wrong number.
+                        torch.distributed.all_reduce(
+                            _mem.last_entropy, op=torch.distributed.ReduceOp.SUM)
+                        _mem.last_entropy /= world
+                    _md = _mem.diagnostics(reset=True)
+                    if is_main:
+                        # `tps` is computed in the is_main block above, and step % 100 == 0
+                        # IMPLIES step % 10 == 0, so it is always this iteration's value rather
+                        # than a stale one. If that cadence ever changes, this reads the wrong
+                        # window's throughput -- hence the assert instead of a comment alone.
+                        assert step % 10 == 0, (
+                            "the diag cadence no longer implies the tok/s cadence, so tps is "
+                            "from an earlier window than the diagnostics it is written beside")
+                        # THE WRITE CANNOT KILL THE RUN IT OBSERVES (4c 2026-09-05). de found
+                        # data/ledger_schema.json outside pod_drift's SCOPE, so memory_diag.py
+                        # reached the pod and the schema it opens did not: the first log_diag at
+                        # step 100 would have raised FileNotFoundError and taken down a run
+                        # holding two cards for an hour. That specific file is now present, but
+                        # the shape recurs -- any writer of an observation is a dependency the
+                        # observed run did not ask for.
+                        #
+                        # ONLY THE WRITE IS WRAPPED, not the collective above. An all_reduce that
+                        # fails is not a diagnostics problem: the ranks are then out of step and
+                        # continuing would hang or corrupt the next reduction, so that must
+                        # propagate. Wrapping the whole block would convert a distributed fault
+                        # into a silent one.
+                        #
+                        # The failure is PRINTED to the run log rather than passed, because a
+                        # diagnostics writer that fails quietly leaves memory_diag_fresh reading
+                        # an absence with no cause in the log -- and the check does read the
+                        # absence, so the loud line is what connects the two.
+                        try:
+                            # THE IMPORT IS INSIDE THE try, and that is not tidiness. It was one
+                            # line above, outside it, where an ImportError or a syntax error in
+                            # memory_diag.py -- or its absence on the pod, which is the exact
+                            # class of fault that prompted this wrap -- would still have killed
+                            # the run. Wrapping only the call would have left the more likely
+                            # failure unguarded.
+                            import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
 
-                        _md = raw_model.memory.diagnostics(reset=True)
-                        memory_diag.log_diag(
-                            name=Cfg.mem_arm,
-                            step=step,
-                            pool_touched_frac=_md["touched_fraction"],
-                            topk_entropy=_md["topk_entropy"],
-                            key_gini=_md["key_gini"],
-                            tok_s_gpu=tps,
-                            n_values=_md["n_values"],
-                            topk=raw_model.memory.top_k,
-                        )
+                            memory_diag.log_diag(
+                                name=Cfg.mem_arm,
+                                step=step,
+                                pool_touched_frac=_md["touched_fraction"],
+                                topk_entropy=_md["topk_entropy"],
+                                key_gini=_md["key_gini"],
+                                tok_s_gpu=tps,
+                                n_values=_md["n_values"],
+                                topk=_mem.top_k,
+                            )
+                        except Exception as _e:  # noqa: BLE001 -- see the comment above
+                            runlog(f"step {step}/{total_steps} memory_diag write FAILED, run "
+                                   f"continues: {type(_e).__name__}: {_e}")
                 if step >= total_steps:
                     break
 
