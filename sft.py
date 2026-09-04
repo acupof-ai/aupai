@@ -73,6 +73,32 @@ def main():
 
     # data: packed (N, seq+1), labels=-100 on prompt tokens
     d = torch.load(args.sft_path, map_location="cpu", weights_only=True)
+    # THE PACK'S VOCABULARY MUST BE THE CHECKPOINT'S. A pack from another vocabulary trains
+    # silently at ~4x the loss: every id is wrong, every id is in range, and the sizes match,
+    # because data/tokenizer.json is rebuilt in place and only the fingerprint separates two
+    # vocabularies. AGENTS.md "Vocabulary identity" is the rule.
+    #
+    # THIS FILE HAD NO SUCH CHECK UNTIL NOW, while sft_math.py has had one since 7aacbac
+    # (2026-09-02) -- and that commit is why the gap survived: it recorded the cause as "the guard
+    # was keyed on the wrong key" and fixed the one function, when the cause was "this repo has two
+    # pack loaders and only one asks the question". ck["vocab_id"] was read four lines above and
+    # used only to STAMP the checkpoints this writes, which propagates the id without ever checking
+    # it -- a stamp is not a comparison. Found by writing harness check vocab_id_on_load_path for
+    # the AGENTS.md coverage row, which FAILed on this file the first time it ran.
+    pack_vocab = d.get("vocab_id", d.get("vocab"))
+    if ck_vocab and pack_vocab is not None:
+        if pack_vocab != ck_vocab:
+            raise RuntimeError(
+                f"{args.sft_path} was packed against vocabulary {pack_vocab} but {args.resume} "
+                f"was trained on {ck_vocab}; repack with `datagen/prepare_sft.py --tokenizer "
+                f"<the base's tokenizer.json>`. Training through this reads every id as a "
+                f"different token and converges at roughly 4x the loss with nothing raising."
+            )
+        if is_main:
+            print(f"vocab_id matches: {ck_vocab}", flush=True)
+    elif is_main:
+        missing = "the checkpoint" if not ck_vocab else "the pack"
+        print(f"WARNING {missing} predates vocabulary fingerprinting; verify by hand", flush=True)
     X = d["input_ids"][:, :-1].long().contiguous()
     Y = d["labels"][:, 1:].long().contiguous()
     del d
