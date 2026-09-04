@@ -273,7 +273,7 @@ def friction_section():
 MEM_STATUS = {
     "model": "实现完",
     "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "被门禁拒（卡来源冲突），等 4c 裁定；发车后首条 step 要约 13 分钟",
+    "m1": "被 block：前台启动（无 setsid）+ world 6 挤 2 卡，等 b0 杀掉重发",
     "m2": "未跑",
     "scored": "未打分",
 }
