@@ -236,6 +236,72 @@ def append_rows(rel, rows, root=ROOT):
     return len(rows)
 
 
+def events_pod_lacks(pod_rows, local_rows, keyfn):
+    """Local EVENTS the pod does not have, per key, in local order (6e, 2026-09-04).
+
+    THE ROW-LEVEL PUSH COULD NEVER SEND A CLOSE, which is the one thing it was built for.
+    diff_rows compares each side's LAST row per key, so a key present on both sides is never
+    `missing` -- and a close is not a new key, it is a second event under an existing one. The
+    three closed-but-running rows de-41's own text names were therefore unreachable by
+    --push: classify() correctly calls them `stale` (the pod adds nothing), collisions are
+    never applied, and `missing` is keyed. Every branch behaved as designed and the case fell
+    between them.
+
+    Identity here is the EVENT, not the key: (key, status, result, ended). A close and its
+    start share a key and differ in status, so the pod lacking the close is visible only at
+    this granularity.
+
+    ONLY EVENTS AFTER THE POD'S LAST ONE FOR THAT KEY. Sending an older `running` start after
+    the pod already holds an `ok` folds the row back to running -- exp.fold's terminal-wins
+    rule protects against a later start, but the pod's file order would then put a start last
+    and any reader folding on position reads it as open. 6e hit this by hand and left two such
+    events out. "Later" is the event's own position in the local file: the local ledger is an
+    append log, so its order IS the sequence, and timestamps are not comparable across
+    machines (`ended` is absent on a start row entirely).
+
+    Reserved for a human: two CLOSES under one key with different values. That is a genuine
+    disagreement about a measurement, and it stays in classify()'s `contradicts`.
+    """
+    def sig(r):
+        return (keyfn(r), str(r.get("status", "")), str(r.get("result", "")),
+                str(r.get("ended", "")))
+
+    pod_sigs = {sig(r) for r in pod_rows}
+    # The pod's last event per key, by its own file order: what "later than" is measured from.
+    pod_last_idx = {}
+    for i, r in enumerate(pod_rows):
+        pod_last_idx[keyfn(r)] = i
+    # The local index of the event matching the pod's last one for that key. Anything before
+    # it is history the pod has already moved past.
+    local_cut = {}
+    for i, r in enumerate(local_rows):
+        k = keyfn(r)
+        if k in pod_last_idx and sig(r) == sig(pod_rows[pod_last_idx[k]]):
+            local_cut[k] = i
+    out = []
+    for i, r in enumerate(local_rows):
+        k = keyfn(r)
+        if sig(r) in pod_sigs:
+            continue
+        cut = local_cut.get(k)
+        if cut is None:
+            # TWO CASES, ONE ANSWER, and the answer is refuse. Either the pod lacks this key
+            # entirely -- diff_rows' `missing` already offers it, and returning it here would
+            # append the same row twice -- or the pod's current event for the key is not in
+            # the local file at all, so local order cannot say whether this event precedes or
+            # follows it, and sending it might fold the row backwards.
+            #
+            # A separate `k not in pod_last_idx` guard stood above this and was REMOVED as
+            # dead: measured 2026-09-04, removing it changes no output, because a key the pod
+            # lacks has no cut either. It read as a second safeguard and no test could tell it
+            # from its absence, which is worse than one check that is known to cover both.
+            continue
+        if i <= cut:
+            continue
+        out.append(r)
+    return out
+
+
 def append_pod_rows(rel, rows, pod_root=POD_ROOT):
     """Append rows to a ledger ON THE POD (de-41). Returns (n, error).
 
@@ -333,6 +399,11 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
             # backwards for a close, and it is the reading under which someone discards it.
             # Caught by the selftest case below, not by reading this.
             coll = [(k, classify(lrow, prow), lrow, prow) for k, _why, prow, lrow in coll]
+            # AND THE EVENTS UNDER SHARED KEYS, which `missing` cannot see: a close is a
+            # second event under an existing key, so it is never `missing` and never applied
+            # as a collision. Without this the push direction could not send the very rows
+            # de-41 was written for (6e measured 3 appended and no_ghost_running still FAIL).
+            missing = missing + events_pod_lacks(pod_rows, local_rows, keys[rel])
         else:
             missing, coll = diff_rows(pod_rows, local_rows, keys[rel])
         kept = []
@@ -507,6 +578,89 @@ def _selftest():
     assert all(r[5] for r in rows), f"a missing pod file reported no error: {rows}"
     assert all(not r[3] for r in rows), "a missing file must offer no rows to append"
 
+    # A CLOSE MUST CROSS TO THE POD, and this is the case the row-level push could never
+    # reach: a close is a second EVENT under an existing key, so diff_rows never calls it
+    # `missing` and classify() calls it `stale`. Both correct, and between them the three
+    # closed-but-running rows de-41 names were unreachable (6e measured 3 rows appended and
+    # no_ghost_running still FAIL on the pod).
+    ek = keys["runs/experiments.jsonl"]
+    start = {"name": "r", "started": "t", "status": "running", "result": "", "ended": ""}
+    close = {"name": "r", "started": "t", "status": "ok", "result": "3.6%",
+             "ended": "2026-09-04 01:00"}
+    got = events_pod_lacks([start], [start, close], ek)
+    assert [r["status"] for r in got] == ["ok"], (
+        f"a local close did not cross to a pod holding only the start: {got}. That is the "
+        f"whole defect -- the pod row stays `running` and no_ghost_running stays FAIL there"
+    )
+    # ...and it folds CLOSED once appended, which is the property that matters rather than
+    # the append itself.
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from exp import fold as _fold
+    folded = {(r["name"], r["started"]): r for r in _fold([start] + got)}
+    assert folded[("r", "t")]["status"] == "ok", f"appending the close did not fold closed: {folded}"
+
+    # AND AN EVENT OLDER THAN THE POD'S LAST ONE MUST NOT CROSS. The pod already holds the
+    # close; sending the start after it puts a `running` row LAST in the pod's file, and any
+    # reader folding on position reads the finished run as open again. 6e left two such
+    # events out by hand, which is why this direction is asserted and not assumed.
+    got_back = events_pod_lacks([start, close], [start, close], ek)
+    assert got_back == [], f"an event the pod already has was offered again: {got_back}"
+    got_older = events_pod_lacks([close], [start, close], ek)
+    assert got_older == [], (
+        f"a start event older than the pod's close was offered: {got_older}. Appending it "
+        f"would fold the row back to running by file position"
+    )
+    # A key the pod lacks ENTIRELY stays diff_rows' job, not this function's -- otherwise the
+    # same row is offered twice and the pod gets a duplicate event.
+    other = {"name": "q", "started": "u", "status": "ok", "result": "1.0", "ended": "x"}
+    assert events_pod_lacks([start], [start, other], ek) == [], (
+        "a whole key the pod lacks was returned by the event union as well as by diff_rows"
+    )
+    # TWO CLOSES WITH DIFFERENT VALUES stay a human's decision: it is a disagreement about a
+    # measurement, not a missing event. classify keeps it in `contradicts`; the event union
+    # must not smuggle it across as an append.
+    close_b = {"name": "r", "started": "t", "status": "ok", "result": "9.9%",
+               "ended": "2026-09-04 02:00"}
+    smuggled = events_pod_lacks([start, close], [start, close_b], ek)
+    assert smuggled == [], (
+        f"a differing close was offered as an append: {smuggled}. Two closes under one key "
+        f"are contradicts -- a human decides which measurement is right"
+    )
+
+    # SURVEY MUST ACTUALLY USE IT, asserted through survey(push=True) and not just on the
+    # function. Both mutations that removed the wiring -- dropping the events_pod_lacks call
+    # from the push path, and letting it return whole-key rows diff_rows already offers --
+    # left every assertion above GREEN, because they all test the function in isolation. A
+    # helper that works and is not called is the shape this whole file exists against
+    # (measured 2026-09-04 by mutating the module).
+    _ev_pod = [dict(start, name="ghost", started="g1")]
+    _ev_loc = [dict(start, name="ghost", started="g1"),
+               dict(close, name="ghost", started="g1"),
+               dict(close, name="fresh", started="g2")]
+
+    def _fake_pair(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _ev_pod), None
+
+    _tmp = __import__("tempfile").mkdtemp(prefix="ledger_union_")
+    os.makedirs(os.path.join(_tmp, "runs"))
+    for _rel in LEDGERS:
+        with open(os.path.join(_tmp, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                for _r in _ev_loc:
+                    _f.write(json.dumps(_r, ensure_ascii=False) + "\n")
+    _rows = {r[0]: r for r in survey(root=_tmp, reader=_fake_pair, push=True)}
+    _off = _rows["runs/experiments.jsonl"][3]
+    _sigs = sorted((r.get("name"), r.get("status")) for r in _off)
+    assert _sigs == [("fresh", "ok"), ("ghost", "ok")], (
+        f"survey(push=True) offered {_sigs}. It must offer BOTH the close under a shared key "
+        f"(the event union) and the whole new key (diff_rows), each exactly once -- if the "
+        f"close is missing the wiring is gone; if a name appears twice the two sources overlap "
+        f"and the pod gets a duplicate event"
+    )
+
     # LINE COUNTS ARE NOT THE ANSWER, and this is the property that decides whether the
     # key comparison was needed at all. Real 2026-09-03 shape: milestones is 13 local
     # against 10 pod with ZERO pod-only keys, while score_matrix is 48 against 50 with
@@ -634,7 +788,10 @@ def _selftest():
         "swap -- the case that caught the live bug, where a local close against a stale pod "
         "row classified as result_only_on_pod, the one reading under which a close looks "
         "like the row to discard; and the append refuses an over-cap payload rather than "
-        "truncating it"
+        "truncating it. EVENT UNION (6e, 2026-09-04): a local close crosses to a pod holding "
+        "only the start and folds closed there, while an event the pod already has, a start "
+        "OLDER than the pod's close, a whole key that is diff_rows' job, and a second close "
+        "with a different value are all refused -- the last staying a human's decision"
     )
     return 0
 

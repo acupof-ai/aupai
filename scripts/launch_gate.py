@@ -317,17 +317,27 @@ def gate_arch_tests(root, mix_path, world):
         r = json.load(open(results, encoding="utf-8"))
     except (OSError, ValueError) as e:
         return NOGO, f"runs/launch_tests.json unreadable: {e}"
-    # Absence and failure are distinct outcomes (main, taken in the merge): absent
-    # means nobody ran it, a failing row means it ran and failed. The first is UNKNOWN,
-    # the second NO-GO, and collapsing them loses the only fact that says what to do.
-    unrecorded = [n for n in ARCH_TESTS if n not in r]
+    # KEYED BY (test path, SHAPE) since 2026-09-04, looked up through launch_tests.rows_for
+    # so the two Stage E arms coexist. Before this the key was the test path alone -- correct
+    # for one launch shape at a time, and N7 Stage E runs L12 and L16 concurrently, so b0's
+    # L16 certification overwrote the L12 rows and this gate then reported "ran at L16,
+    # launch is L12" for an arm that HAD been certified. Absence and failure are distinct
+    # outcomes (main, taken in the merge): absent means nobody ran it, a failing row means it
+    # ran and failed. The first is UNKNOWN, the second NO-GO, and collapsing them loses the
+    # only fact that says what to do.
+    sys.path.insert(0, os.path.join(root, "scripts"))
+    from launch_tests import rows_for
+
+    found = {n: rows_for(r, n, LAUNCH_SHAPE) for n in ARCH_TESTS}
+    unrecorded = [n for n in ARCH_TESTS if found[n] is None]
     if unrecorded:
         return UNKNOWN, (f"launch_tests.json records no result for {', '.join(unrecorded)} "
-                         f"(it has: {', '.join(sorted(r)[:4]) or 'nothing'}) -- a record "
-                         f"that does not name the required test is not evidence it ran")
+                         f"at {LAUNCH_SHAPE} (it has: {', '.join(sorted(r)[:4]) or 'nothing'})"
+                         f" -- a record that does not name the required test at the launch "
+                         f"shape is not evidence it ran")
     problems = []
     for name in ARCH_TESTS:
-        row = r[name]
+        row = found[name]
         if not isinstance(row, dict):
             problems.append(f"{name}: bare {row!r}, which names no shape and no kernel")
             continue
