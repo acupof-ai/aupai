@@ -81,8 +81,10 @@ bytes per step, not by rule: at M1 a uniform draw touches ~86% of the table per 
 4. Diagnostics, logged every 100 steps to `runs/memory_diag.jsonl`: fraction of values
    touched in the window, top-k weight entropy, key-usage Gini. A pool below 20% touched at
    step 1000 is a collapse and the arm is stopped and reported, not tuned in place.
-5. Throughput: tok/s/gpu at step 30 against the control's 82K. Below 70K the arm is stopped:
-   a memory that costs 15% of throughput is not near-zero FLOPs on this hardware.
+5. Throughput: the arm's tok/s/gpu divided by the control's at the SAME step, read at step 30
+   (re-read at 100 and 1000). Below 0.85 the arm is stopped: a memory that costs 15% of
+   throughput is not near-zero FLOPs on this hardware. (Restated from a 70K absolute floor on
+   2026-09-05 after M1's stop, verdict unchanged: the control itself reads 56K by step 200.)
 
 ## Cards (2026-09-04T16:44Z)
 
