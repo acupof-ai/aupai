@@ -930,6 +930,7 @@ def main():
         "scripts/test_vocab_stamp.py",
         "scripts/profile_step_cost.py",
         "scripts/mem_decomp_table.py",
+        "scripts/mem_nobk_cell.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
