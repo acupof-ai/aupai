@@ -604,6 +604,13 @@ def main():
         # silently reduce it to measuring nothing. The sweep itself runs two full selftests six
         # times over and is too slow for a commit hook; the anchor check is instant.
         "runs/audit_0904/mutate_gate_cards.py",
+        # The dead-world scan. 0.9s, no card and no data: it reads harness.py and this file with
+        # ast and greps the tracked tree. Registered because its subjects are the two files whose
+        # worlds it judges -- an edit here or in harness.py can make a marker literal absent, which
+        # is exactly what the scan reports, so a commit that breaks a world should also make the
+        # scan's own end-to-end case notice. Five of its predicates were wrong on first write and
+        # each was caught by a known-answer case, so the cases are the value, not the scan.
+        "runs/audit_0904/dead_worlds.py",
         # pod_sh_offset: the byte-offset gate behind POD_PUSH_ALLOW_RUNNING_SH. Its selftest
         # is pure arithmetic over fixture bytes and fixture ps/fdinfo text -- no pod, no card
         # -- so it runs here. Gated because the file's job is deciding whether overwriting a
@@ -1183,7 +1190,11 @@ def main():
         "datagen/prepare_sft.py": {"scripts/test_sft_pack.py"},              # 1.8s
         "scripts/harness.py": {"scripts/test_cvd_pattern.py", "scripts/test_drop_zombies.py",
                                "scripts/test_eval_registry.py", "scripts/test_pod_ps_judge.py",
-                               "scripts/test_spawned_fast.py"},              # 1.1s
+                               "scripts/test_spawned_fast.py",
+                               # The reverse direction of the dead-world scan: harness.py IS the
+                               # file whose 88 worlds it judges, so an edit that moves a marker
+                               # literal is exactly what it reports. 0.9s.
+                               "runs/audit_0904/dead_worlds.py"},   # 2.0s
         "scripts/ledger_audit.py": {"scripts/test_ledger_predicates.py"},    # 0.6s
         "scripts/e1_29_floor_by_class.py": {"scripts/test_e1_29_floor_by_class.py"},
         "datagen/near_dedup_postpass.py": {"datagen/test_near_dedup_known.py"},
