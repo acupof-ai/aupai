@@ -13550,25 +13550,35 @@ def _selftest_diag_closed_arms():
       - a closed arm WITH a diag row -> SKIP, so the FAIL is about absence and not about
         being closed.
     """
-    import shutil
-
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import memory_diag as md
 
-    real = os.path.join(ROOT, "runs", "experiments.jsonl")
-    rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
-    template = dict(rows[-1])
+    # A LITERAL ROW, not the live ledger's newest one. `dict(rows[-1])` was the second way this
+    # world read live state: whatever another session appended last became the fixture's template,
+    # so a row missing a field these worlds do not override changes the verdict. Only the fields
+    # the check reads are here (name, status, started/ended, commit, cmd) plus the ones exp.py
+    # requires, and every one of them is set below.
+    template = {"name": "", "status": "", "started": "", "ended": "", "commit": "", "cmd": "",
+                "hypothesis": "fixture", "result": "", "finding": "fixture", "decision": "fixture"}
     head = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD"],
                           capture_output=True, text=True).stdout.strip()
     old = subprocess.run(["git", "-C", ROOT, "rev-parse", f"{md.DIAG_CADENCE_COMMIT}~1"],
                          capture_output=True, text=True).stdout.strip()
 
     def _world(commit, cmd, with_row):
+        # THE FIXTURE IS THE ONLY LEDGER. The first version copied ROOT's real
+        # runs/experiments.jsonl and appended its rows to it, so the verdict depended on what was
+        # live at run time: once b0_mem_m1 was launched and OPEN, `arms` was non-empty, the check
+        # took the running-arm path instead of the closed-arm branch these four worlds exist to
+        # test, and the FAIL world returned `WARN 1 open memory arm(s) with no diagnostics row at
+        # all: b0_mem_m1`. CI red on ed6f5f5d and e9a96103 (4c, 2026-09-05). The copy bought
+        # nothing -- the check reads only arm-named rows, and every one it should see is written
+        # here. A test whose answer moves with the pod is the shape check_fixture_not_live_state
+        # gates for; this one built the fixture and then handed it the live file's contents.
         d = _tmp_repo()
         os.makedirs(os.path.join(d, "runs"), exist_ok=True)
         dst = os.path.join(d, "runs", "experiments.jsonl")
-        shutil.copy(real, dst)
-        with open(dst, "a", encoding="utf-8") as f:
+        with open(dst, "w", encoding="utf-8") as f:
             f.write(json.dumps(dict(template, name="b0_mem_m2", status="ok",
                                     started="2026-09-05 06:00", ended="2026-09-05 07:00",
                                     commit=commit, cmd=cmd, result="done"),
@@ -13592,7 +13602,17 @@ def _selftest_diag_closed_arms():
     st, ev = check_memory_diag_fresh(_world(head, train, True))
     assert st == SKIP and "b0_mem_m2" not in ev, \
         f"a closed arm WITH a row is not a defect: {st} {ev}"
-    print("  ok   memory_diag closed-arm states separate (4 worlds)")
+
+    # AND THE WORLD IS SELF-CONTAINED, asserted rather than assumed. This is the regression, not a
+    # tidiness check: with ROOT's ledger copied in, a live OPEN b0_mem_m1 row put the check on the
+    # running-arm path and the FAIL world above returned WARN instead -- so every assertion here
+    # was a statement about the pod's current state. One row in, one row readable.
+    w = _world(head, train, False)
+    with open(os.path.join(w, "runs", "experiments.jsonl"), encoding="utf-8") as f:
+        n = sum(1 for x in f if x.strip())
+    assert n == 1, f"the fixture ledger holds {n} rows -- it is reading live state again"
+
+    print("  ok   memory_diag closed-arm states separate (4 worlds, fixture ledger self-contained)")
 
 
 def _selftest_brief():
