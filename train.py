@@ -160,6 +160,14 @@ class Cfg:
     # argparse arg) so the checkpoint records what it trained under.
     layers = 12
     attn_every = 4
+    # Arm B (head-level hybrid): 0 = off, today's layer-level alternation. N>0 puts BOTH mixers
+    # in every block on an N:1 head split -- KDA on N/(N+1) of the heads, MLA on 1/(N+1) -- and
+    # attn_every then selects nothing. A Cfg field, not just a getattr default, so the value
+    # travels in the checkpoint: a run whose config does not record which architecture it trained
+    # is unscoreable afterwards. Requires heads % (N+1) == 0; HeadMix raises otherwise, because
+    # head_dim is pinned to 128 by the FlashKDA CUTLASS kernel (:2058) and the split cannot be
+    # taken in fractions of a head.
+    head_mixed = 0
     ffn_hidden = 3072
     vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
     # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
@@ -1898,6 +1906,7 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
+        "head_mixed": "head-level hybrid: both mixers in EVERY block on an N:1 KDA:MLA head split (0 = off, layer-level alternation; needs heads % (N+1) == 0)",
         # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
         # argparse prefix matching makes "--d" ambiguous against --duplicate-*-filters
         # and torchrun exits before train.py is ever reached.

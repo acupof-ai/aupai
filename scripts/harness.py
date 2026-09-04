@@ -13290,6 +13290,12 @@ _FROZEN_KEYS = (
     "batch", "accum", "warmup", "vocab", "bucket_cap_mb",  # recipe
     "warmdown", "anneal_frac",  # WSD schedule shape: recipe, must match across a staged run
     "attn_res_blocks", "attn_every", "attn_res", "attn_res_dyn_q",  # architecture
+    # ARCHITECTURE, and the most load-bearing entry in this set: it decides whether a block holds
+    # one mixer or both. A resume that changed it would not be a different hyperparameter, it
+    # would be a different model wearing one run's name -- and unlike attn_every it also changes
+    # the parameter count (+1.18% at d1024 L12 h8, measured 2026-09-04), so the tok/s and the
+    # loss curve would both move for a reason the log does not record.
+    "head_mixed",
     # ARCHITECTURE, and frozen for the ordinary reason plus a specific one. It changes what a
     # document attends to inside the KDA short_conv (eff.kda_document_isolation_violated), so two
     # segments of one run that disagree on it trained two different models -- the same argument as
