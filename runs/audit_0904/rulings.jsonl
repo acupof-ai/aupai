@@ -75,3 +75,5 @@
 {"id": "E9", "ruling": "accepted", "by": "fb", "note": "no defect: assigned question answered, no eval hands ChatML to a base checkpoint"}
 {"id": "F5", "ruling": "accepted", "by": "fb", "note": "not a defect: AGENTS.md documents [] as the deliberate retracted_value; withdrawn by 44 on return"}
 {"id": "F10", "ruling": "accepted", "by": "fb", "note": "accepted S2; points at E16; post-audit boundary note on the fact, no value edit"}
+{"id": "E16", "ruling": "accepted", "by": "fb", "note": "accepted S2; no checkpoint trained on an agentic pack (experiments.jsonl has zero agentic occurrences); provenance came from producer code, 20 of 21 packs carry no sources field"}
+{"id": "E17", "ruling": "accepted", "by": "fb", "note": "accepted S2; two concurrent log writers, origin unresolved; pack verified independently; two one-line fixes queued post-audit"}
