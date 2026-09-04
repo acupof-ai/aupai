@@ -169,6 +169,24 @@ class Cfg:
     # taken in fractions of a head.
     head_mixed = 0
     ffn_hidden = 3072
+    # SPARSE MEMORY LAYERS (docs/standards/memory_layers_0905.md). 0 = off, and off is the
+    # control: every checkpoint before 2026-09-05 trained without a memory pool, and
+    # HybridLM reads `mem_values` 0-or-absent as "construct exactly as the control did".
+    #
+    # ALL FOUR ARE REAL FIELDS RATHER THAN getattr DEFAULTS IN model.py, for the reason
+    # head_mixed is one, and the check that refused the first version of this states it:
+    # getattr(cfg, "mem_top_k", 32) returns 32 both when the field says 32 and when the
+    # field does not exist, so a launch that set --mem_top_k=8 against a cfg that could not
+    # carry it would train top_k 32 while the flag, the log and the ledger row all said 8.
+    # As fields they travel inside ck["cfg"], so the checkpoint records the architecture it
+    # trained under instead of the reader having to trust the launch line.
+    mem_values = 0  # values in the product-key table; must be a perfect square (side^2)
+    mem_top_k = 32  # values read per token; ProductKeyMemory needs top_k <= side
+    mem_layers = "3,6,9"  # block indices sharing the ONE pool, comma string or list
+    mem_sparse = True  # nn.Embedding(sparse=True): the COO grad is the precondition for
+    # exchanging touched indices instead of all-reducing a 4-billion-parameter table, and it
+    # also decides which optimizers can take the group at all (Adagrad/SparseAdam accept a
+    # sparse grad, AdamW raises).
     vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
     # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
     # 2026-08-30), 16 so _fp8_ok passes and the fp8-head option stays open (same cost: the
@@ -1914,6 +1932,8 @@ def main():
         "heads": "attention/KDA heads (head_dim = d/heads must be 128)",
         "layers": "number of blocks",
         "ffn_hidden": "FFN inner width",
+        "mem_values": "sparse memory: values in the product-key table, a perfect square (0 = off, the control)",
+        "mem_top_k": "sparse memory: values read per token (must be <= sqrt(mem_values))",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -1928,9 +1948,15 @@ def main():
         "attn_res": "Attention Residuals (arXiv 2603.15031)",
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
+        "mem_sparse": "sparse memory: nn.Embedding(sparse=True) COO grads (--no-mem_sparse forces a dense grad on the whole table)",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
+    # NOT in the int loop above: this one is a comma string, and model._mem_layers parses the
+    # string and the list form in one place so both spellings build the same architecture.
+    parser.add_argument("--mem_layers", type=str, default=None,
+                        help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
+                             "(default: Cfg.mem_layers)")
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
