@@ -13,6 +13,21 @@
   },
   "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
  },
+ "scripts/test_arch_L32.py@d768L16h6f2304": {
+  "host": "iv-yeozpb5g5cbw80bls64e",
+  "mix": null,
+  "real_kernel": true,
+  "recorded": "2026-09-04 05:57",
+  "result": "pass",
+  "shape": {
+   "d": 768,
+   "ffn_hidden": 2304,
+   "heads": 6,
+   "layers": 16
+  },
+  "stages": null,
+  "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
+ },
  "scripts/test_e2e.py": {
   "host": "iv-yeozpb5g5cbw80bls64e",
   "mix": "data/mix_200m_8b.json",
