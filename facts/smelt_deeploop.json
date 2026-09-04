@@ -226,6 +226,7 @@
     "measured": "2026-09-03",
     "source": "runs/b0_sd_fixpath.jsonl (both arms on the official doc_cu path, eval/domain_loss.py --cu_path doc_cu) paired by eval/block_paired.py; runs/b0_sd_he_L_own.json runs/b0_sd_he_U_own.json runs/b0_sd_he_L_unl.json runs/b0_sd_he_U_loop.json with runs/b0_sd_he_L_own.preds.jsonl and runs/b0_sd_he_U_own.preds.jsonl for the per-task pairing; runs/b0_sd_looped.log and runs/b0_sd_unlooped.log for the training numbers; parameter counts read from the checkpoints",
     "config": {
+      "mfu_basis": "6*n_params*tps/peak_tflops, n_params = 122.3034M dedup (this config's params_dedup_M; train.py's sum(p.numel()) is 147.5184M and gives a different percentage), peak = 296 TFLOPS (fp8; recovered by arithmetic: 6*122.3034M*tps/296e12 reproduces both the 23% and 29% rows within tps rounding)",
       "arms": "ckpt_b0_sd_unlooped.pt and ckpt_b0_sd_looped.pt (--loop 4 7), both 3815 steps at 262,144 tok/step, world 2, seed 42, mix data/mix_200m_8b.json",
       "params_dedup_M": 122.3034,
       "params_state_dict_sum_M": 147.5184,
@@ -256,6 +257,7 @@
     "measured": "2026-09-04",
     "source": "runs/b0_final_blocks.jsonl and runs/b0_sd_fixpath.jsonl paired by eval/block_paired.py; runs/b0_final_he_EC.json runs/b0_final_he_N8.json with runs/b0_final_he_EC.preds.jsonl and runs/b0_sd_he_L_own.preds.jsonl for the per-task pairing; runs/b0_sd_equalcompute.log for the training numbers",
     "config": {
+      "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8; same recipe and hardware as repo.loop_from_scratch_stage_d, recovered there); this entry quotes no MFU number, the mention explains the 6N accounting",
       "arm": "ckpt_b0_sd_equalcompute.pt, 4824 steps x 262,144 tok, world 2, seed 42, mix data/mix_200m_8b.json, warmup 300 absolute, warmdown 0.1 and anneal_frac 0 as fractions of total",
       "competitor": "ckpt_b0_sd_looped.pt (--loop 4 7, 3815 steps)",
       "token_ratio": 1.264482,
