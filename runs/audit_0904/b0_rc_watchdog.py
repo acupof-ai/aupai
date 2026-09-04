@@ -79,19 +79,48 @@ def read_log(path, tail_bytes=200_000):
         return ""
 
 
-def verdict(log):
-    """(rc, why) from what the log SHOWS, or (None, why) when it shows nothing terminal."""
-    steps = STEP.findall(log)
-    if steps:
-        last, total = int(steps[-1][0]), int(steps[-1][1])
-        if last >= total:
-            return 0, f"log reached step {last}/{total}"
-    if re.search(r"\bsaved\b.*\.pt|run complete|training complete", log, re.I):
-        return 0, "log printed a completion marker"
+def verdict(log, ckpt_path=None):
+    """(rc, why) from what the log and the on-disk checkpoint SHOW, or (None, why) when they
+    show nothing terminal.
+
+    REACHING step N/N IS NOT COMPLETION (6e, 2026-09-04). After the last step the run still has
+    to write ckpt_<name>.pt, and a death inside that save leaves a log whose last line says
+    3815/3815 -- which the first version of this read as a clean exit. So rc 0 requires an
+    artifact, not a step count: either the final checkpoint exists with a size stable across two
+    polls (a save still in flight grows between them), or the log printed its own completion
+    marker. The step count alone now yields None, which the monitor reports as `vanished`.
+    """
     m = FATAL.search(log)
     if m:
         tail = log[max(0, m.start() - 200):m.start() + 400].strip().splitlines()
         return 1, f"log holds {m.group(0)!r}; context: {' | '.join(tail[-3:])[:300]}"
+    if re.search(r"run complete|training complete", log, re.I):
+        return 0, "the log printed its own completion marker"
+    steps = STEP.findall(log)
+    reached = bool(steps) and int(steps[-1][0]) >= int(steps[-1][1])
+    if reached and ckpt_path:
+        # SIZE STABLE ACROSS TWO POLLS, because a torch.save in flight grows. 15 s is far longer
+        # than the write takes for a 540 MB checkpoint and costs nothing here: the process is
+        # already gone, so nothing is waiting on this answer.
+        try:
+            a = os.path.getsize(ckpt_path)
+            time.sleep(15)
+            b = os.path.getsize(ckpt_path)
+        except OSError:
+            return None, (f"the log reached step {steps[-1][0]}/{steps[-1][1]} but "
+                          f"{os.path.basename(ckpt_path)} does not exist -- the run died in or "
+                          f"before its final save, which a step count cannot distinguish from a "
+                          f"clean finish. No .rc; 'vanished' is the correct verdict.")
+        if a == b and a > 0:
+            return 0, (f"log reached step {steps[-1][0]}/{steps[-1][1]} AND "
+                       f"{os.path.basename(ckpt_path)} is {a} B, stable across two polls 15 s apart")
+        return None, (f"the log reached step {steps[-1][0]}/{steps[-1][1]} but "
+                      f"{os.path.basename(ckpt_path)} changed size between polls ({a} -> {b}) or "
+                      f"is empty: the save was still in flight when the process vanished")
+    if reached:
+        return None, (f"the log reached step {steps[-1][0]}/{steps[-1][1]} but no checkpoint path "
+                      f"was given to check, and a step count alone cannot rule out a death inside "
+                      f"the final save")
     return None, ("the process is gone and the log shows neither completion nor a fatal error, "
                   "so the exit code is genuinely unknown -- no .rc is written and the monitor's "
                   "'vanished' verdict is correct")
@@ -118,7 +147,7 @@ def main():
                         f"by co-residency on a granted card, not a defect in the arm.\n")
         time.sleep(30)
 
-    rc, why = verdict(read_log(log_path))
+    rc, why = verdict(read_log(log_path), os.path.join(ROOT, f"ckpt_{name}.pt"))
     with open(note_path, "w", encoding="utf-8") as f:
         f.write(f"{time.strftime('%Y-%m-%dT%H:%M:%SZ', time.gmtime())} pid {pid} gone. "
                 f"rc={rc!r} because {why}\n"
