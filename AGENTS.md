@@ -262,20 +262,22 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
+Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 141 survive.
+
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 19 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §60 §66 §70 §83 §87 §92 §96 §106 §131 §139 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 79 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §74 §75 §76 §77 §78 §80 §81 §82 §84 §85 §88 §89 §90 §91 §93 §94 §95 §97 §98 §103 §108 §110 §112 §114 §120 §121 §122 §123 §125 §128 §129 §130 §132 §134 §135 §137 §140 §141 §142 §144 §145 §146 §147 §148 §149 §150 §151 §153 §158 §160 §163 §165 §167 §168 §169 §170 §171 §173 §174 |
-| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 5 | §4 §24 §43 §44 §47 |
-| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 9 | §7 §13 §25 §27 §51 §59 §101 §136 §166 |
-| State the vision before the number; outside it, label unmeasured, not absent | 12 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 §138 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 15 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 61 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 |
+| Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 3 | §4 §24 §44 |
+| Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 7 | §7 §13 §25 §51 §59 §136 §166 |
+| State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 32 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 §109 §111 §115 §117 §118 §124 §127 §133 §143 §152 §155 §156 §157 §159 §161 §164 §172 |
-| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 8 | §16 §22 §42 §58 §68 §102 §119 §162 |
-| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 4 | §15 §33 §126 §154 |
-| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 4 | §39 §41 §107 §113 |
+| Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §58 §68 §102 §119 |
+| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class | 2 | §15 §126 |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
 
-Full cases live in the shapes doc; new shapes land there first and this table follows.
+New shapes land in the incidents doc first and this table follows.
 
 ## Rule coverage
 
@@ -300,7 +302,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
-| Shared files | manual: announcing an edit happens in conversation, outside the repo |
+| Shared files | `shared_file_claim` |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
 | Card claims live where the job runs | manual: the claim files sit in the tree the job runs from and no check reads the pod's runs/claims from here; scripts/test_launch_claims.py asserts the launch path acquires and the monitor releases, card_claim.py --selftest asserts a shell pid is refused |

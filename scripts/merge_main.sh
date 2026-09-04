@@ -69,6 +69,20 @@ for _ in $(seq 1 120); do
         # it). Commit first.
         exit 1
       fi
+      # SHARED-FILE CLAIM RELEASE ON MERGE (T0, 2026-09-04). The claim that let the branch's
+      # shared-file commit pass lives in the branch worktree, not main (the non-merge commit's
+      # hook reads the tree it ran in). Now that the edit is merged the file is handed back:
+      # release the merging session's claims in the branch's worktree. A session that acquired
+      # a claim and merged a DIFFERENT branch still needs its claim, so scope by owner ($USER),
+      # and the branch may have no worktree (merged after --delete) -- then its claims are moot
+      # and the 6h TTL bounds anything left.
+      _wt=$(git -C "$MAIN" worktree list --porcelain 2>/dev/null \
+        | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,16)==b && w!="" {print w; exit}')
+      if [ -n "$_wt" ] && [ -f "$_wt/scripts/file_claim.py" ]; then
+        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all --owner "$USER" 2>/dev/null \
+          || echo "release-all failed")
+        echo "merge_main: shared-file claims on $1: $_rel" >&2
+      fi
       exit 0
     fi
     if [ -e "$MAIN/.git/MERGE_HEAD" ]; then

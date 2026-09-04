@@ -105,6 +105,9 @@ _CHECK_TIMEOUTS = {
     #
     # ~4x the measured wall, the same ratio every entry here uses. Not larger: the deadline still
     # has to catch a real hang, and a network call that takes 40s IS a hang worth reporting.
+    # Independently measured the same hour (tilerl): `pod 'echo ok'` is 2.8-4.7s for a
+    # BARE round trip, which is the floor under pod_stamp_is_main and the reason no local
+    # change can help it.
     "pod_stamp_is_main": 20,
     "snapshot_logs_say_so_at_the_tail": 40,
 }
@@ -267,6 +270,7 @@ _RULE_CHECKS = {
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
     "uv sync after dependency changes": "env_importable",
+    "Shared files": "shared_file_claim",
 }
 
 #: Rule bullets in AGENTS.md that no check can enforce, and why. The count is
@@ -285,7 +289,6 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
     "A PID is only meaningful in the namespace that read it.":
         "no artifact records which namespace a pid was read in -- the host and the "
@@ -1562,49 +1565,35 @@ def _agents_coverage_table(root):
 
 
 def check_shapes_table_covers_doc(root):
-    """Every § in the shapes doc appears exactly once in AGENTS.md's rule table, and every
-    row's count equals the §refs it lists.
+    """Every surviving incident § in gate_failure_incidents.md (model-project) and
+    infra_incidents.md (pod/infra) appears exactly once in AGENTS.md's rule table, and
+    every row's count equals the §refs it lists.
 
-    The table is a hand-maintained compression of docs/lessons/gate_failure_shapes.md and
-    nothing read it: three sessions added shapes on 2026-09-02 and the numbering collided
-    twice (b0 and I both wrote §62, 44 and I both wrote §63), each caught only by a merge
-    conflict. A conflict catches a collision on the same LINE; it does not catch a shape
-    that never reaches the table, or a count that says 14 next to fifteen refs.
+    2026-09-04 restructure: gate_failure_shapes.md became the rules doc (no per-incident
+    headings); incidents split into two layer files with '### §N' headings. 33 closed
+    incidents were deleted, so the surviving set is intentionally non-contiguous. The
+    gap check (1..max contiguous) was dropped. The duplicate check (within and across
+    files) and the table-vs-doc comparison stand.
 
-    Same reason as agents_rules_covered one section up, and the same ceiling: this proves
-    a shape is REFERENCED, not that it sits under the right rule. Which rule a shape
-    belongs to is a judgement only a person re-reading the pair can make.
-
-    A heading number written twice is also FAIL: two sessions appending shapes in
-    parallel collided on §62, §63, §69, and §70, and a merge conflict only catches a
-    collision on the same line, not the same NUMBER.
-
-    §65's own subject, applied to §65: the table and the doc must agree, and until this
-    check existed nothing verified it."""
-    p = os.path.join(root, "docs", "lessons", "gate_failure_shapes.md")
-    if not os.path.exists(p):
-        return FAIL, "docs/lessons/gate_failure_shapes.md missing"
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", open(p, encoding="utf-8").read(), re.M)]
-    if not nums:
-        return FAIL, "no '## N.' shape headings found -- the doc's heading style changed"
-    dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
-    if dupes:
-        return FAIL, "shape heading number(s) used more than once: " + ", ".join(
-            f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
-    doc = set(nums)
-    # A GAP is invisible to every assertion above and below. Duplicates are caught, coverage
-    # is caught, arithmetic is caught -- but a SKIPPED number passes all three, because a
-    # number nobody wrote is in neither the doc nor the table and the two therefore agree.
-    # tilerl renumbered to 156/157 on 2026-09-03 and left 155 empty; that read as green
-    # (6e). The doc is a numbered sequence, so 1..max must be contiguous: a hole means a
-    # shape was written and lost, or a renumber dropped one, and the reader who follows a
-    # §ref chain finds nothing there.
-    gaps = [i for i in range(1, max(nums) + 1) if i not in doc]
-    if gaps:
-        return FAIL, (f"shape numbering has {len(gaps)} gap(s) in 1..{max(nums)}: "
-                      + ", ".join(f"§{g}" for g in gaps[:12])
-                      + " -- a skipped number is a shape that was written and lost, or a "
-                        "renumber that dropped one; renumber to close it")
+    Same ceiling as before: this proves an incident is REFERENCED, not that it sits under
+    the right rule. Which rule an incident belongs to is a judgement only a person
+    re-reading the pair can make."""
+    doc = set()
+    for fname in ("gate_failure_incidents.md", "infra_incidents.md"):
+        p = os.path.join(root, "docs", "lessons", fname)
+        if not os.path.exists(p):
+            return FAIL, f"docs/lessons/{fname} missing"
+        nums = [int(m) for m in re.findall(r"^### §(\d+)", open(p, encoding="utf-8").read(), re.M)]
+        if not nums:
+            return FAIL, f"no '### §N' incident headings in {fname} -- the doc's heading style changed"
+        dupes = sorted({n for n in nums if nums.count(n) > 1}, key=int)
+        if dupes:
+            return FAIL, f"incident heading number(s) used more than once in {fname}: " + ", ".join(
+                f"§{d}" for d in dupes) + " -- two sessions wrote the same number; renumber the later one"
+        overlap = doc & set(nums)
+        if overlap:
+            return FAIL, f"incident §s in both layer files: {sorted(overlap)} -- an incident belongs to one layer"
+        doc |= set(nums)
 
     a = os.path.join(root, "AGENTS.md")
     if not os.path.exists(a):
@@ -1638,7 +1627,7 @@ def check_shapes_table_covers_doc(root):
         problems.append(f"count disagrees with refs: {miscount[:3]}")
     if problems:
         return FAIL, "; ".join(problems)
-    return PASS, (f"{len(doc)} shapes (max §{max(doc)}) each referenced exactly once across "
+    return PASS, (f"{len(doc)} incidents (max §{max(doc)}) each referenced exactly once across "
                   f"{len(rows)} rules; every row's count matches")
 
 
@@ -1657,7 +1646,7 @@ def _broken_shapes_table_covers_doc():
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "AGENTS.md")
     if not os.path.exists(src) or not os.path.exists(
-            os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")):
+            os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")):
         return None
     text = open(src, encoding="utf-8").read()
     # Drop the LAST §ref of the first rule row that has more than one, so the row keeps a
@@ -1676,62 +1665,38 @@ def _broken_shapes_table_covers_doc():
 
 
 def _broken_shapes_table_doc_grew():
-    """The REAL docs with a new shape appended and the table left alone -- exactly what
+    """The REAL docs with a new incident appended and the table left alone -- exactly what
     happened twice on 2026-09-02, and what a merge conflict does not catch."""
     import shutil as _sh
 
     d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")
     if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
         return None
     text = open(src, encoding="utf-8").read()
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
+    nums = [int(m) for m in re.findall(r"^### §(\d+)", text, re.M)]
     if not nums:
-        raise SelftestSkip("no shape headings to extend; update _broken_shapes_table_doc_grew")
+        raise SelftestSkip("no incident headings to extend; update _broken_shapes_table_doc_grew")
+    # Use a number above every § in BOTH layer files so the overlap check does not fire.
+    infra_p = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_p):
+        nums += [int(m) for m in re.findall(r"^### §(\d+)", open(infra_p, encoding="utf-8").read(), re.M)]
+    new_n = max(nums) + 1
     # _tmp_repo_shaped SYMLINKS docs/, so writing through that path would append this
-    # fixture to the REAL shapes doc. Replace the link with a real directory holding a
+    # fixture to the REAL incidents doc. Replace the link with a real directory holding a
     # real copy of the one file this world mutates.
     link = os.path.join(d, "docs")
     if os.path.islink(link):
         os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_incidents.md")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
-        text + f"\n\n## {max(nums) + 1}. a shape added without touching the table (fixture)\n")
-    _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
-    return d
-
-
-def _broken_shapes_table_gap():
-    """The REAL doc with one section RENUMBERED past its neighbour, leaving a hole.
-
-    tilerl's near-miss (6e, 2026-09-03): renumbered to 156/157 and left 155 empty, and the
-    check was green. It has to be a renumber and not a deletion, because a deletion also
-    removes the §ref's target from coverage and would fail the coverage half instead -- the
-    world would then prove nothing about the gap assertion. Renumbering the LAST heading to
-    max+2 keeps every other property intact: no duplicate, and the table's refs still resolve
-    to a heading that exists (the old number's row is now dangling, which is a second FAIL
-    reason, so the assertion below reads the message rather than only the state).
-    """
-    import shutil as _sh
-
-    d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
-    if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
-        return None
-    text = open(src, encoding="utf-8").read()
-    nums = [int(m) for m in re.findall(r"^## (\d+)\.", text, re.M)]
-    if not nums:
-        raise SelftestSkip("no shape headings; update _broken_shapes_table_gap")
-    top = max(nums)
-    # Same symlink hazard as the neighbours: docs/ is a link into the real repo.
-    link = os.path.join(d, "docs")
-    if os.path.islink(link):
-        os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    open(dst, "w", encoding="utf-8").write(
-        re.sub(rf"^## {top}\.", f"## {top + 2}.", text, count=1, flags=re.M))
+        text + f"\n\n### §{new_n} (2026-09-04, R1) an incident added without touching the table (fixture)\nopen: none.\n")
+    # The check reads both layer files; copy the unmutated one so the FAIL is about the
+    # new incident, not a missing file.
+    infra_src = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_src):
+        _sh.copy2(infra_src, os.path.join(d, "docs", "lessons", "infra_incidents.md"))
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -1744,21 +1709,24 @@ def _broken_shapes_table_duplicate_heading():
     import shutil as _sh
 
     d = _tmp_repo_shaped()
-    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_shapes.md")
+    src = os.path.join(ROOT, "docs", "lessons", "gate_failure_incidents.md")
     if not os.path.exists(src) or not os.path.exists(os.path.join(ROOT, "AGENTS.md")):
         return None
     text = open(src, encoding="utf-8").read()
-    nums = re.findall(r"^## (\d+)\.", text, re.M)
+    nums = re.findall(r"^### §(\d+)", text, re.M)
     if not nums:
-        raise SelftestSkip("no shape headings to duplicate; update _broken_shapes_table_duplicate_heading")
+        raise SelftestSkip("no incident headings to duplicate; update _broken_shapes_table_duplicate_heading")
     # Same symlink hazard as _broken_shapes_table_doc_grew: docs/ is a link into the repo.
     link = os.path.join(d, "docs")
     if os.path.islink(link):
         os.unlink(link)
-    dst = os.path.join(d, "docs", "lessons", "gate_failure_shapes.md")
+    dst = os.path.join(d, "docs", "lessons", "gate_failure_incidents.md")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     open(dst, "w", encoding="utf-8").write(
-        text + f"\n\n## {nums[-1]}. a duplicate heading number (fixture)\n")
+        text + f"\n\n### §{nums[-1]} (2026-09-04, R1) a duplicate heading number (fixture)\nopen: none.\n")
+    infra_src = os.path.join(ROOT, "docs", "lessons", "infra_incidents.md")
+    if os.path.exists(infra_src):
+        _sh.copy2(infra_src, os.path.join(d, "docs", "lessons", "infra_incidents.md"))
     _sh.copy2(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -2130,6 +2098,66 @@ def _broken_curl_ipv4():
     open(os.path.join(d, "datagen", "fetch_corpus.py"), "w", encoding="utf-8").write(
         text.replace('"-4",', "", 1)
     )
+    return d
+
+
+def check_refusal_precedes_push(root):
+    """Every `refusing:` in pod_push.sh must be reachable BEFORE the first byte ships.
+
+    The rule is "only a refusing: line means nothing shipped". stamp_sync used to test
+    main-reachability at the END of --all -- after every file and the manifest had
+    landed -- and refuse with `return 1`. The line printed, the push had already
+    happened, and on the `partial` path the refusal was unreachable entirely (that
+    branch cannot return nonzero, and `stamp_sync partial` is the script's last line,
+    so nothing would have propagated it anyway).
+
+    Test: the main-reachability decision is made before the first push_one call."""
+    p = os.path.join(root, "scripts", "pod_push.sh")
+    if not os.path.exists(p):
+        return FAIL, "scripts/pod_push.sh is missing"
+    body = open(p, encoding="utf-8").read()
+    if "resolve_stamp_sha" not in body:
+        return FAIL, ("scripts/pod_push.sh has no resolve_stamp_sha: the main-reachability "
+                      "refusal is back inside stamp_sync, which runs after the push")
+    call = body.find("STAMP_SHA=$(resolve_stamp_sha")
+    if call < 0:
+        return FAIL, "resolve_stamp_sha is defined but never called"
+    first_push = body.find("push_one", body.find("if [ $ALL -eq 1 ]"))
+    if first_push < 0:
+        return FAIL, "no push_one call inside the --all block to order against"
+    if call > first_push:
+        return FAIL, ("resolve_stamp_sha runs AFTER the first push_one, so its refusal "
+                      "names a condition that no longer prevents anything")
+    if re.search(r"stamp_sync\(\)[\s\S]{0,600}?merge-base", body):
+        return FAIL, ("stamp_sync still runs the merge-base test itself; a second copy "
+                      "can drift from the hoisted one and refuse too late")
+    return PASS, "the main-reachability refusal is resolved before the first push"
+
+
+def _broken_refusal_precedes_push():
+    """The REAL pod_push.sh with the resolve call MOVED to after the pushes.
+
+    Not deleted -- moved. Deleting it trips the "defined but never called" branch,
+    which is the trivial half; the branch that matters is the ORDER test, and a world
+    that never reaches it leaves it unverified. This world keeps every line and changes
+    only where the call sits, so the check must fail on ordering or not at all."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "pod_push.sh")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    call = "  STAMP_SHA=$(resolve_stamp_sha)\n"
+    if "resolve_stamp_sha" not in text or call not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    # Lift the call out and re-insert it immediately before the stamp, i.e. after every
+    # push_one and after the manifest -- exactly where the defect had it.
+    broken = text.replace(call, "")
+    anchor = '  stamp_sync all "$STAMP_SHA"'
+    if anchor not in broken:
+        return None
+    broken = broken.replace(anchor, call + anchor)
+    open(os.path.join(d, "scripts", "pod_push.sh"), "w", encoding="utf-8").write(broken)
     return d
 
 
@@ -3880,6 +3908,104 @@ def _broken_spawned_scripts_importable():
         'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
     open(pre, "w").write(body)
     return d
+
+
+def check_shared_file_claim(root):
+    """Editing a listed shared file needs a live claim (AGENTS.md "Shared files", T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature 2026-08-30, `git checkout` erased
+    a device gate 2026-08-31, `git add -A` swept five sessions into d535674) show a spoken
+    announce is no record. A claim is a file under runs/claims/files/<path>.json; the
+    pre-commit hook refuses a staged shared-file commit with no live claim. This check is the
+    `harness check` view of the same gate: shared files staged with no claim would FAIL.
+    Runs on staged content, so it SKIPs with nothing staged (the hook is the enforcer).
+
+    A MERGE IS NOT AN EDIT, and this is measured, not defensive. During a merge `git diff --cached`
+    lists every incoming file, so any session merging main after someone else changed AGENTS.md sees
+    its own commit refused for a change it did not write -- and the merge cannot be split, because
+    git refuses a partial commit during a merge. Measured 2026-09-04, minutes after the check landed:
+    `de` merging main was refused naming AGENTS.md, whose only change came from 38af3d47 on another
+    branch; every worktree merging main was blocked the same way, which is a gate that stops the work
+    it was written to protect.
+
+    THE COMPARISON IS AGAINST MERGE_HEAD, NOT THE MERGE BASE, and the first version of this fix got
+    it backwards. Measured on this merge: `--cached <merge-base>` returns 18 paths, main's incoming
+    changes, AGENTS.md among them -- exactly the wrong set, and it still FAILed. `--cached
+    <MERGE_HEAD>` returns 3, this branch's own files. MERGE_HEAD is the side being merged IN, so
+    diffing the index against it leaves what THIS branch contributes, which is the subject the rule
+    is about. A shared file this branch really did edit is still caught, because its change is in
+    that diff.
+    """
+    import subprocess as sp
+    shared = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
+    merge_head = sp.run(["git", "-C", root, "rev-parse", "-q", "--verify", "MERGE_HEAD"],
+                        capture_output=True, text=True).stdout.strip()
+    args = ["git", "-C", root, "diff", "--cached", "--name-only"]
+    during_merge = ""
+    if merge_head:
+        args.append(merge_head)
+        during_merge = (f" (merge in progress; this branch's own paths, against MERGE_HEAD "
+                        f"{merge_head[:8]})")
+
+    staged = sp.run(args, capture_output=True, text=True).stdout.split()
+    touched = [p for p in staged if p in shared]
+    if not touched:
+        return SKIP, ("no staged shared-file edit; the pre-commit hook enforces staged claims"
+                      + during_merge)
+    claims_dir = os.path.join(root, "runs", "claims", "files")
+    missing = []
+    for p in touched:
+        cp = os.path.join(claims_dir, p.replace("/", "__") + ".json")
+        live = False
+        if os.path.exists(cp):
+            try:
+                rec = json.load(open(cp, encoding="utf-8"))
+                live = (time.time() - rec.get("time", 0)) <= 6 * 3600
+            except (OSError, ValueError):
+                live = False
+        if not live:
+            missing.append(p)
+    if missing:
+        return FAIL, (f"shared-file edit(s) without a live claim: {', '.join(missing)} -- "
+                      f"claim first via `harness claim-file acquire --path <file>`{during_merge}")
+    return PASS, f"{len(touched)} shared-file edit(s) claimed{during_merge}"
+
+
+def _broken_shared_file_claim():
+    """A staged train.py edit with no claim must FAIL; with a claim it must PASS."""
+    import tempfile
+    import subprocess as sp
+    tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
+    try:
+        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
+        sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
+        # world A: stage train.py with no claim -> FAIL
+        with open(os.path.join(tmp, "train.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "train.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed train.py edit must FAIL, got {r[0]}: {r[1]}"
+        # world B: add a live claim -> PASS
+        claims_dir = os.path.join(tmp, "runs", "claims", "files")
+        os.makedirs(claims_dir, exist_ok=True)
+        with open(os.path.join(claims_dir, "train.py.json"), "w") as fh:
+            json.dump({"path": "train.py", "owner": "t", "time": int(time.time())}, fh)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == PASS, f"claimed train.py edit must PASS, got {r[0]}: {r[1]}"
+        # world C: a claimed non-shared file is not guarded (train.py still claimed, add sft_math.py without claim -> FAIL)
+        sp.run(["git", "-C", tmp, "rm", "-q", "--cached", "--ignore-unmatch", "train.py"], check=True)
+        with open(os.path.join(tmp, "sft_math.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "sft_math.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed sft_math.py edit must FAIL, got {r[0]}: {r[1]}"
+        return tmp
+    except Exception:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 
 def check_no_oversized_blob(root):
@@ -8127,6 +8253,52 @@ def _friction_rows(path=None):
     return out
 
 
+def check_friction_minutes_required(root):
+    """near_miss and process_failure friction rows must carry minutes_lost.
+
+    These two kinds are the ones where the cost is the whole point: a near-miss with no
+    minutes is a story, not a data point, and a process failure with no minutes cannot be
+    ranked against the other causes. 2026-09-04: 3/3 rows of these kinds lacked
+    minutes_lost, and the friction summary printed "minutes not reported" for the
+    combined cause -- the second-largest unfixed friction item, invisible to ranking.
+
+    Baseline 3 (b0's rows, 2026-09-03/04): the check FAILs if a FOURTH row is added
+    without minutes_lost. When b0 fills in the historical minutes, lower the baseline."""
+    p = os.path.join(root, "runs", "friction.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/friction.jsonl"
+    BASELINE = 3
+    bad = []
+    for i, ln in enumerate(open(p, encoding="utf-8"), 1):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if r.get("kind") in ("near_miss", "process_failure") and "minutes_lost" not in r:
+            who = r.get("who", "?")
+            what = r.get("what", "?")[:50]
+            bad.append(f"line {i} ({who}: {what})")
+    if len(bad) > BASELINE:
+        return FAIL, f"{len(bad)} near_miss/process_failure rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
+    return PASS, f"{len(bad)}/{BASELINE} baseline rows missing minutes_lost; no new violations"
+
+
+def _broken_friction_minutes_required():
+    """A temp repo whose friction.jsonl has 4 near_miss rows without minutes_lost
+    (baseline is 3, so the 4th is a new violation)."""
+    d = _tmp_repo_shaped()
+    fpath = os.path.join(d, "runs", "friction.jsonl")
+    if os.path.islink(fpath):
+        os.remove(fpath)  # symlink to the real file; replace with a temp-local copy
+    with open(fpath, "w", encoding="utf-8") as fh:
+        for i in range(4):
+            fh.write(json.dumps({"kind": "near_miss", "who": "x", "what": f"fixture {i}"}) + "\n")
+    return d
+
+
 def cmd_friction(argv):
     """The one ledger of things that blocked someone, and the counts by cause.
 
@@ -10335,6 +10507,13 @@ CHECKS = [
         _broken_mix,
     ),
     (
+        "shared_file_claim",
+        "editing a listed shared file (train.py/sft*.py/AGENTS.md) needs a live claim",
+        "three unannounced shared-file edits cost: a push rolled back 3b's build_corpus feature, a checkout erased a device gate, git add -A swept five sessions into d535674",
+        check_shared_file_claim,
+        _broken_shared_file_claim,
+    ),
+    (
         "launch_line_vs_oom_facts",
         "no stop-window launch line or running experiments row matches a recorded OOM config on (dim, layers, batch, accum, seq)",
         "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
@@ -10740,7 +10919,7 @@ CHECKS = [
     ),
     (
         "shapes_table_covers_doc",
-        "every shape in the shapes doc is referenced exactly once in AGENTS.md's rule table",
+        "every incident in the incidents doc is referenced exactly once in AGENTS.md's rule table",
         "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
         check_shapes_table_covers_doc,
         _broken_shapes_table_covers_doc,
@@ -10758,6 +10937,13 @@ CHECKS = [
         "the pod's IPv6 egress is broken; without -4 the failure reads as 'host unreachable' and produced a whole reachability matrix of false negatives (2026-08-30)",
         check_curl_ipv4,
         _broken_curl_ipv4,
+    ),
+    (
+        "refusal_precedes_push",
+        "pod_push's main-reachability refusal is decided before the first file ships",
+        "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
+        check_refusal_precedes_push,
+        _broken_refusal_precedes_push,
     ),
     (
         "running_sh_override_verified",
@@ -10851,6 +11037,13 @@ CHECKS = [
         _broken_no_shared_stash,
     ),
     (
+        "friction_minutes_required",
+        "near_miss and process_failure friction rows carry minutes_lost",
+        "3/3 rows of these kinds lacked minutes_lost, making the second-largest unfixed friction cause invisible to ranking",
+        check_friction_minutes_required,
+        _broken_friction_minutes_required,
+    ),
+    (
         "no_conflict_markers",
         "no tracked doc or source holds a merge/stash conflict marker",
         "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
@@ -10931,8 +11124,10 @@ EVIDENCE = {
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
+    "refusal_precedes_push": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
@@ -12439,6 +12634,19 @@ def _selftest_flagless_test_is_gated():
         f"a test_*.py with no `if __name__` runs nothing and must not be demanded: {ev2[:200]}")
     print("  selftests_are_gated: a flagless runnable test must be gated; an inert test_*.py "
           "is not demanded")
+    # The odd-quote arm (§74): a comment inside the map with an odd number of double quotes
+    # re-pairs every quote below it and silently drops entries. The cross-validation must
+    # refuse rather than report a false FAIL.
+    mutated = text.replace("SELFTEST_FILES = {",
+                           'SELFTEST_FILES = {\n    # odd quote " here', 1)
+    if mutated != text:
+        open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(mutated)
+        st3, ev3 = check_selftests_are_gated(d)
+        assert st3 == FAIL and "invisible to this check" in ev3, (
+            f"an odd quote in a map comment must FAIL with the cross-validation message; "
+            f"got {st3}: {ev3[:200]}")
+        print("  selftests_are_gated: an odd quote in a map comment is refused, not reported "
+              "as a false FAIL")
 
 
 def _selftest_repo_auth_mirror():
@@ -13324,8 +13532,8 @@ def _demo(only=None):
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
 
-    # shapes_table_covers_doc has two halves its registered world does not exercise: a
-    # shape that reaches the doc but not the table, and a heading number written twice.
+    # shapes_table_covers_doc has two halves its registered world does not exercise: an
+    # incident that reaches the doc but not the table, and a heading number written twice.
     # _broken_shapes_table_doc_grew existed but nothing ran it -- a broken world nobody
     # runs is the §71 shape itself.
     for _w, _label in ((_broken_shapes_table_doc_grew, "doc grew, table stood still"),
@@ -13338,22 +13546,6 @@ def _demo(only=None):
                     untested.append(f"shapes_table_covers_doc reported {_st} on {_label} ({_why[:60]})")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
-
-    # The gap world asserts the REASON, not only the state. A renumber leaves a hole AND a
-    # dangling table ref, so the check would FAIL on this world even with no gap assertion at
-    # all -- reading only the state would certify a check that cannot see gaps (6e's near-miss
-    # is precisely a world where the other halves stayed green).
-    _d = _broken_shapes_table_gap()
-    if _d:
-        try:
-            _st, _why = check_shapes_table_covers_doc(_d)
-            if _st != FAIL:
-                untested.append(f"shapes_table_covers_doc reported {_st} on a numbering gap")
-            elif "gap" not in _why:
-                untested.append("shapes_table_covers_doc FAILs on a numbering gap for the wrong "
-                                f"reason -- it does not name the gap: {_why[:70]}")
-        finally:
-            shutil.rmtree(_d, ignore_errors=True)
 
     # score_matrix_present gained two branches on 2026-09-04 and its registered world exercises
     # neither. Both are worlds where the check could SILENTLY PASS, which is the shape it was just
@@ -14661,6 +14853,39 @@ def cmd_free_card(argv):
                   file=sys.stderr)
             return 1
         time.sleep(min(30, max(5, a.wait / 20)))
+
+
+def cmd_claim_file(argv):
+    """`harness claim-file {acquire,release,status} --path <f>` -- the Shared-files rule (T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature, a checkout erased a device gate,
+    `git add -A` swept five sessions' work) show a conversation announcement is not a record.
+    A claim makes the announce a file under runs/claims/files/ and the pre-commit hook refuses
+    a staged shared-file commit with no live claim. Delegates to scripts/file_claim.py."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import file_claim
+    c = argv[0] if argv else "status"
+    if c == "acquire":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        owner = argv[argv.index("--owner") + 1] if "--owner" in argv else None
+        if not path:
+            print("claim-file acquire needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.acquire(path, owner)
+        print(msg)
+        return 0 if ok else 1
+    if c == "release":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        if not path:
+            print("claim-file release needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.release(path)
+        print(msg)
+        return 0 if ok else 1
+    for p, r in file_claim.claims().items():
+        print(f"{p:16s} owner={r.get('owner')} t={time.strftime('%H:%M', time.gmtime(r.get('time')))} UTC")
+    return 0
 
 
 def _wait_for_startup(log_path, timeout):
@@ -15979,11 +16204,12 @@ def cmd_milestone(argv):
 
 
 def cmd_install_hooks(rest):
-    """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit}
-    to scripts/hooks/pre-commit. pre-commit covers direct commits; pre-merge-commit
-    (git >= 2.24) covers non-fast-forward merges, which otherwise run no hook at all
-    (2026-08-31: a bad fact entered main through a clean merge). Fast-forward merges
-    carry already-hooked commits, so they are covered by construction.
+    """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit,
+    post-merge,post-commit,commit-msg} to scripts/hooks/. pre-commit covers direct
+    commits; pre-merge-commit (git >= 2.24) covers non-fast-forward merges, which
+    otherwise run no hook at all (2026-08-31: a bad fact entered main through a clean
+    merge). post-merge covers fast-forward merges, which also run no hook (2026-09-03
+    friction: a wip commit landed on main unchecked via fast-forward, ~10 min).
     The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
     # The common dir: in a linked worktree .git is a FILE, and the common dir's
     # hooks/ is what git consults -- installing there covers every worktree once.
@@ -16006,16 +16232,14 @@ def cmd_install_hooks(rest):
     # post-commit has its OWN source: it is not the same script under another name.
     # It repairs the shared index that pre-commit's manifest `git add` leaves stale
     # under `git commit -- <paths>` -- see scripts/hooks/post-commit.
-    for name in ("pre-commit", "pre-merge-commit", "post-commit", "commit-msg"):
+    for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-commit", "commit-msg"):
         # commit-msg is its own file, not the pre-commit script under another name: it is the
         # only hook git hands THIS commit's message (argv[1]). pre-commit cannot read it --
         # .git/COMMIT_EDITMSG there still holds the PREVIOUS commit's message, measured four ways
         # (de-33, 2026-09-03) -- so the ledger guard grants its exception by env var in
         # pre-commit and requires the reason here, where the message is real.
-        if name == "post-commit":
-            src = os.path.join(main_root, "scripts", "hooks", "post-commit")
-        elif name == "commit-msg":
-            src = os.path.join(main_root, "scripts", "hooks", "commit-msg")
+        if name in ("post-commit", "commit-msg", "post-merge"):
+            src = os.path.join(main_root, "scripts", "hooks", name)
         else:
             src = hook_src
         if not os.path.exists(src):
@@ -16082,6 +16306,8 @@ def main():
         return cmd_milestone(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "free-card":
         return cmd_free_card(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "claim-file":
+        return cmd_claim_file(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
