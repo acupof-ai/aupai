@@ -3,12 +3,12 @@
   "host": "iv-yeozpb5g5cbw80bls64e",
   "mix": null,
   "real_kernel": true,
-  "recorded": "2026-09-03 03:16",
+  "recorded": "2026-09-04 03:14",
   "result": "pass",
   "shape": {
-   "d": 1024,
-   "ffn_hidden": 3072,
-   "heads": 8,
+   "d": 768,
+   "ffn_hidden": 2304,
+   "heads": 6,
    "layers": 12
   },
   "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
@@ -17,14 +17,14 @@
   "host": "iv-yeozpb5g5cbw80bls64e",
   "mix": "data/mix_200m_8b.json",
   "real_kernel": true,
-  "recorded": "2026-09-03 03:49",
+  "recorded": "2026-09-04 03:10",
   "result": "pass",
   "shape": {
-   "d": 1024,
-   "ffn_hidden": 3072,
-   "heads": 8,
+   "d": 768,
+   "ffn_hidden": 2304,
+   "heads": 6,
    "layers": 12
   },
-  "test_sha256": "217fdf6acbed17de688f83eb8891b7b28d19a054685d68a0a8348f91f182f2a8"
+  "test_sha256": "97b28519d0516f9b3365839f4afbbc09730e9d7d6bb3b5dfa26fdc73a3f6e008"
  }
 }
