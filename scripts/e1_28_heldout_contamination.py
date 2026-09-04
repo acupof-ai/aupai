@@ -121,13 +121,17 @@ def _scan_shard(path):
     """
     nl = nb = 0
     a_m, q_m = set(), set()
-    with open(path, encoding="utf-8", errors="replace") as fh:
-        for ln in fh:
+    # BYTES, so open in binary and decode per line. `len(ln)` on a text-mode line counts CHARACTERS,
+    # and the first parallel run printed textbook_30b as "3.14 GB" against 8.12 GB on disk (ratio 2.59)
+    # and chatml as 0.09 against 0.171 -- every Chinese domain understated by up to 3x, which would
+    # have gone into the fact as the corpus size the scan covered.
+    with open(path, "rb") as fh:
+        for raw in fh:
             nl += 1
-            nb += len(ln)
+            nb += len(raw)
             try:
-                obj = json.loads(ln)
-            except json.JSONDecodeError:
+                obj = json.loads(raw)
+            except (json.JSONDecodeError, UnicodeDecodeError):
                 continue
             text = obj.get("content") or obj.get("text") or ""
             if not text:
@@ -238,8 +242,12 @@ def main():
         per_domain[dom] = len(a_hit) - before
         total_lines += nl
         total_bytes += nb
+        # nb against the directory's real size, because the scan's own byte count is the only evidence
+        # that it read the whole domain: a shard that failed to open contributes 0 silently.
+        on_disk = sum(os.path.getsize(s) for s in shards)
+        gap = "" if not on_disk else f"  {100 * nb / on_disk:.1f}% of the {on_disk / 1e9:.2f} GB shards"
         print(f"  {dom:22s} {nb / 1e9:6.2f} GB {nl:>10,} lines  "
-              f"+{per_domain[dom]} new answer-hit item(s)  (running {len(a_hit)})", flush=True)
+              f"+{per_domain[dom]} new answer-hit item(s)  (running {len(a_hit)}){gap}", flush=True)
         done.append(dom)
         with open(prog_path, "w", encoding="utf-8") as fh:
             json.dump({"fingerprint": fp, "n": N, "domains_done": done,
@@ -358,6 +366,18 @@ def selftest():
         _A_KEYS = frozenset()
         if _scan_shard(paths[0])[2]:
             print("  FAIL a shard matched against an EMPTY key set; membership is not being tested")
+            bad += 1
+        # BYTES, NOT CHARACTERS. The first parallel run printed textbook_30b as 3.14 GB against 8.12 GB
+        # on disk because `len(ln)` in text mode counts characters; every Chinese domain was understated
+        # up to 3x and that number was headed for the fact as "the corpus this scan covered".
+        zp = os.path.join(d, "zh.jsonl")
+        with open(zp, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"content": "模型记住了答案"}, ensure_ascii=False) + "\n")
+        n_bytes = _scan_shard(zp)[1]
+        on_disk = os.path.getsize(zp)
+        if n_bytes != on_disk:
+            print(f"  FAIL counted {n_bytes} but the shard is {on_disk} bytes on disk; the byte "
+                  f"column is counting characters")
             bad += 1
     print(f"e1_28 selftest: {'OK' if not bad else f'{bad} FAILURE(S)'}")
     return 1 if bad else 0
