@@ -139,3 +139,16 @@ dense embedding backward 40.7 ms, index_add 91.9, sort+segment 98.3; a free scat
 0.841. Ruling: the arms relaunch with `--mem_layers 6`. The 0.85 gate is unchanged. M1's stop at
 0.78 stands as the three-layer result. The table dtype paragraph above is superseded by
 amendments 7-9 (bf16 table, table-owned fp32 master, 14 B/param steady, 16 at the in-step peak).
+
+**The diagnostics block is not a cost and gating it would be a regression.** The `nobk` cell
+(`runs/mem_nobk_0905.jsonl`) ran M1 with the `torch.is_grad_enabled()` block at `model.py:538`
+stripped — the `index_put` over the 1,048,576-element bool buffer plus both `bincount`s — and
+the step got **52 ms slower**, not faster: forward -2.8 ms (noise, against a predicted -38),
+backward +57.7, ratio 0.770 against m1's 0.790. The hypothesis it was written to test was a
+graph break splitting the backward; a break would move the step the other way, and
+`dynamo.explain` reports graphs=1 breaks=0 ops=36 with the block live. Mechanism, offered as a
+hypothesis rather than a measurement: the block reads `flat`, `sel`, `i0` and `i1` under
+`no_grad`, keeping them resident across the region, and without it backward recomputes what it
+used to find live. Two consequences that are measurements: the ~12 ms/layer of forward the fit
+leaves unexplained is not the bookkeeping, and the step-gate held in reserve as b0's fix is
+closed — gating that block makes the arm slower.
