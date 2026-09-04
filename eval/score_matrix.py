@@ -213,7 +213,7 @@ def read_cfg(ckpt_path):
     return ck.get("cfg", {}), ck.get("vocab_id")
 
 
-def metric_domain_loss(model, tok, seq, device, mix_path):
+def metric_domain_loss(model, tok, seq, device, mix_path, cu_path="cu_none"):
     """Per-domain loss on the rows train.py actually held out.
 
     Was the head of each domain's alphabetically-first shard, which stopped being val
@@ -241,7 +241,10 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
         # is unaffected -- domain_loss_seqs keeps the flat reduction="sum" as its return
         # value and adds the rows beside it (verified: the rescore reproduced all 9 domains
         # and the mean 1.9443 to the digit).
-        loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True)
+        # cu_path REACHES THE ROWS. E1: bfa1a846 labelled domain_loss.py's CLI and left this
+        # call taking the cu_none DEFAULT, so all 60 published rows were scored without the
+        # document mask while training used doc_cu_seqlens.
+        loss, ntok, per = domain_loss_seqs(model, rows, device, per_row=True, cu_path=cu_path)
         if loss is None:
             skipped.append(name)
             continue
@@ -1010,6 +1013,22 @@ def selftest():
         write_records(p6, [{"ckpt": "w.pt", "v": 1}])
         rows = [json.loads(l) for l in open(p6, encoding="utf-8")]  # noqa: SIM115
         assert len(rows) == 3, f"(ckpt, profile) pairs were treated as duplicates: {rows}"
+        # THE #cu SUFFIX IS WHAT KEEPS A doc_cu ROW FROM EATING ITS cu_none PAIR. Asserted on
+        # write_records, the thing that actually folds: two rows differing ONLY by the suffix must
+        # both survive, and two rows of the same name must not (E5 -- 0 of 60 published rows carry
+        # it, so a doc_cu re-score would have replaced the row it was meant to be compared with).
+        p7 = os.path.join(d, "m7.jsonl")
+        write_records(p7, [{"ckpt": "n2.pt", "cu_path": "cu_none", "v": 1}])
+        write_records(p7, [{"ckpt": "n2.pt#cu", "cu_path": "doc_cu", "v": 2}])
+        rows = [json.loads(l) for l in open(p7, encoding="utf-8")]  # noqa: SIM115
+        assert len(rows) == 2, f"the doc_cu row replaced the cu_none row instead of joining it: {rows}"
+        assert {r["cu_path"] for r in rows} == {"cu_none", "doc_cu"}, rows
+        # And the suffix must come from cu_path, not be typed by a caller: score() builds it.
+        import inspect as _inspect
+        _src = _inspect.getsource(score)
+        assert 'ckpt_name + ("#cu" if cu_path == "doc_cu" else "")' in _src, \
+            "score() no longer derives the row name from cu_path; a hand-typed suffix drifts"
+        assert '"cu_path": cu_path' in _src, "score() no longer records cu_path as a field"
         # concurrent writers: every record must survive. Without flock, the later
         # writer reads stale content and overwrites the earlier's record — both
         # print "wrote N record(s)", both exit 0, and a record vanishes silently.
@@ -1231,7 +1250,8 @@ def _mix_for(ckpt_path, fallback, explicit=False):
     return p
 
 
-def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full"):
+def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="full",
+          cu_path="cu_none"):
     ckpt_name = os.path.basename(ckpt_path)
     cfg, vocab_id = read_cfg(ckpt_path)
     kind = classify(cfg, ckpt_name)
@@ -1258,9 +1278,21 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
     # type; the profile's whole purpose is that the same command works on base and sft
     # and the record says which metrics each could carry.
     wanted, unusable, preskipped = dispatch(kind, requested)
-    print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics", flush=True)
+    if cu_path not in ("cu_none", "doc_cu"):
+        raise ValueError(f"cu_path must be 'doc_cu' or 'cu_none', got {cu_path!r}")
+    # THE NAME CARRIES THE PATH, same spelling and same order as eval/domain_loss.py:770-776 and
+    # the two rows already on the pod ("ckpt_b0_sd_equalcompute.pt#cu"). Rows fold on
+    # (ckpt, profile), and every other logged field is identical between a cu_none row and a
+    # doc_cu row of the same checkpoint -- so without the suffix a doc_cu re-score silently
+    # REPLACES the cu_none row it was meant to be compared against, and they differ by up to
+    # 0.28 nat (audit_0904 E5: 0 of 60 published rows carry the suffix because this file never
+    # applied it).
+    row_ckpt = ckpt_name + ("#cu" if cu_path == "doc_cu" else "")
+    print(f"\n{ckpt_name}  type={kind}  {len(wanted)} metrics  cu_path={cu_path}", flush=True)
     record = {
-        "ckpt": ckpt_name,
+        "ckpt": row_ckpt,
+        "cu_path": cu_path,  # the field AND the suffix: the suffix keeps rows apart, the field
+                             # says which path without parsing a name (E1: 0 of 60 rows said)
         "profile": profile,  # (ckpt, profile) is the key: a milestone record must never replace a full one
         "type": kind,
         "vocab_id": vocab_id,
@@ -1292,7 +1324,8 @@ def score(ckpt_path, mix_path, tok_path, device, ngpu=1, metrics=None, profile="
         print(f"  {'model':15s} loaded", flush=True)
 
     if "domain_loss" in wanted:
-        _metric("domain_loss", metric_domain_loss, record, model, tok, seq, device, mix_path)
+        _metric("domain_loss", metric_domain_loss, record, model, tok, seq, device, mix_path,
+                cu_path)
     if model is not None:
         del model
         torch.cuda.empty_cache()
@@ -1368,6 +1401,11 @@ def main():
                     help="subset of metrics to run (default: all that apply to the ckpt type)")
     ap.add_argument("--profile", choices=list(PROFILES), default=None,
                     help="predefined metric subset (overrides --metrics)")
+    ap.add_argument("--cu_path", choices=["cu_none", "doc_cu"], default="cu_none",
+                    help="doc_cu passes the document mask to the metrics that score PACKED rows "
+                         "(domain_loss here; ppl and domain_bpb take the same flag on their own "
+                         "CLIs). The row is named <ckpt>#cu so it cannot replace the cu_none row. "
+                         "cu_none is what all 60 published rows were taken with (E1/E5/E10).")
     a = ap.parse_args()
     if a.selftest:
         selftest()
@@ -1387,7 +1425,7 @@ def main():
     for ck in a.ckpt:
         try:
             rec = score(ck, _mix_for(ck, a.mix, explicit=mix_given), a.tokenizer, device,
-                        a.ngpu, metrics, a.profile or "full")
+                        a.ngpu, metrics, a.profile or "full", cu_path=a.cu_path)
         except Exception as e:
             # "SKIPPED (OutOfMemoryError: ...)" read as "the checkpoint OOMed when
             # saving", which would be a large conclusion -- training fits but writing
