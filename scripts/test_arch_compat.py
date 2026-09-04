@@ -547,6 +547,50 @@ assert _rmb.note_row_changes() == 1, (
     "a ONE-ULP change in ONE element of a bf16 row at d=1024 was not resolved by row_checksums, so "
     "readout 6 under-reports precisely the small updates it exists to detect -- the projection must "
     "accumulate in fp32 over the bf16 table, not in bf16")
+# THE BLOCK LOOP MUST BE EXERCISED, and no table above reaches one block: at 65,536 rows the pools
+# used here (64, 256) all fit in the first iteration, so a regression to a single whole-table
+# `weight.float()` would pass every assertion so far. This case makes the block smaller than the
+# table for the duration, so the loop runs more than once and its boundary arithmetic is tested --
+# a row in the LAST partial block is the one an off-by-one drops.
+_saved_blk = model._ROW_CHECKSUM_BLOCK
+try:
+    model._ROW_CHECKSUM_BLOCK = 7          # 256 rows -> 37 blocks, the last one partial
+    _rb = model.ProductKeyMemory(256, 64, top_k=8, sparse=False).to(DEV)
+    assert _rb.note_row_changes() == -1, "baseline call on the chunked module"
+    with torch.no_grad():                  # row 255 is in the final, partial block
+        _rb.values.weight[255] += 1.0
+    assert _rb.note_row_changes() == 1, (
+        "a change in the LAST row was not seen: the block loop drops its final partial block, so "
+        "every row past the last whole block is invisible to readout 6")
+    with torch.no_grad():                  # row 0 is in the first block
+        _rb.values.weight[0] += 1.0
+    assert _rb.note_row_changes() == 1, "a change in the FIRST row was not seen"
+    # DETERMINISM ACROSS CALLS is the property the `!=` comparison downstream needs, and it is NOT
+    # the same as agreeing with an unchunked projection. Measured here: the chunked result differs
+    # from `weight.float() @ probe` by up to 2.98e-07 on values of order 0.81 -- one fp32 ULP, from
+    # a different summation order in the BLAS call, on 182 of 256 rows. That difference is
+    # harmless because both sides of every real comparison are chunked; what would NOT be harmless
+    # is the same table producing two different checksums on two calls, which would make every row
+    # read as changed at every diag step and report rows_changed_since_prev as 1.0 forever.
+    assert torch.equal(_rb.row_checksums(), _rb.row_checksums()), (
+        "row_checksums is not deterministic for an unchanged table, so consecutive diag steps "
+        "would compare two different projections and every row would read as changed")
+    # THE BLOCK CONSTANT MUST GOVERN THE COMPUTATION, and no correctness assertion can establish
+    # that: an unchunked `weight.float() @ probe` returns the RIGHT answer while allocating a
+    # full-size fp32 temporary -- 5.45 GiB at side 1195 -- which is a peak-memory regression that
+    # every check above passes. Measured, a mutant reverting the loop survived all of them. What
+    # separates the two is that chunking changes the SUMMATION ORDER: at block 7 the result differs
+    # from the whole-table product by up to 2.98e-07 on 182 of 256 rows. So a block size that
+    # changes nothing in the output means the constant is not being read.
+    _small = _rb.row_checksums().clone()
+    model._ROW_CHECKSUM_BLOCK = 1 << 30          # one block: the whole table at once
+    _whole = _rb.row_checksums()
+    assert not torch.equal(_small, _whole), (
+        "row_checksums returns bit-identical results at block 7 and block 2^30, so the block loop "
+        "is not running and the fp32 temporary is the whole table -- 5.45 GiB at side 1195, "
+        "charged to the peak at every diag step")
+finally:
+    model._ROW_CHECKSUM_BLOCK = _saved_blk
 # NON-PERSISTENT, all four buffers: a window counter in the checkpoint would make two saves of the
 # same weights differ, and row_sum_prev is 4 bytes per row -- 4 MiB at M1 -- of pure scratch.
 _sd = HybridLM(Cfg).state_dict()
