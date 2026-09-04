@@ -8362,21 +8362,48 @@ def check_card_held_without_claim(root):
         live, _stale = card_claim.claims()
         held = card_claim.held_cards(live)
         mem = card_claim.card_memory()
+        # A ZOMBIE-HELD CARD IS CLAIMED, AND THIS CHECK USED TO SAY "no claim" FOR IT (de-51).
+        # claims() files a zombie as LIVE on purpose -- acquire deletes whatever claims() calls
+        # stale, so calling it stale would hand a starting job's cards away -- so a card held by
+        # a corpse lands in `held` and the WARN below never fires, or fires with the wrong
+        # reason for a neighbouring card. The three causes the message offers (another tree, not
+        # claimed yet, another container) all send the reader outside this tree, and the claim
+        # is right here. Named separately, WARN either way, because the action differs: a
+        # foreign card needs identifying, a zombie-held one needs `card_claim.py release`.
+        zombie_held = {}
+        for c in live:
+            p = c.get("pid")
+            if isinstance(p, int) and card_claim._is_zombie(p):
+                for card in c.get("cards", []):
+                    zombie_held[str(card)] = (c.get("name"), p)
     finally:
         card_claim.CLAIM_DIR = saved
     if mem is None:
         return SKIP, "no nvidia-smi here -- this check is pod-side"
     unclaimed = [(c, m) for c, m in sorted(mem.items(), key=lambda kv: int(kv[0]))
                  if m > CARD_HELD_MIB and c not in held]
-    if unclaimed:
-        detail = ", ".join(f"card {c} {m} MiB" for c, m in unclaimed)
-        return WARN, (
-            f"{len(unclaimed)} card(s) hold memory no live claim in {os.path.relpath(claim_dir, root)} "
-            f"names: {detail} -- either a claim written in another tree (claims live where the "
-            f"job runs), a job that has not claimed yet, or another container. Whose it is cannot "
-            f"be read here: nvidia-smi gives host pids that this namespace cannot resolve, so "
-            f"identify it by GPU UUID plus cmdline "
-            f"(nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory)")
+    zombie_busy = [(c, m, zombie_held[c]) for c, m in sorted(mem.items(), key=lambda kv: int(kv[0]))
+                   if m > CARD_HELD_MIB and c in zombie_held]
+    if unclaimed or zombie_busy:
+        parts = []
+        if unclaimed:
+            detail = ", ".join(f"card {c} {m} MiB" for c, m in unclaimed)
+            parts.append(
+                f"{len(unclaimed)} card(s) hold memory no live claim in "
+                f"{os.path.relpath(claim_dir, root)} names: {detail} -- either a claim written in "
+                f"another tree (claims live where the job runs), a job that has not claimed yet, "
+                f"or another container. Whose it is cannot be read here: nvidia-smi gives host "
+                f"pids that this namespace cannot resolve, so identify it by GPU UUID plus "
+                f"cmdline (nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory)")
+        if zombie_busy:
+            zd = ", ".join(f"card {c} {m} MiB claimed by {nm} on pid {p} (Z)"
+                           for c, m, (nm, p) in zombie_busy)
+            parts.append(
+                f"{len(zombie_busy)} card(s) are claimed by a ZOMBIE process, so the claim is "
+                f"real and its job has ended: {zd} -- do not look for another tree or another "
+                f"container, release it (card_claim.py release --name <name>). claims() keeps a "
+                f"zombie LIVE on purpose, because acquire deletes what it calls stale")
+        return WARN, " AND ".join(parts)
     n_busy = sum(1 for m in mem.values() if m > CARD_HELD_MIB)
     return PASS, (f"{len(mem)} card(s), {n_busy} above {CARD_HELD_MIB} MiB, every one named by a "
                   f"live claim ({len(live)} claim(s))")
