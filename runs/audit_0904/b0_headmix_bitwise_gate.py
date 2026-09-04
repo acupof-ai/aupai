@@ -12,19 +12,25 @@ of eff.eval_path_cu_artifact_ce: a number that moved because the instrument move
 WHAT IT PROVES. `inner=None` must mean "cfg.d", and that path must be the code it is today
 to the last bit. Run before the edit to record logits, after the edit to compare:
 
-    python3 runs/audit_0904/b0_headmix_bitwise_gate.py --record   # pre-change
+    CUDA_VISIBLE_DEVICES=<granted card> python3 runs/audit_0904/b0_headmix_bitwise_gate.py \
+        --record --ckpt <ckpt>          # pre-change, once per shape
     <edit model.py>
-    python3 runs/audit_0904/b0_headmix_bitwise_gate.py --check    # post-change
+    ... --check --ckpt <ckpt>           # post-change
+    ... --check --ckpt <ckpt> --perturb kda    # must FAIL
+    ... --check --ckpt <ckpt> --perturb mla    # must FAIL
 
---check FAILS on any nonzero difference and names the first differing module rather than
-proposing a fix (6e's instruction 2026-09-04). Two shapes, because both are live: d1024 L12
-h8 (the ladder shape arm A/B use) and d768 h6 (Stage D/E).
+--check FAILS on any nonzero difference and names the two candidate modules rather than
+proposing a fix (6e's instruction 2026-09-04). One shape per invocation, keyed by the shape
+the checkpoint holds; run it once per live width.
 
-FIXED INPUT, FIXED SEED, EAGER. torch.compile is off and dtype is fp32: the question is
-whether the ARITHMETIC changed, and a compiled bf16 path has its own nondeterminism that
-would mask or fake a difference. A real checkpoint's weights, not random init -- random
-weights would agree bitwise under any edit that preserved shapes, which is the failure this
-gate is aimed at.
+AND THE PASS IS WORTH NOTHING WITHOUT THE TWO FAILS. This gate was adjusted three times
+before it first passed -- CPU to CUDA, fp32 to bf16, and the summary statistic -- which is the
+shape of an instrument tuned until it agrees. `--perturb` is the answer: it nudges one weight
+by a single ulp and --check must report DIFFERS. Committed beside the PASS.
+
+REQUIRES A GPU AND bf16, both learned by running it: see _logits for the two errors.
+A real checkpoint's weights, not random init -- random weights agree bitwise under any edit
+that preserves shapes, which is the failure this gate is aimed at.
 """
 import argparse
 import json
@@ -44,8 +50,14 @@ OUT = os.path.join(ROOT, "runs", "b0_headmix_bitwise.json")
 # as launch_tests keying on the test path alone (audit MT-4), one file over.
 
 
-def _logits(ckpt_path, seed=904):
+def _logits(ckpt_path, seed=904, perturb=None):
     """Logits for one checkpoint on fixed input, eager, ON A GPU, in the training dtype.
+
+    `perturb` is the broken-world lever (6e, 2026-09-04): "kda" nudges the first KDA layer's
+    qkv weight by ONE ulp, "mla" nudges the first MLA layer's kv_down. A gate that reports
+    IDENTICAL under a 1-ulp weight change is not measuring what it claims, and this gate was
+    adjusted three times before it passed (CUDA, bf16, the summary statistic) -- which is
+    exactly the history that makes an unperturbed PASS worth nothing on its own.
 
     CUDA IS NOT OPTIONAL AND CPU IS NOT A FALLBACK. DeltaRecurrence routes through
     fla.ops.kda.chunk_kda, a Triton kernel: on CPU tensors it raises
@@ -84,20 +96,39 @@ def _logits(ckpt_path, seed=904):
     sd = M.remap_legacy_state_dict(ck["model"])
     missing, unexpected = m.load_state_dict(sd, strict=False)
     m.eval().to(dev)
+    if perturb:
+        # Name the tensor by SUFFIX, and refuse if no tensor matches: a perturbation that
+        # silently hit nothing would print FAIL-expected/PASS-actual and read as the gate
+        # being blind, when in fact the fixture never fired.
+        want = {"kda": "mixer.qkv.weight", "mla": "mixer.kv_down.weight"}[perturb]
+        hit = [(n, p) for n, p in m.named_parameters() if n.endswith(want)]
+        if not hit:
+            raise SystemExit(f"REFUSING: --perturb {perturb} matched no tensor ending "
+                             f"{want}; the fixture would not have fired.")
+        n, p = hit[0]
+        with torch.no_grad():
+            flat = p.view(-1)
+            before = flat[0].item()
+            flat[0] = torch.nextafter(flat[0], torch.tensor(float("inf"), device=flat.device,
+                                                            dtype=flat.dtype))
+            after = flat[0].item()
+        print(f"  perturbed {n}[0]: {before!r} -> {after!r} (1 ulp, {len(hit)} candidate(s))")
     torch.manual_seed(seed)
     x = torch.randint(0, int(getattr(cfg, "vocab_real", cfg.vocab)), (2, 64), device=dev)
     with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
         y = m(x)
     if isinstance(y, tuple):
         y = y[0]
-    # HASH THE REAL VOCAB ONLY. model.py:557 sets columns [vocab_real:vocab] to
-    # torch.finfo(dtype).min so alignment padding stays neutral in the softmax -- deliberate,
-    # not corruption. But -3.4e38 in 11 of 32784 columns dominates any sum or mean over the
-    # whole tensor: the first baseline printed sum -4.79e+41 and mean -inf, which says nothing
-    # about the 32773 columns the model actually predicts. A digest over the padding is also
-    # blind to a change inside it, in exchange for a number no reader can sanity-check.
+    # THE PADDING COLUMNS ARE HASHED TOO, and the reason matters (6e, 2026-09-04).
+    # model.py:555-557 overwrites [vocab_real:vocab] with torch.finfo(out.dtype).min AFTER the
+    # softcap -- a deterministic constant assignment, not uninitialized memory. So they are a
+    # legitimate part of the comparison: if the edit ever stopped writing them, or wrote a
+    # different constant, that is a real change and this gate must catch it. Excluding them
+    # because they dominated a printed SUM would be discarding coverage to fix a display.
+    # What was actually wrong was the summary statistic, so the digest covers the whole tensor
+    # and the printed sum reports the real-vocab slice separately, where a reader can judge it.
     real = int(getattr(cfg, "vocab_real", cfg.vocab))
-    y = y[..., :real].float().cpu()
+    y = y.float().cpu()
     return y, dict(missing=len(missing), unexpected=len(unexpected), vocab_real=real,
                    d=cfg.d, heads=cfg.heads, layers=cfg.layers)
 
@@ -106,6 +137,13 @@ def _fp(t):
     """A fingerprint that a rounding change cannot hide: exact bytes, not a rounded print."""
     import hashlib
     return hashlib.sha256(t.contiguous().numpy().tobytes()).hexdigest()
+
+
+def _sum_real(t, meta):
+    """Sum over the REAL vocab only. The digest covers the whole tensor including the padding
+    constant; this number exists so a reader can judge the magnitude, which -3.4e38 in the
+    padding columns makes impossible over the full width."""
+    return float(t[..., : meta["vocab_real"]].double().sum())
 
 
 def _key(meta):
@@ -117,19 +155,20 @@ def record(ckpt):
     k = _key(meta)
     all_ = json.load(open(OUT, encoding="utf-8")) if os.path.exists(OUT) else {}
     all_[k] = {"ckpt": os.path.basename(ckpt), "sha256": _fp(y), "shape": list(y.shape),
-               "sum": float(y.double().sum()), "meta": meta}
+               "sum_real": _sum_real(y, meta), "meta": meta}
     with open(OUT, "w", encoding="utf-8") as f:
         json.dump(all_, f, indent=1, sort_keys=True)
     r = all_[k]
     print(f"recorded {k} from {r['ckpt']}")
-    print(f"  logits {r['shape']}  sha256 {r['sha256'][:16]}  sum {r['sum']!r}")
+    print(f"  logits {r['shape']}  sha256 {r['sha256'][:16]}  "
+          f"sum over [:{meta['vocab_real']}] {r['sum_real']!r}")
     print(f"  missing {meta['missing']} unexpected {meta['unexpected']} keys")
     print(f"-> {OUT} (now holds: {', '.join(sorted(all_))})")
     return 0
 
 
-def check(ckpt):
-    y, meta = _logits(ckpt)
+def check(ckpt, perturb=None):
+    y, meta = _logits(ckpt, perturb=perturb)
     k = _key(meta)
     all_ = json.load(open(OUT, encoding="utf-8")) if os.path.exists(OUT) else {}
     if k not in all_:
@@ -145,7 +184,8 @@ def check(ckpt):
     if same:
         print(f"  logits {list(y.shape)}: the inner=None path is bitwise the code it replaced")
         return 0
-    print(f"  sum was {want['sum']!r}, now {float(y.double().sum())!r}")
+    print(f"  sum over [:{meta['vocab_real']}] was {want['sum_real']!r}, "
+          f"now {_sum_real(y, meta)!r}")
     print("  THE EDIT CHANGED THE FULL-WIDTH PATH. Not proposing a fix (6e 2026-09-04).")
     print("  The width now comes from the module rather than from x.shape, so the candidates")
     print("  are DeltaRecurrence.forward and GatedMLA.forward. To name the first differing")
@@ -159,8 +199,13 @@ if __name__ == "__main__":
     ap.add_argument("--record", action="store_true")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--ckpt", default="ckpt_b0_sd_unlooped.pt")
+    ap.add_argument("--perturb", choices=["kda", "mla"],
+                    help="broken-world: nudge one weight by 1 ulp; --check must FAIL")
     a = ap.parse_args()
     if a.record == a.check:
         print("exactly one of --record / --check")
         raise SystemExit(2)
-    raise SystemExit(record(a.ckpt) if a.record else check(a.ckpt))
+    if a.record and a.perturb:
+        print('REFUSING: --perturb with --record would bake the perturbation into the baseline')
+        raise SystemExit(2)
+    raise SystemExit(record(a.ckpt) if a.record else check(a.ckpt, a.perturb))
