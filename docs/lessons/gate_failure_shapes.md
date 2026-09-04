@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents deleted 2026-09-04 (see commit)
+source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents folded into machine checks 2026-09-04 (141 = 59 + 82; see commit)
 ---
 
 # Gate failure rules
