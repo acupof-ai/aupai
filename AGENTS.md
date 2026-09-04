@@ -56,7 +56,6 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
   - **When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency is judged by host IO and seconds, not by metric class.** The rule stated on 2026-09-02 was "likelihood evals may share a card, generative ones wait", derived from one eval (`score_matrix`, 2.3 GiB). MEASURED against the run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was killed. The class was never the variable. What separates `ppl` from `score_matrix` inside one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for `zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits for the run; one that only loads a checkpoint costs about what a save costs. `python3 scripts/eval_load_cost.py` is the table, with the unmeasured evals listed as unmeasured rather than as zero.
   - **Judge the cost in seconds against what the run already spends on itself, never by the printed ETA.** ETA extrapolates a single 10-step interval over 19,151 steps, so one interval 54 s slow prints as 29 lost hours, and every checkpoint save prints ~99 h. Total across every dip in the first 1990 steps: 10.3 min of 6.04 h elapsed, 2.8% (`docs/lessons/gate_failure_shapes.md` §50).
 - **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
-- **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
 - **A deletion needs a per-file check for glob and runtime loaders.** No static analysis sees a runtime glob. `scripts/reachability.py` is a citation graph -- a doc mention is an edge, so "reachable" can mean "named by a doc nobody runs" -- and `mathbank/vet_programs.py:37` globs `math_programs_l*_ext*.py`, so 23 live generators read as unreferenced to a name scan. Grep for `glob`/`importlib` over a directory before deleting anything in it.
@@ -301,7 +300,6 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
-| Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
@@ -337,7 +335,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 | `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-53 rules: 17 checked, 36 manual. The count is regenerated from `harness check`'s
+52 rules: 18 checked, 34 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.
