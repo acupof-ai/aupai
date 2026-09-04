@@ -261,6 +261,24 @@ def metric_domain_loss(model, tok, seq, device, mix_path):
     return out, None
 
 
+def _capture_failure(r):
+    """A failed subprocess's non-empty output lines, from BOTH streams.
+
+    `(r.stderr or r.stdout)` was here and it discards stdout ENTIRELY whenever stderr holds
+    anything at all -- one `UserWarning` is enough. That is not hypothetical: eval/domain_bpb.py
+    puts every refusal it has on stdout (`REFUSING: no domain produced a number` at :292,
+    `SKIPPED (round-trip ...)` at :267, and zero sys.exit/SystemExit), while scripts/loader.py:136
+    warns on stderr for every old-format checkpoint. 6 of 10 domain_bpb error rows in
+    runs/score_matrix.jsonl therefore record the vocab_id warning as the cause and the refusal
+    nowhere (audit_0904 E18; MT-12 counted 10, 3 of those had a real stderr cause and 1 a bare
+    source line).
+
+    stdout FIRST: a refusal is what the script chose to say, a warning is what leaked. The 3-line
+    tail the callers keep should hold the former when both exist.
+    """
+    return [ln for ln in (r.stdout + r.stderr).strip().splitlines() if ln.strip()]
+
+
 def metric_minimal_pairs(ckpt_path):
     """b0's eval/base_matrix.py: token-aligned Chinese minimal pairs across five
     syntactic dimensions, with BPE-merge handling (a pair is skipped, not scored,
@@ -278,7 +296,11 @@ def metric_minimal_pairs(ckpt_path):
             timeout=1800,
         )
         if r.returncode != 0:
-            tail = (r.stderr or r.stdout).strip().splitlines()[-1:] or ["no output"]
+            # BOTH streams, concatenated -- see _capture_failure's docstring for why `or` is
+            # wrong. base_matrix.py has no refusal path today, so nothing is known to be lost
+            # here; the expression is fixed anyway because the next refusal it gains would be
+            # invisible, and `_run` eleven lines below already does it this way.
+            tail = _capture_failure(r)[-1:] or ["no output"]
             return None, f"base_matrix.py exited {r.returncode}: {tail[0][:200]}"
         return json.load(open(out, encoding="utf-8")), None
     finally:
@@ -299,9 +321,11 @@ def _run_eval_json(script, ckpt_path, extra_args=None, timeout=3600):
             # frame with a caret line, and a subprocess can write past the traceback, so the
             # one-line version recorded domain_bpb's failure as the SOURCE LINE
             # "ours_tok = load_tokenizer(a.tokenizer, None)" -- which names where, never what.
-            # All three of that eval's rows in runs/score_matrix.jsonl carry that string, and
-            # it is why nobody fixed it: the record never said what broke.
-            lines = [ln for ln in (r.stderr or r.stdout).strip().splitlines() if ln.strip()]
+            # ONE row in runs/score_matrix.jsonl carries that string
+            # (ckpt_data_leg_206m_8b.pt.step10000); the comment said "all three" before the rows
+            # were counted, and 6 others carry a different failure -- the stream shadowing
+            # _capture_failure now fixes (audit_0904 E18).
+            lines = _capture_failure(r)
             exc = [ln for ln in lines if re.match(r"^\w[\w.]*(Error|Exception|Exit|Interrupt)\b", ln)]
             # With an exception line, one line IS the answer. Without one the traceback was
             # truncated, and the last line alone is exactly what was useless before -- keep
@@ -808,6 +832,30 @@ def selftest():
     _metric("returner", lambda: (None, "no shards"), _rec)
     assert _rec["metrics"]["returner"]["error"] == "no shards", _rec["metrics"]["returner"]
     assert "_traceback" not in _rec["metrics"]["returner"], "a returned error has no traceback"
+
+    # _capture_failure keeps BOTH streams. The world this fails in is the real one: domain_bpb
+    # refuses on stdout and loader warns on stderr, and `(r.stderr or r.stdout)` recorded the
+    # warning while dropping the refusal for 6 of 10 rows (E18). A real subprocess, not a stub,
+    # because the defect lives in what subprocess.run returns.
+    _cap = subprocess.run(
+        [sys.executable, "-c",
+         'import sys, warnings\n'
+         'warnings.warn("checkpoint has no vocab_id (old format)")\n'
+         'print("REFUSING: no domain produced a number")\n'
+         'sys.exit(1)\n'],
+        capture_output=True, text=True,
+    )
+    _lines = _capture_failure(_cap)
+    assert any("REFUSING" in ln for ln in _lines), \
+        f"the refusal was dropped; _capture_failure returned {_lines}"
+    assert any("vocab_id" in ln for ln in _lines), \
+        f"the warning was dropped; both streams are kept, not one: {_lines}"
+    # Order is load-bearing: callers keep a 3-line TAIL, so with stderr first a long warning
+    # could push the refusal out of the window. Verified against the old expression, which
+    # returns the warning alone and fails the first assertion above.
+    assert _lines.index(next(ln for ln in _lines if "REFUSING" in ln)) < \
+        _lines.index(next(ln for ln in _lines if "vocab_id" in ln)), \
+        f"stdout must come first so the tail keeps the refusal: {_lines}"
 
     # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
     # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.
