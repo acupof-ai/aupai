@@ -21,6 +21,7 @@ ever land in the index -- permanently dirty, aborting the next merge.
 import fnmatch
 import hashlib
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -99,6 +100,32 @@ def _merging(common_abs=None):
         return True
     return (os.path.basename(sys.argv[0]) == "pre-merge-commit"
             or os.environ.get("GIT_REFLOG_ACTION", "").startswith("merge"))
+
+
+def _union_merged(paths):
+    """Which of `paths` git resolves with merge=union, straight from git check-attr.
+
+    THE ATTRIBUTE IS THE AUTHORITY, not a list here. .gitattributes already names the
+    append-only ledgers and a second copy of that list in this file would rot against it --
+    the fix would then be to add a ledger in one place and have the other silently disagree,
+    which is the shape half this hook exists to catch. Reads the resolved attribute, so a
+    ledger added to .gitattributes is covered the moment it is added.
+    """
+    if not paths:
+        return set()
+    r = subprocess.run(["git", "check-attr", "merge", "--"] + list(paths),
+                       capture_output=True, text=True)
+    out = set()
+    for line in r.stdout.splitlines():
+        # "<path>: merge: union". Split from the RIGHT twice: a path may contain ": ", and
+        # the value never does.
+        rest, _, value = line.rpartition(": ")
+        if value.strip() != "union":
+            continue
+        path, _, attr = rest.rpartition(": ")
+        if attr == "merge" and path:
+            out.add(path)
+    return out
 
 
 def staged(diff_filter):
@@ -239,12 +266,35 @@ def main():
     # 2026-09-02 in a diverged worktree; the conflict path it was tested on has
     # MERGE_HEAD on disk and passed. Now shares _merging with the tree check (e1-12).
     merging = _merging()
-    if behind and not merging and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+    # AN APPEND-ONLY LEDGER COMMIT CANNOT WRITE ON TOP OF CODE, so behind-main has nothing to
+    # say about it (de, on 6e's C5 ruling 2026-09-04). The refusal's own reason is "this commit
+    # writes on top of code main has already moved past, and any check you ran said nothing
+    # about which version it tested" -- a commit whose every staged path merges by union adds
+    # rows to a ledger, runs no check, and is resolved by git without reference to what main
+    # did. Refusing it costs the row.
+    #
+    # And the cost was measured, twice in one hour: `harness friction add --commit` appends the
+    # row and then the hook refuses the commit, leaving the ledger dirty, which is precisely
+    # what --commit exists to prevent -- b0's friction row needed AUPAI_BEHIND_MAIN_OK=1 to
+    # land. The second time, the tree went one commit behind BETWEEN a clean `git merge main`
+    # and the commit two seconds later, so "merge first" is not a fix available to the writer:
+    # main moves faster than a commit takes on a repo with six sessions. A friction row is the
+    # one write that must never be refused, because it is how the refusals get fixed.
+    #
+    # NARROW: every staged path must be union-merged. One code path alongside a ledger and the
+    # refusal stands -- the exemption is about what the commit CAN break, not about intent, so
+    # it cannot be widened by adding a ledger row to a code commit.
+    _staged_all = staged("ACDMR")
+    _ledger_only = bool(_staged_all) and set(_staged_all) <= _union_merged(_staged_all)
+    if behind and not merging and not _ledger_only and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
         print(
             f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
             f"  git merge --no-edit main\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
+            f"A commit staging ONLY union-merged ledgers (runs/*.jsonl) is exempt and needs "
+            f"no flag; this one stages "
+            f"{', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:4]) or 'nothing'}.\n"
             f"Deliberate exception (reproducing something that only fails on the older "
             f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
             f"commit and every check behind it describe a tree nobody else has.",
@@ -1305,6 +1355,62 @@ def _selftest():
         if "REFUSING: this tree is" in out:
             fails.append("world 5: `git merge --no-edit main` was refused in a worktree "
                          f"{behind} behind main -- the command the refusal itself prints")
+
+        # WORLDS 5b/5c: the append-only-ledger exemption, BOTH directions, in the same
+        # worktree. 5b is why it exists -- `harness friction add --commit` appended a row and
+        # the hook refused the commit, leaving the ledger dirty, twice in one hour; the second
+        # time the tree fell behind BETWEEN a clean merge and the commit, so "merge first" was
+        # not available. 5c is the load-bearing half: one code path alongside the ledger and
+        # the refusal must stand, or the exemption is a way to commit code from behind main by
+        # attaching a ledger row.
+        #
+        # Re-diverge first: world 5 merged main in, so the worktree is no longer behind and a
+        # PASS here would prove nothing about the exemption.
+        for a in (("checkout", "-q", "-b", "feat2"),):
+            git(*a, cwd=wt)
+        with open(os.path.join(d2, "m2.txt"), "w") as fh:
+            fh.write("m2\n")
+        git("add", "m2.txt")
+        git("commit", "-q", "-m", "main-ahead-2")
+        behind2 = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
+        if behind2 == "0":
+            fails.append("world 5b precondition: worktree is not behind again, proves nothing")
+        # The ledger must be union-merged where the hook looks, which is .gitattributes in the
+        # tree being committed -- copied from the real one so the fixture cannot disagree with
+        # the repo about which paths are ledgers.
+        with open(os.path.join(wt, ".gitattributes"), "w") as fh:
+            fh.write("runs/friction.jsonl merge=union\n")
+        os.makedirs(os.path.join(wt, "runs"), exist_ok=True)
+        git("add", ".gitattributes", cwd=wt)
+        subprocess.run(["git", "commit", "-q", "-m", "attrs"], cwd=wt, capture_output=True,
+                       env=dict(clean, AUPAI_BEHIND_MAIN_OK="1"))
+        with open(os.path.join(wt, "runs", "friction.jsonl"), "a") as fh:
+            fh.write('{"id": "x", "kind": "merge"}\n')
+        git("add", "runs/friction.jsonl", cwd=wt)
+        env_no_flag = {k: v for k, v in clean.items() if k != "AUPAI_BEHIND_MAIN_OK"}
+        r = subprocess.run(["git", "commit", "-q", "-m", "friction row"], cwd=wt,
+                           capture_output=True, text=True, env=env_no_flag)
+        out5b = r.stdout + r.stderr
+        if "REFUSING: this tree is" in out5b:
+            fails.append(f"world 5b: a commit staging ONLY runs/friction.jsonl was refused in "
+                         f"a worktree {behind2} behind main -- the friction row is the write "
+                         f"that must never be refused, and it needs no flag")
+
+        with open(os.path.join(wt, "runs", "friction.jsonl"), "a") as fh:
+            fh.write('{"id": "y", "kind": "hook"}\n')
+        with open(os.path.join(wt, "code.py"), "w") as fh:
+            fh.write("x = 1\n")
+        git("add", "runs/friction.jsonl", "code.py", cwd=wt)
+        r = subprocess.run(["git", "commit", "-q", "-m", "ledger plus code"], cwd=wt,
+                           capture_output=True, text=True, env=env_no_flag)
+        out5c = r.stdout + r.stderr
+        if "REFUSING: this tree is" not in out5c:
+            fails.append("world 5c: a commit staging code.py ALONGSIDE the ledger was NOT "
+                         "refused -- the exemption must be narrow, or a ledger row becomes a "
+                         "way to commit code from behind main")
+        elif "code.py" not in out5c:
+            fails.append(f"world 5c: refused without naming the path that is not a ledger, so "
+                         f"the writer cannot see why: {out5c[-120:]}")
     finally:
         shutil.rmtree(d2, ignore_errors=True)
 
@@ -1464,7 +1570,15 @@ def _selftest():
 
     for f in fails:
         print("SELFTEST FAIL: " + f, file=sys.stderr)
-    print("pre-commit selftest: %s (7 worlds)" % ("FAIL" if fails else "ok"),
+    # COUNTED FROM THE SOURCE, not a literal. The literal read "7 worlds" while nine were
+    # running: 5b and 5c were added and the number was not, so the line under-reported the
+    # coverage it was printed to describe -- the same shape as a selftests timing line that
+    # includes zero files. Counts the `# WORLD <n>` markers, so a world added without a marker
+    # is the only way to be miscounted now.
+    _n = len({w for pair in re.findall(r"#\s*WORLDS?\s+([0-9]+[a-z]?)(?:/([0-9]+[a-z]?))?",
+                                       open(__file__, encoding="utf-8").read())
+              for w in pair if w})
+    print("pre-commit selftest: %s (%d worlds)" % ("FAIL" if fails else "ok", _n),
           file=sys.stderr)
     return 1 if fails else 0
 
