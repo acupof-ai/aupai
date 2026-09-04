@@ -44,6 +44,13 @@ else:
 
 from train import Cfg, HybridLM, build_optimizers  # noqa: E402
 from launch_tests import record_launch_test  # noqa: E402
+from loader import claim_my_cards  # noqa: E402
+
+# INSIDE the cuda branch's condition, not at import: DEV is "cpu" whenever fla is absent,
+# which is every machine but the pod, and an unconditional claim would refuse a correct
+# cardless run (de-55).
+if DEV != "cpu":
+    claim_my_cards("test_arch_L32", note="L32 depth gate")
 
 # The ruled shape. seq and vocab are cut to keep a CPU run in seconds -- neither is
 # depth-dependent, and the point here is depth.
