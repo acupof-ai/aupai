@@ -611,6 +611,12 @@ def main():
         # scan's own end-to-end case notice. Five of its predicates were wrong on first write and
         # each was caught by a known-answer case, so the cases are the value, not the scan.
         "runs/audit_0904/dead_worlds.py",
+        # The eval-acquire-unit measurement. 0.4s, no card and no data: it reads the experiments
+        # ledger, the tracked .sh files, doc command blocks, this file's own SELFTEST_FILES, and
+        # run_eval's MC_BENCHMARKS table. Registered because its first run put nine reachable
+        # tools in a deletion bucket -- a wrong answer that looked like a finding -- and its
+        # negative controls are what caught that. Its inputs are all files people edit.
+        "runs/audit_0904/eval_acquire_unit.py",
         # pod_sh_offset: the byte-offset gate behind POD_PUSH_ALLOW_RUNNING_SH. Its selftest
         # is pure arithmetic over fixture bytes and fixture ps/fdinfo text -- no pod, no card
         # -- so it runs here. Gated because the file's job is deciding whether overwriting a

@@ -130,3 +130,42 @@ directly, which is a separate measurement.
 entry point, the refusal in one testable place — is what makes 31 more sites cheap if the
 controller wants them. The scan is the deciding artifact and it is reproducible: rerun the
 predicate above rather than trusting this count.
+
+## The 19 eval/ tools: measured, and the answer is 8
+
+`runs/audit_0904/eval_acquire_unit.py`, 2026-09-04. The population is 20 card-taking eval/ tools
+with no claim, not 19 — the earlier figure was read off a hand list.
+
+| bucket | n | acquire goes |
+|---|---|---|
+| launched directly (a ledger `cmd` row or a doc command block) | 8 | in the tool |
+| reached only through `run_eval`'s `import_module` registry | 3 | `run_eval.py`, once |
+| reached only through a `.sh` | 3 | the wrapper |
+| hook runs or exempts its selftest, never launched with a card | 6 | nowhere |
+| no record of ever being run | **0** | — |
+
+The eight: `code_fewshot`, `code_zh`, `domain_loss`, `humaneval_bpb`, `l1_fewshot`, `loop_wrapper`,
+`math_hard`, `ppl`.
+
+**Zero deletion candidates, and that is the finding.** The first run of the scan put nine tools in
+the never-run bucket and every one of them was reachable by a route the first three predicates
+could not see. Two sources fixed it, and both are the shape AGENTS.md already warns about:
+
+- `arc`/`mmlu`/`piqa` are imported by `eval/run_eval.py` through `import_module(f"eval.{name}")`.
+  No static analysis sees a runtime loader — the same defect as `vet_programs.py:37`'s glob making
+  23 live math generators read as unreferenced. They are library modules; `run_eval` holds the card,
+  so an acquire inside each would refuse `run_eval`'s own claim.
+- Six more are in the hook's `SELFTEST_FILES` or carry a written `NEEDS_DATA` exemption, i.e. they
+  are executed or deliberately excused on every commit that stages them. A selftest takes no card,
+  so they are neither dead nor acquire sites.
+
+**A path in backticks is not a command.** The doc reader first counted every backtick span, which
+made `docs/lessons/kept_methods.md` a launch and inflated "launched directly" from 8 to 14. The
+negative control caught it; command spans now have to start like commands (`python`, `bash`, `./`,
+`VAR=`, `torchrun`, `setsid`, `pod`). Both halves are needed: AGENTS.md's entry-point table — the
+repo's actual answer to "how do I run this" — puts commands in backticks inside table cells, never
+in fenced blocks, so a fenced-only reader misses them entirely.
+
+15 selftest cases, including the bucket partition (`[8, 3, 3, 6, 0]`) so the classification order
+is asserted total rather than observed non-overlapping today.
+
