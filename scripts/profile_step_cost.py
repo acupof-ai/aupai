@@ -816,6 +816,33 @@ def main():
                   f"opt_state={sb}B{'' if sb else ' (no Adagrad state found)'} "
                   f"-> {wb + gb + sb} B/param x {tw.numel()} params = "
                   f"{tw.numel() * (wb + gb + sb) / 2**30:.2f} GiB of table tensors", flush=True)
+            # READOUT 6'S OWN COST, timed here so the diag cadence cannot hide inside the arm's
+            # throughput reading (4c's condition, 2026-09-05). row_checksums is a (rows x d) @ (d)
+            # matvec over the WHOLE table -- 2 GiB read at M1, 4 at 1448^2 -- and it runs at steps
+            # 10, 20, 30 and every 100 thereafter. If a call costs a material fraction of a step,
+            # then the steps carrying a diag row are slower than the steps around them, and readout
+            # 5 reads tok/s/gpu AT STEP 30, which is one of them.
+            #
+            # CUDA events and a warmed call: the first touches allocate the fp32 result and would
+            # time the allocator rather than the matvec.
+            if hasattr(raw.memory, "row_checksums"):
+                raw.memory.note_row_changes()          # warm: arms the baseline, allocates
+                _e0 = torch.cuda.Event(enable_timing=True)
+                _e1 = torch.cuda.Event(enable_timing=True)
+                _rc = []
+                for _ in range(5):
+                    _e0.record()
+                    raw.memory.note_row_changes()
+                    _e1.record()
+                    torch.cuda.synchronize()
+                    _rc.append(_e0.elapsed_time(_e1))
+                _rcm = statistics.median(_rc)
+                _tot = _stats(steps)
+                _share = f", {100 * _rcm / _tot['median_ms']:.2f}% of a step" if _tot else ""
+                print(f"READOUT6 note_row_changes median {_rcm:.2f} ms over 5 calls{_share} "
+                      f"-- charged only at diag steps (10, 20, 30, then every 100), so those "
+                      f"steps are slower than their neighbours by this much and step 30 is one "
+                      f"of them", flush=True)
         print(f"STARTUP {startup_alloc:.2f} GiB allocated, {startup_res:.2f} GiB reserved "
               f"(construction + compile + {a.warmup} warmup steps, before the reset)", flush=True)
         print("  TWO NUMBERS, TWO QUESTIONS. STARTUP decides whether the shape can be LAUNCHED "
