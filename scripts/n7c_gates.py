@@ -111,13 +111,17 @@ def main():
         doc_prompt_lengths,
         reference_mask,
     )
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
 
     if not M.HAS_FA:
         raise SystemExit(
             "REFUSING: HAS_FA is False here, so GatedMLA takes the SDPA fallback at "
             "model.py:196 and no mask_mod is ever called. Every gate below would pass "
             "vacuously while testing nothing. Run this on the pod.")
+
+    # No CPU path: mdl.cuda() below is unconditional, so this runs only on a card and the
+    # claim is unconditional too. AFTER the HAS_FA refusal, which takes no card (de-55).
+    claim_my_cards("n7c_gates", note=f"prefix-mask gates on {os.path.basename(CKPT)}")
 
     fails = []
     arm_now = [""]

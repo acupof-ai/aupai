@@ -53,11 +53,14 @@ def main():
         prefix_two_call,
         reference_mask,
     )
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
 
     if not M.HAS_FA:
         raise SystemExit("REFUSING: HAS_FA is False, so path A would not run the kernel at all.")
+
+    # No CPU path: mdl.cuda() below is unconditional. AFTER the HAS_FA refusal (de-55).
+    claim_my_cards("n7c_grad_check", note=f"prefix-mask grads on {os.path.basename(CKPT)}")
 
     mdl, _cfg = load_checkpoint(CKPT, dtype=torch.bfloat16)
     mdl = mdl.cuda().train()  # train(), not eval(): the gradient is what is being compared

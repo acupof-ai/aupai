@@ -62,6 +62,8 @@ ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
 
+from loader import claim_my_cards  # noqa: E402
+
 TEXT_DEFAULT = os.path.join(ROOT, "data", "sft", "control_sft_text_heldout.jsonl")
 #: Only for adding the two specials to the control tokenizer. The TEMPLATE is not written here
 #: -- see format_pair.
@@ -558,6 +560,11 @@ def main():
 
     eval_ids = [rid for rid, _, _ in kept]
     sbytes, n_ex = supervised_bytes_of(a.arm, rows, eval_ids)
+    # AFTER every early return above: --emit_ids, --intersect and each CANNOT RUN path do no
+    # model work and take no card, so a claim there would refuse a cardless invocation that
+    # is correct (de-55).
+    if str(a.device).startswith("cuda"):
+        claim_my_cards("eval_heldout", note=f"{a.arm} arm on {os.path.basename(a.ckpt)}")
     if a.arm == "ours":
         model, _ = load_ours(a.ckpt, a.device)
         from tokenizers import Tokenizer
