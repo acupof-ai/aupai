@@ -379,6 +379,56 @@ def foreign_cards(root=ROOT):
     return out
 
 
+def grant_lane(card, to, why, by, root=None):
+    """Write a lane grant as ONE edit: lane_card, lane_to, cards[card], lane_note, granted_by.
+
+    Five fields state one fact, and hand-editing them is how they diverge: on 2026-09-04
+    cards["5"] said the lane was e1's for C11 while lane_note said the same thing again, and
+    nothing would have caught either one going stale alone. This is the only writer, so a grant
+    cannot be half-written -- and `launch_gate.gate_cards` reads exactly these fields to confirm
+    a lane launch, so a grant it cannot read is a grant that refuses.
+
+    `lane_to` is a FIELD and not a phrase in the prose, because the prose cannot answer "whose
+    lane is this": measured on the live file, a substring search for the session name `de` hits
+    inside "excluded", and adding word boundaries then hits `b0` inside
+    "ckpt_b0_sd_equalcompute" and `fb` in the granter's own name. Two-character names are not
+    recoverable from free text.
+
+    REFUSES a card marked foreign, since granting our lane onto another container's job is the
+    destructive direction. Appends to granted_by rather than replacing it: the list is the
+    grant's history and the controller reads it to see who moved the lane last.
+    """
+    root = root or FOREIGN_ROOT
+    p = os.path.join(root, "runs", "card_assignment.json")
+    try:
+        with open(p, encoding="utf-8") as fh:
+            obj = json.load(fh)
+    except (OSError, ValueError) as e:
+        return False, f"{p}: {e}"
+    card = str(card).strip()
+    if not card.isdigit():
+        return False, f"card {card!r} is not a card index"
+    foreign = foreign_cards(root).get(card)
+    if foreign:
+        return False, (f"refusing: card {card} is marked {foreign[0]!r} -- {foreign[1][:80]}. "
+                       f"The lane cannot be granted onto another container's job")
+    stamp = _now()
+    obj["lane_card"] = card
+    obj["lane_to"] = to
+    obj.setdefault("cards", {})[card] = f"lane: {to} {why} (granted {stamp} {by})"
+    obj["lane_note"] = f"{stamp} {by}: lane card {card} granted to {to} -- {why}"
+    hist = obj.get("granted_by")
+    obj["granted_by"] = (hist if isinstance(hist, list) else [hist] if hist else []) + [
+        f"{by} {stamp} (lane {card} -> {to})"]
+    tmp = p + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(obj, fh, ensure_ascii=False, indent=1)
+        fh.write("\n")
+    os.replace(tmp, p)
+    return True, (f"lane card {card} -> {to} ({why}); lane_card, lane_to, cards[{card}], "
+                  f"lane_note, granted_by written")
+
+
 def card_memory():
     """{index: MiB} from nvidia-smi, or None when there is no nvidia-smi.
 
@@ -956,6 +1006,90 @@ def _selftest():
         _case(any("card 2" in x for x in said_orphan) and ("2", 27809) in orphans,
               "THE SAME memory on an unmarked card still reads ORPHAN (the negative case)")
         globals()["card_memory"] = real
+
+        # ---------------------------------------------------------- grant_lane (de, 2026-09-04)
+        # The four fields must move together, and the gate that reads them must go GREEN on the
+        # result. Both halves are asserted here because the writer's whole purpose is to be
+        # readable by launch_gate.gate_cards -- a grant written in a shape the gate refuses is
+        # the divergence with an extra step.
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"cards": {"6": "FOREIGN OCCUPANT: another container"},
+                       "block_cards": "0-3", "lane_card": "7",
+                       "launch_block_granted": True, "granted_by": "fb 2026-09-03"}, fh)
+        ok, msg = grant_lane("5", "de", "the gate_cards fixture", "6e", root=froot)
+        _case(ok, f"grant_lane writes a lane grant: {msg}")
+        got = json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
+        _case(got.get("lane_card") == "5" and got.get("lane_to") == "de"
+              and "de" in got["cards"].get("5", "") and "de" in got.get("lane_note", "")
+              and any("lane 5 -> de" in x for x in got.get("granted_by", [])),
+              f"all five fields name the same grant: {json.dumps(got)[:120]}")
+        _case(got["cards"].get("6", "").startswith("FOREIGN"),
+              "and the other cards' entries are untouched")
+
+        ok, msg = grant_lane("6", "de", "onto a foreign card", "6e", root=froot)
+        _case(not ok and "FOREIGN" in msg.upper(),
+              f"REFUSES the lane onto a card marked foreign: {msg}")
+        _case(json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
+              .get("lane_card") == "5",
+              "and a refused grant writes nothing (lane_card still the previous grant)")
+
+        # THE GATE READS IT. Positive: de's own lane launch on card 5 is confirmed. Negative,
+        # and this is the case the old gate got wrong: the same launch on card 6 refuses.
+        import launch_gate
+        _saved = launch_gate.LAUNCH_CARDS
+        _saved_owner = os.environ.get("LAUNCH_OWNER")
+        try:
+            os.environ["LAUNCH_OWNER"] = "de"
+            launch_gate.LAUNCH_CARDS = ["5"]
+            st, why = launch_gate.gate_cards(froot, None, 1)
+            _case(st == launch_gate.GO and "de" in why,
+                  f"gate_cards confirms the lane it was granted: {st} {why[:90]}")
+            launch_gate.LAUNCH_CARDS = ["6"]
+            st, why = launch_gate.gate_cards(froot, None, 1)
+            _case(st == launch_gate.NOGO and "6" in why,
+                  f"and refuses the same launch on an ungranted card: {st} {why[:90]}")
+            # The lane granted to SOMEONE ELSE. The gate must refuse b0 on de's lane card --
+            # this is the collision the item was raised for, and it is the case an
+            # ownership-blind gate reports GO on.
+            os.environ["LAUNCH_OWNER"] = "b0"
+            launch_gate.LAUNCH_CARDS = ["5"]
+            st, why = launch_gate.gate_cards(froot, None, 1)
+            _case(st == launch_gate.NOGO and "b0" in why,
+                  f"and refuses a lane granted to someone else: {st} {why[:90]}")
+            # OWNERSHIP COMES FROM lane_to, NOT FROM THE PROSE, and this world is the reason:
+            # the real 2026-09-04 lane_note grants card 5 to e1, and a substring search for the
+            # session name "de" hits inside the word "excluded" in it. My first version of the
+            # gate did exactly that and reported GO for de on e1's lane. Word boundaries do not
+            # rescue it -- "b0" then matches "ckpt_b0_sd_equalcompute" in the same string.
+            _prose = ("2026-09-04 05:40Z fb: lane card 5 granted to e1 for C11: one score_matrix "
+                      "run over ckpt_b0_sd_equalcompute; domain_bpb excluded (C12)")
+            _obj = json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
+            _obj["lane_note"] = _prose
+            _obj["cards"]["5"] = "lane: e1 C11 doc_cu re-score"
+            _obj["lane_to"] = "e1"
+            with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+                json.dump(_obj, fh)
+            for _w in ("de", "b0"):
+                os.environ["LAUNCH_OWNER"] = _w
+                st, why = launch_gate.gate_cards(froot, None, 1)
+                _case(st == launch_gate.NOGO and "e1" in why,
+                      f"{_w} does not get e1's lane off a prose match: {st} {why[:80]}")
+            os.environ["LAUNCH_OWNER"] = "e1"
+            st, why = launch_gate.gate_cards(froot, None, 1)
+            _case(st == launch_gate.GO, f"and e1, whom lane_to names, does: {st} {why[:80]}")
+            # No lane_to at all: UNKNOWN naming the writer, never a guess from the prose.
+            _obj.pop("lane_to")
+            with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+                json.dump(_obj, fh)
+            st, why = launch_gate.gate_cards(froot, None, 1)
+            _case(st == launch_gate.UNKNOWN and "grant-lane" in why,
+                  f"a lane grant with no lane_to is UNKNOWN naming the writer: {st} {why[:80]}")
+        finally:
+            launch_gate.LAUNCH_CARDS = _saved
+            if _saved_owner is None:
+                os.environ.pop("LAUNCH_OWNER", None)
+            else:
+                os.environ["LAUNCH_OWNER"] = _saved_owner
     finally:
         globals()["FOREIGN_ROOT"] = _saved_foreign_root
         shutil.rmtree(froot, ignore_errors=True)
@@ -1106,9 +1240,12 @@ def _selftest():
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("action", nargs="?", choices=["acquire", "release", "status"])
+    ap.add_argument("action", nargs="?", choices=["acquire", "release", "status", "grant-lane"])
     ap.add_argument("--name", help="the exp row name of the job claiming the cards")
     ap.add_argument("--cards", help="comma-separated card indices, as CUDA_VISIBLE_DEVICES")
+    ap.add_argument("--to", help="grant-lane: who the lane is granted to (a session name)")
+    ap.add_argument("--why", default="", help="grant-lane: the one job it is granted for")
+    ap.add_argument("--by", default="", help="grant-lane: who is granting (the controller)")
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a clash to clear")
     ap.add_argument("--note", default="", help="free text: what this job is")
     ap.add_argument("--pid", type=int, default=None,
@@ -1120,7 +1257,17 @@ def main():
     if a.selftest:
         return _selftest()
     if not a.action:
-        ap.error("an action is required (acquire, release, status) unless --selftest")
+        ap.error("an action is required (acquire, release, status, grant-lane) unless --selftest")
+    if a.action == "grant-lane":
+        for f in ("cards", "to", "why", "by"):
+            if not getattr(a, f):
+                ap.error(f"--{f} is required for grant-lane")
+        cards = [c.strip() for c in a.cards.split(",") if c.strip()]
+        if len(cards) != 1:
+            ap.error("grant-lane takes exactly one card: the lane holds one job at a time")
+        ok, msg = grant_lane(cards[0], a.to, a.why, a.by)
+        print(msg, file=sys.stdout if ok else sys.stderr)
+        return 0 if ok else 1
     if a.action == "status":
         orphans, dup, lines = status()
         for line in lines:
