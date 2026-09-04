@@ -25,6 +25,7 @@ import fcntl
 import json
 import os
 import re
+import signal
 import subprocess
 import sys
 import tempfile
@@ -282,6 +283,41 @@ def _capture_failure(r):
     return [ln for ln in (r.stdout + r.stderr).strip().splitlines() if ln.strip()]
 
 
+def _failure_cause(script, r):
+    """One "<script> exited <rc>: <cause>" string, for every runner that shells out.
+
+    THE CAUSE IS THE SUBJECT. Three shapes, in the order they are worth reporting:
+
+    1. A NEGATIVE RETURN CODE IS A SIGNAL, and a killed process wrote no exception anywhere -- so
+       whatever the tail holds is the last thing it happened to print, not a cause. That is how
+       `l1_fewshot.py exited -15:   448/497 acc=0.0%` came to record a PROGRESS LINE as its failure
+       (audit_0904 E18/E21: one row, not eight -- the other seven name a real exception). Naming the
+       signal is the only honest answer here; the progress line is kept after it because it says how
+       far the run got, which is what a reader wants next.
+    2. An exception line, when one exists: that IS the answer, so one line is enough.
+    3. Otherwise the last three lines. The traceback was truncated and the last line alone is what
+       recorded `ours_tok = load_tokenizer(a.tokenizer, None)` -- a source line, naming where and
+       never what.
+
+    Shared by all three runners so a fix cannot land on one and miss the others, which is exactly
+    what E18 found: `metric_minimal_pairs` kept ONE line with no exception search while
+    `_run_eval_json` kept three, in the same file.
+    """
+    lines = _capture_failure(r)
+    if r.returncode < 0:
+        try:
+            sig = signal.Signals(-r.returncode).name
+        except ValueError:
+            sig = f"signal {-r.returncode}"
+        # The last line, labelled as progress rather than presented as the cause.
+        where = f"; last output: {lines[-1].strip()}" if lines else ""
+        return (f"{script} killed by {sig} (exit {r.returncode}) -- no exception was raised, so "
+                f"nothing here is a cause{where}")[:400]
+    exc = [ln for ln in lines if re.match(r"^\w[\w.]*(Error|Exception|Exit|Interrupt)\b", ln)]
+    tail = exc[-1:] or lines[-3:] or ["no output"]
+    return f"{script} exited {r.returncode}: {' | '.join(t.strip() for t in tail)[:400]}"
+
+
 def metric_minimal_pairs(ckpt_path):
     """b0's eval/base_matrix.py: token-aligned Chinese minimal pairs across five
     syntactic dimensions, with BPE-merge handling (a pair is skipped, not scored,
@@ -299,12 +335,10 @@ def metric_minimal_pairs(ckpt_path):
             timeout=1800,
         )
         if r.returncode != 0:
-            # BOTH streams, concatenated -- see _capture_failure's docstring for why `or` is
-            # wrong. base_matrix.py has no refusal path today, so nothing is known to be lost
-            # here; the expression is fixed anyway because the next refusal it gains would be
-            # invisible, and `_run` eleven lines below already does it this way.
-            tail = _capture_failure(r)[-1:] or ["no output"]
-            return None, f"base_matrix.py exited {r.returncode}: {tail[0][:200]}"
+            # The SAME formatter as the other runners. This site kept one line and searched for no
+            # exception, so a base_matrix traceback recorded its last line whatever that was -- E18's
+            # second defect, in the same file as the first.
+            return None, _failure_cause("base_matrix.py", r)
         return json.load(open(out, encoding="utf-8")), None
     finally:
         os.unlink(out)
@@ -320,21 +354,9 @@ def _run_eval_json(script, ckpt_path, extra_args=None, timeout=3600):
             capture_output=True, text=True, cwd=ROOT, timeout=timeout,
         )
         if r.returncode != 0:
-            # The LAST line of a traceback is not reliably the exception. Python 3.12 ends a
-            # frame with a caret line, and a subprocess can write past the traceback, so the
-            # one-line version recorded domain_bpb's failure as the SOURCE LINE
-            # "ours_tok = load_tokenizer(a.tokenizer, None)" -- which names where, never what.
-            # ONE row in runs/score_matrix.jsonl carries that string
-            # (ckpt_data_leg_206m_8b.pt.step10000); the comment said "all three" before the rows
-            # were counted, and 6 others carry a different failure -- the stream shadowing
-            # _capture_failure now fixes (audit_0904 E18).
-            lines = _capture_failure(r)
-            exc = [ln for ln in lines if re.match(r"^\w[\w.]*(Error|Exception|Exit|Interrupt)\b", ln)]
-            # With an exception line, one line IS the answer. Without one the traceback was
-            # truncated, and the last line alone is exactly what was useless before -- keep
-            # three so the record at least says which frames.
-            tail = exc[-1:] or lines[-3:] or ["no output"]
-            return None, f"{script} exited {r.returncode}: {' | '.join(t.strip() for t in tail)[:400]}"
+            # _failure_cause holds the reasoning that used to live here, so the three runners
+            # cannot drift apart again (audit_0904 E18).
+            return None, _failure_cause(script, r)
         return json.load(open(out, encoding="utf-8")), None
     finally:
         os.unlink(out)
@@ -859,6 +881,47 @@ def selftest():
     assert _lines.index(next(ln for ln in _lines if "REFUSING" in ln)) < \
         _lines.index(next(ln for ln in _lines if "vocab_id" in ln)), \
         f"stdout must come first so the tail keeps the refusal: {_lines}"
+
+    # _failure_cause: A KILLED PROCESS MUST NOT HAVE A PROGRESS LINE AS ITS CAUSE. The real row is
+    # `l1_fewshot.py exited -15:   448/497 acc=0.0%` -- SIGTERM, no exception anywhere, and the
+    # tail-3 fallback grabbed the progress line (E18/E21). Real subprocesses, because the defect is
+    # in what returncode/streams come back.
+    _killed = subprocess.run(
+        [sys.executable, "-c",
+         'import os, signal, sys\n'
+         'print("  448/497 acc=0.0%", flush=True)\n'
+         'os.kill(os.getpid(), signal.SIGTERM)\n'],
+        capture_output=True, text=True,
+    )
+    _cause = _failure_cause("l1_fewshot.py", _killed)
+    assert "SIGTERM" in _cause, f"a killed run does not name its signal: {_cause}"
+    assert not _cause.startswith("l1_fewshot.py exited -15:   448/497"), \
+        f"the progress line is presented as the cause: {_cause}"
+    assert "448/497" in _cause, f"the progress line was dropped instead of labelled: {_cause}"
+    assert "no exception" in _cause, f"the record does not say why there is no cause: {_cause}"
+    # AN EXCEPTION LINE WINS OVER THE TAIL, and the fixture has to make that DISCRIMINATING: the
+    # exception must have THREE OR MORE non-empty lines after it IN THE SAME STREAM, or lines[-3:]
+    # contains it by luck and the assertion passes with the search deleted. Two earlier fixtures
+    # failed this and I only caught them by mutating: (a) exception one line from the end, (b)
+    # stdout written "past" the traceback -- which cannot work, because _capture_failure puts ALL
+    # of stdout before ALL of stderr, so a stderr exception is last however the process interleaved
+    # them. What does work is the real case E18 names: NCCL/torch writing to stderr on the way down.
+    _raised = subprocess.run(
+        [sys.executable, "-c",
+         'import sys\n'
+         'sys.stderr.write("Traceback (most recent call last):\\n")\n'
+         'sys.stderr.write("  File \\"x.py\\", line 1, in main\\n")\n'
+         'sys.stderr.write("ValueError: cache stamps disagree\\n")\n'
+         'sys.stderr.write("[rank0] NCCL WARN Destroy comm 0x55 aborted\\n")\n'
+         'sys.stderr.write("[rank0] NCCL INFO Bootstrap: socket closed\\n")\n'
+         'sys.stderr.write("terminate called after throwing an instance\\n")\n'
+         'sys.exit(1)\n'],
+        capture_output=True, text=True,
+    )
+    _cause2 = _failure_cause("domain_bpb.py", _raised)
+    assert "ValueError: cache stamps disagree" in _cause2, \
+        f"the exception was not found; the tail-3 fallback recorded shutdown noise: {_cause2}"
+    assert "NCCL" not in _cause2, f"an exception existed and the tail was used anyway: {_cause2}"
 
     # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
     # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.
