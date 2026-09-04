@@ -643,6 +643,7 @@ def main():
     loader, steps, nccl = [], [], []
     fwds, bwds, opts = [], [], []
     losses = []
+    mem_grad = None  # (bytes per element, layout) of the table's gradient, read inside the loop
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
         print(f"built {n_par / 1e6:.2f}M params, compile={train.Cfg.compile and amp}, "
@@ -732,6 +733,14 @@ def main():
                 loss.backward()
             _mark(marks)
         torch.nn.utils.clip_grad_norm_(raw.parameters(), train.Cfg.clip)
+        # THE TABLE'S GRADIENT, CAPTURED HERE BECAUSE NOTHING CAN READ IT LATER: the
+        # zero_grad(set_to_none=True) two lines down drops it, so a report written after the
+        # loop sees grad=None and would print 0 bytes for the largest single tensor the
+        # memory allocates. Itemsize and layout only -- no tensor is retained.
+        if mem_grad is None and train.Cfg.mem_values:
+            _g = raw.memory.values.weight.grad
+            mem_grad = (0, "absent") if _g is None else (
+                _g.element_size(), "sparse COO" if _g.is_sparse else "dense")
         for opt in optimizers:
             opt.step()
         for opt in optimizers:
@@ -781,6 +790,26 @@ def main():
         print("  reserved is the number that decides whether it FITS -- allocated omits the "
               "caching allocator's fragmentation, and OOM is raised against reserved.",
               flush=True)
+        # THE TABLE'S BYTES PER PARAMETER, READ OFF THE LIVE TENSORS. A peak answers "does
+        # THIS table fit"; extrapolating to another size multiplies bytes-per-parameter, and
+        # that figure was derived by reading the construction site -- nn.Embedding in the
+        # default dtype, so fp32, 12 B/param -- rather than the model that trains. `raw.to(
+        # torch.bfloat16)` at :610 casts every floating parameter, the embedding included, so
+        # the premise does not survive the cast. PRINTED HERE, after the timed steps, because
+        # Adagrad allocates its state on the FIRST step: reading it before would have to
+        # assume the dtype instead of measuring it, which is the error this line exists to
+        # correct.
+        if train.Cfg.mem_values:
+            tw = raw.memory.values.weight
+            wb = tw.element_size()
+            gb, glayout = mem_grad if mem_grad else (0, "never read")
+            st = [s for o in optimizers if isinstance(o, torch.optim.Adagrad)
+                  for p, s in o.state.items() if p is tw]
+            sb = st[0]["sum"].element_size() if st and "sum" in st[0] else 0
+            print(f"TABLE dtype={tw.dtype} weight={wb}B grad={gb}B ({glayout}) "
+                  f"opt_state={sb}B{'' if sb else ' (no Adagrad state found)'} "
+                  f"-> {wb + gb + sb} B/param x {tw.numel()} params = "
+                  f"{tw.numel() * (wb + gb + sb) / 2**30:.2f} GiB of table tensors", flush=True)
         print(f"STARTUP {startup_alloc:.2f} GiB allocated, {startup_res:.2f} GiB reserved "
               f"(construction + compile + {a.warmup} warmup steps, before the reset)", flush=True)
         print("  TWO NUMBERS, TWO QUESTIONS. STARTUP decides whether the shape can be LAUNCHED "
