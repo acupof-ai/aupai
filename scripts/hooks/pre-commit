@@ -599,6 +599,16 @@ def main():
         # the defect -- it declared origin 16000 with no _row_cursor_base, a run that
         # consumed 512,000 rows and remembered none. 28s, no card, no data.
         "scripts/test_cursor_save.py",
+        # The holdout guard's two machine-dependence guards (6e ruling, 2026-09-04):
+        # _fingerprint() skips absent files, so the laptop (5 of 13 registry files) and
+        # the pod compute different values over the same committed hash set. Generation
+        # refuses where a path is missing; load() there trusts the committed fp and says
+        # "not verifiable here" instead of raising a false "stale". The selftest hides one
+        # REAL registry file and asserts both, plus that the refusal NAMES it. It writes
+        # the real HASH_PATH and restores it byte-for-byte, verified after -- an earlier
+        # mutation harness wrote a 501-line partial set through a symlink and it had to be
+        # restored from HEAD. No card, no data beyond what is already on disk.
+        "datagen/holdout.py",
         # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
         # check_selftests_are_gated's population widened from "contains the string
         # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE
