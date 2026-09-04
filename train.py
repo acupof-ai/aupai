@@ -2937,7 +2937,23 @@ def main():
                 # true fraction and a collapsed pool could read as healthy. key_hits is the
                 # opposite: usage COUNTS add, so SUM is right there. Getting these two backwards
                 # is the kind of error that produces a plausible number.
-                if raw_model.memory is not None and step % 100 == 0:
+                # EARLY ROWS AT 10, 20, 30 AS WELL AS EVERY 100 (4c 2026-09-05). M1 was stopped by
+                # readout 5 at STEP 30 and left no diagnostics row at all, because the first write
+                # was due at 100 and the arm was killed at 83: the ledger cannot say what the pool
+                # was doing at the moment the decision was taken, and memory_diag_fresh reported
+                # "no diagnostics row at all" for a run that had produced 83 steps of data. A stop
+                # rule that fires at step 30 needs a row at step 30.
+                #
+                # THE SET IS RANK-INVARIANT, which is the constraint the collective below imposes:
+                # every rank computes the same `_diag_due` from `step` alone, so all ranks enter
+                # the all_reduce together. A condition involving `is_main`, a rank-local counter or
+                # a wall clock would hang instead of mismeasuring.
+                #
+                # ONLY MULTIPLES OF 10, because `tps` is computed in the every-10-steps block
+                # above and the row's tok_s_gpu must be this window's throughput rather than an
+                # earlier one -- the assert below is the guard on that, and 10/20/30 satisfy it.
+                _diag_due = step % 100 == 0 or step in (10, 20, 30)
+                if raw_model.memory is not None and _diag_due:
                     _mem = raw_model.memory
                     if ddp:
                         _t = _mem.touched.to(torch.int32)
@@ -2954,13 +2970,23 @@ def main():
                         _mem.last_entropy /= world
                     _md = _mem.diagnostics(reset=True)
                     if is_main:
-                        # `tps` is computed in the is_main block above, and step % 100 == 0
-                        # IMPLIES step % 10 == 0, so it is always this iteration's value rather
-                        # than a stale one. If that cadence ever changes, this reads the wrong
-                        # window's throughput -- hence the assert instead of a comment alone.
+                        # `tps` is computed in the is_main block above, so every step in
+                        # `_diag_due` must be a multiple of 10 or this row would carry an earlier
+                        # window's throughput beside this window's diagnostics. 100, 10, 20 and 30
+                        # all are; the assert is what keeps that true if the set is edited.
                         assert step % 10 == 0, (
                             "the diag cadence no longer implies the tok/s cadence, so tps is "
                             "from an earlier window than the diagnostics it is written beside")
+                        # THE WINDOW IS NOT UNIFORM, and the row says so rather than leaving the
+                        # reader to assume. diagnostics(reset=True) clears the counters, so with
+                        # extra rows at 10/20/30 the windows are 1-10, 11-20, 21-30, 31-100, then
+                        # every 100. pool_touched_frac is a fraction of the pool touched IN ITS
+                        # WINDOW, so a 10-step window and a 100-step window are not comparable --
+                        # a short window touches fewer rows for a reason that has nothing to do
+                        # with collapse. readout 4's threshold (below 0.20 at step 1000) is read
+                        # on the 100-step windows, which are uniform from step 100 onward; the
+                        # early rows exist so a stop before step 100 has evidence, not to be
+                        # compared against them.
                         # THE WRITE CANNOT KILL THE RUN IT OBSERVES (4c 2026-09-05). de found
                         # data/ledger_schema.json outside pod_drift's SCOPE, so memory_diag.py
                         # reached the pod and the schema it opens did not: the first log_diag at
