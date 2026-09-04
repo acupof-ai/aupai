@@ -270,7 +270,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 16 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 63 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 65 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 3 | §4 §24 §44 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 7 | §7 §13 §25 §51 §59 §136 §166 |
 | State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
@@ -296,13 +296,13 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
 | Vocabulary identity | `vocab_id_on_load_path` |
-| GPUs | manual: card ownership is a controller decision, not a file state |
-| A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
-| Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
-| Small jobs queue on the lane card. They never spill into the block, not even o | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
+| GPUs (9) | manual: card ownership is a controller decision, not a file state |
+| A kill is not finished until `nvidia-smi` says the card is free (4) | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
+| Lanes: a 7-card training block, and one lane card for everything else (3) | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
+| Small jobs queue on the lane card. They never spill into the block, not even o (3) | manual: queueing is operator behaviour over time; lane_respected catches the instantaneous violation |
 | The lane holds one job at a time | manual: same: lane_respected sees now, not the queue discipline |
 | When there is no lane card at all — `NGPU=8`, as p500m_ | `coresident_cache_refusal` |
-| Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
+| Judge the cost in seconds against what the run already (2) | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
 | Shared files | `shared_file_claim` |
@@ -310,7 +310,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
 | Card claims live where the job runs | manual: the claim files sit in the tree the job runs from and no check reads the pod's runs/claims from here; scripts/test_launch_claims.py asserts the launch path acquires and the monitor releases, card_claim.py --selftest asserts a shell pid is refused |
 | `CUDA_VISIBLE_DEVICES`, not `cuda:N` | `device_set_honoured` |
-| File transfer into the container: `podput <local> <remote-abs-path>` | manual: the 100KB cap is enforced by podput itself, which refuses |
+| File transfer into the container: `podput <local> <remote-abs-path>` (3) | manual: the 100KB cap is enforced by podput itself, which refuses |
 | The wrappers are `scripts/pod` and `scripts/podput`, tr | `test_pod_wrappers` |
 | pod refuses a cd … & shape: the cd does not reach the b | `test_pod_wrappers` |
 | pod --view prints which filesystem the next command see | `test_pod_wrappers` |
@@ -319,19 +319,17 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | `setsid`, not `nohup` | `no_foreground_pod_training` |
 | Push code via `scripts/pod_push.sh <files>`, never bare `podput` | `pod_drift` |
 | Never `git stash` in this repository ->R8 | `no_shared_stash` |
-| The index must equal HEAD before you merge: commit your | manual: which order a session ran merge and add in is not recoverable from the repo. What IS checked is the consequence: a wip commit lands on the branch where dirty_aged and the behind-main hook see it. The rule's own history is the reason it stays prose -- the previous version was a correct measurement of the wrong branch shape, and no artifact records which shape a merge had |
-| A conflicting path needs a commit first, and read which | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
+| The index must equal HEAD before you merge: commit your (7) | manual: which order a session ran merge and add in is not recoverable from the repo. What IS checked is the consequence: a wip commit lands on the branch where dirty_aged and the behind-main hook see it. The rule's own history is the reason it stays prose -- the previous version was a correct measurement of the wrong branch shape, and no artifact records which shape a merge had |
+| A conflicting path needs a commit first, and read which (4) | manual: same -- the sequence happens in a terminal; the consequence IS checked, a wip commit lands on the branch where dirty_aged and the behind-main hook see it |
 | `pod_push` only ever ADDS: a deletion on `main` needs a second exp | manual: the deletion is an operator sequence -- delete here, then delete there -- and the second half happens on a filesystem no check reads; pod_drift compares the manifest against the pod, and a file in neither is invisible to it by construction |
-| Only a `refusing:` line means nothing shipped | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
-| `data/pod_head_manifest.txt` is NOT tracked. `scripts/pod_push.sh` generates it | manual: `pod_drift` gates the pod side and `.gitignore` stops the file being committed by accident, so the tracking half IS enforced -- the harness world that used to assert the hook STAGES the manifest now asserts it does not. What stays manual is the push ORDER, that the manifest ships AFTER the files: pod_drift's selftest asserts it in both directions against a pod-shaped fixture, but whether the real push ran in that order is not recoverable from any artifact it leaves behind |
+| Only a `refusing:` line means nothing shipped (2) | manual: how a human reads pod_push's stdout; the transcript is not an artifact, so nothing records whether the reader's filter could see a refusal at all |
+| `data/pod_head_manifest.txt` is NOT tracked. `scripts/pod_push.sh` generates it (14) | manual: `pod_drift` gates the pod side and `.gitignore` stops the file being committed by accident, so the tracking half IS enforced -- the harness world that used to assert the hook STAGES the manifest now asserts it does not. What stays manual is the push ORDER, that the manifest ships AFTER the files: pod_drift's selftest asserts it in both directions against a pod-shaped fixture, but whether the real push ran in that order is not recoverable from any artifact it leaves behind |
 | Outbound network: `curl -4`, always | `curl_ipv4` |
 | What is reachable, measured 2026-08-30 with `-4` | manual: a record of a measurement, not a rule to enforce |
 | Reachability changes without notice, so a fetcher carries a mirror chain | manual: fetchers do carry chains; asserting 'a chain is present' would match a comment |
 | `cd` inside a backgrounded chain stays in it | `test_pod_wrappers` |
 | The pod is frozen from a training launch until that run | manual: the window is defined by two events in different places -- a launch timestamp on the pod and a push from a laptop -- and nothing records the second. `pod_drift` sees the drift that results, which is the consequence; whether a push landed inside someone's startup window is not recoverable from any artifact |
-| cfg_default raises rather than returning None: an annotation | manual: a note on how checks are written, not a rule to enforce |
-| The ledger takes names from the scores: --name X attributes | manual: MEASURED 2026-09-04, and the check 6e proposed ("a score row names a checkpoint that exists") would be permanent-red. `produced_checkpoint` (harness.py:2315) mints `ckpt_<name>` from `--name` when no path is in the cmd: 92 of the register's rows get their name that way, and **35 of those 92 name a checkpoint absent from the newest pod listing** — `ckpt_0830v1_*` are the 0830v1 reset, `ckpt_t38_kill`/`t52_*` are finished probes. Every one was legitimately pruned, so an existence check FAILs on correct history and its only remedy would be un-pruning or an exception list that grows forever. The attribution hazard the rule names is real and already enforced from the other end: `recorded_scores` returns orphans (a score matching no checkpoint) and `produced_checkpoint` excludes `--resume`/`--ckpt` inputs after crediting `ckpt_k4` with its own output's score. Orphans measured today: 0 of 1 resolved score. What stays manual is that `SCORE_RE` matches only `math-hard <n>%`, so every other metric's rows are outside both this rule and its enforcement |
-| Each session works in its own worktree on its own branch: gi | manual: worktree topology is per-machine, not in the repo |
+| Each session works in its own worktree on its own branch: gi (2) | manual: worktree topology is per-machine, not in the repo |
 | Commit in your worktree as soon as a change works, at most 3 | manual: same deadline as above, enforced by dirty_aged |
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
