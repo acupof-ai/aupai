@@ -586,6 +586,17 @@ def main():
         # cannot tell a correct implementation from one using the wrong weighting. Eight
         # mutations verified red, each through a named assertion rather than a traceback.
         "eval/block_paired.py",
+        # Readout 2's API-name cloze. 1.5s, no card, no tokenizer, no cache: --selftest builds
+        # its own text and its region arithmetic runs on the control's RECORDED numbers rather
+        # than on the checkpoint file. Registered in the same commit as the file because the
+        # case that matters is a scoring defect it cannot see on its own: run_eval.score_mc
+        # leaves an unscoreable item's row at the -1e9 fill, argmax returns the FIRST maximum,
+        # so the item counts CORRECT whenever the gold sits in slot 0. That is a free point
+        # sized by where the caller puts the gold, and this file is a caller that chooses the
+        # slot at random -- so its own accuracy would carry 1/4 of every tokenizer failure as
+        # signal. The selftest reproduces the defect and then requires the mask, which means an
+        # edit to score_mc_items that drops the mask goes red here.
+        "eval/api_cloze.py",
         # math gold BPB (N3's second metric): it IMPORTS humaneval_bpb's solution_bpb rather
         # than re-implementing it, and its selftest runs that file's selftest too -- so the
         # shared arithmetic is verified against the shared implementation, not against a second
