@@ -6430,6 +6430,7 @@ def check_score_matrix(root):
             except Exception:
                 pass
     missing = []
+    unverifiable = []
     for r in rows:
         if r.get("status") != "ok":
             continue
@@ -6447,11 +6448,41 @@ def check_score_matrix(root):
             continue
         if "--profile" in cmd or "--profile_steps" in cmd:
             continue  # a torch profiler run stops after a handful of steps
+        # A ROW MAY NAME ITS OWN READING instead of a score-matrix record, because for some runs the
+        # matrix is a DIFFERENT QUANTITY than the one the row pre-registered. e1_31b_loop_500's
+        # reading is a 2x2 humaneval-BPB diagonal against its own mismatch controls; the matrix's
+        # domain-loss numbers would be a real record of something nobody asked about, and satisfying
+        # this gate with it would cost a card (6e's ruling, 2026-09-04: not that).
+        #
+        # THE PATH MUST EXIST. Otherwise the field is a way to assert a reading nobody wrote, which
+        # is worse than the gap it replaces -- the row would read as "scored by another instrument"
+        # with nothing behind it.
+        art = r.get("reading_artifact")
+        if art:
+            if os.path.exists(os.path.join(root, str(art))):
+                continue
+            missing.append(f"{r.get('name', '?')} reading_artifact {art} does not exist")
+            continue
         cand = produced_checkpoint(cmd, str(r.get("name", "?")))
-        if cand and f"{cand}.pt" not in scored:
+        if cand is None:
+            # SILENTLY EXEMPT UNTIL 2026-09-04, and that is what this branch is for. A row whose cmd
+            # is prose with no --out, no --name and no bare ckpt_*.pt returns None here and the gate
+            # skipped it: e1_31_middle_layer_loop passed that way while its 500-step sibling, whose
+            # cmd names --out honestly, was held to the record. The gate was being satisfied by cmd
+            # FORMATTING rather than by runs being scored. WARN rather than FAIL because the row may
+            # be legitimate -- but it is no longer invisible, and `reading_artifact` is the field
+            # that resolves it (6e's ruling: make the escape visible, do not fix it by accident).
+            unverifiable.append(str(r.get("name", "?")))
+            continue
+        if f"{cand}.pt" not in scored:
             missing.append(cand)
     if missing:
         return FAIL, f"ok training run(s) with no score-matrix record: {sorted(set(missing))[:5]}"
+    if unverifiable:
+        return WARN, (f"{len(unverifiable)} ok training row(s) whose cmd names no checkpoint, so "
+                      f"'trained but not scored' cannot be checked for them: "
+                      f"{sorted(set(unverifiable))[:5]} -- add reading_artifact: <path> naming the "
+                      f"run's own reading, or a cmd that names its --out")
     return PASS, "every ok training run has a score-matrix record"
 
 
@@ -6468,6 +6499,53 @@ def _broken_score_matrix():
             [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
             check=True, capture_output=True,
         )
+    return d
+
+
+def _broken_score_matrix_no_ckpt():
+    """A REAL ok training row whose cmd names no checkpoint -- the WARN tier.
+
+    This is the world e1_31_middle_layer_loop lives in: a cmd written as prose describing stages,
+    with no --out, no --name and no bare ckpt_*.pt, so produced_checkpoint returns None. Until
+    2026-09-04 the check skipped such rows entirely, which meant the gate was satisfied by cmd
+    FORMATTING rather than by the run being scored -- and the sibling row that wrote --out honestly
+    was the one held to the record.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "prose", "--cmd",
+         "sft_math.py both arms at 250 steps (Stage B), then eval/humaneval_bpb.py in the 2x2"],
+        ["done", "--name", "prose", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    return d
+
+
+def _broken_score_matrix_dangling_artifact():
+    """An ok training row whose reading_artifact names a path that does not exist -- the FAIL tier.
+
+    The field is an escape hatch from the score-matrix requirement, so an unchecked one would let a
+    row assert "scored by another instrument" with nothing behind it: strictly worse than the gap it
+    replaces, because the gap is visible and the false claim reads as satisfied.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "y", "--cmd", "sft_math.py --out ckpt_y.pt"],
+        ["done", "--name", "y", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    log = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(log, encoding="utf-8") if x.strip()]
+    rows[-1]["reading_artifact"] = "runs/this_file_was_never_written.log"
+    with open(log, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
     return d
 
 
@@ -11814,6 +11892,30 @@ def _demo():
                                 f"reason -- it does not name the gap: {_why[:70]}")
         finally:
             shutil.rmtree(_d, ignore_errors=True)
+
+    # score_matrix_present gained two branches on 2026-09-04 and its registered world exercises
+    # neither. Both are worlds where the check could SILENTLY PASS, which is the shape it was just
+    # fixed for: reading_artifact is an escape hatch, so a path that does not exist must FAIL rather
+    # than wave the row through; and a cmd that names no checkpoint used to be skipped outright,
+    # which is how e1_31_middle_layer_loop passed while its honestly-written sibling did not.
+    for _w, _want, _label, _needle in (
+        (_broken_score_matrix_dangling_artifact, FAIL, "reading_artifact at a missing path",
+         "does not exist"),
+        (_broken_score_matrix_no_ckpt, WARN, "an ok training row whose cmd names no checkpoint",
+         "names no checkpoint"),
+    ):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_score_matrix(_d)
+                if _st != _want:
+                    untested.append(f"score_matrix_present reported {_st}, wanted {_want}, on "
+                                    f"{_label} ({_why[:70]})")
+                elif _needle not in _why:
+                    untested.append(f"score_matrix_present hit the right tier on {_label} but does "
+                                    f"not say why: {_why[:70]}")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
