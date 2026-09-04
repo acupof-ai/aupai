@@ -291,7 +291,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Rule | Enforced by |
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
-| Vocabulary identity | manual: enforced at load since 7aacbac (2026-09-03): sft_math.py refuses a vocab_id mismatch and prints the matching id; before 7aacbac the guard key was `vocab` and the assert key `vocab_id`, so the check never fired (shape §70) |
+| Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
