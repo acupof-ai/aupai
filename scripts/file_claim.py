@@ -44,6 +44,19 @@ def _claim_dir():
 SHARED_FILES = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
 
 
+def _owner():
+    # $USER is `bytedance` for every session on this box, so scoping release-all by it is no
+    # scoping at all: one session's merge hands back every other session's claims, and with the
+    # 6h TTL a leaked claim blocks all sessions' shared-file commits. Same identity model as
+    # launch_gate._launch_owner: LAUNCH_OWNER wins, else the worktree's own name (one session
+    # per worktree is the standing rule), `aupai-3b` -> `3b`.
+    o = os.environ.get("LAUNCH_OWNER", "").strip()
+    if o:
+        return o
+    base = os.path.basename(ROOT)
+    return base[len("aupai-"):] if base.startswith("aupai-") else base
+
+
 def claim_path(path):
     safe = path.replace("/", "__")
     return os.path.join(_claim_dir(), safe + ".json")
@@ -52,7 +65,7 @@ def claim_path(path):
 def acquire(path, owner=None):
     os.makedirs(_claim_dir(), exist_ok=True)
     cp = claim_path(path)
-    owner = owner or os.environ.get("USER", "unknown")
+    owner = owner or _owner()
     live = claim(path)
     if live:
         return False, f"{path} already claimed by {live.get('owner')} at {live.get('time')}"
@@ -140,7 +153,7 @@ def main(argv=None):
         print(msg)
         return 0 if ok else 1
     if a.cmd == "release-all":
-        removed = release_all(a.owner or os.environ.get("USER", "unknown"))
+        removed = release_all(a.owner or _owner())
         print(f"released {len(removed)} claim(s): {', '.join(removed) if removed else 'none'}")
         return 0
     for p, rec in claims().items():
@@ -160,8 +173,12 @@ def _selftest():
     try:
         # Hermetic: point the claim dir at the temp tree (the re-exec children inherit the env),
         # and the owner at a fixed name, so the selftest never reads or writes real claims.
+        # The owner is pinned via LAUNCH_OWNER, not $USER: $USER is no longer the default owner,
+        # and this assertion used to read `st_owner` straight out of it -- the world encoded the
+        # very defect (unscoped release-all) that the last two worlds below now catch.
         os.environ["FILE_CLAIM_DIR"] = d
         os.environ["USER"] = "st_owner"
+        os.environ["LAUNCH_OWNER"] = "st_owner"
         # acquire a path -> claim present, second acquire refuses
         rc, out = run("acquire", "--path", "train.py")
         if rc != 0: fails.append(f"acquire failed: {out}")
@@ -190,8 +207,28 @@ def _selftest():
         if not claim("train.py"): fails.append("release-all dropped a foreign claim")
         rc, _ = run("release", "--path", "train.py")
         if rc != 0: fails.append("release train.py(other) failed")
+        # THE DEFAULT OWNER IGNORES $USER. The worlds above all pass --owner explicitly, so they
+        # pass just as well when the default is $USER -- which is `bytedance` for every session
+        # here, i.e. no scoping at all. LAUNCH_OWNER wins; with it unset the worktree name is
+        # used; neither may be the $USER value.
+        os.environ["LAUNCH_OWNER"] = "st_wt"
+        rc, _ = run("acquire", "--path", "sft_math.py")
+        if rc != 0: fails.append("acquire under LAUNCH_OWNER failed")
+        c = claim("sft_math.py")
+        if not (c and c["owner"] == "st_wt"):
+            fails.append(f"LAUNCH_OWNER must win, got {c and c.get('owner')}")
+        os.environ.pop("LAUNCH_OWNER")
+        rc, _ = run("acquire", "--path", "train.py")
+        if rc != 0: fails.append("acquire under default owner failed")
+        c = claim("train.py")
+        if c and c["owner"] == "st_owner":
+            fails.append("default owner is $USER -- release-all would not be scoped")
+        rc, out = run("release-all", "--owner", "st_wt")
+        if rc != 0: fails.append(f"release-all(st_wt) failed: {out}")
+        if claim("sft_math.py"): fails.append("release-all left the LAUNCH_OWNER claim")
+        if not claim("train.py"): fails.append("release-all dropped a foreign default-owner claim")
     finally:
-        for _k in ("FILE_CLAIM_DIR", "USER"):
+        for _k in ("FILE_CLAIM_DIR", "USER", "LAUNCH_OWNER"):
             try:
                 os.environ.pop(_k)
             except KeyError:
@@ -199,7 +236,7 @@ def _selftest():
         import shutil; shutil.rmtree(d, ignore_errors=True)
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"file_claim selftest: {'PASS (6 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"file_claim selftest: {'PASS (8 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
