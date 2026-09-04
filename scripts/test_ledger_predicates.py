@@ -336,11 +336,26 @@ def selftest():
         def tkey(o):
             return o.get("id")
 
-        open_ix = [n for n, ln in enumerate(tasks) if (obj(ln) or {}).get("state") == "open"]
-        if not open_ix:
-            print("  SKIP tasks world: no open row on main to close")
+        # THE ROW THE FOLD KEEPS, not the last line whose state is open (found red on the real
+        # tree 2026-09-04). runs/tasks.jsonl is an EVENT LOG: `task done` APPENDS a close event
+        # rather than rewriting the open row, so the last `state=open` LINE for an id can be
+        # followed by that id's close. Mutating it then changes a superseded line -- the fold's
+        # kept row is unchanged, both predicates report 0 hits, and the case read as a BUG in the
+        # predicates when the defect was in the world. de-58 was the row it picked: open at index
+        # 482, closed at 483, both on main.
+        #
+        # Same class as harness._broken_run_commits_resolve, which planted into rows[-1] while its
+        # check read exp.fold. A fixture keyed on a raw line index goes vacuous the moment anyone
+        # appends to the ledger, and here it went worse than vacuous: it asserted a real bug.
+        #
+        # So: group first, take ids whose KEPT row is open, and mutate that row's index.
+        _kept_open = [(k, rows[-1]) for k, rows in _group(tasks, tkey).items()
+                      if (obj(rows[-1]) or {}).get("state") == "open"]
+        if not _kept_open:
+            print("  SKIP tasks world: no id on main whose current row is open")
         else:
-            n = open_ix[-1]
+            _k, _ln = _kept_open[-1]
+            n = max(i for i, x in enumerate(tasks) if x == _ln)
             closed = list(tasks)
             closed[n] = json.dumps(
                 dict(obj(tasks[n]), state="done", evidence="x", closed="2026-09-03 00:00"), ensure_ascii=False
@@ -350,8 +365,9 @@ def selftest():
             ok = bool(s_hits) and not k_hits
             bad += not ok
             print(
-                f"  {'ok  ' if ok else 'BUG '} `harness task done` in place: subsume refuses "
-                f"({len(s_hits)}), key_present passes ({len(k_hits)}) -- why tasks is not subsume"
+                f"  {'ok  ' if ok else 'BUG '} `harness task done` in place on {_k}: subsume "
+                f"refuses ({len(s_hits)}), key_present passes ({len(k_hits)}) -- why tasks is "
+                f"not subsume"
             )
 
     # de-39's EXEMPTION, on four worlds. ledger_audit._superseded_by_ruling excuses a lost row
