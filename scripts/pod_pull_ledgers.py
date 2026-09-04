@@ -91,17 +91,25 @@ def _keys():
 
 
 def read_pod(rel, pod_root=POD_ROOT):
-    """(text, error). A MISSING file is an error, never an empty ledger.
+    """(text, error). A MISSING file is an error; an EMPTY one is an empty ledger.
 
-    runs/review.jsonl does not exist on the pod today. Returning "" for it would report
-    "0 pod-only rows", which reads as agreement when it means the question was not asked --
-    the shape this repo has bought three times (unmeasured labelled as absent)."""
+    runs/review.jsonl did not exist on the pod at all, and returning "" for that would report
+    "0 pod-only rows", which reads as agreement when it means the question was not asked -- the
+    shape this repo has bought three times (unmeasured labelled as absent).
+
+    AN EMPTY FILE IS A DIFFERENT FACT AND WAS BEING FOLDED INTO THE SAME ERROR. Under 6e's ruling
+    of 2026-09-04 the two absent ledgers were created on the pod as empty files so the transport is
+    symmetric -- and nothing changed, because `not r.stdout.strip()` still returned the error, the
+    survey still reported `n_local 0` for them (the error path reports zeros for BOTH sides), and
+    all 168 local review rows stayed unsendable. An empty ledger has a defined answer to "what do
+    you hold": nothing. Only a file that is not there has no answer.
+
+    The distinction now decides the direction: an empty pod file means every local row is
+    local-only, which is exactly what the push exists to send."""
     p = f"{pod_root}/{rel}"
     r = subprocess.run([os.path.expanduser("~/bin/pod"), f"cat {p}"], capture_output=True, text=True)
-    if r.returncode != 0 or (not r.stdout and "No such file" in (r.stderr or "")):
+    if r.returncode != 0 or "No such file" in (r.stderr or ""):
         return None, f"unreadable on the pod ({(r.stderr or 'rc=%d' % r.returncode).strip()[:90]})"
-    if not r.stdout.strip():
-        return None, "empty or absent on the pod"
     return r.stdout, None
 
 
@@ -517,6 +525,23 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
             missing = missing + events_pod_lacks(pod_rows, local_rows, keys[rel])
         else:
             missing, coll = diff_rows(pod_rows, local_rows, keys[rel])
+            # THE SAME UNION, MIRRORED. The event union was added for --push and never given to
+            # the pull, so an event the POD holds under a key the repository already has could not
+            # come home -- the exact defect --push was written to fix, surviving in the direction
+            # this file is named after.
+            #
+            # MEASURED 2026-09-04 (6e's report): the pod held two events for
+            # (b0_headmix_armA, 2026-09-04 11:10) -- `fail vanished` from the ghost monitor, then
+            # `dropped` with "ghost: monitor invoked with the wrong repo root, void". Two
+            # pod_push --all runs pulled the first and then nothing, because diff_rows compares
+            # each side's LAST row per key: once the repo had any row for that key, the key was no
+            # longer `missing` and the void event was unreachable. A void that cannot travel leaves
+            # the ghost row standing as the current state in main while the pod says it is void.
+            #
+            # Not a second implementation: events_pod_lacks with the arguments in pull order, so
+            # its "only events AFTER the receiving side's last one for that key" rule applies
+            # unchanged and an older event still cannot fold a closed row back open.
+            missing = missing + events_pod_lacks(local_rows, pod_rows, keys[rel])
         kept = []
         for k, why, lrow, prow in coll:
             ok, stale = settled(rel, k, lrow, prow, idx)
@@ -730,6 +755,61 @@ def _selftest():
     assert all(r[5] for r in rows), f"a missing pod file reported no error: {rows}"
     assert all(not r[3] for r in rows), "a missing file must offer no rows to append"
 
+    # AN EMPTY POD FILE IS NOT A MISSING ONE, and the two were folded into one error until
+    # 2026-09-04. Under 6e's ruling the two absent ledgers were created on the pod as empty files
+    # so the transport is symmetric -- and nothing changed: `not r.stdout.strip()` still returned
+    # the error, the survey reported n_local 0 for them too (the error path zeroes BOTH sides), and
+    # all 168 local review rows stayed unsendable. An empty ledger has a defined answer to "what do
+    # you hold" -- nothing -- and under --push that answer means every local row is local-only.
+    #
+    # READ_POD ITSELF IS THE SUBJECT, not the survey. The first version of this case passed a stub
+    # reader returning ("", None), which BYPASSES read_pod -- so reverting the fix left it green:
+    # a case that tests the caller cannot test the callee's classification. It fakes the pod
+    # COMMAND instead, one layer lower, so the branch under test actually runs.
+    _real_run = subprocess.run
+
+    def _fake_cat(argv, **kw):
+        class _R:
+            returncode = 0
+            stdout = ""          # the file exists and is empty
+            stderr = ""
+        return _R()
+
+    try:
+        subprocess.run = _fake_cat
+        _txt, _err = read_pod("runs/review.jsonl", pod_root="/work/aupai")
+    finally:
+        subprocess.run = _real_run
+    assert _err is None, f"an EMPTY pod file must not be an error: {_err!r}"
+    assert _txt == "", f"an empty pod file reads as empty text, got {_txt!r}"
+
+    def _fake_absent(argv, **kw):
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "cat: /work/aupai/runs/review.jsonl: No such file or directory"
+        return _R()
+
+    try:
+        subprocess.run = _fake_absent
+        _txt2, _err2 = read_pod("runs/review.jsonl", pod_root="/work/aupai")
+    finally:
+        subprocess.run = _real_run
+    assert _err2 and _txt2 is None, (
+        f"an ABSENT pod file must still error -- 'not asked' must never read as 'agreed': "
+        f"{_txt2!r}, {_err2!r}")
+
+    # And the consequence in the survey: an empty pod file offers every local row to the push.
+    def _empty_pod(rel, pod_root):
+        return "", None
+
+    _erows = {r[0]: r for r in survey(reader=_empty_pod, push=True)}
+    _rev = _erows["runs/review.jsonl"]
+    assert _rev[5] is None and _rev[1] == 0, f"empty pod file: {_rev[5]}, {_rev[1]}"
+    assert _rev[2] > 0 and len(_rev[3]) > 0, (
+        f"the LOCAL count and the sendable set must be real for an empty pod file, got "
+        f"{_rev[2]} local and {len(_rev[3])} sendable -- the error path used to zero both sides")
+
     # A CLOSE MUST CROSS TO THE POD, and this is the case the row-level push could never
     # reach: a close is a second EVENT under an existing key, so diff_rows never calls it
     # `missing` and classify() calls it `stale`. Both correct, and between them the three
@@ -811,6 +891,64 @@ def _selftest():
         f"(the event union) and the whole new key (diff_rows), each exactly once -- if the "
         f"close is missing the wiring is gone; if a name appears twice the two sources overlap "
         f"and the pod gets a duplicate event"
+    )
+
+    # THE SAME WIRING IN THE PULL DIRECTION, which is what this file is named after and is
+    # where the union was missing for a day. The broken world is the real pair 6e reported:
+    # the pod holds `fail` and then `dropped` for one (name, started); the repository holds
+    # only `fail`. Two pod_push --all runs brought the first row home and then nothing,
+    # because the pull branch called diff_rows alone -- and diff_rows compares each side's
+    # LAST row per key, so once the repo held any row for that key the void event had no way
+    # across. The consequence is not cosmetic: main keeps showing the ghost row as current
+    # state while the pod says it is void.
+    _pull_pod = [dict(start, name="b0_headmix_armA", started="2026-09-04 11:10",
+                      status="fail", result="vanished"),
+                 dict(close, name="b0_headmix_armA", started="2026-09-04 11:10",
+                      status="dropped", result="ghost: wrong repo root, void")]
+    _pull_loc = [_pull_pod[0]]
+
+    def _fake_pull(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _pull_pod), None
+
+    _tmp2 = __import__("tempfile").mkdtemp(prefix="ledger_pull_union_")
+    os.makedirs(os.path.join(_tmp2, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_tmp2, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                for _r in _pull_loc:
+                    _f.write(json.dumps(_r, ensure_ascii=False) + "\n")
+    _prow = {r[0]: r for r in survey(root=_tmp2, reader=_fake_pull, push=False)}
+    _pmiss = _prow["runs/experiments.jsonl"][3]
+    assert [r.get("status") for r in _pmiss] == ["dropped"], (
+        f"survey(push=False) offered {[r.get('status') for r in _pmiss]}. The pod's SECOND "
+        f"event under a key the repository already has must come home -- diff_rows cannot "
+        f"see it, so removing the event union from the pull branch leaves the void row "
+        f"stranded on the pod and the ghost row standing in main"
+    )
+    # ...and the pull must not run BACKWARDS. The negative control is the mirror world: the
+    # pod holds only the first event and the repository holds both. Nothing is due home, and
+    # a pull that offered the repository's own later event would append it to a file the pod
+    # is the authority for. Swapping the two arguments in the pull branch turns the assertion
+    # above green-to-empty and this one red, so the pair pins the orientation, not just the
+    # presence, of the call.
+    def _fake_pull_back(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return json.dumps(_pull_pod[0], ensure_ascii=False) + "\n", None
+
+    _tmp3 = __import__("tempfile").mkdtemp(prefix="ledger_pull_back_")
+    os.makedirs(os.path.join(_tmp3, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_tmp3, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                for _r in _pull_pod:
+                    _f.write(json.dumps(_r, ensure_ascii=False) + "\n")
+    _brow = {r[0]: r for r in survey(root=_tmp3, reader=_fake_pull_back, push=False)}
+    assert _brow["runs/experiments.jsonl"][3] == [], (
+        f"the pull offered {_brow['runs/experiments.jsonl'][3]} when the repository was the "
+        f"side holding the later event -- the arguments are in push order"
     )
 
     # LINE COUNTS ARE NOT THE ANSWER, and this is the property that decides whether the
