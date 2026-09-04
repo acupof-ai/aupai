@@ -2063,6 +2063,66 @@ def _broken_curl_ipv4():
     return d
 
 
+def check_refusal_precedes_push(root):
+    """Every `refusing:` in pod_push.sh must be reachable BEFORE the first byte ships.
+
+    The rule is "only a refusing: line means nothing shipped". stamp_sync used to test
+    main-reachability at the END of --all -- after every file and the manifest had
+    landed -- and refuse with `return 1`. The line printed, the push had already
+    happened, and on the `partial` path the refusal was unreachable entirely (that
+    branch cannot return nonzero, and `stamp_sync partial` is the script's last line,
+    so nothing would have propagated it anyway).
+
+    Test: the main-reachability decision is made before the first push_one call."""
+    p = os.path.join(root, "scripts", "pod_push.sh")
+    if not os.path.exists(p):
+        return FAIL, "scripts/pod_push.sh is missing"
+    body = open(p, encoding="utf-8").read()
+    if "resolve_stamp_sha" not in body:
+        return FAIL, ("scripts/pod_push.sh has no resolve_stamp_sha: the main-reachability "
+                      "refusal is back inside stamp_sync, which runs after the push")
+    call = body.find("STAMP_SHA=$(resolve_stamp_sha")
+    if call < 0:
+        return FAIL, "resolve_stamp_sha is defined but never called"
+    first_push = body.find("push_one", body.find("if [ $ALL -eq 1 ]"))
+    if first_push < 0:
+        return FAIL, "no push_one call inside the --all block to order against"
+    if call > first_push:
+        return FAIL, ("resolve_stamp_sha runs AFTER the first push_one, so its refusal "
+                      "names a condition that no longer prevents anything")
+    if re.search(r"stamp_sync\(\)[\s\S]{0,600}?merge-base", body):
+        return FAIL, ("stamp_sync still runs the merge-base test itself; a second copy "
+                      "can drift from the hoisted one and refuse too late")
+    return PASS, "the main-reachability refusal is resolved before the first push"
+
+
+def _broken_refusal_precedes_push():
+    """The REAL pod_push.sh with the resolve call MOVED to after the pushes.
+
+    Not deleted -- moved. Deleting it trips the "defined but never called" branch,
+    which is the trivial half; the branch that matters is the ORDER test, and a world
+    that never reaches it leaves it unverified. This world keeps every line and changes
+    only where the call sits, so the check must fail on ordering or not at all."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "pod_push.sh")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    call = "  STAMP_SHA=$(resolve_stamp_sha)\n"
+    if "resolve_stamp_sha" not in text or call not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    # Lift the call out and re-insert it immediately before the stamp, i.e. after every
+    # push_one and after the manifest -- exactly where the defect had it.
+    broken = text.replace(call, "")
+    anchor = '  stamp_sync all "$STAMP_SHA"'
+    if anchor not in broken:
+        return None
+    broken = broken.replace(anchor, call + anchor)
+    open(os.path.join(d, "scripts", "pod_push.sh"), "w", encoding="utf-8").write(broken)
+    return d
+
+
 def check_running_sh_override_verified(root):
     """POD_PUSH_ALLOW_RUNNING_SH must reach the offset check, not return unconditionally.
 
@@ -10368,6 +10428,13 @@ CHECKS = [
         _broken_curl_ipv4,
     ),
     (
+        "refusal_precedes_push",
+        "pod_push's main-reachability refusal is decided before the first file ships",
+        "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
+        check_refusal_precedes_push,
+        _broken_refusal_precedes_push,
+    ),
+    (
         "running_sh_override_verified",
         "POD_PUSH_ALLOW_RUNNING_SH reaches the byte-offset check instead of permitting on the operator's word",
         "the override was one line returning unconditionally: an edit to a RUNNING script was pushed on an assertion nobody recomputed, and the same flag on an edit touching an earlier byte would corrupt the live shell's resume position with no warning (de-48, 2026-09-04)",
@@ -10535,6 +10602,7 @@ EVIDENCE = {
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
+    "refusal_precedes_push": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
     "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "getattr_cfg_names_exist": "repo",
