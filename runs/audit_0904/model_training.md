@@ -1,7 +1,8 @@
 ---
 question: Do model.py / train.py / sft_math.py and the efficiency + smelt_deeploop facts say what
   their artifacts say, on 2026-09-04?
-status: partial — first report at the 3h mark, per the charter's "partial beats late"
+status: pass 1 (source existence) and pass 2 (40 values recomputed, seed 904) complete;
+  named gaps in §5
 source: user order 2026-09-04 (whole-team audit); charter docs/standards/audit_0904.md
 ---
 
@@ -58,6 +59,7 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | fact ids citing a pod-only path | 15 | 15 | 2 verified on the pod |
 | fact ids citing a path absent everywhere | 12 | 12 | 4 chased through git history |
 | corpus stamps opened on the pod | 47 | 47 (`filters_fp`) | 6 opened in full |
+| facts whose VALUE was recomputed (pass 2) | 124 | 40 sampled at seed 904 | 21 PARTIAL classified by hand, 4 re-derived arithmetically |
 
 ## 4. Findings
 
@@ -71,6 +73,8 @@ Pod artifacts were opened, not inferred: `torch.load(..., mmap=True)` for checkp
 | MT-6 | S3 | `test_e2e` stage 11: "resume from the step-less final save refuses". | `de-31` (`c9011022`, 2026-09-03) changed train.py's run-end save to pass `opt_snapshot(optimizers), step` — deliberately, because the bare save carried no `row_cursor` and silently restored a cold optimizer. `torch.load` of `ckpt_e2e_tmp.pt`: `step=6`, `opt` present. `train.py:2229` refuses only on `missing = [k for k in ("step","opt") if k not in ck]`. | The test asserts a postcondition its own repo removed on purpose. Not a code defect — a test behind the code, which fails every e2e run at every shape. |
 | MT-7 | S2 | `runs/recipe_provenance.json` gives every launched value a source. | No group matched `d768 L12 h6 ffn2304` until I added one (`fd6a382a`), and **four completed Stage D runs had already used that shape** (`b0_sd_unlooped`, `b0_sd_looped`, `b0_sd_equalcompute`, `b0_n8_fixed`). `gate_launch_command` reconciles argv against these keys. | Twelve values were passed on the command line across four runs with no recorded source, and the gate read GO because `_recipe_for_shape` found *a* recipe. Same defect the shape partition was built to remove, one shape later. |
 | MT-8 | S3 | 12 fact ids cite a path resolvable nowhere. | `git log --all --diff-filter=D` for each: `ckpt_cost.py`, `bench_short_conv2.py` exist in **no commit, on no machine, and never did**. `kv_cache.py`/`cli.py` are MT-1 (another repo). `bench_eff2.py`→`bench_eff/bench_eff2.py`, `gate_failure_shapes.md`→`docs/lessons/…`, `score_matrix.jsonl`→`runs/…` resolve as bare basenames. Brace-expansion residue (`ckpt_…pt.step{2500`) accounts for 7 of the 12 — same class as the `runs/b0_sd_he_{…}` defect I hit on 2026-09-03. | Severity is S3, not higher, BECAUSE the two facts whose scripts vanished keep their logs: `eff.short_conv_shifted_madd` cites `runs/p02_sc_{base,patched}.log` and `eff.ckpt_resume_16h_interval` cites `runs/t38_{ref,resume}.log`, all four present on main AND the pod. The measurement survives; only re-derivation is lost. |
+| MT-9 | S2 | The two fact files are the repo's record of what it measured. | §4c: of 40 facts sampled at seed 904, **30 cannot be recomputed by a reader on main** — 9 need the pod, 11 need a card, 4 are literature-only (`smelt.*`), 6 cite a script in no commit. Instrument `runs/audit_0904/audit_fact_values.py`. | Nothing is CONTRADICTED — zero wrong values in 40 — but the repo cannot demonstrate its own numbers to anyone who was not there. Pass 1 found 15 facts with an unopenable source; pass 2 puts the sampled rate at 75%, so 15 was a floor and not a measure. |
+| MT-10 | S2 | `sft_math.py:190` asserts a pack's `vocab_id` equals the checkpoint's — "a pack from another vocabulary trains silently at ~4x the loss: every id is wrong and in range, and the sizes match." | The file's OWN comment (:181-187) records that the condition read `"vocab" in d` while `prepare_sft.pack_and_save` writes `"vocab_id"`, so for every pack built by the current packer the assert was skipped and the run took the WARNING branch — "the pack predates vocabulary fingerprinting" printed about a pack that carries the fingerprint. Fixed 2026-09-03. **Nothing has exercised the fix.** `grep -rln pack_vocab --include=*.py` returns `sft_math.py` and `scripts/check_sft_ready.py` and no test; `runs/experiments.jsonl` has **zero** SFT runs after 2026-09-03. | The guard has never fired in either state — not once while broken (the whole point of the comment), and not once since the repair. Its correctness rests on a code reading alone, which is the same shape as `guards-dont-backfill`: the fix is present, the demonstration that it works is not. |
 
 ### 4a. Every pod-only source, with size and committability (MT-2)
 
@@ -153,15 +157,95 @@ enumeration step is where this class of audit fails, not the checking step.
   `eff.run_end_cursor_overstates_under_max_steps` exactly — the fact reproduces. Pinned as
   `ckpt_p200m_4b_0902.milestone_keep_44_runendcursor.pt`, inode **84199064**, nlink 2.
 
+
+## 4c. Pass 2: 40 fact values recomputed at seed 904 (controller's Q5 ruling)
+
+Instrument: `runs/audit_0904/audit_fact_values.py --selftest` then no flag. Sample drawn
+`random.Random(904).sample(sorted(ids), 40)` from all 124 facts — seed 904 matches 44's so the
+two samples can be checked for overlap.
+
+**HEADLINE: not one contradicted number in 40 facts.** Every discrepancy the instrument raised
+resolved, on inspection, to a number the cited artifact could not carry. That is a real result and
+it is also a weak one — §5.2 below says why.
+
+    HELD 6   PARTIAL 21   NO-FILE 13
+
+**The instrument was wrong three times before it was right, and each defect over-reported.**
+Recorded because the pattern is now three-for-three across two auditors: in this class of audit
+the enumeration step fails, not the checking step (58's `json|jsonl` alternation truncated every
+`.jsonl` path; my pass-1 tokeniser read `A/B` as a path).
+
+1. A trailing `\b` on the number regex killed every K/M/G-suffixed figure — `11.87K` matched
+   nothing, and most throughput numbers in this repo are suffixed.
+2. `\b\d{3,}(?:,\d{3})*` matched `189,548` INSIDE `1,189,548`, so a 7-digit grouped number
+   truncated and the search then looked for a number no artifact contains.
+3. Exact string matching called precision disagreement. First run: 22 of 40 PARTIAL, and the first
+   I checked by hand was `repo.loop_from_scratch_stage_d` "missing" 122.30 while its log prints
+   `params 122.3M`. Same number. Replaced with numeric comparison at the ARTIFACT's precision —
+   and the fixture that forced that (`11.9` claimed against a log reading `11.87`) caught my first
+   fix, which truncated the wanted string to `11.` and accepted it.
+
+**All 21 PARTIALs classified by hand.** None is a wrong value:
+
+| what the missing number is | facts |
+|---|---|
+| explicitly `derived:` or a computed ratio/delta across two runs | `repo.moe_a2a_cost_h20`, `eff.bucket_cap_mb_7gpu_ab`, `eff.ddp_5k_not_identified`, `eff.attn_every_1_has_no_position_information` |
+| stdout of a probe cited BY SHA and since deleted | `eff.bf16_updates_discarded`, `eff.fp8_head_activation_range`, `eff.kda_chunk_size_32` |
+| in a pod-only artifact (MT-2) | `eff.clip_and_sync_cost_p200m`, `eff.quant_tax_is_the_elementwise_group`, `eff.p500m_20b_throughput_and_dips`, `eff.tied_head_does_not_inflate_tok_200m` |
+| computed from checkpoint tensors, never printed | `eff.layer9_mixer_o_lags`, `eff.resume_inflates_total_steps`, `repo.loop_from_scratch_stage_d` |
+| a microbenchmark whose script was never committed (MT-8) | `eff.short_conv_shifted_madd`, `eff.ckpt_resume_16h_interval` |
+| a PID from a live pod reproduction in `/tmp` | `eff.wrapper_orphans_torchrun` (6173) |
+| a LINE NUMBER, not a measurement | `repo.tpp_and_step_profile` (2361 = `facts/efficiency.json:2361`) |
+| host tool output not committed | `repo.nv18_topology_measured` (nvidia-smi topo) |
+| a breakdown computed from a logged total | `eff.w7_peak_memory_b32_fits`, `eff.seam_dynamo_disable` |
+
+**Two facts I had provisionally called unrecoverable DO reproduce, and I checked before writing
+it down.** `eff.seam_dynamo_disable`: `runs/t57_seam.log` is present on main and carries `218` and
+`70 flash` and a final `--- flash recompiles --- 0`, which is the fact's whole claim (70 → 0).
+`eff.ckpt_resume_16h_interval`: the resume-equivalence numbers are exactly there — `5.874` in
+`runs/t38_ref.log`, `5.841` in `runs/t38_resume.log`. Only their secondary write-cost figures
+(959 MB, 4.91 s) came from the uncommitted `ckpt_cost.py`. So MT-8's severity holds at S3 for a
+second, independently-checked reason.
+
+**Where the 40 can be recomputed, which is the finding that matters more than the tally:**
+
+| recomputable | count | note |
+|---|---:|---|
+| on main today | 10 | logs and code present here |
+| needs the pod | 9 | MT-2's artifacts |
+| needs a card | 11 | a forward pass or a kernel benchmark; NOT sampled, per the ruling |
+| literature only | 4 | `smelt.*` — arXiv 2609.01343, nothing local to check |
+| neither, script gone | 6 | but see the two above that reproduce from logs anyway |
+
+Per the ruling the 11 "needs card" facts are listed rather than sampled: `eff.fp8_head_activation_range`,
+`eff.kda_chunk_size_32`, `eff.attnres_internal`, `eff.gpu4_peak_flops`, `eff.vocab_alignment_2x_lm_head`,
+`eff.attn_every_1_has_no_position_information`, `eff.launch_overhead_is_not_a_cost`,
+`eff.launch_reduction_not_a_lever`, `eff.throughput_quality_exchange_rate`, `eff.fb_data_curve`,
+`eff.w7_peak_memory_b32_fits`.
+
+**MT-9 in the table above is what pass 2 produced.** 30 of 40 sampled facts cannot be recomputed
+by a reader on main: 9 need the pod, 11 need a card, 4 are literature, 6 cite a vanished script.
+The published numbers are not in doubt — nothing contradicted — but the repo cannot demonstrate
+that to anyone who was not there. Pass 1 found this for source EXISTENCE at 15 facts; pass 2 finds
+it for VALUE at 30 of 40, so the sampled rate is 75% and the pass-1 count was a floor, not a
+measure.
+
 ## 5. Blind spots of this audit
 
-1. **`sft_math.py` was not read at all.** It has its own checkpoint loader (train.py:2228 notes SFT
-   is "the legitimate step-0 case and has its own loader"), so every save/load finding above may or
-   may not transfer, and I did not check.
-2. **The instrument reads `source` fields only.** A fact whose *number* is wrong but whose artifact
-   exists passes it silently. Of 124 facts I recomputed the value of exactly one (MT-1's, plus the
-   two cursor sums in 4b) — the charter asks for a fixed-seed sample of ≥30 and this report has 3.
-   That is the largest gap here.
+1. **`sft_math.py`: the load path and the vocab_id refusal were read (MT-10), the rest was not.**
+   Read: `:150` `torch.load(args.resume, weights_only=False)`, `:175` the pack load, `:180-198` the
+   vocab_id comparison and its WARNING branch, `:199-212` the holdout-stamp refusal and
+   `--allow_unstamped_pack`. NOT read: the training loop, the masking (`format_agentic`'s
+   per-turn boundaries), the optimizer construction, the rollback buffer at `:518-524`, and the
+   distributed setup. train.py:2228 notes SFT is "the legitimate step-0 case and has its own
+   loader", so the save/load findings above do not automatically transfer to it and I have not
+   checked whether they do.
+2. **Pass 2 closes the count and not the depth.** 40 values are now checked (§4c), above the
+   charter's 30, but the check is a TEXT SEARCH for the number in the artifact. It proves a number
+   appears where the fact says it does; it does not prove the artifact's own arithmetic. A median
+   quoted faithfully from a log whose step lines are wrong reads as HELD. Of the 40 I re-derived
+   arithmetic for exactly four (MT-1's block product, the two cursor sums in §4b, and the
+   1.264604 ratio 44 independently confirmed). That is now the largest gap.
 3. **`filters_fp` uniformity was measured, filter EQUIVALENCE was not.** 47 stamps share 3 values;
    whether two domains with the same `filters_fp` and different `filters` descriptions actually got
    the same filtering is not answered by the hash and not by me.
