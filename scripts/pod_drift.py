@@ -69,6 +69,13 @@ SCOPE = [
     "scripts/hooks/*",
     "data/mix_*.json",
     "data/tokenizer.json",
+    # The row schemas for runs/*.jsonl. In SCOPE because a WRITER validates against it at
+    # every call: scripts/memory_diag.py opens data/ledger_schema.json before appending, and
+    # train.py's diagnostics hook calls that on the pod every 100 steps. Without this the
+    # writer ships and its schema does not, so the first row raises FileNotFoundError on the
+    # training box -- which is the same defect that crashed the hook's own selftest when the
+    # two were split across commits (2026-09-05).
+    "data/ledger_schema.json",
     "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",
