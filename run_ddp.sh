@@ -34,8 +34,11 @@ if [ ! -d .git ] && [ "${ALLOW_UNSYNCED:-}" != "1" ]; then
   if ! python3 scripts/pod_drift.py --check >/dev/null 2>&1; then
     echo "REFUSING: pod files drifted from the manifest since the $_when push:" >&2
     python3 scripts/pod_drift.py --check 2>&1 | grep -oE "[0-9]+ drifted: [^;]*" | head -3 >&2
-    echo "  Someone edited the pod directly. Commit that change and re-run" >&2
-    echo "  scripts/pod_push.sh --all, or ALLOW_UNSYNCED=1 to train on it knowingly." >&2
+    echo "  A file on the pod differs from what the manifest says was pushed. TWO causes, and" >&2
+    echo "  the message cannot tell them apart: someone edited the pod directly, OR someone" >&2
+    echo "  committed on main and did not push (AGENTS.md: pod_push is the committer's step)." >&2
+    echo "  Read the named file in the CONTAINER, compare it with main, then either commit the" >&2
+    echo "  pod's version or scripts/pod_push.sh --all. ALLOW_UNSYNCED=1 trains on it knowingly." >&2
     exit 1
   fi
   echo "pod code: $_sha (clean, synced $_when, manifest verified)"

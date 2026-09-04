@@ -46,7 +46,10 @@ FREE_MIB = 64
 PROC_ROOT = "/proc"
 # How long a launch waits for the job to open a device. Measured 1.33s on the pod in the harness
 # wrapper shape; 90s is ~68x that and is NOT waiting for build_mix, which runs after set_device.
-DEVICE_WAIT_S = 90.0
+# None = poll while the wrapper process lives. NOT a constant: run_ddp.sh's drift gate, mix
+# assertion and 155 GiB cache load all precede the ranks, and that launch's own startup gate was
+# 793 s -- any ceiling short of the job's own startup abandons a live run's cards (4c, 2026-09-05).
+DEVICE_WAIT_S = None
 
 
 def _now():
@@ -230,23 +233,40 @@ def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
     so it answers a question nobody asked. Polling until a descendant HOLDS a device closes both
     halves: the pid is the job, and it is provably on a card at claim time.
 
-    Deadline 90s against a measured 1.33s. It does not have to cover build_mix's cache load --
-    train.py calls setup_ddp (torch.cuda.set_device, train.py:2019-2023) at :2248 and build_mix
-    only at :2355, so devices are open seconds after exec even on a run that then spends 2.5
-    minutes reading 156 GB.
+    NO DEADLINE WHILE THE WRAPPER IS ALIVE (4c's ruling, 2026-09-05, after this gave up on a
+    live M1 launch). The poll ends when a device appears or when the job ends -- never on a clock.
+    A constant cannot be right here: run_ddp.sh runs the drift gate, asserts the mix, and
+    build_mix loads token caches (155 GiB on that launch) before the ranks are even spawned, and
+    the run's own startup gate was 793 s. A launcher that gives up before the job it launched has
+    started is b0_mem_m1's hole in a new form -- the card ends up held with no claim, which is the
+    state the whole mechanism exists to prevent. `deadline` is kept for the selftest's bounded
+    worlds and for a caller that wants a ceiling; None means "while the wrapper lives".
 
-    Returns None when /proc is unreadable, so a caller on macOS falls back rather than waiting
-    90s for an answer that cannot arrive. Callers must distinguish that from a real timeout:
-    ask nvidia_fds(pid) is None."""
-    end = time.time() + deadline
+    A VANISHED PID READS None, THE SAME VALUE AS "no /proc", and conflating them is what actually
+    broke that launch -- not the deadline. The first version returned None on the first unreadable
+    descendant, and run_ddp.sh spawns short-lived python children (scripts/pod_drift.py --check at
+    run_ddp.sh:34) whose /proc entry is gone by the next read. So the poll aborted about a second
+    in and printed "no descendant opened a GPU device within 90s", a message naming a timeout that
+    had not happened: measured on that run, the ranks held device fds from 22:35:01, two seconds
+    after launch, while the claim was refused at 22:35:00-ish and b0 claimed by hand at 22:36:01.
+    The distinction is made ONCE, against the wrapper itself, before the loop: if the wrapper's
+    own /proc is unreadable this host cannot answer (macOS), and a descendant that goes unreadable
+    mid-poll is simply gone and is skipped.
+
+    Returns None when /proc is unreadable, so a caller on macOS falls back rather than polling for
+    an answer that cannot arrive. Callers must distinguish that from "nothing opened a device":
+    ask nvidia_fds(os.getpid()) is None."""
+    if nvidia_fds(os.getpid()) is None:
+        return None  # no /proc anywhere here: this predicate has no opinion, decided once
+    end = None if deadline is None else time.time() + deadline
     while True:
         for p, _a in _job_descendants(pid):
             n = nvidia_fds(p)
-            if n is None:
-                return None  # no /proc: this predicate has no opinion here
             if n:
                 return p, n
-        if not _alive(pid) or time.time() >= end:
+            # n == 0: alive, not on a card yet. n is None: the pid vanished between the ps
+            # snapshot and this read -- skip it, never end the wait on another process's exit.
+        if not _alive(pid) or (end is not None and time.time() >= end):
             return None
         time.sleep(interval)
 
@@ -1353,6 +1373,118 @@ def _selftest():
                     pass
             idle.kill()
             idle.wait()
+
+        # THE LIVE M1 DEFECT, 2026-09-05, and it was NOT the deadline the message blamed. The
+        # launcher printed "no descendant of 915701 opened a GPU device within 90s" while the ranks
+        # had held device fds since 22:35:01, two seconds after launch -- b0 claimed by hand at
+        # 22:36:01. Cause: a VANISHED pid reads None from nvidia_fds, the same value as "this host
+        # has no /proc", and the first version returned None on the first unreadable descendant.
+        # run_ddp.sh runs scripts/pod_drift.py --check (run_ddp.sh:34) and other short-lived
+        # children, so a descendant disappears between the ps snapshot and the fd read, about a
+        # second in. The poll aborted then and blamed a timeout that had not happened.
+        #
+        # THE WORLD MUST PUT AN UNREADABLE PID INSIDE THE WALK, and my first attempt did not --
+        # it asserted nvidia_fds(9999991) is None beside a healthy tree, which is true of the
+        # broken code too. Measured: 3 of 4 mutants GREEN, including the original bug restored
+        # verbatim. A world that cannot reach the defect proves nothing about the fix, and the
+        # mutation run is the only reason I know that (§186's shape, in my own test).
+        #
+        # So: patch _job_descendants for the duration, to return a vanished pid FIRST and the
+        # device-holding one second -- the real ordering, since ps lists by pid and the transient
+        # child is younger. The tree is real, only the walk's answer is staged.
+        vlive = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+        _saved_jd = globals()["_job_descendants"]
+        try:
+            time.sleep(1.0)
+            kids4 = _saved_jd(vlive.pid)
+            _case(bool(kids4), f"world: the vanish tree has a real descendant ({len(kids4)})")
+            if kids4:
+                real = kids4[0][0]
+                _fake_proc(real, nvidia=44)
+                gone = 9999991
+                _case(nvidia_fds(gone) is None and nvidia_fds(real) == 44,
+                      "world: one pid reads None (vanished), the other reads 44 (on a card)")
+
+                def _staged(pid, table=None):
+                    return [(gone, "python3 -u train.py"), (real, "python3 -u train.py")]
+
+                globals()["_job_descendants"] = _staged
+                got = wait_for_device(vlive.pid, deadline=3.0, interval=0.1)
+                _case(got == (real, 44),
+                      f"a vanished pid EARLIER in the walk does not end the wait: {got}")
+                # THE TWO SEPARATIONS THE MUTATION RUN FOUND UNCOVERED. Both were GREEN on the
+                # first rebuild, i.e. the code was right and nothing held it there.
+                #
+                # (a) NO-PROC IS DECIDED ONCE, ON THE WRAPPER, not per descendant. Moving the test
+                # inside the loop makes it fire on any vanished pid again -- the original bug with
+                # an extra step. Staged with a walk whose ONLY entry is unreadable and a wrapper
+                # that IS readable: the answer must be a timeout (None after the deadline), not an
+                # instant None, and the difference is visible only in the elapsed time.
+                globals()["_job_descendants"] = lambda pid, table=None: [(gone, "python3 x.py")]
+                _t0 = time.time()
+                got2 = wait_for_device(vlive.pid, deadline=1.0, interval=0.1)
+                _el = time.time() - _t0
+                _case(got2 is None and _el >= 0.9,
+                      f"an all-vanished walk TIMES OUT rather than abstaining instantly "
+                      f"({_el:.2f}s of a 1.0s deadline)")
+
+                # (b) deadline=None means "while the wrapper lives", not "90 seconds". A constant
+                # reinstated anywhere reads identically until the wait outlives it, so the world
+                # has to outlive it -- impossible in a selftest at 90s. Assert the CONTRACT
+                # instead, on a dead wrapper where an unbounded wait must still return at once:
+                # with a constant ceiling this passes too, so pair it with the module default,
+                # which is the thing a reinstated constant would have to change.
+                _dead = subprocess.Popen(["bash", "-c", "exit 0"])
+                _dead.wait()
+                globals()["_job_descendants"] = _saved_jd
+                _t0 = time.time()
+                got3 = wait_for_device(_dead.pid, deadline=None, interval=0.1)
+                _case(got3 is None and time.time() - _t0 < 2.0,
+                      "deadline=None still returns at once when the wrapper is gone")
+                _case(DEVICE_WAIT_S is None,
+                      f"and the module default carries no ceiling ({DEVICE_WAIT_S!r}) -- a "
+                      f"constant here abandoned a live launch's cards")
+
+                # (a2) THE OTHER HALF OF "decided once, on the wrapper": with the wrapper
+                # UNREADABLE the answer is None even though a descendant holds 44 fds. Case (a)
+                # above cannot see this -- it keeps the wrapper readable, so deleting the check
+                # only removes an early return nothing reaches, and the mutation run read GREEN.
+                # This is the macOS contract, stated as a case: no /proc means the predicate
+                # abstains and the caller falls back, rather than polling for an answer that
+                # cannot arrive.
+                shutil.rmtree(os.path.join(proot, str(me)), ignore_errors=True)
+                globals()["_job_descendants"] = _staged
+                _t0 = time.time()
+                got4 = wait_for_device(vlive.pid, deadline=3.0, interval=0.1)
+                _el4 = time.time() - _t0
+                _case(got4 is None and _el4 < 0.5,
+                      f"an unreadable wrapper abstains AT ONCE even with a 44-fd descendant in "
+                      f"the walk ({got4}, {_el4:.2f}s)")
+                _fake_proc(me, nvidia=36)
+
+                # (b2) deadline=0 MEANS CHECK ONCE. `deadline or 90.0` reads identically to
+                # `None if deadline is None` for every value except 0 -- and 0 is the one a caller
+                # uses for a non-blocking probe, where the falsy version waits 90 s instead. The
+                # 90 s ceiling itself cannot be tested in a selftest; this boundary can, and it is
+                # the same bug in a reachable place.
+                globals()["_job_descendants"] = lambda pid, table=None: [(gone, "python3 x.py")]
+                _t0 = time.time()
+                got5 = wait_for_device(vlive.pid, deadline=0, interval=0.1)
+                _el5 = time.time() - _t0
+                _case(got5 is None and _el5 < 0.5,
+                      f"deadline=0 checks once and returns, it is not falsy-promoted to a "
+                      f"default wait ({_el5:.2f}s)")
+        finally:
+            globals()["_job_descendants"] = _saved_jd
+            for q, _a in _descendants(vlive.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            vlive.kill()
+            vlive.wait()
 
         # W3, AND IT DOES NOT BEHAVE THE WAY THE SPEC ASSUMED. "keep walking the tree from the
         # wrapper" is not available: when the intermediate shell exits, the job REPARENTS to init
