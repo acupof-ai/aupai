@@ -897,7 +897,22 @@ def main():
         n = write_manifest_index()
         print(f"wrote {n} entries from index to {os.path.relpath(MANIFEST, ROOT)}")
     elif mode == "--selftest":
-        selftest()
+        # 7 mkdtemp sites here, none of which can clean up: check_pod() is handed the
+        # world and the assertion that follows reads it. One root for the process
+        # instead. Degrades to running unscoped rather than refusing, because the hook
+        # executes a STAGED COPY of this file from the gitdir, where scripts/ is not on
+        # sys.path -- a leak is worse than nothing, an ImportError there is worse still.
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "scripts"))
+            import tmpworld
+
+            ctx = tmpworld.scoped("aupai_poddrift_st_")
+        except ImportError:
+            import contextlib
+
+            ctx = contextlib.nullcontext()
+        with ctx:
+            selftest()
     elif mode == "--list-scoped":
         print("\n".join(scoped_paths()))
     elif mode == "--check":

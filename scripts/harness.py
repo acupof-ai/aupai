@@ -41,6 +41,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
 import corpus_fingerprint as cfp  # noqa: E402
 import pod_drift  # noqa: E402
+import tmpworld  # noqa: E402
 DATA = os.path.join(ROOT, "data")
 SAMPLE_DOMAIN = "sample"  # the only corpus directory a git checkout ships
 
@@ -16747,9 +16748,16 @@ def main():
                   f"shared helper or to the CHECKS table can break any check, and only the full "
                   f"`harness check --selftest` covers that.")
             return 0
-        return _demo(only=set(_names)) or 0
+        with tmpworld.scoped("aupai_harness_st_"):
+            return _demo(only=set(_names)) or 0
     if a.selftest:
-        return _demo() or 0
+        # Every world every _broken_* mints lands under one root that dies with this
+        # process. The sites cannot clean up individually -- a world must outlive the
+        # function that built it so the caller can inspect it -- so the redirect is the
+        # producer-side fix. MEASURED before this line: 12 dirs and 7.5 MB per run, 5 of
+        # them from the pod_drift --selftest subprocess, which inherits TMPDIR.
+        with tmpworld.scoped("aupai_harness_st_"):
+            return _demo() or 0
     cmd = a.cmd
     res = []
     if cmd in ("all", "check"):
