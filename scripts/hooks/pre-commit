@@ -684,6 +684,11 @@ def main():
         # git cannot show it -- after a fast-forward the branch IS an ancestor, so the check
         # placed after the merge would fire on every successful merge.
         "scripts/test_merge_main_ancestor.py",
+        # The three readers of runs/experiments.jsonl fold it identically -- exp.fold,
+        # harness._exp_fold and launch_gate._recorded_cmd, on four shapes, with exp.py present
+        # AND hidden so both inline fallbacks run. ~1s, no card, no data: every event list is
+        # fabricated in a temp dir. Each of the three has diverged in production at least once.
+        "scripts/test_exp_fold_agree.py",
         # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
         # check_selftests_are_gated's population widened from "contains the string
         # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE
@@ -1751,10 +1756,13 @@ def _selftest():
         os.makedirs(hooks8, exist_ok=True)
         shutil.copy(hook, os.path.join(hooks8, "pre-commit"))
         os.chmod(os.path.join(hooks8, "pre-commit"), 0o755)
-        # scripts/hooks/pre-commit -> up three, not two: dirname gives .../scripts/hooks, then
-        # .../scripts, then the root. Derived rather than a constant so a linked worktree resolves
-        # to its own tree (the same reason world 7 derives it).
-        _repo8 = os.path.dirname(os.path.dirname(os.path.dirname(hook)))
+        # WHERE THE REAL PAIR LIVES: git, not the hook's own path. `hook` is a realpath of
+        # __file__, and when the hook is run as a STAGED COPY -- which is how it is verified at
+        # commit time, from .hookstaged_pre-commit -- deriving the root by walking up from it
+        # lands in the wrong directory, the pair is not copied, and world 8 fails with "a staged
+        # defect was allowed" on a hook that works. Measured 2026-09-04 by running the copied
+        # path: FAIL from the copy, ok from scripts/hooks/pre-commit, same bytes.
+        _repo8 = repo_root() or os.path.dirname(os.path.dirname(os.path.dirname(hook)))
         _copied = []
         for _rel in ("algorithms/rlvr_reward.py", "algorithms/test_rlvr_reward_suite.py"):
             _src = os.path.join(_repo8, _rel)
