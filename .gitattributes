@@ -10,6 +10,7 @@ runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
 runs/friction.jsonl merge=union
+runs/memory_diag.jsonl merge=union
 
 # EXPERIMENTS.md is DERIVED (exp.py render from runs/experiments.jsonl), so "pick a side" is
 # never the right resolution: the driver regenerates it. MEASURED 2026-09-04 that it needs
