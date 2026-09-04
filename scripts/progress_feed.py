@@ -273,7 +273,7 @@ def friction_section():
 MEM_STATUS = {
     "model": "实现完",
     "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "未跑",
+    "m1": "启动中（卡 1+2，world 2）",
     "m2": "未跑",
     "scored": "未打分",
 }
