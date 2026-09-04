@@ -51,6 +51,14 @@ ROOT = os.environ.get("POD_DRIFT_ROOT") or os.path.dirname(
     os.path.dirname(os.path.abspath(__file__)))
 MANIFEST = os.path.join(ROOT, "data", "pod_head_manifest.txt")
 
+
+class ManifestIncomplete(RuntimeError):
+    """A scoped path could not be given a sha, so the manifest would not describe it.
+
+    Raised rather than skipped because the manifest's contract is the list itself: --check
+    compares the rows it finds and is silent about a path that has no row, so an omission
+    turns a drift check into a check of a smaller set with nothing saying so (de-37)."""
+
 # Files that execute on the pod (pretrain -> score flow), plus the files that DECIDE
 # what the pod runs on: the hooks and the corpus filters. "Never runs there" was the
 # wrong test -- filters/ is read to build the data, and a file nobody executes can still
@@ -249,12 +257,32 @@ def mode_disk(path):
 
 
 def write_manifest(root=ROOT):
+    """Manifest from HEAD. The live generator: scripts/pod_push.sh:193 and :274 call --write.
+
+    A path in scope whose HEAD blob cannot be read is an ERROR, not a missing line (de-37).
+    `sha_head` returns None on failure and this used to interpolate it, writing the literal
+    string "None" as a sha -- a row that matches no file on either side, so `--check` reports
+    it as drift on a file nobody touched, and the real cause (an unreadable blob) is invisible.
+    The mirror defect is in write_manifest_index, which `continue`s instead: there the line
+    vanishes and `--check` asserts nothing about the path at all, which is worse, because the
+    manifest's whole contract is that it lists what must match. Both now name the path and
+    exit nonzero."""
     classes = _classify_files()
     modes = git_modes(root, "HEAD")
-    lines = [
-        f"{sha_head(root, p)}  {p}  {classes.get(p, 'docs')}  {modes.get(p, '644')}"
-        for p in scoped_paths(root)
-    ]
+    lines, bad = [], []
+    for p in scoped_paths(root):
+        sha = sha_head(root, p)
+        if not sha:
+            bad.append(p)
+            continue
+        lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}  {modes.get(p, '644')}")
+    if bad:
+        raise ManifestIncomplete(
+            f"{len(bad)} scoped path(s) are in the index but have no readable HEAD blob, so the "
+            f"manifest would either carry a 'None' sha or silently omit them: {', '.join(bad[:5])}"
+            f"{'...' if len(bad) > 5 else ''}. A manifest that omits a scoped path asserts nothing "
+            f"about it, and pod_drift --check cannot report what the manifest does not list."
+        )
     with open(MANIFEST, "w", encoding="utf-8") as f:
         f.write("\n".join(lines) + "\n")
     return len(lines)
@@ -300,14 +328,26 @@ def write_manifest_index(root=ROOT):
     # no cache for this -- one ls-tree covers every path, so the reason write_manifest
     # caches shas (per-file subprocesses) does not apply.
     imodes = git_modes(root, ref=None)
+    missing = []
     for p in scoped_paths(root):
         if p in changed or p not in head:
             sha = sha_index(root, p)
             if not sha:
+                # A scoped path with no staged blob AND no HEAD row. The old code `continue`d,
+                # so the manifest simply lacked the line -- and --check compares only what the
+                # manifest lists, so the path became invisible on both sides rather than
+                # reported (de-37). Named and refused instead.
+                missing.append(p)
                 continue
         else:
             sha = head[p]
         lines.append(f"{sha}  {p}  {classes.get(p, 'docs')}  {imodes.get(p, '644')}")
+    if missing:
+        raise ManifestIncomplete(
+            f"{len(missing)} scoped path(s) have neither a staged blob nor a HEAD row, so the "
+            f"manifest would omit them and pod_drift --check would assert nothing about them: "
+            f"{', '.join(missing[:5])}{'...' if len(missing) > 5 else ''}"
+        )
     out = os.path.join(root, "data", "pod_head_manifest.txt")
     os.makedirs(os.path.dirname(out), exist_ok=True)
     with open(out, "w", encoding="utf-8") as f:
@@ -605,6 +645,42 @@ def selftest():
     m = read_manifest(os.path.join(g, "data", "pod_head_manifest.txt"))
     assert "a.py" not in m, "manifest named a.py, absent from the commit's index"
     assert "b.py" in m, "manifest dropped b.py, present in the commit's index"
+
+    # de-37: A SCOPED PATH WITH NO SHA IS AN ERROR, NOT A MISSING LINE. --check only compares
+    # rows it finds, so a path with no row is unwatched on both sides with nothing red.
+    #
+    # WHICH CASE IS REACHABLE, measured before writing this: scope comes from the INDEX
+    # (scoped_paths is `git ls-files`) while write_manifest reads HEAD, so a staged-but-never-
+    # committed scoped file is in scope with sha_head None -- that is the live one, and it wrote
+    # the literal string "None" as a sha. `git rm --cached` is NOT a way in: it removes the path
+    # from the index and therefore from scope in the same breath, so write_manifest_index's
+    # `if not sha: continue` is unreachable today. It is fixed anyway, because the two functions
+    # disagreeing about which ref defines scope is exactly what made the first case live.
+    open(os.path.join(g, "d.py"), "w").write("# d.py: staged, never committed\n")
+    _g("add", "d.py")
+    _saved_manifest = MANIFEST
+    try:
+        globals()["MANIFEST"] = os.path.join(g, "data", "pod_head_manifest.txt")
+        os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
+        try:
+            write_manifest(g)
+        except ManifestIncomplete as e:
+            assert "d.py" in str(e), f"refused without naming the path: {e}"
+        else:
+            raise AssertionError(
+                "write_manifest accepted a scoped path with no HEAD blob; the row carries the "
+                "literal string 'None' as a sha, which matches no file on either side"
+            )
+        # The positive beside it: once committed, the same call must succeed and name the file.
+        _g("commit", "-m", "d")
+        n_ok = write_manifest(g)
+        assert n_ok >= 2, f"the positive world wrote {n_ok} entries"
+        rows = read_manifest(MANIFEST)
+        assert "d.py" in rows, "the positive world omitted d.py"
+        assert not any(sha == "None" for sha, _c, _m in rows.values()), "a 'None' sha survived"
+    finally:
+        globals()["MANIFEST"] = _saved_manifest
+    evidence += f"; de-37: uncommitted scoped path refused by name, {n_ok} rows once committed"
 
     # Merge-commit regeneration: when the hook runs on a merge commit, the index
     # it reads IS the merged index. The regenerated manifest must name every file
