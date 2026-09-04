@@ -10839,6 +10839,9 @@ EVIDENCE = {
     "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
     "cache_readers_set_vocab_id": "repo",
+    # repo: sft.py and sft_math.py are tracked, so the AST answers the same anywhere. It does NOT
+    # read a pack or a checkpoint -- the ids themselves are pod-side and outside this check.
+    "vocab_id_on_load_path": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
