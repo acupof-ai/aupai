@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Thirteen entries: two S1, seven S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Fourteen entries: two S1, eight S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -129,10 +129,11 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
   verdict is wrong: whether the sign survives a doc_cu re-score is a card measurement and the
   audit forbids running it. What I can say is that the fact does not record which path it was
   taken on, so no reader can tell.
-- Contamination facts: I audited status/source/population as recorded. I did not re-run any
-  scanner, so a fact whose recorded population is right and whose scan was wrong looks clean
-  here. `cont.heldout_in_pretrain_corpus` is the one case where that was checked, by me, before
-  this audit.
+- Contamination facts: I audited status, source, population and instrument-existence (E14). I
+  did not RE-RUN any scanner, so a fact whose recorded population is right and whose scan was
+  wrong still looks clean here. `cont.heldout_in_pretrain_corpus` is the one case where the scan
+  itself was checked, by me, before this audit — and that check is what retracted the 316-item
+  result, so the class of defect E14 cannot see is known to occur in this very file.
 - The pod's `data/` is gitignored, so every corpus fact rests on a `stat` I ran once at
   2026-09-04 ~11:40Z. A directory mtime is when it was last written, not when its contents
   were built; a domain rebuilt in place would read as newer than its data.
@@ -220,3 +221,36 @@ paths**, 15 of which were ledgers sitting in the repo (`runs/score_matrix.jsonl`
 `runs/score_matrix.json`, and so on). Reordering to `jsonl|json` gives 6, plus `n7_domain.jsonl`
 found by hand while pair-checking = 7. The wrong answer was 3.5x too alarming, in the opposite
 direction from §2's error — a loose pattern can fail either way, and neither direction is safe.
+
+### E14 (S2): four `measured` contamination facts cite an instrument that exists nowhere
+
+Enumerated the instrument of all 36 `facts/contamination.json` entries by extracting every
+script path from each `source`. Fifteen cite `datagen/scan_math_contamination.py`, which exists;
+most others resolve. **Four cite a script under `/tmp`, and none of the four scripts exists on
+this machine or on the pod** (`ls` on both, 2026-09-04 ~12:40Z):
+
+| fact | status | cited instrument |
+|---|---|---|
+| `cont.scanner_idf_weighting` | measured | `/tmp/harden_scan.py` |
+| `cont.gsm8k_zh_webhq_scan` | measured | `/tmp/gsm_hit_detail.py` |
+| `cont.math500_webhq_fp_explained` | measured | `/tmp/contam_details.py`, `/tmp/harden_scan.py` |
+| `cont.code_holdout_carved` | measured | `/tmp/carve_code_eval.py` |
+
+`/tmp` is cleared on reboot, so these citations could not survive by construction — this is not
+a file someone forgot to commit, it is a location that guarantees the loss. Each of the four is
+`status: measured`, i.e. the store's strongest claim, and none can be re-derived: the numbers
+stand only as recorded values. `cont.scanner_idf_weighting` is the one that matters most, because
+it is the fact that justifies the IDF weighting the other scans rely on — the instrument that
+validated the instrument is gone.
+
+Separately, **9 of 36 entries name no script at all** in `source`. Six describe the procedure in
+prose ("contrasted scans, same script/params", "sampled 2000 docs … bigram-jaccard all pairs",
+"two stratified hand-reads … reader: cklxx session"), which is a method statement rather than a
+reproducible instrument. Two name only a log (`runs/scan_code_holdout.log`,
+`runs/scan_code_holdout_sft.log`) — both present in the repo, so the OUTPUT is readable while the
+code that produced it is not named. One is a decision record (`cont.math_hard_v1_void`), where
+naming no instrument is correct.
+
+Not a finding about the numbers: nothing here contradicts any contamination value. It is a
+finding about what "measured" can mean in this store — for these four, it means "was measured
+once, by something no longer in existence".
