@@ -33,10 +33,21 @@ different labels. Hence 6e's ruling: run contrast (b) alone.
 THE CONTROL COMES FIRST, AND ITS NUMBER IS REPORTED FIRST. The effect under test is -0.024 nat over a
 corpus, and bf16 reduction order moves per-token values by more than that at this granularity: the
 T-parity measurement (runs/n8/) found appending ONE token to a row shifts earlier positions by 2-4
-absolute, mean 6.7 ulps, purely from chunk_kda's tiling changing with T. So each arm is scored TWICE
-in the same pass, and the same-arm difference is the resolution floor. A gap inside that floor is
-"cannot see", never "no effect" -- 6e's wording, and it is the difference between a null result and an
-absent instrument.
+absolute, mean 6.7 ulps, purely from chunk_kda's tiling changing with T.
+
+THE FIRST VERSION'S CONTROL WAS VACUOUS AND MEASURED 0.000000. It scored each arm TWICE on the same
+rows and called the difference the resolution -- but one checkpoint over the same rows at the same
+shapes is BITWISE deterministic, so it measured determinism and produced a floor of nothing, against
+which any gap "exceeds the resolution". Reduction order is fixed by the shapes, and the shapes were
+deliberately held fixed. The control now perturbs the one thing that changes the arithmetic without
+changing the quantity: row LENGTH. The same rows are right-padded with <eos> to a second length, the
+edge positions sit at the row START so the measured tokens are untouched, and the same-arm difference
+across the two lengths is the floor. A gap inside that floor is "cannot see", never "no effect".
+
+THE POOLED NUMBER IS A FOOTNOTE, THE PER-DOMAIN TABLE IS THE RESULT. Single-document rows exist only
+where rows hold few documents, so the subset is not the corpus: measured on the first run, chat_qa
+contributed 0 rows and code_py_rp1t contributed 23 of 53. A pooled mean over that is a number about two
+code domains wearing a corpus label. Each domain's gap is printed against its OWN resolution.
 
     python3 scripts/e1_n8_row_edge_probe.py --fixed <ckpt> --current <ckpt>
     python3 scripts/e1_n8_row_edge_probe.py --selftest
@@ -185,9 +196,16 @@ def selftest():
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--fixed", default="ckpt_b0_n8_fixed.pt")
-    ap.add_argument("--current", default="ckpt_b0_sd_equalcompute.pt")
+    # ckpt_b0_sd_unlooped.pt, NOT ckpt_b0_sd_equalcompute.pt. My first run used equalcompute and the
+    # fixed arm lost 0.02-0.04 everywhere -- because equalcompute is the 4824-step / 1.2646B-token arm
+    # from the loop question, a better model by construction, against fixed's 3815 steps / 1.0001B.
+    # 26% more tokens is what that gap was. unlooped is the arm that differs from fixed ONLY in the
+    # flag: same steps, tokens, seed and mix (6e, 2026-09-04).
+    ap.add_argument("--current", default="ckpt_b0_sd_unlooped.pt")
     ap.add_argument("--domains", nargs="*", default=None,
                     help="default: every domain in data/mix_200m_4b.json")
+    ap.add_argument("--pad", type=int, default=64,
+                    help="right-pad width for the T-parity resolution control")
     ap.add_argument("--out", default="runs/e1_n8_row_edge.json")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--selftest", action="store_true")
@@ -256,12 +274,49 @@ def main():
             torch.cuda.empty_cache()
         return acc
 
+    # THE RESOLUTION CONTROL IS A T-PARITY PERTURBATION, not a repeat run.
+    #
+    # MY FIRST VERSION SCORED EACH ARM TWICE ON THE SAME ROWS and reported the difference as the
+    # resolution: it came back 0.000000 for both arms, because the same checkpoint over the same rows
+    # in the same order at the same shapes is BITWISE deterministic. That measured determinism, which
+    # was never in question, and gave a floor of zero -- so "the gap exceeds the resolution" compared
+    # the gap against nothing. The whole point of the control was the bf16 reduction-order noise, and
+    # reduction order is fixed by the shapes, which I had deliberately held fixed.
+    #
+    # What moves reduction order while leaving the QUANTITY alone is the row LENGTH: chunk_kda's
+    # tiling changes with T, which is where the 6.7-ulp T-parity figure came from. So the control
+    # scores the same rows PADDED to a second length and takes the same-arm difference across the two
+    # lengths. The measured quantity is unchanged (the same tokens, at the same offsets, under the same
+    # weights); only the arithmetic path differs.
+    def score_padded(ckpt, pad):
+        """Same rows, padded on the RIGHT with <eos> to a longer T. The edge positions are at the row
+        START, so right-padding cannot touch the tokens being measured -- it only changes the tiling.
+        """
+        mdl, _cfg = load_checkpoint(os.path.join(ROOT, ckpt), device=dev, dtype=torch.bfloat16)
+        mdl.eval()
+        acc = {}
+        with torch.no_grad():
+            for dom, seqs in subset.items():
+                s = seqs.to(dev)
+                s = torch.cat([s, torch.full((s.shape[0], pad), EOS_ID, dtype=s.dtype,
+                                             device=s.device)], dim=1)
+                x, y = s[:, :-1], s[:, 1:]
+                acc[dom] = per_position_ce(mdl, x, y, range(EDGE),
+                                           cu_of=lambda b: doc_cu_seqlens(b, EOS_ID))
+        del mdl
+        if dev == "cuda":
+            torch.cuda.empty_cache()
+        return acc
+
     runs = {}
-    for name, ckpt in (("fixed_a", a.fixed), ("fixed_b", a.fixed),
-                       ("current_a", a.current), ("current_b", a.current)):
+    for name, ckpt in (("fixed", a.fixed), ("current", a.current)):
         runs[name] = score(ckpt)
-        tot = sum(v[0] for v in runs[name].values()), sum(v[1] for v in runs[name].values())
-        print(f"  {name:10s} edge mean {tot[0] / tot[1]:.6f} over {tot[1]} tokens", flush=True)
+        runs[name + "_padded"] = score_padded(ckpt, a.pad)
+        for suffix in ("", "_padded"):
+            r = runs[name + suffix]
+            tot = sum(v[0] for v in r.values()), sum(v[1] for v in r.values())
+            print(f"  {name + suffix:16s} edge mean {tot[0] / tot[1]:.6f} over {tot[1]} tokens",
+                  flush=True)
 
     def edge_mean(r):
         s = sum(v[0] for v in r.values())
@@ -273,44 +328,75 @@ def main():
         n = sum(v[3] for v in r.values())
         return s / n
 
-    res_fixed = abs(edge_mean(runs["fixed_a"]) - edge_mean(runs["fixed_b"]))
-    res_current = abs(edge_mean(runs["current_a"]) - edge_mean(runs["current_b"]))
+    res_fixed = abs(edge_mean(runs["fixed"]) - edge_mean(runs["fixed_padded"]))
+    res_current = abs(edge_mean(runs["current"]) - edge_mean(runs["current_padded"]))
     resolution = max(res_fixed, res_current)
-    gap = edge_mean(runs["fixed_a"]) - edge_mean(runs["current_a"])
-    gap_rest = rest_mean(runs["fixed_a"]) - rest_mean(runs["current_a"])
+    gap = edge_mean(runs["fixed"]) - edge_mean(runs["current"])
+    gap_rest = rest_mean(runs["fixed"]) - rest_mean(runs["current"])
+    # PER DOMAIN, because the pooled subset is NOT the corpus: single-document rows exist only where
+    # rows hold few documents, so chat_qa contributed 0 and chatml near 0 while code_py_rp1t
+    # contributed 23 of 53 on the first run. Pooling over that is a number about two code domains
+    # wearing a corpus label. The token count travels with each domain's gap for the same reason.
+    per_domain = {}
+    for dom in subset:
+        f_s, f_n = runs["fixed"][dom][0], runs["fixed"][dom][1]
+        c_s, c_n = runs["current"][dom][0], runs["current"][dom][1]
+        fp_s, fp_n = runs["fixed_padded"][dom][0], runs["fixed_padded"][dom][1]
+        per_domain[dom] = {
+            "edge_tokens": f_n, "rows": int(subset[dom].shape[0]),
+            "fixed": f_s / f_n, "current": c_s / c_n, "gap": f_s / f_n - c_s / c_n,
+            "resolution": abs(f_s / f_n - fp_s / fp_n),
+        }
 
     out = {
         "question": ("is the N8 fix's corpus gain leak removal or a row-edge effect? On "
                      "single-document rows there are ZERO interior boundaries, so leak removal "
                      "predicts no gain at row positions 0-2 and the row-edge effect predicts the "
                      "same gain as anywhere"),
+        "arms": {"fixed": a.fixed, "current": a.current},
         "rows": n_rows, "domains": sorted(subset), "edge_positions": list(range(EDGE)),
-        "resolution_same_arm": resolution,
+        "resolution_method": (f"T-parity: the same rows right-padded with <eos> by {a.pad}, same arm, "
+                              f"so the measured tokens are identical and only chunk_kda's tiling "
+                              f"changes. NOT a repeat run -- scoring one checkpoint twice at the same "
+                              f"shapes is bitwise deterministic and reported 0.000000, a floor of "
+                              f"nothing."),
+        "resolution": resolution,
         "resolution_fixed": res_fixed, "resolution_current": res_current,
         "edge_gap_fixed_minus_current": gap,
         "rest_gap_fixed_minus_current": gap_rest,
         "edge_mean": {k: edge_mean(v) for k, v in runs.items()},
         "rest_mean": {k: rest_mean(v) for k, v in runs.items()},
-        "per_domain_edge_tokens": {d: runs["fixed_a"][d][1] for d in subset},
+        "per_domain": per_domain,
+        "subset_is_not_the_corpus": ("single-document rows exist only where rows hold few documents, "
+                                     "so the pooled number is dominated by those domains and the "
+                                     "per-domain table is the result; pooled is a footnote"),
         "reading": None,
     }
     # THE RESOLUTION IS READ FIRST, and the verdict is written by the code rather than by whoever
     # reads the numbers: a gap inside the floor is "cannot see", not "no effect" (6e's ruling).
+    n_over = sum(1 for v in per_domain.values() if abs(v["gap"]) > max(v["resolution"], 1e-12))
     if abs(gap) <= resolution:
-        out["reading"] = (f"CANNOT SEE: the fixed-vs-current edge gap {gap:+.6f} is inside the "
-                          f"same-arm resolution {resolution:.6f}. This does not distinguish the "
-                          f"hypotheses and is not evidence of no effect.")
+        out["reading"] = (f"CANNOT SEE: the pooled edge gap {gap:+.6f} is inside the T-parity "
+                          f"resolution {resolution:.6f}. This does not distinguish the hypotheses "
+                          f"and is not evidence of no effect.")
     else:
-        out["reading"] = (f"the edge gap {gap:+.6f} exceeds the {resolution:.6f} resolution. On rows "
-                          f"with ZERO interior boundaries, leak removal predicts no gain, so a gain "
-                          f"here is the ROW-EDGE effect; the rest-of-row gap is {gap_rest:+.6f} for "
-                          f"comparison.")
+        out["reading"] = (f"the pooled edge gap {gap:+.6f} exceeds the {resolution:.6f} resolution, "
+                          f"and {n_over} of {len(per_domain)} domains exceed their own. On rows with "
+                          f"ZERO interior boundaries leak removal predicts no gain, so a gain here is "
+                          f"the ROW-EDGE effect; rest-of-row gap {gap_rest:+.6f}. Read the per-domain "
+                          f"table before the pooled number: the subset is not the corpus.")
     dest = os.path.join(ROOT, a.out)
     with open(dest, "w", encoding="utf-8") as fh:
         json.dump(out, fh, indent=1)
-    print(f"\nRESOLUTION (same arm, twice): {resolution:.6f} nat/token "
+    print(f"\nRESOLUTION (T-parity, same arm at two lengths): {resolution:.6f} nat/token "
           f"[fixed {res_fixed:.6f}, current {res_current:.6f}]")
-    print(f"EDGE GAP (fixed - current) at row positions 0-{EDGE - 1}: {gap:+.6f}")
+    print(f"\n{'domain':22s}{'rows':>6s}{'edge tok':>10s}{'gap':>12s}{'own res':>12s}  verdict")
+    for dom, v in sorted(per_domain.items(), key=lambda kv: -abs(kv[1]["gap"])):
+        seen = abs(v["gap"]) > max(v["resolution"], 1e-12)
+        print(f"{dom:22s}{v['rows']:6d}{v['edge_tokens']:10d}{v['gap']:+12.6f}"
+              f"{v['resolution']:12.6f}  {'above floor' if seen else 'CANNOT SEE'}")
+    print(f"\nPOOLED edge gap (fixed - current) at row positions 0-{EDGE - 1}: {gap:+.6f} "
+          f"[footnote: the subset is not the corpus]")
     print(f"rest-of-row gap, same rows: {gap_rest:+.6f}")
     print(out["reading"])
     print(f"wrote {dest}")

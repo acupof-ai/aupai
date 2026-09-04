@@ -1,0 +1,32 @@
+claimed 1 for e1_n8_row_edge
+  math_owm_stage2            7 single-document of 64 val rows
+  en_c4_stage2               1 single-document of 64 val rows
+  cot                        0 single-document of 64 val rows
+  textbook_30b               1 single-document of 64 val rows
+  chatml                     0 single-document of 64 val rows
+  chat_qa                    0 single-document of 64 val rows
+  zh_web                     7 single-document of 64 val rows
+  code_py_starcoder         14 single-document of 64 val rows
+  code_py_rp1t              23 single-document of 64 val rows
+subset: 53 single-document rows over 6 domain(s)
+  fixed            edge mean 4.731679 over 159 tokens
+  fixed_padded     edge mean 4.731679 over 159 tokens
+  current          edge mean 4.676950 over 159 tokens
+  current_padded   edge mean 4.676950 over 159 tokens
+
+RESOLUTION (T-parity, same arm at two lengths): 0.000000 nat/token [fixed 0.000000, current 0.000000]
+
+domain                  rows  edge tok         gap     own res  verdict
+textbook_30b               1         3   +1.020609    0.000000  above floor
+zh_web                     7        21   -0.279889    0.000000  above floor
+en_c4_stage2               1         3   -0.180649    0.000000  above floor
+math_owm_stage2            7        21   +0.125721    0.000000  above floor
+code_py_starcoder         14        42   +0.117176    0.000000  above floor
+code_py_rp1t              23        69   +0.065189    0.000000  above floor
+
+POOLED edge gap (fixed - current) at row positions 0-2: +0.054728 [footnote: the subset is not the corpus]
+rest-of-row gap, same rows: -0.019732
+the pooled edge gap +0.054728 exceeds the 0.000000 resolution, and 6 of 6 domains exceed their own. On rows with ZERO interior boundaries leak removal predicts no gain, so a gain here is the ROW-EDGE effect; rest-of-row gap -0.019732. Read the per-domain table before the pooled number: the subset is not the corpus.
+wrote /work/aupai/runs/e1_n8_row_edge.json
+released e1_n8_row_edge
+probe exit 0

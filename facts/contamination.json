@@ -787,6 +787,94 @@
    "uncertainty": "THE CONSUMED-ROWS RATE IS UNMEASURED. This is containment in the corpus ON DISK, not in the rows the 200M run actually read. row_cursor (1,189,548) counts TOKEN-BLOCK rows (cache.numel()//(seq+1)), the corpus is documents, and the pre-tokenize shuffle at train.py:1456 means the first N documents are not the first N of the token cache -- so no instrument here maps cursor to documents. 6e's ruling 2026-09-04: do not build the doc-level cursor now. Direction of the bound: the run consumed a fraction of each domain, so the consumed-rows rate is AT MOST 28.10% and its true value is unknown.",
    "boundary": "The Pile side is UNMEASURED and unmeasurable here -- the control arm's pretraining corpus is not on this machine, so this halves the confound rather than closing it. The floor re-score on the clean subset is NOT in this fact: it is a card decision. SUPERSEDES the 316-item exclusion in runs/e1_28_matched.json, which docs/audits/control_pythia160m_vs_ours.md 5.3d used for its clean-subset re-score: scripts/e1_28_leak_scan.py read 5.0-13.2% of each domain's documents because it treated cursor rows as documents, and its coverage guard was in the same wrong unit so it never fired. That scan also saw chatml and chat_qa report 808 char-hits EACH and filtered the identical count away as markdown formatting; it was the shared source.",
    "status": "measured"
+  },
+  {
+   "id": "cont.math_owm_ws13",
+   "value": {
+    "unit": "whitespace 13-gram containment (e1-28's method; the char-13 window is reserved for dense-char domains, on code/math/English it shreds indentation and identifiers into meaningless matches)",
+    "math_owm": {
+     "shards": 127,
+     "docs": 2554754,
+     "wall_s": 2942,
+     "humaneval_164": {
+      "question": {
+       "docs_hit": 440,
+       "rate": 0.000172
+      },
+      "answer": {
+       "docs_hit": 22,
+       "rate": 9e-06
+      },
+      "other": {
+       "docs_hit": 1176,
+       "rate": 0.00046
+      }
+     },
+     "code_holdout_v2_500": {
+      "question": {
+       "docs_hit": 12,
+       "rate": 5e-06
+      },
+      "other": {
+       "docs_hit": 12,
+       "rate": 5e-06
+      }
+     },
+     "math_test_500": 0,
+     "math_hard_eval_v2_1k": 0,
+     "lambada_test_en": 0
+    },
+    "math_owm_stage2": {
+     "shards": 206,
+     "docs": 4135793,
+     "wall_s": 4715,
+     "humaneval_164": {
+      "question": {
+       "docs_hit": 777,
+       "rate": 0.000188
+      },
+      "answer": {
+       "docs_hit": 50,
+       "rate": 1.2e-05
+      },
+      "other": {
+       "docs_hit": 1958,
+       "rate": 0.000473
+      }
+     },
+     "code_holdout_v2_500": {
+      "question": {
+       "docs_hit": 22,
+       "rate": 5e-06
+      },
+      "other": {
+       "docs_hit": 22,
+       "rate": 5e-06
+      }
+     },
+     "math_test_500": 0,
+     "math_hard_eval_v2_1k": 0,
+     "lambada_test_en": 0
+    },
+    "verdict": "both math OWM super-sets carry no gold contamination: math-500 / math-hard v2 / lambada all 0; humaneval-question 13-gram hits at 0.017-0.019% of documents (digit-sequence / identifier collisions, not problem text), answer-level hits 22 and 50.",
+    "retracted_value": "scan_math_ws.json's 1,986,682 humaneval hits (rate 15643.17 = HITS DIVIDED BY SHARDS, not per-doc) was the char-13 shredding unit produced by a pre-fix pod scanner copy; void. The authoritative numbers are from runs/scan_math_ws2.json under whitespace-13."
+   },
+   "measured": "2026-09-04",
+   "source": "runs/scan_math_ws2.json (datagen/scan_eval_golds.py whitespace-13, shard-parallel pool 8) over data/corpus/math_owm and math_owm_stage2",
+   "config": {
+    "scanner": "datagen/scan_eval_golds.py --golds data/eval/humaneval/humaneval_164.jsonl data/eval/math_test_500.jsonl data/synthetic/math_hard_eval_v2_1k.jsonl data/eval/lambada_en/lambada_test_en.jsonl data/eval/code_holdout_v2_500.jsonl",
+    "method": "whitespace 13-gram containment; a hit requires an exact 13-token gram of the gold in a corpus doc",
+    "needle_type": "question/answer/other by gold value's source key",
+    "pool": "8 CPU cores (no GPU)",
+    "unit": "docs hit (a doc hits an eval once); rate = docs_hit / docs",
+    "selftest": "verbatim gold found, shuffled gold 0 hits",
+    "unattested_leg": "humaneval_164.jsonl, lambada_test_en.jsonl, code_holdout_v2_500.jsonl"
+   },
+   "uncertainty": "humaneval-question hits are per-doc; the same gold sentence can hit multiple docs (not a distinct-holdout union). A 13-word digit/identifier gram collision is a low-signal hit, not problem-text leakage.",
+   "status": "measured",
+   "artifact_sha256": {
+    "math_test_500.jsonl": "609a5a5af31d666a01e2a82c692d1d54f5e13a081a2a98c929e02670941b34e5"
+   }
   }
  ]
 }
