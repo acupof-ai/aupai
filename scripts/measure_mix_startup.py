@@ -39,6 +39,16 @@ def main():
     print(f"mix {a.mix_path or '(domains-only)'}: total_tokens={mix.get('total_tokens')}, {len(domains)} domains")
 
     import torch
+
+    # THE CO-RESIDENCY REFUSAL, for the whole mix at once because that is what this tool
+    # reads: a full non-mmap torch.load of every cache in the file, which at mix_200m_8b is
+    # 161 GB off /data00. This is the read the "no lane card" rule was written for, and it
+    # had no refusal in front of it because the guard's chokepoint is train._domain_seqs and
+    # this file opens the caches by path (e1, 2026-09-05).
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "eval"))
+    from cache_guard import assert_not_co_resident
+
+    assert_not_co_resident(domains)
     rows = []
     total_bytes = total_load_s = total_walk_s = 0.0
     for name in domains:

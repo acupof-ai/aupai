@@ -3848,6 +3848,119 @@ def check_coresident_cache_refusal(root):
     GUARDS = {"assert_caches_fresh", "guard", "val_seqs", "assert_not_co_resident"}
     bypass = []
     scanned = 0
+    # THE SECOND WAY INTO A CACHE, and the one this check was blind to when it landed
+    # (38af3d47). The rule's quantity is HOST BYTES OFF /data00, and _domain_seqs is only one
+    # door to them: a file can `torch.load("/data00/tokens_<domain>.pt")` by path and read the
+    # same 35 GB with neither guard in the stack. e1 walked into it the next day building
+    # eval/api_cloze.py, whose whole job is reading that cache -- a 35.1 GB mmap read that
+    # this check called green because the file never mentions _domain_seqs. Two more were
+    # already in the tree: scripts/replay_cursor.py (mmap) and scripts/measure_mix_startup.py,
+    # which does a FULL non-mmap torch.load of every cache in a mix, i.e. the 166 GB ppl.py
+    # shape the rule was written for.
+    #
+    # The population is a load whose path argument mentions a cache: the literal
+    # `tokens_<name>.pt` or `/data00`, or train's own _domain_cache_path/TOKEN_CACHE. Matched
+    # on the path EXPRESSION and one hop through a local name, because every real site builds
+    # the path first and loads it a few lines later. Loose in the safe direction: a false
+    # positive is one guard call to add, a false negative is a 35 GB read beside a live run.
+    PATH_MARK = re.compile(r"tokens_[a-z0-9_]*\.pt|tokens_\{|/data00|_domain_cache_path|TOKEN_CACHE")
+    path_bypass = []
+    path_readers = 0
+    for sub in ("eval", "scripts", "probes", "datagen", "algorithms"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".py") or fn == "cache_guard.py":
+                continue
+            p = os.path.join(d, fn)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+            except OSError:
+                continue
+            if "load" not in src or not PATH_MARK.search(src):
+                continue
+            try:
+                tree = _ast.parse(src)
+            except SyntaxError:
+                continue
+
+            def _cachey(node):
+                """Does this expression name a token cache?
+
+                A SUBTREE SCAN, not ast.get_source_segment. The first version called
+                get_source_segment per candidate node, which re-splits the whole file each
+                call: measured 125 s over 19 candidate files against 0.7 s here. A check that
+                costs two minutes gets run with --skip.
+
+                AN F-STRING IS REBUILT BEFORE MATCHING, which is the whole difference between
+                the two implementations and cost two of the four real findings when it was
+                missing. `f"tokens_{name}.pt"` parses to JoinedStr(["tokens_", FormattedValue,
+                ".pt"]) -- neither constant matches `tokens_<x>.pt` on its own, so the scan
+                read three of the four by-path readers as clean while get_source_segment,
+                seeing the raw text, caught them. Every real site builds its path this way, so
+                this branch is the common case rather than an edge one.
+                """
+                for n in _ast.walk(node):
+                    if isinstance(n, _ast.JoinedStr):
+                        lit = "".join(
+                            v.value if isinstance(v, _ast.Constant) and isinstance(v.value, str)
+                            else "{}" for v in n.values)
+                    elif isinstance(n, _ast.Constant):
+                        lit = n.value if isinstance(n.value, str) else ""
+                    elif isinstance(n, _ast.Name):
+                        lit = n.id
+                    elif isinstance(n, _ast.Attribute):
+                        lit = n.attr
+                    else:
+                        continue
+                    if PATH_MARK.search(lit):
+                        return True
+                return False
+
+            names, calls, redirects = set(), set(), False
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Assign):
+                    if _cachey(node.value):
+                        for t in node.targets:
+                            if isinstance(t, _ast.Name):
+                                names.add(t.id)
+                            elif isinstance(t, _ast.Attribute):
+                                names.add(t.attr)
+                    for t in node.targets:
+                        # A file that points TOKEN_CACHE at its own tree reads its own
+                        # fixture, same exclusion the _domain_seqs half already makes.
+                        if isinstance(t, _ast.Attribute) and t.attr in ("TOKEN_CACHE", "DATA"):
+                            redirects = True
+                if isinstance(node, _ast.Call):
+                    f = node.func
+                    nm = f.attr if isinstance(f, _ast.Attribute) else (
+                        f.id if isinstance(f, _ast.Name) else None)
+                    if nm:
+                        calls.add(nm)
+                    if nm == "add_argument":
+                        dest = next((a.value[2:].replace("-", "_") for a in node.args
+                                     if isinstance(a, _ast.Constant)
+                                     and isinstance(a.value, str) and a.value.startswith("--")),
+                                    None)
+                        for kw in node.keywords:
+                            if kw.arg == "default" and dest and _cachey(kw.value):
+                                names.add(dest)
+            loads = []
+            for node in _ast.walk(tree):
+                if (isinstance(node, _ast.Call) and isinstance(node.func, _ast.Attribute)
+                        and node.func.attr == "load" and node.args):
+                    a0 = node.args[0]
+                    if (_cachey(a0)
+                            or (isinstance(a0, _ast.Name) and a0.id in names)
+                            or (isinstance(a0, _ast.Attribute) and a0.attr in names)):
+                        loads.append(node.lineno)
+            if not loads or redirects:
+                continue
+            path_readers += 1
+            if not (calls & GUARDS):
+                path_bypass.append(f"{sub}/{fn}:{loads[0]}")
     for sub in ("eval", "scripts", "probes"):
         d = os.path.join(root, sub)
         if not os.path.isdir(d):
@@ -3905,9 +4018,18 @@ def check_coresident_cache_refusal(root):
             f"they read a token cache with no co-residency or freshness refusal: "
             f"{', '.join(bypass[:4])}. Call eval.domain_loss.val_seqs, or "
             f"cache_guard.guard(cfg, domains) before the read")
+    if path_bypass:
+        return FAIL, (
+            f"{len(path_bypass)} file(s) torch.load a token cache BY PATH with no co-residency "
+            f"refusal in the call stack, so they read tens of GB off /data00 beside a live "
+            f"training run: {', '.join(path_bypass[:4])}. Call "
+            f"cache_guard.assert_not_co_resident([domain, ...]) before the load. Reading by "
+            f"path skips train._domain_seqs, which is where the other half of this check "
+            f"looks -- the bytes are the same and so is the rule")
     return PASS, (f"assert_caches_fresh refuses co-resident reads before the freshness loop "
                   f"(statement {co_at} of {loop_at}); {scanned} real _domain_seqs caller(s) "
-                  f"reach it (files that stub it or redirect TOKEN_CACHE are not counted)")
+                  f"and {path_readers} by-path cache reader(s) reach a refusal (files that "
+                  f"stub it or redirect TOKEN_CACHE are not counted)")
 
 
 def _broken_coresident_call_removed():
@@ -3962,6 +4084,37 @@ def _broken_coresident_bypass():
             "def main(tok):\n"
             "    rows = train._domain_seqs('zh_web', tok, True, False)\n"
             "    return len(rows)\n"
+        )
+    return d
+
+
+def _broken_coresident_path_read():
+    """A NEW eval that torch.loads a token cache BY PATH, reaching no guard.
+
+    THE WORLD THE FIRST VERSION OF THIS CHECK HAD NO ANSWER FOR. Its population was
+    train._domain_seqs callers, and a file that builds `/data00/tokens_<domain>.pt` itself
+    calls nothing in that set -- so 35 GB of host IO beside a live run read as green. Not
+    hypothetical: e1 wrote exactly this file (eval/api_cloze.py) the day after landing the
+    check, and two more were already in the tree, one of them a FULL non-mmap read of every
+    cache in a mix. The fixture mirrors that shape, path built one line above the load,
+    because that is how every real site is written.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    with open(os.path.join(ed, "zz_path_read_probe.py"), "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env python3\n"
+            '"""A new eval that opens the token cache by path."""\n'
+            "import torch\n\n\n"
+            "def main(domain):\n"
+            "    cache = f'/data00/tokens_{domain}.pt'\n"
+            "    stream = torch.load(cache, map_location='cpu', mmap=True)\n"
+            "    return stream.numel()\n"
         )
     return d
 
@@ -14114,6 +14267,29 @@ def _demo(only=None):
                                 f"bullet ({_why[:60]})")
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
+
+    # coresident_cache_refusal has THREE halves and CHECKS carries one world per row, so the
+    # two population halves were written and never run -- the §71 shape, in the commit that
+    # added the check (e1, 38af3d47, caught 2026-09-05 while using it). The registered world
+    # breaks the CHOKEPOINT (call deleted); these break the POPULATIONS, which is where the
+    # check's real coverage lives:
+    #   bypass    a new eval calling train._domain_seqs itself
+    #   path_read a new eval building /data00/tokens_<domain>.pt and torch.loading it -- the
+    #             world the first version of the check could not fail, and the one e1 then
+    #             walked into by writing eval/api_cloze.py
+    # Each is measured here rather than asserted to work: a world nobody runs is
+    # indistinguishable from one that cannot fail.
+    for _w, _label in ((_broken_coresident_bypass, "a new eval calling _domain_seqs"),
+                       (_broken_coresident_path_read, "a new eval loading the cache by path")):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_coresident_cache_refusal(_d)
+                if _st != FAIL:
+                    untested.append(f"coresident_cache_refusal reported {_st} on {_label} "
+                                    f"({_why[:70]})")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
 
     # shapes_table_covers_doc has two halves its registered world does not exercise: an
     # incident that reaches the doc but not the table, and a heading number written twice.
