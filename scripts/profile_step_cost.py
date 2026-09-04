@@ -360,6 +360,40 @@ def _selftest():
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
 
+    # EVERY MEMORY-PATH CONSTRUCTION train.py PERFORMS MUST BE PERFORMED HERE TOO, and this check
+    # exists because the previous version of this file omitted one: train.py builds TableMaster for
+    # any mem_values > 0 and this file built none, so a --peak-only of a memory arm reported the
+    # table at 6 B/param where the arm allocates 16 -- 13.62 GiB missing at side 1195, on a peak a
+    # launch decision was about to be taken from. All 28 other cases here passed throughout.
+    #
+    # BOTH SIDES, PAIRWISE: the defect is a DIFFERENCE between the two files. Asserting only that
+    # train.py contains TableMaster goes green on a probe that ignores it; asserting only that this
+    # file does goes green after train.py drops it.
+    #
+    # READ FROM main()'s AST FOR THIS FILE, NEVER BY SUBSTRING -- and that is not a style
+    # preference. A substring version of this exact check went GREEN under a mutant that deleted
+    # all three call sites, because the names appear in this comment and in the check's own data
+    # table, so the file "contains" them no matter what it does. Same self-satisfying shape the
+    # fp8 check above records, hit again in the same file. The `calls` set is built from main()'s
+    # AST above, so a name is present only if main() really calls it.
+    for name, why in (
+        ("TableMaster", "constructs the table's fp32 master"),
+        ("pull_grads", "pulls the table's gradient into the master"),
+        ("push", "writes the master back to the table"),
+    ):
+        in_train = name in src
+        in_probe = name in calls
+        ok = in_train == in_probe
+        bad += 0 if ok else 1
+        if ok:
+            print(f"  ok   {why}: called in both" if in_probe
+                  else f"  ok   {why}: in neither (no table master in this version)")
+        else:
+            which = "train.py only -- THE PROBE OMITS IT" if in_train else "this probe only"
+            print(f"  BUG  {why}: {which}. The probe and the run allocate different tensors, so "
+                  f"the peak reported here is not the peak of the shape that would launch")
+
+
     # The cfg handed to torch.save must be a plain dict WITH the dunder keys dropped. Two
     # separate unpicklables live in a class's vars(): the mappingproxy itself, and the
     # __dict__/__weakref__ getset_descriptors inside it -- so `dict(vars(cls))` still raises,
@@ -480,7 +514,12 @@ def _selftest():
     print(f"  {'ok  ' if ok else 'BUG '} a mark count that disagrees with accum raises "
           "rather than reporting a shifted region")
 
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2
+    # 3 for the probe-vs-train pairwise memory-path checks. HAND-SUMMED AND THEREFORE WRONG ONCE
+    # ALREADY: adding three cases without touching this line left the file reporting 28/28 while
+    # running 31, so the total said nothing about what ran. It is kept because a mismatch between
+    # the printed count and the case list is itself worth noticing -- but the count is not evidence
+    # that a case exists, and a check whose absence shows up only in this integer is not registered.
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2 + 3
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -615,10 +654,25 @@ def main():
     if fp8:
         raw = raw.to(torch.bfloat16)
         train.convert_to_fp8_compute(raw)
+    # THE TABLE'S fp32 MASTER, mirroring train.py:2603. WITHOUT THIS THE PROBE MEASURES A WORLD THAT
+    # NO LONGER LAUNCHES: train.py constructs TableMaster for any mem_values > 0, taking the table
+    # from 6 B/param (w2 + g2 + Adagrad sum2) to 14 steady and 16 while both gradients are live, and
+    # a probe that omits it reports 8.17 GiB of table tensors at side 1195 where the arm allocates
+    # 21.79 -- 13.62 GiB missing from the number a launch decision is taken on. Caught after the
+    # first 1195 probe had already been launched against a < 90 GiB rule it could not answer.
+    #
+    # The construction is unconditional on --fp32_master, exactly as in train.py, because that flag
+    # is off on every arm; a master gated on it would be the same absent-fix defect one level down.
+    table_master = train.TableMaster(raw) if raw.memory is not None else None
+    if table_master is not None and not table_master.pairs:
+        print("FAIL: the memory pool exists but TableMaster matched no value table. The probe would "
+              "report the non-master peak as the arm's.", file=sys.stderr)
+        return 1
     # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
     # :2491 compile). Building the optimizers first would hand Muon fp32 parameter references
     # that the cast then replaces, so the optimizer would step tensors the model no longer uses.
-    optimizers = train.build_optimizers(raw, train.Cfg)
+    optimizers = train.build_optimizers(raw, train.Cfg,
+                                        table_master.map if table_master else None)
     model = raw
     if ddp:
         model = DDP(model, device_ids=[local], bucket_cap_mb=25, gradient_as_bucket_view=True,
@@ -650,6 +704,7 @@ def main():
     fwds, bwds, opts = [], [], []
     losses = []
     mem_grad = None  # (bytes per element, layout) of the table's gradient, read inside the loop
+    mst_grad = None  # bytes per element of the MASTER's gradient, likewise read inside the loop
     n_par = sum(p.numel() for p in raw.parameters())
     if is_main:
         print(f"built {n_par / 1e6:.2f}M params, compile={train.Cfg.compile and amp}, "
@@ -747,10 +802,24 @@ def main():
             _g = raw.memory.values.weight.grad
             mem_grad = (0, "absent") if _g is None else (
                 _g.element_size(), "sparse COO" if _g.is_sparse else "dense")
+        # train.py:2904-2910's order, and the order is the measurement: pull_grads makes the
+        # master's fp32 gradient while the model's still exists, which is the 16 B/param moment a
+        # peak has to hold; push writes the master back after every optimizer has stepped.
+        if table_master is not None:
+            table_master.pull_grads()
+            # THE MASTER'S GRADIENT, CAPTURED HERE FOR THE SAME REASON THE MODEL'S IS: the optimizer
+            # holds the master, so its zero_grad(set_to_none=True) below sets m.grad to None and a
+            # report written after the loop would print 0 bytes for a full-size fp32 tensor that is
+            # alive inside every step. Itemsize only; nothing is retained.
+            if mst_grad is None:
+                _mg = table_master.pairs[0][1].grad
+                mst_grad = 0 if _mg is None else _mg.element_size()
         for opt in optimizers:
             opt.step()
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
+        if table_master is not None:
+            table_master.push()
         _mark(marks)
         torch.cuda.synchronize()
         # EVERY step's loss, warmup included. The A/B's correctness condition is that the two
@@ -809,13 +878,32 @@ def main():
             tw = raw.memory.values.weight
             wb = tw.element_size()
             gb, glayout = mem_grad if mem_grad else (0, "never read")
+            # THE MASTER IS PART OF THE ANSWER, AND IT IS NAMED. A probe that silently omitted the
+            # master read 8.17 GiB where the arm allocates 21.79 at side 1195, and nothing in its
+            # output said which world it had measured -- so the presence, dtype and bytes are
+            # printed rather than inferred from the file's version.
+            mst = table_master.pairs[0][1] if table_master and table_master.pairs else None
+            mb = mst.element_size() if mst is not None else 0
+            # Adagrad's state is keyed on WHATEVER THE OPTIMIZER HOLDS, which is the master when
+            # there is one. Looking it up under `tw` was correct only in the no-master world and
+            # would now print "no Adagrad state found" beside a perfectly healthy optimizer.
+            key = mst if mst is not None else tw
             st = [s for o in optimizers if isinstance(o, torch.optim.Adagrad)
-                  for p, s in o.state.items() if p is tw]
+                  for p, s in o.state.items() if p is key]
             sb = st[0]["sum"].element_size() if st and "sum" in st[0] else 0
-            print(f"TABLE dtype={tw.dtype} weight={wb}B grad={gb}B ({glayout}) "
-                  f"opt_state={sb}B{'' if sb else ' (no Adagrad state found)'} "
-                  f"-> {wb + gb + sb} B/param x {tw.numel()} params = "
-                  f"{tw.numel() * (wb + gb + sb) / 2**30:.2f} GiB of table tensors", flush=True)
+            # The master's own gradient is a second full-size fp32 tensor (pull_grads does
+            # m.grad = p.grad.float()), alive from pull_grads until the optimizer's zero_grad. It
+            # is inside the step, so it belongs in the peak figure, not only in the steady one.
+            mgb = mst_grad or 0
+            steady = wb + gb + sb + mb
+            instep = steady + mgb
+            print(f"TABLE dtype={tw.dtype} weight={wb}B grad={gb}B ({glayout}) opt_state={sb}B"
+                  f"{'' if sb else ' (no Adagrad state found)'} "
+                  + (f"master={mb}B(fp32) master_grad={mgb}B" if mst is not None
+                     else "master=ABSENT -- this is NOT the world the arms run in")
+                  + f" -> {steady} B/param steady, {instep} in-step x {tw.numel()} params = "
+                  f"{tw.numel() * steady / 2**30:.2f} GiB steady, "
+                  f"{tw.numel() * instep / 2**30:.2f} GiB in-step", flush=True)
             # READOUT 6'S OWN COST, timed here so the diag cadence cannot hide inside the arm's
             # throughput reading (4c's condition, 2026-09-05). row_checksums is a (rows x d) @ (d)
             # matvec over the WHOLE table -- 2 GiB read at M1, 4 at 1448^2 -- and it runs at steps
