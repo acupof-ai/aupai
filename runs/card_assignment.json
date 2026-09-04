@@ -23,7 +23,8 @@
   "fb 2026-09-04 00:2xZ (both Stage D arms finished; 0-3 idle, no grant; 4 -> b0 HumanEval cells for equalcompute/n8_fixed, one job, e1's probe grant on 4 ended; 5 lane b0 doc_cu cells)",
   "fb 2026-09-04 01:1xZ (card 5 holds two processes not in the container's ps, 490+1500 MiB, foreign; lent block card 0 to b0 for two sequential score_matrix jobs on ckpt_b0_n8_fixed / ckpt_b0_sd_equalcompute, ~40 min, no 7-card job pending; 4 returned)",
   "fb 2026-09-04 01:5xZ (block card 1 lent to e1 for the N8 mechanism probe: contrast (b) on single-document val rows, both Stage D arms, same-arm double-scoring control, forward only, one job; return by message)",
-  "fb 2026-09-04 02:5xZ (card 0 returned by b0, both score_matrix rows written; card 1 lent to e1 for the N8 probe rerun; 2-3 idle, no grant; 5 lane held by a foreign container (2000 MiB); 7 the user's, running again at 27.7 GB)"
+  "fb 2026-09-04 02:5xZ (card 0 returned by b0, both score_matrix rows written; card 1 lent to e1 for the N8 probe rerun; 2-3 idle, no grant; 5 lane held by a foreign container (2000 MiB); 7 the user's, running again at 27.7 GB)",
+  "fb 2026-09-04 03:0xZ (card 1 returned by e1, N8 mechanism probe stopped as unmeasured; block 0-3 idle, no grant, pending the user's decision)"
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
