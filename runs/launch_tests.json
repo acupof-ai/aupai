@@ -13,6 +13,21 @@
   },
   "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
  },
+ "scripts/test_arch_L32.py@d1024L12h8f3072": {
+  "host": "iv-yeozpb5g5cbw80bls64e",
+  "mix": null,
+  "real_kernel": true,
+  "recorded": "2026-09-04 08:38",
+  "result": "pass",
+  "shape": {
+   "d": 1024,
+   "ffn_hidden": 3072,
+   "heads": 8,
+   "layers": 12
+  },
+  "stages": null,
+  "test_sha256": "e73ff35f378eb00de1223e7b6b1fa20bf5df48424b645bd4340506fe3d38a5d1"
+ },
  "scripts/test_arch_L32.py@d768L16h6f2304": {
   "host": "iv-yeozpb5g5cbw80bls64e",
   "mix": null,
@@ -41,5 +56,20 @@
    "layers": 12
   },
   "test_sha256": "97b28519d0516f9b3365839f4afbbc09730e9d7d6bb3b5dfa26fdc73a3f6e008"
+ },
+ "scripts/test_e2e.py@d1024L12h8f3072": {
+  "host": "iv-yeozpb5g5cbw80bls64e",
+  "mix": "data/mix_200m_8b.json",
+  "real_kernel": true,
+  "recorded": "2026-09-04 08:57",
+  "result": "pass",
+  "shape": {
+   "d": 1024,
+   "ffn_hidden": 3072,
+   "heads": 8,
+   "layers": 12
+  },
+  "stages": 11,
+  "test_sha256": "065b6463de6eb555c71a19fc9a4da4648b6894077df528c9344e206c90a9c112"
  }
 }
