@@ -56,7 +56,6 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
   - **When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency is judged by host IO and seconds, not by metric class.** The rule stated on 2026-09-02 was "likelihood evals may share a card, generative ones wait", derived from one eval (`score_matrix`, 2.3 GiB). MEASURED against the run's own control — `--save_every 500`, and steps 500/1000/1500/2000 all read 7K tok/s/gpu with **no eval running**, because a 2.1 GB `torch.save` plus a val pass costs 78 s by itself: `score_matrix`'s four likelihood metrics cost **46 s**, cheaper than the control; `l1_fewshot` (generative) **209 s**; `ppl` **109 s** and climbing when it was killed. The class was never the variable. What separates `ppl` from `score_matrix` inside one class is that `ppl` `torch.load`s a whole token cache per domain — 85 GB for `zh_web`, ~166 GB across the nine. So: an eval that reads a token cache off `/data00` waits for the run; one that only loads a checkpoint costs about what a save costs. `python3 scripts/eval_load_cost.py` is the table, with the unmeasured evals listed as unmeasured rather than as zero.
   - **Judge the cost in seconds against what the run already spends on itself, never by the printed ETA.** ETA extrapolates a single 10-step interval over 19,151 steps, so one interval 54 s slow prints as 29 lost hours, and every checkpoint save prints ~99 h. Total across every dip in the first 1990 steps: 10.3 min of 6.04 h elapsed, 2.8% (`docs/lessons/gate_failure_shapes.md` §50).
 - **Long jobs detach.** `pod "<cmd>"` in the foreground dies with the tn tunnel after 5 minutes, but the container process keeps running — it becomes an orphan holding a whole card at 100%. One such orphan silently contaminated a seven-card profile before anyone noticed. Always `setsid nohup ... </dev/null &`, then poll the log.
-- **Language.** Repo artifacts (code, docs, commits) in English; user-facing text in Chinese.
 - **Shared files.** Announce before editing `train.py`/`sft*.py`/`AGENTS.md`, commit promptly, hand the file back.
 - **CI gates.** ruff E9/F, py_compile, `test_arch_compat`, `eqcheck`, `holdout` on every push.
 - **A deletion needs a per-file check for glob and runtime loaders.** No static analysis sees a runtime glob. `scripts/reachability.py` is a citation graph -- a doc mention is an edge, so "reachable" can mean "named by a doc nobody runs" -- and `mathbank/vet_programs.py:37` globs `math_programs_l*_ext*.py`, so 23 live generators read as unreferenced to a name scan. Grep for `glob`/`importlib` over a directory before deleting anything in it.
@@ -291,7 +290,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Rule | Enforced by |
 |---|---|
 | Tokenizer frozen 2026-08-29 | `pinned_ids` |
-| Vocabulary identity | manual: enforced at load since 7aacbac (2026-09-03): sft_math.py refuses a vocab_id mismatch and prints the matching id; before 7aacbac the guard key was `vocab` and the assert key `vocab_id`, so the check never fired (shape §70) |
+| Vocabulary identity | `vocab_id_on_load_path` |
 | GPUs | manual: card ownership is a controller decision, not a file state |
 | A kill is not finished until `nvidia-smi` says the card is free | manual: the rule is an operator sequence -- kill, read the card, kill what remains -- and no artifact records whether the second step happened; lane_respected catches the orphan holding a card now, which is the consequence, not the discipline |
 | Lanes: a 7-card training block, and one lane card for everything else | manual: the lane/block split is allocation policy; lane_respected checks the instant, not the policy |
@@ -301,7 +300,6 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Judge the cost in seconds against what the run already | manual: how a human reads a log field. The fix that IS checkable is on the instrument — ETA as a window mean, or the per-interval overrun printed beside it — and that edits `train.py`, frozen for p500m_20b_0902 (de-27, stop-window list) |
 | A dropped tn tunnel does not end the command it started | manual: the surviving process lives in the container and the only record of the dropped tunnel is a terminal the repo never sees; `no_foreground_pod_training` catches the launch shape that produces these orphans, which is the cause, not the post-drop verification |
 | Long jobs detach | `no_foreground_pod_training` |
-| Language | manual: no automatic judge of whether prose is English or Chinese-for-the-user |
 | Shared files | manual: announcing an edit happens in conversation, outside the repo |
 | CI gates | CI |
 | Derived artifacts carry the fingerprint of what produced them ->R3 | `corpus_fp_matches` |
@@ -324,7 +322,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | `cd` inside a backgrounded chain stays in it | manual: a shell fact; no artifact records the mistake |
 | The pod is frozen from a training launch until that run | manual: the window is defined by two events in different places -- a launch timestamp on the pod and a push from a laptop -- and nothing records the second. `pod_drift` sees the drift that results, which is the consequence; whether a push landed inside someone's startup window is not recoverable from any artifact |
 | cfg_default raises rather than returning None: an annotation | manual: a note on how checks are written, not a rule to enforce |
-| The ledger takes names from the scores: --name X attributes | manual: a note on how the ledger reads, not a rule to enforce |
+| The ledger takes names from the scores: --name X attributes | manual: MEASURED 2026-09-04, and the check 6e proposed ("a score row names a checkpoint that exists") would be permanent-red. `produced_checkpoint` (harness.py:2315) mints `ckpt_<name>` from `--name` when no path is in the cmd: 92 of the register's rows get their name that way, and **35 of those 92 name a checkpoint absent from the newest pod listing** — `ckpt_0830v1_*` are the 0830v1 reset, `ckpt_t38_kill`/`t52_*` are finished probes. Every one was legitimately pruned, so an existence check FAILs on correct history and its only remedy would be un-pruning or an exception list that grows forever. The attribution hazard the rule names is real and already enforced from the other end: `recorded_scores` returns orphans (a score matching no checkpoint) and `produced_checkpoint` excludes `--resume`/`--ckpt` inputs after crediting `ckpt_k4` with its own output's score. Orphans measured today: 0 of 1 resolved score. What stays manual is that `SCORE_RE` matches only `math-hard <n>%`, so every other metric's rows are outside both this rule and its enforcement |
 | Each session works in its own worktree on its own branch: gi | manual: worktree topology is per-machine, not in the repo |
 | Commit in your worktree as soon as a change works, at most 3 | manual: same deadline as above, enforced by dirty_aged |
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
@@ -337,7 +335,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 | `harness task` and `harness friction` write the ledger of the tree they are invoked from | manual: the invoking directory is a shell fact no artifact records; the integration tree's pre-commit hook refuses the resulting non-controller commit, which is the consequence, not the discipline |
 
-53 rules: 17 checked, 36 manual. The count is regenerated from `harness check`'s
+52 rules: 18 checked, 34 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, which is the same drift the table
 itself had before the check began reading it.

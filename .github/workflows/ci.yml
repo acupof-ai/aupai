@@ -37,7 +37,12 @@ jobs:
       # 2026-09-02: run it before judging it).
       - run: bash scripts/test_eval_rescore.sh
       - run: python scripts/eqcheck.py
-      - run: python datagen/holdout.py
+      # --check, not the bare call: the bare call REGENERATES, and d2c95b1c correctly made that
+      # refuse where any registry path is absent -- a runner holds 5 of 13, so it can only write a
+      # fingerprint no other machine reproduces. CI wants the committed guard to LOAD and be
+      # non-empty; regenerating is a deliberate act on the pod.
+      - run: python datagen/holdout.py --check
+      - run: python datagen/holdout.py --selftest
       - run: python scripts/tokenizer_report.py --selftest
       - run: python scripts/tokenizer_eval.py --selftest
       - run: python scripts/harness.py --selftest
