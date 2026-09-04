@@ -43,6 +43,11 @@ def _world(drop=None):
     """
     d = tempfile.mkdtemp(prefix="evalreg_")
     os.makedirs(os.path.join(d, "datagen"), exist_ok=True)
+    # A .git, because these worlds model a CHECKOUT. Without it is_pod() reads the fixture as the
+    # pod's hand-pushed tree, where every registry path must exist -- and since `data/` is
+    # gitignored the fixture cannot hold them all, so the (c+) world FAILed for a reason that had
+    # nothing to do with what it was testing. The world under test has to be the world it claims.
+    os.makedirs(os.path.join(d, ".git"), exist_ok=True)
     text = open(HOLDOUT, encoding="utf-8").read()
     entry_rel = None
     if drop:
@@ -162,9 +167,36 @@ def main():
     # on both worlds the assertions above would still read green one at a time.
     case(st_full != st_drop, "the three points DIFFER between the two worlds (not constants)")
 
-    for t in (d_full, d_drop, d_wrong):
+    # THE PATH-EXISTS HALF MUST NOT DEPEND ON HOW MUCH DATA A LAPTOP HAPPENS TO HOLD. The first
+    # version gated it on `data_present > len(reg)//2`, which read 5 of 13 in one worktree and
+    # SKIPPED, then 7 of 13 in the integration tree and FAILED on the same commit -- and because
+    # the pre-commit hook runs `harness check`, that red blocked every commit and merge into main
+    # from a laptop for about an hour (6e, 2026-09-04). A threshold over incidental files is not a
+    # test of "is the population supposed to be complete here"; is_pod is.
+    #
+    # The world below is a git checkout (it has .git) holding 7 of 13 registered paths -- the
+    # integration tree's exact shape -- and it must not FAIL.
+    d_seven, _ = _world()   # _world() already gives it a .git: it models a checkout
+    seven_mod = _load(os.path.join(d_seven, "datagen", "holdout.py"), "h_seven")
+    present = [n for n, e in seven_mod.REGISTRY.items()
+               if os.path.exists(os.path.join(d_seven, e["path"]))]
+    st_seven, ev_seven = harness.check_eval_registry_complete(d_seven)
+    case(st_seven != harness.FAIL,
+         f"a git checkout with {len(present)}/{len(seven_mod.REGISTRY)} paths present does NOT "
+         f"FAIL on the absent ones ({st_seven}: {ev_seven[:70]})")
+    case("speaks on the pod" in ev_seven,
+         "...and it says which half it skipped and where that half speaks")
+    # The same tree WITHOUT .git is the pod's shape, where every path must exist -- so the half
+    # is not merely disabled, it still fires where it is meant to.
+    import shutil as _sh2
+    _sh2.rmtree(os.path.join(d_seven, ".git"))
+    st_pod, ev_pod = harness.check_eval_registry_complete(d_seven)
+    case(st_pod == harness.FAIL and "does not exist" in ev_pod,
+         f"...while the same tree with no .git (the pod's shape) DOES FAIL on them ({st_pod})")
+
+    for t in (d_full, d_drop, d_wrong, d_seven):
         shutil.rmtree(t, ignore_errors=True)
-    print(f"test_eval_registry: {10 - bad}/10 pass")
+    print(f"test_eval_registry: {13 - bad}/13 pass")
     return 1 if bad else 0
 
 

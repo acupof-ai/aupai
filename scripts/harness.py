@@ -4280,18 +4280,22 @@ def check_eval_registry_complete(root):
     reg = mod.REGISTRY
     registered = {e["path"] for e in reg.values()}
     known_absent = getattr(mod, "KNOWN_ABSENT", set())
-    # A REGISTERED PATH THAT IS ABSENT HERE IS NOT NEWS ON A LAPTOP: `data/` is gitignored, so a
-    # dev checkout is missing most of the population by construction and this direction would
-    # FAIL on every clean checkout -- a permanent red, which AGENTS records as the same as no
-    # signal. Measured: 8 of 13 entries read absent here while all 13 are present on the pod.
-    # So the reverse direction only speaks where the data lives, and says so where it does not.
-    data_present = sum(1 for e in reg.values()
-                       if os.path.exists(os.path.join(root, e["path"])))
-    have_population = data_present > len(reg) // 2
+    # A REGISTERED PATH THAT IS ABSENT IS ONLY NEWS WHERE THE DATA LIVES. `data/` is gitignored,
+    # so a git checkout is missing most of the population by construction and this direction is a
+    # permanent red there -- which AGENTS records as the same as no signal.
+    #
+    # THE PREDICATE IS is_pod, NOT A FRACTION. My first version asked whether more than half the
+    # entries were present, which is not a test of "do we have the population" at all: it read 5
+    # of 13 here and skipped, then 7 of 13 in the integration tree and FAILED on the same commit
+    # (6e, 2026-09-04). A threshold over how much data happens to be lying around flips on the
+    # difference between two checkouts. is_pod asks the question that actually decides it -- a
+    # tree with no .git is the hand-pushed pod tree, where every path must exist -- and it is the
+    # same predicate mix_shards_present uses for the same reason.
+    on_pod = pod_drift.is_pod(root)
     missing_paths = sorted(
         f"{n} -> {e['path']}" for n, e in reg.items()
         if n not in known_absent and not os.path.exists(os.path.join(root, e["path"]))
-    ) if have_population else []
+    ) if on_pod else []
     found, scanned_dirs = [], 0
     for sub in ("data/eval", "data/synthetic", "data/sft"):
         d = os.path.join(root, sub)
@@ -4325,9 +4329,10 @@ def check_eval_registry_complete(root):
                         f"exist, so the hash set covers less than it claims: {missing_paths[:3]}")
     if problems:
         return FAIL, "; ".join(problems)
-    where = ("" if have_population else
-             "; registry paths NOT checked for existence here (data/ is gitignored and "
-             f"only {data_present}/{len(reg)} entries are present -- that direction speaks on the pod)")
+    where = ("" if on_pod else
+             "; registry paths NOT checked for existence here (data/ is gitignored on a git "
+             f"checkout -- {sum(1 for e in reg.values() if os.path.exists(os.path.join(root, e['path'])))}"
+             f"/{len(reg)} present; that direction speaks on the pod)")
     return PASS, (f"{len(reg)} registry entry(ies); {len(found)} eval-location file(s) scanned, "
                   f"every eval-ish one registered{where}")
 
