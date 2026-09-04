@@ -1790,6 +1790,21 @@ def _selftest():
         # makes every unparseable generation score as correct -- a real defect the suite's known
         # answers catch, and not a syntax error, which py_compile would catch first and let this
         # world pass for the wrong reason.
+        #
+        # THE GREEN RUN ABOVE LEFT A __pycache__, AND THIS MUTATION DOES NOT INVALIDATE IT.
+        # Measured 2026-09-04 after it blocked b0 mid-merge: pyc invalidation is
+        # (source mtime in WHOLE SECONDS, source size), `0.0` -> `1.0` is byte-for-byte the same
+        # length (3565 -> 3565), so a mutation landing in the same wall-clock second as the green
+        # run reuses the stale bytecode, the defect never executes, the inner hook exits 0, and
+        # this world reports "a staged defect was allowed" on a hook that works. Six replica runs
+        # gave rc 1,1,1,0,0,1 -- a race, which is why it never reproduced by hand and only bit
+        # under a slow merge. Deleting the caches is the fix, not touching mtime: a
+        # timestamp nudge assumes one second of granularity is enough and would come back.
+        for _root8, _dirs8, _ in os.walk(d8):
+            for _dn in list(_dirs8):
+                if _dn == "__pycache__":
+                    shutil.rmtree(os.path.join(_root8, _dn), ignore_errors=True)
+                    _dirs8.remove(_dn)
         _rr = os.path.join(d8, "algorithms", "rlvr_reward.py")
         _src8 = open(_rr, encoding="utf-8").read() if os.path.exists(_rr) else ""
         _marker = "    pred = extract_boxed(gen_text)\n    if pred is None:\n        return 0.0"
@@ -1801,6 +1816,18 @@ def _selftest():
             with open(_rr, "w", encoding="utf-8") as fh:
                 fh.write(_src8.replace(_marker, _marker[:-3] + "1.0", 1))
             git8("add", "algorithms/rlvr_reward.py")
+            # THE MUTATION MUST BE LIVE BEFORE THE HOOK IS BLAMED. Without this the two
+            # explanations of rc=0 -- "the hook did not run the mapped test" and "the mutation
+            # never took effect" -- produce the same message, and the second one is what actually
+            # happened on 2026-09-04 (see the pycache note above). Run the test directly against
+            # the mutated copy: it must now FAIL.
+            _mut = subprocess.run([sys.executable, "algorithms/test_rlvr_reward_suite.py"],
+                                  cwd=d8, capture_output=True, text=True, env=clean)
+            if _mut.returncode == 0:
+                fails.append("world 8: the mapped test still PASSES on the mutated subject, so "
+                             "this world can say nothing about the hook -- the defect did not "
+                             "take effect (a stale __pycache__ does this: the mutation preserves "
+                             "the file size and pyc invalidation is (mtime_seconds, size))")
             r8 = subprocess.run([os.path.join(hooks8, "pre-commit")], cwd=d8,
                                 capture_output=True, text=True, env=clean)
             out8 = r8.stdout + r8.stderr
