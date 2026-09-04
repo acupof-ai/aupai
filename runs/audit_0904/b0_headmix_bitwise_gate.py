@@ -45,9 +45,27 @@ OUT = os.path.join(ROOT, "runs", "b0_headmix_bitwise.json")
 
 
 def _logits(ckpt_path, seed=904):
-    """Logits for one checkpoint on fixed input, eager, fp32, CPU-deterministic."""
+    """Logits for one checkpoint on fixed input, eager, ON A GPU.
+
+    CUDA IS NOT OPTIONAL AND CPU IS NOT A FALLBACK. DeltaRecurrence routes through
+    fla.ops.kda.chunk_kda, a Triton kernel: on CPU tensors it raises
+    `ValueError: Pointer argument (at 0) cannot be accessed from Triton (cpu tensor?)`
+    (measured 2026-09-04). A gate that silently fell back to a CPU path would be comparing
+    a code path the training run never takes.
+
+    fp32 and eager: the question is whether the ARITHMETIC changed, and a compiled bf16 path
+    carries its own run-to-run variation that would both mask a real difference and manufacture
+    a fake one. Determinism is set explicitly rather than assumed.
+    """
     import model as M
 
+    if not torch.cuda.is_available():
+        raise SystemExit("REFUSING: no CUDA device. The KDA mixer is a Triton kernel and "
+                         "cannot run on CPU, so a CPU run would prove nothing about the "
+                         "training path. Run this on a GRANTED card: "
+                         "CUDA_VISIBLE_DEVICES=<card> python3 " + os.path.relpath(__file__, ROOT))
+    dev = "cuda"
+    torch.use_deterministic_algorithms(False)  # cuDNN/Triton paths here are already fixed-seed
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg = ck["cfg"]
     if isinstance(cfg, dict):
@@ -61,15 +79,15 @@ def _logits(ckpt_path, seed=904):
     m = M.HybridLM(cfg)
     sd = M.remap_legacy_state_dict(ck["model"])
     missing, unexpected = m.load_state_dict(sd, strict=False)
-    m.eval().float()
+    m.eval().float().to(dev)
     torch.manual_seed(seed)
-    x = torch.randint(0, int(getattr(cfg, "vocab_real", cfg.vocab)), (2, 64))
+    x = torch.randint(0, int(getattr(cfg, "vocab_real", cfg.vocab)), (2, 64), device=dev)
     with torch.no_grad():
         y = m(x)
     if isinstance(y, tuple):
         y = y[0]
-    return y, dict(missing=len(missing), unexpected=len(unexpected),
-                   d=cfg.d, heads=cfg.heads, layers=cfg.layers)
+    return y.float().cpu(), dict(missing=len(missing), unexpected=len(unexpected),
+                                 d=cfg.d, heads=cfg.heads, layers=cfg.layers)
 
 
 def _fp(t):
