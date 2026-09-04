@@ -354,6 +354,139 @@ def selftest():
                 f"({len(s_hits)}), key_present passes ({len(k_hits)}) -- why tasks is not subsume"
             )
 
+    # de-39's EXEMPTION, on four worlds. ledger_audit._superseded_by_ruling excuses a lost row
+    # only when it is the row a recorded ruling SUPERSEDED and the row the ruling installed is
+    # still present. It shipped at 54c77d5e with no test anywhere -- grep found it in
+    # ledger_audit.py and nothing else -- which is the "a helper that works and is not called"
+    # shape: the logic is right and nothing asserts the WIRING, so a future edit to
+    # regressions() could drop the filter and every selftest would stay green.
+    #
+    # MUTATION-TESTED, four mutations of _superseded_by_ruling against these worlds: the filter
+    # removed (red, world A), the replacement-present half made unconditional (red, world C), the
+    # no-ruling case excused (red, world D). ONE SURVIVES AND IS UNOBSERVABLE BY CONSTRUCTION:
+    # disabling `if fingerprint(lost) == local_fp: return False` changes nothing, because a lost
+    # row that IS the ruling's current row leaves no row at local_fp behind, so the second half
+    # refuses anyway. It could only bite on a file holding TWO rows at one fingerprint, i.e. two
+    # byte-identical rows, which subsume treats as one -- so that drop is not a loss to begin
+    # with. The first half is a redundant guard, not an untested one; recorded here rather than
+    # papered over with a world that cannot exist.
+    #
+    # Built from a REAL ruling and the real ledger it names, so the fingerprints are the ones
+    # the ruling actually recorded rather than values this test computed for itself.
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        import ledger_audit as _la2
+        import ledger_resolutions as _lr
+    except Exception as e:  # noqa: BLE001
+        print(f"\n  SKIP de-39 exemption: not importable ({e})")
+    else:
+        rulings = [(led, key, r) for led, key, r in _lr.load() if led in _la2.KEYS]
+        if not rulings:
+            print("\n  SKIP de-39 exemption: no ruling names a keyed ledger")
+        else:
+            led, key, ruling = rulings[0]
+            real_rows = lines("main", led)
+            kf = _la2.KEYS[led]
+            cur = [ln for ln in (real_rows or [])
+                   if (o := obj(ln)) is not None and _lr.fingerprint(o) == ruling.get("local_fp")]
+            if not cur:
+                print(f"\n  SKIP de-39 exemption: {led} holds no row at the ruling's local_fp "
+                      f"{ruling.get('local_fp')} -- the ruling is stale, which settled() reports")
+            else:
+                keep = cur[0]
+                # The SUPERSEDED row: any other row under the same key. Its fingerprint is not
+                # the ruling's local_fp, so it is the one the exemption may excuse.
+                others = [ln for ln in real_rows
+                          if (o := obj(ln)) is not None and kf(o) == key and ln != keep]
+                if not others:
+                    print(f"\n  SKIP de-39 exemption: {led} key {key} has no second row to "
+                          f"supersede in this clone")
+                else:
+                    # THE SUPERSEDED ROW MUST BE LAST UNDER ITS KEY, or the world is vacuous.
+                    # subsume compares only the LAST head row per key (:98), and in the real
+                    # file the superseded row comes FIRST -- so dropping it flags nothing with
+                    # or without the exemption. My first version of this test did exactly that
+                    # and passed with the filter mutated away, which is the GREEN-BUG this
+                    # ordering fixes: measured, `running` fp e1bcb9ce is row 1 and the ruling's
+                    # `killed` fp 47301bc1 is row 2.
+                    sup = others[-1]
+                    rest = [ln for ln in real_rows if ln not in (sup, keep)]
+                    head_txt = "\n".join(rest + [keep, sup]) + "\n"
+                    # World A: the superseded row leaves, the ruling's current row stays -> EXCUSED.
+                    a = "\n".join(rest + [keep]) + "\n"
+                    hits_a = _la2.regressions(led, head_txt, a)
+                    ok_a = not any(k == key for k, _ in hits_a)
+                    # And the world must be non-vacuous: WITHOUT the exemption this same drop
+                    # must be flagged, or "not flagged" says nothing about the exemption.
+                    raw_a = _la2.PREDICATE.get(led, _la2.subsume)(
+                        [json.dumps(r) for r in _la2._rows(led, head_txt)],
+                        [json.dumps(r) for r in _la2._rows(led, a)], kf)
+                    live_a = any(k == key for k, _ in raw_a)
+                    # World B: the ruling's OWN current row leaves -> REFUSED, ruling or not.
+                    # Its head must put `keep` last, for the same reason world A puts `sup` last.
+                    head_b = "\n".join(rest + [sup, keep]) + "\n"
+                    b = "\n".join(rest + [sup]) + "\n"
+                    hits_b = _la2.regressions(led, head_b, b)
+                    ok_b = any(k == key for k, _ in hits_b)
+                    # World C: the superseded row leaves AND the ruling's current row is not
+                    # there either -- REFUSED, because the exemption's second half requires the
+                    # replacement to be present. Without this world, mutating that half to
+                    # `return True` (any ruling excuses any loss) leaves A and B both green:
+                    # measured, A is excused either way and B is caught by the first half.
+                    head_c = "\n".join(rest + [keep, sup]) + "\n"
+                    c = "\n".join(rest) + "\n"
+                    hits_c = _la2.regressions(led, head_c, c)
+                    ok_c = any(k == key for k, _ in hits_c)
+                    # World D: an UNRULED key loses EVERY row -- REFUSED, because a key no ruling
+                    # names is not covered by the exemption at all. Without this world, mutating
+                    # `if ruling is None: return False` to `return True` (no ruling excuses
+                    # everything, i.e. the guard is off for every unruled key) leaves A-C green,
+                    # since all three are about the one key that IS ruled.
+                    #
+                    # EVERY row of the key, not just its last: my first version dropped only the
+                    # last and read 0 hits, because subsume asks whether the head's last row is
+                    # subsumed by ANY index row under that key -- and for a key whose earlier
+                    # rows are supersets, one of them satisfies it. Dropping the key entirely is
+                    # the state the predicate is actually about.
+                    ok_d = None
+                    other_keys = [kf(o) for ln in real_rows
+                                  if (o := obj(ln)) is not None and kf(o) != key]
+                    if other_keys:
+                        dkey = other_keys[-1]
+                        d_rows = [ln for ln in real_rows
+                                  if (o := obj(ln)) is not None and kf(o) == dkey]
+                        base = [ln for ln in real_rows if ln not in d_rows and ln not in (keep, sup)]
+                        head_d = "\n".join(base + [keep, sup] + d_rows) + "\n"
+                        d_txt = "\n".join(base + [keep, sup]) + "\n"
+                        hits_d = _la2.regressions(led, head_d, d_txt)
+                        ok_d = any(k == dkey for k, _ in hits_d)
+                    bad += not ok_a
+                    bad += not live_a
+                    bad += not ok_b
+                    bad += not ok_c
+                    if ok_d is not None:
+                        bad += not ok_d
+                    print()
+                    print(f"  {'ok  ' if live_a else 'BUG '} de-39: the world is NON-VACUOUS -- the "
+                          f"raw predicate does flag this drop ({len(raw_a)} hit(s)), so the "
+                          f"exemption is what excuses it")
+                    print(f"  {'ok  ' if ok_a else 'BUG '} de-39: the row a ruling SUPERSEDED may "
+                          f"leave ({led} key {key}) -- {len(hits_a)} hit(s), none on this key")
+                    print(f"  {'ok  ' if ok_b else 'BUG '} de-39: the ruling's OWN current row may "
+                          f"NOT leave -- {len(hits_b)} hit(s), this key among them")
+                    print(f"  {'ok  ' if ok_c else 'BUG '} de-39: with the replacement ALSO gone the "
+                          f"superseded row may NOT leave -- {len(hits_c)} hit(s), this key among them")
+                    if ok_d is None:
+                        print("  SKIP de-39: no unruled key in this clone to test the "
+                              "no-ruling-excuses-nothing half")
+                    else:
+                        print(f"  {'ok  ' if ok_d else 'BUG '} de-39: an UNRULED key may not lose its "
+                              f"row -- {len(hits_d)} hit(s), that key among them")
+                    if not (ok_a and ok_b and ok_c and live_a and ok_d is not False):
+                        print("       the exemption is either too wide (a ruling authorises "
+                              "losing the live record), dead (regressions() lost the filter), "
+                              "or the world never reached it")
+
     print(f"\nde-33 ledger predicates: {'PASS' if not bad else f'{bad} BUG(S)'}")
     return 1 if bad else 0
 
