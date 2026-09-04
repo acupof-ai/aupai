@@ -12697,6 +12697,248 @@ task carries an artifact, never a session's word for it.</p>
 </body></html>"""
 
 
+#: kind -> the rule short names 44 assigned to it (docs/lessons/manual_rules_review.md,
+#: "BRIEF assignment table"). The MAPPING is here; the rule TEXT is read from AGENTS.md at
+#: print time, so the brief cannot drift from the rule it briefs. Rules 22+24 are merged in
+#: 44's table (same incident, same rule), which is why git has four entries and not five.
+#:
+#: Two kinds come from 4c's order rather than 44's table: write_check and controller_ruling.
+#: Those have no AGENTS.md bullet, so their content is the CHECKS table and the incident
+#: doc, which is stated in the output rather than left to look like an empty section.
+BRIEF_KINDS = {
+    "gpu": ["Lanes: a 7-card training block", "Card claims live where the job runs",
+            "The lane holds one job at a time", "A kill is not finished until"],
+    "pod": ["A dropped tn tunnel does not end the command it started",
+            "`tn exec` and `~/bin/pod` are two different filesystem views",
+            "`pod_push` only ever ADDS", "The pod is frozen from a training launch",
+            "Long jobs detach", "`setsid`, not `nohup`"],
+    "net": ["Outbound network: `curl -4`, always", "What is reachable, measured",
+            "Reachability changes without notice"],
+    "git": ["Commit as soon as a change works", "Run `ruff format` over a whole file",
+            "Stage by path, never", "`harness task` and `harness friction` write the ledger",
+            "Never `git stash` in this repository",
+            "A hook edit made in a branch worktree does not run until it is merged",
+            "The index must equal HEAD before you merge"],
+    "review": ["Every delivery has a second reader", "The controller is reviewed too"],
+    "write_check": [],
+    "controller_ruling": [],
+}
+
+#: Lines that are not AGENTS.md bullets but are the lesson of a measured incident, per kind.
+#: Each cites where it came from: a brief that asserts something unsourced is a rule nobody
+#: can check, which is the thing the whole layering is against.
+BRIEF_EXTRA = {
+    "write_check": [
+        ("the hook you edited runs main's copy until merged -- a green measured through it "
+         "is a green of the old hook", "friction 2026-09-05, sha 1c9517bd"),
+        ("a stale worktree answers a question about main with yesterday's tree; read "
+         "`git show main:<path>`", "friction 2026-09-05, sha 1c9517bd"),
+        ("a broken world must mutate a REAL artifact, and must use the names the real "
+         "system produces -- a fixture name your matcher also happens to match verifies "
+         "the check against itself", "memory_diag_fresh matched none of b0_mem_m1/m2/m3"),
+        ("test the world through the check's OWN predicate, not a restatement of it",
+         "no_ghost_close PASSed on its own broken world, CI 33890047643"),
+        ("a check that reads live state has a verdict that moves with today's state",
+         "§182 sibling: d9ba571d, fixture_not_live_state"),
+    ],
+    "controller_ruling": [
+        ("a ruling that carries a number cites the artifact it was read from",
+         "4c broke read-before-relay three times, 2026-09-05"),
+        ("verify a peer's premise before acting on it; a correct conclusion does not "
+         "certify its argument", "R1, 16 shapes"),
+        ("a number is a claim: compute it before printing it",
+         "58 asserted train.py:1478 without running the grep, 2026-09-05"),
+    ],
+    "git": [
+        ("working around an un-loaded hook by reordering commits can produce an "
+         "intermediate commit that does not stand on its own",
+         "friction 2026-09-05, sha 95579a06"),
+    ],
+    "pod": [
+        ("a validator and the file it validates against are one unit: every boundary "
+         "they cross must carry both", "§182"),
+    ],
+}
+
+
+def _brief_trim(note, n=58):
+    """The part of a manual note that says what the check CANNOT see, short enough to read."""
+    s = re.sub(r"^manual:\s*", "", note or "").strip()
+    s = s.split(";", 1)[1].strip() if ";" in s else s
+    return (s[:n] + "...") if len(s) > n else s
+
+
+def cmd_brief(kind):
+    """One screen for a kind of work, GENERATED from the rule table and the incident doc.
+
+    4c's order (2026-09-05): rules delivered BEFORE the work instead of red after it.
+    Dispatch messages carry this output.
+
+    GENERATED, not hand-written, and that is the whole design constraint. A hand-written
+    brief is a fourth copy of the rules -- AGENTS.md, _RULE_CHECKS, the coverage table, and
+    then this -- and the copies drift silently because each looks right alone. So the rule
+    TEXT comes from AGENTS.md at print time, the enforcement column from _RULE_CHECKS, and
+    the incidents from the §refs in AGENTS.md's compressed table. Only the kind->rule
+    ASSIGNMENT lives here, because that is 44's judgement and exists nowhere else.
+
+    No refusal and no state: it prints and exits 0. A brief that could fail would be a
+    fifth gate, and the point of this one is to be readable before the gates run.
+    """
+    kind = (kind or "").strip().lower()
+    if kind not in BRIEF_KINDS:
+        print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
+        return 2
+
+    bullets, err = _agents_rule_bullets(ROOT)
+    if err:
+        print(f"cannot read AGENTS.md rules: {err}")
+        return 2
+    cov, _ = _agents_coverage_table(ROOT)
+
+    print(f"BRIEF: {kind}")
+    print("=" * 66)
+
+    # L1 -- what will REFUSE. Read from _RULE_CHECKS by matching the rule prefix, so a rule
+    # whose enforcement is deleted drops out of the brief instead of being asserted here.
+    l2, unenforced = [], []
+    for prefix in BRIEF_KINDS[kind]:
+        text = next((b for b in bullets if _norm_rule(b).startswith(_norm_rule(prefix)[:38])),
+                    None)
+        one = (text or prefix).strip().split("\n")[0]
+        one = re.sub(r"\*\*|`", "", one).lstrip("- ").strip()
+        chk = next((v for k, v in _RULE_CHECKS.items()
+                    if _norm_rule(prefix).startswith(_norm_rule(k)[:38])
+                    or _norm_rule(k).startswith(_norm_rule(prefix)[:38])), None)
+        note = next((v for k, v in cov.items()
+                     if _norm_rule(k).startswith(_norm_rule(prefix)[:38])), "")
+        if not note:
+            # AGENTS.md's coverage table holds 46 rows and _MANUAL_RULES holds more: the five
+            # rules 44 labelled A-E (the second reader among them) are in AGENTS.md PROSE and
+            # never got a coverage row. Falling back to _MANUAL_RULES is what makes their
+            # note -- and the check named inside it -- visible at all.
+            note = next((v for k, v in _MANUAL_RULES.items()
+                         if _norm_rule(k).startswith(_norm_rule(prefix)[:38])
+                         or _norm_rule(prefix).startswith(_norm_rule(k)[:38])), "")
+        if not chk:
+            # A rule can be PARTLY checked: _MANUAL_RULES explains what no check can see, and
+            # several of those notes NAME the check that covers the other half -- "review_present
+            # checks the row exists; whether the reviewer read the artifact cannot be checked".
+            # Reading only _RULE_CHECKS printed "nothing will stop you" for the second-reader
+            # rule while review_present was live and would FAIL the close (measured 2026-09-05).
+            # A brief that hides a gate is worse than no brief: it is wrong in the direction
+            # that gets someone refused after they were told they were clear.
+            # The verb list is empirical, not guessed: "enforce" was missing on the first pass
+            # and hid dirty_aged from the git brief, whose note reads "dirty_aged/untracked_aged
+            # enforce the deadline". Two hidden gates found this way, so the list is extended
+            # when a note is found phrasing it another way -- not widened speculatively, since a
+            # loose match would name a check that does not exist.
+            m = re.search(r"\b([a-z][a-z0-9_]{4,})\b(?=[/\w]*\s+(?:checks|check|catches|catch|"
+                          r"asserts|assert|sees|see|reports|report|refuses|refuse|gates|gate|"
+                          r"enforces|enforce))", note or "")
+            if m and any(m.group(1) == c[0] for c in CHECKS):
+                l2.append((one[:96], m.group(1) + " (partly: " + _brief_trim(note) + ")"))
+                continue
+        if chk:
+            l2.append((one[:96], chk))
+        else:
+            unenforced.append((one[:96], re.sub(r"^manual:\s*", "", note)[:80]))
+
+    if l2:
+        print("\nL2 -- checks that WILL run on your commit (these refuse):")
+        for one, chk in l2:
+            print(f"  [{chk}]")
+            print(f"     {one}")
+    if unenforced:
+        print("\nNOT MACHINE-CHECKED -- nothing will stop you; this is the whole risk:")
+        for one, why in unenforced:
+            print(f"  - {one}")
+            if why:
+                print(f"      (why no check: {why})")
+
+    extra = BRIEF_EXTRA.get(kind, [])
+    if extra:
+        print("\nMEASURED, from incidents of this kind:")
+        for line, src in extra:
+            print(f"  - {line}")
+            print(f"      [{src}]")
+
+    hi = _brief_incidents(kind)
+    if hi:
+        print(f"\nHIGHEST-COST INCIDENTS of this kind ({len(hi)} shown):")
+        for ref, rule, txt in hi:
+            print(f"  {ref}  {txt[:88]}")
+            print(f"        rule: {rule[:76]}")
+    if not (l2 or unenforced or extra or hi):
+        print("\n(no rules assigned to this kind yet)")
+    print()
+    return 0
+
+
+def _brief_incidents(kind, limit=5):
+    """The <=5 incidents of this kind, from the incident docs, longest entry first.
+
+    Longest-first is a PROXY for cost and is labelled as one: the docs record no minutes
+    and no severity, so ordering by anything else would be inventing a number. A long
+    entry is one someone had to explain at length, which correlates with what it cost --
+    it is not a measurement of cost, and this docstring is the only place that can say so.
+    """
+    seen, out = set(), []
+    for rel in ("docs/lessons/gate_failure_incidents.md", "docs/lessons/infra_incidents.md"):
+        p = os.path.join(ROOT, rel)
+        if not os.path.isfile(p):
+            continue
+        # The rule heading a block belongs to is the one BEFORE it. Splitting on "### " puts
+        # the NEXT rule's "## Rx" heading at the END of the preceding incident's block, so
+        # reading it from there attributes every incident to the following rule -- measured
+        # 2026-09-05: §182, filed under R3, printed as "R4. Failures must be loud". Carried
+        # forward in `rule` instead, updated only after the block that announces it.
+        rule = ""
+        for block in open(p, encoding="utf-8").read().split("\n### "):
+            head = block.split("\n", 1)[0]
+            body = block.split("\n", 1)[1] if "\n" in block else ""
+            m = re.match(r"^§(\d+)", head)
+            if m:
+                ref = f"§{m.group(1)}"
+                if ref not in seen:
+                    hay = (head + " " + body).lower()
+                    if _brief_kind_matches(kind, hay):
+                        seen.add(ref)
+                        # The body up to the next rule heading: everything after it belongs
+                        # to the next section, not to this incident.
+                        txt = body.split("\n## ", 1)[0]
+                        out.append((ref, rule, " ".join(txt.split())))
+            # Now advance the rule, for the blocks that follow.
+            if "\n## " in block:
+                rule = block.rsplit("\n## ", 1)[1].split("\n", 1)[0]
+            elif block.startswith("## "):
+                rule = block.split("\n", 1)[0][3:]
+    out.sort(key=lambda t: -len(t[2]))
+    return out[:limit]
+
+
+#: Word sets that place an incident in a kind. Deliberately narrow, and narrowed AGAIN after
+#: measuring: "claim" alone put a merge incident (§175) and a premise incident (§179) in the
+#: gpu brief, because the word appears in "the claim the check makes". Five loosely-matched
+#: incidents is five things to skim past, and then the reader stops opening the brief at all.
+#: Multi-word phrases where a bare word is ambiguous.
+_BRIEF_WORDS = {
+    "gpu": ("nvidia-smi", "gpu ", "the card", "a card", "lane", "card claim", "cuda_visible"),
+    "pod": ("pod", "podput", "container", "tn exec", "setsid", "manifest", "drift"),
+    # "curl -4" rather than "curl": curl_ipv4 greps this file for a curl call without -4 and
+    # correctly flagged the bare word here as one. A word list that trips another check is the
+    # check working; carrying the flag makes it both correct AND a real match for the incidents.
+    "net": ("curl -4", "ipv6", "mirror", "errno 99", "unreachable", "hf-mirror"),
+    "git": ("commit", "merge", "worktree", "stash", "hook", "branch"),
+    "review": ("review", "reviewer", "second reader"),
+    "write_check": ("broken world", "selftest", "predicate", "the check", "a check"),
+    "controller_ruling": ("ruling", "controller", "relay", "cited"),
+}
+
+
+def _brief_kind_matches(kind, hay):
+    return any(w in hay for w in _BRIEF_WORDS.get(kind, ()))
+
+
 def cmd_board(as_json=False, html_path=None):
     """harness board [--json | --html <path>]. Renders harness state as JSON or HTML.
     Default: writes runs/board.html. Every number is read at render time — nothing typed."""
@@ -12980,6 +13222,58 @@ def _selftest_milestone_selection():
     short = 1 - (3000 * TOKENS_PER_STEP) / 3.24e9
     assert 0.14 < short < 0.16, f"step3000 vs the 3.24B label is ~15%, got {short:.3f}"
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
+
+
+def _selftest_brief():
+    """Every kind prints, an unknown kind refuses, and a named check is never hidden.
+
+    The last assertion is the one that matters and the one that caught two real defects. The
+    brief's job is to say what WILL refuse you; printing "nothing will stop you" for a rule
+    that has a live gate is wrong in the direction that gets someone refused after being told
+    they were clear. Twice: review_present, whose note lives in _MANUAL_RULES and not in
+    AGENTS.md's coverage table at all; and dirty_aged, whose note says "enforce" where the
+    verb list only had "checks".
+
+    Also asserts every check name the brief prints is real -- a regex that extracts a word
+    from prose will happily name a check that does not exist.
+    """
+    import io
+    from contextlib import redirect_stdout
+
+    names = {c[0] for c in CHECKS}
+    seen_l2 = 0
+    for kind in sorted(BRIEF_KINDS):
+        buf = io.StringIO()
+        with redirect_stdout(buf):
+            rc = cmd_brief(kind)
+        out = buf.getvalue()
+        assert rc == 0, f"brief {kind} returned {rc}"
+        assert out.startswith(f"BRIEF: {kind}"), f"brief {kind} has no header: {out[:60]}"
+        assert len(out.split("\n")) <= 60, f"brief {kind} is {len(out.split(chr(10)))} lines, not a screen"
+        for line in out.split("\n"):
+            m = re.match(r"^  \[([a-z0-9_]+)", line)
+            if m:
+                seen_l2 += 1
+                assert m.group(1) in names, f"brief {kind} names a check that does not exist: {m.group(1)}"
+    assert seen_l2 >= 4, f"only {seen_l2} L2 rows across all kinds -- the brief is hiding gates"
+
+    # The two specific regressions, by name.
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_brief("review")
+    assert "review_present" in buf.getvalue(), "review brief hides review_present"
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        cmd_brief("git")
+    assert "dirty_aged" in buf.getvalue(), "git brief hides dirty_aged"
+
+    # An unknown kind refuses rather than printing an empty brief that reads as "no rules".
+    buf = io.StringIO()
+    with redirect_stdout(buf):
+        rc = cmd_brief("bogus")
+    assert rc == 2 and "unknown kind" in buf.getvalue(), (rc, buf.getvalue()[:60])
+    print(f"  brief: {len(BRIEF_KINDS)} kinds print one screen each, {seen_l2} live gates named, "
+          f"none hidden, unknown kind refuses")
 
 
 def _selftest_monitor_stop_rules():
@@ -15054,6 +15348,7 @@ def _demo(only=None):
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
+    _selftest_brief()
     _selftest_gate_timeout()
     _selftest_register_union()
     _selftest_auto_resume()
@@ -17453,9 +17748,13 @@ def main():
         return cmd_claim_file(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
-        "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
+        "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board", "brief"]
     )
+    ap.add_argument("kind_pos", nargs="?", default=None,
+                    help="brief: the kind, as a positional (harness brief gpu)")
     ap.add_argument("--json", action="store_true", help="board: emit state as JSON instead of HTML")
+    ap.add_argument("--kind", default=None,
+                    help="brief: gpu, pod, net, git, review, write_check, controller_ruling")
     ap.add_argument("--html", default=None, help="board: output path (default runs/board.html)")
     ap.add_argument("--only", help="measure: substring filter on the checkpoint name")
     ap.add_argument("--ngpu", help="measure: shards for eval_all.sh")
@@ -17518,6 +17817,11 @@ def main():
         gaps()
     if cmd == "measure":
         return measure(only=a.only, ngpu=a.ngpu, tokenizer=a.tokenizer, dry=a.dry, full=a.full)
+    if cmd == "brief":
+        # `harness brief gpu` as well as `--kind gpu`: the positional is how anyone will
+        # actually type it. Declared as its own optional positional, because argparse rejects
+        # an undeclared second positional before any code of ours runs.
+        return cmd_brief(a.kind or a.kind_pos)
     if cmd == "board":
         return cmd_board(as_json=a.json, html_path=a.html)
     if cmd in ("all", "stages"):
