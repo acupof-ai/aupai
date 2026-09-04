@@ -492,5 +492,40 @@ def _selftest():
     return 0
 
 
+def check():
+    """Assert the committed guard LOADS, without regenerating it. What CI actually wants.
+
+    CI ran `python datagen/holdout.py`, which is the REGENERATE path, on a runner that holds 5 of
+    the 13 registry files. d2c95b1c gave that path a correct refusal -- a fingerprint computed from
+    a partial set is reproducible on no other machine -- and CI went red on it, which is the
+    refusal working and the caller asking the wrong question. Nothing in CI needs the file rebuilt:
+    a runner cannot produce a valid one, and the committed file is what every consumer reads.
+
+    What CI can honestly assert is that the committed guard loads and covers something, which is
+    the failure that would actually hurt -- a missing or truncated holdout_hashes.txt means
+    is_holdout() raises or silently passes contaminated questions. load() already handles the
+    partial machine: it trusts the committed fp and prints how many files it could not verify,
+    rather than recomputing a false staleness.
+
+    Regenerating stays a deliberate act on the pod, where every path resolves.
+    """
+    got = load()
+    if not got:
+        raise RuntimeError(
+            f"{HASH_PATH} loaded but holds zero hashes -- the holdout guard is empty, so "
+            f"is_holdout() returns False for every question and nothing is excluded. Regenerate "
+            f"on the pod with `python datagen/holdout.py`.")
+    present, absent = _fp_inputs()
+    print(f"holdout guard loads: {len(got)} hashes, {len(present)} of {len(EVAL_FILES)} registry "
+          f"files present here"
+          + (f" ({len(absent)} absent, fp not verifiable on this machine)" if absent else
+             ", fp verified"))
+    return 0
+
+
 if __name__ == "__main__":
-    sys.exit(_selftest() if "--selftest" in sys.argv else (main() or 0))
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
+    elif "--check" in sys.argv:
+        sys.exit(check())
+    sys.exit(main() or 0)
