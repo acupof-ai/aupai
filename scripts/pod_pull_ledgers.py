@@ -366,25 +366,61 @@ def append_pod_rows(rel, rows, pod_root=POD_ROOT):
     stripped from the encoding because a newline inside the quoted command becomes a command
     separator in the pod's bash -lc (the same trap pod_push.sh:184 documents for paths).
 
-    The size cap is podput's, ~100KB of argv, and it is checked rather than assumed: a batch
-    of closes is a few hundred bytes each, so the realistic call is far under it, but a silent
-    truncation of a ledger write is exactly the failure this repo keeps buying."""
+    The size cap is podput's, ~100KB of argv. THE FIRST VERSION REFUSED AN OVER-CAP BATCH and its
+    docstring said "a batch of closes is a few hundred bytes each, so the realistic call is far
+    under it" -- measured wrong on the first real use: C4's tasks.jsonl push is 52 rows carrying
+    `reading`, `why` and `evidence` prose and encodes to 120,108 base64 chars. The refusal was still
+    the right behaviour over a silent truncation, but refusing the whole batch means the transport
+    cannot move the one ledger that most needed it.
+
+    So it CHUNKS, and each chunk is a complete append of whole rows -- never a split row, because
+    half a JSON line in an append-only ledger is a parse error for every reader afterwards. A chunk
+    failing stops the rest and reports how many landed: a partial append is recoverable (the next
+    run sees the remainder as still missing and sends it), while a wrong count is not."""
     import base64
 
-    payload = "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows)
-    b64 = base64.b64encode(payload.encode("utf-8")).decode("ascii")
-    if len(b64) > 90000:
-        return 0, (
-            f"{len(b64)} base64 chars exceeds the ~100KB argv cap -- split the batch "
-            f"(this is podput's limit, not a constant here)"
+    if not rows:
+        return 0, None
+    # One row at a time into the current chunk, so the boundary always falls between rows. A row
+    # that alone exceeds the cap is reported rather than sent truncated.
+    #
+    # THE SINGLE-ROW CHECK COMES FIRST, before any chunking. The first version tested it only when
+    # a row started a NEW chunk, so a lone oversized row -- the whole batch, one row, no boundary
+    # to cross -- went straight to the pod and failed there on the shell instead of refusing here.
+    # Caught by the pre-existing cap case, which is why that case stayed rather than being replaced
+    # by the chunking one.
+    lines = []
+    for r in rows:
+        line = json.dumps(r, ensure_ascii=False) + "\n"
+        enc = len(base64.b64encode(line.encode("utf-8")))
+        if enc > 90000:
+            return 0, (f"a single row encodes to {enc} base64 chars, over the ~100KB argv cap -- "
+                       f"it cannot be sent without splitting a JSON line")
+        lines.append(line)
+
+    chunks, cur = [], []
+    for line in lines:
+        if cur and len(base64.b64encode(("".join(cur) + line).encode("utf-8"))) > 90000:
+            chunks.append(cur)
+            cur = [line]
+        else:
+            cur.append(line)
+    if cur:
+        chunks.append(cur)
+
+    sent = 0
+    for i, lines in enumerate(chunks):
+        b64 = base64.b64encode("".join(lines).encode("utf-8")).decode("ascii")
+        cmd = f"cd {pod_root} && printf %s {b64} | base64 -d >> {rel}"
+        r = subprocess.run(
+            [os.path.expanduser("~/bin/pod"), cmd], capture_output=True, text=True,
+            stdin=subprocess.DEVNULL
         )
-    cmd = f"cd {pod_root} && printf %s {b64} | base64 -d >> {rel}"
-    r = subprocess.run(
-        [os.path.expanduser("~/bin/pod"), cmd], capture_output=True, text=True, stdin=subprocess.DEVNULL
-    )
-    if r.returncode:
-        return 0, f"pod append failed: {(r.stderr or 'rc=%d' % r.returncode).strip()[:120]}"
-    return len(rows), None
+        if r.returncode:
+            return sent, (f"pod append failed on chunk {i + 1} of {len(chunks)} after {sent} "
+                          f"row(s): {(r.stderr or 'rc=%d' % r.returncode).strip()[:120]}")
+        sent += len(lines)
+    return sent, None
 
 
 def verify_pod_append(rel, rows, pod_root=POD_ROOT, reader=read_pod):
@@ -831,10 +867,49 @@ def _selftest():
     )
 
     # THE APPEND IS SIZE-CHECKED, not assumed. A silent truncation of a ledger write is the
-    # failure this repo keeps buying, so the cap refuses rather than sending a short payload.
+    # failure this repo keeps buying. A SINGLE row over the cap still refuses -- it cannot be
+    # split without splitting a JSON line, and half a line in an append-only ledger is a parse
+    # error for every reader after it.
     big = [{"name": "x" * 70000, "started": "t"}]
     n, err = append_pod_rows("runs/experiments.jsonl", big, pod_root="/nonexistent")
     assert n == 0 and err and "argv cap" in err, (n, err)
+
+    # BUT A BATCH over the cap is CHUNKED, not refused. Measured on C4's first real push: 52
+    # tasks.jsonl rows carrying reading/why/evidence prose encode to 120,108 base64 chars, and the
+    # refusal meant the transport could not move the one ledger that most needed it. Asserted
+    # through a fake pod command that records each call, so the chunk BOUNDARIES are checked rather
+    # than the total: every chunk must decode to whole lines, and their concatenation must equal
+    # the payload.
+    import base64 as _b64
+
+    _calls = []
+
+    def _fake_pod(argv, **kw):
+        _calls.append(argv[-1])
+
+        class _R:
+            returncode = 0
+            stderr = ""
+        return _R()
+
+    _rows = [{"id": f"t-{i}", "reading": "p" * 3000} for i in range(60)]
+    _real_run = subprocess.run
+    try:
+        subprocess.run = _fake_pod
+        n, err = append_pod_rows("runs/tasks.jsonl", _rows, pod_root="/work/aupai")
+    finally:
+        subprocess.run = _real_run
+    assert err is None and n == 60, f"an over-cap BATCH must chunk, not refuse: {n}, {err}"
+    assert len(_calls) > 1, f"60 rows of 3000 chars fit in one chunk; the case tests nothing: {len(_calls)}"
+    _sent = ""
+    for _c in _calls:
+        _payload = _c.split("printf %s ")[1].split(" |")[0]
+        _txt = _b64.b64decode(_payload).decode("utf-8")
+        assert _txt.endswith("\n"), "a chunk does not end at a row boundary -- a split JSON line"
+        assert all(json.loads(x) for x in _txt.splitlines() if x.strip()), "a chunk holds a partial row"
+        _sent += _txt
+    assert _sent == "".join(json.dumps(r, ensure_ascii=False) + "\n" for r in _rows), (
+        "the chunks do not reassemble into the payload")
 
     # PROVENANCE-ONLY, from the three real shapes --push found on 2026-09-03. Each pair agrees
     # on status AND result to the character, so none is two measurements disagreeing, and
