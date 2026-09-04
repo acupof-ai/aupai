@@ -176,6 +176,60 @@ def note_cases():
     return bad
 
 
+def artifact_cases():
+    """--reading_artifact names a file that EXISTS, or the close does not happen.
+
+    Why it is checked here and not only in harness.py: the ledger is append-only. If the
+    field can carry a path to nothing, harness.py's score_matrix_present FAILs the ledger
+    AFTER the close event is already on disk, and there is no way to take it back -- the
+    fix would be a second event correcting a claim that should never have been written.
+    The row it exists for is e1_31b_loop_500, whose cmd produces no checkpoint to score,
+    so the artifact path IS the whole evidence that the result was read from something."""
+    bad = 0
+
+    def _close_events(d):
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        return [r for r in (json.loads(x) for x in open(p, encoding="utf-8") if x.strip())
+                if r.get("name") == "zz_probe" and r.get("status") != "running"]
+
+    # 1. A path that exists lands in the close event, verbatim and repo-relative.
+    d = _world(1)
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    with open(os.path.join(d, "runs", "zz_read.log"), "w", encoding="utf-8") as f:
+        f.write("bpb 0.41\n")
+    rc, out = _done(d, "--result", "read from a log", "--reading_artifact", "runs/zz_read.log")
+    ev = _close_events(d)
+    ok = rc == 0 and len(ev) == 1 and ev[0].get("reading_artifact") == "runs/zz_read.log"
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} an existing --reading_artifact lands in the close event "
+          f"(rc={rc}, field={ev[0].get('reading_artifact') if ev else None!r})")
+
+    # 2. A path that does not exist REFUSES and writes nothing. Without this, the field is a
+    #    scoring exemption backed by an unfalsifiable claim.
+    d = _world(1)
+    rc, out = _done(d, "--result", "should not land", "--reading_artifact", "runs/absent.log")
+    ev = _close_events(d)
+    ok = rc != 0 and not ev and "does not exist" in out
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a dangling --reading_artifact refuses and writes nothing "
+          f"(rc={rc}, closes={len(ev)})")
+    if not ok:
+        print(f"       output was: {out.strip()[:200]}")
+
+    # 3. Omitting the flag omits the KEY, not writes an empty string. harness.py branches on
+    #    `if art:` -- an "" would read as absent there but as present to anything checking
+    #    membership, which is two readers disagreeing about the same row.
+    d = _world(1)
+    rc, out = _done(d, "--result", "no artifact")
+    ev = _close_events(d)
+    ok = rc == 0 and len(ev) == 1 and "reading_artifact" not in ev[0]
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} no flag means no key at all "
+          f"(rc={rc}, keys_has_field={'reading_artifact' in ev[0] if ev else None})")
+
+    return bad
+
+
 def main():
     bad = 0
 
@@ -247,7 +301,9 @@ def main():
     print(f"test_exp_done_started: {6 - bad}/6 pass")
     bad_note = note_cases()
     print(f"test_exp_note: {6 - bad_note}/6 pass")
-    return 1 if (bad or bad_note) else 0
+    bad_art = artifact_cases()
+    print(f"test_exp_reading_artifact: {3 - bad_art}/3 pass")
+    return 1 if (bad or bad_note or bad_art) else 0
 
 
 if __name__ == "__main__":
