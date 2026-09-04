@@ -44,9 +44,20 @@ sys.path.insert(0, os.path.join(ROOT, "eval"))
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
 TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
-# A round trip below this is a refusal. Not 1.0: a single unlucky row must not void a domain,
-# and the exact figure is reported either way so a reader never has to trust the threshold.
-MIN_ROUNDTRIP = 0.98
+# THERE IS NO THRESHOLD, because the right check is exact. MIN_ROUNDTRIP = 0.98 was here and it
+# gated on ID stability -- whether decode->encode reproduces the same ids -- while the property this
+# metric needs is BYTE identity: that both arms score the same text. The two come apart in exactly
+# one place, a row cut mid-UTF-8-character: the fragment decodes to U+FFFD, which re-encodes as the
+# three tokens of U+FFFD, so the ids differ while the text does not.
+#
+# Measured before the change (audit_0904 E19/C12, 576 val rows over all 9 domains of mix_200m_4b):
+#   id round-trip  0.9826  -- below 0.98 for zh_web (0.9375), cot and chatml (0.9688)
+#   TEXT identity  1.0000  -- every row, every domain, no exceptions
+# So the old gate skipped all 9 domains, `out` came out empty, and the metric printed REFUSING and
+# exited 1 for every checkpoint ever scored -- it has never produced a number. Only 6 of 576 rows
+# carry a boundary U+FFFD at all; the other misses were the same fragment at the row END.
+# Unpacked plain text round-trips exactly by ids too (5/5 known-answer cases in _selftest), so the
+# tokenizer is not lossy and there was never a fraction to tune.
 
 
 class OursModel:
@@ -127,19 +138,25 @@ def text_bpb(m, text, max_ctx=2048):
     return (total / math.log(2), scored_bytes), None
 
 
-def roundtrip_fraction(tok, rows, decode, encode):
-    """Fraction of rows whose decode->encode reproduces the original ids exactly.
+def text_identity_misses(rows, decode, encode):
+    """Rows whose decoded text does NOT survive a decode->encode->decode round trip.
 
-    This is the number that says whether "the same bytes" is true. It is measured rather than
-    asserted because a lossy merge or a normalisation step in either direction would otherwise
-    turn into a silent difference in what the two arms were scored on.
+    THE PROPERTY IS BYTE IDENTITY, NOT ID STABILITY. Both arms score `decode(ids)`; what has to
+    hold is that this text is what the codec really represents, i.e. that re-encoding it and
+    decoding again gives the same text back. A lossy merge or a normalisation step in either
+    direction changes the text and is caught here.
+
+    Returns the list of offending row indices -- empty means exact, and there is nothing to
+    threshold. The predecessor asked `encode(decode(ids)) == ids` and failed on every row cut
+    mid-UTF-8-character, where the ids legitimately differ (U+FFFD is one token in the row and
+    three when re-encoded) while the text is identical. See the MIN_ROUNDTRIP note above.
     """
-    ok = 0
-    for r in rows:
-        ids = [int(t) for t in r]
-        if encode(decode(ids)) == ids:
-            ok += 1
-    return ok / max(1, len(rows))
+    bad = []
+    for i, r in enumerate(rows):
+        text = decode([int(t) for t in r])
+        if decode(encode(text)) != text:
+            bad.append(i)
+    return bad
 
 
 def _selftest():
@@ -194,17 +211,42 @@ def _selftest():
     out, err = text_bpb(m, "")
     assert out is None and "at least 2" in err, (out, err)
 
-    # The round-trip measure must actually detect a lossy codec, or it certifies nothing.
+    # THE GATE MUST DETECT A LOSSY CODEC AND MUST NOT FIRE ON A MERE RE-SPLIT. Both halves, or it
+    # certifies nothing: the predecessor had only the first half and rejected all 9 domains.
     rows = [[104, 105], [106, 107]]
-    assert roundtrip_fraction(None, rows, lambda i: "".join(chr(x) for x in i),
-                              lambda s: [ord(c) for c in s]) == 1.0
-    assert roundtrip_fraction(None, rows, lambda i: "".join(chr(x) for x in i),
-                              lambda s: [ord(c) for c in s][:1]) == 0.0
+    ident = lambda i: "".join(chr(x) for x in i)          # noqa: E731
+    back = lambda s: [ord(c) for c in s]                  # noqa: E731
+    assert text_identity_misses(rows, ident, back) == [], "an exact codec was reported lossy"
+    # Lossy: encode drops a character, so the text does not come back.
+    assert text_identity_misses(rows, ident, lambda s: back(s)[:1]) == [0, 1], \
+        "a codec that loses a character was certified as exact"
+    # RE-SPLIT ONLY: same text, different ids -- the U+FFFD case that voided every real domain.
+    # `encode` returns different ids than the row held, but decode of them gives the same text,
+    # so this must NOT be flagged. An id-equality gate fails here and that was the whole defect.
+    resplit = lambda s: [ord(c) for c in s] + [0]         # noqa: E731
+    ident0 = lambda i: "".join(chr(x) for x in i if x != 0)  # noqa: E731
+    assert text_identity_misses(rows, ident0, resplit) == [], \
+        "a re-split that preserves the text was flagged; that is the MIN_ROUNDTRIP defect"
+    # KNOWN ANSWERS on the real tokenizer, if it is present: unpacked plain text must survive
+    # exactly. These five are the cases C12 measured (E19); a tokenizer that fails any of them is
+    # lossy and no threshold could rescue the metric.
+    if os.path.exists(TOK_PATH):
+        from scripts.loader import load_tokenizer  # noqa: PLC0415
+        _t = load_tokenizer(TOK_PATH, None)
+        _d = lambda ids: _t.decode(ids, skip_special_tokens=False)      # noqa: E731
+        _e = lambda x: _t.encode(x, add_special_tokens=False).ids       # noqa: E731
+        for text in ("The quick brown fox jumps over the lazy dog.",
+                     "def add(a, b):\n    return a + b\n",
+                     "\u4e2d\u6587\u6bb5\u843d\uff0c\u5e26\u6807\u70b9\u3002 3.14159 \u548c 2026-09-04\u3002",
+                     "x = 1e-9 * 42 // 7 % 3",
+                     "mixed \u4e2d\u82f1 text with 12345 numbers"):
+            assert _d(_e(text)) == text, f"tokenizer lost text on a known-answer case: {text!r}"
 
     print("domain_bpb self-test OK: uniform models read exactly log2(V) bits/byte, the "
           "unscored first token enters neither numerator nor denominator (so chunking cannot "
-          "change the figure), a too-short text refuses, and the round-trip measure detects a "
-          "lossy codec")
+          "change the figure), a too-short text refuses, the gate detects a "
+          "lossy codec while ignoring a pure re-split, and five known-answer texts survive "
+          "the real tokenizer exactly")
 
 
 def main():
@@ -284,17 +326,32 @@ def main():
             skipped[name] = "no shards for this domain (absent, not zero)"
             continue
         rows = rows[: a.rows]
-        rt = roundtrip_fraction(ours_tok, rows, ours_tok.decode,
-                               lambda s: ours_tok.encode(s, add_special_tokens=False).ids)
-        if rt < MIN_ROUNDTRIP:
-            skipped[name] = (f"decode round-trip only {rt:.3f} < {MIN_ROUNDTRIP}: the text the "
-                             f"two arms would score is not the held-out bytes")
-            print(f"  {name:16} SKIPPED (round-trip {rt:.3f})", flush=True)
+        # skip_special_tokens=False: the delimiter is part of the held-out bytes. The default drops
+        # it (EOS decodes to ""), which is what made the id-based predecessor fail on every packed
+        # row -- see the MIN_ROUNDTRIP note at the top.
+        _dec = lambda ids: ours_tok.decode(ids, skip_special_tokens=False)  # noqa: E731
+        _enc = lambda s: ours_tok.encode(s, add_special_tokens=False).ids   # noqa: E731
+        # PER ROW, and the offenders are dropped rather than the domain. A row whose text does not
+        # survive the codec cannot be scored on "the same bytes", but one such row is no reason to
+        # void the other 63 -- the count is reported so a silent shrink is impossible.
+        bad = text_identity_misses(rows, _dec, _enc)
+        if bad:
+            keep = [r for i, r in enumerate(rows) if i not in set(bad)]
+            skipped[f"{name}#rows"] = (f"{len(bad)} of {len(rows)} row(s) dropped: decoded text "
+                                       f"does not survive decode->encode->decode, so the two arms "
+                                       f"would not score the same bytes")
+            print(f"  {name:16} dropped {len(bad)}/{len(rows)} row(s) on text identity", flush=True)
+            rows = keep
+        if not len(rows):
+            skipped[name] = "every row failed text identity; nothing left to score"
+            print(f"  {name:16} SKIPPED (no row survived text identity)", flush=True)
             continue
         bits = nbytes = 0.0
         errs = 0
         for r in rows:
-            text = ours_tok.decode([int(t) for t in r])
+            # THE SAME decode THE GATE CHECKED. Using the default here while the gate used
+            # skip_special_tokens=False would score text the gate never cleared.
+            text = _dec([int(t) for t in r])
             res, err = text_bpb(m, text, a.max_ctx)
             if err:
                 errs += 1
@@ -304,14 +361,16 @@ def main():
         if nbytes <= 0:
             skipped[name] = f"no row produced scored bytes ({errs} errors)"
             continue
+        # text_identity_dropped, not a round-trip FRACTION: the gate is exact now, so what a
+        # reader needs is how many rows it removed, which is 0 on every domain measured so far.
         rec = {"domain": name, "bpb": bits / nbytes, "scored_bytes": int(nbytes),
-               "n_rows": len(rows), "roundtrip_exact": rt, "row_errors": errs}
+               "n_rows": len(rows), "text_identity_dropped": len(bad), "row_errors": errs}
         out[name] = rec["bpb"]
         if a.preds:
             with open(a.preds, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print(f"  {name:16} {rec['bpb']:.4f} bits/byte over {int(nbytes):,} bytes "
-              f"(round-trip {rt:.3f})", flush=True)
+              f"({len(bad)} row(s) dropped on text identity)", flush=True)
 
     if not out:
         print("REFUSING: no domain produced a number")
