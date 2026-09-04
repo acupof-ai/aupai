@@ -227,6 +227,7 @@ _RULE_CHECKS = {
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
     "uv sync after dependency changes": "env_importable",
+    "Shared files": "shared_file_claim",
 }
 
 #: Rule bullets in AGENTS.md that no check can enforce, and why. The count is
@@ -245,7 +246,6 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
     "A PID is only meaningful in the namespace that read it.":
         "no artifact records which namespace a pid was read in -- the host and the "
@@ -3865,6 +3865,78 @@ def _broken_spawned_scripts_importable():
         'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
     open(pre, "w").write(body)
     return d
+
+
+def check_shared_file_claim(root):
+    """Editing a listed shared file needs a live claim (AGENTS.md "Shared files", T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature 2026-08-30, `git checkout` erased
+    a device gate 2026-08-31, `git add -A` swept five sessions into d535674) show a spoken
+    announce is no record. A claim is a file under runs/claims/files/<path>.json; the
+    pre-commit hook refuses a staged shared-file commit with no live claim. This check is the
+    `harness check` view of the same gate: shared files staged with no claim would FAIL.
+    Runs on staged content, so it SKIPs with nothing staged (the hook is the enforcer)."""
+    import subprocess as sp
+    shared = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
+    staged = sp.run(["git", "-C", root, "diff", "--cached", "--name-only"],
+                    capture_output=True, text=True).stdout.split()
+    touched = [p for p in staged if p in shared]
+    if not touched:
+        return SKIP, "no staged shared-file edit; the pre-commit hook enforces staged claims"
+    claims_dir = os.path.join(root, "runs", "claims", "files")
+    missing = []
+    for p in touched:
+        cp = os.path.join(claims_dir, p.replace("/", "__") + ".json")
+        live = False
+        if os.path.exists(cp):
+            try:
+                rec = json.load(open(cp, encoding="utf-8"))
+                live = (time.time() - rec.get("time", 0)) <= 6 * 3600
+            except (OSError, ValueError):
+                live = False
+        if not live:
+            missing.append(p)
+    if missing:
+        return FAIL, (f"shared-file edit(s) without a live claim: {', '.join(missing)} -- "
+                      "claim first via `harness claim-file acquire --path <file>`")
+    return PASS, f"{len(touched)} shared-file edit(s) claimed"
+
+
+def _broken_shared_file_claim():
+    """A staged train.py edit with no claim must FAIL; with a claim it must PASS."""
+    import tempfile
+    import subprocess as sp
+    tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
+    try:
+        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
+        sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
+        # world A: stage train.py with no claim -> FAIL
+        with open(os.path.join(tmp, "train.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "train.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed train.py edit must FAIL, got {r[0]}: {r[1]}"
+        # world B: add a live claim -> PASS
+        claims_dir = os.path.join(tmp, "runs", "claims", "files")
+        os.makedirs(claims_dir, exist_ok=True)
+        with open(os.path.join(claims_dir, "train.py.json"), "w") as fh:
+            json.dump({"path": "train.py", "owner": "t", "time": int(time.time())}, fh)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == PASS, f"claimed train.py edit must PASS, got {r[0]}: {r[1]}"
+        # world C: a claimed non-shared file is not guarded (train.py still claimed, add sft_math.py without claim -> FAIL)
+        sp.run(["git", "-C", tmp, "rm", "-q", "--cached", "--ignore-unmatch", "train.py"], check=True)
+        with open(os.path.join(tmp, "sft_math.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "sft_math.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed sft_math.py edit must FAIL, got {r[0]}: {r[1]}"
+        return tmp
+    except Exception:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 
 def check_no_oversized_blob(root):
@@ -10366,6 +10438,13 @@ CHECKS = [
         _broken_mix,
     ),
     (
+        "shared_file_claim",
+        "editing a listed shared file (train.py/sft*.py/AGENTS.md) needs a live claim",
+        "three unannounced shared-file edits cost: a push rolled back 3b's build_corpus feature, a checkout erased a device gate, git add -A swept five sessions into d535674",
+        check_shared_file_claim,
+        _broken_shared_file_claim,
+    ),
+    (
         "launch_line_vs_oom_facts",
         "no stop-window launch line or running experiments row matches a recorded OOM config on (dim, layers, batch, accum, seq)",
         "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
@@ -10978,7 +11057,8 @@ EVIDENCE = {
     "running_sh_override_verified": "repo",
     "refusal_precedes_push": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
@@ -14690,6 +14770,39 @@ def cmd_free_card(argv):
         time.sleep(min(30, max(5, a.wait / 20)))
 
 
+def cmd_claim_file(argv):
+    """`harness claim-file {acquire,release,status} --path <f>` -- the Shared-files rule (T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature, a checkout erased a device gate,
+    `git add -A` swept five sessions' work) show a conversation announcement is not a record.
+    A claim makes the announce a file under runs/claims/files/ and the pre-commit hook refuses
+    a staged shared-file commit with no live claim. Delegates to scripts/file_claim.py."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import file_claim
+    c = argv[0] if argv else "status"
+    if c == "acquire":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        owner = argv[argv.index("--owner") + 1] if "--owner" in argv else None
+        if not path:
+            print("claim-file acquire needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.acquire(path, owner)
+        print(msg)
+        return 0 if ok else 1
+    if c == "release":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        if not path:
+            print("claim-file release needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.release(path)
+        print(msg)
+        return 0 if ok else 1
+    for p, r in file_claim.claims().items():
+        print(f"{p:16s} owner={r.get('owner')} t={time.strftime('%H:%M', time.gmtime(r.get('time')))} UTC")
+    return 0
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -16108,6 +16221,8 @@ def main():
         return cmd_milestone(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "free-card":
         return cmd_free_card(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "claim-file":
+        return cmd_claim_file(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]
