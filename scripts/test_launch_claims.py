@@ -137,6 +137,37 @@ def selftest():
     _case(results, "_job_pids_for" in called,
           "and _job_pids_for, so the pid it claims is the job and not the wrapper shell")
 
+    # AND IT WAITS FOR A DEVICE (4c item 1, 2026-09-05). "not a shell" is necessary and not
+    # sufficient: measured on the pod in this wrapper shape, the first non-shell descendant
+    # appears at t=0.11s holding ZERO device fds and the first fd at t=1.33s. b0_mem_m1's claim
+    # landed in that 1.22s window, so status read STALE plus "ORPHAN card 1 holds 1179 MiB with
+    # no claim" for a live arm. AST again, for the reason in the docstring: a text match for
+    # `_device_pid_for` also hits its own def.
+    _case(results, "_device_pid_for" in called,
+          "cmd_launch waits for a descendant that HOLDS a device before claiming")
+    _case(results, "_proc_readable" in called,
+          "and asks whether /proc is readable, so macOS falls back instead of blocking 90s")
+
+    # The predicate's contract, at the level the launcher depends on. A device count and an
+    # unreadable pid must not collapse to the same value: None is not 0, and only 0 refuses.
+    _case(results, CC.nvidia_fds(999999) is None,
+          "nvidia_fds on an unreadable pid is None, which never refuses (macOS has no /proc)")
+    _case(results, isinstance(CC.nvidia_fds(os.getpid()), (int, type(None))),
+          "and on this process it is an int or None, never a raise")
+    _case(results, CC.DEVICE_WAIT_S >= 30,
+          f"the wait deadline covers a slow interpreter start ({CC.DEVICE_WAIT_S}s vs 1.33s measured)")
+
+    # THE DEADLINE MUST BE BOUNDED AND MUST END EARLY ON A DEAD WRAPPER. A launch whose job died
+    # at once must not block for the full 90s; without this case the poll passes for a version
+    # that always burns its deadline.
+    _dead = subprocess.Popen(["bash", "-c", "exit 0"])
+    _dead.wait()
+    _t0 = time.time()
+    _got = CC.wait_for_device(_dead.pid, deadline=5.0, interval=0.1)
+    _el = time.time() - _t0
+    _case(results, _got is None and _el < 2.0,
+          f"wait_for_device ends at once when the wrapper is gone ({_el:.2f}s of a 5s deadline)")
+
     # And the helper does what its name says, exercised for real -- in a TEMP claim dir.
     # card_claim.py reads AUPAI_CLAIM_DIR at import, and the helper shells out to it, so
     # patching this process's CC.CLAIM_DIR does not reach the subprocess: the first version of
@@ -160,7 +191,22 @@ def selftest():
         _case(results, not os.path.exists(os.path.join(ROOT, "runs", "claims", CC.claim_file("de30_helper", ["7"]))),
               "and nothing was written to the repo's real runs/claims/")
 
-    mon = re.search(r"monitor_code = f'''(.*?)'''", src, re.S)
+    # THE RELEASE, and the scan must be scoped to the function that HOLDS the template. A
+    # file-wide `re.search` for `monitor_code = f'''` matched harness.py:13301 instead -- a line
+    # inside _selftest_monitor_stop_rules that carries that exact text as a REGEX STRING, and it
+    # sits before the real template, so the search captured 5 characters ("(.*?)") and reported
+    # "0 release calls in its body" while both releases were present. §187's shape: a scanner that
+    # locates its subject by a delimiter finds whatever mentions the delimiter first.
+    #
+    # AST for the boundary, regex only inside it. The template lives in _arm_monitor, not in
+    # cmd_launch -- checked here rather than assumed, since a search that finds nothing must not
+    # read as zero releases.
+    mon_fn = next((n for n in ast.walk(tree)
+                   if isinstance(n, ast.FunctionDef) and n.name == "_arm_monitor"), None)
+    seg = ast.get_source_segment(src, mon_fn) if mon_fn else ""
+    mon = re.search(r"monitor_code = f'''(.*?)'''", seg, re.S)
+    _case(results, mon is not None,
+          "the monitor template is found in _arm_monitor (not a stray regex-string match)")
     body = mon.group(1) if mon else ""
     calls = [ln for ln in body.splitlines()
              if "card_claim.py" in ln and not ln.strip().startswith("#")]
