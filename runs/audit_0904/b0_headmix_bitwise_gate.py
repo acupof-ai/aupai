@@ -90,8 +90,16 @@ def _logits(ckpt_path, seed=904):
         y = m(x)
     if isinstance(y, tuple):
         y = y[0]
-    return y.float().cpu(), dict(missing=len(missing), unexpected=len(unexpected),
-                                 d=cfg.d, heads=cfg.heads, layers=cfg.layers)
+    # HASH THE REAL VOCAB ONLY. model.py:557 sets columns [vocab_real:vocab] to
+    # torch.finfo(dtype).min so alignment padding stays neutral in the softmax -- deliberate,
+    # not corruption. But -3.4e38 in 11 of 32784 columns dominates any sum or mean over the
+    # whole tensor: the first baseline printed sum -4.79e+41 and mean -inf, which says nothing
+    # about the 32773 columns the model actually predicts. A digest over the padding is also
+    # blind to a change inside it, in exchange for a number no reader can sanity-check.
+    real = int(getattr(cfg, "vocab_real", cfg.vocab))
+    y = y[..., :real].float().cpu()
+    return y, dict(missing=len(missing), unexpected=len(unexpected), vocab_real=real,
+                   d=cfg.d, heads=cfg.heads, layers=cfg.layers)
 
 
 def _fp(t):
