@@ -39,7 +39,7 @@ AREA_ORDER = list(AREAS)
 # report landed as model_training.md.
 STEM_ALIAS = {"model_training": "model_code", "pod_repo_state": "pod_repo"}
 
-SEV_ORDER = {"S1": 0, "S2": 1, "S3": 2}
+SEV_ORDER = {"S1": 0, "S2": 1, "S3": 2, "ND": 3}
 ID_RE = re.compile(r"^[A-Z]{1,3}-?\d+$")
 
 HEADER_ALIASES = [
@@ -144,6 +144,8 @@ def read_report(path):
             unparsed.append({"raw": line, "reason": "not 5 columns"})
             continue
         fid, sev, claim, evidence, contra = cells
+        if sev in ("—", "–", "-"):
+            sev = "ND"
         if not ID_RE.match(fid) or sev not in SEV_ORDER:
             unparsed.append({"raw": line, "reason": "bad id or severity"})
             continue
@@ -234,6 +236,7 @@ def collect():
         )
         f["ruling"] = r.get("ruling", "pending")
         f["ruling_by"] = r.get("by", "")
+        f["ruling_note"] = r.get("note", "")
         f["fix_state"] = r.get("fix_state", "frozen-until-audit-close")
     all_findings.sort(key=lambda f: (SEV_ORDER[f["severity"]], f["id"]))
     return reports, all_findings, all_unparsed
@@ -346,6 +349,7 @@ def render_page(reports, findings, unparsed, old_html):
         f'<div class="strip">{chip("S1 " + str(sev_counts["S1"]), "s1")}'
         f'{chip("S2 " + str(sev_counts["S2"]), "s2")}'
         f'{chip("S3 " + str(sev_counts["S3"]), "s3")}'
+        f'{chip("ND " + str(sev_counts["ND"]), "nd")}'
         f'<span class="strip-item">报告 {landed}/7</span>'
         f'<span class="strip-item">ledger 记为在跑（24h 内启动，可能含未关闭的死行）：{_esc("、".join(jobs)) if jobs else "无"}</span>'
         f'<span class="strip-item">删档 12:03Z（charter aed940e8）</span>'
@@ -383,14 +387,19 @@ def render_page(reports, findings, unparsed, old_html):
     for f in findings:
         pc = f["pair_check"]
         pc_cls = "ok" if pc == "held" else "bad" if pc == "failed" else "pend"
+        sev_label = "无缺陷/撤回" if f["severity"] == "ND" else f["severity"]
+        sev_cls = "nd" if f["severity"] == "ND" else f["severity"].lower()
         ruling = f["ruling"]
+        r_cls = "ok" if ruling == "accepted" else "bad" if ruling == "returned" else "pend"
+        r_note = f.get("ruling_note", "")
+        note_html = f"<div class='rnote'>{_esc(r_note)}</div>" if r_note else ""
         rows_html.append(
-            f"<tr><td>{chip(f['severity'], f['severity'].lower())}</td>"
+            f"<tr><td>{chip(sev_label, sev_cls)}</td>"
             f"<td>{_esc(f['area'])}</td>"
             f"<td class='claim'>{_esc(f['claim'])}</td>"
             f"<td>{evidence_html(f['evidence'])}</td>"
             f"<td>{chip(pc, pc_cls)}</td>"
-            f"<td class='ruling'>{_esc(ruling)}</td></tr>"
+            f"<td class='ruling'>{chip(ruling, r_cls)}{note_html}</td></tr>"
         )
     for u in unparsed:
         rows_html.append(
@@ -466,6 +475,8 @@ details summary {{ cursor:pointer; font-size:13px; color:var(--mut); }}
 .chip.s1 {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
 .chip.s2 {{ background:#d68910; color:#fff; border-color:#d68910; }}
 .chip.s3 {{ background:var(--mut); color:#fff; border-color:var(--mut); }}
+.chip.nd {{ background:transparent; color:var(--mut); border:1px solid var(--line); }}
+.rnote {{ font-size:11px; color:var(--mut); margin-top:2px; }}
 .chip.ok {{ background:#1e8449; color:#fff; border-color:#1e8449; }}
 .chip.bad {{ background:#c0392b; color:#fff; border-color:#c0392b; }}
 .chip.pend {{ background:transparent; color:var(--mut); }}
@@ -502,6 +513,7 @@ pair: u
 | T-1 | S1 | a claim | `eval/x.py:1` | the contradiction |
 | T-2 | S2 | another | facts/t.json#t | none |
 | T-3 | S3 | pipe in code | `grep -c 'a\\|b'` returns 0 | none |
+| T-4 | — | withdrawn, no defect | facts/t.json#t | withdrawn by controller |
 
 A non-finding table later in the same section must be ignored, not unparsed:
 
@@ -525,9 +537,10 @@ A non-finding table later in the same section must be ignored, not unparsed:
         ap = os.path.join(td, "test_area.md")
         open(ap, "w").write(good)
         rep = read_report(ap)
-        assert len(rep["findings"]) == 3, rep["findings"]
+        assert len(rep["findings"]) == 4, rep["findings"]
         assert rep["findings"][0]["id"] == "T-1"
         assert rep["findings"][2]["evidence"] == "`grep -c 'a\\|b'` returns 0"
+        assert rep["findings"][3]["severity"] == "ND"
         assert not rep["unparsed"], rep["unparsed"]
         assert rep["blind_spots"] == ["nothing"]
         assert rep["open_qs"] == ["decide something"]
@@ -541,7 +554,7 @@ A non-finding table later in the same section must be ignored, not unparsed:
         # unparsable row
         open(ap, "w").write(good.replace("| T-2 | S2 |", "| T-X | S9 |"))
         rep = read_report(ap)
-        assert len(rep["findings"]) == 2 and len(rep["unparsed"]) == 1
+        assert len(rep["findings"]) == 3 and len(rep["unparsed"]) == 1
     print("selftest ok")
 
 
