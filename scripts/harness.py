@@ -90,6 +90,16 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
+    # Both reach the pod, and the deadline was set against a fast tunnel. Measured
+    # 2026-09-04 with `pod 'echo ok'` at 2.8-4.7s for a BARE round trip: these do one
+    # each and take 3.2s and 4.6s, so a 5s deadline leaves 0.4s of headroom on a
+    # constant that is not ours -- the tunnel's. Both passed by hand every time
+    # (WARN "pod is 6 commits behind main" and PASS "0 of 84 logs truncated") while
+    # banking 4 consecutive strikes and FAILing commits they had nothing to say about.
+    # The rule these enforce is about the pod's state, so making them local is not
+    # available; ~4x the measured wall is, same ratio as the entries above.
+    "pod_stamp_is_main": 20,
+    "snapshot_logs_say_so_at_the_tail": 20,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
