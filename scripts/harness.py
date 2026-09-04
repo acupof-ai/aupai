@@ -16891,13 +16891,20 @@ def _proc_readable():
     return card_claim.nvidia_fds(os.getpid()) is not None
 
 
-def _acquire_cards(name, cards, pid, note):
-    """(ok, message). Claim `cards` for `name` on behalf of `pid`."""
-    r = subprocess.run(
-        [sys.executable, os.path.join(HERE, "card_claim.py"), "acquire",
-         "--name", name, "--cards", cards, "--pid", str(pid), "--note", note],
-        capture_output=True, text=True,
-    )
+def _acquire_cards(name, cards, pid, note, require_device=False):
+    """(ok, message). Claim `cards` for `name` on behalf of `pid`.
+
+    require_device belongs to THIS path and not to acquire's default. A launcher claims ANOTHER
+    process after wait_for_device has proved it holds a card, so asserting the fact costs nothing
+    and catches the wrong-pid bind (b0_mem_m1). A process claiming ITSELF before it opens the
+    device it named through CVD holds zero fds by construction -- scripts/loader.py's
+    claim_my_cards -- and refusing there turned CI red on main for two hours at 121a865d while
+    passing on macOS, where no /proc means the predicate has no opinion."""
+    cmd = [sys.executable, os.path.join(HERE, "card_claim.py"), "acquire",
+           "--name", name, "--cards", cards, "--pid", str(pid), "--note", note]
+    if require_device:
+        cmd.append("--require-device")
+    r = subprocess.run(cmd, capture_output=True, text=True)
     return r.returncode == 0, (r.stdout + r.stderr).strip()
 
 
@@ -17203,7 +17210,11 @@ def cmd_launch(rest):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
-            ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note)
+            # require_device only when the poll established it: on macOS the fallback picked
+            # the first non-shell descendant without proving anything, so asserting it there
+            # would refuse every laptop launch.
+            ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note,
+                                                 require_device=claim_dev is not None)
             if ok_claim:
                 claim_name = args.name
                 held = f" ({claim_dev} device fds)" if claim_dev else ""
