@@ -10810,6 +10810,24 @@ def _broken_no_ghost_close():
     return d
 
 
+def _arm_id(name):
+    """'m1' from b0_mem_m1, m1_probe, mem_m1_resume; None from anything that is not an arm.
+
+    The join key between a run name and its diagnostics rows. Both sides are written by
+    different hands -- the launch names the run, b0's train.py hook names the row -- so
+    neither is a prefix of the other and comparing them as strings fails on exactly the
+    live case (b0_mem_m1 vs m1)."""
+    m = _ARM_RE.search(str(name or ""))
+    if not m:
+        return None
+    return re.search(r"m[123]", m.group(0), re.I).group(0).lower()
+
+
+# Anchored on an arm SUFFIX or an explicit mem_ marker, never on a leading m1: see the note
+# in check_memory_diag_fresh. Module-level so the check and _arm_id share one definition.
+_ARM_RE = re.compile(r"(^|_)mem_m[123]([_-]|$)|(^|_)m[123]([_-]|$)", re.I)
+
+
 def check_memory_diag_fresh(root):
     """A running memory arm must be writing runs/memory_diag.jsonl, keyed by arm.
 
@@ -10857,8 +10875,16 @@ def check_memory_diag_fresh(root):
     # A memory arm is named by the charter's own arm ids. Matched on the name rather than on
     # the command line: the flags are b0's to choose inside the charter's bounds, so a
     # --memory_values match would rot the moment they pick a different flag name.
+    #
+    # SEARCHED, NOT ANCHORED AT THE START, and this is the whole bug the first version had.
+    # `^m[123]` matched the m1_probe fixture and NONE of b0_mem_m1/m2/m3, the names the arms
+    # actually launch under (4c, 2026-09-05) -- so the check would have SKIPped "no memory arm
+    # is running" through all three live arms and never fired once. A gate that cannot see its
+    # subject is worse than no gate: it prints a reason that reads like an answer. Verified on
+    # the three real names plus six near misses that must NOT match: p200m_control,
+    # b0_headmix_armA, b0_memoir_m1x, ckpt_m1x, sm1_run, b0_mem_m4.
     arms = [r for r in rows
-            if _exp_open(r) and re.match(r"^m[123]([_-]|$)", str(r.get("name") or ""), re.I)]
+            if _exp_open(r) and _ARM_RE.search(str(r.get("name") or ""))]
     if not arms:
         return SKIP, "no memory arm (m1/m2/m3) is running"
 
@@ -10878,10 +10904,14 @@ def check_memory_diag_fresh(root):
     stale, silent, tripped, fresh = [], [], [], []
     for r in named:
         nm = str(r.get("name"))
-        # The arm id, not the full run name: a launch is named m1_0905 and its rows carry
-        # the arm. Matched case-insensitively on the prefix for the same reason.
-        key = next((k for k in latest if str(nm).lower().startswith(str(k).lower())
-                    or str(k).lower().startswith(str(nm).lower())), None)
+        # JOIN ON THE ARM ID, extracted from both sides, not on a prefix of either. The run
+        # is named b0_mem_m1 and the diag rows may be named either that or plain m1 (b0 owns
+        # the call), and neither string is a prefix of the other -- the prefix join this
+        # replaced returned None for exactly the live case and would have reported every
+        # healthy arm as "no diagnostics row at all". One canonical key, so the two sides
+        # cannot disagree about spelling.
+        want = _arm_id(nm)
+        key = next((k for k in latest if _arm_id(str(k)) == want), None)
         if key is None:
             silent.append(nm)
             continue
@@ -10964,6 +10994,13 @@ def _broken_memory_diag_fresh():
 
     The tripped rule is chosen over the simpler "no rows at all" world on purpose: that
     one returns WARN, and a broken world must produce FAIL.
+
+    NAMED b0_mem_m1, the name the arms actually launch under (4c, 2026-09-05), not a
+    convenient fixture name. The first version of this check anchored its matcher at the
+    start of the name and so matched an `m1_probe` fixture while matching NONE of
+    b0_mem_m1/m2/m3 -- green selftest, and a SKIP reading "no memory arm is running"
+    through all three live arms. A world that uses a name the real system never produces
+    verifies the check against itself.
     """
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -10975,13 +11012,15 @@ def _broken_memory_diag_fresh():
     rows = [json.loads(x) for x in open(real, encoding="utf-8") if x.strip()]
     template = dict(rows[-1])
     with open(dst, "a", encoding="utf-8") as f:
-        f.write(json.dumps(dict(template, name="m1_probe", status="running",
+        f.write(json.dumps(dict(template, name="b0_mem_m1", status="running",
                                 started="2026-09-05 03:00", result="", ended=""),
                            ensure_ascii=False) + "\n")
     sys.path.insert(0, os.path.join(ROOT, "scripts"))
     import memory_diag as md
-    # Step 500 at 41K tok/s/gpu: past readout 5's step-30 gate and well under its 70K floor.
-    md.log_diag("m1_probe", 500, 0.83, 3.1, 0.30, 41000.0,
+    # Rows named by the bare arm id while the run is named b0_mem_m1: the live shape, where
+    # neither string is a prefix of the other. Step 500 at 41K tok/s/gpu is past readout 5's
+    # step-30 gate and well under its 70K floor.
+    md.log_diag("m1", 500, 0.83, 3.1, 0.30, 41000.0,
                 path=os.path.join(d, "runs", "memory_diag.jsonl"))
     return d
 
