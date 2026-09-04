@@ -1133,15 +1133,58 @@ def main():
     # STAGED set, so a test only runs when someone edits the test. The file under test is the file
     # that changes.
     #
-    # Keyed on the subject, listing the tests that read it. Only pairs where the test genuinely
-    # exercises the subject go here -- a test listed against a file it does not read costs seconds
-    # on every commit and buys nothing.
+    # Keyed on the subject, listing the tests that read it. DERIVED, not guessed (6e's item,
+    # 2026-09-04): runs/audit_0904/derive_subject_tests.py reads every test's imports and string
+    # literals with ast, and runs/audit_0904/subject_test_budget.py picks pairs deepest-first
+    # under a per-subject wall-time budget. Both are committed so this table can be re-derived
+    # instead of trusted. Three measurements decided its shape:
+    #
+    #   - The loose "carries --selftest" set calls 167 files tests, including tools like
+    #     scripts/profile_step_cost.py and eval/cache_guard.py, which merely import their
+    #     "subject". test_*.py is the honest set: 56 runnable pairs, not 146.
+    #   - AN IMPORT EDGE IS NOT EVIDENCE A TEST EXERCISES ITS SUBJECT. 23 hook-runnable tests
+    #     import train.py and nearly all of them want `Cfg`, where every shape constant lives.
+    #     Ranking by names-taken and uses-of-those-names cuts train.py from 23 tests to 6.
+    #   - Cost is the binding constraint. All 27 candidates measured here: 186.8s total, and an
+    #     unbudgeted train.py commit would pay 126.1s. test_cursor_save alone is 51.3s.
+    #
+    # 45s per subject buys the table below: 27 pairs, 15 subjects, worst case train.py at 42.6s.
+    # FIVE PAIRS DO NOT FIT AND ARE NAMED HERE rather than silently absent, because a hook that
+    # quietly skips coverage reads as "covered everything": train.py -> test_cursor_save (51.3s,
+    # 5 uses), test_num_id_resolve (16.8s, 3), test_muon_shape_lr (15.3s, 8); model.py ->
+    # test_untie_head (14.2s, 3), test_zero_init_out (9.6s, 3). They stay in SELFTEST_FILES, so
+    # editing one still runs it; what is missing is the reverse direction for those five.
+    #
+    # Only pairs where the test genuinely exercises the subject go here -- a test listed against
+    # a file it does not read costs seconds on every commit and buys nothing.
     TESTS_FOR_SUBJECT = {
-        "eval/l1_fewshot.py": {"eval/test_l1_fewshot_2x2.py", "eval/score_matrix.py"},
+        "eval/l1_fewshot.py": {"eval/test_l1_fewshot_2x2.py", "eval/score_matrix.py",
+                               "scripts/test_fewshot_demos.py", "scripts/test_fewshot_stop.py"},
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
         # verify_artifact and the transcriber, so a change to either file can break it.
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
+        # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
+        "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
+                     "scripts/test_untie_head.py"},                          # 42.6s
+        "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
+                     "scripts/test_value_embed.py"},                         # 36.3s
+        "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
+                              "scripts/test_eval_base_prompt_format.py",
+                              "scripts/test_serve_history.py"},              # 22.0s
+        "fone.py": {"scripts/test_arch_compat.py"},                          # 18.0s
+        "scripts/card_claim.py": {"scripts/test_launch_claims.py"},          # 4.0s
+        "eval/prefix_mask.py": {"scripts/test_sft_prefix.py"},               # 1.9s
+        "datagen/prepare_sft.py": {"scripts/test_sft_pack.py"},              # 1.8s
+        "scripts/harness.py": {"scripts/test_cvd_pattern.py", "scripts/test_drop_zombies.py",
+                               "scripts/test_eval_registry.py", "scripts/test_pod_ps_judge.py",
+                               "scripts/test_spawned_fast.py"},              # 1.1s
+        "scripts/ledger_audit.py": {"scripts/test_ledger_predicates.py"},    # 0.6s
+        "scripts/e1_29_floor_by_class.py": {"scripts/test_e1_29_floor_by_class.py"},
+        "datagen/near_dedup_postpass.py": {"datagen/test_near_dedup_known.py"},
+        "algorithms/rlvr_reward.py": {"algorithms/test_rlvr_reward_suite.py"},
+        "scripts/e1_28_leak_scan.py": {"scripts/test_e1_28_leak_scan.py"},
+        "scripts/e1_28_matched.py": {"scripts/test_e1_28_matched.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
@@ -1672,6 +1715,119 @@ def _selftest():
             fails.append(f"world 7: refused but did not NAME the dropped row: {out6[:160]}")
     finally:
         shutil.rmtree(d6, ignore_errors=True)
+
+    # WORLD 8 (must REFUSE): a staged DEFECT in a subject whose test lives in another file.
+    # 6e's item, and the shape is measured rather than hypothesised: on 2026-09-04, dropping
+    # `demo_lang` from eval/l1_fewshot.py's artifact name committed GREEN with `selftests 0.07s`,
+    # because the loop intersected SELFTEST_FILES with the STAGED set and the test was not staged.
+    # The file under test is the file that changes.
+    #
+    # BOTH DIRECTIONS, because a world that only checks the refusal would pass on a hook that
+    # runs the test for every commit -- which is the failure mode of an unbudgeted map (a train.py
+    # commit would pay 126.1s). So: staging a defect in a mapped subject must refuse, and staging
+    # an UNMAPPED file must not run that subject's tests at all.
+    #
+    # THE SUBJECT MUST NOT ITSELF BE IN SELFTEST_FILES, AND MUST RUN STANDALONE. Two earlier
+    # versions of this world were wrong in different ways and each said so rather than passing:
+    #   - scripts/ledger_audit.py IS registered, so staging it ran its own selftest and the
+    #     refusal came from the pre-existing loop, not the map ("refused but not by the mapped
+    #     test").
+    #   - datagen/near_dedup_postpass.py imports build_corpus, which imports holdout and loader,
+    #     so a two-file world refused with ModuleNotFoundError. That refusal even NAMED the mapped
+    #     test, so a name-matching assertion accepted it: the world was green for a missing import.
+    # Hence the pair used now -- algorithms/rlvr_reward.py -> algorithms/test_rlvr_reward_suite.py:
+    # the subject is unregistered so only the map reaches it, imports nothing outside the stdlib,
+    # and the test is 0.12s. And the assertion below demands the test's OWN failure text, not its
+    # filename, so an import error cannot satisfy it.
+    d8 = tempfile.mkdtemp()
+    try:
+        def git8(*a):
+            return subprocess.run(["git"] + list(a), cwd=d8, capture_output=True, text=True,
+                                  env=clean)
+        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
+                  ("config", "user.name", "t")):
+            git8(*a)
+        hooks8 = os.path.join(d8, ".git", "hooks")
+        os.makedirs(hooks8, exist_ok=True)
+        shutil.copy(hook, os.path.join(hooks8, "pre-commit"))
+        os.chmod(os.path.join(hooks8, "pre-commit"), 0o755)
+        # scripts/hooks/pre-commit -> up three, not two: dirname gives .../scripts/hooks, then
+        # .../scripts, then the root. Derived rather than a constant so a linked worktree resolves
+        # to its own tree (the same reason world 7 derives it).
+        _repo8 = os.path.dirname(os.path.dirname(os.path.dirname(hook)))
+        _copied = []
+        for _rel in ("algorithms/rlvr_reward.py", "algorithms/test_rlvr_reward_suite.py"):
+            _src = os.path.join(_repo8, _rel)
+            if os.path.exists(_src):
+                os.makedirs(os.path.join(d8, os.path.dirname(_rel)), exist_ok=True)
+                shutil.copy(_src, os.path.join(d8, _rel))
+                _copied.append(_rel)
+        if len(_copied) != 2:
+            fails.append(f"world 8: could not stage its pair from {_repo8} -- the world would "
+                         f"pass without testing anything (copied {_copied})")
+        git8("add", "-A")
+        git8("commit", "-q", "-m", "base")
+
+        # THE WORLD MUST BE GREEN BEFORE IT IS BROKEN, or a refusal proves nothing. Measured
+        # directly: run the mapped test against the unmutated copy.
+        _pre = subprocess.run([sys.executable, "algorithms/test_rlvr_reward_suite.py",
+                               "--selftest"], cwd=d8, capture_output=True, text=True, env=clean)
+        if _pre.returncode != 0:
+            fails.append(f"world 8: the mapped test does not pass on the UNMUTATED world, so a "
+                         f"refusal would not be caused by the mutation: "
+                         f"{(_pre.stdout + _pre.stderr)[-200:]}")
+
+        # NEGATIVE: break the SUBJECT, stage only the subject. Its test is not staged, so before
+        # the map the hook ran nothing. `return 0.0` -> `return 1.0` on the no-boxed-answer path
+        # makes every unparseable generation score as correct -- a real defect the suite's known
+        # answers catch, and not a syntax error, which py_compile would catch first and let this
+        # world pass for the wrong reason.
+        _rr = os.path.join(d8, "algorithms", "rlvr_reward.py")
+        _src8 = open(_rr, encoding="utf-8").read() if os.path.exists(_rr) else ""
+        _marker = "    pred = extract_boxed(gen_text)\n    if pred is None:\n        return 0.0"
+        if _marker not in _src8:
+            fails.append("world 8: rlvr_reward.reward_fn's no-answer branch is not where this "
+                         "world mutates; the target moved and it would pass without testing "
+                         "anything")
+        else:
+            with open(_rr, "w", encoding="utf-8") as fh:
+                fh.write(_src8.replace(_marker, _marker[:-3] + "1.0", 1))
+            git8("add", "algorithms/rlvr_reward.py")
+            r8 = subprocess.run([os.path.join(hooks8, "pre-commit")], cwd=d8,
+                                capture_output=True, text=True, env=clean)
+            out8 = r8.stdout + r8.stderr
+            if r8.returncode == 0:
+                fails.append("world 8: a staged defect in a mapped SUBJECT was allowed -- its "
+                             "test lives in another file and the loop only ran staged tests")
+            elif "test_rlvr_reward_suite" not in out8:
+                fails.append(f"world 8: refused but not by the mapped test: {out8[:200]}")
+            elif not re.search(r"REFUSING:.*test_rlvr_reward_suite", out8):
+                fails.append(f"world 8: the mapped test is named but is not what refused: "
+                             f"{out8[:200]}")
+            elif re.search(r"REFUSING:[^\n]*\n(?:[^\n]*\n){0,6}?[^\n]*"
+                           r"(ModuleNotFoundError|ImportError)", out8):
+                # NOT a bare `"ModuleNotFoundError" in out8`: the hook's own ledger step prints
+                # `ledger audit SKIPPED: ModuleNotFoundError: No module named 'ledger_audit'` in
+                # any world that does not copy that module, so the bare test matched a line with
+                # nothing to do with the refusal and this world reported FAIL while working
+                # correctly. Scoped to the refusal's own output instead.
+                fails.append(f"world 8: the refusal is an import failure, not the defect -- the "
+                             f"world is incomplete and proves nothing: {out8[-200:]}")
+            git8("checkout", "--", "algorithms/rlvr_reward.py")
+            git8("reset", "-q")
+
+        # POSITIVE: an UNMAPPED file must not pull that subject's tests in. Without this, a hook
+        # that runs every test on every commit would pass the negative above.
+        with open(os.path.join(d8, "unrelated.txt"), "w") as fh:
+            fh.write("x\n")
+        git8("add", "unrelated.txt")
+        r8b = subprocess.run([os.path.join(hooks8, "pre-commit")], cwd=d8,
+                             capture_output=True, text=True, env=clean)
+        if "test_rlvr_reward_suite" in (r8b.stdout + r8b.stderr):
+            fails.append("world 8 positive: an unmapped file ran a mapped subject's test -- the "
+                         "map is not being consulted, every commit pays for every test")
+    finally:
+        shutil.rmtree(d8, ignore_errors=True)
 
     for f in fails:
         print("SELFTEST FAIL: " + f, file=sys.stderr)
