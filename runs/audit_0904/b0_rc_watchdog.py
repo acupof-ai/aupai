@@ -49,8 +49,19 @@ import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-FATAL = re.compile(r"Traceback \(most recent call last\)|CUDA error|out of memory|"
-                   r"CUDA out of memory|NCCL.*(?:error|timeout)|Killed", re.I)
+FATAL = re.compile(r"^FATAL:|^REFUSING:|Traceback \(most recent call last\)|CUDA error|out of memory|"
+                   r"CUDA out of memory|NCCL.*(?:error|timeout)|Killed", re.I | re.M)
+# `^FATAL:` AND `^REFUSING:` FIRST, because their absence is the defect this pattern already had.
+# Measured 2026-09-04 on my own arm A: run_ddp.sh printed
+#     FATAL: no free lane card in 30min -- ckpt_b0_headmix_armA.pt unscored
+#     FATAL: scoring failed for ckpt_b0_headmix_armA.pt (rc=1) -- exiting nonzero
+# and this watchdog wrote `rc=None because the log shows neither completion nor a fatal error`.
+# Two lines beginning with the literal word FATAL, and the pattern that decides whether a log
+# holds a fatal error did not contain it. I enumerated Python and CUDA failure SIGNATURES --
+# tracebacks, OOM, NCCL -- and omitted the repo's OWN failure marker, which is the one every
+# script here prints deliberately. A watchdog blind to the codebase's chosen word for "I failed"
+# reads a loud, correctly-reported failure as an unexplained disappearance.
+
 STEP = re.compile(r"^step (\d+)/(\d+)")
 
 
