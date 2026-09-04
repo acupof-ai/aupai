@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+# infra-layer: moves to aupai-infra at the split (6e ruling 2026-09-04).
+#
+# pod — run a command INSIDE the `sglang-test` static-pod container (the sglang
+# cu129 image, all 8 H20 GPUs visible) via the tn tunnel -> crictl exec. The
+# node's kubelet kubeconfig can only create mirror/static pods and cannot
+# `kubectl exec`, so we drive the container through crictl (node-local
+# containerd, no API RBAC).
+#
+#   pod 'nvidia-smi'
+#   pod 'cd /work/aupai && python3 scripts/exp.py list'
+#
+# VENDORED 2026-09-04. It lived only in ~/bin, untracked, while every session and
+# five tracked scripts depended on it -- a tree that does not contain its own
+# entry points cannot be split. `~/bin/pod` is now a symlink here; see the Pod
+# section of AGENTS.md for the one-time per-laptop install.
+#
+# THE CONTRACT'S exec VERB. It never interprets the command. Two refusals below
+# are the exception, and each exists because the failure is silent otherwise.
+set -euo pipefail
+
+# --view before anything else: it must not be swallowed into user_cmd. Prints which
+# filesystem the next command sees, because the wrong view does not error -- it
+# answers, with a world that looks stale rather than absent (AGENTS.md, measured
+# 2026-09-03: a host-view grep agreed with a second wrong reading, and two wrong
+# views agreeing is what made it convincing).
+if [ "${1:-}" = "--view" ]; then
+  echo "container view (crictl exec into ${POD_NAME:-sglang-test}): /work/aupai is the live tree."
+  echo "  host view is 'tn exec <cmd>' -- same paths, different directories."
+  exit 0
+fi
+
+user_cmd="${*:-bash -l}"
+pod_name="${POD_NAME:-sglang-test}"
+
+# REFUSAL: `cd X && ... &` — the cd does not survive into the background chain.
+# Measured (shape 166, e1 2026-09-04): three inline background forms produce NO
+# log file at all, not an empty one, so the redirect never ran. The container's
+# default cwd is /sgl-workspace/sglang, so a relative path in the backgrounded
+# half resolves under a tree that has no runs/. The working form is already in
+# scripts/launch_30b.sh:141 -- write the command to a file on the pod, then
+# `setsid bash runs/foo.sh > log 2>&1 &`.
+#
+# WHAT THIS DOES NOT CATCH, checked rather than assumed: the two 17-hour loops
+# live when this was written are NOT this shape. Their argv is
+# `bash -lc until grep -q ALL-DONE runs/x.log; do sleep 5; done` -- no cd at all
+# and no trailing `&`. Whatever was supposed to cd never appeared in the command,
+# so no inspection of the command string can see it. Those are class (b) in
+# env_hygiene, caught by resolving the target against the process's own cwd AFTER
+# it is running. A launch-time guard and a runtime sweep catch different halves,
+# and neither subsumes the other.
+if printf '%s' "$user_cmd" | grep -qE '(^|[;&|[:space:]])cd[[:space:]]' \
+   && printf '%s' "$user_cmd" | grep -qE '&[[:space:]]*$'; then
+  echo "pod: refusing a 'cd ... &' shape -- the cd does not reach the backgrounded half," >&2
+  echo "  so a relative path resolves under /sgl-workspace/sglang and the redirect silently" >&2
+  echo "  does not run (no log file at all, shape 166). Write the command to a file on the" >&2
+  echo "  pod and 'setsid bash runs/<name>.sh > runs/<name>.log 2>&1 &' instead" >&2
+  echo "  (scripts/launch_30b.sh:141). POD_ALLOW_BG_CD=1 overrides." >&2
+  [ -n "${POD_ALLOW_BG_CD:-}" ] || exit 1
+fi
+
+remote="cid=\$(crictl ps -q --name $(printf '%q' "$pod_name") --state Running 2>/dev/null | head -1); "
+remote+="if [ -z \"\$cid\" ]; then echo \"pod: $pod_name container not Running yet\"; crictl ps -a --name $(printf '%q' "$pod_name") 2>/dev/null | tail -2; exit 1; fi; "
+remote+="crictl exec \$cid bash -lc $(printf '%q' "$user_cmd")"
+exec tn exec "$remote"
