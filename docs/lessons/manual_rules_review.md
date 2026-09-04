@@ -53,6 +53,26 @@ The first pass searched four sources and missed 5 rules that live in `_MANUAL_RU
 - **MOVE to selftest contract (2)**: rules 19, 20
 - **DELETE (0)**: none — every rule has at least one dated incident in AGENTS.md prose or the other four sources
 
+## BRIEF assignment table (rule → kind)
+
+For de's `harness brief <kind>`. Rules 22+24 merged (same incident, same rule).
+
+| kind | rule | short name |
+|---|---|---|
+| gpu | 5 | lane holds one job at a time |
+| gpu | 8 | card claims live where the job runs |
+| pod | 7 | dropped tn tunnel doesn't end command |
+| pod | 10 | tn exec vs ~/bin/pod filesystem views |
+| pod | 13 | pod_push only ever ADDS |
+| pod | 18 | pod frozen from training launch until run ends |
+| net | 16 | what is reachable, measured with -4 |
+| net | 17 | reachability changes; fetcher carries mirror chain |
+| git | 22+24 | commit within 30 min / as soon as change works |
+| git | 23 | ruff format only on files you created |
+| git | 25 | stage by path, never git add -A/. |
+| git | 26 | harness task/friction write tree's ledger |
+| review | E | every delivery has a second reader |
+
 ## Notes
 
 - Rules 22 and 24 are near-duplicates. Both have 1 incident (the same friction:#48 event). If merged, the combined rule has 1 incident → BRIEF.
