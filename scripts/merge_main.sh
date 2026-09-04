@@ -91,9 +91,24 @@ for _ in $(seq 1 120); do
       _wt=$(git -C "$MAIN" worktree list --porcelain 2>/dev/null \
         | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,19)==b && w!="" {print w; exit}')
       if [ -n "$_wt" ] && [ -f "$_wt/scripts/file_claim.py" ]; then
-        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all --owner "$USER" 2>/dev/null \
+        # No --owner: file_claim's own default is LAUNCH_OWNER, else the worktree name, and both
+        # it and the claim dir derive from the script's own path -- so invoking $_wt's copy by
+        # absolute path already targets $_wt's claims as $_wt's owner. Passing $USER scoped
+        # nothing: it is `bytedance` for every session here, so one session's merge handed back
+        # every other session's claims.
+        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all 2>/dev/null \
           || echo "release-all failed")
         echo "merge_main: shared-file claims on $1: $_rel" >&2
+      else
+        # SAY SO WHEN NOTHING WAS RELEASED. The absence of the line above was the only signal,
+        # and it read as "merged after --delete" -- which is how the substr(16) bug survived:
+        # the release had never fired for any branch and silence looked like the normal case.
+        if [ -z "$_wt" ]; then
+          echo "merge_main: no worktree matched branch $1 -- shared-file claims NOT released;" >&2
+          echo "  release by hand in that tree, or the 6h TTL clears them." >&2
+        else
+          echo "merge_main: $_wt has no scripts/file_claim.py -- claims NOT released" >&2
+        fi
       fi
       exit 0
     fi
