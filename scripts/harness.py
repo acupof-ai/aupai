@@ -13692,6 +13692,30 @@ def _selftest_monitor_stop_rules():
     template = re.search(r"monitor_code = f'''(.*?)'''",
                          inspect.getsource(_arm_monitor), re.S).group(1)
 
+    # EVERY SLOT THE TEMPLATE USES MUST BE IN THE NAME MAP BELOW, checked here rather than
+    # discovered by the NameError. Measured 2026-09-05: adding `started = "{started}"` to the
+    # template broke this selftest at the eval, not at the assertion -- `NameError: name
+    # 'started' is not defined`, harness.py:13714 -- and it survived the commit because the
+    # pre-commit hook runs the SCOPED selftest, which changes nothing for a template edit and
+    # said so ("no CHECK function is changed ... THIS IS NOT A PASS"). A template with N slots
+    # has one obligation per slot per evaluator, and only the production path is exercised by
+    # running the tool; the failure mode is a crash in a DIFFERENT selftest, which reads as that
+    # selftest being broken. Named up front so the message says which slot, not which line.
+    # DOUBLED BRACES FIRST. The template is an f-string that GENERATES f-strings: the monitor's
+    # own log lines are written `{{time.strftime(...)}}` so the inner code gets one brace at
+    # runtime. Scanning the raw template counts those as slots -- measured, it reported `out` and
+    # `silent_limit`, both runtime names of the monitor process and neither interpolated at build
+    # time -- so an assertion on the raw scan would demand names this selftest must NOT supply.
+    _flat = template.replace("{{", "\x00").replace("}}", "\x01")
+    _slots = set(re.findall(r"\{([A-Za-z_][A-Za-z_0-9]*)[}:!]", _flat))
+    _supplied = {"pid", "log_path", "name", "os", "output_repr", "rc_repr", "started",
+                 "arm_repr", "HERE"}
+    _missing = _slots - _supplied
+    assert not _missing, (
+        f"the monitor template interpolates {sorted(_missing)}, which this selftest's name map "
+        f"does not supply -- add them to the dict below, or the eval raises NameError and reads "
+        f"as this selftest being broken rather than as an unsupplied slot")
+
     def one_pass(name, diag_rows):
         d = tempfile.mkdtemp(prefix="monstop_")
         try:
@@ -13714,6 +13738,7 @@ def _selftest_monitor_stop_rules():
             code = eval("f'''" + template + "'''", {}, {  # noqa: S307 -- the real template
                 "pid": 1, "log_path": log, "name": name, "os": os,
                 "output_repr": "None", "rc_repr": repr(os.path.join(runs, f"{name}.rc")),
+                "started": "2026-09-05 03:00",
                 "arm_repr": repr(bool(_arm_id(name))), "HERE": scripts})
             code = code.replace("while True:\n    time.sleep(60)", "for _ONCE in [0]:\n    pass")
             code = code.replace("    if settled():", "    if False:")
