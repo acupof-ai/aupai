@@ -249,7 +249,14 @@ def main():
         p = os.path.join(ROOT, a.preds_dir, fname)
         if not os.path.exists(p):
             sys.exit(f"REFUSING: {p} absent")
-        rows = [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
+        # THE HEADER ROW IS NOT A GENERATION. l1_fewshot writes an identity row first (its
+        # "_header" key, which no scored row carries), so every reader has to drop it: `r["gen"]`
+        # in analyse() would raise on it, and a version that used .get("gen", "") would silently
+        # add a zero-length generation to the length quantiles and the copy denominator. Filtered
+        # on the KEY, not on position, because a resumed file's header is not guaranteed to be the
+        # line a reader happens to see first.
+        rows = [d for d in (json.loads(l) for l in open(p, encoding="utf-8") if l.strip())
+                if "_header" not in d]
         out["cells"][f"{arm}-{lang}"] = analyse(rows, demo_text) | {"preds": fname}
 
     print(f"{'cell':<12} {'n':>5} {'copy%':>7} {'copyshr':>8} {'loop':>7} {'deg50':>6} {'deg/kc':>7} {'median':>7} "
