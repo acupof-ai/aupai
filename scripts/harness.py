@@ -4254,6 +4254,12 @@ _NON_EVAL_PREFIXES = {
     # registered. Bare ids leak nothing; the passages they name are the surface, and those are
     # covered by the lambada_zh_src entry.
     "lambada_zh_ids": "523 rows of bare {id} for lambada_zh_src, which is itself registered",
+    # fetch_stats.json records WHICH MIRROR served each file (AGENTS, Pod: every HF-hosted source
+    # lists [hf-mirror, modelscope, huggingface.co] and the fetcher writes which host answered).
+    # It sits inside data/eval/humaneval/ and data/eval/lambada_en/ beside the eval files it
+    # describes, so the glob finds it; it holds hosts and byte counts, no questions. Flagged on
+    # the pod's first run of this check (6e, 2026-09-04) -- the laptop has neither directory.
+    "fetch_stats": "the fetcher's per-host record (which mirror served each file), not eval data",
 }
 
 
@@ -9798,6 +9804,24 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             state, evidence = FAIL, f"the check itself raised: {type(e).__name__}: {e}"
         finally:
             signal.alarm(0)
+        # THE MIRROR OF THE auth=pod SKIP. A pod-authoritative check SKIPs on a laptop because the
+        # thing it reads is not here; a repo-authoritative check must SKIP on the POD for the same
+        # reason, and until now it FAILed instead. Measured on the pod 2026-09-04 (6e): 8 FAILs
+        # and launch_gate reading NO-GO, five of them auth=repo checks failing only because
+        # /work/aupai is not a git checkout -- tasks_closed_by_commit reported 86 of 86 commits
+        # "not a commit in this repo", shapes_table_covers_doc reported §75+ missing from a stale
+        # partial copy of the doc, ckpt_facts_sources_present found no listing because those files
+        # are outside the push scope. None of that is a defect in the repo; it is a check reading
+        # a tree that does not hold its subject.
+        #
+        # A blanket red is worse than no red: launch_gate weighs these, so five structural FAILs
+        # made every real signal on the pod unreadable, which is the permanent-red rule in AGENTS.
+        # SKIP names the reason so nobody reads it as "checked and fine".
+        if (state in (FAIL, WARN, TIMEOUT) and pod_drift.is_pod(root)
+                and EVIDENCE.get(name) == "repo"):
+            state = SKIP
+            evidence = (f"repo check, not authoritative here: {evidence[:110]}"
+                        if evidence else "repo check, not authoritative here")
         dur = time.time() - t0
         results.append((name, state, evidence, asserts, incident))
         if not quiet:
