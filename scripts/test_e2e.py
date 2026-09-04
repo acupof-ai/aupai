@@ -44,6 +44,24 @@ STEPS = int(os.environ.get("E2E_STEPS", "6"))
 # matching makes --d ambiguous (754b624).
 E2E_LAYERS = os.environ.get("E2E_LAYERS", "").strip()
 E2E_SHAPE = ["--layers", E2E_LAYERS] if E2E_LAYERS else []
+# DEPTH WAS THE ONLY OVERRIDABLE AXIS, and the gate compares all four (b0, 2026-09-04).
+# E2E_LAYERS could move --layers while E2E_RECIPE below pinned --dim 1024 --heads 8
+# --ffn_hidden 3072, so this test could produce a row for exactly one width. N7 Stage E
+# launches at d768 h6 ffn2304, which left the same two wrong options test_arch_L32.py's
+# comment records: record the width that ran and be refused, or hold a green for a model
+# nobody is training. gate_arch_tests reads LAUNCH_SHAPE's four keys, so all four have to
+# be reachable from the launch side or the gate is unsatisfiable for any other width.
+#
+# Read through launch_gate.LAUNCH_SHAPE, the same single source test_arch_L32.py uses --
+# not a second set of env vars here, which is the drift LAUNCH_MIX's docstring warns about.
+# E2E_LAYERS still wins over it (argparse takes the last occurrence, and E2E_SHAPE is
+# appended after E2E_RECIPE); it is kept because it predates this and callers use it.
+#
+# Import placement: launch_gate imports no torch, so this is safe above the
+# CUDA_VISIBLE_DEVICES line's constraint -- but it is placed after it regardless, because
+# the constraint is about import ORDER and a reader should not have to verify a
+# transitive import graph to know this line is harmless.
+from launch_gate import LAUNCH_SHAPE  # noqa: E402
 # The mix, same discipline as E2E_LAYERS. Default: the sample mix, which is what this test
 # has always run -- and running it is what let the 20B launch die at step 0 on a
 # KeyError('content') that e2e could not reach: data/corpus/sample holds zero holdout
@@ -59,8 +77,19 @@ MIX = E2E_MIX or "data/mix_sample.json"
 # E2E_LAYERS comment above promises; recipe_provenance's 32 belongs to the 500M run and would
 # silently turn an 8-step smoke test into a 500M one. E2E_SHAPE is appended AFTER these, so
 # E2E_LAYERS still overrides the depth (argparse takes the last occurrence).
+# WHEN LAUNCH_SHAPE_JSON IS UNSET, LAUNCH_SHAPE IS THE 493.6M DEFAULT (d1024 L32) -- and
+# using it here unconditionally would silently turn this 6-step smoke test into a 500M one,
+# which is the exact hazard the comment below was written about. So the presence of the
+# variable selects, and only its values are read: set -> the launch shape, unset -> the
+# historic d1024 L12 h8 ffn3072 this test has always run. Testing presence is not a second
+# copy of the shape; the numbers still come from one place.
+_SHAPE = (LAUNCH_SHAPE if os.environ.get("LAUNCH_SHAPE_JSON", "").strip()
+          else {"d": 1024, "layers": 12, "heads": 8, "ffn_hidden": 3072})
 E2E_RECIPE = [
-    "--dim", "1024", "--layers", "12", "--heads", "8", "--ffn_hidden", "3072",
+    "--dim", str(_SHAPE["d"]),
+    "--layers", str(_SHAPE["layers"]),
+    "--heads", str(_SHAPE["heads"]),
+    "--ffn_hidden", str(_SHAPE["ffn_hidden"]),
     "--accum", "1", "--lr_scale", "1.0", "--warmdown", "0.65", "--anneal_frac", "0.1",
     "--no-grad_ckpt", "--save_every", "1000",
 ]

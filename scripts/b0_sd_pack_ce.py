@@ -29,7 +29,7 @@ rescore everything against a different reference. That is a ruling for the fix o
 line, 6e rules), and this script deliberately stops at the measurement.
 
 USAGE
-    CUDA_VISIBLE_DEVICES=4 python3 scripts/b0_sd_pack_ce.py
+    CUDA_VISIBLE_DEVICES=<the granted card> python3 scripts/b0_sd_pack_ce.py
 """
 import os
 import sys
