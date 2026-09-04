@@ -81,3 +81,8 @@
 {"id": "MT-13", "ruling": "accepted", "by": "fb", "note": "accepted S3; unconditional vocab_id warning when cfg=None"}
 {"id": "E18", "ruling": "accepted", "by": "fb", "note": "accepted S2 (verified :281/:304 stderr-or-stdout, :387 correct; 6/10 domain_bpb rows vocab-warning-only); affected: domain_bpb, humaneval_bpb 1 path, minimal_pairs all failures, l1_fewshot SIGTERM rows"}
 {"id": "PR-11", "ruling": "accepted", "by": "fb", "note": "accepted S3 (verified 3958 zombies of 4305, 3 endless until-loops); unaccounted list actioned post-audit by exact PID; host-vs-container PID namespace generalisation to shapes doc post-audit"}
+{"id": "DL-21", "ruling": "accepted", "by": "fb", "note": "accepted S2; prior=defect-fix is the majority spelling (83/120), a fact FILE is refused while the literal passes; fold de-45 post-audit"}
+{"id": "DL-22", "ruling": "accepted", "by": "fb", "note": "accepted S2; merge_main.sh gate present or absent by main timing (ff vs three-way); post-audit fix: --no-ff so the hook always fires"}
+{"id": "E13", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E14", "ruling": "accepted", "by": "fb", "note": "accepted S2; four measured contamination facts cite /tmp scripts on neither machine; status stays measured, boundary gains instrument-lost, cont.scanner_idf_weighting queued for rebuild"}
+{"id": "E15", "ruling": "accepted", "by": "fb", "note": "accepted S2; laptop-derived Z timestamps were +0800; conclusions survive; timezone sweep post-audit"}
