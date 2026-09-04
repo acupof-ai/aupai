@@ -1,0 +1,122 @@
+
+DISCARDED 74 episode(s): 5 1 span(s) over 512 chars, 1 13 span(s) over 512 chars, 2 2 span(s) over 512 chars, 2 3 span(s) over 512 chars, 1 5 span(s) over 512 chars, 1 6 span(s) over 512 chars, 62 REAL_CREDENTIAL
+  A REAL_CREDENTIAL drops the episode -- a masked line still teaches the model that a credential belongs there. An over-limit opaque span drops it because redacting >512 chars deletes content while leaving the episode looking intact.
+  ['env-credential-assignment']  40 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  57 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  71 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  153 turns  -Users-<USER>-code-agent-infer  [3 span(s) over 512 chars]
+  ['cli-credential-flag']  44 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  5 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['GitHub Token']  49 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['IBM Cloud IAM Key']  5 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  184 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  52 turns  -Users-<USER>-code-agent-infer  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  247 turns  -Users-<USER>-code-ai-digest  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  4 turns  -Users-<USER>-code-arle-app-demo-ArleChat  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  57 turns  -Users-<USER>-code-arle-app-demo-ArleChat  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  332 turns  -Users-<USER>-code-arle-app-demo-ArleChat  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  154 turns  -Users-<USER>-code-arle-app-demo-ArleChat  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  102 turns  -Users-<USER>-code-arle-app-demo-cupai-ui  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  33 turns  -Users-<USER>-code-aupai  [1 span(s) over 512 chars]
+  ['env-credential-assignment']  27 turns  -Users-<USER>-code-cha  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  23 turns  -Users-<USER>-code-cha  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  139 turns  -Users-<USER>-code-cha  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  120 turns  -Users-<USER>-code-clean-my-repo  [1 span(s) over 512 chars]
+  ['Private Key']  79 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  11 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  14 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  11 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  12 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  18 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  113 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  155 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  75 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  50 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  20 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  14 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  11 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  72 turns  -Users-<USER>-code-eic  [1 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  12 turns  -Users-<USER>-code-eic  [1 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  161 turns  -Users-<USER>-code-eic  [3 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  54 turns  -Users-<USER>-code-eic  [6 span(s) over 512 chars]
+  ['cli-credential-flag']  32 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  108 turns  -Users-<USER>-code-eic  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  92 turns  -Users-<USER>-code-eic  [2 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  619 turns  -Users-<USER>-code-eic  [5 span(s) over 512 chars]
+  ['Opaque Span Over Limit']  444 turns  -Users-<USER>-code-eic  [13 span(s) over 512 chars]
+  ['cli-credential-flag']  23 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  9 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  176 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  93 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  139 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  12 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  378 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  46 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  96 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  248 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  68 turns  -Users-<USER>-code-lessons  [2 span(s) over 512 chars]
+  ['cli-credential-flag']  48 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  128 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  85 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  31 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  87 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  59 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  183 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  6 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['env-credential-assignment']  183 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  102 turns  -Users-<USER>-code-lessons  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  74 turns  -Users-<USER>-code-llmserver  [REAL_CREDENTIAL]
+  ['Opaque Span Over Limit']  34 turns  -Users-<USER>-code-llmserver  [1 span(s) over 512 chars]
+  ['cli-credential-flag']  40 turns  -Users-<USER>-code-sglang-iaas  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  87 turns  -Users-<USER>-code-uvos  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  28 turns  -Users-<USER>-code-uvos  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  104 turns  -Users-<USER>-code-uvos  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  65 turns  -Users-<USER>-code-veGrid  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  220 turns  -Users-<USER>-code-veGrid  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  48 turns  -Users-<USER>-code-veGrid  [REAL_CREDENTIAL]
+  ['cli-credential-flag']  12 turns  -Users-<USER>-code-veGrid  [REAL_CREDENTIAL]
+  Content is not printed or written anywhere. The source files still hold these; that is a separate problem for whoever owns the machine.
+
+REDACTED 2631 opaque span(s) in 366 kept episode(s) (3.7% of episodes, 2631 span(s) over 44549 turns), each replaced with [REDACTED-CREDENTIAL]. These episodes are KEPT: an opaque hit needs no credential-vs-identifier judgment, because replacing an identifier costs one span and dropping the episode costs the episode.
+   167 span(s)  37 turns  -Users-<USER>-code-eic
+   119 span(s)  662 turns  -Users-<USER>-code-agent-infer
+    98 span(s)  171 turns  -Users-<USER>-code-eic
+    86 span(s)  22 turns  -Users-<USER>-code-eic
+    73 span(s)  46 turns  -Users-<USER>-code-sglang-iaas
+    63 span(s)  195 turns  -Users-<USER>-code-agent-infer
+    52 span(s)  408 turns  -Users-<USER>-code-sglang-iaas
+    50 span(s)  93 turns  -Users-<USER>-code-lessons
+    47 span(s)  457 turns  -Users-<USER>-code-agent-infer
+    44 span(s)  555 turns  -Users-<USER>-code-agent-infer
+  ... 356 more
+  token_filter: 9060 rows in 66.4s, 246 MB encoded (3.71 MB/s), 4237 over 4096 tokens
+staged 4823 rows -> data/sft/agentic_v14.jsonl.unscanned (not yet scanned for secrets)
+
+secret scan gate: 0 real-credential row(s), 2 allowed type(s) ['Base64 High Entropy String', 'Secret Keyword'] over 16,288,781 chars
+Traceback (most recent call last):
+  File "/Users/bytedance/code/aupai-e1/scripts/build_agentic_sft.py", line 1855, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/bytedance/code/aupai-e1/scripts/build_agentic_sft.py", line 1826, in main
+    os.replace(staged, a.out)
+FileNotFoundError: [Errno 2] No such file or directory: 'data/sft/agentic_v14.jsonl.unscanned' -> 'data/sft/agentic_v14.jsonl'
+     251  opener the model cannot act on (image-only / slash command)
+      245  text contains a literal ChatML marker (tokenizes as the real token)
+       94  every assistant turn is a non-answer
+       17  over the memory ceiling (not an admission criterion)
+       15  an assistant turn holds an unparsed tool invocation as text
+      866  near-duplicate of an earlier episode (same opener and answer)
+top projects:
+     3628  -Users-<USER>-code-agent-infer  (36.3%)
+     1809  -Users-<USER>-code-aupai  (18.1%)
+      936  -Users-<USER>-code-lessons  (9.4%)
+      674  -Users-<USER>-code-sglang-iaas  (6.7%)
+      647  -Users-<USER>-code-tileRL  (6.5%)
+      469  -Users-<USER>-code-eic  (4.7%)
+      428  -Users-<USER>-code-arle-app-demo-ArleChat  (4.3%)
+      208  -Users-<USER>-code-ai-passport  (2.1%)
+
+secret scan: 2 type(s) over 16,288,781 chars ['Base64 High Entropy String', 'Secret Keyword']
+token filter (4096): 4823 of 9060 fit (53.2%), 4237 over
+tokens         7,119,919 in longest pairs (mean 1476, max 4095)
+build exit=0
