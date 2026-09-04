@@ -429,8 +429,149 @@ class HeadMix(nn.Module):
         return self.kda(x, cu) + self.mla(x, cu)
 
 
+class ProductKeyMemory(nn.Module):
+    """A sparse memory table read by product-key lookup, ONE pool shared by several blocks.
+
+    WHY THIS EXISTS (charter docs/standards/memory_layers_0905.md, user order 2026-09-04T16:44Z).
+    N2 measured the params arm winning 0.0108 nat at equal compute; N7/Stage E measured reusing
+    weights buying nothing; the head-hybrid lost 0.087 nat. The one variable that moved loss was
+    how many parameters a token can reach, so this adds parameters at near-zero FLOPs: a token
+    touches top_k of V values, not all of them.
+
+    PRODUCT KEYS, and they are the whole reason a 1M-value table is affordable to search. A flat
+    table needs V dot products per token (1,048,576 at M1). Product keys factor the query into two
+    halves and the key space into two sub-tables of sqrt(V) each, so the search is 2*sqrt(V) = 2048
+    dot products plus a top_k x top_k combine. The cost is that the searchable set is a Cartesian
+    product rather than V free vectors -- a real restriction on what the table can represent, and
+    the reason this is a known architecture (Lample et al. 2019, Meta memory+) rather than a
+    shortcut invented here.
+
+    SHARED ACROSS BLOCKS, ONE POOL. Layers 3, 6, 9 all read THIS module. The alternative (one pool
+    per layer) triples the parameters for the same charter line and makes the arm a test of two
+    changes. Sharing is also what makes the diagnostics meaningful: "fraction of values touched"
+    is a statement about one table, not an average over three.
+
+    PARALLEL TO THE FFN, NOT REPLACING IT: `h = h + ffn(n2(h)) + mem(n_mem(h))`. The dense
+    parameter count therefore equals the control's EXACTLY, which is the property the whole
+    experiment rests on -- if the FFN were replaced, a loss delta would confound "memory helps"
+    with "less FFN hurts". prereg field dense_params_equal_control is that assertion, recomputed
+    on the launch sha.
+
+    KEYS AND VALUES ARE OUTSIDE FP8 AND MUON, by charter. Muon orthogonalises 2D matrices, which
+    is meaningless for an embedding table read by index -- and _fp8_ok would otherwise convert the
+    key projection. train.build_optimizers routes anything named `.mem.` to its own Adagrad group
+    (dense state, one moment: 16 GiB at 2048^2 against SparseAdam's 32 GiB, measured before
+    choosing, 4c's ruling 2026-09-05).
+
+    THE VALUE TABLE IS AN nn.Embedding WITH sparse=True so its grad arrives as a sparse COO
+    tensor holding only the touched rows. That is what lets DDP exchange touched indices instead
+    of all-reducing a 4.3B-row table, and it is why the optimizer must be one that accepts sparse
+    grads -- Adagrad and SparseAdam do, AdamW does not.
+    """
+
+    def __init__(self, n_values, d, top_k=32, key_dim=None, sparse=True):
+        super().__init__()
+        side = int(round(math.isqrt(n_values)))
+        if side * side != n_values:
+            raise ValueError(
+                f"product-key memory needs a SQUARE value count so the two sub-tables are equal: "
+                f"got n_values={n_values}, whose isqrt is {side} ({side * side} != {n_values}). "
+                f"Use a perfect square (M1 1024^2 = 1048576, M2 512^2 = 262144, "
+                f"M3 2048^2 = 4194304)."
+            )
+        if top_k > side:
+            raise ValueError(
+                f"top_k={top_k} exceeds the per-half candidate count sqrt(n_values)={side}: each "
+                f"half can return at most {side} keys, so a larger top_k silently returns fewer "
+                f"than requested and the combine below would index out of range."
+            )
+        self.n_values, self.side, self.top_k = n_values, side, top_k
+        # key_dim is the HALF-query width, so the full query is 2*key_dim. Default d//2 keeps the
+        # query projection square (d -> d) rather than growing it.
+        self.key_dim = key_dim if key_dim is not None else d // 2
+        self.n_mem = RMSNorm(d)
+        # ONE query head (charter). Projects to both halves at once; the split is a view.
+        self.query = nn.Linear(d, 2 * self.key_dim, bias=False)
+        # Two key sub-tables, each sqrt(V) x key_dim. These are the searchable half-keys.
+        self.keys = nn.Parameter(torch.randn(2, side, self.key_dim) * (self.key_dim ** -0.5))
+        # The table itself. padding_idx unset: every row is a real value.
+        self.values = nn.Embedding(n_values, d, sparse=sparse)
+        nn.init.normal_(self.values.weight, std=d ** -0.5)
+        # Output gate (Meta memory+ style): the read is projected and silu-gated so the block can
+        # learn to ignore the memory rather than being forced to add it.
+        self.gate = nn.Linear(d, d, bias=False)
+        self.out = nn.Linear(d, d, bias=False)
+        # Diagnostics, charter readout 4: which rows were touched since the last read of this
+        # counter. A bool buffer rather than a set, so it costs V bits and no python.
+        # NOT persistent: it is a window counter, not model state, and saving it would make two
+        # checkpoints of the same weights differ.
+        self.register_buffer("touched", torch.zeros(n_values, dtype=torch.bool), persistent=False)
+        self.register_buffer("last_entropy", torch.zeros(()), persistent=False)
+
+    def forward(self, x):
+        B, T, d = x.shape
+        h = self.n_mem(x)
+        q = self.query(h).view(B * T, 2, self.key_dim)
+        # Each half scores its own sqrt(V) keys and keeps top_k.
+        s0 = torch.einsum("nk,ck->nc", q[:, 0], self.keys[0])
+        s1 = torch.einsum("nk,ck->nc", q[:, 1], self.keys[1])
+        v0, i0 = s0.topk(self.top_k, dim=-1)
+        v1, i1 = s1.topk(self.top_k, dim=-1)
+        # The Cartesian combine: top_k x top_k candidate pairs, whose scores add because the full
+        # key is the concatenation of the two halves and the query is split to match.
+        cand = (v0[:, :, None] + v1[:, None, :]).view(B * T, self.top_k * self.top_k)
+        idx = (i0[:, :, None] * self.side + i1[:, None, :]).view(B * T, self.top_k * self.top_k)
+        w, sel = cand.topk(self.top_k, dim=-1)
+        flat = idx.gather(1, sel)                       # (B*T, top_k) rows of the table
+        w = torch.softmax(w.float(), dim=-1).to(x.dtype)
+        vals = self.values(flat)                        # (B*T, top_k, d)
+        read = torch.einsum("nkd,nk->nd", vals, w).view(B, T, d)
+        if not self.training or torch.is_grad_enabled():
+            with torch.no_grad():
+                self.touched[flat.reshape(-1)] = True
+                p = w.float().clamp_min(1e-9)
+                self.last_entropy = -(p * p.log()).sum(-1).mean()
+        return self.out(F.silu(self.gate(h)) * read)
+
+    def diagnostics(self, reset=True):
+        """Charter readout 4: (touched_fraction, topk_entropy, key_usage_gini) for the window.
+
+        Reset by default because the readout is "fraction touched IN THE WINDOW": a cumulative
+        counter converges to 1.0 and stops being able to see a collapse, which is the one thing
+        this diagnostic exists to catch (a pool below 20% at step 1000 stops the arm).
+        """
+        n = int(self.touched.sum())
+        frac = n / self.n_values
+        ent = float(self.last_entropy)
+        # Gini over the two key sub-tables' usage is not derivable from `touched` (a bool tells
+        # us reached-or-not, not how often), so it is reported as the row-count concentration we
+        # CAN see: how far the touched set is from uniform coverage of the product space. Named
+        # honestly rather than called a Gini it is not.
+        if reset:
+            self.touched.zero_()
+        return {"touched_fraction": frac, "touched_rows": n, "n_values": self.n_values,
+                "topk_entropy": ent, "topk_entropy_max": math.log(self.top_k)}
+
+
+def _mem_layers(cfg):
+    """Which block indices read the shared memory pool: cfg.mem_layers, or the charter's 3,6,9.
+
+    Accepts a list or a comma string, because the flag arrives from argv as a string and from a
+    saved cfg as whatever it was saved as. Parsed in one place so a checkpoint written from a
+    string and one written from a list produce the SAME architecture -- two spellings of the same
+    arm reading as two arms is the shape that made a ledger knob look like a 1/sqrt(L) rule.
+    """
+    v = getattr(cfg, "mem_layers", None)
+    if v is None or v == "":
+        return [3, 6, 9]
+    if isinstance(v, str):
+        return [int(t) for t in v.replace(" ", "").split(",") if t]
+    return [int(t) for t in v]
+
+
 class Block(nn.Module):
-    def __init__(self, cfg, is_attn=False):
+
+    def __init__(self, cfg, is_attn=False, memory=None):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
         # head_mixed replaces the layer-level alternation entirely: EVERY block gets both mixers,
@@ -440,6 +581,12 @@ class Block(nn.Module):
         self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
         self.ffn = SwiGLU(cfg)
+        # THE SHARED POOL IS NOT REGISTERED AS A CHILD, deliberately. Assigning it to an attribute
+        # would register it once per block that reads it (layers 3, 6, 9), so state_dict would
+        # carry three copies of a table up to 4.3B rows and named_parameters would hand the
+        # optimizer the same tensor three times. Held inside a list so nn.Module.__setattr__ does
+        # not see a Module: HybridLM owns it and registers it exactly once.
+        self._mem = [memory] if memory is not None else []
         attn_res = getattr(cfg, "attn_res", False)
         dyn_q = getattr(cfg, "attn_res_dyn_q", False)
         _fused = getattr(cfg, "attn_res_fused", False)
@@ -449,7 +596,11 @@ class Block(nn.Module):
 
     def forward(self, x, cu=None):
         x = x + self.mixer(self.n1(x), cu)
-        return x + self.ffn(self.n2(x))
+        # PARALLEL TO THE FFN, both branches reading the same x: `h = h + ffn(n2(h)) + mem(h)`.
+        # The memory is added, never substituted, so the dense parameter count equals the
+        # control's exactly -- the property the whole experiment rests on.
+        h = x + self.ffn(self.n2(x))
+        return h + self._mem[0](x) if self._mem else h
 
     def sublayers(self, cu=None):
         return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))
@@ -495,9 +646,61 @@ class HybridLM(nn.Module):
                 f"(KDA handles position). The model would have no position information. "
                 f"Use attn_every >= 2, or add RoPE to GatedMLA first."
             )
+        # ONE SHARED MEMORY POOL, owned here so it is registered exactly once no matter how many
+        # blocks read it (see Block._mem). `mem_values` 0 or absent means no memory: a Cfg from
+        # before this field existed is legitimately the control, and the control must construct
+        # bit-identically to how it trained.
+        _mv = int(getattr(cfg, "mem_values", 0) or 0)
+        if _mv:
+            _layers = _mem_layers(cfg)
+            bad = [i for i in _layers if not 0 <= i < cfg.layers]
+            if bad:
+                raise ValueError(
+                    f"mem_layers names layer(s) {bad} outside 0..{cfg.layers - 1}. A memory layer "
+                    f"index that does not exist would silently attach to nothing and the arm "
+                    f"would train as the control while its flags said otherwise."
+                )
+            self.memory = ProductKeyMemory(
+                _mv, cfg.d,
+                top_k=int(getattr(cfg, "mem_top_k", 32)),
+                sparse=bool(getattr(cfg, "mem_sparse", True)),
+            )
+            self.mem_layers = sorted(set(_layers))
+            # MEMORY + attn_res IS HANDLED IN BOTH PATHS, and it took a defect to get here.
+            # _body has two paths: the plain one calls Block.forward (which adds the memory) and
+            # the attn_res one iterates Block.sublayers(), which returns only (ar1, n1, mixer) and
+            # (ar2, n2, ffn) -- NO memory branch. Until 2026-09-05 the second path silently
+            # skipped the memory, so an arm would have trained as the CONTROL while every flag,
+            # log line and ledger row said it carried a 1B-parameter table, and the primary
+            # readout would have reported a null it never tested. Found by reading the traceback
+            # of the first CPU run rather than by reasoning: the stack went through sublayers,
+            # which is where the memory is not.
+            #
+            # It is not hypothetical: Cfg.attn_res DEFAULTS TO TRUE and the control trained with
+            # it on (ck["cfg"] of ckpt_b0_headmix_armA.pt reads attn_res True, and 50 AttnRes
+            # tensors are in its weights). So the arms must run attn_res too -- turning it off
+            # would change the control. _body's attn_res branch now adds the memory per block as a
+            # plain residual outside the AR mechanism (4c's ruling), which is why this no longer
+            # raises. What still raises is grad_ckpt on that path, below: the memory add sits
+            # outside the checkpointed fn, so the two have never been run together.
+            if getattr(cfg, "attn_res", False) and getattr(cfg, "grad_ckpt", False):
+                raise ValueError(
+                    "mem_values with BOTH attn_res and grad_ckpt is refused. On the attn_res path "
+                    "the memory add sits outside the checkpointed fn, so under recomputation the "
+                    "memory branch is evaluated on the forward tape only -- and a hook or counter "
+                    "that does not fire in the recompute has already cost a day here "
+                    "(hooks-dont-fire-in-recompute). The charter's arms reuse the control's line, "
+                    "which carries --no-grad_ckpt, so this combination is not needed. Measure it "
+                    "on a card before enabling it, and check the diagnostics counter specifically: "
+                    "`touched` is written under no_grad and would double-count or vanish."
+                )
+        else:
+            self.memory, self.mem_layers = None, []
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
-            [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1)) for i in range(cfg.layers)]
+            [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
+                   memory=(self.memory if i in self.mem_layers else None))
+             for i in range(cfg.layers)]
         )
         self.norm = RMSNorm(cfg.d)
         # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
@@ -645,7 +848,7 @@ class HybridLM(nn.Module):
             return x
         # Block AttnRes (Fig. 2): `done` = completed block reps, `partial` = intra-block running sum
         done, partial, n = [Source.of(x)], [], 0
-        for b in self.blocks:
+        for bi, b in enumerate(self.blocks):
             for ar, norm, f in b.sublayers(cu):
                 h = ar(done + partial)
                 # AttnRes stays outside the checkpoint: only [B,T] logits on the tape, never [B,T,D]
@@ -655,6 +858,28 @@ class HybridLM(nn.Module):
                 n += 1
                 if n in self.ar_block_ends:
                     done, partial = done + partial, []
+            # THE MEMORY IN THE attn_res PATH, placed here by 4c's ruling 2026-09-05 and NOT a
+            # sublayer. The control trained with attn_res True (ck["cfg"] of
+            # ckpt_b0_headmix_armA.pt, and 50 AttnRes tensors are in its weights, 51,200 params =
+            # 0.0214% of the model), so the arms must run it too -- turning it off would change the
+            # control and break the block-paired comparison the primary readout depends on.
+            #
+            # OUTSIDE THE AR MECHANISM, deliberately: a plain residual add after the block's
+            # AR-combined sublayers. The memory neither reads the depth-attention's `done`/`partial`
+            # sources nor becomes one of them, so what a depth-attention read of a memory branch
+            # would mean stays an open question rather than an implicit answer. Adding it as a
+            # third sublayer would have made this arm a test of two changes.
+            #
+            # The read is on the block's OUTPUT (the AR-combined running sum), which is this path's
+            # equivalent of the plain path's post-FFN x. Both paths therefore compute
+            # h = h + mem(norm(h)) with the memory's own RMSNorm inside ProductKeyMemory.
+            if self.memory is not None and bi in self.mem_layers:
+                cur = partial[0].v if partial else done[-1].v
+                upd = cur + self.memory(cur)
+                if partial:
+                    partial = [Source.of(upd)]
+                else:
+                    done = done[:-1] + [Source.of(upd)]
         return self.final_ar(done + partial)
 
     def lm_logits(self, hidden):
