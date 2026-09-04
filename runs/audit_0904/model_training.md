@@ -90,8 +90,12 @@ controller asked for; it is a size judgement only, not a ruling that the artifac
 | `runs/n7_domain.jsonl` | 55,804 | **YES** | `docs/standards/roadmap_0903.md:24` (Stage A) — a DOC citation, not a fact; supplied by e1 |
 | `runs/warmup_smoke*.log` (3 files) | 17,781 | **YES** | `eff.warmup_absolute_not_fractional` |
 | `runs/milestone_p324_v2.jsonl` | 1,882 | **YES** | `eff.light_profile_wall` |
+| `runs/p500m_20b_0902.log` | 65,990 | no | `eff.p500m_20b_throughput_and_dips` (config) — from 58's sweep |
+| `runs/eval_p500m_step1500_base.log` | 5,247 | **YES** | `eff.p500m_20b_throughput_and_dips` (config) — from 58's sweep |
+| `runs/eval_p500m_step1500_l1.log` | 40 | **YES** | `eff.p500m_20b_throughput_and_dips` (value + config) — from 58's sweep |
+| `runs/ppl_step1500_v2.log` | **0** | **YES** | `eff.p500m_20b_throughput_and_dips` (value + config) — from 58's sweep |
 
-**Three of eleven are committable, and they are 75,467 bytes together.** The other eight are
+**Six of the fifteen rows are committable, and they are 80,754 bytes together.** The other eight are
 checkpoints and profiler traces — 9.9 GB in total, one of them 415 MB — so "pull them into the
 repo" is not available for the paths that matter most. That asymmetry is the finding: the
 citations that CANNOT be committed are exactly the ones carrying five, four and two facts each,
@@ -103,6 +107,29 @@ that was measured, or an explicit convention that a pod path is a legitimate cit
 `facts_well_formed` reports it as pod-resident rather than staying silent. Right now a reader on
 main cannot distinguish "this artifact is on the pod" from "this artifact is gone", and MT-8 shows
 both cases exist.
+
+
+**MT-2b (S3, and it corrects a stronger claim).** 58's sweep — over `source`, `config`,
+`uncertainty` AND `boundary`, where mine read `source` only — found four paths mine missed, all
+four confirmed by my own `stat` on the pod. Two are near-empty: `runs/ppl_step1500_v2.log` is
+**0 bytes** and `runs/eval_p500m_step1500_l1.log` is **40 bytes** (one header line, no result).
+58 reads the zero-byte one as a citation that "cannot be satisfied anywhere". **It can, and this
+is worth stating precisely because the opposite reading would retract a sound fact.**
+`eff.p500m_20b_throughput_and_dips` cites these two files for their **mtime**, not their contents:
+it attributes throughput dips to eval jobs contending for the cards, and the evidence is *that a
+job wrote a file at that instant*. I read both: `ppl_step1500_v2.log` mtime **07:25:52** and
+`eval_p500m_step1500_l1.log` mtime **06:29:12**, exactly the two timestamps the fact's `value`
+names, and the l1 log's single line is verbatim the string the fact quotes
+(`L1 few-shot: 3 demos, 497 eval problems`). An empty file with a trustworthy mtime is sufficient
+evidence for a contention claim. So the finding here is narrower than 58's: the two files are
+**pod-only**, which is MT-2, and separately the l1 eval **produced no result** — a fact about that
+eval, not about this fact's support.
+
+Also recording 58's instrument defect because it is the same class as my own tokeniser problem: a
+regex alternating `json|jsonl` matches `.json` first and truncates every `.jsonl` path, which
+reported 21 absent paths of which 15 were ledgers sitting in the repo. Their published 7 is the
+corrected count. Two independent sweeps, two tokeniser defects, both over-reporting — the
+enumeration step is where this class of audit fails, not the checking step.
 
 ### 4b. Checked and SOUND — recorded so absence of a finding is not read as absence of a check
 
