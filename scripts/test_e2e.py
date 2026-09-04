@@ -396,12 +396,26 @@ def main():
         # -- ck["cfg"], not the flag that was requested. The flag says what was asked
         # for; the checkpoint says what was built, and only the second is evidence. This
         # test requires a GPU, so a run that reaches here ran real kernels.
-        from launch_tests import record_launch_test
+        #
+        # NOT WRITTEN HERE ANY MORE. This point is before the `finally`, and stage 11 runs
+        # IN the finally -- so a stage-11 AssertionError landed after the row already said
+        # "pass", and runs/launch_tests.json certified a run that exited nonzero (b0
+        # measured it at the Stage E shape, 6e 2026-09-04). A record written before the
+        # last stage is a claim about a run that has not finished.
+        #
+        # The row now carries `stages`, and it is written in the finally after stage 11 --
+        # once, with the count that actually passed. Saying WHICH stages a pass covers is
+        # the honest form: a reader of the record can see whether the resume join is part
+        # of it, which is what 6e's ruling ("arm 2 may launch on stages 1-10") needed a
+        # human to say out loud.
+        from launch_tests import record_launch_test  # noqa: F401 -- used in the finally
 
         cf = ck["cfg"]
-        record_launch_test(__file__, "pass",
-                           {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
-                           real_kernel=True, mix=MIX)
+        _record = {
+            "shape": {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
+            "mix": MIX,
+            "stages": 10,
+        }
         return 0
     finally:
         # STAGE 11 ONLY IF THE RUN GOT FAR ENOUGH TO NEED IT. This `finally` runs on the
@@ -420,41 +434,89 @@ def main():
             print("\n[11] skipped: the run refused before a checkpoint existed, so there "
                   "is nothing to attempt a resume from (and nothing was written)")
         else:
-            stage(11, "resume from the step-less final save refuses (fb 2026-09-02)")
-        # The end-of-run save writes neither step nor opt, so a resume from it would
-        # silently restart at step 0 with a cold optimizer. The guard is field-based,
-        # not filename-based: milestone hardlinks without stepN in the name pass.
-        p = subprocess.run(
-            [
-                sys.executable,
-                "train.py",
-                "--name",
-                name + "_resume",
-                "--mix",
-                MIX,
-                "--resume",
-                ckpt,
-                "--max_steps",
-                "1",
-                "--batch",
-                "1",
-                "--seq",
-                "512",
-                "--warmup",
-                "2",
-                *E2E_RECIPE,
-                *E2E_SHAPE,
-            ],
-            cwd=ROOT,
-            capture_output=True,
-            text=True,
-            timeout=900,
-        )
-        assert p.returncode != 0 and "refusing to resume" in (p.stdout + p.stderr), (
-            f"resume from step-less {ckpt} did not refuse (rc={p.returncode})\n"
-            f"{p.stdout[-1200:]}\n{p.stderr[-1200:]}"
-        )
-        print("    refused as designed")
+            stage(11, "resume from the run-end save SUCCEEDS; a field-less checkpoint refuses")
+            # INVERTED 2026-09-04 (6e, on b0's Stage E measurement). This asserted that a
+            # resume from the run-end .pt REFUSES, which was true when the end-of-run save
+            # wrote neither step nor opt. c9011022 (de-31) changed that on purpose: the
+            # run-end save now passes both, and a check asserts it by AST. So the old
+            # assertion tested that my own fix had not happened -- a stale expectation that
+            # reads as a failing guard.
+            #
+            # Both directions, because the guard is FIELD-BASED (train.py:2229, `missing =
+            # [k for k in ("step", "opt") if k not in ck]`) and the point is which fields a
+            # checkpoint carries, not which filename it has: the run-end save is now a valid
+            # resume target, and the refusal still has to fire on a checkpoint that really
+            # lacks the fields. Asserting only the success half would let the guard be
+            # deleted with nothing going red.
+            def _resume(target, tag):
+                return subprocess.run(
+                    [
+                        sys.executable, "train.py",
+                        "--name", name + tag,
+                        "--mix", MIX,
+                        "--resume", target,
+                        "--max_steps", "1",
+                        "--batch", "1",
+                        "--seq", "512",
+                        "--warmup", "2",
+                        *E2E_RECIPE,
+                        *E2E_SHAPE,
+                    ],
+                    cwd=ROOT, capture_output=True, text=True, timeout=900,
+                )
+
+            import torch as _torch
+
+            _ck = _torch.load(ckpt, map_location="cpu", weights_only=False)
+            assert "step" in _ck and "opt" in _ck, (
+                f"the run-end save {ckpt} carries {sorted(k for k in _ck if k != 'model')} "
+                f"-- c9011022 makes it pass step and opt, so this test's premise is gone "
+                f"and the resume below would be testing something else"
+            )
+            p = _resume(ckpt, "_resume")
+            assert p.returncode == 0, (
+                f"resume from the run-end save FAILED (rc={p.returncode}). Since c9011022 it "
+                f"carries step and opt, so it is a valid resume target\n"
+                f"{p.stdout[-1200:]}\n{p.stderr[-1200:]}"
+            )
+            assert "refusing to resume" not in (p.stdout + p.stderr), (
+                f"the field guard refused a checkpoint that HAS step and opt:\n{p.stdout[-800:]}"
+            )
+            # The step it restored, from the log rather than from the flag: a resume that
+            # restarted at 0 with a cold optimizer is the failure the guard exists to
+            # prevent, and rc=0 alone cannot tell that apart from a correct resume.
+            assert f"resume {_ck['step']}" in (p.stdout + p.stderr) or str(_ck["step"]) in (
+                p.stdout + p.stderr), (
+                f"the resume did not report step {_ck['step']}; a silent restart at 0 is "
+                f"what step+opt exist to prevent\n{p.stdout[-800:]}"
+            )
+            print(f"    resumed from step {_ck['step']} with optimizer state")
+
+            # THE REFUSAL, on a checkpoint actually missing the fields -- built by stripping
+            # them from this run's own checkpoint, so the world is the real artifact minus
+            # the thing under test rather than a hand-written stand-in.
+            stripped = os.path.join(tmp, "ckpt_no_fields.pt")
+            _torch.save({k: v for k, v in _ck.items() if k not in ("step", "opt")}, stripped)
+            q = _resume(stripped, "_resume_nofields")
+            assert q.returncode != 0 and "refusing to resume" in (q.stdout + q.stderr), (
+                f"a checkpoint missing step and opt did not refuse (rc={q.returncode}) -- "
+                f"resuming from it restarts at step 0 with a cold optimizer, both invisible "
+                f"in the logs\n{q.stdout[-1200:]}\n{q.stderr[-1200:]}"
+            )
+            print("    a field-less checkpoint refused as designed")
+            _record["stages"] = 11
+
+        # THE RECORD, written HERE and only here: after the last stage, with the count of
+        # stages that actually passed. Before 2026-09-04 it was written before the `finally`,
+        # so a stage-11 AssertionError left runs/launch_tests.json saying "pass" for a run
+        # that exited nonzero (b0, Stage E shape). `stages` is what makes a partial pass
+        # readable instead of needing a human to say "arm 2 may launch on stages 1-10".
+        #
+        # Only when the body got far enough to build it: a stage-1/2 refusal has no shape to
+        # record, and a row without one is worse than no row.
+        if "_record" in set(locals()):
+            record_launch_test(__file__, "pass", _record["shape"], real_kernel=True,
+                               mix=_record["mix"], stages=_record["stages"])
 
         # Always clean up the temp checkpoints; the .ep1 carries optimizer state and is the
         # bigger file.
