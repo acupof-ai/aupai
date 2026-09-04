@@ -226,7 +226,7 @@
    "id": "ds.mathhard_resolution",
    "value": "math-hard resolves +-1.1pt at 2-3% pass rate (n=1032); a 4.1% vs 2.9% gap is z=1.44, p=0.15",
    "measured": "2026-08-29",
-   "source": "aupai EXPERIMENTS.md + adversarial_review.md scoreboard",
+   "source": "aupai EXPERIMENTS.md + docs/lessons/adversarial_review.md@59d751b3 scoreboard (deleted in the 0830v1 reset at 7359a56f; recoverable by sha)",
    "config": {
     "n": 1032
    },
