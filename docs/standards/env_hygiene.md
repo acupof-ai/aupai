@@ -64,10 +64,16 @@ tileRL jobs (three checkouts, `/work/tl-ab`, `/work/tl-rl`, `/work/tilerl`, seen
 cards 1, 2 and 7 today) and any aupai training run alive at that moment. It is therefore
 **scheduled by the user, not by us**, and form 1 is available meanwhile at zero cost.
 
-## 2. The in-container sweeper — five classes, and what each one must prove
+## 2. The sweeper — three classes in the container, two answered host-side
 
 `harness sweep` (db builds it). It kills **only** by exact PID, **only** the classes below,
 and writes every decision to `runs/sweeper.jsonl`. `--execute` defaults **off**.
+
+**Split, per 6e's ruling.** The container sweeper implements **(a), (b)-file-existence and
+(c)**. **(d)** and **(e)** are protections answered from the **host view via `tn exec`** —
+(e) keyed on GPU UUID + cmdline — because inside the container neither cgroups nor
+`nvidia-smi` pids discriminate (see (e)). Zombies are **counted and reported**, never
+listed as candidates.
 
 **The rule that outranks the classes: a class that cannot be positively established is
 reported `unclassified` and never killed.** A sweeper that guesses is worse than the
@@ -136,9 +142,28 @@ The positive test, which needs no prose:
 > pids resolve only inside. **Never intersect the two sets.**
 
 So: skip any process whose host cgroup names a container id other than ours, and skip any
-host pid in `nvidia-smi --query-compute-apps`. **A sweeper running inside the container
-cannot see host `/proc`; it must then treat every GPU question as `unclassified`.** That is
-the safe direction. `card_assignment.json` prose may remain an *additional* exclusion,
+host pid in `nvidia-smi --query-compute-apps`.
+
+**PRECONDITION, and it decides where the sweeper may run at all.** db measured, and I
+confirmed: **there is exactly ONE distinct cgroup across every live process in the
+container** — PID 1, our jobs, and both tileRL trainers are byte-identical at
+`kubepods/besteffort/pod95a05e32…/827d3e58…`. Inside the container the cgroup has **zero
+discriminating power**; it cannot separate ours from tileRL's because at that level they
+are not separate. And container `nvidia-smi` reports host pids (3487226, 3547785 in db's
+read) that resolve in no container `/proc`.
+
+By this document's own "cannot resolve → `unclassified`" rule, **a container-side sweeper
+classifies every process as unclassified and sweeps nothing.** Class (e) is therefore not a
+rule about pids, it is a **constraint on the sweeper's location**:
+
+> `harness sweep` must read host `/proc` through `tn exec` for classes (d) and (e). Run
+> purely inside the container, it is correct but inert.
+
+**Ruling (6e, 2026-09-04): (e) is not a container-sweeper class at all.** It is a
+**host-view check via `tn exec`, keyed on GPU UUID + cmdline**, not on pids and not on
+cgroups. The container sweeper therefore covers **(a), (b)-file-existence and (c) only**,
+against the 314 processes recorded this morning; ownership of a GPU process is answered
+host-side or not at all. `card_assignment.json` prose may remain an *additional* exclusion,
 never the test.
 
 Measured twice today, once by db and once by me: intersecting container pids with
@@ -269,6 +294,16 @@ started" test (it was written before, and writing is not the point). The likely 
 the default-cwd trap again: its `cd` never took, so `runs/…` resolves elsewhere. **n=1 is
 not a class; it stays `unclassified` and is recorded here so the next instance is
 recognised.**
+
+db then measured the mechanism rather than leaving it hypothesised: `/proc/3874083/cwd` is
+**`/sgl-workspace/sglang`**, and `/sgl-workspace/sglang/runs` **does not exist at all**. The
+loop's `cd` never took, so `runs/count_en_c4_both.log` resolves to a path that cannot
+exist, and it polls forever while the real file has read `ALL-DONE` since 2026-09-03T14:38Z.
+
+The general form — **a cwd-relative target that does not resolve from the process's own
+`/proc/<pid>/cwd`** — is worth naming here because this container's default cwd makes it
+common, and `AGENTS.md` already warns about it twice from other directions. **It is named,
+not matched**: one instance does not justify a matcher, and db is not writing one.
 
 ## What this design does not solve
 
