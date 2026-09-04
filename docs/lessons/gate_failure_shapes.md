@@ -2831,3 +2831,34 @@ checkpoint 的真实 doc_cu 均值。错的只有"一条门能读的行存在"�
 `cu_path` 相同,不是"两个文件里都出现了 doc_cu 这个词"。侧写文件不是行:要么用 scorer 重新打分,让
 `score_matrix.py --json` 自己写行,要么在报数时明说"这个数来自侧写文件,门读不到"。手工把侧写文件的数
 翻译成 score_matrix 的 schema 再 append 是最差的一种——那是我手打的数,不是 scorer 写的数(§150 同族)。
+
+## 173. 声明行里写了「NOT KEPT: X, Y」,解析器把 X 和 Y 读成了 CLAIMED——一条为记录两个删除而写的行阻止了这两个删除,同时掩盖了刚装上的守卫(b0 当事人自报,2026-09-04,证据 `_keep_names` 对 `runs/pod_ckpt_candidates_2026-09-04.txt` 第 8 行返回 4 个名字,其中一个 `ckpt_sft_p324_v4.pt.jsonl` 根本不是文件)
+
+装完 §172 的 subject pin(facts 里被当作主题的 checkpoint 不可删)后第一次跑真实 listing:189 条 rm,
+**subject-pin 命中 0**。它至少应该拦住我手查出来的三个文件。一个都没拦住,因为三个都已经被
+"a live KEEP line claims it" 拦下了,而 KEEP 检查在前。
+
+拦住它们的 KEEP 行是我一小时前写的。我在行内写了:
+
+    NOT KEPT, checked individually rather than as a class: ckpt_sft_p324_v4.pt (...) ckpt_w7_b32a1.pt (...)
+
+`_keep_names` 从散文里抽名字,**看不见否定**,于是把两个都读成了 claimed。实测返回四个名字:
+
+    ckpt_0830v1_3.24b.pt.ep1
+    ckpt_sft_p324_v4.pt          <- 我明确写了 NOT KEPT
+    ckpt_sft_p324_v4.pt.jsonl    <- 不是文件,从 data/eval/preds_code_ckpt_sft_p324_v4.pt.jsonl 里截出来的
+    ckpt_w7_b32a1.pt             <- 我明确写了 NOT KEPT
+
+**一条为记录两个删除而写的行,阻止了这两个删除。** 而且它同时掩盖了新守卫:守卫没命中不是因为它坏,
+是因为它前面那道检查抢先把输入吃掉了。两个失效指向同一个方向(文件被保住了),所以整体看起来是对的——
+只是保住的理由是错的,机制也是错的。
+
+**这与 `_retired_names` docstring 记录的失效是同一形状,就在同一个文件的上一个前缀。** 那段实测记录:
+散文当 claim list 解析,会漏掉 "and" 后面的名字,会从周围文本里凭空造出名字。我今天读过那段 docstring,
+然后照样把推理写进了声明行。
+
+**判据。声明行是名字列表,不是讲道理的地方。** 任何"为什么不选 X"的推理,以及任何包含路径的解释,
+都必须搬到解析器不读的行(这里是 `# NOTE`,`_keep_names` 只匹配 `# KEEP`)。一个从散文里抽标识符的
+解析器,对"提到"和"主张"无法区分,而否定句里的名字恰好是被提到最频繁的那种。
+**并且:新装守卫命中 0 次,永远先怀疑它前面的检查抢先短路了输入,而不是"这次刚好没有可疑对象"**
+(§171 的反面:那次是扰动太小所以没动,这次是根本没走到)。
