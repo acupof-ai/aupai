@@ -116,6 +116,38 @@ if [ $rc -eq 0 ] && [ -n "$NAME" ] && [ -f "ckpt_${NAME}.pt" ]; then
     echo "FATAL: no free lane card in 30min -- ckpt_${NAME}.pt unscored, training succeeded but this run produced NO metrics. Re-score: CUDA_VISIBLE_DEVICES=<lane> python eval/score_matrix.py --ckpt ckpt_${NAME}.pt --json runs/score_matrix.jsonl" >&2
     SCORING_RC=1
   fi
+  # CLOSE THE ROW HERE, because nothing else will (de-47). no_stale_running FAILs on a
+  # row still `running` after 24h, and this chain is the last thing that runs -- a 66h
+  # pretrain ends, scores, and exits, and the row it opened stays open until a human
+  # remembers. That is what stalled launch_gate: an open row from a finished run reads
+  # identical to a job still on the cards, so the gate cannot tell a free lane from a
+  # busy one and says NO-GO.
+  #
+  # UNCONDITIONAL, both paths. The failure path is the one that most needs closing: a
+  # run that produced no metrics is exactly the row a human is least likely to come
+  # back to, and `exit 1` below would otherwise leave it open forever. status carries
+  # which happened, so a closed row is not a claim that the run was good.
+  #
+  # The result is the val loss read from the log, not a score: the score_matrix record
+  # holds the metrics, and this field exists so `exp.py render` shows a number instead
+  # of an empty cell. `finding` says the close was automatic -- the human interpretation
+  # is still missing and must not read as supplied.
+  #
+  # Best-effort for the same reason as the notes: --quiet-if-absent for a run launched
+  # without `harness launch`, `|| true` so bookkeeping cannot turn a good run bad, and
+  # stderr left alone so a mistyped flag is loud in the log.
+  VAL=$(grep -oE "val [0-9]+\.[0-9]+" "runs/${NAME}.log" 2>/dev/null | tail -1)
+  if [ "$SCORING_RC" -eq 0 ]; then
+    DONE_STATUS=ok
+    DONE_RESULT="${VAL:-training completed}, score_matrix on card $CARD"
+  else
+    DONE_STATUS=error
+    DONE_RESULT="${VAL:-training completed}, scoring FAILED rc=$SCORING_RC -- no metrics"
+  fi
+  python scripts/exp.py done --name "$NAME" --status "$DONE_STATUS" \
+    --result "$DONE_RESULT" \
+    --finding "chained close by run_ddp.sh; finding pending a human reading" \
+    --decision "pending" >/dev/null || true
   # fb, 2026-09-02: a scoring failure must make the run's exit code nonzero. The
   # old `|| echo WARN` swallowed it: a 66h run's ~28 milestones would each fail
   # silently while the run exited 0, and a red nobody can act on is no signal.

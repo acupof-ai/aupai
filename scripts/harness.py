@@ -287,6 +287,9 @@ _MANUAL_RULES = {
     "A conflicting path needs a commit first, and read which path it is":
         "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
         "commit lands on the branch where dirty_aged and the behind-main hook see it",
+    "`harness task` and `harness friction` write the ledger of the tree they are invoked from":
+        "the invoking directory is a shell fact no artifact records; the integration tree's "
+        "pre-commit hook refuses the resulting non-controller commit, which is the consequence",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -353,7 +356,7 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 35
+_MANUAL_BASELINE = 36
 
 
 def _norm_rule(text):
@@ -995,10 +998,38 @@ def check_selftests_are_gated(root):
         # the map: a false positive hides wherever the answer is right by accident.
         if "--selftest" in strip_docstrings(body):
             have.add(rel)
+        # A RUNNABLE test_*.py IS A SELFTEST WHETHER OR NOT IT CARRIES THE FLAG (de,
+        # 2026-09-04, measured: 63 test_*.py tracked, 53 runnable by `if __name__`, 19 of
+        # those in neither map). The population above is "files containing the string --selftest", so a
+        # test_*.py with a main() and no flag was outside this check by construction --
+        # the third time this check's population has been narrower than its property, after
+        # the four-directory listdir blind to mathbank/ and the argparse-only predicate
+        # blind to nine sys.argv dispatchers. Both earlier widenings are recorded above as
+        # the same lesson, and both times the PASS counted only the files the check already
+        # understood.
+        #
+        # The case that made it concrete: scripts/test_score_exit.py, 13 cases over
+        # run_ddp.sh's exit codes and row close, never run at any commit -- and the commit
+        # that CHANGED run_ddp.sh printed `selftests 0.03s`, which reads as "ran, fast" and
+        # means "ran zero". scripts/test_resume_accumulates.py is the demonstration that the
+        # old population was not merely incomplete but blind on purpose: its docstring
+        # explains that it deliberately carries no flag, so stripping docstrings correctly
+        # excluded it, and it is a runnable test nobody ran.
+        #
+        # `if __name__` and not `def main(`: algorithms/test_rlvr_reward_suite.py asserts at
+        # module scope with no main() at all, so a main()-shaped predicate would have missed
+        # it -- the same defect one more level down. (I first wrote that three files were in
+        # that shape; measured, the other two are already gated. One is enough to decide the
+        # predicate.) The invoker passes --selftest to every entry, so a file here must
+        # tolerate an unknown argument or get a SELFTEST_FLAG override; that is a property of
+        # the file, checked by running it, not something this check can assert.
+        elif (re.search(r"(^|/)test_[\w-]+\.py$", rel)
+                and re.search(r"^if __name__", strip_docstrings(body), re.M)):
+            have.add(rel)
     missing = sorted(have - gated)
     if missing:
-        return FAIL, (f"{len(missing)} file(s) carry --selftest but are not in the hook's "
-                      f"SELFTEST_FILES, so nothing runs them at commit time: "
+        return FAIL, (f"{len(missing)} file(s) carry a selftest but are not in the hook's "
+                      f"SELFTEST_FILES or NEEDS_DATA, so nothing runs them at commit time: "
                       f"{', '.join(missing[:4])}")
     # A NEEDS_DATA entry is a CLAIM about why a selftest cannot run at commit time, and
     # nothing recomputed it. scripts/harness.py's read "the hook already runs `harness
@@ -2398,7 +2429,7 @@ def _parse_ckpt_listing(path):
     return date, keep, cands
 
 
-def _noted_gone(entry, name):
+def _noted_gone(entry, name, tier=None):
     """Whether the entry's uncertainty/boundary already names this checkpoint as
     deleted/pruned. A stale source with an honest note is a WARN, not a FAIL:
     b0's eff.kda_mla_growth_ratio_l32 keeps step1500 in its source (provenance) and
@@ -2412,14 +2443,33 @@ def _noted_gone(entry, name):
     9420c8b, measured True). Semicolons stay inside a sentence -- they join an aside
     to the disclosure that owns it (e1's recal note names the ckpt, then "; its
     siblings ARE listed", then the pruning). ASCII "." is no boundary: checkpoint
-    names are built from it."""
+    names are built from it.
+
+    A QUOTED TIER LABEL ONLY DISCLOSES ITS OWN TIER (de, 2026-09-04, measured). Accepting
+    the check's vocabulary was right, and tier-blind it downgrades a different complaint
+    than the one the note answers. ds.n2_params_vs_data_matched_compute says both legs
+    POSTDATE the listing, "and therefore read [absent]", and that they were verified
+    present on the pod at 19:10Z, 892,199,291 and 1,854,896,463 bytes. Against the newer
+    09-03 22:56Z listing the two legs are [deletion-candidate] -- on the prune plan,
+    unclaimed -- and the single word `[absent]` was the whole credit: strip the bracket
+    labels from that sentence and zero gone-words survive, so the FAIL AGENTS.md requires
+    read WARN, on a fact whose own note asserts the files exist. A note answering "not in
+    the snapshot" is not a note answering "scheduled for deletion"; the second needs a
+    KEEP claim or prose, and a checkpoint deleted at 12:03Z takes its evidence with it.
+    Prose disclosure is unrestricted -- the 12 other credited notes keep their WARN, 10 on
+    prose that survives the strip and 2 on a label matching their own tier."""
     note = f"{entry.get('uncertainty') or ''} {entry.get('boundary') or ''}"
     if not note.strip():
         return False
     tail = name.split(".pt", 1)[-1].lstrip(".")
     for seg in re.split(r"[。！？!?]+", note):
-        if (name in seg or (len(tail) >= 5 and tail in seg)) and re.search(
-                r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
+        if not (name in seg or (len(tail) >= 5 and tail in seg)):
+            continue
+        # A label for a tier OTHER than the one being reported is not a disclosure of it.
+        if tier:
+            seg = re.sub(r"\[(?:zeroed|absent|deletion-candidate)\]",
+                         lambda m: m.group(0) if m.group(0) == f"[{tier}]" else " ", seg)
+        if re.search(r"prun|delet|zero|remov|gone|discard|absent|作废|删|丢|重置", seg, re.I):
             return True
     return False
 
@@ -2749,14 +2799,17 @@ def check_ckpt_facts_sources_present(root):
                     if name in keep:
                         continue
                     if section == "A":
+                        tier = "zeroed"
                         msg = f"[zeroed] {fid} -> {name} (section A, zeroed by the reset)"
                     else:
+                        tier = "deletion-candidate"
                         msg = f"[deletion-candidate] {fid} -> {name} (candidate {mtime}, not KEEP-claimed)"
                 elif name not in keep:
+                    tier = "absent"
                     msg = f"[absent] {fid} -> {name} (not in pod listing {date}; pruned, misnamed, or newer than the snapshot)"
                 else:
                     continue
-                (warned if _noted_gone(e, name) else bad).append(msg)
+                (warned if _noted_gone(e, name, tier) else bad).append(msg)
     if bad:
         both = "; ".join(bad + warned)
         return FAIL, f"{len(bad)} FAIL + {len(warned)} WARN: fact source(s) name doomed/gone " \
@@ -6430,6 +6483,7 @@ def check_score_matrix(root):
             except Exception:
                 pass
     missing = []
+    unverifiable = []
     for r in rows:
         if r.get("status") != "ok":
             continue
@@ -6447,11 +6501,41 @@ def check_score_matrix(root):
             continue
         if "--profile" in cmd or "--profile_steps" in cmd:
             continue  # a torch profiler run stops after a handful of steps
+        # A ROW MAY NAME ITS OWN READING instead of a score-matrix record, because for some runs the
+        # matrix is a DIFFERENT QUANTITY than the one the row pre-registered. e1_31b_loop_500's
+        # reading is a 2x2 humaneval-BPB diagonal against its own mismatch controls; the matrix's
+        # domain-loss numbers would be a real record of something nobody asked about, and satisfying
+        # this gate with it would cost a card (6e's ruling, 2026-09-04: not that).
+        #
+        # THE PATH MUST EXIST. Otherwise the field is a way to assert a reading nobody wrote, which
+        # is worse than the gap it replaces -- the row would read as "scored by another instrument"
+        # with nothing behind it.
+        art = r.get("reading_artifact")
+        if art:
+            if os.path.exists(os.path.join(root, str(art))):
+                continue
+            missing.append(f"{r.get('name', '?')} reading_artifact {art} does not exist")
+            continue
         cand = produced_checkpoint(cmd, str(r.get("name", "?")))
-        if cand and f"{cand}.pt" not in scored:
+        if cand is None:
+            # SILENTLY EXEMPT UNTIL 2026-09-04, and that is what this branch is for. A row whose cmd
+            # is prose with no --out, no --name and no bare ckpt_*.pt returns None here and the gate
+            # skipped it: e1_31_middle_layer_loop passed that way while its 500-step sibling, whose
+            # cmd names --out honestly, was held to the record. The gate was being satisfied by cmd
+            # FORMATTING rather than by runs being scored. WARN rather than FAIL because the row may
+            # be legitimate -- but it is no longer invisible, and `reading_artifact` is the field
+            # that resolves it (6e's ruling: make the escape visible, do not fix it by accident).
+            unverifiable.append(str(r.get("name", "?")))
+            continue
+        if f"{cand}.pt" not in scored:
             missing.append(cand)
     if missing:
         return FAIL, f"ok training run(s) with no score-matrix record: {sorted(set(missing))[:5]}"
+    if unverifiable:
+        return WARN, (f"{len(unverifiable)} ok training row(s) whose cmd names no checkpoint, so "
+                      f"'trained but not scored' cannot be checked for them: "
+                      f"{sorted(set(unverifiable))[:5]} -- add reading_artifact: <path> naming the "
+                      f"run's own reading, or a cmd that names its --out")
     return PASS, "every ok training run has a score-matrix record"
 
 
@@ -6468,6 +6552,53 @@ def _broken_score_matrix():
             [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
             check=True, capture_output=True,
         )
+    return d
+
+
+def _broken_score_matrix_no_ckpt():
+    """A REAL ok training row whose cmd names no checkpoint -- the WARN tier.
+
+    This is the world e1_31_middle_layer_loop lives in: a cmd written as prose describing stages,
+    with no --out, no --name and no bare ckpt_*.pt, so produced_checkpoint returns None. Until
+    2026-09-04 the check skipped such rows entirely, which meant the gate was satisfied by cmd
+    FORMATTING rather than by the run being scored -- and the sibling row that wrote --out honestly
+    was the one held to the record.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "prose", "--cmd",
+         "sft_math.py both arms at 250 steps (Stage B), then eval/humaneval_bpb.py in the 2x2"],
+        ["done", "--name", "prose", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    return d
+
+
+def _broken_score_matrix_dangling_artifact():
+    """An ok training row whose reading_artifact names a path that does not exist -- the FAIL tier.
+
+    The field is an escape hatch from the score-matrix requirement, so an unchecked one would let a
+    row assert "scored by another instrument" with nothing behind it: strictly worse than the gap it
+    replaces, because the gap is visible and the false claim reads as satisfied.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "y", "--cmd", "sft_math.py --out ckpt_y.pt"],
+        ["done", "--name", "y", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    log = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(log, encoding="utf-8") if x.strip()]
+    rows[-1]["reading_artifact"] = "runs/this_file_was_never_written.log"
+    with open(log, "w", encoding="utf-8") as fh:
+        for r in rows:
+            fh.write(json.dumps(r) + "\n")
     return d
 
 
@@ -11026,6 +11157,63 @@ def _selftest_batched_git_probes():
     )
 
 
+def _selftest_flagless_test_is_gated():
+    """The WIDENED arm of selftests_are_gated: a flagless runnable test_*.py must be seen.
+
+    The check's own broken world drops scripts/eval_artifacts.py, which CARRIES the flag, so
+    it exercises the old population only -- the widened arm would be unguarded there while
+    --selftest read green. Same shape as the run_checks mirror above: a guard placed where no
+    test looks. One broken world per check, so this arm asserts here.
+
+    Mutates the REAL hook by removing one REAL registration, and uses a file that is flagless
+    on purpose: scripts/test_resume_accumulates.py, whose docstring explains it deliberately
+    carries no --selftest. Under the old population it was invisible with docstrings stripped,
+    which is exactly the blindness being fixed -- pick a flag-carrying file here and the
+    mutation proves nothing about the widening (measured: 63 test_*.py tracked, 53 runnable,
+    19 in neither map before this).
+
+    Also asserts the NEGATIVE, because a predicate that fires on every test_*.py would pass
+    the positive case for the wrong reason: a test_*.py with no `if __name__` runs nothing when
+    executed and must NOT be demanded."""
+    victim = "scripts/test_resume_accumulates.py"
+    hookp = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
+    if not (os.path.exists(hookp) and os.path.exists(os.path.join(ROOT, victim))):
+        return
+    text = open(hookp, encoding="utf-8").read()
+    if f'"{victim}",' not in text:
+        return
+    d = _tmp_repo_shaped()
+    # scripts/ is a symlink into the real repo in a shaped world, so the mutated hook needs
+    # its own directory -- but COPYING a handful of files makes the other 96 map entries look
+    # deleted and the check FAILs on the stale-entry assertion instead, which is a world
+    # failing for the wrong reason (the same trap _broken_selftests_are_gated records).
+    # Mirror the real scripts/ by symlinking every entry, then override only hooks/.
+    real_scripts = os.path.join(ROOT, "scripts")
+    if os.path.islink(os.path.join(d, "scripts")):
+        os.unlink(os.path.join(d, "scripts"))
+        os.makedirs(os.path.join(d, "scripts"))
+        for f in os.listdir(real_scripts):
+            if f != "hooks":
+                os.symlink(os.path.join(real_scripts, f), os.path.join(d, "scripts", f))
+    hd = os.path.join(d, "scripts", "hooks")
+    os.makedirs(hd, exist_ok=True)
+    open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(
+        text.replace(f'"{victim}",', "", 1))
+    st, ev = check_selftests_are_gated(d)
+    assert st == FAIL and victim in ev, (
+        f"a flagless runnable test_*.py dropped from the map must FAIL and be named; "
+        f"got {st}: {ev[:200]}")
+    # The negative: a test_*.py that runs nothing when executed is not demanded.
+    inert = os.path.join(d, "scripts", "test_inert_probe.py")
+    open(inert, "w", encoding="utf-8").write("def helper():\n    return 1\n")
+    open(os.path.join(hd, "pre-commit"), "w", encoding="utf-8").write(text)
+    st2, ev2 = check_selftests_are_gated(d)
+    assert "test_inert_probe.py" not in ev2, (
+        f"a test_*.py with no `if __name__` runs nothing and must not be demanded: {ev2[:200]}")
+    print("  selftests_are_gated: a flagless runnable test must be gated; an inert test_*.py "
+          "is not demanded")
+
+
 def _selftest_repo_auth_mirror():
     """An auth=repo FAIL becomes SKIP on the pod's shape, and NOWHERE else.
 
@@ -11639,6 +11827,29 @@ def _demo():
     assert not _noted_gone({"uncertainty": "step1000 was fine"}, "ckpt_x.pt.ep1")
     assert not _noted_gone({"uncertainty": "nothing here"}, "ckpt_x.pt.step1500")
 
+    # A QUOTED TIER LABEL ONLY DISCLOSES ITS OWN TIER (de-53, the N2 legs, 2026-09-04).
+    # `_n2` is ds.n2_params_vs_data_matched_compute's own shape: it quotes [absent] to
+    # explain that the checkpoints POSTDATE the listing and asserts they exist. Against a
+    # newer listing they are deletion candidates, and that word was the entire credit.
+    _n2 = {"uncertainty": "BOTH CHECKPOINTS POSTDATE THE LISTING and therefore read "
+                          "[absent] to ckpt_facts_sources_present: ckpt_data_leg_206m_8b.pt "
+                          "was verified present on the pod at 19:10Z, 892,199,291 bytes"}
+    assert _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt", "absent"), \
+        "a note quoting [absent] must still disclose the absent tier it answers"
+    assert not _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt", "deletion-candidate"), \
+        "[absent] credited a deletion-candidate: a FAIL for a doomed ckpt read WARN"
+    # Tier-blind is the pre-fix behaviour; keep the untiered call answering the old question.
+    assert _noted_gone(_n2, "ckpt_data_leg_206m_8b.pt"), "untiered call changed meaning"
+    # Prose disclosure is unrestricted -- the tier does not narrow a real statement.
+    _prose = {"uncertainty": "ckpt_z.pt was pruned on the 09-04 plan before this reading"}
+    for _t in ("absent", "deletion-candidate", "zeroed", None):
+        assert _noted_gone(_prose, "ckpt_z.pt", _t), f"prose disclosure lost at tier {_t}"
+    # A matching label still counts, and the two other labels in one sentence do not leak.
+    assert _noted_gone({"uncertainty": "ckpt_q.pt is [deletion-candidate], unclaimed"},
+                       "ckpt_q.pt", "deletion-candidate")
+    assert not _noted_gone({"uncertainty": "ckpt_q.pt reads [zeroed] and [absent] here"},
+                           "ckpt_q.pt", "deletion-candidate")
+
     # run dispatch: a missing or unknown step is a usage error, not a silent exit 0
     assert run_dispatch([]) == 2 and run_dispatch(["bogus"]) == 2
 
@@ -11815,9 +12026,34 @@ def _demo():
         finally:
             shutil.rmtree(_d, ignore_errors=True)
 
+    # score_matrix_present gained two branches on 2026-09-04 and its registered world exercises
+    # neither. Both are worlds where the check could SILENTLY PASS, which is the shape it was just
+    # fixed for: reading_artifact is an escape hatch, so a path that does not exist must FAIL rather
+    # than wave the row through; and a cmd that names no checkpoint used to be skipped outright,
+    # which is how e1_31_middle_layer_loop passed while its honestly-written sibling did not.
+    for _w, _want, _label, _needle in (
+        (_broken_score_matrix_dangling_artifact, FAIL, "reading_artifact at a missing path",
+         "does not exist"),
+        (_broken_score_matrix_no_ckpt, WARN, "an ok training row whose cmd names no checkpoint",
+         "names no checkpoint"),
+    ):
+        _d = _w()
+        if _d:
+            try:
+                _st, _why = check_score_matrix(_d)
+                if _st != _want:
+                    untested.append(f"score_matrix_present reported {_st}, wanted {_want}, on "
+                                    f"{_label} ({_why[:70]})")
+                elif _needle not in _why:
+                    untested.append(f"score_matrix_present hit the right tier on {_label} but does "
+                                    f"not say why: {_why[:70]}")
+            finally:
+                shutil.rmtree(_d, ignore_errors=True)
+
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
     _selftest_repo_auth_mirror()
+    _selftest_flagless_test_is_gated()
 
     # The other half of the selftest: a PASS must have verified something. A check that
     # examined zero items and returned PASS is vacuous -- the shape shared by score_matrix_present
