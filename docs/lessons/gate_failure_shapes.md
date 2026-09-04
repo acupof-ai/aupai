@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents removed 2026-09-04 (141 = 59 + 82); 10 sampled: 8 confirmed machine-closed, 2 gated this commit, 23 unsampled
+source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents removed 2026-09-04 (141 = 59 + 82); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -10,11 +10,49 @@ Ten rules, ranked by incidents × cost (rough hours lost per incident). Each rul
 
 Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false greens, some cost days); R1/R3/R4/R10 ~3-4h; R5/R6/R7/R8 ~2h; R9 ~1h.
 
+## Closed incidents (33/33 confirmed machine-gated, 2026-09-04)
+
+10 sampled by 6e, 23 sampled by 44. Each line: §N: gate file:line.
+
+§27: launch_tests degrade-string check (6e sample)
+§33: check_no_shared_stash scripts/harness.py:9884
+§42: check_frozen_paths scripts/harness.py:9578
+§43: vocab_id_on_load_path (6e sample)
+§47: test_vocab_stamp --selftest scripts/test_vocab_stamp.py:1
+§60: check_launch_line_vs_oom_facts scripts/harness.py:2589
+§74: _selftest_flagless_test_is_gated odd-quote arm scripts/harness.py:12407
+§78: domain_loss --selftest eval/domain_loss.py:289
+§82: test_ledger_predicates --selftest scripts/test_ledger_predicates.py:1
+§83: sft_hf_control.py source-level scan scripts/sft_hf_control.py:700
+§87: alignment_sentinel scripts/eval_heldout.py:346
+§88: ledger_audit.py --selftest scripts/ledger_audit.py:580
+§92: ledger_audit.duplicates (6e sample)
+§93: check_tasks_closed_by_commit scripts/harness.py:5881
+§95: _check_call_sites scripts/test_cursor_sum.py:127
+§101: launch_gate mix/UNRECORDED (6e sample)
+§107: check_ckpt_facts_sources_present scripts/harness.py:3095
+§113: check_keep_claim_reasons_live scripts/harness.py:3190
+§120: card_claim basename wait (6e sample)
+§122: test_sft_lr_provenance.py case 4 scripts/test_sft_lr_provenance.py:159
+§123: test_sft_lr_provenance.py case 4b scripts/test_sft_lr_provenance.py:211
+§129: fp_dir import (6e sample)
+§130: head_path_rows.py _selftest case 5 scripts/head_path_rows.py:187
+§138: test_shard_glob.py scripts/test_shard_glob.py:111
+§144: a2a selftest (6e sample)
+§145: test_l1_fewshot_2x2.py group 9 eval/test_l1_fewshot_2x2.py:205
+§154: check_card_held_without_claim scripts/harness.py:8999
+§160: card_claim _cvd selftests (6e sample)
+§162: check_milestone_ckpt_pinned scripts/harness.py:786
+§163: _selftest_commit_delivers_fact_ref scripts/harness.py:12466
+§167: test_e1_28_leak_scan.py scripts/test_e1_28_leak_scan.py:152
+§168: check_eval_registry_complete scripts/harness.py:4958
+§174: _selftest world 8 scripts/hooks/pre-commit:1824
+
 ## Checks to write (top 5 by product)
 
 - **R2** (61 incidents, 244h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (32 incidents, 64h): every number carries its basis. Owner: blank.
-- **R1** (15 incidents, 45h): verify premises before acting, sources before citing. Owner: blank.
+- **R1** (16 incidents, 48h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
 - **R4** (7 incidents, 21h): failures must be loud. Owner: blank.
 
@@ -78,14 +116,14 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (23 incidents)
+### R2-g Criterion answers an adjacent question (24 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
 - §110: a pre-registered branch collapsed two worlds into one; the criterion (branch taken) did not isolate the property (which world).
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
@@ -98,12 +136,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-15 incidents (10 infra, 5 model), ~3h each, 45h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+16 incidents (11 infra, 5 model), ~3h each, 48h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139, §175).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 

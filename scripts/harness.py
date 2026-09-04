@@ -90,26 +90,37 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
-    # Measured by hand on this checkout, 2026-09-04 (load avg 6.5, 24 users): pod_stamp_is_main
-    # WARN in 2.9s, snapshot_logs_say_so_at_the_tail PASS in 9.3s over 84 tracked logs. Both
-    # banked 3 consecutive strikes and FAILed a commit with "has not actually run since", and
-    # neither has anything to do with what the commit changed -- the fifth and sixth instance of
-    # the same shape as the four entries above.
+    # FOUND TWICE, INDEPENDENTLY, THE SAME HOUR: b0 hit these two on the head-hybrid closes and
+    # tilerl hit them on their own commit, each measuring separately. Both sets of numbers are
+    # kept because they disagree in a way that decides the value.
     #
-    # WHAT THEY ACTUALLY SPEND, because the fix has to match the cause: pod_stamp_is_main shells
-    # out to the pod to read data/pod_synced_head, so its wall time is a network round trip and
-    # cannot be optimised locally at all. snapshot_logs reads the last 5 lines of every tracked
-    # log and compares against the pod's copies; 9.3s over 84 files is ~0.11s each, so it grows
-    # with the log count and will cross any fixed deadline as runs/ fills. That is cost growth,
-    # not a hang, which is the distinction the strike mechanism cannot make on its own.
+    # tilerl, by hand (load avg 6.5, 24 users): pod_stamp_is_main WARN in 2.9s,
+    # snapshot_logs_say_so_at_the_tail PASS in 9.3s over 84 tracked logs; 3 strikes each; ~4x the
+    # measured wall gives 20s and 40s. Also measured `pod 'echo ok'` at 2.8-4.7s for a BARE round
+    # trip, which is the floor under pod_stamp_is_main and the reason no local change can help it.
     #
-    # ~4x the measured wall, the same ratio every entry here uses. Not larger: the deadline still
-    # has to catch a real hang, and a network call that takes 40s IS a hang worth reporting.
-    # Independently measured the same hour (tilerl): `pod 'echo ok'` is 2.8-4.7s for a
-    # BARE round trip, which is the floor under pod_stamp_is_main and the reason no local
-    # change can help it.
-    "pod_stamp_is_main": 20,
-    "snapshot_logs_say_so_at_the_tail": 40,
+    # b0, solo hand runs: pod_stamp_is_main 1.81/5.20/4.92s, snapshot 3.97/7.21/6.43s -- all PASS,
+    # 5 strikes and 2 strikes. Then the measurement that changes the answer: INSIDE THE FULL CHECK
+    # SET, snapshot took 15.8s (2.2x its solo worst) and pod_stamp_is_main TIMED OUT AT 20.0s while
+    # still passing solo. So 20s is observed to be insufficient, not predicted to be; b0's first
+    # fix set exactly 20s and had to be corrected after watching it fail.
+    #
+    # WHY THE HIGHER VALUES WIN. Both entries used the right ratio on the wrong sample: a solo run
+    # on an idle machine does not describe the run that has to pass. Several auth=pod checks make
+    # tunnel calls in one run and contend for the same tunnel, so in-set cost is a multiple of
+    # alone-cost. 60s is ~4x b0's in-set measurement, the same ratio, on the sample that matters.
+    # tilerl's concern is still correct and still satisfied -- the deadline must catch a real hang,
+    # and a pod call that takes 60s IS a hang worth reporting; it is one round trip whose bare
+    # floor both of us measured at 3-8s, so 60s cannot mask a hang while admitting a slow read.
+    #
+    # snapshot's cost grows with the tracked-log count (~0.11s each over 84-85 files), so it will
+    # cross any fixed deadline as runs/ fills. That is cost growth, not a hang -- the distinction
+    # the strike mechanism cannot make on its own.
+    #
+    # NOT fixed by caching the stamp locally: the check's claim is that the POD's stamp names main,
+    # and a cached answer is exactly the stale reading it exists to catch.
+    "pod_stamp_is_main": 60,
+    "snapshot_logs_say_so_at_the_tail": 60,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -252,6 +263,7 @@ _RULE_CHECKS = {
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
     "Vocabulary identity": "vocab_id_on_load_path",
+    "When there is no lane card at all": "coresident_cache_refusal",
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
@@ -304,12 +316,6 @@ _MANUAL_RULES = {
     "Small jobs queue on the lane card":
         "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
     "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
-    "When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency "
-    "is judged by host IO and seconds, not by metric class":
-        "the deciding quantity is host bytes read, which nothing in the repo records per "
-        "eval run. scripts/eval_load_cost.py classifies each eval by whether it reaches a "
-        "token cache (static, checkable) and carries the three MEASURED costs, but the "
-        "measurement itself needs a live training run to differ against",
     "Judge the cost in seconds against what the run already spends on itself, never by the "
     "printed ETA":
         "how a human reads a log field. The fix that IS checkable is on the instrument -- "
@@ -435,7 +441,21 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 36
+#: 36 -> 32 (e1, 2026-09-04). Four steps, and only the first is mine:
+#:   1. "no lane card at all -- co-residency is judged by host IO" moved to _RULE_CHECKS as
+#:      coresident_cache_refusal. The stated reason for manual was "host bytes per eval run,
+#:      which nothing records", wrong in one specific way: the bytes are a property of the
+#:      DOMAIN SET, not of a run, and eval_load_cost.py's CACHE_BYTES has held them per
+#:      domain since 2026-09-03. The tok/s delta is still unmeasured and the refusal does not
+#:      need it -- it needs the bytes and whether a live claim holds the box.
+#:   2. 9edaf849 deleted the Language row (T3, 0 recorded incidents).
+#:   3. ea289a89 closed Shared files with a T0 structural change.
+#:   4. The baseline read 36 against a dict of 35, so the ratchet carried a slot of slack and
+#:      would not have fired on a rule going manual again.
+#: Set to the count measured on this tree, not to an arithmetic guess -- three of the four
+#: steps landed in other sessions while this one was verifying, and each re-merge moved it.
+#: The ETA rule beside #1 stays manual until train.py unfreezes.
+_MANUAL_BASELINE = 32
 
 
 def _norm_rule(text):
@@ -3679,6 +3699,223 @@ def check_vocab_id_on_load_path(root):
         return FAIL, "; ".join(bad)
     return PASS, (f"{len(ok)} pack loader(s) compare the pack's vocab_id to the checkpoint's "
                   f"({', '.join(ok)})")
+
+
+def check_coresident_cache_refusal(root):
+    """Every token-cache read passes a co-residency refusal, and the chokepoint asks for it.
+
+    The rule is AGENTS.md, Lanes: with no lane card, co-residency is judged by host IO and
+    seconds, not by metric class. The deciding quantity is host bytes, so the enforcement is
+    on the READ, not on the tool -- of score_matrix's fourteen metrics exactly one reaches a
+    cache, and refusing at its entry would refuse the four likelihood metrics whose 46 s is
+    the measurement that says scoring beside a run is fine.
+
+    TWO PROPERTIES, and the second is the one the selftest cannot hold:
+
+      1. eval/cache_guard.py's assert_caches_fresh CALLS assert_not_co_resident, and calls it
+         BEFORE the freshness loop. Both answer "may this process read these caches now", and
+         a refusal after 166 GB has been read is not a refusal.
+      2. No file reaches train._domain_seqs except through that chokepoint (directly, or via
+         domain_loss.val_seqs which calls it). This is the property cache_guard's own
+         --selftest is blind to: its worlds exercise the guard, not the population of callers,
+         so a NEW eval that calls _domain_seqs itself is invisible there and green here only
+         while nobody writes one.
+
+    WHY A CHECK AND NOT JUST THE SELFTEST: the hook runs cache_guard.py --selftest when
+    cache_guard.py is staged. A new eval that reads a cache does not stage cache_guard.py, so
+    the selftest that would have caught it never runs -- the shape from 2026-09-04, where a
+    test correctly registered in SELFTEST_FILES guarded zero commits because the loop only
+    fired when the test file itself was staged.
+
+    WHAT IT CANNOT SEE: whether the threshold is right. CO_RESIDENCY_BYTES is DECLARED, not
+    fitted -- there is no measured bytes->seconds point above ~2 GB, because the three 166 GB
+    reads have never been allowed to finish beside a run (ppl.py's 109 s was recorded at the
+    kill, before it reached a cache). This check asserts the question is asked at every read
+    site, not that 10 GB is the correct answer.
+    """
+    import ast as _ast
+
+    guard_p = os.path.join(root, "eval", "cache_guard.py")
+    if not os.path.isfile(guard_p):
+        return FAIL, "eval/cache_guard.py missing -- the cache-read chokepoint is gone"
+    with open(guard_p, encoding="utf-8") as fh:
+        gsrc = fh.read()
+    try:
+        gtree = _ast.parse(gsrc)
+    except SyntaxError as e:
+        return FAIL, f"eval/cache_guard.py does not parse: {e}"
+
+    fresh = next((n for n in _ast.walk(gtree) if isinstance(n, _ast.FunctionDef)
+                  and n.name == "assert_caches_fresh"), None)
+    if fresh is None:
+        return FAIL, ("eval/cache_guard.py no longer defines assert_caches_fresh -- the "
+                      "chokepoint moved and this check cannot see the new one")
+    if not any(isinstance(n, _ast.FunctionDef) and n.name == "assert_not_co_resident"
+               for n in _ast.walk(gtree)):
+        return FAIL, ("eval/cache_guard.py defines no assert_not_co_resident: nothing refuses a "
+                      "whole-cache read beside a live training run")
+
+    # ORDER, not just presence. The statement index of the co-residency call against the first
+    # statement that reads a stamp off disk: a refusal that runs after the read is not one.
+    co_at = None
+    for i, st in enumerate(fresh.body):
+        if any(isinstance(c, _ast.Call) and isinstance(c.func, _ast.Name)
+               and c.func.id == "assert_not_co_resident" for c in _ast.walk(st)):
+            co_at = i
+            break
+    if co_at is None:
+        return FAIL, ("assert_caches_fresh does not call assert_not_co_resident: the refusal "
+                      "exists but no eval reaches it -- a guard nothing asks")
+    loop_at = next((i for i, st in enumerate(fresh.body) if isinstance(st, (_ast.For, _ast.While))),
+                   len(fresh.body))
+    if co_at > loop_at:
+        return FAIL, (f"assert_caches_fresh calls assert_not_co_resident at statement {co_at}, "
+                      f"AFTER the per-domain loop at {loop_at}: the caches would already have "
+                      f"been read when the refusal fires")
+
+    # THE POPULATION. Everything that calls train._domain_seqs must be the chokepoint itself,
+    # a caller that reaches it, or a test that stubs/builds its own fixture corpus.
+    #
+    # `val_seqs` counts as reaching it because domain_loss.val_seqs calls assert_caches_fresh --
+    # asserted here rather than assumed, so a future edit that drops the guard from val_seqs
+    # fails this check instead of silently widening the bypass set.
+    dl_p = os.path.join(root, "eval", "domain_loss.py")
+    if not os.path.isfile(dl_p):
+        return FAIL, "eval/domain_loss.py missing -- val_seqs is the shared cache reader"
+    with open(dl_p, encoding="utf-8") as fh:
+        dlsrc = fh.read()
+    try:
+        dltree = _ast.parse(dlsrc)
+    except SyntaxError as e:
+        return FAIL, f"eval/domain_loss.py does not parse: {e}"
+    vs = next((n for n in _ast.walk(dltree) if isinstance(n, _ast.FunctionDef)
+               and n.name == "val_seqs"), None)
+    if vs is None:
+        return FAIL, "eval/domain_loss.py no longer defines val_seqs"
+    if not any(isinstance(c, _ast.Call) and isinstance(c.func, _ast.Name)
+               and c.func.id == "assert_caches_fresh" for c in _ast.walk(vs)):
+        return FAIL, ("domain_loss.val_seqs no longer calls assert_caches_fresh, so every eval "
+                      "that reads the cache through it now bypasses both guards")
+
+    GUARDS = {"assert_caches_fresh", "guard", "val_seqs", "assert_not_co_resident"}
+    bypass = []
+    scanned = 0
+    for sub in ("eval", "scripts", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".py") or fn == "cache_guard.py":
+                continue
+            p = os.path.join(d, fn)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+            except OSError:
+                continue
+            if "_domain_seqs" not in src:
+                continue
+            try:
+                tree = _ast.parse(src)
+            except SyntaxError:
+                continue
+            # `scanned` counts CALLERS THE RULE APPLIES TO, incremented after the three
+            # exclusions below, not files that merely mention the name. The first version
+            # incremented here and reported "13 _domain_seqs caller(s) all reach it" when four
+            # files call it and only two reach the guard on their own -- the other nine mention
+            # it in prose, stub it, or redirect the cache. A count that overstates coverage is
+            # the same defect class as a green check that tests nothing.
+            calls, assigned, redirects = set(), False, False
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Call):
+                    f = node.func
+                    nm = f.attr if isinstance(f, _ast.Attribute) else (
+                        f.id if isinstance(f, _ast.Name) else None)
+                    if nm:
+                        calls.add(nm)
+                # A test that REPLACES train._domain_seqs is not reading a cache at all.
+                # And one that REDIRECTS TOKEN_CACHE or DATA to its own tree reads its own
+                # fixture, not /data00: scripts/test_vocab_stamp.py builds a real cache under
+                # a mkdtemp, so it is a true negative rather than a file to exempt by name.
+                # Keyed on the redirect because that is the property that makes it safe --
+                # a name exemption would still be green if the redirect were removed.
+                if isinstance(node, _ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, _ast.Attribute):
+                            if t.attr == "_domain_seqs":
+                                assigned = True
+                            elif t.attr in ("TOKEN_CACHE", "DATA"):
+                                redirects = True
+            if "_domain_seqs" not in calls or assigned or redirects:
+                continue
+            scanned += 1
+            if not (calls & GUARDS):
+                bypass.append(f"{sub}/{fn}")
+    if bypass:
+        return FAIL, (
+            f"{len(bypass)} file(s) call train._domain_seqs without reaching the chokepoint, so "
+            f"they read a token cache with no co-residency or freshness refusal: "
+            f"{', '.join(bypass[:4])}. Call eval.domain_loss.val_seqs, or "
+            f"cache_guard.guard(cfg, domains) before the read")
+    return PASS, (f"assert_caches_fresh refuses co-resident reads before the freshness loop "
+                  f"(statement {co_at} of {loop_at}); {scanned} real _domain_seqs caller(s) "
+                  f"reach it (files that stub it or redirect TOKEN_CACHE are not counted)")
+
+
+def _broken_coresident_call_removed():
+    """The REAL cache_guard.py with the co-residency call deleted from the chokepoint.
+
+    The guard function stays, its selftest worlds 1-5 still pass, and every eval bypasses it --
+    which is why this world is the one that matters. A deleted FUNCTION would be caught by a
+    substring search; a working function nobody calls is the shape that has cost this repo
+    twice (the SELFTEST_FILES loop, and the hook gate that ran zero selftests).
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "eval", "cache_guard.py")
+    if not os.path.isfile(src):
+        raise SelftestSkip("eval/cache_guard.py absent")
+    # eval/ is a symlink into the repo in a shaped world: replace the link with a real dir.
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    p = os.path.join(ed, "cache_guard.py")
+    with open(p, encoding="utf-8") as fh:
+        s = fh.read()
+    old = "    assert_not_co_resident(domains, root=root)\n"
+    if old not in s:
+        raise SelftestSkip("the chokepoint no longer calls assert_not_co_resident this way")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(s.replace(old, "", 1))
+    return d
+
+
+def _broken_coresident_bypass():
+    """A NEW eval that calls train._domain_seqs itself, reaching no guard.
+
+    This is the half cache_guard.py --selftest structurally cannot see: its worlds test the
+    guard, not the set of callers, and a new file does not stage cache_guard.py so the hook
+    never runs that selftest either.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    with open(os.path.join(ed, "zz_new_eval_probe.py"), "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env python3\n"
+            '"""A new eval that reads the token cache directly."""\n'
+            "import train\n\n\n"
+            "def main(tok):\n"
+            "    rows = train._domain_seqs('zh_web', tok, True, False)\n"
+            "    return len(rows)\n"
+        )
+    return d
 
 
 def _broken_vocab_id_load_path():
@@ -10602,6 +10839,13 @@ CHECKS = [
         _broken_vocab_id_load_path,
     ),
     (
+        "coresident_cache_refusal",
+        "every token-cache read passes a co-residency refusal, and the chokepoint asks for it before reading",
+        "with no lane card, co-residency is judged by host bytes, not metric class: ppl.py was killed two minutes into a 166 GB read beside a live 20B run on 2026-09-02, and the rule lived only in a table. The refusal has to key on the read -- one of score_matrix's fourteen metrics reaches a cache, and refusing at its entry would refuse the four likelihood metrics whose 46s says scoring beside a run is fine",
+        check_coresident_cache_refusal,
+        _broken_coresident_call_removed,
+    ),
+    (
         "entrypoint_help",
         "every argparse help string can be formatted, so --help works",
         "eval/code_zh.py --help died with 'TypeError: %o format' for 25 hours and nobody noticed, because nothing runs --help; a literal percent in a help string is a %-conversion to argparse",
@@ -11120,6 +11364,7 @@ EVIDENCE = {
     # repo: sft.py and sft_math.py are tracked, so the AST answers the same anywhere. It does NOT
     # read a pack or a checkpoint -- the ids themselves are pod-side and outside this check.
     "vocab_id_on_load_path": "repo",
+    "coresident_cache_refusal": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
