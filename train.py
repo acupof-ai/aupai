@@ -2920,8 +2920,6 @@ def main():
                 # opposite: usage COUNTS add, so SUM is right there. Getting these two backwards
                 # is the kind of error that produces a plausible number.
                 if raw_model.memory is not None and step % 100 == 0:
-                    import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
-
                     _mem = raw_model.memory
                     if ddp:
                         _t = _mem.touched.to(torch.int32)
@@ -2945,16 +2943,46 @@ def main():
                         assert step % 10 == 0, (
                             "the diag cadence no longer implies the tok/s cadence, so tps is "
                             "from an earlier window than the diagnostics it is written beside")
-                        memory_diag.log_diag(
-                            name=Cfg.mem_arm,
-                            step=step,
-                            pool_touched_frac=_md["touched_fraction"],
-                            topk_entropy=_md["topk_entropy"],
-                            key_gini=_md["key_gini"],
-                            tok_s_gpu=tps,
-                            n_values=_md["n_values"],
-                            topk=_mem.top_k,
-                        )
+                        # THE WRITE CANNOT KILL THE RUN IT OBSERVES (4c 2026-09-05). de found
+                        # data/ledger_schema.json outside pod_drift's SCOPE, so memory_diag.py
+                        # reached the pod and the schema it opens did not: the first log_diag at
+                        # step 100 would have raised FileNotFoundError and taken down a run
+                        # holding two cards for an hour. That specific file is now present, but
+                        # the shape recurs -- any writer of an observation is a dependency the
+                        # observed run did not ask for.
+                        #
+                        # ONLY THE WRITE IS WRAPPED, not the collective above. An all_reduce that
+                        # fails is not a diagnostics problem: the ranks are then out of step and
+                        # continuing would hang or corrupt the next reduction, so that must
+                        # propagate. Wrapping the whole block would convert a distributed fault
+                        # into a silent one.
+                        #
+                        # The failure is PRINTED to the run log rather than passed, because a
+                        # diagnostics writer that fails quietly leaves memory_diag_fresh reading
+                        # an absence with no cause in the log -- and the check does read the
+                        # absence, so the loud line is what connects the two.
+                        try:
+                            # THE IMPORT IS INSIDE THE try, and that is not tidiness. It was one
+                            # line above, outside it, where an ImportError or a syntax error in
+                            # memory_diag.py -- or its absence on the pod, which is the exact
+                            # class of fault that prompted this wrap -- would still have killed
+                            # the run. Wrapping only the call would have left the more likely
+                            # failure unguarded.
+                            import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+
+                            memory_diag.log_diag(
+                                name=Cfg.mem_arm,
+                                step=step,
+                                pool_touched_frac=_md["touched_fraction"],
+                                topk_entropy=_md["topk_entropy"],
+                                key_gini=_md["key_gini"],
+                                tok_s_gpu=tps,
+                                n_values=_md["n_values"],
+                                topk=_mem.top_k,
+                            )
+                        except Exception as _e:  # noqa: BLE001 -- see the comment above
+                            runlog(f"step {step}/{total_steps} memory_diag write FAILED, run "
+                                   f"continues: {type(_e).__name__}: {_e}")
                 if step >= total_steps:
                     break
 
