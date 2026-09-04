@@ -105,6 +105,9 @@ _CHECK_TIMEOUTS = {
     #
     # ~4x the measured wall, the same ratio every entry here uses. Not larger: the deadline still
     # has to catch a real hang, and a network call that takes 40s IS a hang worth reporting.
+    # Independently measured the same hour (tilerl): `pod 'echo ok'` is 2.8-4.7s for a
+    # BARE round trip, which is the floor under pod_stamp_is_main and the reason no local
+    # change can help it.
     "pod_stamp_is_main": 20,
     "snapshot_logs_say_so_at_the_tail": 40,
 }
@@ -195,6 +198,7 @@ _RULE_CHECKS = {
     # a dropped byte). Neither can see the unfreeze decision itself.
     "Tokenizer frozen 2026-08-29": "pinned_ids",
     "Vocabulary identity": "vocab_id_on_load_path",
+    "When there is no lane card at all": "coresident_cache_refusal",
     "Long jobs detach": "no_foreground_pod_training",
     "CI gates": "CI",
     "Derived artifacts carry the fingerprint of what produced them": "corpus_fp_matches",
@@ -213,6 +217,7 @@ _RULE_CHECKS = {
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
     "uv sync after dependency changes": "env_importable",
+    "Shared files": "shared_file_claim",
 }
 
 #: Rule bullets in AGENTS.md that no check can enforce, and why. The count is
@@ -231,7 +236,6 @@ _MANUAL_RULES = {
         "the surviving process lives in the container and the only record of the dropped tunnel "
         "is a terminal the repo never sees; no_foreground_pod_training catches the launch shape "
         "that produces these orphans, which is the cause, not the post-drop verification",
-    "Shared files": "announcing an edit happens in conversation, outside the repo",
     "GPUs": "card ownership is a controller decision, not a file state",
     "A PID is only meaningful in the namespace that read it.":
         "no artifact records which namespace a pid was read in -- the host and the "
@@ -247,12 +251,6 @@ _MANUAL_RULES = {
     "Small jobs queue on the lane card":
         "queueing is operator behaviour over time; lane_respected catches the instantaneous violation",
     "The lane holds one job at a time": "same: lane_respected sees now, not the queue discipline",
-    "When there is no lane card at all — `NGPU=8`, as p500m_20b_0902 runs — co-residency "
-    "is judged by host IO and seconds, not by metric class":
-        "the deciding quantity is host bytes read, which nothing in the repo records per "
-        "eval run. scripts/eval_load_cost.py classifies each eval by whether it reaches a "
-        "token cache (static, checkable) and carries the three MEASURED costs, but the "
-        "measurement itself needs a live training run to differ against",
     "Judge the cost in seconds against what the run already spends on itself, never by the "
     "printed ETA":
         "how a human reads a log field. The fix that IS checkable is on the instrument -- "
@@ -378,7 +376,21 @@ _MANUAL_RULES = {
 #: 34 -> 33 (44-20, 2026-09-02): the launch-line check landed as
 #: launch_line_vs_oom_facts, so the rule above moved to _RULE_CHECKS. It was manual
 #: only until written, not manual by nature -- both sides are static.
-_MANUAL_BASELINE = 36
+#: 36 -> 32 (e1, 2026-09-04). Four steps, and only the first is mine:
+#:   1. "no lane card at all -- co-residency is judged by host IO" moved to _RULE_CHECKS as
+#:      coresident_cache_refusal. The stated reason for manual was "host bytes per eval run,
+#:      which nothing records", wrong in one specific way: the bytes are a property of the
+#:      DOMAIN SET, not of a run, and eval_load_cost.py's CACHE_BYTES has held them per
+#:      domain since 2026-09-03. The tok/s delta is still unmeasured and the refusal does not
+#:      need it -- it needs the bytes and whether a live claim holds the box.
+#:   2. 9edaf849 deleted the Language row (T3, 0 recorded incidents).
+#:   3. ea289a89 closed Shared files with a T0 structural change.
+#:   4. The baseline read 36 against a dict of 35, so the ratchet carried a slot of slack and
+#:      would not have fired on a rule going manual again.
+#: Set to the count measured on this tree, not to an arithmetic guess -- three of the four
+#: steps landed in other sessions while this one was verifying, and each re-merge moved it.
+#: The ETA rule beside #1 stays manual until train.py unfreezes.
+_MANUAL_BASELINE = 32
 
 
 def _norm_rule(text):
@@ -2044,6 +2056,66 @@ def _broken_curl_ipv4():
     return d
 
 
+def check_refusal_precedes_push(root):
+    """Every `refusing:` in pod_push.sh must be reachable BEFORE the first byte ships.
+
+    The rule is "only a refusing: line means nothing shipped". stamp_sync used to test
+    main-reachability at the END of --all -- after every file and the manifest had
+    landed -- and refuse with `return 1`. The line printed, the push had already
+    happened, and on the `partial` path the refusal was unreachable entirely (that
+    branch cannot return nonzero, and `stamp_sync partial` is the script's last line,
+    so nothing would have propagated it anyway).
+
+    Test: the main-reachability decision is made before the first push_one call."""
+    p = os.path.join(root, "scripts", "pod_push.sh")
+    if not os.path.exists(p):
+        return FAIL, "scripts/pod_push.sh is missing"
+    body = open(p, encoding="utf-8").read()
+    if "resolve_stamp_sha" not in body:
+        return FAIL, ("scripts/pod_push.sh has no resolve_stamp_sha: the main-reachability "
+                      "refusal is back inside stamp_sync, which runs after the push")
+    call = body.find("STAMP_SHA=$(resolve_stamp_sha")
+    if call < 0:
+        return FAIL, "resolve_stamp_sha is defined but never called"
+    first_push = body.find("push_one", body.find("if [ $ALL -eq 1 ]"))
+    if first_push < 0:
+        return FAIL, "no push_one call inside the --all block to order against"
+    if call > first_push:
+        return FAIL, ("resolve_stamp_sha runs AFTER the first push_one, so its refusal "
+                      "names a condition that no longer prevents anything")
+    if re.search(r"stamp_sync\(\)[\s\S]{0,600}?merge-base", body):
+        return FAIL, ("stamp_sync still runs the merge-base test itself; a second copy "
+                      "can drift from the hoisted one and refuse too late")
+    return PASS, "the main-reachability refusal is resolved before the first push"
+
+
+def _broken_refusal_precedes_push():
+    """The REAL pod_push.sh with the resolve call MOVED to after the pushes.
+
+    Not deleted -- moved. Deleting it trips the "defined but never called" branch,
+    which is the trivial half; the branch that matters is the ORDER test, and a world
+    that never reaches it leaves it unverified. This world keeps every line and changes
+    only where the call sits, so the check must fail on ordering or not at all."""
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "pod_push.sh")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    call = "  STAMP_SHA=$(resolve_stamp_sha)\n"
+    if "resolve_stamp_sha" not in text or call not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    # Lift the call out and re-insert it immediately before the stamp, i.e. after every
+    # push_one and after the manifest -- exactly where the defect had it.
+    broken = text.replace(call, "")
+    anchor = '  stamp_sync all "$STAMP_SHA"'
+    if anchor not in broken:
+        return None
+    broken = broken.replace(anchor, call + anchor)
+    open(os.path.join(d, "scripts", "pod_push.sh"), "w", encoding="utf-8").write(broken)
+    return d
+
+
 def check_running_sh_override_verified(root):
     """POD_PUSH_ALLOW_RUNNING_SH must reach the offset check, not return unconditionally.
 
@@ -3564,6 +3636,223 @@ def check_vocab_id_on_load_path(root):
                   f"({', '.join(ok)})")
 
 
+def check_coresident_cache_refusal(root):
+    """Every token-cache read passes a co-residency refusal, and the chokepoint asks for it.
+
+    The rule is AGENTS.md, Lanes: with no lane card, co-residency is judged by host IO and
+    seconds, not by metric class. The deciding quantity is host bytes, so the enforcement is
+    on the READ, not on the tool -- of score_matrix's fourteen metrics exactly one reaches a
+    cache, and refusing at its entry would refuse the four likelihood metrics whose 46 s is
+    the measurement that says scoring beside a run is fine.
+
+    TWO PROPERTIES, and the second is the one the selftest cannot hold:
+
+      1. eval/cache_guard.py's assert_caches_fresh CALLS assert_not_co_resident, and calls it
+         BEFORE the freshness loop. Both answer "may this process read these caches now", and
+         a refusal after 166 GB has been read is not a refusal.
+      2. No file reaches train._domain_seqs except through that chokepoint (directly, or via
+         domain_loss.val_seqs which calls it). This is the property cache_guard's own
+         --selftest is blind to: its worlds exercise the guard, not the population of callers,
+         so a NEW eval that calls _domain_seqs itself is invisible there and green here only
+         while nobody writes one.
+
+    WHY A CHECK AND NOT JUST THE SELFTEST: the hook runs cache_guard.py --selftest when
+    cache_guard.py is staged. A new eval that reads a cache does not stage cache_guard.py, so
+    the selftest that would have caught it never runs -- the shape from 2026-09-04, where a
+    test correctly registered in SELFTEST_FILES guarded zero commits because the loop only
+    fired when the test file itself was staged.
+
+    WHAT IT CANNOT SEE: whether the threshold is right. CO_RESIDENCY_BYTES is DECLARED, not
+    fitted -- there is no measured bytes->seconds point above ~2 GB, because the three 166 GB
+    reads have never been allowed to finish beside a run (ppl.py's 109 s was recorded at the
+    kill, before it reached a cache). This check asserts the question is asked at every read
+    site, not that 10 GB is the correct answer.
+    """
+    import ast as _ast
+
+    guard_p = os.path.join(root, "eval", "cache_guard.py")
+    if not os.path.isfile(guard_p):
+        return FAIL, "eval/cache_guard.py missing -- the cache-read chokepoint is gone"
+    with open(guard_p, encoding="utf-8") as fh:
+        gsrc = fh.read()
+    try:
+        gtree = _ast.parse(gsrc)
+    except SyntaxError as e:
+        return FAIL, f"eval/cache_guard.py does not parse: {e}"
+
+    fresh = next((n for n in _ast.walk(gtree) if isinstance(n, _ast.FunctionDef)
+                  and n.name == "assert_caches_fresh"), None)
+    if fresh is None:
+        return FAIL, ("eval/cache_guard.py no longer defines assert_caches_fresh -- the "
+                      "chokepoint moved and this check cannot see the new one")
+    if not any(isinstance(n, _ast.FunctionDef) and n.name == "assert_not_co_resident"
+               for n in _ast.walk(gtree)):
+        return FAIL, ("eval/cache_guard.py defines no assert_not_co_resident: nothing refuses a "
+                      "whole-cache read beside a live training run")
+
+    # ORDER, not just presence. The statement index of the co-residency call against the first
+    # statement that reads a stamp off disk: a refusal that runs after the read is not one.
+    co_at = None
+    for i, st in enumerate(fresh.body):
+        if any(isinstance(c, _ast.Call) and isinstance(c.func, _ast.Name)
+               and c.func.id == "assert_not_co_resident" for c in _ast.walk(st)):
+            co_at = i
+            break
+    if co_at is None:
+        return FAIL, ("assert_caches_fresh does not call assert_not_co_resident: the refusal "
+                      "exists but no eval reaches it -- a guard nothing asks")
+    loop_at = next((i for i, st in enumerate(fresh.body) if isinstance(st, (_ast.For, _ast.While))),
+                   len(fresh.body))
+    if co_at > loop_at:
+        return FAIL, (f"assert_caches_fresh calls assert_not_co_resident at statement {co_at}, "
+                      f"AFTER the per-domain loop at {loop_at}: the caches would already have "
+                      f"been read when the refusal fires")
+
+    # THE POPULATION. Everything that calls train._domain_seqs must be the chokepoint itself,
+    # a caller that reaches it, or a test that stubs/builds its own fixture corpus.
+    #
+    # `val_seqs` counts as reaching it because domain_loss.val_seqs calls assert_caches_fresh --
+    # asserted here rather than assumed, so a future edit that drops the guard from val_seqs
+    # fails this check instead of silently widening the bypass set.
+    dl_p = os.path.join(root, "eval", "domain_loss.py")
+    if not os.path.isfile(dl_p):
+        return FAIL, "eval/domain_loss.py missing -- val_seqs is the shared cache reader"
+    with open(dl_p, encoding="utf-8") as fh:
+        dlsrc = fh.read()
+    try:
+        dltree = _ast.parse(dlsrc)
+    except SyntaxError as e:
+        return FAIL, f"eval/domain_loss.py does not parse: {e}"
+    vs = next((n for n in _ast.walk(dltree) if isinstance(n, _ast.FunctionDef)
+               and n.name == "val_seqs"), None)
+    if vs is None:
+        return FAIL, "eval/domain_loss.py no longer defines val_seqs"
+    if not any(isinstance(c, _ast.Call) and isinstance(c.func, _ast.Name)
+               and c.func.id == "assert_caches_fresh" for c in _ast.walk(vs)):
+        return FAIL, ("domain_loss.val_seqs no longer calls assert_caches_fresh, so every eval "
+                      "that reads the cache through it now bypasses both guards")
+
+    GUARDS = {"assert_caches_fresh", "guard", "val_seqs", "assert_not_co_resident"}
+    bypass = []
+    scanned = 0
+    for sub in ("eval", "scripts", "probes"):
+        d = os.path.join(root, sub)
+        if not os.path.isdir(d):
+            continue
+        for fn in sorted(os.listdir(d)):
+            if not fn.endswith(".py") or fn == "cache_guard.py":
+                continue
+            p = os.path.join(d, fn)
+            try:
+                with open(p, encoding="utf-8") as fh:
+                    src = fh.read()
+            except OSError:
+                continue
+            if "_domain_seqs" not in src:
+                continue
+            try:
+                tree = _ast.parse(src)
+            except SyntaxError:
+                continue
+            # `scanned` counts CALLERS THE RULE APPLIES TO, incremented after the three
+            # exclusions below, not files that merely mention the name. The first version
+            # incremented here and reported "13 _domain_seqs caller(s) all reach it" when four
+            # files call it and only two reach the guard on their own -- the other nine mention
+            # it in prose, stub it, or redirect the cache. A count that overstates coverage is
+            # the same defect class as a green check that tests nothing.
+            calls, assigned, redirects = set(), False, False
+            for node in _ast.walk(tree):
+                if isinstance(node, _ast.Call):
+                    f = node.func
+                    nm = f.attr if isinstance(f, _ast.Attribute) else (
+                        f.id if isinstance(f, _ast.Name) else None)
+                    if nm:
+                        calls.add(nm)
+                # A test that REPLACES train._domain_seqs is not reading a cache at all.
+                # And one that REDIRECTS TOKEN_CACHE or DATA to its own tree reads its own
+                # fixture, not /data00: scripts/test_vocab_stamp.py builds a real cache under
+                # a mkdtemp, so it is a true negative rather than a file to exempt by name.
+                # Keyed on the redirect because that is the property that makes it safe --
+                # a name exemption would still be green if the redirect were removed.
+                if isinstance(node, _ast.Assign):
+                    for t in node.targets:
+                        if isinstance(t, _ast.Attribute):
+                            if t.attr == "_domain_seqs":
+                                assigned = True
+                            elif t.attr in ("TOKEN_CACHE", "DATA"):
+                                redirects = True
+            if "_domain_seqs" not in calls or assigned or redirects:
+                continue
+            scanned += 1
+            if not (calls & GUARDS):
+                bypass.append(f"{sub}/{fn}")
+    if bypass:
+        return FAIL, (
+            f"{len(bypass)} file(s) call train._domain_seqs without reaching the chokepoint, so "
+            f"they read a token cache with no co-residency or freshness refusal: "
+            f"{', '.join(bypass[:4])}. Call eval.domain_loss.val_seqs, or "
+            f"cache_guard.guard(cfg, domains) before the read")
+    return PASS, (f"assert_caches_fresh refuses co-resident reads before the freshness loop "
+                  f"(statement {co_at} of {loop_at}); {scanned} real _domain_seqs caller(s) "
+                  f"reach it (files that stub it or redirect TOKEN_CACHE are not counted)")
+
+
+def _broken_coresident_call_removed():
+    """The REAL cache_guard.py with the co-residency call deleted from the chokepoint.
+
+    The guard function stays, its selftest worlds 1-5 still pass, and every eval bypasses it --
+    which is why this world is the one that matters. A deleted FUNCTION would be caught by a
+    substring search; a working function nobody calls is the shape that has cost this repo
+    twice (the SELFTEST_FILES loop, and the hook gate that ran zero selftests).
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "eval", "cache_guard.py")
+    if not os.path.isfile(src):
+        raise SelftestSkip("eval/cache_guard.py absent")
+    # eval/ is a symlink into the repo in a shaped world: replace the link with a real dir.
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    p = os.path.join(ed, "cache_guard.py")
+    with open(p, encoding="utf-8") as fh:
+        s = fh.read()
+    old = "    assert_not_co_resident(domains, root=root)\n"
+    if old not in s:
+        raise SelftestSkip("the chokepoint no longer calls assert_not_co_resident this way")
+    with open(p, "w", encoding="utf-8") as fh:
+        fh.write(s.replace(old, "", 1))
+    return d
+
+
+def _broken_coresident_bypass():
+    """A NEW eval that calls train._domain_seqs itself, reaching no guard.
+
+    This is the half cache_guard.py --selftest structurally cannot see: its worlds test the
+    guard, not the set of callers, and a new file does not stage cache_guard.py so the hook
+    never runs that selftest either.
+    """
+    import shutil
+
+    d = _tmp_repo_shaped()
+    ed = os.path.join(d, "eval")
+    if os.path.islink(ed):
+        os.remove(ed)
+        shutil.copytree(os.path.join(ROOT, "eval"), ed, symlinks=True)
+    with open(os.path.join(ed, "zz_new_eval_probe.py"), "w", encoding="utf-8") as fh:
+        fh.write(
+            "#!/usr/bin/env python3\n"
+            '"""A new eval that reads the token cache directly."""\n'
+            "import train\n\n\n"
+            "def main(tok):\n"
+            "    rows = train._domain_seqs('zh_web', tok, True, False)\n"
+            "    return len(rows)\n"
+        )
+    return d
+
+
 def _broken_vocab_id_load_path():
     """sft_math.py's guard with the KEY RENAMED, which is the 7aacbac defect itself.
 
@@ -3791,6 +4080,78 @@ def _broken_spawned_scripts_importable():
         'sys.path.insert(0, os.path.join(ROOT, "scripts"))', "")
     open(pre, "w").write(body)
     return d
+
+
+def check_shared_file_claim(root):
+    """Editing a listed shared file needs a live claim (AGENTS.md "Shared files", T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature 2026-08-30, `git checkout` erased
+    a device gate 2026-08-31, `git add -A` swept five sessions into d535674) show a spoken
+    announce is no record. A claim is a file under runs/claims/files/<path>.json; the
+    pre-commit hook refuses a staged shared-file commit with no live claim. This check is the
+    `harness check` view of the same gate: shared files staged with no claim would FAIL.
+    Runs on staged content, so it SKIPs with nothing staged (the hook is the enforcer)."""
+    import subprocess as sp
+    shared = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
+    staged = sp.run(["git", "-C", root, "diff", "--cached", "--name-only"],
+                    capture_output=True, text=True).stdout.split()
+    touched = [p for p in staged if p in shared]
+    if not touched:
+        return SKIP, "no staged shared-file edit; the pre-commit hook enforces staged claims"
+    claims_dir = os.path.join(root, "runs", "claims", "files")
+    missing = []
+    for p in touched:
+        cp = os.path.join(claims_dir, p.replace("/", "__") + ".json")
+        live = False
+        if os.path.exists(cp):
+            try:
+                rec = json.load(open(cp, encoding="utf-8"))
+                live = (time.time() - rec.get("time", 0)) <= 6 * 3600
+            except (OSError, ValueError):
+                live = False
+        if not live:
+            missing.append(p)
+    if missing:
+        return FAIL, (f"shared-file edit(s) without a live claim: {', '.join(missing)} -- "
+                      "claim first via `harness claim-file acquire --path <file>`")
+    return PASS, f"{len(touched)} shared-file edit(s) claimed"
+
+
+def _broken_shared_file_claim():
+    """A staged train.py edit with no claim must FAIL; with a claim it must PASS."""
+    import tempfile
+    import subprocess as sp
+    tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
+    try:
+        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
+        sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
+        # world A: stage train.py with no claim -> FAIL
+        with open(os.path.join(tmp, "train.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "train.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed train.py edit must FAIL, got {r[0]}: {r[1]}"
+        # world B: add a live claim -> PASS
+        claims_dir = os.path.join(tmp, "runs", "claims", "files")
+        os.makedirs(claims_dir, exist_ok=True)
+        with open(os.path.join(claims_dir, "train.py.json"), "w") as fh:
+            json.dump({"path": "train.py", "owner": "t", "time": int(time.time())}, fh)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == PASS, f"claimed train.py edit must PASS, got {r[0]}: {r[1]}"
+        # world C: a claimed non-shared file is not guarded (train.py still claimed, add sft_math.py without claim -> FAIL)
+        sp.run(["git", "-C", tmp, "rm", "-q", "--cached", "--ignore-unmatch", "train.py"], check=True)
+        with open(os.path.join(tmp, "sft_math.py"), "w") as f:
+            f.write("def main():\n    pass\n")
+        sp.run(["git", "-C", tmp, "add", "sft_math.py"], check=True)
+        r = check_shared_file_claim(tmp)
+        assert r[0] == FAIL, f"unclaimed sft_math.py edit must FAIL, got {r[0]}: {r[1]}"
+        return tmp
+    except Exception:
+        import shutil
+        shutil.rmtree(tmp, ignore_errors=True)
+        raise
 
 
 def check_no_oversized_blob(root):
@@ -10292,6 +10653,13 @@ CHECKS = [
         _broken_mix,
     ),
     (
+        "shared_file_claim",
+        "editing a listed shared file (train.py/sft*.py/AGENTS.md) needs a live claim",
+        "three unannounced shared-file edits cost: a push rolled back 3b's build_corpus feature, a checkout erased a device gate, git add -A swept five sessions into d535674",
+        check_shared_file_claim,
+        _broken_shared_file_claim,
+    ),
+    (
         "launch_line_vs_oom_facts",
         "no stop-window launch line or running experiments row matches a recorded OOM config on (dim, layers, batch, accum, seq)",
         "p200m_4b_0902 launched b32a1 twice on 2026-09-02 after eff.microbatch_32_oom had recorded that exact OOM; the line had been checked against argparse, not against the facts",
@@ -10378,6 +10746,13 @@ CHECKS = [
         "a pack from another vocabulary trains silently at ~4x the loss -- every id is wrong, in range, and the sizes match; 7aacbac fixed sft_math.py's guard, which had read a key the packer never writes, and sft.py loads a pack and compares nothing",
         check_vocab_id_on_load_path,
         _broken_vocab_id_load_path,
+    ),
+    (
+        "coresident_cache_refusal",
+        "every token-cache read passes a co-residency refusal, and the chokepoint asks for it before reading",
+        "with no lane card, co-residency is judged by host bytes, not metric class: ppl.py was killed two minutes into a 166 GB read beside a live 20B run on 2026-09-02, and the rule lived only in a table. The refusal has to key on the read -- one of score_matrix's fourteen metrics reaches a cache, and refusing at its entry would refuse the four likelihood metrics whose 46s says scoring beside a run is fine",
+        check_coresident_cache_refusal,
+        _broken_coresident_call_removed,
     ),
     (
         "entrypoint_help",
@@ -10717,6 +11092,13 @@ CHECKS = [
         _broken_curl_ipv4,
     ),
     (
+        "refusal_precedes_push",
+        "pod_push's main-reachability refusal is decided before the first file ships",
+        "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
+        check_refusal_precedes_push,
+        _broken_refusal_precedes_push,
+    ),
+    (
         "running_sh_override_verified",
         "POD_PUSH_ALLOW_RUNNING_SH reaches the byte-offset check instead of permitting on the operator's word",
         "the override was one line returning unconditionally: an edit to a RUNNING script was pushed on an assertion nobody recomputed, and the same flag on an edit touching an earlier byte would corrupt the live shell's resume position with no warning (de-48, 2026-09-04)",
@@ -10891,12 +11273,15 @@ EVIDENCE = {
     # repo: sft.py and sft_math.py are tracked, so the AST answers the same anywhere. It does NOT
     # read a pack or a checkpoint -- the ids themselves are pod-side and outside this check.
     "vocab_id_on_load_path": "repo",
+    "coresident_cache_refusal": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
+    "refusal_precedes_push": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
@@ -14608,6 +14993,39 @@ def cmd_free_card(argv):
         time.sleep(min(30, max(5, a.wait / 20)))
 
 
+def cmd_claim_file(argv):
+    """`harness claim-file {acquire,release,status} --path <f>` -- the Shared-files rule (T0).
+
+    The rule "announce before editing train.py/sft*.py/AGENTS.md" was prose; three recorded
+    incidents (a push rolled back 3b's build_corpus feature, a checkout erased a device gate,
+    `git add -A` swept five sessions' work) show a conversation announcement is not a record.
+    A claim makes the announce a file under runs/claims/files/ and the pre-commit hook refuses
+    a staged shared-file commit with no live claim. Delegates to scripts/file_claim.py."""
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    import file_claim
+    c = argv[0] if argv else "status"
+    if c == "acquire":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        owner = argv[argv.index("--owner") + 1] if "--owner" in argv else None
+        if not path:
+            print("claim-file acquire needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.acquire(path, owner)
+        print(msg)
+        return 0 if ok else 1
+    if c == "release":
+        path = argv[argv.index("--path") + 1] if "--path" in argv else None
+        if not path:
+            print("claim-file release needs --path <shared file>", file=sys.stderr)
+            return 2
+        ok, msg = file_claim.release(path)
+        print(msg)
+        return 0 if ok else 1
+    for p, r in file_claim.claims().items():
+        print(f"{p:16s} owner={r.get('owner')} t={time.strftime('%H:%M', time.gmtime(r.get('time')))} UTC")
+    return 0
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -16026,6 +16444,8 @@ def main():
         return cmd_milestone(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "free-card":
         return cmd_free_card(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "claim-file":
+        return cmd_claim_file(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board"]

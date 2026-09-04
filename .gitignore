@@ -43,6 +43,9 @@ data/_corpus_unsanitized/
 data/raw/
 data/eval/preds_*.jsonl
 runs/board.html
+# Transient ownership: who holds a shared file right now (Shared-files rule, T0). A claim is
+# per-instant state -- committing one would carry a stale hold into history and dirty the tree.
+runs/claims/
 # Per-machine, per-run state: which checks hit their deadline on the LAST run here.
 # Committing it would carry one machine's slowness into everyone's strike count.
 runs/check_timeouts.json
