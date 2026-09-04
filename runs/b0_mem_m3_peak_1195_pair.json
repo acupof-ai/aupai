@@ -1,0 +1,90 @@
+{
+  "id": "b0_mem_m3_peak_1195_pair",
+  "written": "2026-09-04T22:11Z",
+  "by": "b0",
+  "what": "the pair of world-1 --peak-only runs at side 1195 with ONE pooled layer, without and with the value table's fp32 master. Decides M3's size under 4c's < 90 GiB reserved rule (amendment_10 + the TableMaster ruling).",
+  "shape": {
+    "side": 1195,
+    "values": 1428025,
+    "table_params": 1462297600,
+    "mem_layers": "6",
+    "mem_top_k": 32,
+    "mem_sparse": false,
+    "backbone": "d1024 L12 h8 ffn3072 batch16 accum2 seq4096 no grad_ckpt fp8",
+    "world": 1,
+    "alloc_conf": "PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True",
+    "card_usable_GiB": 95.22
+  },
+  "runs": {
+    "baseline_no_master": {
+      "name": "b0_mem_m3_peak_1195",
+      "code": "684268b4 profile_step_cost.py at 440bd579's parent -- NO TableMaster",
+      "peak_reserved_GiB": 63.48, "peak_allocated_GiB": 63.15,
+      "startup_reserved_GiB": 63.46, "startup_allocated_GiB": 63.12,
+      "gap_GiB": 0.33,
+      "table_B_per_param": 6, "table_GiB": 8.17,
+      "tok_s_gpu": 33900,
+      "step_ms": {"total": 1929.98, "forward": 721.87, "backward": 1140.69, "opt_step": 66.65, "loader_wait": 0.64},
+      "readout6_ms": 9.15, "readout6_share_pct": 0.47,
+      "role": "the world the probe measured before the master was added to it, kept because it is the only measurement of the non-table residual"
+    },
+    "with_master": {
+      "name": "b0_mem_m3_peak_1195_master",
+      "code": "440bd579 -- TableMaster constructed as train.py does",
+      "peak_reserved_GiB": 77.52, "peak_allocated_GiB": 76.77,
+      "startup_reserved_GiB": 77.01, "startup_allocated_GiB": 76.74,
+      "gap_GiB": 0.75,
+      "table_B_per_param_steady": 12, "table_GiB_steady": 16.34,
+      "table_B_per_param_in_step": 16, "table_GiB_in_step": 21.79,
+      "tok_s_gpu": 33700,
+      "step_ms": {"total": 1938.14, "forward": 721.83, "backward": 1130.61, "opt_step": 83.58, "loader_wait": 0.64},
+      "readout6_ms": 9.15, "readout6_share_pct": 0.47,
+      "role": "THE DECISION READING: this is the shape that would launch"
+    }
+  },
+  "verdict": {
+    "rule": "4c, 2026-09-05: under 90 GiB reserved -> M3 = 1195",
+    "measured_reserved_GiB": 77.52,
+    "margin_to_rule_GiB": 12.48,
+    "margin_to_card_GiB": 17.70,
+    "result": "M3 = 1195 by the rule. STARTUP 77.01 is BELOW peak 77.52, so no compile transient exceeds the steady state and the shape starts as well as runs.",
+    "not_my_call": "the size decision is 4c's; this artifact reports the measurement the rule reads."
+  },
+  "correction_to_my_own_costing": {
+    "what_i_told_4c": "14 B/param steady, 16 in-step",
+    "measured": "12 B/param steady, 16 in-step",
+    "why_i_was_wrong": "I counted the master's fp32 gradient as a steady-state term. It is not: pull_grads creates m.grad at the top of the step and the optimizer's zero_grad(set_to_none=True) frees it after step(), so between one step's zero_grad and the next step's pull_grads the tensor does not exist. Steady state is weight 2 + model grad 2 + Adagrad sum 4 + master 4 = 12; the master's grad is the 13th-to-16th byte and lives only inside the step. The in-step figure, 16, was right and is the one a peak must hold, so the planning number I gave 4c was correct where it mattered and wrong in the steady column.",
+    "consequence": "none for the launch decision -- 16 in-step is what the peak reads. It matters for anyone sizing against steady state: 1195 is 16.34 GiB resident, not 19.07.",
+    "board_note_to_amend": "the '14-steady / 16-peak' line 4c recorded on the board should read 12-steady / 16-peak."
+  },
+  "master_cost_measured": {
+    "peak_reserved_delta_GiB": 14.04,
+    "table_tensor_delta_GiB": 13.62,
+    "residual_GiB": 0.42,
+    "residual_note": "13.62 of the 14.04 is the table tensors themselves (21.79 in-step minus 8.17); the remaining 0.42 is allocator behaviour, and the alloc/reserved gap grew 0.33 -> 0.75 GiB, consistent with that. So the master costs what its tensors cost and nothing structural beyond them.",
+    "opt_step_ms": {"without": 66.65, "with": 83.58, "delta": 16.93, "pct": 25.4,
+                    "why": "pull_grads writes a 5.45 GiB fp32 gradient copy and push writes a 5.45 GiB copy back to the bf16 table, both per step"},
+    "step_total_ms": {"without": 1929.98, "with": 1938.14, "delta": 8.16, "pct": 0.42},
+    "throughput": {"without": 33900, "with": 33700, "ratio": 0.9941,
+                   "note": "the master costs 0.6% of throughput. opt_step grew 25% but is only 4.3% of the step, and part of the 16.93 ms overlaps what backward gave back (1140.69 -> 1130.61)."}
+  },
+  "readout6_cost": {
+    "ms_per_call": 9.15,
+    "share_of_step_pct": 0.47,
+    "identical_in_both_runs": true,
+    "identical_is_expected_not_stale": "note_row_changes reads only the value table and the probe vector, neither of which the master changes, and the chunk size is fixed -- so the two runs measuring 9.15 ms to two decimals is the correct result, not a copied print. Stated because an unexplained exact match is normally a reporting defect.",
+    "bandwidth_check": "2.72 GiB of bf16 table read per call / 9.15 ms = ~297 GB/s effective. Bandwidth-bound, which is what the chunking was for: an unchunked call would have allocated a 5.45 GiB fp32 temporary and shown up in the peak instead of in the clock.",
+    "cost_over_a_run": "charged at steps 10, 20, 30 and every 100 thereafter -- 4 calls in the first 100 steps, then 1 per 100. Over 3815 steps that is 41 calls x 9.15 ms = 0.38 s against a ~2.05 h run: 0.005%.",
+    "share_rises_with_one_layer": "at three layers the step was 2348.90 ms and the same call would have read 0.39%. One pooled layer shortens the step and the checksum does not shrink with it, so the share went up while the absolute cost did not change."
+  },
+  "one_layer_effect": {
+    "non_table_reserved_GiB": {"three_layers_1448": 76.15, "one_layer_1195": 55.31, "recovered": 20.84},
+    "attribution_unresolved": "the 20.84 GiB is one layer AND expandable_segments together, and this pair cannot separate them: both changed between the 1448 and 1195 probes. The gap collapsing from 10.01 to 0.33 GiB is evidence that expandable_segments accounts for a large share of it, but 'a large share' is as far as these two runs support.",
+    "throughput": {"1448_three_layers": 28000, "1195_one_layer": 33900, "note": "different table size AND different layer count, so this is not tilerl's 0.79 -> 0.90 measurement and must not be quoted as it."}
+  },
+  "what_this_does_NOT_answer": [
+    "the world-2 residual. Both runs are world 1; the arms run world 2, whose NCCL buffers and DDP bucket are absent here. Not recoverable from a ratio.",
+    "whether the master is NEEDED. That is readout 6 on a real arm: rows_changed_since_prev below 0.50 of touched rows is the failure the master prevents, and no probe of 30 steps at warmup lr can show it.",
+    "the arms' throughput ratio against the control. These are world-1 probes with no memory-off control at this exact shape; tilerl's table owns that number."
+  ]
+}
