@@ -46,7 +46,7 @@
  "cards": {
   "0-3": "params leg params_leg_438m_3p76b, 438.4M x 3.761775B, world 4, launched 12:52Z after the gate (PEAK/STARTUP 76.36 GiB, code_fp NONE). Data leg done 12:40Z, val 1.836.",
   "4": "e1: N8 attention-kernel control and the conv fix gates; then free",
-  "5": "lane: b0 nine-domain cu probe and cu rescores, one job at a time",
+  "5": "lane: e1 C11 doc_cu domain_loss re-score (granted 2026-09-04 05:40Z fb); returns to free when the row lands",
   "6": "FOREIGN OCCUPANT since ~12:5xZ 2026-09-03: host-namespace pids 2278278/2291027 (not in our container), 0.5-12.7 GB, 92-100%. harness launch refused bench_final_score_matrix twice on it. Lane jobs do not queue behind another container: the lane moved to card 5 for bench_final_score_matrix (read-and-launch in one command, 0 MiB). Card 6 returns to lane duty only when its compute-apps list is empty of foreign pids.",
   "7": "0 MiB / 0% at 11:0xZ -- the user's container's job ENDED. This does NOT make card 7 available. Its owner is the user's container, not the nvidia-smi row; the same rule that says a stale grant is not ownership says an empty card is not ownership either. STILL NEVER TAKE without the user saying so.",
   "0": "b0 Stage D equal-compute arm (unlooped, 5085 steps = 1.333B tok), world 2 with card 1",
