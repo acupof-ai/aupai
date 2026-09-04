@@ -6,7 +6,7 @@ source: facts/data_scaling.json#ds.n2_params_vs_data_matched_compute; facts/smel
 
 # Experiments of 2026-09-04
 
-Four experiments. Two adopted decisions (N7 not adopted, N8 enters for correctness), one no-difference verdict (N2), one pending (head-hybrid A/B).
+Four experiments. Two decisions (N7 not adopted, N8 enters the recipe), one no-difference verdict (N2), one pending (head-hybrid A/B).
 
 ## N2: parameters vs data at matched compute
 
@@ -104,7 +104,7 @@ Design (`runs/prereg.jsonl` b0_head_hybrid_3to1, registered 2026-09-04T08:29Z, a
 
 Parameter counts (recomputed on 2bc3fe6f): Arm A 206,128,200; Arm B 208,552,008; +2,423,808 = **+1.18%** of the model, +4.10% of mixer parameters. An earlier draft said −1.91%: computed for a layout where each mixer read only its own slice, and does not survive the change to full-residual projections. The sign flipped.
 
-What +1.18% buys at 1B: unmeasured. The nearest point is +26.46% params for +0.031 nat worse — a single point, not a slope, so it does not license interpolating down to 1.18%. A B advantage smaller than the unmeasured quantity is undecidable: it cannot be attributed to the topology rather than to the extra parameters.
+What +1.18% buys at 1B: unmeasured. A B advantage smaller than the unmeasured quantity is undecidable: it cannot be attributed to the topology rather than to the extra parameters.
 
 Confound: attention count vs per-layer width. Arm B has 12 attention paths of width 256; Arm A has 3 of width 1024. Total attention width is 3072 vs 3072, equal by construction, but the count and the per-layer width both move together and this design cannot separate them. A result favouring B reads as "this topology", not as either mechanism. A third arm separating them is not scheduled.
 
