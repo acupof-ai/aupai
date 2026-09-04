@@ -1233,13 +1233,26 @@ def main():
                     sys.exit(1)
                 content = blob.stdout
             else:
+                # A subject-pulled test that is ABSENT is SKIPPED, not a refusal, and the hook says
+                # so. The refusal I first wrote here deadlocked a worktree within hours, and it was
+                # my own: .git/hooks/pre-commit is a symlink into the INTEGRATION tree, so every
+                # worktree runs main's copy of this file while its own tree may be dozens of commits
+                # behind. main's map named runs/audit_0904/dead_worlds.py, which exists on main and
+                # not in a 58-behind worktree -- so committing refused for a missing file, and the
+                # merge that would have supplied it refused because the tree was dirty. Neither
+                # could go first.
+                #
+                # A missing file is not evidence about the staged change, and this branch cannot
+                # tell "the test was deleted" from "this tree predates it". So: warn, skip, and let
+                # behind-main (which fires before this and names the real remedy) be the check that
+                # cares about the tree being old.
                 try:
                     with open(os.path.join(repo_root(), f), "rb") as fh:
                         content = fh.read()
                 except OSError as e:
-                    print(f"REFUSING: cannot read {f} ({e}); it guards a staged file",
-                          file=sys.stderr)
-                    sys.exit(1)
+                    print(f"hook: skipping {f} ({e.strerror}); it guards a staged file but is not "
+                          f"in this tree -- merge main if that is unexpected", file=sys.stderr)
+                    continue
             d, base = os.path.split(os.path.join(repo_root(), f))
             dst = os.path.join(d, f".hookstaged_{base}")
             staged_copies.append(dst)
