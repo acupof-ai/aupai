@@ -8319,15 +8319,6 @@ def _task_close_run(name, evidence):
     return None
 
 
-DROP_REASON_GRANDFATHERED = frozenset({
-    # state=dropped, no drop_reason, measured 2026-09-04 on runs/tasks.jsonl (475 events,
-    # 247 ids, 51 dropped, 46 with the field). WARN by name; every other such row FAILs.
-    # Shrinks only: an id leaves this set when its owner fills the field. tilerl-1 and
-    # tilerl-10 were on it and left the same day, which is the list working.
-    "e1-21", "e1-25", "e1-27", "e1-29", "e1-30",
-})
-
-
 def check_tasks_well_formed(root):
     """A closed task carries an artifact; an open one carries an owner and a reason; a DROPPED
     one carries the reason it was dropped.
@@ -8335,20 +8326,22 @@ def check_tasks_well_formed(root):
     `drop_reason` is a separate field from `why` and the distinction is the point: `why` is the
     justification the row was OPENED with, and it survives a drop unchanged, so a dropped row
     always has a `why` and that tells a reader nothing about why the work stopped. Measured
-    2026-09-04 (tilerl's triage d039a32e, verified here): 51 dropped rows, 46 carry
-    `drop_reason`, 5 do not -- e1-21, e1-25, e1-27, e1-29, e1-30 -- and this check passed on all
-    of them, because it only ever asserted `why`. The field is the established convention
-    (46 of 51), not a new demand. tilerl-1 and tilerl-10 were a sixth and seventh at the time of
-    the measurement and were filled in the same day.
+    2026-09-04 (tilerl's triage d039a32e, verified here): 52 dropped rows, 45 carried
+    `drop_reason` and 7 did not -- e1-21, e1-25, e1-27, e1-29, e1-30, tilerl-1, tilerl-10 -- and
+    this check passed on all seven, because it only ever asserted `why`.
 
-    Those seven are WARN, not FAIL, and the difference is not politeness. They belong to e1 and
-    tilerl; only their owners know why the work stopped, and a value written by anyone else is a
-    fabricated reason in the field whose whole purpose is to carry a real one. FAILing on them
-    would also make `harness check --selftest` red on the real tree for every session until they
-    are filled, which is the permanent-red failure mode -- a red nobody can clear is the same as
-    no signal. So DROP_REASON_GRANDFATHERED is a literal list with a measurement date: those ids
-    WARN by name, every other dropped row with no drop_reason FAILs. The list only ever shrinks;
-    when it empties, delete it and the clause is a plain FAIL.
+    A PLAIN FAIL, and it was WARN for about two hours. Those seven rows belonged to e1 and
+    tilerl, and nobody else could fill the field: the value IS the reason, so a value written by
+    a third party is a fabricated one. FAILing immediately would have made `harness check
+    --selftest` red on the real tree for every session until the owners acted, which _demo
+    forbids (every check PASSes or SKIPs on the real tree at the moment it lands) and which is
+    the permanent-red shape -- a red nobody can clear is the same as no signal. So the clause
+    shipped with DROP_REASON_GRANDFATHERED: a dated literal list, WARN by name, shrink-only,
+    to be deleted when it emptied. tilerl filled two within the hour and e1 all five at
+    aaf02e47; at 482 events / 51 dropped / 51 carrying the field the list was empty and is gone,
+    exactly as its own comment said. Recorded because the ratchet is the reusable part: a new
+    required field on existing rows their author cannot fill is a dated WARN list plus a deletion
+    condition, not a FAIL that blocks every session and not a rule left unenforced.
     """
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     if not rows:
@@ -8364,7 +8357,7 @@ def check_tasks_well_formed(root):
     collisions = sorted(i for i, o in opened_by_id.items() if len(o) > 1)
     if collisions:
         bad.append(f"id collision (same id, different tasks): {', '.join(collisions)}")
-    no_reason, grandfathered = [], []
+    no_reason = []
     for r in rows:
         if r.get("state") == "done" and not (r.get("evidence") or "").strip():
             bad.append(f"{r.get('id')} done without evidence")
@@ -8373,8 +8366,7 @@ def check_tasks_well_formed(root):
         if not (r.get("why") or "").strip():
             bad.append(f"{r.get('id')} has no why")
         if r.get("state") == "dropped" and not str(r.get("drop_reason") or "").strip():
-            rid = str(r.get("id"))
-            (grandfathered if rid in DROP_REASON_GRANDFATHERED else no_reason).append(rid)
+            no_reason.append(str(r.get("id")))
     if no_reason:
         bad.append(f"{len(no_reason)} dropped without drop_reason: {', '.join(sorted(no_reason))}"
                    f" -- `why` is the reason it was OPENED and survives a drop, so it cannot say "
@@ -8383,10 +8375,6 @@ def check_tasks_well_formed(root):
         return FAIL, "; ".join(bad[:3])
     n_open = sum(1 for r in rows if r.get("state") == "open")
     n_drop = sum(1 for r in rows if r.get("state") == "dropped")
-    if grandfathered:
-        return WARN, (f"{n_drop} dropped, {len(grandfathered)} carry no drop_reason and are "
-                      f"grandfathered (measured 2026-09-04): {', '.join(sorted(grandfathered))} "
-                      f"-- their owners fill the field; nobody else can, the value IS the reason")
     return PASS, (f"{len(rows)} task(s), {n_open} open, every closed one carries an artifact, "
                   f"every one of {n_drop} dropped carries a drop_reason")
 
@@ -8411,18 +8399,19 @@ def _broken_tasks_drop_reason():
     """A SECOND world for the drop_reason clause: the real register, REPAIRED, then one real
     dropped row's `drop_reason` removed.
 
-    The repair is what makes it a discriminator. As of 2026-09-04 the live register already
-    misses the field on seven rows, so a world that merely adds an eighth proves nothing: undo
-    the mutation and the world reports the same tier. Here every dropped row is filled in, so
-    the only remaining offender is the planted one, and putting the field back makes the world
-    PASS -- the selftest asserts both halves.
-
-    The victim is a row NOT in DROP_REASON_GRANDFATHERED, because a grandfathered id WARNs by
-    design and a world built on one would certify the exemption instead of the clause.
+    The repair is what makes it a discriminator, and it was load-bearing when this was written:
+    the live register missed the field on seven rows, so a world that merely added an eighth
+    proved nothing -- undo the mutation and it reported the same tier. Every dropped row is
+    filled in, so the only remaining offender is the planted one, and putting the field back
+    makes the world PASS. The selftest asserts BOTH halves, which is what makes the FAIL a
+    statement about the mutation rather than about the register. Kept after e1 filled the last
+    five (51/51 now carry the field, so a bare copy would PASS and a single mutation would
+    already discriminate): the fixture no longer depends on the register's state, and reverting
+    it would make this world fragile again the next time a row lands without the field.
 
     Filling the others in is legitimate for a fixture and would not be for the register: the
     value written is the literal string "(filled by the fixture)", which no reader could mistake
-    for a real reason. The live rows stay WARN until their owners fill them.
+    for a real reason.
     """
     d = _tmp_repo()
     p = os.path.join(d, "runs", "tasks.jsonl")
@@ -8430,11 +8419,9 @@ def _broken_tasks_drop_reason():
     raw = _read_tasks(raw=True)
     if not raw:
         return None
-    dropped = [r.get("id") for r in _read_tasks()
-               if r.get("state") == "dropped" and str(r.get("id")) not in DROP_REASON_GRANDFATHERED]
+    dropped = [r.get("id") for r in _read_tasks() if r.get("state") == "dropped"]
     if not dropped:
-        raise SelftestSkip("every dropped row in the real register is grandfathered; a world "
-                           "built on one would test the exemption, not the clause")
+        raise SelftestSkip("the real register holds no dropped row to mutate")
     victim = dropped[0]
     rows = []
     for r in raw:
@@ -12750,15 +12737,14 @@ def _demo(only=None):
                 shutil.rmtree(_d, ignore_errors=True)
 
     # tasks_well_formed's registered world breaks the ID half (a collision). The drop_reason
-    # clause needs its own, and it needs a REVERSIBILITY assertion rather than only a FAIL:
-    # the live register already misses the field on five grandfathered rows as of 2026-09-04,
-    # so a world built by copying it reports the same tier whether or not the mutation is
-    # present -- three worlds were green for exactly that reason (2171). So: repair every
-    # dropped row, break one non-grandfathered row, assert FAIL naming that id, then fill the
-    # field back in and assert PASS. The second half is what proves the FAIL came from the
-    # mutation. Third assertion: a grandfathered id alone must be WARN, never FAIL and never
-    # silence -- the exemption exists so the check is not permanently red on rows only their
-    # owners can fill, and an exemption that swallows the row entirely would be the §71 shape.
+    # clause needs its own, and it needs a REVERSIBILITY assertion rather than only a FAIL. When
+    # it was written the live register missed the field on seven rows, so a world built by copying
+    # it reported the same tier whether or not the mutation was present -- three worlds were green
+    # for exactly that reason (2171). So: repair every dropped row, break one, assert FAIL naming
+    # that id, then fill the field back in and assert PASS. The second half is what proves the
+    # FAIL came from the mutation, and it stays after e1 filled the last five: the fixture is now
+    # independent of the register's state, which is the property that made it worth writing.
+    # (A third assertion covered DROP_REASON_GRANDFATHERED's WARN tier and went with the list.)
     _d = _broken_tasks_drop_reason()
     if _d:
         try:
@@ -12786,14 +12772,6 @@ def _demo(only=None):
                     untested.append(f"tasks_well_formed still reported {_st} after the drop_reason "
                                     f"was filled back in, so its FAIL was not caused by the "
                                     f"mutation ({_why[:70]})")
-                # and the exemption: the same emptied field on a grandfathered id is WARN
-                _gf = sorted(DROP_REASON_GRANDFATHERED)[0]
-                _write_tasks([dict(r, drop_reason="") if r.get("id") == _gf else r
-                              for r in _filled], _p)
-                _st, _why = check_tasks_well_formed(_d)
-                if _st != WARN or _gf not in _why:
-                    untested.append(f"tasks_well_formed reported {_st} on the grandfathered id "
-                                    f"{_gf} alone, wanted WARN naming it ({_why[:70]})")
         finally:
             shutil.rmtree(_d, ignore_errors=True)
 
@@ -13090,9 +13068,11 @@ def _demo(only=None):
     real_rows = _read_tasks()
     if real_rows:
         # The subject here is the REOPEN transition, so every other tier the live register
-        # carries has to be neutralised or this case reports someone else's row. As of
-        # 2026-09-04 five dropped rows carry no drop_reason (DROP_REASON_GRANDFATHERED), so a
-        # bare copy of the register reports WARN -- correct, and nothing to do with a reopen.
+        # carries has to be neutralised or this case reports someone else's row. Seven dropped
+        # rows carried no drop_reason on 2026-09-04 and a bare copy of the register then failed
+        # this case for a reason unrelated to a reopen. All 51 carry the field now, so the fill
+        # below is a no-op today and stays anyway: the next row dropped without one would
+        # otherwise turn this case red and point at the reopen path.
         real_rows = [dict(r, drop_reason=(r.get("drop_reason") or "(filled by the fixture)"))
                      if r.get("state") == "dropped" else r for r in real_rows]
         _write_tasks(real_rows, tmp_tasks)
