@@ -349,8 +349,8 @@ _MANUAL_RULES = {
         "header says so. vet_programs.py:37 globs math_programs_l*_ext*.py -- 23 live generators "
         "a name scan reads as unreferenced (near-miss, 2026-08-31)",
     "Every delivery has a second reader": "review_present checks the row exists; whether the reviewer actually read the artifact cannot be checked, only that they named one",
-    "cfg_default raises rather than returning None": "a note on how checks are written, not a rule to enforce",
-    "The ledger takes names from the scores": "a note on how the ledger reads, not a rule to enforce",
+    "cfg_default raises rather than returning None": "selftest contract, not an operational rule; documented in AGENTS.md 'Two failure modes specific to the harness'",
+    "The ledger takes names from the scores": "selftest contract, not an operational rule; documented in AGENTS.md 'Two failure modes specific to the harness'",
     "Commit in your worktree as soon as a change works": "same deadline as above, enforced by dirty_aged",
     "pod_push only ever ADDS: a deletion on main needs a second explicit step on the pod":
         "the deletion is an operator SEQUENCE -- delete here, then delete there -- and the "
