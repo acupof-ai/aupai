@@ -21,6 +21,38 @@ set -euo pipefail
 export PODPUT_TRACKED_OK=1
 cd "$(dirname "$0")/.."
 
+# The sha a whole-manifest stamp may claim, or a refusal — BEFORE anything ships.
+# Same test stamp_sync used to run at the end, hoisted for the reason the rule exists:
+# a `refusing:` line printed after every file and the manifest have landed names a
+# condition that no longer prevents anything, and "only a refusing: line means nothing
+# shipped" was then false on this path. Echoes the sha; refuses nonzero.
+resolve_stamp_sha() {
+  local head_sha main_sha
+  head_sha=$(git rev-parse HEAD)
+  # THE SHA MUST BE MAIN'S, NOT THIS WORKTREE'S BRANCH TIP (de-14). Every session pushes
+  # from its own worktree, so `rev-parse HEAD` is that branch's tip: measured 2026-09-03,
+  # this tree's HEAD was 1b85dd0c while main was 69c8bd87. The pod runs main -- push_one
+  # already refuses any file that differs from main -- so a stamp naming a branch tip
+  # describes a tree that does not exist anywhere: main's file contents under a sha only
+  # one laptop has. run_ddp.sh then compares against a value nobody else can resolve.
+  main_sha=$(git rev-parse main 2>/dev/null || echo "")
+  if [ -n "$main_sha" ] && [ "$head_sha" != "$main_sha" ]; then
+    if git merge-base --is-ancestor "$head_sha" "$main_sha" 2>/dev/null; then
+      # Behind main: the files pushed are main's (push_one enforced that), so main's sha
+      # is what describes them.
+      echo "pod sync stamp: using main ($main_sha) not this branch tip ($head_sha)" >&2
+      head_sha=$main_sha
+    else
+      echo "refusing: HEAD ($head_sha) is not reachable from main ($main_sha)." >&2
+      echo "  The pod runs main. A stamp naming an unmerged commit describes a tree that" >&2
+      echo "  exists on no branch, and run_ddp.sh cannot verify it. Merge into main first." >&2
+      echo "  Nothing was pushed." >&2
+      return 1
+    fi
+  fi
+  echo "$head_sha"
+}
+
 # Stamp WHAT is on the pod and from WHERE. The pod has no git and no route back to
 # this machine, so it cannot ask whether main has moved -- run_ddp.sh can only read a
 # stamp somebody left. Called after --check, so a stamp means the manifest gate agreed.
@@ -31,28 +63,8 @@ cd "$(dirname "$0")/.."
 # guards is a three-day run on code somebody pushed one file into.
 stamp_sync() {
   if [ "$1" = all ]; then
-    local head_sha dirty main_sha
-    head_sha=$(git rev-parse HEAD)
-    # THE SHA MUST BE MAIN'S, NOT THIS WORKTREE'S BRANCH TIP (de-14). Every session pushes
-    # from its own worktree, so `rev-parse HEAD` is that branch's tip: measured 2026-09-03,
-    # this tree's HEAD was 1b85dd0c while main was 69c8bd87. The pod runs main -- push_one
-    # already refuses any file that differs from main -- so a stamp naming a branch tip
-    # describes a tree that does not exist anywhere: main's file contents under a sha only
-    # one laptop has. run_ddp.sh then compares against a value nobody else can resolve.
-    main_sha=$(git rev-parse main 2>/dev/null || echo "")
-    if [ -n "$main_sha" ] && [ "$head_sha" != "$main_sha" ]; then
-      if git merge-base --is-ancestor "$head_sha" "$main_sha" 2>/dev/null; then
-        # Behind main: the files pushed are main's (push_one enforced that), so main's sha
-        # is what describes them.
-        echo "pod sync stamp: using main ($main_sha) not this branch tip ($head_sha)"
-        head_sha=$main_sha
-      else
-        echo "refusing to stamp: HEAD ($head_sha) is not reachable from main ($main_sha)." >&2
-        echo "  The pod runs main. A stamp naming an unmerged commit describes a tree that" >&2
-        echo "  exists on no branch, and run_ddp.sh cannot verify it. Merge into main first." >&2
-        return 1
-      fi
-    fi
+    local head_sha dirty
+    head_sha=$2  # resolved and refused-on before the first push
     dirty=$(git status --porcelain -- $(awk '{print $2}' data/pod_head_manifest.txt \
             | grep -v '^runs/') 2>/dev/null | wc -l | tr -d ' ')
     ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $head_sha $dirty $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
@@ -187,6 +199,9 @@ if [ $ALL -eq 1 ]; then
   # and be reachable from main; the pod's last manifest defines the delete set, so
   # throwaway probes (never in any manifest) are untouched.
   [ $# -eq 0 ] || { echo "pod_push --all takes no file arguments" >&2; exit 2; }
+  # BEFORE the first push, not at stamp time: an unmergeable HEAD must refuse while
+  # refusing still means nothing shipped.
+  STAMP_SHA=$(resolve_stamp_sha)
   # Generate from HEAD; not tracked, so there is nothing to be stale against and no
   # main-reachability gate to apply to it (shape A). The old `push_one manifest` call
   # existed only to run that gate on a tracked file.
@@ -261,7 +276,7 @@ if [ $ALL -eq 1 ]; then
   # The manifest last: it must describe exactly what landed.
   ~/bin/podput data/pod_head_manifest.txt /work/aupai/data/pod_head_manifest.txt
   ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
-  stamp_sync all
+  stamp_sync all "$STAMP_SHA"
   exit 0
 fi
 
