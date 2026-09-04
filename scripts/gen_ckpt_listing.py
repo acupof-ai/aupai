@@ -326,6 +326,7 @@ def _selftest():
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} {text}")
 
+    import json
     import tempfile
 
     scan = [
@@ -524,6 +525,45 @@ def _selftest():
         any("ckpt_already_gone.pt" in s and "already gone" in s for s in skipped),
         "a candidate the scan did not find is skipped, not planned",
     )
+
+    # THE SUBJECT PIN, and the broken world is the exact shape that got past the real plan
+    # (6e's specification, 2026-09-04): a fact whose `source` names an eval script and whose
+    # SUBJECT is a planned candidate. Before _fact_subjects, ckpt_plain_old.pt below was the one
+    # file the plan named; with a fact about it, the plan must name nothing.
+    fdir = tempfile.mkdtemp()
+    json.dump({"facts": [{
+        "id": "t.subject_only",
+        "value": "known-answer panel 3/4 on ckpt_plain_old.pt",
+        # source names the SCRIPT and a /tmp run, never the checkpoint -- so a source scan
+        # passes after the file is deleted and the number becomes unrecomputable in silence.
+        "source": "eval/math_v2_like.py; pod runs /tmp/ka_math_norm.json",
+    }]}, open(os.path.join(fdir, "base_eval.json"), "w"))
+    rm4, ref4, sk4 = deletion_plan(plan_listing, plan_scan, facts_dir=fdir)
+    case(
+        not any(n == "ckpt_plain_old.pt" for n, _s in rm4),
+        f"a fact's SUBJECT is not planned for deletion even though no source field names it ({[n for n, _ in rm4]})",
+    )
+    case(
+        any("ckpt_plain_old.pt" in s and "t.subject_only" in s for s in sk4),
+        f"and the skip names the fact id, so the reader can judge the claim ({sk4})",
+    )
+    # THE CONTROL: without that facts dir the same file IS planned. Without this line the case
+    # above passes for a plan that names nothing at all, which is the shape of a guard that
+    # agrees because it measured nothing.
+    empty_fdir = tempfile.mkdtemp()
+    rm5, _r5, _s5 = deletion_plan(plan_listing, plan_scan, facts_dir=empty_fdir)
+    case(
+        any(n == "ckpt_plain_old.pt" for n, _s in rm5),
+        f"control: with no fact about it, the same file is planned ({[n for n, _ in rm5]})",
+    )
+    # A FACTS FILE THAT WILL NOT PARSE MUST REFUSE, not widen the plan by skipping itself.
+    bad_fdir = tempfile.mkdtemp()
+    open(os.path.join(bad_fdir, "broken.json"), "w").write("{not json")
+    try:
+        deletion_plan(plan_listing, plan_scan, facts_dir=bad_fdir)
+        case(False, "an unparseable facts file must refuse, not silently widen the plan")
+    except SystemExit as e:
+        case("did not parse" in str(e), f"an unparseable facts file refuses, naming it ({e})")
     # THE WHOLE-RUN REFUSAL. A claimed name reaching a candidate section means the listing
     # contradicts itself, and no part of it can then be trusted to say what is safe.
     #
@@ -572,7 +612,7 @@ def _selftest():
     return 1 if bad else 0
 
 
-def deletion_plan(listing_path, scan, now=None):
+def deletion_plan(listing_path, scan, now=None, facts_dir=None):
     """(rm_list, refusals, skipped) for the listing of record. NOTHING IS DELETED HERE.
 
     rm_list is [(name, bytes)] in listing order. refusals is non-empty when the whole run must be
@@ -635,6 +675,7 @@ def deletion_plan(listing_path, scan, now=None):
             [],
         )
     rm, refusals, skipped = [], [], []
+    fact_subjects = _fact_subjects(cands, root=ROOT, facts_dir=facts_dir)
     for name, (mtime, section) in sorted(cands.items()):
         if name in live_keep:
             # SKIPPED, NOT AN ABORT, and my first version had this backwards. I designed a
@@ -654,6 +695,30 @@ def deletion_plan(listing_path, scan, now=None):
         if section == "C":
             skipped.append(f"{name}: section C, no deadline was ever set for it")
             continue
+        if name in fact_subjects:
+            # A FACT'S SUBJECT IS NOT IN ITS SOURCE, and that gap is why this condition exists
+            # rather than the source scan being enough (b0 2026-09-04, finding
+            # b0-plan-deletion-subject-pin). The 09-04 plan named ckpt_0830v1_3.24b.pt.ep1 for
+            # deletion while three published facts are ABOUT it -- be.known_answer_panel_3_4,
+            # be.lambada_zh_heldout_3p24b, be.math_v2_5k_known_answer -- because all three name
+            # eval scripts and /tmp run files in `source` and none names the checkpoint. Every
+            # existence check passes after the file is gone: the fact resolves, its artifacts are
+            # present, and the number can never be recomputed. That is the failure that reads as
+            # healthy, and it is worse than a dangling reference, which at least fails loudly.
+            #
+            # So the pin is "named anywhere in a facts/*.json fact object", not "named in a source
+            # field". Skipped rather than refused, for the same reason as a KEEP: the listing's
+            # candidate sections are a full inventory, and a fact naming a file is an exemption
+            # laid over it, not a contradiction.
+            #
+            # DELIBERATELY NOT EXTENDED TO runs/*.jsonl. A score_matrix or experiments row citing a
+            # checkpoint RECORDS a measurement that already happened, so deleting the file costs
+            # re-scorability, not the record -- 30 of the 33 cited files in the 09-04 plan are that
+            # kind, and pinning them would freeze the pod. A fact is a published claim with no
+            # other route back; a row is its own evidence.
+            skipped.append(f"{name}: named in {fact_subjects[name]} -- a fact's subject, "
+                           f"whose deletion makes that number unrecomputable")
+            continue
         if name not in present:
             skipped.append(f"{name}: already gone from the pod")
             continue
@@ -667,6 +732,51 @@ def deletion_plan(listing_path, scan, now=None):
     if refusals:
         return [], refusals, skipped
     return rm, [], skipped
+
+
+def _fact_subjects(names, root=None, facts_dir=None):
+    """{checkpoint name -> "fact ids"} for every candidate named anywhere in a facts/*.json fact.
+
+    THE WHOLE POINT IS "ANYWHERE IN THE OBJECT", not "in the source field". A fact's SUBJECT --
+    the checkpoint the number is about -- is routinely absent from its source, which names the
+    eval script and the run log instead. Measured 2026-09-04: be.math_v2_5k_known_answer's source
+    is `eval/math_v2_like.py; mathbank/eval_hard_v2_gen.py; pod runs /tmp/ka5k_{norm,swap}.json`
+    and the checkpoint appears only in the value/config text. So this serialises each fact whole
+    and does a substring test.
+
+    SUBSTRING, AND THE LONGEST MATCH IS NOT THE ISSUE HERE. `ckpt_x.pt` is a substring of
+    `ckpt_x.pt.step500`, so a fact naming the .stepN also flags the base name. That direction is
+    safe -- it pins MORE than strictly needed and a pin is recoverable, a deletion is not. The
+    reverse would be the dangerous one and does not occur: a fact naming only the base cannot flag
+    a .stepN, because the .stepN string is not present.
+    """
+    import glob
+    import json as _json
+
+    fd = facts_dir or os.path.join(root or ROOT, "facts")
+    out = {}
+    for fp in sorted(glob.glob(os.path.join(fd, "*.json"))):
+        try:
+            facts = _json.load(open(fp, encoding="utf-8")).get("facts", [])
+        except (OSError, ValueError):
+            # A FACTS FILE THAT WILL NOT PARSE MUST NOT SILENTLY WIDEN THE PLAN. Skipping it here
+            # would mean every checkpoint it pins becomes deletable with no message, so the caller
+            # is told through the returned marker rather than by absence.
+            out.setdefault("__unreadable__", []).append(os.path.basename(fp))
+            continue
+        for fact in facts:
+            blob = _json.dumps(fact, ensure_ascii=False)
+            fid = fact.get("id", "?")
+            for n in names:
+                if n in blob:
+                    out.setdefault(n, [])
+                    if fid not in out[n]:
+                        out[n].append(fid)
+    bad = out.pop("__unreadable__", None)
+    if bad:
+        raise SystemExit(f"REFUSING to plan a deletion: {bad} did not parse as JSON, so the "
+                         f"checkpoints those facts pin would read as deletable. Fix the file.")
+    return {k: ", ".join(v) for k, v in out.items()}
 
 
 def _pinned_inodes(scan):
