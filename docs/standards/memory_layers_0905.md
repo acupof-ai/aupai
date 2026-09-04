@@ -45,8 +45,12 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if <= -0.010 nat (the size of
    the N2 params effect), null if |delta| < 0.003, in between is "measured, not adopted".
-2. Split: a closed-book fact probe (cloze over a held-out slice of an English encyclopedic
-   domain, registered in the holdout registry before launch) against a reasoning probe
+2. Split: a closed-book fact probe against a reasoning probe. The fact probe is an API-name
+   cloze over a held-out slice of code_py_starcoder (registered in the holdout registry before
+   launch): gold = the true attribute, function or keyword-argument name after a `module.` or
+   call prefix, scored against 3 real names from the same module. Re-scoped from 'English
+   encyclopedic domain' when e1 measured that mix_200m_8b has none (textbook_30b is Chinese
+   synthetic tutorials, wiki is absent). The reasoning probe is
    (l1_fewshot answer-present, 3 demos, existing). The claim "memory buys knowledge, not
    reasoning" is the fact delta exceeding the reasoning delta by more than both SEs.
 3. Scaling: M2 vs M1 gives the slope of loss against memory size; two points plus the control
