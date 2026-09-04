@@ -642,6 +642,16 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # The selftest temp-root redirect. 0.4s, no card and no data: it makes a directory,
+        # spawns one `python -c`, and removes both. Registered because its subject is the
+        # cleanup every OTHER selftest depends on and nothing else can observe: if scoped()
+        # stops redirecting, every selftest still passes and the laptop fills up instead --
+        # measured 12 dirs and 7.5 MB per harness --selftest before it existed, on a disk the
+        # user has cleared three times. Four mutants verified red (no rmtree, no redirect, no
+        # TMPDIR export, no restore); the no-sibling-leak case is the one that makes the pass
+        # mean something, since asserting only containment passes a scoped() that leaks beside
+        # its own root.
+        "scripts/tmpworld.py",
         # file_claim: the shared-file claim acquirer (Shared-files rule, T0). Its selftest
         # uses a temp dir and env-var USER, hitting no real claim path -- six worlds verify
         # acquire/refuse/release/stale/release-all. Runs at commit because a hook whose
@@ -1286,6 +1296,15 @@ def main():
     # Measured per selftest, not once around the loop, so the refusal can name WHICH
     # one did it (e1-14). A single before/after pair would say "something changed".
     state_before = _shared_repo_state(repo_root())
+    # One temp root for every selftest this hook runs, removed in the same finally as the
+    # staged copies. 19 of the tracked selftests mkdtemp without rmtree, and most cannot
+    # clean up: the world is handed to an assertion that reads it after the function
+    # returns. Passing TMPDIR down is the producer-side fix that needs no edit in any of
+    # them. MEASURED 2026-09-05: 12 dirs and 7.5 MB from harness.py --selftest alone, on a
+    # laptop whose disk the user has cleared three times. tempfile directly, not
+    # scripts/tmpworld.py: the hook runs as a staged copy from the gitdir, where scripts/
+    # is not importable.
+    st_tmp = tempfile.mkdtemp(prefix="aupai_hook_st_")
     try:
         for f in sorted(((SELFTEST_FILES | set(PARTIAL)) & set(staged("AM"))) | _subject_tests):
             # A staged file is read from the INDEX (the version being committed); a test pulled in
@@ -1325,9 +1344,10 @@ def main():
             with open(dst, "wb") as fh:
                 fh.write(content)
             flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
+            _env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            _env["TMPDIR"] = _env["TEMP"] = _env["TMP"] = st_tmp
             r = subprocess.run([sys.executable, dst, flag], capture_output=True,
-                               text=True, cwd=repo_root(),
-                               env={k: v for k, v in os.environ.items() if not k.startswith("GIT_")})
+                               text=True, cwd=repo_root(), env=_env)
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
                 _origin = ("staged version" if f in set(staged("AM"))
@@ -1362,6 +1382,7 @@ def main():
         for p in staged_copies:
             if os.path.exists(p):
                 os.unlink(p)
+        shutil.rmtree(st_tmp, ignore_errors=True)
     print(f"hook: selftests {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Harness check: the full invariant suite. ~5s locally; GPU/pod checks SKIP
