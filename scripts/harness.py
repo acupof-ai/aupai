@@ -2232,6 +2232,20 @@ def read_mix(path):
     return list(doms), None
 
 
+def _exp_open(row):
+    """Is this experiments.jsonl event an OPEN one? exp.py's rule, not a fourth local copy.
+
+    exp.py folds terminal-wins on `status != "running"` (:63) and pick_open_row's docstring states
+    it: OPEN means the last event for this (name, started) is `running`. Every other status is
+    terminal by kind, including the ones that are not `ok`/`fail` -- killed, stopped, retracted,
+    dropped, provisional. Measured on the live ledger 2026-09-04: 18 distinct statuses, of which
+    exactly one is open, and no row carries an empty or absent status. Written as a function rather
+    than a set literal for the reason _exp_fold gives: this file held four re-implementations of
+    exp.py's reduction and three were wrong.
+    """
+    return (row.get("status") or "") == "running"
+
+
 def _exp_fold(evs):
     """The ledger's own fold, from scripts/exp.py. Lazy-imported, like _launch_shape.
 
@@ -10057,7 +10071,143 @@ def _broken_allocation_reads_the_grant():
     return d
 
 
+GHOST_STARTLESS_CEILING = 180
+
+
+def check_no_ghost_close(root):
+    """A close must fold onto the row it closes, not mint a second identity beside it.
+
+    6e's ruling, 2026-09-04. `exp.py done` resolves its row through pick_open_row and then falls
+    back to `dict(base or {"started": now(), ...})`, so a close that fails to find its start writes
+    a row whose `started` is the CLOSE's timestamp. The result is two keys where the run had one:
+    the real key stays `running` forever and a terminal row sits beside it carrying the measurement.
+    b0_headmix_armA is the incident -- 09:09 stayed `running` while a `fail vanished` row appeared
+    under 11:10, and the number that mattered (val 2.117, scoring rc=1) was on the pod under the
+    09:09 key where nothing local could see it.
+
+    FAIL is the NARROW predicate and WARN is the broad one, because they are different questions and
+    only one has a bounded answer today.
+
+    NARROW: a key with a terminal event whose `started` is later than a still-open key of the SAME
+    name. That is a close which minted an identity while the row it should have folded onto was
+    open. Measured on the live ledger 2026-09-04: 0 today, and exactly 1 -- the armA pair -- if the
+    two events f4d48444 pulled home are removed. So the check goes green the moment the repair
+    lands, which is the property that makes it a gate rather than a standing red.
+
+    POSITION IS NOT IN THE PREDICATE, and this is the part that took three measurements to get
+    right. exp.fold is terminal-wins, so a start event appearing after a close does not reopen the
+    key. Three readings of the same ledger: a position-based scan over raw events found 3 hits (two
+    of them already repaired, because the repair is an APPEND and the original ghost row is still
+    in the file); folding first found 0, since folding collapses each key to its terminal row and
+    destroys the evidence; keying on "is any event under this key terminal" found 1, the real one.
+    A check that folds first cannot see this defect at all, and a check that reads positions
+    reports repaired history as broken.
+
+    BROAD, as a WARN with a dated ceiling: 180 keys hold no open event ever -- rows appended
+    straight to a terminal status, with no start on record. Shipping that as FAIL would turn the
+    whole ledger's history red, so the ceiling is the literal GHOST_STARTLESS_CEILING (180, measured
+    2026-09-04) and only a NEW start-less close raises the count past it. Same only-shrinks pattern
+    as tasks_well_formed's drop_reason grandfather list: the number can go down without a commit and
+    cannot go up without one.
+    """
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    evs = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            if not line.strip():
+                continue
+            try:
+                evs.append(json.loads(line))
+            except Exception:
+                continue
+    if not evs:
+        return SKIP, "runs/experiments.jsonl is empty"
+
+    by_key = {}
+    for r in evs:
+        by_key.setdefault((r.get("name"), r.get("started")), []).append(r)
+    open_keys = {k for k, v in by_key.items() if all(_exp_open(r) for r in v)}
+
+    ghosts = []
+    for k in sorted(by_key, key=lambda kk: (str(kk[0]), str(kk[1]))):
+        if k in open_keys:
+            continue
+        stole = sorted(ok for ok in open_keys
+                       if ok[0] == k[0] and str(ok[1]) < str(k[1]))
+        if stole:
+            sts = ",".join(sorted({str(r.get("status")) for r in by_key[k]}))
+            ghosts.append(f"{k[0]} closed under {k[1]} [{sts}] while {stole[0][1]} was still open")
+    if ghosts:
+        return FAIL, (
+            f"{len(ghosts)} close(s) minted a new identity instead of folding onto the open row: "
+            f"{'; '.join(ghosts[:4])} -- the run's real key stays `running` forever and its "
+            f"measurement sits under a key no reader joins on (b0_headmix_armA, 2026-09-04). Close "
+            f"with the start row's own `started`, and append a void row for the ghost key")
+
+    startless = [k for k in by_key if k not in open_keys
+                 and not any(_exp_open(r) for r in by_key[k])]
+    if len(startless) > GHOST_STARTLESS_CEILING:
+        return WARN, (
+            f"{len(startless)} keys have a terminal row and NO start event, above the "
+            f"{GHOST_STARTLESS_CEILING} recorded 2026-09-04. The new ones were appended straight "
+            f"to a terminal status, so nothing records that the run began or when. Start rows "
+            f"first, or raise the ceiling in a commit saying which ones are legitimate")
+    return PASS, (
+        f"{len(by_key)} keys, {len(open_keys)} open, 0 ghost closes; {len(startless)} start-less "
+        f"(ceiling {GHOST_STARTLESS_CEILING})")
+
+
+def _broken_no_ghost_close():
+    """The REAL ledger with the two events f4d48444 pulled home removed -- the world as it was.
+
+    Mutated, not hand-written, and the mutation is a DELETION of real rows rather than an edit, so
+    there is no size-preserving-pyc question here (this world runs no python it wrote). Removing
+    armA's `error` and `dropped` events restores exactly the state 6e reported: the pod held the
+    measurement, 09:09 read `running`, and a `fail vanished` row stood under 11:10. Measured
+    2026-09-04: 1 ghost in this world, 0 in the real ledger.
+
+    The check that this world is load-bearing and not merely different: it must hold a terminal row
+    under a LATER `started` than a still-open key of the same name. Asserted here, because a future
+    edit to armA's rows could leave the deletion valid and the property absent.
+    """
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "runs", "experiments.jsonl")
+    kept = []
+    for line in open(src, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except Exception:
+            continue
+        if r.get("name") == "b0_headmix_armA" and str(r.get("status")) in ("error", "dropped"):
+            continue
+        kept.append(r)
+    arm = [r for r in kept if r.get("name") == "b0_headmix_armA"]
+    opens = {str(r.get("started")) for r in arm if _exp_open(r)}
+    closes = {str(r.get("started")) for r in arm if not _exp_open(r)}
+    assert opens and closes and min(opens) < max(closes), (
+        f"b0_headmix_armA no longer holds an open key earlier than a closed one "
+        f"(open {sorted(opens)}, closed {sorted(closes)}); this world would report no ghost and "
+        f"the check would pass on it untested")
+    with open(os.path.join(d, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
+        for r in kept:
+            f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    return d
+
+
 CHECKS = [
+    (
+        "no_ghost_close",
+        "a close folds onto the row it closes; it never mints a second identity beside it",
+        "b0_headmix_armA: exp.py done could not find the 09:09 start, so it wrote a row under "
+        "11:10 -- the run read `running` forever in main while its real result (val 2.117, "
+        "scoring rc=1, no metrics) sat on the pod under the key nothing joined on",
+        check_no_ghost_close,
+        _broken_no_ghost_close,
+    ),
     (
         "mutation_asserted_took",
         "every broken world that mutates a file and runs it proves the mutation took effect",
@@ -10673,6 +10823,7 @@ EVIDENCE = {
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
     # exempt from it.
     "mutation_asserted_took": "repo",
+    "no_ghost_close": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
