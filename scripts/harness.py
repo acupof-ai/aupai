@@ -90,6 +90,10 @@ _CHECK_TIMEOUTS = {
     # since'. ~4x the measured wall time, same ratio as the entries above.
     "getattr_cfg_names_exist": 30,
     "restartability": 20,
+    # Measured by hand 2026-09-04: 2.7s (shells out to ~/bin/pod). Under hook load
+    # it crosses 5s and banked 6 consecutive timeout strikes, FAILing a commit whose
+    # changes it has nothing to say about. 30s is ~11x the by-hand wall time.
+    "pod_stamp_is_main": 30,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -8007,6 +8011,52 @@ def _friction_rows(path=None):
     return out
 
 
+def check_friction_minutes_required(root):
+    """near_miss and process_failure friction rows must carry minutes_lost.
+
+    These two kinds are the ones where the cost is the whole point: a near-miss with no
+    minutes is a story, not a data point, and a process failure with no minutes cannot be
+    ranked against the other causes. 2026-09-04: 3/3 rows of these kinds lacked
+    minutes_lost, and the friction summary printed "minutes not reported" for the
+    combined cause -- the second-largest unfixed friction item, invisible to ranking.
+
+    Baseline 3 (b0's rows, 2026-09-03/04): the check FAILs if a FOURTH row is added
+    without minutes_lost. When b0 fills in the historical minutes, lower the baseline."""
+    p = os.path.join(root, "runs", "friction.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/friction.jsonl"
+    BASELINE = 3
+    bad = []
+    for i, ln in enumerate(open(p, encoding="utf-8"), 1):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if r.get("kind") in ("near_miss", "process_failure") and "minutes_lost" not in r:
+            who = r.get("who", "?")
+            what = r.get("what", "?")[:50]
+            bad.append(f"line {i} ({who}: {what})")
+    if len(bad) > BASELINE:
+        return FAIL, f"{len(bad)} near_miss/process_failure rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
+    return PASS, f"{len(bad)}/{BASELINE} baseline rows missing minutes_lost; no new violations"
+
+
+def _broken_friction_minutes_required():
+    """A temp repo whose friction.jsonl has 4 near_miss rows without minutes_lost
+    (baseline is 3, so the 4th is a new violation)."""
+    d = _tmp_repo_shaped()
+    fpath = os.path.join(d, "runs", "friction.jsonl")
+    if os.path.islink(fpath):
+        os.remove(fpath)  # symlink to the real file; replace with a temp-local copy
+    with open(fpath, "w", encoding="utf-8") as fh:
+        for i in range(4):
+            fh.write(json.dumps({"kind": "near_miss", "who": "x", "what": f"fixture {i}"}) + "\n")
+    return d
+
+
 def cmd_friction(argv):
     """The one ledger of things that blocked someone, and the counts by cause.
 
@@ -10731,6 +10781,13 @@ CHECKS = [
         _broken_no_shared_stash,
     ),
     (
+        "friction_minutes_required",
+        "near_miss and process_failure friction rows carry minutes_lost",
+        "3/3 rows of these kinds lacked minutes_lost, making the second-largest unfixed friction cause invisible to ranking",
+        check_friction_minutes_required,
+        _broken_friction_minutes_required,
+    ),
+    (
         "no_conflict_markers",
         "no tracked doc or source holds a merge/stash conflict marker",
         "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
@@ -10812,7 +10869,7 @@ EVIDENCE = {
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-    "no_shared_stash": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+    "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
@@ -15827,11 +15884,12 @@ def cmd_milestone(argv):
 
 
 def cmd_install_hooks(rest):
-    """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit}
-    to scripts/hooks/pre-commit. pre-commit covers direct commits; pre-merge-commit
-    (git >= 2.24) covers non-fast-forward merges, which otherwise run no hook at all
-    (2026-08-31: a bad fact entered main through a clean merge). Fast-forward merges
-    carry already-hooked commits, so they are covered by construction.
+    """`harness install-hooks` -- symlink .git/hooks/{pre-commit,pre-merge-commit,
+    post-merge,post-commit,commit-msg} to scripts/hooks/. pre-commit covers direct
+    commits; pre-merge-commit (git >= 2.24) covers non-fast-forward merges, which
+    otherwise run no hook at all (2026-08-31: a bad fact entered main through a clean
+    merge). post-merge covers fast-forward merges, which also run no hook (2026-09-03
+    friction: a wip commit landed on main unchecked via fast-forward, ~10 min).
     The hook refuses staged files >5MB and new data/ paths not in the allow-list."""
     # The common dir: in a linked worktree .git is a FILE, and the common dir's
     # hooks/ is what git consults -- installing there covers every worktree once.
@@ -15854,16 +15912,14 @@ def cmd_install_hooks(rest):
     # post-commit has its OWN source: it is not the same script under another name.
     # It repairs the shared index that pre-commit's manifest `git add` leaves stale
     # under `git commit -- <paths>` -- see scripts/hooks/post-commit.
-    for name in ("pre-commit", "pre-merge-commit", "post-commit", "commit-msg"):
+    for name in ("pre-commit", "pre-merge-commit", "post-merge", "post-commit", "commit-msg"):
         # commit-msg is its own file, not the pre-commit script under another name: it is the
         # only hook git hands THIS commit's message (argv[1]). pre-commit cannot read it --
         # .git/COMMIT_EDITMSG there still holds the PREVIOUS commit's message, measured four ways
         # (de-33, 2026-09-03) -- so the ledger guard grants its exception by env var in
         # pre-commit and requires the reason here, where the message is real.
-        if name == "post-commit":
-            src = os.path.join(main_root, "scripts", "hooks", "post-commit")
-        elif name == "commit-msg":
-            src = os.path.join(main_root, "scripts", "hooks", "commit-msg")
+        if name in ("post-commit", "commit-msg", "post-merge"):
+            src = os.path.join(main_root, "scripts", "hooks", name)
         else:
             src = hook_src
         if not os.path.exists(src):
