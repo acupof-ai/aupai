@@ -929,6 +929,7 @@ def main():
         "scripts/test_cache_dir_knob.py",
         "scripts/test_vocab_stamp.py",
         "scripts/profile_step_cost.py",
+        "scripts/mem_decomp_table.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
