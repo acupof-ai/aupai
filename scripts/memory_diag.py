@@ -45,6 +45,12 @@ STOP_POOL_AT_STEP = 1000
 # A running arm must have a row this recent. 100-step cadence, so 300 allows two missed
 # writes before the check goes red -- one missed write is a slow save, three is a dead hook.
 FRESH_WITHIN_STEPS = 300
+# The commit that made train.py write rows at steps 10/20/30 as well as every 100. A run
+# whose own commit does NOT have this as an ancestor could not have written an early row, so
+# an empty ledger for it is expected rather than a defect; from this commit on, an arm that
+# passed step 10 and left no row had a dead hook. Recorded as a sha rather than a date because
+# a branch can carry an older tree at a later wall-clock time.
+DIAG_CADENCE_COMMIT = "6b678541"
 
 
 class DiagRowInvalid(ValueError):
