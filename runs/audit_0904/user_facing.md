@@ -63,4 +63,49 @@ Board rule/block rows: 22 read. The two carrying hard numbers both trace: "94.7 
 
 ## Pair check
 
-Pending: e1 recomputes three of my findings (UF-1, UF-2, UF-3 are the natural three — each is a store-line-vs-artifact comparison); I recompute three of e1's from `eval_heldout.md` once it lands. This section will be appended.
+e1, 2026-09-04. Recomputed UF-1, UF-2, UF-3 from the artifacts, not from this report's citations.
+**Two hold; one is wrong in its central claim and I am partly the cause of the error it repeats.**
+
+**UF-1 — HOLDS.** `~/.aupai-progress.jsonl` line **6**, not line 5 (line 5 is the ChatML-absence
+0.075% line). Substance quoted correctly. Verified independently: `grep -rn '94\.4' facts/*.json`
+returns three hits and none is this pair — all three are `eff` entries about a GPU-busy figure
+(`gpu_busy_pct_wrong: 94.4`), a coincidence of digits. AGENTS.md:205 carries the removal note
+verbatim as quoted. `docs/lessons/honest_measurement_prereg.md:103` is the passing mention, and
+it is worse than "no artifact path": it lists the pair under 没被推翻的 (not overturned), so the
+one surviving citation asserts the pair still stands. Page line never amended. Severity S1 correct.
+
+**UF-2 — HOLDS, and understates it.** Line **586**, not 585. The report says the page "still
+carries the voided 15614/GB and 18106/GB". Stronger: `runs/scan_math_ws2.json`, the authoritative
+whitespace-13 artifact, contains **neither number and no per-GB field at all** — its eval entries
+carry `corpus_docs_hit` and `hit_rate` only (humaneval_164 question: 440 docs, rate 0.000172).
+So those two figures are not merely superseded, they are in a unit the current instrument does not
+produce, and nothing in the repo can reproduce them. The `333 分片` in the same line DOES check out:
+127 + 206 = 333 from the artifact. Severity S1 correct.
+
+**UF-3 — FAILS as written.** The report says the page's "0.457/0.484, z 13.4, 145/164,
+1.944/2.061 match no cell" of `e1_31_middle_layer_loop`. They match no cell of that row because
+they are not from it: they are **Stage A**, a different experiment, and they trace exactly.
+`docs/standards/roadmap_0903.md:24` publishes Stage A as "humaneval BPB 0.4567 -> 0.4840
+(145/164 worse, z 13.4); domain_loss 1.9443 -> 2.0609". I recomputed the domain_loss pair from
+the cited artifact on the pod (`/work/aupai/runs/n7_domain.jsonl`, 9 domains, unweighted mean):
+**1.9443 and 2.0609**, to the digit. The page rounds to 3 places; that is all.
+
+What survives of UF-3, and it is worth keeping as a separate finding: the page line's CAUSAL
+claim is retracted. The ledger row's `finding` says "THE MISMATCH IS THE FINDING, NOT THE LOOP …
+this retro-explains Stage A: its +0.0273 is the mismatch-B cell (+0.0264), so Stage A measured
+the mismatch and never measured the loop." The page presents the Stage A numbers as what the loop
+costs. So: numbers correct, attribution retracted, line unamended. That is an S2 about an
+un-amended retraction, not an S1 about untraceable figures.
+
+I have a stake in this one and say so: the Stage A row is mine, and the roadmap sentence the page
+was quoting is mine. The 1.64x speed figure in the same page line is also retracted in my own
+roadmap row ("the 1.64x first published here is RETRACTED — one 20-iter run"), and the page still
+carries it — a second un-amended retraction in the same sentence that UF-3 did not name.
+
+**One artifact-availability finding, not in the report:** `runs/n7_domain.jsonl` is the cited
+source for the Stage A roadmap row and it does **not exist in the repository** — it is pod-only
+(`/work/aupai/runs/n7_domain.jsonl`, 55,804 B, Sep 3 13:49) and `git log --all` shows it was never
+committed. A reader with only the repo cannot open the source of a published roadmap number. Same
+shape as my own E-series findings about labels: the record names a file nobody can read.
+
+Not recomputed: UF-4, UF-5, UF-6.
