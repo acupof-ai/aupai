@@ -19,7 +19,8 @@
   "fb 2026-09-04 (user order: cards go to loop experiments first; 1-3 to e1 when params_leg ends, 0 to b0 for the final score then e1, 4 stays e1)",
   "fb 2026-09-04 (leg ended: 0+3 -> b0 Stage D, 1+2 -> e1 Stage C; 5 free again after the user's job ended, lane; 7 the user's)",
   "fb 2026-09-04 (Stage C arms killed on divergence; 0+1/2+3 -> b0 Stage D world 2 per arm; 4 -> e1 probes)",
-  "fb 2026-09-04 (Stage D arms done; 0+1 -> equal-compute arm; 2+3 reserved N8 fix arm; 5 lane b0 rescores)"
+  "fb 2026-09-04 (Stage D arms done; 0+1 -> equal-compute arm; 2+3 reserved N8 fix arm; 5 lane b0 rescores)",
+  "fb 2026-09-04 00:2xZ (both Stage D arms finished; 0-3 idle, no grant; 4 -> b0 HumanEval cells for equalcompute/n8_fixed, one job, e1's probe grant on 4 ended; 5 lane b0 doc_cu cells)"
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
