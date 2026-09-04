@@ -317,18 +317,20 @@ def cluster_se(correct, groups):
     correctness grouped by source row. Free once per-item outcomes exist, which
     score_mc_items already returns.
 
-    THREE EFFECTIVE SIZES, THREE JOBS, AND ONE OF THEM HAS NO JOB (3b, 2026-09-05). On the
-    20+80x1 shape the numbers are: mean 1.2346, with NO STATISTICAL ROLE AT ALL; Kish
-    4.8000, which is the design effect's multiplier; ANOVA's m0 = (n - sum(s^2)/n)/(k-1) =
-    1.1900, which is the ICC denominator's. The mean is stated here precisely because it is
-    the obvious summary and the wrong one -- using it instead of Kish understates the SE by
-    1.085x at ICC .05, 1.161x at .10 and 1.297x at .20, which at the prereg's decision
-    boundary is the difference between "beyond both SEs" firing and not.
+    THREE EFFECTIVE SIZES, THREE JOBS, AND ONE OF THEM HAS NO JOB (3b, 2026-09-05). Stated on
+    the fixture world (f) actually uses, so the comment and the assertions describe one shape:
+    on 3x10 + 7x1 (n=37, k=10) the numbers are mean 3.7000, with NO STATISTICAL ROLE AT ALL;
+    Kish 8.2973, the design effect's multiplier; ANOVA's m0 = (n - sum(s^2)/n)/(k-1) = 3.1892,
+    the ICC denominator's. The mean is written down precisely because it is the obvious
+    summary and the wrong one -- using it instead of Kish understates the SE by 1.097x at ICC
+    .05, 1.167x at .10 and 1.264x at .20, which at the prereg's decision boundary is the
+    difference between "beyond both SEs" firing and not.
 
     m0 AND KISH ARE NOT INTERCHANGEABLE and this code used each correctly before anyone
     checked that it did -- written from each definition without noticing they were a
-    swappable pair. Selftest world (f) is what closes that: a fixture where the two differ
-    2.6x with ICC strictly interior, so either swap moves an asserted number.
+    swappable pair. Selftest world (f) is what closes that: its two sizes differ 2.60x with
+    the ICC at 0.3444, mid-range rather than near a boundary, so all four swap combinations
+    land far apart and none of them sits where a small change in the fixture would flip it.
 
     WHY BOTH ARE REPORTED RATHER THAN ONE CHOSEN (3b, 2026-09-05, correcting me): I argued
     the clustering cancels in a paired difference. That is true for the ARM pairing -- the
@@ -1004,6 +1006,21 @@ def _selftest():
     #             ICC via Kish, deff via Kish   -> ICC 0.1680  deff 2.2261
     #             ICC via Kish, deff via m0     -> ICC 0.1680  deff 1.3678
     #        Four distinct answers, so either swap moves a number this asserts.
+    #
+    #        WHY THIS SHAPE AND NOT 20+80x1, which was the other candidate: NOT because that
+    #        one is degenerate -- I claimed it was and 3b's count refuted me. Of its 105
+    #        correct-count assignments, 57 give ICC 0, 8 give ICC 1, and 40 are strictly
+    #        interior across two broad bands (big-row counts 1-7 and 13-19), so it discriminates
+    #        over most of its range. My "degenerate" reading came from a sweep that printed only
+    #        the maximum-ICC case, i.e. one row of output taken for the distribution.
+    #        The real reason to prefer this fixture: its two sizes differ 2.60x with the ICC at
+    #        0.3444, MID-RANGE, so all four combinations land far apart and none sits where a
+    #        small change would flip it. 20+80x1's interior cases run up to ICC 0.80, close
+    #        enough to 1 that only one of the two swaps separates comfortably.
+    #        THE ALTERNATION IS LOAD-BEARING and not decoration: `round(s*0.8)` on even rows
+    #        and its complement on odd ones is what puts the ICC interior. 3b reproduced this
+    #        fixture from the commit and got ICC 0.0745 on a first attempt that arranged the
+    #        rows uniformly -- the arrangement cannot be inferred from the description.
     _sizes = [10, 10, 10, 1, 1, 1, 1, 1, 1, 1]
     _v, _g = [], []
     for _r_i, _s in enumerate(_sizes):
