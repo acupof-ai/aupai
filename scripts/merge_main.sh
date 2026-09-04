@@ -76,12 +76,39 @@ for _ in $(seq 1 120); do
       # a claim and merged a DIFFERENT branch still needs its claim, so scope by owner ($USER),
       # and the branch may have no worktree (merged after --delete) -- then its claims are moot
       # and the 6h TTL bounds anything left.
+      # THE OFFSET IS 19, NOT 16. `branch refs/heads/` is 18 characters, so substr($0,16) starts
+      # three too early and yields `ds/de` for branch `de` -- it never equals the bare name, `_wt`
+      # is always empty, and the release is silently skipped for EVERY branch. Measured 2026-09-05
+      # on this tree: substr(16)="ds/de", substr(19)="de", and with 19 the awk matches
+      # /Users/bytedance/code/aupai-de. 58's AGENTS.md claim survived a successful merge and had to
+      # be released by hand. Reported as a branch-naming problem (`ds/<name>` prefixes); it is not
+      # -- `git worktree list --porcelain` prints the full ref and the coincidence is that the
+      # three characters at 16-18 are `ds/`, the tail of `refs/heads/`.
+      #
+      # The consequence is not cosmetic even with the 6h TTL: $USER is `bytedance` for every
+      # session on this box, so one leaked claim blocks every other session's shared-file commits
+      # until it expires.
       _wt=$(git -C "$MAIN" worktree list --porcelain 2>/dev/null \
-        | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,16)==b && w!="" {print w; exit}')
+        | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,19)==b && w!="" {print w; exit}')
       if [ -n "$_wt" ] && [ -f "$_wt/scripts/file_claim.py" ]; then
-        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all --owner "$USER" 2>/dev/null \
+        # No --owner: file_claim's own default is LAUNCH_OWNER, else the worktree name, and both
+        # it and the claim dir derive from the script's own path -- so invoking $_wt's copy by
+        # absolute path already targets $_wt's claims as $_wt's owner. Passing $USER scoped
+        # nothing: it is `bytedance` for every session here, so one session's merge handed back
+        # every other session's claims.
+        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all 2>/dev/null \
           || echo "release-all failed")
         echo "merge_main: shared-file claims on $1: $_rel" >&2
+      else
+        # SAY SO WHEN NOTHING WAS RELEASED. The absence of the line above was the only signal,
+        # and it read as "merged after --delete" -- which is how the substr(16) bug survived:
+        # the release had never fired for any branch and silence looked like the normal case.
+        if [ -z "$_wt" ]; then
+          echo "merge_main: no worktree matched branch $1 -- shared-file claims NOT released;" >&2
+          echo "  release by hand in that tree, or the 6h TTL clears them." >&2
+        else
+          echo "merge_main: $_wt has no scripts/file_claim.py -- claims NOT released" >&2
+        fi
       fi
       exit 0
     fi

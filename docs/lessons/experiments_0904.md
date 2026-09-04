@@ -6,7 +6,7 @@ source: facts/data_scaling.json#ds.n2_params_vs_data_matched_compute; facts/smel
 
 # Experiments of 2026-09-04
 
-Four experiments. Three decisions (N7 not adopted, N8 enters the recipe, headmix B loses), one no-difference verdict (N2).
+Four experiments concluded, one program open. Three decisions (N7 not adopted, N8 enters the recipe, headmix B loses), one no-difference verdict (N2), one program in progress (memory layers at 200M).
 
 ## N2: parameters vs data at matched compute
 
@@ -132,3 +132,33 @@ Source: `runs/b0_headmix_armA.log`, `runs/b0_headmix_armB.log`. These are the tr
 What this cannot say:
 - Whether the result generalises. n=1 seed per arm; the delta is large enough that seed variance (0.0516 nat at 0.2B) is unlikely to flip it, but a reseeded pair was not run.
 - Why B loses. The +1.18% parameter count and the count-vs-width confound both stand; the loss cannot be attributed to either mechanism.
+
+## Memory layers at 200M (program opened 2026-09-04T16:44Z, user order)
+
+**Status: model implementation in progress; no arms running.**
+
+A memory layer is a large lookup table the model reads a few rows from per token. It adds parameters at near-zero FLOPs. The direct test of the N2 finding (params arm wins at equal compute) and the headmix loss (B loses): the variable that moved loss was parameters a token can reach, not the shape of compute.
+
+Control: `ckpt_b0_headmix_armA.pt` — d1024 L12 h8 ffn3072 attn_every=4, mix_200m_8b, 3815 steps = 1B tokens, seed 42. Its doc_cu row is in `runs/score_matrix.jsonl`.
+
+| arm | memory values | value dim | params added | FLOP vs control |
+|---|---|---|---|---|
+| M1 | 1,048,576 (1024×1024 product keys) | 1024 | 1.07B | ≤ +3% |
+| M2 | 262,144 (512×512) | 1024 | 0.27B | ≤ +3% |
+
+Design: one memory pool shared by layers 3, 6, 9, added in parallel to the FFN (`h = h + mem(norm(h))`). Product-key lookup, top-k=32, one query head, output gated. Memory values and keys excluded from FP8 and Muon; sparse optimizer at their own lr. Sparse gradients across DDP: gather touched indices, never all-reduce the dense table.
+
+Pre-registered readouts (`runs/prereg.jsonl#memory_layers_0905`):
+
+1. Primary: block-paired doc_cu val, arm minus control. Adopt if ≤ −0.010 nat (the N2 params effect size); null if |Δ| < 0.003; in between is "measured, not adopted".
+2. Split: closed-book fact probe (cloze over a held-out encyclopedic slice, registered before launch) vs reasoning probe (l1_fewshot answer-present, 3 demos). "Memory buys knowledge, not reasoning" requires the fact delta to exceed the reasoning delta by more than both SEs.
+3. Scaling: M2 vs M1 gives the slope of loss against memory size; two points plus the control are a line, not a law.
+4. Diagnostics, logged every 100 steps to `runs/memory_diag.jsonl`: fraction of values touched, top-k weight entropy, key-usage Gini. A pool below 20% touched at step 1000 is a collapse — the arm is stopped and reported, not tuned in place.
+5. Throughput: tok/s/gpu at step 30 against the control's 82K. Below 70K the arm is stopped: a memory that costs 15% of throughput is not near-zero FLOPs on this hardware.
+
+Cards: M1 on cards 1+2, M2 on cards 4+6, world 2 each; lane card 5 for smoke and probes; card 3 foreign; card 7 the user's. M2 launches after M1 prints step 100 with no NaN and diagnostics within bounds.
+
+What this cannot say (pre-registered):
+- Whether the effect is knowledge or reasoning until both probes are scored.
+- Whether the slope generalises beyond two memory sizes.
+- Whether the throughput cost holds at 30B, where the recipe decision applies.

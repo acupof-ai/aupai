@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (59 model-project incidents) and docs/lessons/infra_incidents.md (82 pod/infra incidents); 33 closed incidents removed 2026-09-04 (141 = 59 + 82); 10 sampled: 8 confirmed machine-closed, 2 gated this commit, 23 unsampled
+source: derived from docs/lessons/gate_failure_incidents.md (60 model-project incidents) and docs/lessons/infra_incidents.md (84 pod/infra incidents); 33 closed incidents removed 2026-09-04 (144 = 60 + 84); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -10,17 +10,55 @@ Ten rules, ranked by incidents × cost (rough hours lost per incident). Each rul
 
 Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false greens, some cost days); R1/R3/R4/R10 ~3-4h; R5/R6/R7/R8 ~2h; R9 ~1h.
 
+## Closed incidents (33/33 confirmed machine-gated, 2026-09-04)
+
+10 sampled by 6e, 23 sampled by 44, 5 reviewed by e1 (4c). Each line: §N: gate `file::function`.
+
+§27: launch_tests degrade-string check (6e sample)
+§33: `scripts/harness.py::check_no_shared_stash`
+§42: `scripts/harness.py::check_frozen_paths`
+§43: vocab_id_on_load_path (6e sample)
+§47: `scripts/test_vocab_stamp.py` selftest
+§60: `scripts/harness.py::check_launch_line_vs_oom_facts`
+§74: `scripts/harness.py::_selftest_flagless_test_is_gated` (odd-quote arm)
+§78: `eval/domain_loss.py` selftest (0-rows refusal)
+§82: `scripts/test_ledger_predicates.py` selftest
+§83: `scripts/sft_hf_control.py` source-level pre-shift scan
+§87: `scripts/eval_heldout.py::alignment_sentinel`
+§88: `scripts/ledger_audit.py` selftest (index-first read)
+§92: ledger_audit.duplicates (6e sample)
+§93: `scripts/harness.py::check_tasks_closed_by_commit`
+§95: `scripts/test_cursor_sum.py::_check_call_sites`
+§101: launch_gate mix/UNRECORDED (6e sample)
+§107: `scripts/harness.py::check_ckpt_facts_sources_present`
+§113: `scripts/harness.py::check_keep_claim_reasons_live`
+§120: card_claim basename wait (6e sample)
+§122: `scripts/test_sft_lr_provenance.py` case 4 (AST interpolation)
+§123: `scripts/test_sft_lr_provenance.py` case 4b (exec shipped block)
+§129: fp_dir import (6e sample)
+§130: `scripts/head_path_rows.py` selftest case 5
+§138: `scripts/test_shard_glob.py` selftest
+§144: a2a selftest (6e sample)
+§145: `eval/test_l1_fewshot_2x2.py` group 9 (answer_marker disjunction)
+§154: `scripts/harness.py::check_card_held_without_claim`
+§160: card_claim _cvd selftests (6e sample)
+§162: `scripts/gen_ckpt_listing.py::build` (inode pin + refusal on missing claimed file; e1 correction: not check_milestone_ckpt_pinned, which reads milestones.jsonl only)
+§163: `scripts/harness.py::_selftest_commit_delivers_fact_ref`
+§167: `scripts/test_e1_28_leak_scan.py` selftest (units refusal)
+§168: `scripts/harness.py::check_eval_registry_complete`
+§174: `scripts/hooks/pre-commit` world 8 (stale __pycache__ fix)
+
 ## Checks to write (top 5 by product)
 
-- **R2** (61 incidents, 244h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (63 incidents, 252h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (32 incidents, 64h): every number carries its basis. Owner: blank.
-- **R1** (15 incidents, 45h): verify premises before acting, sources before citing. Owner: blank.
+- **R1** (16 incidents, 48h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
 - **R4** (7 incidents, 21h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-61 incidents (32 infra, 29 model), ~4h each, 244h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+63 incidents (33 infra, 30 model), ~4h each, 252h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -78,14 +116,14 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (23 incidents)
+### R2-g Criterion answers an adjacent question (25 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
 - §110: a pre-registered branch collapsed two worlds into one; the criterion (branch taken) did not isolate the property (which world).
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
@@ -98,12 +136,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-15 incidents (10 infra, 5 model), ~3h each, 45h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+16 incidents (11 infra, 5 model), ~3h each, 48h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139, §175).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 

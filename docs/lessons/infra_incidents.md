@@ -1,7 +1,7 @@
 ---
 question: What are the surviving pod/infra gate-failure incidents, what would close each, and which are already closed?
 status: open
-source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents removed (10 sampled: 8 confirmed machine-closed, 2 gated this commit, 23 unsampled), 141 survive here and in gate_failure_incidents.md
+source: derived from the 2026-09-04 restructure of gate_failure_shapes.md; 33 closed incidents removed (33/33 confirmed machine-gated, list in gate_failure_shapes.md), 141 survive here and in gate_failure_incidents.md
 ---
 
 # Gate failure incidents — pod/infra layer
@@ -49,6 +49,10 @@ open: a check that verifies a log line's process is still alive before quoting i
 ### §139 (2026-09-03, R1)
 A source was cited from a draft that had been superseded; the published version said something different. Evidence: docs/standards/state_0904.md.
 open: a check that flags citations to superseded drafts; none exists.
+
+### §175 (2026-09-04, R1)
+A merge was killed by a 2-minute command timeout after resolution; MERGE_HEAD was gone and the staged tree was main's content — 18 files of peers' work. `git status` says "still merging" only while MERGE_HEAD exists; after that the same staged tree looks like ordinary authored work and a commit records it single-parent under the committer's name. Caught by checking parents, not status; discarded and remerged. Evidence: tilerl session 2026-09-04.
+open: a pre-commit hook that refuses a commit whose staged tree is byte-identical to main's tree while the commit would be single-parent (`git write-tree` vs `git rev-parse main^{tree}`); broken world = the scenario replayed in a temp repo. Proposed to de.
 
 ## R2. A criterion must express the property asked
 
@@ -179,6 +183,10 @@ open: a check that liveness reads STAT=Z, not kill -0; none exists.
 ### §173 (2026-09-04, R2-g)
 "NOT KEPT" was read as "CLAIMED"; the absence of a KEEP claim was read as a claim. Evidence: runs/pod_ckpt_candidates_*.txt.
 open: a check that distinguishes "not kept" from "claimed"; none exists.
+
+### §174 (2026-09-04, R2-g)
+A guard was green by hand and red under automation, and three of us looked in the environment. Cause was TIME: a same-length mutation (3565 -> 3565 bytes) landing in the same wall-clock second as the preceding run reuses a stale `.pyc`, because Python invalidates on (whole-second mtime, size) -- so the interpreter ran the pre-mutation code and the mutation test passed on a defect it never executed. Confirmed by the shape of the failure: 6 replicas gave rc 1,1,1,0,0,1, which is a race, not a configuration. Two of my own diagnoses (a TZ artifact, then a resolving symlink) and one of 6e's (GIT_INDEX_FILE) were all refuted. Evidence: de's world-8 replica run.
+open: manual -- a mutation test must change the file's SIZE or force a `.pyc` invalidation; "green by hand, red under automation" is a race's signature and the environment is the wrong place to look first.
 
 ## R3. Artifacts carry their producer's identity
 
