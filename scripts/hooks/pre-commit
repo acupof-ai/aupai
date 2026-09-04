@@ -577,6 +577,42 @@ def main():
         # stale -- following the docstring drops seqlen_info and breaks the call at mask.py:232.
         "eval/prefix_mask.py",
         "scripts/test_exp_done_started.py",
+        # run_ddp.sh's end-of-run chain: exit codes, the two score notes, and the row close
+        # (de-47). It is registered LATE and that is the finding, not a footnote -- it has
+        # been unguarded since it was written, and the commit adding the row close printed
+        # `selftests 0.03s`, i.e. ran zero of them, while changing the exact script it tests.
+        # It carries no `--selftest` string, so check_selftests_are_gated could not see it:
+        # that check's population is flag-carrying files, and a test_*.py with a main() is
+        # outside it by construction. Measured 2026-09-04: 19 runnable test_*.py are ungated
+        # the same way. The invoker at :1009 passes `--selftest` to every entry without a
+        # SELFTEST_FLAG override; this file takes no arguments and ignores it, verified by
+        # running it with the flag. A test that PARSED argv strictly would need an entry
+        # there instead, so the tolerance is the reason it needs none, not an accident.
+        "scripts/test_score_exit.py",
+        # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
+        # check_selftests_are_gated's population widened from "contains the string
+        # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE
+        # before landing here and passed; the four that did not are in NEEDS_DATA with the
+        # reason each printed. Wall time measured per file, and the three slowest are the
+        # reason this is worth stating: test_l1_fewshot_2x2 24.0s, test_sft_lr_provenance
+        # 14.5s, test_fewshot_demos 10.8s, test_split_bitwise 10.1s, test_rep_stop_flag 9.9s
+        # -- so a commit staging several of these pays real seconds. That is the price of the
+        # gate, not a defect; the alternative was 19 tests nobody ran.
+        "algorithms/test_rlvr_reward_suite.py",
+        "datagen/test_near_dedup_known.py",
+        "datagen/test_parallel_exact_identity.py",
+        "eval/test_l1_fewshot_2x2.py",
+        "scripts/test_e1_28_matched.py",
+        "scripts/test_e1_29_floor_by_class.py",
+        "scripts/test_fewshot_demos.py",
+        "scripts/test_fewshot_stop.py",
+        "scripts/test_free_card.py",
+        "scripts/test_pod_ps_judge.py",
+        "scripts/test_rep_stop_flag.py",
+        "scripts/test_resume_accumulates.py",
+        "scripts/test_score_matrix_failpath.py",
+        "scripts/test_sft_lr_provenance.py",
+        "scripts/test_split_bitwise.py",
         # A mid-run SFT checkpoint must carry optimizer state. It writes a checkpoint from a
         # 2-layer 2-step toy model on CPU and READS IT BACK, because every source-level
         # criterion for the defect it guards was already true of the broken code: the snapshot
@@ -856,6 +892,14 @@ def main():
     # from it is unguarded, one level down: a correct judgement applied at the wrong
     # granularity, silently not checking.
     NEEDS_DATA = {
+        # Four of the 18 flagless runnable test_*.py that check_selftests_are_gated started
+        # seeing on 2026-09-04. Each reason is what the file actually printed when run, not
+        # a guess: 18 were run once each, 14 passed and went to SELFTEST_FILES, these four
+        # did not. "broken" and "cannot run here" are different facts and only the second is
+        # an exemption, so the broken one says so and names its first error line.
+        "scripts/test_e2e.py": "asserts `set E2E_GPU=<idx>` at import; the pod's cards are shared and it will not pick one",
+        "datagen/test_scan_math_contamination.py": "needs data/corpus/math/ape210k_000.jsonl at import (gitignored corpus); IndexError on the glob",
+        "scripts/test_cursor_save.py": "RED, and the test is right: it dies at line 143 before printing a single case. Its resumed fixture sets _plan_step_origin=16000 and writes 3200 rows = 100 RELATIVE steps x 16 x 2, which is correct; train.py:1163 computes step x batch x accum x world from the ABSOLUTE step, ignores _plan_step_origin, gets 515200 and raises. That is the exact absolute-vs-relative confusion this test was written to catch (c35f66fd, committed as -- FAILS today), now blocking it with a raise instead of a comparison. Not registered as a passing gate because it cannot pass until train.py is fixed, and train.py is frozen for the running pretrain",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         # The sandbox itself. 17 known answers, every one of which needs root plus unshare,

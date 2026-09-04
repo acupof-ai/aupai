@@ -46,11 +46,17 @@ def _world(script_src):
     # exp.py note APPENDS to a trace file rather than exiting 0 silently: the note calls are
     # the de-47 annotation, and a stub that swallowed them would let a mistyped flag or a
     # dropped call pass every case below. What a test cannot see, it does not check.
+    #
+    # `exp.py done` traces to the SAME file for the same reason (de-47 c3). It used to fall
+    # through to the `*)` catch-all, which exits 0 and records nothing -- so the chained close
+    # could be dropped entirely and every case here would still pass. The `done` arm must come
+    # BEFORE `*)`; order is the whole mechanism in a case statement.
     p = os.path.join(bin_, "python")
     with open(p, "w") as f:
         f.write("#!/bin/bash\n"
                 "case \"$*\" in\n"
                 "  *exp.py*note*) echo \"$*\" >> \"$NOTE_TRACE\"; exit ${FAKE_NOTE_RC:-0};;\n"
+                "  *exp.py*done*) echo \"DONE $*\" >> \"$NOTE_TRACE\"; exit ${FAKE_DONE_RC:-0};;\n"
                 "  *score_matrix*) exit ${FAKE_SCORE_RC:-0};;\n"
                 "  *free-card*) echo \"${FAKE_CARD-7}\"; exit 0;;\n"
                 "  *) exit 0;;\n"
@@ -60,9 +66,12 @@ def _world(script_src):
     return d, bin_
 
 
-def run(script_src, train_rc=0, score_rc=0, card="7", note_rc=0):
+def run(script_src, train_rc=0, score_rc=0, card="7", note_rc=0, done_rc=0, log=None):
     d, bin_ = _world(script_src)
     trace = os.path.join(d, "note_trace")
+    if log is not None:
+        with open(os.path.join(d, "runs", "probe.log"), "w") as f:
+            f.write(log)
     try:
         env = dict(os.environ)
         env["PATH"] = bin_ + os.pathsep + env["PATH"]
@@ -70,6 +79,7 @@ def run(script_src, train_rc=0, score_rc=0, card="7", note_rc=0):
         env["FAKE_SCORE_RC"] = str(score_rc)
         env["FAKE_CARD"] = card
         env["FAKE_NOTE_RC"] = str(note_rc)
+        env["FAKE_DONE_RC"] = str(done_rc)
         env["NOTE_TRACE"] = trace
         r = subprocess.run(["bash", os.path.join(d, "run_ddp.sh"), "--name", "probe"],
                            capture_output=True, text=True, env=env, cwd=d, timeout=120)
@@ -152,6 +162,61 @@ def main():
         print(f"  FAIL a note that exits nonzero must not fail the run (exit={rc_n})")
         return 1
     print("  ok   a failing note does not change the run's exit code")
+
+    # de-47 c3: THE CHAIN CLOSES THE ROW, on both paths. no_stale_running FAILs on a row
+    # still `running` after 24h, and this chain is the last thing that runs -- so before
+    # this, every pretrain left its own row open and launch_gate could not tell a finished
+    # run from a job still on the cards. That is the NO-GO it was reading.
+    _rc_ok, _o, notes_ok = run(src, 0, 0, "6", log="step 10 | loss 2.9\nval 2.135\n")
+    done_ok = [l for l in notes_ok.splitlines() if l.startswith("DONE ")]
+    if len(done_ok) != 1:
+        print(f"  FAIL a successful run must close its row exactly once; got {len(done_ok)}\n{notes_ok}")
+        return 1
+    if "--status ok" not in done_ok[0]:
+        print(f"  FAIL a successful run must close status=ok: {done_ok[0]}")
+        return 1
+    # The val loss from the log, not a hand-written string: an empty result cell is what
+    # `exp.py render` shows when the chain closes a row with nothing in it.
+    if "2.135" not in done_ok[0]:
+        print(f"  FAIL the close must carry the val loss read from the log: {done_ok[0]}")
+        return 1
+    # `finding` must NOT read as a human interpretation the chain cannot supply.
+    if "pending" not in done_ok[0]:
+        print(f"  FAIL the chained close must mark its finding pending, not assert one: {done_ok[0]}")
+        return 1
+    print("  ok   a successful run closes its row: status ok, val loss, finding pending")
+
+    # THE FAILURE PATH IS THE ONE THAT MATTERS. A run that produced no metrics is the row a
+    # human is least likely to return to, and `exit 1` would otherwise leave it open forever.
+    # Both scoring-failed and no-free-card reach the exit; both must still close.
+    for label, s_rc, card in (("scoring failed", 1, "7"), ("no free card", 0, "")):
+        _rc_f, _of, notes_f = run(src, 0, s_rc, card, log="val 3.010\n")
+        done_f = [l for l in notes_f.splitlines() if l.startswith("DONE ")]
+        if len(done_f) != 1:
+            print(f"  FAIL {label}: the row must still close ({len(done_f)} closes)\n{notes_f}")
+            return 1
+        if "--status error" not in done_f[0]:
+            print(f"  FAIL {label}: an unscored run must close status=error, not ok: {done_f[0]}")
+            return 1
+        print(f"  ok   {label}: row closed status=error")
+
+    # A close that cannot write must not fail the run, for the same reason a note cannot:
+    # bookkeeping with nowhere to go is not a training failure. Distinct from the note case
+    # because `done` runs AFTER the scoring verdict, where a nonzero could reach the exit.
+    rc_d, _od, _nd = run(src, 0, 0, "7", done_rc=4)
+    if rc_d != 0:
+        print(f"  FAIL a failing close must not fail the run (exit={rc_d})")
+        return 1
+    print("  ok   a failing close does not change the run's exit code")
+
+    # The close must not fire when there was no checkpoint to score: that branch never
+    # opened this chain, and closing a row the chain did not enter would close somebody
+    # else's. A training failure exits before the `if` block.
+    _rc_t, _ot, notes_t = run(src, 2, 0, "7")
+    if [l for l in notes_t.splitlines() if l.startswith("DONE ")]:
+        print(f"  FAIL a failed training run must not be closed by this chain: {notes_t}")
+        return 1
+    print("  ok   a failed training run is not closed by the scoring chain")
     print("score exit OK: a scoring failure reaches the caller")
     return 0
 
