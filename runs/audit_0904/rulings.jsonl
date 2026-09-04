@@ -14,3 +14,63 @@
 {"id": "UF-4", "ruling": "accepted", "by": "fb"}
 {"id": "UF-5", "ruling": "accepted", "by": "fb"}
 {"id": "UF-6", "ruling": "accepted", "by": "fb"}
+{"id": "DL-11", "ruling": "accepted", "by": "fb", "note": "accepted S1; one transport for every runs/*.jsonl, union by event, second on queue"}
+{"id": "DL-4", "ruling": "accepted", "by": "fb", "note": "accepted S1; fix already on main via merge (c8f9f25f), recorded as freeze breach"}
+{"id": "DL-5", "ruling": "accepted", "by": "fb", "note": "accepted S1; inverted on main at b98cd784"}
+{"id": "MT-1", "ruling": "accepted", "by": "fb", "note": "accepted S1; post-audit tilerl rewrites as retracted + new fact against cli.py current line"}
+{"id": "PR-1", "ruling": "returned", "by": "fb", "note": "returned: restate S2, label conflation not a wrong decision; card 7 question put to the user"}
+{"id": "PR-3", "ruling": "returned", "by": "fb", "note": "returned: restate S2, same as PR-1"}
+{"id": "CD-7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-1", "ruling": "accepted", "by": "fb", "note": "accepted S2; first on post-audit fix queue, cost is the variable"}
+{"id": "DL-10", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-12", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-17", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-2", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-20", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-3", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-6", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-8", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-9", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E10", "ruling": "accepted", "by": "fb", "note": "accepted S2; one post-audit lane job covers every cu-blind scorer, domain_bpb first"}
+{"id": "E11", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E4", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F1", "ruling": "accepted", "by": "fb", "note": "accepted S2 (verified fact fields); routed to de as DL-8"}
+{"id": "F3", "ruling": "accepted", "by": "fb", "note": "accepted S2; de area"}
+{"id": "MT-10", "ruling": "accepted", "by": "fb", "note": "accepted S2 (verified sft_math.py:188, no test)"}
+{"id": "MT-11", "ruling": "accepted", "by": "fb", "note": "accepted S2 (verified :45 :413 :510)"}
+{"id": "MT-2", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-3", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-4", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-5", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-9", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-2", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-4", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-8", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-9", "ruling": "accepted", "by": "fb", "note": "accepted S2; KEEP pin of ckpt_pretrain_15b_s1.pt.step15000 requested from b0"}
+{"id": "UF-7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-13", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-14", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-15", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-16", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "DL-18", "ruling": "returned", "by": "fb", "note": "returned as stale, restated S3 by de"}
+{"id": "DL-19", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E12", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E6", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "E8", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F2", "ruling": "returned", "by": "fb", "note": "returned once (never-in-git wording), accepted S3 after correction"}
+{"id": "F4", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F6", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F7", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F8", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "F9", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-6", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "MT-8", "ruling": "accepted", "by": "fb", "note": "accepted S3; logs are the measurement"}
+{"id": "PR-10", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-5", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "PR-6", "ruling": "accepted", "by": "fb", "note": "accepted after dual-rule publication (197 vs 130, manifest sha pinned)"}
+{"id": "PR-7", "ruling": "accepted", "by": "fb", "note": "accepted, same as PR-6"}
+{"id": "UNPARSED", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
+{"id": "UNPARSED", "ruling": "accepted", "by": "fb", "note": "accepted at report acceptance; not individually sampled"}
