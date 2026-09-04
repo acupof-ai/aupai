@@ -472,6 +472,13 @@ def main():
         # that missed CJK would scan it as empty and report zero contamination while never having
         # looked at 56% of the corpus.
         "scripts/e1_28_heldout_contamination.py",
+        # The cursor scanner's test, which is a TEST FILE rather than a --selftest script and so
+        # takes no flag; it is here because selftests_are_gated counts any file carrying the string
+        # and because the thing it now asserts is a REFUSAL. That refusal exists because the scan's
+        # cursor restriction read token-block rows as documents (5-13% document coverage) and its
+        # 316-item result reached an audit. A test whose subject is "this tool must refuse" has to
+        # run at commit time, or the refusal can be removed with nothing going red.
+        "scripts/test_e1_28_leak_scan.py",
         # humaneval gold BPB: its selftest needs no data and no model -- a uniform-distribution
         # stand-in has a known answer (log2(V) bits/byte exactly), which is what pins the bit
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to
