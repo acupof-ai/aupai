@@ -972,6 +972,43 @@ def _selftest():
     _u3, _w3 = is_undefined_vs_chance(_r3, 0.25)
     assert _u3 and _w3 == 0.0, (_u3, _w3)
 
+    #    (f) THE TWO EFFECTIVE SIZES ARE NOT INTERCHANGEABLE, and no world above can tell.
+    #        cluster_se uses KISH's m_eff = sum(s^2)/n for the design effect and ANOVA's
+    #        m0 = (n - sum(s^2)/n)/(k-1) for the ICC denominator. Different quantities for
+    #        different jobs, and swapping either in for the other is a plausible-looking
+    #        error that every case (a)-(e) passes: (a) and (b) have EQUAL cluster sizes, where
+    #        m0 and Kish nearly coincide, and (c) has ICC exactly 1 or 0, where the deff is
+    #        pinned by m_eff alone. 3b found this correct by inspection (2026-09-05) and it
+    #        was correct by luck rather than by design -- I wrote each from its own definition
+    #        without noticing they were a swappable pair, so the code was right and my worlds
+    #        did not prove it.
+    #
+    #        THIS FIXTURE DISCRIMINATES all four combinations. Unequal sizes (three rows of 10
+    #        beside seven singletons) with 80% within-row agreement, so 0 < ICC < 1 and
+    #        Kish 8.297 against m0 3.189, a 2.6x gap. Computed, not asserted from memory:
+    #             ICC via m0,   deff via Kish   -> ICC 0.3444  deff 3.5135   (correct)
+    #             ICC via m0,   deff via m0     -> ICC 0.3444  deff 1.7541
+    #             ICC via Kish, deff via Kish   -> ICC 0.1680  deff 2.2261
+    #             ICC via Kish, deff via m0     -> ICC 0.1680  deff 1.3678
+    #        Four distinct answers, so either swap moves a number this asserts.
+    _sizes = [10, 10, 10, 1, 1, 1, 1, 1, 1, 1]
+    _v, _g = [], []
+    for _r_i, _s in enumerate(_sizes):
+        _ones = round(_s * 0.8) if _r_i % 2 == 0 else _s - round(_s * 0.8)
+        _v += [1.0] * _ones + [0.0] * (_s - _ones)
+        _g += [_r_i] * _s
+    _sn, _sc, _icc, _me, _k = cluster_se(torch.tensor(_v), _g)
+    _n = sum(_sizes)
+    _kish = sum(s * s for s in _sizes) / _n
+    _m0 = (_n - _kish) / (_k - 1)
+    assert _k == len(_sizes) and _n == 37, (_k, _n)
+    assert abs(_kish - 8.297) < 0.001 and abs(_m0 - 3.189) < 0.001, (_kish, _m0)
+    assert abs(_me - _kish) < 1e-9, f"m_eff is not the Kish size: {_me} vs {_kish}"
+    assert 0.0 < _icc < 1.0, f"the fixture no longer discriminates (ICC {_icc})"
+    assert abs(_icc - 0.3444) < 0.001, _icc          # dies if the ICC uses Kish (0.1680)
+    _deff = (_sc / _sn) ** 2
+    assert abs(_deff - 3.5135) < 0.001, _deff        # dies if the deff uses m0 (1.7541)
+
     print("api_cloze selftest OK: the region pair on the control's real numbers "
           f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "
           f"cursor sum {cursor_sum} == 3815x16x2x2), the CONTIGUOUS reading rejected three "
