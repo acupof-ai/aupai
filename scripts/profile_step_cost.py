@@ -446,6 +446,19 @@ def main():
     ap.add_argument("--peak-only", action="store_true",
                     help="memory probe: run --steps steps, report peak GiB and tok/s/gpu, "
                          "skip save/val/nccl. For the L18 feasibility question.")
+    # SPARSE MEMORY, so --peak-only can answer the M3 question before a card is committed to it.
+    # M3 is 2048^2 x 1024 = 4,294,967,296 parameters: 8.00 GiB of bf16 table plus a DENSE fp32
+    # Adagrad moment of 16 GiB, against a 95.58 GiB card whose control peak is 49.53 GiB. Whether
+    # that fits is a measurement, not an addition -- activations and the allocator's fragmentation
+    # are what the arithmetic cannot predict, and this is the only tool that reads the high-water
+    # mark of live tensors rather than nvidia-smi's reservation.
+    ap.add_argument("--mem_values", type=int, default=0,
+                    help="sparse memory pool size, a perfect square (0 = no memory)")
+    ap.add_argument("--mem_top_k", type=int, default=32)
+    ap.add_argument("--mem_layers", type=str, default="3,6,9")
+    ap.add_argument("--mem_sparse", action=argparse.BooleanOptionalAction, default=False,
+                    help="COO grads for the value table. Default FALSE, matching the arms: NCCL "
+                         "raises on all_reduce of a sparse tensor (tilerl, 2026-09-05)")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -483,6 +496,18 @@ def main():
         )
         setattr(train.Cfg, field, getattr(a, flag))
     train.Cfg.grad_ckpt = a.grad_ckpt
+    # Same map, same assert, for the memory fields: a name here is one this file PROMISES to
+    # apply, so an absent field is a bug in the map and the assert names it. Without this the
+    # probe would build a model with no memory and report its peak as M3's -- the number would
+    # look like a comfortable fit and be an answer to a different question.
+    for _f in ("mem_values", "mem_top_k", "mem_layers", "mem_sparse"):
+        assert hasattr(train.Cfg, _f), f"Cfg has no {_f!r}, which --{_f} is supposed to set"
+        setattr(train.Cfg, _f, getattr(a, _f))
+    # mem_arm is train.py's launch-time requirement, not this probe's: nothing here writes a
+    # memory_diag row, so there is no arm label to get wrong. Set explicitly rather than left
+    # empty so a future reader does not read the empty string as an oversight.
+    if hasattr(train.Cfg, "mem_arm"):
+        train.Cfg.mem_arm = "probe"
 
     ddp, rank, world, local = train.setup_ddp()
     is_main = rank == 0
@@ -667,7 +692,14 @@ def main():
         print(f"\nPEAK {peak_gib:.2f} GiB allocated, {peak_res_gib:.2f} GiB reserved | "
               f"{tok_s_gpu / 1e3:.1f}K tok/s/gpu over {a.steps} timed steps "
               f"(L={train.Cfg.layers} d={train.Cfg.d} batch={B} accum={train.Cfg.accum} "
-              f"grad_ckpt={a.grad_ckpt} fp8={a.fp8} world={world})", flush=True)
+              f"grad_ckpt={a.grad_ckpt} fp8={a.fp8} world={world}"
+              # THE MEMORY CONFIG ON THE SAME LINE AS THE PEAK IT PRODUCED. A peak reported
+              # without the pool size that produced it is the shape of number that gets copied
+              # into a decision about a different shape.
+              + (f" mem_values={train.Cfg.mem_values} top_k={train.Cfg.mem_top_k}"
+                 f" layers={train.Cfg.mem_layers} sparse={train.Cfg.mem_sparse}"
+                 if train.Cfg.mem_values else " mem=off")
+              + ")", flush=True)
         print("  reserved is the number that decides whether it FITS -- allocated omits the "
               "caching allocator's fragmentation, and OOM is raised against reserved.",
               flush=True)
