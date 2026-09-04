@@ -1202,6 +1202,47 @@ def main():
                 print(f"  TIMED OUT (did not run): {ln.strip()}", file=sys.stderr)
     print(f"hook: harness check {time.time() - t0:.2f}s", file=sys.stderr)
 
+    # scripts/harness.py is DELIBERATELY not in SELFTEST_FILES, and this block is the reason
+    # recorded rather than the absence left to be read as an omission (de, on 6e's C5 ruling
+    # 2026-09-04). `harness check --selftest` builds a broken world for each of 79 checks and
+    # takes ~4 min -- a hook that slow is a hook people --no-verify past, which buys less than
+    # the exclusion costs. What made the exclusion a defect was silence: two commits changing
+    # check code printed `selftests 0.04s` and `34.20s`, and neither number included a single
+    # one of the 79. A timing line cannot tell you the run was empty.
+    #
+    # The substitute is scoped by FUNCTION, not by file: every CHECKS function lives in
+    # harness.py, so a file-level filter selects all 79 and saves nothing (measured). This maps
+    # the staged diff's changed line numbers to the enclosing `def` and verifies only the checks
+    # whose run() or broken() actually changed -- 1 of 79 in 6.7s on the commit that added it.
+    #
+    # NOT A REPLACEMENT, and it says so in its own output: an edit to a shared helper or to the
+    # CHECKS table changes no check function, selects nothing, and is reported as "no answer".
+    # The full run stays the coverage claim; this only catches the case where someone edits a
+    # check and its world stops discriminating. That case is not hypothetical -- it is how
+    # _broken_run_commits_resolve was caught planting its defect into a superseded ledger row.
+    if "scripts/harness.py" in staged("AM") and repo:
+        t0 = time.time()
+        try:
+            r = subprocess.run(
+                [sys.executable, os.path.join(repo, "scripts", "harness.py"), "check",
+                 "--selftest-touching", "scripts/harness.py"],
+                capture_output=True, text=True, timeout=240,
+            )
+            out = (r.stdout + r.stderr).strip()
+            tail = [ln for ln in out.splitlines() if ln.strip()][-6:]
+            if r.returncode != 0:
+                print("REFUSING: a changed check does not FAIL on its broken world",
+                      file=sys.stderr)
+                for ln in tail:
+                    print(f"  {ln}", file=sys.stderr)
+                sys.exit(1)
+            for ln in tail[-1:]:
+                print(f"  {ln}", file=sys.stderr)
+        except subprocess.TimeoutExpired:
+            print("  scoped harness selftest did not finish in 240s -- run "
+                  "`harness check --selftest` by hand", file=sys.stderr)
+        print(f"hook: harness selftest (scoped) {time.time() - t0:.2f}s", file=sys.stderr)
+
     # THE MANIFEST REGEN LIVED HERE AND IS GONE (shape A, 6e ruling 2026-09-04).
     # data/pod_head_manifest.txt is no longer tracked: scripts/pod_push.sh generates it from
     # the HEAD it ships and ships it last. Regenerating it on every commit is what made it

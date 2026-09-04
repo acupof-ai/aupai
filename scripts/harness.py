@@ -2816,7 +2816,19 @@ def _broken_run_commits_resolve():
     Repairing the others is what makes the world a discriminator. The real tree already WARNs
     (three pod-side shas came home with de-36's pull), so a world that merely adds a fourth
     proves nothing: undo the mutation and it still WARNs. Here the mutation is the ONLY
-    unresolvable value, so removing it would make the world PASS."""
+    unresolvable value, so removing it would make the world PASS.
+
+    THE PLANT GOES IN THE ROW THE FOLD KEEPS, not in rows[-1] (de, 2026-09-04). The check reads
+    exp.fold -- the current row per (name, started) -- and this world wrote to the last LINE.
+    Those are the same row only until someone appends a close: e1 appended a `running` row for
+    e1_c11_doccu_rescore and then its `ok` close under the same key, so rows[-1] became a
+    SUPERSEDED row, the fold dropped the planted `cec145b` before the check could see it, and
+    the world reported PASS -- caught 40 minutes after a full selftest had passed on it. Nothing
+    about the check or the world changed; another session closed a run. A fixture that targets a
+    position in an event log is valid only as long as nobody appends, which in this repo is
+    minutes. Written as "the last row of the last key the fold keeps", so it is the same
+    reduction the check applies.
+    """
     d = _tmp_repo()
     src = os.path.join(ROOT, "runs", "experiments.jsonl")
     if not os.path.exists(src):
@@ -2830,12 +2842,30 @@ def _broken_run_commits_resolve():
         sha = r.get("commit")
         if sha and not _exp.commit_resolves(sha, ROOT)[0]:
             r["commit"] = "unknown"          # an honest non-answer; the check accepts it
-    rows[-1]["commit"] = "cec145b"           # the planted defect, and now the only one
+    # Plant into a row the fold KEEPS: take the fold's own last row and mutate the ledger line
+    # that IS it, matched by identity so no second copy of the reduction can disagree.
+    kept = _exp.fold(rows)
+    assert kept, "the fold kept no row, so there is nowhere to plant a defect"
+    target = kept[-1]
+    planted = False
+    for r in rows:
+        if r is target or ((r.get("name"), r.get("started")) == (target.get("name"),
+                                                                 target.get("started"))
+                           and r.get("status") == target.get("status")):
+            r["commit"] = "cec145b"          # the planted defect, and now the only one
+            planted = True
+    assert planted, "the fold's last row is not in the ledger rows -- cannot plant"
     dst = os.path.join(d, "runs", "experiments.jsonl")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
     with open(dst, "w", encoding="utf-8") as fh:
         for r in rows:
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
+    # The mutation must survive the check's own reduction, or this world certifies nothing --
+    # which is exactly how it went green above. Asserted here rather than trusted.
+    assert any(r.get("commit") == "cec145b"
+               for r in _exp.fold([json.loads(x) for x in open(dst, encoding="utf-8")
+                                   if x.strip()])), \
+        "the planted commit does not survive exp.fold, so the world cannot fail the check"
     # The check needs an object database to ask `cat-file -e` of; the mutation is in the
     # ledger, not in git, so linking the real .git is what keeps the world minimal.
     os.symlink(os.path.join(ROOT, ".git"), os.path.join(d, ".git"))
@@ -12027,7 +12057,72 @@ def _selftest_auto_resume():
           "the scene is archived and a newer interrupt save wins")
 
 
-def _demo():
+def _funcs_in_diff(paths, rev=None):
+    """Top-level function names whose body the staged diff of `paths` touches.
+
+    FUNCTION granularity, not file: every one of the CHECKS functions lives in harness.py, so a
+    file-level filter selects all 79 and saves nothing -- measured, which is why the first
+    version of this was useless for the only caller it has. Reads the changed line numbers from
+    `git diff` and maps each to the enclosing `def` by AST line span.
+    """
+    import ast
+    import bisect
+
+    out = set()
+    for rel in paths:
+        args = ["git", "diff", "--unified=0"]
+        args += [rev] if rev else ["--cached"]
+        r = subprocess.run(args + ["--", rel], capture_output=True, text=True, cwd=ROOT)
+        lines = set()
+        for line in r.stdout.splitlines():
+            m = re.match(r"^@@ -\S+ \+(\d+)(?:,(\d+))? @@", line)
+            if m:
+                start, count = int(m.group(1)), int(m.group(2) or 1)
+                lines.update(range(start, start + max(count, 1)))
+        if not lines:
+            continue
+        try:
+            tree = ast.parse(open(os.path.join(ROOT, rel), encoding="utf-8").read())
+        except (OSError, SyntaxError):
+            continue
+        spans = sorted((n.lineno, n.end_lineno, n.name) for n in tree.body
+                       if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef)))
+        starts = [s[0] for s in spans]
+        for ln in lines:
+            i = bisect.bisect_right(starts, ln) - 1
+            if i >= 0 and spans[i][1] >= ln:
+                out.add(spans[i][2])
+    return out
+
+
+def _checks_touching(paths, rev=None):
+    """Check names whose run() or broken() the staged diff of `paths` changes.
+
+    For the hook's cheap substitute: a commit that edits one check should verify THAT check's
+    broken world, not all 79 (~4 min). Resolved by each function's own __code__.co_name and
+    co_filename, so it cannot drift from where the code actually lives.
+
+    An edit OUTSIDE any check function -- a helper both call, the CHECKS table itself -- returns
+    nothing, and the caller must treat that as "no answer", never as a pass. That is the honest
+    reading: a helper change can break any check, and the only cheap thing that covers it is
+    the full run.
+    """
+    changed = _funcs_in_diff(paths, rev=rev)
+    if not changed:
+        return []
+    want = {os.path.realpath(os.path.join(ROOT, p)) for p in paths}
+    out = []
+    for name, _a, _i, fn, broken in CHECKS:
+        for f in (fn, broken):
+            code = getattr(f, "__code__", None)
+            if (code and os.path.realpath(code.co_filename) in want
+                    and code.co_name in changed):
+                out.append(name)
+                break
+    return out
+
+
+def _demo(only=None):
     """Every check must FAIL on a world where its condition is violated."""
     import shutil
 
@@ -12158,6 +12253,8 @@ def _demo():
                  "peer_stalled", "card_held_without_claim"}
     untested = []
     for name, _a, _i, fn, broken in CHECKS:
+        if only is not None and name not in only:
+            continue
         try:
             root = broken()
         except SelftestSkip as e:
@@ -12278,6 +12375,25 @@ def _demo():
                                     f"not say why: {_why[:70]}")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
+
+    if only is not None:
+        # THE FILTERED RUN STOPS HERE, and says what it did not do. Everything below is a
+        # second world for a NAMED check (spawned_scripts_exist, agents_rules_covered,
+        # shapes_table_covers_doc, score_matrix_present), the repo-auth mirror, and the
+        # non-vacuous-PASS sweep over every check's live evidence -- none of which is scoped to
+        # a name, so running them under a filter would either re-run the full cost the filter
+        # exists to avoid or silently skip properties the caller was not told about.
+        #
+        # A filtered green is NOT the selftest passing. Printed as a count of what ran against
+        # the total, because the failure this whole item is about is a green line that describes
+        # less coverage than the reader assumes.
+        assert not untested, ("checks that cannot be made to fail:\n  "
+                              + "\n  ".join(untested))
+        print(f"harness selftest (FILTERED): {len(only)} of {len(CHECKS)} checks verified on "
+              f"their broken worlds -- {', '.join(sorted(only))}. NOT run: the extra worlds, "
+              f"the repo-auth mirror, and the non-vacuous-PASS sweep. Run the full "
+              f"`harness check --selftest` before trusting this as coverage.")
+        return 0
 
     assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
 
@@ -14879,7 +14995,21 @@ def main():
     ap.add_argument("--dry", action="store_true", help="measure: list what would run")
     ap.add_argument("--full", action="store_true", help="measure: the whole matrix, not just math-hard")
     ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
+    ap.add_argument("--selftest-touching", metavar="PATHS",
+                    help="comma-separated files: verify only the checks whose run() or broken() "
+                         "is defined in them. For the pre-commit hook, which cannot afford the "
+                         "full ~4min run; prints what it did NOT cover")
     a = ap.parse_args()
+    if a.selftest_touching:
+        _paths = [p.strip() for p in a.selftest_touching.split(",") if p.strip()]
+        _names = _checks_touching(_paths)
+        if not _names:
+            print(f"no CHECK function is changed by the staged diff of {', '.join(_paths)} -- "
+                  f"nothing scoped to verify. THIS IS NOT A PASS for those files: an edit to a "
+                  f"shared helper or to the CHECKS table can break any check, and only the full "
+                  f"`harness check --selftest` covers that.")
+            return 0
+        return _demo(only=set(_names)) or 0
     if a.selftest:
         return _demo() or 0
     cmd = a.cmd
