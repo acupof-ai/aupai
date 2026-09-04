@@ -387,11 +387,57 @@ class AttnRes(nn.Module):
         return out
 
 
+class HeadMix(nn.Module):
+    """Arm B: KDA and MLA side by side INSIDE one block, on a head-count split (default 3:1).
+
+    Today's hybrid alternates whole layers -- 3 KDA blocks then 1 MLA block (attn_every=4). This
+    puts both mixers in every block instead, KDA on 3/4 of the heads and MLA on 1/4, so every
+    layer has both a recurrent and a full-attention path rather than every fourth layer having
+    only attention.
+
+    THE OUTPUTS ARE SUMMED, and that is not an approximation of concatenation. Each mixer's o
+    projects its own working width back to the full residual, so summing the two is exactly what
+    concatenating [kda_out, mla_out] and applying a single [d, d] o would compute:
+    o(concat(a,b)) == o1(a) + o2(b) where o1,o2 are o's column blocks. Verified numerically,
+    max|diff| 1.43e-06 and torch.allclose True (2026-09-04). So no fusion mechanism is needed and
+    no parameter is spent on one.
+
+    HEAD_DIM STAYS 128 on both halves (train.py:2058, the FlashKDA CUTLASS kernel), which is what
+    makes the split arithmetic rigid: inner = heads * 128, so a 3:1 split at d=1024/h=8 is
+    KDA h=6 inner=768 and MLA h=2 inner=256. h must be divisible by 4 -- at d=768/h=6 it is not,
+    which is why this arm runs at d=1024/h=8 and not at the Stage D shape.
+    """
+
+    def __init__(self, cfg, ratio=3):
+        super().__init__()
+        h = cfg.heads
+        if h % (ratio + 1) != 0:
+            raise ValueError(
+                f"head_mixed ratio {ratio}:1 needs heads divisible by {ratio + 1}, got heads={h}. "
+                f"head_dim is pinned to {cfg.d // h} by the FlashKDA CUTLASS kernel "
+                f"(train.py:2058), so the split cannot be taken in fractions of a head.")
+        hd = cfg.d // h
+        self.h_mla = h // (ratio + 1)
+        self.h_kda = h - self.h_mla
+        self.kda = DeltaRecurrence(cfg, inner=self.h_kda * hd, heads=self.h_kda)
+        # latent stays cfg.d // 4, the value every checkpoint holds: deriving it from the MLA
+        # half's inner would shrink the KV latent to d//16 and silently make this arm a test of
+        # two changes at once.
+        self.mla = GatedMLA(cfg, inner=self.h_mla * hd, heads=self.h_mla)
+
+    def forward(self, x, cu=None):
+        return self.kda(x, cu) + self.mla(x, cu)
+
+
 class Block(nn.Module):
     def __init__(self, cfg, is_attn=False):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
-        self.mixer = GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg)
+        # head_mixed replaces the layer-level alternation entirely: EVERY block gets both mixers,
+        # so is_attn stops selecting anything. Reading it here rather than in HybridLM keeps the
+        # block list construction (:421) untouched, so attn_every still decides nothing else.
+        _hm = getattr(cfg, "head_mixed", 0)
+        self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
         self.ffn = SwiGLU(cfg)
         attn_res = getattr(cfg, "attn_res", False)
