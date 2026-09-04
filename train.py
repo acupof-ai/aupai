@@ -2863,30 +2863,49 @@ def main():
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
                     )
-                    # MEMORY DIAGNOSTICS, charter readout 4, rank 0 only and inside this block
-                    # because `tps` is computed here and nowhere else -- the ledger's tok_s_gpu is
-                    # the same number the step line prints, not a second estimate of it.
-                    #
-                    # `name` IS THE ARM ID (m1/m2/m3), NOT THE RUN NAME. de's rule, and the reason
-                    # is readout 3: the ledger is append-only and nothing else on the row records
-                    # which arm produced it, so a wrong name folds three curves into one line and
-                    # the M2-vs-M1 slope cannot be recovered afterwards. It comes from --mem_arm,
-                    # a required flag whenever mem_values is set, rather than from --name: the run
-                    # name carries a prefix and a date and would silently become the arm id.
-                    # THE FRACTION IS RANK 0's WINDOW, and it is a LOWER BOUND on the global one,
-                    # which is why it is usable for the stop rule as it stands. Each rank's
-                    # `touched` counts only the rows its own tokens read, and an all-reduce here
-                    # would deadlock: this whole block is inside `if is_main`, so a collective
-                    # would be entered by one rank and waited on by none. The stop rule is "below
-                    # 0.20 at step 1000" -- if rank 0 alone reaches 0.20 the global set is at
-                    # least that, so a pass is a real pass. A FAIL is the case that needs care: at
-                    # world 2 rank 0 sees half the tokens, so a rank-0 reading just under the line
-                    # is not proof of collapse and the arm gets an all-ranks reading before it is
-                    # stopped. Recorded here rather than left for the reader to infer.
-                    if raw_model.memory is not None and step % 100 == 0:
-                        import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+                # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
+                # that placement is the whole correctness argument: the fraction the stop rule
+                # reads must be the GLOBAL one, each rank's `touched` counts only the rows its own
+                # tokens read, and a collective inside `if is_main` would be entered by one rank
+                # and waited on by none -- a hang, not a wrong number (4c's ruling 2026-09-05,
+                # replacing my rank-0 lower bound).
+                #
+                # THE CONDITION MUST BE RANK-INVARIANT or the collective deadlocks. `step % 100`
+                # is; `is_main` is not, which is why the whole block moved rather than just the
+                # all_reduce. raw_model.memory is None identically on every rank (same Cfg), so
+                # that conjunct is safe.
+                #
+                # UNION, NOT SUM, for `touched`: two ranks reading the same row must count once,
+                # so it is a bool OR (MAX over 0/1) -- a SUM would report up to `world` times the
+                # true fraction and a collapsed pool could read as healthy. key_hits is the
+                # opposite: usage COUNTS add, so SUM is right there. Getting these two backwards
+                # is the kind of error that produces a plausible number.
+                if raw_model.memory is not None and step % 100 == 0:
+                    import memory_diag  # noqa: PLC0415  (scripts/ is on sys.path)
 
-                        _md = raw_model.memory.diagnostics(reset=True)
+                    _mem = raw_model.memory
+                    if ddp:
+                        _t = _mem.touched.to(torch.int32)
+                        torch.distributed.all_reduce(_t, op=torch.distributed.ReduceOp.MAX)
+                        _mem.touched.copy_(_t.bool())
+                        torch.distributed.all_reduce(
+                            _mem.key_hits, op=torch.distributed.ReduceOp.SUM)
+                        # last_entropy and windows are per-rank means over the same number of
+                        # windows, so SUM/world is their mean. Summed then divided below rather
+                        # than averaged here, because ReduceOp.AVG is not available on every
+                        # backend build and a silent fallback would be a wrong number.
+                        torch.distributed.all_reduce(
+                            _mem.last_entropy, op=torch.distributed.ReduceOp.SUM)
+                        _mem.last_entropy /= world
+                    _md = _mem.diagnostics(reset=True)
+                    if is_main:
+                        # `tps` is computed in the is_main block above, and step % 100 == 0
+                        # IMPLIES step % 10 == 0, so it is always this iteration's value rather
+                        # than a stale one. If that cadence ever changes, this reads the wrong
+                        # window's throughput -- hence the assert instead of a comment alone.
+                        assert step % 10 == 0, (
+                            "the diag cadence no longer implies the tok/s cadence, so tps is "
+                            "from an earlier window than the diagnostics it is written beside")
                         memory_diag.log_diag(
                             name=Cfg.mem_arm,
                             step=step,
@@ -2895,7 +2914,7 @@ def main():
                             key_gini=_md["key_gini"],
                             tok_s_gpu=tps,
                             n_values=_md["n_values"],
-                            topk=raw_model.memory.top_k,
+                            topk=_mem.top_k,
                         )
                 if step >= total_steps:
                     break
