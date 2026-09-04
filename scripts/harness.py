@@ -1001,6 +1001,137 @@ def _broken_cache_readers_set_vocab_id():
     return d
 
 
+def check_mutation_asserted_took(root):
+    """Every world that mutates a file in place proves the mutation took, before blaming the subject.
+
+    6e's ruling, 2026-09-04, from the world-8 race that blocked b0 mid-merge for half an hour. World
+    8 replaced `return 0.0` with `return 1.0` in algorithms/rlvr_reward.py -- byte-for-byte the same
+    length, 3565 -> 3565 -- ran the mapped test green BEFORE mutating (correct: a refusal proves
+    nothing on an already-red world), and that green run left a __pycache__. Python invalidates a
+    pyc on (source mtime in WHOLE SECONDS, size), so a mutation landing in the same wall-clock second
+    reused the stale bytecode, the defect never executed, the inner hook exited 0, and the world
+    reported "a staged defect in a mapped SUBJECT was allowed" about a hook that works. Six replica
+    runs: rc 1,1,1,0,0,1.
+
+    THE DEEPER FAILURE IS THAT ONE MESSAGE COVERED TWO CAUSES. "The hook did not run the mapped
+    test" and "the mutation never took effect" printed the same sentence, and it was the second one
+    all along -- which is why the first hypothesis (a leaked GIT_INDEX_FILE) survived a day. The
+    same shape killed _broken_reported_path silently: its marker is still in eval/l1_fewshot.py
+    today, but e1's 29b31367 deleted the `preds_path` VARIABLE, so the reverted print raised
+    NameError instead of reproducing the stale-name defect, and the world PASSED with its defect
+    unreproduced.
+
+    So: a world that mutates bytes and then runs something must assert the mutation took. Two ways
+    satisfy it, and either is enough --
+      1. compare the mutated text against the source (`!=`, `assert <new> in`, a marker guard that
+         FAILs when the target is absent), or
+      2. delete the __pycache__ it could have inherited, which removes the mechanism entirely.
+
+    WHAT THIS CANNOT SEE, stated because a check that reads as complete is worse than one that
+    admits its edge: it matches the SHAPE of an assertion, not its correctness. A world asserting
+    the wrong string passes here. That is the residual, and it is why the scan
+    runs/audit_0904/dead_worlds.py exists beside this check -- it reads whether the marker literal
+    is still in the file, which is the other half.
+    """
+    worlds = []
+    for path in (os.path.join(root, "scripts", "harness.py"),
+                 os.path.join(root, "scripts", "hooks", "pre-commit")):
+        if not os.path.exists(path):
+            continue
+        try:
+            tree = ast.parse(open(path, encoding="utf-8").read())
+        except SyntaxError as e:
+            return FAIL, f"{os.path.relpath(path, root)} does not parse: {e}"
+        rel = os.path.relpath(path, root)
+        for n in tree.body:
+            if not isinstance(n, ast.FunctionDef):
+                continue
+            if not (n.name.startswith(("_broken_", "_positive_")) or n.name == "_selftest"):
+                continue
+            worlds.append((rel if n.name == "_selftest" else "", n.name, n))
+
+    bad = []
+    for rel, name, fn in worlds:
+        writes = replaces = runs = proves = purges = False
+        for x in ast.walk(fn):
+            if isinstance(x, ast.Call):
+                f = getattr(x.func, "attr", None) or getattr(x.func, "id", None)
+                if f == "replace":
+                    replaces = True
+                if f in ("write", "writelines"):
+                    writes = True
+                if f in ("run", "check_output", "check_call", "call", "Popen", "system",
+                         "import_module"):
+                    runs = True
+                if f == "rmtree":
+                    purges = True
+            # The PROOF: `assert <marker> in src`, or any comparison of the mutated text against
+            # what it came from. Either shape says the world checked rather than assumed.
+            if isinstance(x, ast.Assert):
+                proves = True
+            elif isinstance(x, ast.Compare) and any(
+                    isinstance(o, (ast.NotEq, ast.Eq, ast.In, ast.NotIn)) for o in x.ops):
+                proves = True
+        if not (replaces and writes and runs):
+            continue
+        if proves or purges:
+            continue
+        bad.append(f"{rel + ':' if rel else ''}{name}")
+
+    if bad:
+        return FAIL, (
+            f"{len(bad)} world(s) mutate a file and then run it without proving the mutation took: "
+            f"{', '.join(sorted(bad))} -- a size-preserving edit inside the pyc's one-second mtime "
+            f"key silently does nothing, and the world then blames its subject (world 8 blocked "
+            f"b0's merge this way, e5b73d40)")
+    return PASS, f"{len(worlds)} worlds; every in-place mutator asserts its edit or purges pycache"
+
+
+def _broken_mutation_asserted_took():
+    """The REAL _broken_gemm_dims with its proof removed, and made to RUN what it mutated.
+
+    NOT the hook's world 8, though that is the incident. Two attempts at surgery on the hook both
+    produced a FAIL for the wrong reason -- first a dangling `else:`, then an unclosed brace -- and
+    a broken world that reports FAIL on a SyntaxError proves nothing about the property. The lesson
+    is the check's own: a world must prove its mutation took, and text surgery across a 1900-line
+    file cannot. _broken_gemm_dims is nine lines, mutates train.py in place with a size-preserving
+    edit (`ffn_hidden = 3072` -> `3400`, 17 bytes both), and carries exactly the assert this check
+    looks for -- so removing that one line, and adding the subprocess call that makes the pyc
+    reachable, is the whole world.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
+    src = open(os.path.join(ROOT, "scripts", "harness.py"), encoding="utf-8").read()
+    real = '''def _broken_gemm_dims():
+    # The REAL train.py with ffn_hidden 3072 -> 3400: 8-aligned (passes the cuBLAS
+    # tier) but not 16-aligned, so _fp8_ok silently drops FP8. Mutated, not hand-written.
+    import shutil
+
+    d = _tmp_repo()
+    p = os.path.join(d, "train.py")
+    shutil.copy(os.path.join(ROOT, "train.py"), p)
+    src = open(p, encoding="utf-8").read()
+    src = src.replace("ffn_hidden = 3072", "ffn_hidden = 3400", 1)
+    assert "ffn_hidden = 3400" in src, "real train.py no longer has \'ffn_hidden = 3072\'; update _broken_gemm_dims"
+    open(p, "w", encoding="utf-8").write(src)
+    return d'''
+    assert real in src, ("_broken_gemm_dims is not the shape this world mutates; the target moved "
+                         "and the world would pass without testing anything")
+    stripped = "\n".join(ln for ln in real.splitlines() if not ln.strip().startswith("assert "))
+    # The subprocess call is what makes a stale pyc reachable, and the check only judges worlds
+    # that RUN what they mutated -- without it the stripped world is correctly out of scope.
+    stripped = stripped.replace('    open(p, "w", encoding="utf-8").write(src)',
+                                '    open(p, "w", encoding="utf-8").write(src)\n'
+                                '    subprocess.run([sys.executable, p], capture_output=True)')
+    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
+        src.replace(real, stripped, 1))
+    return d
+
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -8913,13 +9044,23 @@ def _broken_lane_respected():
         block = [str(c) for c in _expand_cards(grant.get("block_cards"))]
     else:
         lane, block = [], []
-    if not lane or not block:
-        # No grant to mutate: fall back to the frozen config's first card, the pre-de-49 world.
-        config = json.load(open(os.path.join(ROOT, "data", "mix_scale_run_config.json"),
-                                encoding="utf-8"))
-        os.environ["HARNESS_BUSY_CARDS"] = config["cards"].split(",")[0].strip()
-        os.environ["HARNESS_TRAINING_PROC"] = "0"
-        return d
+    if not block:
+        raise SelftestSkip("runs/card_assignment.json names no block_cards; there is no lane "
+                           "violation to build")
+    if not lane:
+        # A GRANT WITH NO LANE CANNOT EXPRESS THIS CHECK'S DEFECT, and the fallback that used to
+        # stand here quietly built a world with no violation at all: it marked the frozen config's
+        # FIRST card busy, which on the 2026-09-04 grant (`lane_card: ""`, `block_cards: 1,2,4,6`)
+        # is a block card, so the world read "training cards [1,2,4,6]: idle" and the check
+        # correctly PASSed -- reported by _demo as "lane_respected cannot be made to fail".
+        # A world that cannot express the defect SKIPs by name; it does not build a green one and
+        # let the selftest interpret it. Measured: grant 8a7a0662 set lane_card empty for the
+        # head-hybrid A/B, which runs with no lane card at all, and this selftest went red on a
+        # check that works.
+        raise SelftestSkip(
+            f"runs/card_assignment.json grants no lane card (block {','.join(block)}), and the "
+            f"defect this check catches is a busy LANE counted as one of the block's cards -- "
+            f"there is no such card to mark busy, so the world would assert nothing")
     # One block card plus the lane, no training process: the lane must not make up the count.
     os.environ["HARNESS_BUSY_CARDS"] = f"{block[0]},{lane[0]}"
     os.environ["HARNESS_TRAINING_PROC"] = "0"
@@ -9768,6 +9909,17 @@ def _broken_allocation_reads_the_grant():
 
 CHECKS = [
     (
+        "mutation_asserted_took",
+        "every broken world that mutates a file and runs it proves the mutation took effect",
+        "world 8's `return 0.0` -> `return 1.0` kept rlvr_reward.py at 3565 bytes, so a mutation "
+        "landing in the same wall-clock second as the world's own green run reused a stale "
+        "__pycache__ (invalidation is mtime-in-SECONDS plus size), the defect never executed, and "
+        "the world reported 'a staged defect was allowed' -- blocking b0 mid-merge for half an "
+        "hour while the message covered two different causes",
+        check_mutation_asserted_took,
+        _broken_mutation_asserted_took,
+    ),
+    (
         "allocation_reads_the_grant",
         "a training launch's cards come from runs/card_assignment.json, not the ladder config",
         "the grant was narrowed to 0-3 because cards 4 and 7 hold the user's own work; the "
@@ -10359,6 +10511,11 @@ EVIDENCE = {
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
+    # repo: harness.py and the hook are both tracked, so the worlds' shape answers the same
+    # anywhere. `auth=?` is not a third value -- an unregistered check prints it and is then
+    # neither mirrored on the pod nor gated, which is a check outside the rule rather than
+    # exempt from it.
+    "mutation_asserted_took": "repo",
     # repo: evidence is in git; answers on main, never gated by a pod-side FAIL
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
@@ -12700,6 +12857,7 @@ def _demo(only=None):
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths"}
     untested = []
+    skipped = []
     for name, _a, _i, fn, broken in CHECKS:
         if only is not None and name not in only:
             continue
@@ -12707,6 +12865,7 @@ def _demo(only=None):
             root = broken()
         except SelftestSkip as e:
             print(f"  SKIP {name}: {e}")
+            skipped.append(name)
             continue
         try:
             if name in world_reality:
@@ -13274,8 +13433,15 @@ def _demo(only=None):
         f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
         f"undeclared: {sorted(check_names - set(EVIDENCE))}")
 
-    print(f"harness self-test OK ({len(CHECKS)} checks each verified to FAIL on a broken world; "
-          f"every PASS verified a non-zero count)")
+    # THE COUNT MUST NOT INCLUDE WHAT WAS SKIPPED. `len(CHECKS)` claimed "81 checks each verified to
+    # FAIL on a broken world" while a SelftestSkip meant some of them were never run -- the skip
+    # printed above, but the closing line is what people read and quote, and it overclaimed by
+    # exactly the checks whose worlds could not be built. Same class as the defect this run's own
+    # commit fixes: a number that reads as coverage without being it.
+    _verified = len(CHECKS) - len(skipped)
+    _tail = f"; {len(skipped)} SKIPPED, not verified: {', '.join(sorted(skipped))}" if skipped else ""
+    print(f"harness self-test OK ({_verified} of {len(CHECKS)} checks each verified to FAIL on a "
+          f"broken world; every PASS verified a non-zero count{_tail})")
 
 
 STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score", "dedup")

@@ -458,8 +458,13 @@ def _selftest():
         broke = os.path.join(d, "harness_broken.py")
         clean = os.path.join(d, "harness_clean.py")
         open(clean, "w", encoding="utf-8").write(hsrc)
+        # EVERY OCCURRENCE, not the first. _broken_mutation_asserted_took embeds a verbatim copy of
+        # _broken_gemm_dims's source as the string it mutates, so the anchor appears twice; a
+        # count-1 replace corrupted only the first and the second kept the marker live, so the
+        # world reported no dead marker and this case failed on a working scan. Caught by the hook
+        # when that check landed -- the fixture was coupled to there being exactly one copy.
         open(broke, "w", encoding="utf-8").write(hsrc.replace(
-            old, 'src.replace("ffn_hidden = 9999", "ffn_hidden = 3400", 1)', 1))
+            old, 'src.replace("ffn_hidden = 9999", "ffn_hidden = 3400", 1)'))
         saved = globals()["HARNESS"]
         try:
             globals()["HARNESS"] = broke
