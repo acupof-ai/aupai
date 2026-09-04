@@ -272,6 +272,62 @@ def _fingerprint():
     return h.hexdigest()[:16]
 
 
+# PER-FILE sha1 OF EVERY REGISTRY FILE, read on the pod 2026-09-04 where all 13 resolve.
+# This is what makes the committed fingerprint checkable on a machine holding 5 of them: it
+# is not a second source of truth but the SAME inputs _fingerprint() hashes, written down.
+# Verified 2026-09-04: feeding these 13 through _fingerprint()'s exact recipe -- basename
+# then raw sha1 digest, in sorted-path order -- reproduces the committed 26984613941ab5a2,
+# and the 5 files present on a laptop hash to the values recorded here.
+#
+# WHY NOT WRITE THEM INTO holdout_hashes.txt, which was the obvious place: sft_math.py:218
+# and datagen/prepare_sft.py:291 compute `holdout_fp` as sha256 of that file's WHOLE BYTES.
+# Adding a manifest line would change every future fp while every pack on disk carries the
+# old one, so sft_math.py would refuse to train on packs whose holdout set had not changed.
+# The check's own artifact must not invalidate the artifacts it guards.
+#
+# A file legitimately changes -- a regenerated eval set, a widened registry. Then this dict is
+# stale BY CONSTRUCTION and check() reports which entry moved, naming the recorded and the
+# observed sha1. Update it from the pod in the same commit that changes the file; a value here
+# that nothing produced is worse than no value, so do not hand-edit it to make a check pass.
+REGISTRY_SHA1 = {
+    "code_holdout_500": "a43dde77332cffe863be26f57d347c9be8198a33",
+    "code_holdout_v2_500": "c9fd62cdf5d4d73167c6284e5c99a5d8a9272a2a",
+    "control_sft_text_heldout": "b3c97dd749d24f4b9c9eb1e67d8912b5cd5e4ea7",
+    "gsm8k_zh_holdout": "8ccbf8b2314f9f7b12874b86af931fe2bba41307",
+    "humaneval_164": "95af0d86fac5e937e23d880780081765e81afc01",
+    "lambada_en": "7cf46a68e4e2d89b0fbcf98cef843b00cc8a221c",
+    "lambada_zh": "52771e5909a032393447278c51017dba302aef5c",
+    "lambada_zh_src": "930bc8d5e6ea9c16be0b1e90ef6bd6dac77da7a3",
+    "math_hard_eval_1k": "6ad174ece54ee7927549e489c07a040576598e1d",
+    "math_hard_eval_v2_1k": "b971639725b3a745b6502eb805931f33ee2e8e31",
+    "math_hard_eval_v2_1k_fmt": "ca7d29489294d341a1dbd643ac4fb507c5bd6054",
+    "math_hard_eval_v2_5k": "ecc339d4381de95bd3910200f33279168a974ed6",
+    "math_test_500": "dbe2dff2e562dfa9c5ca2bd7b6f619bdf24ab5b9",
+}
+
+
+def _fingerprint_from_recorded(reg=None, sha1s=None):
+    """_fingerprint()'s value over ALL registry files, from REGISTRY_SHA1 instead of disk.
+
+    The same recipe as _fingerprint() -- basename, then the raw sha1 digest, in sorted-path
+    order -- so a divergence means one of them changed, which is the point. Raises if a
+    registry entry has no recorded sha1: a missing input must not silently shrink the domain,
+    which is the defect _fingerprint()'s own docstring is about.
+    """
+    reg = REGISTRY if reg is None else reg
+    sha1s = REGISTRY_SHA1 if sha1s is None else sha1s
+    missing = sorted(set(reg) - set(sha1s))
+    if missing:
+        raise RuntimeError(
+            f"REGISTRY_SHA1 has no sha1 for {missing} -- a fingerprint over a subset of the "
+            f"registry is reproducible on no machine. Read them on the pod and record them.")
+    h = hashlib.sha1()
+    for path, name in sorted((os.path.join(ROOT, reg[n]["path"]), n) for n in reg):
+        h.update(os.path.basename(path).encode())
+        h.update(bytes.fromhex(sha1s[name]))
+    return h.hexdigest()[:16]
+
+
 def load():
     if not os.path.exists(HASH_PATH):
         raise RuntimeError(
@@ -487,9 +543,179 @@ def _selftest():
                     f"against {len(_hash_saved)} saved. Restore it from git before trusting "
                     f"the holdout guard.")
     assert _fingerprint() == fp_all, "the selftest did not restore the file it hid"
+    n_chk = _selftest_check()
     print(f"holdout selftest OK: hiding {os.path.basename(victim)} moves the fp "
-          f"({fp_all} -> {fp_minus}), regeneration refuses and names it, load() still loads")
+          f"({fp_all} -> {fp_minus}), regeneration refuses and names it, load() still loads; "
+          f"--check correct on {n_chk} worlds")
     return 0
+
+
+def _selftest_check():
+    """check()'s two added assertions, on worlds that break each one.
+
+    THE POINT OF WORLD 1 is 6e's stated broken world: a registry ENTRY REMOVED. The committed
+    hash set then describes a file list the registry no longer names, and every consumer reads
+    a guard covering questions nobody declared. Nothing on a partial machine could see this
+    before -- load() trusts the committed fp there by design, and that is correct; what was
+    missing is a second reader that does not need the files.
+
+    Worlds are built by mutating the REGISTRY dict and REGISTRY_SHA1, not by touching
+    data/eval/holdout_hashes.txt: the artifact is what 29,923 hashes of real guard live in, and
+    a selftest that rewrites it can corrupt the thing it verifies. That already happened once
+    here -- the docstring above records a 501-line partial set written straight through to the
+    committed file -- so this one never opens it for writing.
+    """
+    global REGISTRY, REGISTRY_SHA1
+
+    saved_reg, saved_sha = dict(REGISTRY), dict(REGISTRY_SHA1)
+    n = 0
+    try:
+        # 0. The real tree passes, or the three worlds below prove only that check() can fail.
+        check()
+        n += 1
+
+        # 1. A REGISTRY ENTRY REMOVED -> the derived fp moves and check() must FAIL. 6e's world.
+        victim = sorted(REGISTRY)[0]
+        REGISTRY = {k: v for k, v in saved_reg.items() if k != victim}
+        REGISTRY_SHA1 = {k: v for k, v in saved_sha.items() if k != victim}
+        try:
+            check()
+            raise AssertionError(
+                f"removing registry entry {victim!r} left --check GREEN: the committed "
+                f"fingerprint is then a number nothing reads, and the guard can cover a file "
+                f"list the registry does not declare")
+        except RuntimeError as e:
+            assert "declares fingerprint to" in str(e), f"wrong refusal: {str(e)[:160]}"
+            # It must say BOTH numbers, or an operator cannot tell which side moved.
+            assert saved_sha and "carries fp" in str(e), f"refusal names one side only: {str(e)[:160]}"
+        n += 1
+        REGISTRY, REGISTRY_SHA1 = dict(saved_reg), dict(saved_sha)
+
+        # 2. A PRESENT FILE'S CONTENT CHANGED -> C must FAIL, naming the file.
+        #
+        #    MUTATING THE FILE, not the recorded sha1, and that is the whole difficulty. Flipping
+        #    REGISTRY_SHA1[local] moves the DERIVED fp too, so B fires first and C is never
+        #    reached -- my first version asserted `local in msg or "declares fingerprint" in msg`
+        #    and was GREEN with the entire sha1 comparison deleted (`if False:`). An `or` across
+        #    two assertions means neither is tested.
+        #
+        #    So: append a byte to the real file, and repair REGISTRY_SHA1 to the file's NEW hash
+        #    so B still passes. Then the only thing that can fail is C -- against the committed
+        #    fp, which no longer matches either, so the fp line is repaired in the same way. The
+        #    file is restored byte-for-byte in the finally, and the restore is VERIFIED, because
+        #    this selftest writes to a real registry file.
+        local = next((nm for nm in sorted(saved_reg)
+                      if os.path.isfile(os.path.join(ROOT, saved_reg[nm]["path"]))), None)
+        if local is None:
+            print("  (world 2 skipped: no registry file resolves here to mutate)")
+        else:
+            lp = os.path.join(ROOT, saved_reg[local]["path"])
+            original = open(lp, "rb").read()
+            try:
+                with open(lp, "wb") as fh:
+                    fh.write(original + b'{"instruction": "a row this file did not have"}\n')
+                new_sha = hashlib.sha1(open(lp, "rb").read()).hexdigest()
+                assert new_sha != saved_sha[local], "appending a row did not change the sha1"
+                # B repaired: REGISTRY_SHA1 now agrees with the file on disk, so the derived fp
+                # is stable -- but it is NOT the committed one, so B would fire on that instead.
+                # Point C at the file while asking B's comparison to see agreement: recorded
+                # equals disk, and the committed fp is compared against the ORIGINAL recording.
+                REGISTRY_SHA1 = dict(saved_sha)
+                try:
+                    check()
+                    raise AssertionError(
+                        f"{local}'s file changed on disk and --check stayed GREEN: the committed "
+                        f"hash set need not describe the files on this machine")
+                except RuntimeError as e:
+                    msg = str(e)
+                    assert "hashes" in msg and local in msg, (
+                        f"the refusal must be C (a file differs from its recorded sha1) and must "
+                        f"NAME the file; got: {msg[:200]}")
+                    assert "declares fingerprint to" not in msg, (
+                        f"B fired instead of C, so C is still untested: {msg[:200]}")
+                n += 1
+            finally:
+                with open(lp, "wb") as fh:
+                    fh.write(original)
+                back = open(lp, "rb").read()
+                if back != original:
+                    raise AssertionError(
+                        f"the selftest did not restore {lp}: {len(back)} bytes against "
+                        f"{len(original)} saved. Restore it from git before trusting the guard.")
+                REGISTRY_SHA1 = dict(saved_sha)
+
+        # 2b. AN ABSENT FILE MUST NOT BE COUNTED AS CHECKED. Found by mutation: adding absent
+        #     files to `checked` left every other assertion green, and the printed line then
+        #     claims 13 files hash as recorded on a machine holding 5. A count that overstates
+        #     verification is the same defect class as a check that verifies nothing.
+        import contextlib
+        import io
+
+        buf = io.StringIO()
+        with contextlib.redirect_stdout(buf):
+            check()
+        out = buf.getvalue()
+        n_present = sum(1 for nm in saved_reg
+                        if os.path.isfile(os.path.join(ROOT, saved_reg[nm]["path"])))
+        assert f"{n_present} file(s) hash as recorded" in out, (
+            f"--check does not report exactly the {n_present} file(s) present here as hashed; "
+            f"an absent file counted as checked reads as verification that did not happen. "
+            f"Printed: {out[:300]!r}")
+        if n_present < len(saved_reg):
+            assert "NOT CHECKABLE HERE" in out, (
+                "files are absent and --check did not name them as not checkable")
+        n += 1
+
+        # 3. A REGISTRY ENTRY WITH NO RECORDED sha1 -> raise rather than fingerprint a subset.
+        #    The failure _fingerprint()'s own docstring is about, one level up: a fingerprint
+        #    over fewer files than the registry names is reproducible on no machine, and a
+        #    silent skip is what makes it look reproducible.
+        REGISTRY_SHA1 = {k: v for k, v in saved_sha.items() if k != sorted(saved_sha)[-1]}
+        try:
+            _fingerprint_from_recorded()
+            raise AssertionError(
+                "a registry entry with no recorded sha1 was silently skipped -- the derived "
+                "fingerprint then covers a subset while claiming to cover the registry")
+        except RuntimeError as e:
+            assert "no sha1 for" in str(e), f"wrong refusal: {str(e)[:160]}"
+        n += 1
+        # RESTORED BEFORE WORLD 4, and this line is load-bearing. Without it world 4 inherits a
+        # REGISTRY_SHA1 missing an entry, so `if not got:` -> `if False:` went RED on world 3's
+        # "no sha1 for [...]" refusal instead of on the empty-set assertion -- red, and for the
+        # wrong reason, which is indistinguishable from tested. Found by mutation.
+        REGISTRY_SHA1 = dict(saved_sha)
+
+        # 4. AN EMPTY HASH SET MUST REFUSE. This is de's own assertion in check(), not mine, and
+        #    mutation found nothing tested it: `if not got:` -> `if False:` left every world
+        #    above GREEN. It is also the assertion that matters most -- an empty set means
+        #    is_holdout() returns False for every question, which IS the 2026-08-30
+        #    contamination (19 of 20 holdout questions packed into sft_all.pt).
+        #
+        #    load() is monkeypatched rather than writing an empty HASH_PATH: the committed file
+        #    holds 29,923 real hashes and this selftest has already corrupted it once in its
+        #    history (see _selftest above). The subject here is check()'s reaction to an empty
+        #    return, so the empty return is what is faked. Patched through this module's own
+        #    globals(), not `import datagen.holdout`: --selftest runs this file as a SCRIPT, so
+        #    that import fails with ModuleNotFoundError (measured), and check() resolves `load`
+        #    from these globals either way.
+        g = globals()
+        saved_load = g["load"]
+        try:
+            g["load"] = lambda: set()
+            try:
+                check()
+                raise AssertionError(
+                    "check() accepted an EMPTY hash set: is_holdout() then returns False for "
+                    "every question and nothing is excluded, which is the 2026-08-30 "
+                    "sft_all.pt contamination this guard exists to prevent")
+            except RuntimeError as e:
+                assert "zero hashes" in str(e), f"wrong refusal: {str(e)[:160]}"
+            n += 1
+        finally:
+            g["load"] = saved_load
+    finally:
+        REGISTRY, REGISTRY_SHA1 = saved_reg, saved_sha
+    return n
 
 
 def check():
@@ -508,6 +734,21 @@ def check():
     rather than recomputing a false staleness.
 
     Regenerating stays a deliberate act on the pod, where every path resolves.
+
+    TWO ASSERTIONS ADDED 2026-09-04 (6e's spec), because "it loads and is non-empty" passes on
+    a guard built from the wrong files:
+
+      B. THE COMMITTED FINGERPRINT MATCHES THE REGISTRY'S DECLARED FILE LIST. Recomputing from
+         disk cannot say this on a partial machine -- that is why load() trusts the committed
+         value -- so it is recomputed from REGISTRY_SHA1, which covers all 13 wherever this
+         runs. A registry entry removed changes the derived value and this FAILs, which is the
+         broken world 6e named. Without it, the committed fp is a number no CI run reads.
+      C. EVERY FILE PRESENT HERE HASHES AS RECORDED, and absent ones are reported by name as
+         "not checkable here" rather than counted as verified. On CI that is 5 of 13; on the
+         pod it is all 13, so the same command gets stronger where the data is without a flag.
+
+    Neither regenerates anything. HOLDOUT_ALLOW_PARTIAL is not read here and must stay out of
+    CI: it exists to write a knowingly partial guard, which is the opposite of verifying one.
     """
     got = load()
     if not got:
@@ -516,10 +757,48 @@ def check():
             f"is_holdout() returns False for every question and nothing is excluded. Regenerate "
             f"on the pod with `python datagen/holdout.py`.")
     present, absent = _fp_inputs()
+
+    # B. The committed fp against the registry's declared list, machine-independently.
+    committed = next((l.strip()[5:] for l in open(HASH_PATH, encoding="utf-8")
+                      if l.startswith("# fp:")), None)
+    derived = _fingerprint_from_recorded()
+    if committed != derived:
+        raise RuntimeError(
+            f"{HASH_PATH} carries fp {committed}, but the {len(REGISTRY)} files REGISTRY "
+            f"declares fingerprint to {derived}. The committed hash set was built from a "
+            f"different file list than the registry now names -- an entry was added, removed, "
+            f"or its file changed. Regenerate on the pod, and if a file legitimately changed, "
+            f"update REGISTRY_SHA1 from the pod in the same commit.")
+
+    # C. Files present here must hash as recorded. Absent ones are named, never counted.
+    wrong, checked = [], []
+    for name in sorted(REGISTRY):
+        p = os.path.join(ROOT, REGISTRY[name]["path"])
+        if not os.path.isfile(p):
+            continue
+        got_sha = hashlib.sha1(open(p, "rb").read()).hexdigest()
+        if got_sha != REGISTRY_SHA1[name]:
+            wrong.append(f"{name}: {os.path.basename(p)} hashes {got_sha[:12]}, recorded "
+                         f"{REGISTRY_SHA1[name][:12]}")
+        else:
+            checked.append(name)
+    if wrong:
+        raise RuntimeError(
+            f"{len(wrong)} registry file(s) differ from the recorded sha1, so the committed "
+            f"hash set does not describe the files on this machine:\n  " + "\n  ".join(wrong)
+            + "\nIf the change is intended, regenerate on the pod and update REGISTRY_SHA1 in "
+              "the same commit. If it is not, this machine's copy is corrupt or stale.")
+
     print(f"holdout guard loads: {len(got)} hashes, {len(present)} of {len(EVAL_FILES)} registry "
           f"files present here"
-          + (f" ({len(absent)} absent, fp not verifiable on this machine)" if absent else
-             ", fp verified"))
+          + (f" ({len(absent)} absent, fp not verifiable from disk)" if absent else
+             ", fp verified from disk"))
+    print(f"  fp {committed} matches the registry's {len(REGISTRY)} declared files "
+          f"(derived from REGISTRY_SHA1)")
+    print(f"  {len(checked)} file(s) hash as recorded: {', '.join(checked)}")
+    if absent:
+        print(f"  {len(absent)} NOT CHECKABLE HERE: "
+              f"{', '.join(os.path.basename(p) for p in absent)}")
     return 0
 
 
