@@ -10,7 +10,7 @@ source: user order 2026-09-04, method docs/standards/audit_0904.md
 # Audit: evaluation and held-out, 2026-09-04
 
 Second pass. The first was partial at the 3-hour mark; the 43-scorer sweep has since landed as
-E9-E12 and section 5 names what remains unseen. Twenty-one entries: four S1, thirteen S2, three S3, and
+E9-E12 and section 5 names what remains unseen. Twenty-two entries: four S1, fourteen S2, three S3, and
 E9, which carries no severity because it is a clean result -- recorded as an entry anyway,
 since "no defect" is an answer to an assigned question and silence is not.
 
@@ -126,6 +126,7 @@ build dates from `stat` on the pod, population from `datagen/holdout.py`'s histo
 | E19 | S1 | `domain_bpb` is a published metric of this project: it is the control arm's cross-tokenizer reading, `runs/score_matrix.jsonl` carries it as a field on 60 rows, and `facts/*.json` cite it. | Ran domain_bpb's whole pre-forward half on the pod with `CUDA_VISIBLE_DEVICES=""` (no model, no card): `val_seqs` + `roundtrip_fraction` over all 9 domains of `data/mix_200m_4b.json`. Round-trip fractions math_owm_stage2 0.1094, en_c4_stage2 0.0156, cot 0.0000, textbook_30b 0.0156, chatml 0.0000, chat_qa 0.0000, zh_web 0.1094, code_py_starcoder 0.2188, code_py_rp1t 0.3594 — every one below `MIN_ROUNDTRIP = 0.98`. | **All 9 domains are skipped, `out` is empty, and `domain_bpb.py:317` prints `REFUSING: no domain produced a number` and returns 1. The metric has NEVER produced a number for any checkpoint and cannot on the current data path** — the 10 error rows in E18 are this one cause, not a per-checkpoint problem. Cause is one line: `tok.decode([EOS_ID])` returns `''`, and every val row from `train._domain_seqs` is packed and EOS-delimited (cot row 0 holds 8), so decode drops the delimiters and re-encode cannot reproduce the ids. The gate measures the tokenizer's special-token handling, not whether the two arms score the same bytes. |
 | E20 | S1 | `ds.n2_params_vs_data_matched_compute` = −0.010770 nat, block-paired over 576 blocks, t −6.51, sign test 227 up / 349 down p 2.10e-07 — the params-vs-data verdict behind the 30B shape decision. | `eval/block_paired.py --from runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt#cu ckpt_params_leg_438m_3p76b.pt#cu`, the same instrument the fact's `source` names, same 576 blocks / 2,359,296 tokens, same orientation. | On doc_cu the mean is **−0.000920** (t **−0.55**, 1/43 of its own SE) and **the sign test REVERSES: 329 up / 247 down, p 3.62e-04** — a significant majority of blocks where params is WORSE, opposite to the mean, with median **+0.003204** also opposite. On cu_none both statistics agreed. The surviving negative mean rides on chatml/chat_qa/textbook_30b, and chatml+chat_qa are the two domains the mask moved most (−0.2364, −0.1695), so it is E2's non-uniformity inside the pair rather than an advantage. Domain count is 9 in all four rows, unchanged between the published number and the re-score. |
 | E21 | S2 | E18's own numbers: `l1_fewshot` "has 8 error rows, all of the form `l1_fewshot.py exited -15`", over "the 18 score_matrix error entries". | All 8 `l1_fewshot` error values read verbatim from `runs/score_matrix.jsonl`; the population recounted at E18's own commit `2c87a493` under both counting rules; `TZ=UTC git log` against bare `--date=format-local:...Z`. | **1 of 8 is the SIGTERM shape, not 8** — the other 7 name `eval_artifacts.ArtifactExists` and are readable as published. I read one row and wrote "all of the form". The population is 19 by E18's own rule or 25 by the plainer one, never 18: "18" was 10 `domain_bpb` + 8 `l1_fewshot`, the two metrics I had looked at, stated as the population. And dating the E18 commit I printed `12:38:11Z` from `--date=format-local:'...Z'` — +0800 with a `Z` I typed into the format string, the exact defect E15 records, reproduced while checking E15's neighbour; true UTC is `04:38:11Z`. E18's MECHANISM survives intact, including the 6-of-10 count. |
+| E22 | S2 | E18 called the `l1_fewshot` error rows unreadable failures; E21 corrected the count and called the seven `ArtifactExists` rows "readable as published". Both stopped at the exception NAME. | All 7 error values read in full; `eval/l1_fewshot.py:371` and its fix commit `5a989647` (2026-09-02T07:00:52Z, `TZ=UTC`); the artifact read on the pod. | These are not failures — `open_artifact` REFUSED TO OVERWRITE an existing result, which is what it exists for (`be.l1_3shot_retracted` records the 477-row file that was overwritten before the guard). Six are the pre-fix bare `preds_l1_d3.jsonl` colliding across checkpoints. **The seventh, `ckpt_b0_sd_equalcompute.pt` measured 2026-09-04, names the FIXED path and collides with ITSELF: the artifact holds a complete 497-row result at accuracy 0.0181** (9 ok, 423,307 B, Sep 4 00:39). A real L1 measurement of a Stage D arm exists on disk while its score_matrix row says ERROR. Cause: `metric_l1_fewshot` passes neither `--force` nor `--run`, so any re-score of an already-scored checkpoint can only refuse. |
 
 ## 5. Blind spots of this audit
 
@@ -732,3 +733,57 @@ the broken-world test, and the 6-of-10 count (verified again here: at E18's comm
 `domain_bpb` error entries, 6 warning-as-cause; now 11 and 7, the growth being
 `ckpt_b0_se_16lnew_1b.pt`). What does not survive is the `l1_fewshot` count and the population size —
 both mine, both stated with more confidence than the reading behind them supported.
+
+### E22 (S2): the seven `l1_fewshot` "failures" are a guard working, and one of them hides a real measurement nobody read
+
+e1-38's third item, and it inverts what E18 and E21 both assumed. E18 called these failure records
+unreadable; E21 corrected the count and said the seven "name a real exception and are readable as
+published". Both readings stopped at the exception NAME. Reading what the exception says changes the
+finding: `l1_fewshot` did not fail in these seven runs — it **refused to overwrite an existing
+result**, which is what `scripts/eval_artifacts.open_artifact` exists to do.
+
+**The seven, by artifact name and date:**
+
+| ckpt | measured | artifact the run refused to overwrite |
+|---|---|---|
+| `ckpt_pretrain_15b_s1.pt` | 2026-08-31 | bare `preds_l1_d3.jsonl` |
+| `ckpt_rehearse_resume.pt` | 2026-08-31 | bare `preds_l1_d3.jsonl` |
+| `ckpt_rehearse_join.pt` | 2026-08-31 | bare `preds_l1_d3.jsonl` |
+| `ckpt_lrprobe_1.2.pt` | 2026-09-01 | bare `preds_l1_d3.jsonl` |
+| `ckpt_proberesume.pt` | 2026-09-01 | bare `preds_l1_d3.jsonl` |
+| `ckpt_p500m_20b_0902.pt.step1500` | 2026-09-02 | bare `preds_l1_d3.jsonl` |
+| `ckpt_b0_sd_equalcompute.pt` | **2026-09-04** | `preds_l1_d3_ckpt_b0_sd_equalcompute.pt.zh.jsonl` |
+
+**Six of the seven are historical and explained.** The bare `preds_l1_d3.jsonl` name carried no
+checkpoint, so every checkpoint's run collided on one path and `open_artifact` refused all but the
+first. The name was fixed at `eval/l1_fewshot.py:371` on 2026-09-02T07:00:52Z (`5a989647`) — it now
+interpolates `os.path.basename(args.ckpt)`, the demo language, and the arm flags. All six predate or
+coincide with that commit. The guard did its job: `be.l1_3shot_retracted` records a 477-row preds
+file that WAS overwritten this way on 2026-08-31, which is why the refusal was added.
+
+**The seventh does not fit that story and is the finding.** `ckpt_b0_sd_equalcompute.pt` was measured
+**2026-09-04**, two days after the naming fix, and its error names the FIXED, checkpoint-specific
+path. So the collision is not with another checkpoint — it is with itself. I read the file on the
+pod rather than inferring: `/work/aupai/data/eval/preds_l1_d3_ckpt_b0_sd_equalcompute.pt.zh.jsonl`,
+423,307 B, Sep 4 00:39, **497 rows**, and it is a complete result — `ok=True` on 9 of 497,
+**accuracy 0.0181**. The generations are real Chinese arithmetic attempts, not empty.
+
+So a valid L1 measurement of a Stage D arm exists, was produced at 00:39Z, and the score_matrix row
+for that checkpoint records `l1_fewshot` as an ERROR. Whoever reads the row sees a failure; the
+number is on disk. Nothing published cites it, which is why it went unnoticed — but "the metric
+errored" and "the metric ran and nobody transcribed it" are different states and the ledger says the
+wrong one.
+
+**Why this is S2 and not S1.** No published number is wrong: `l1_fewshot` for
+`ckpt_b0_sd_equalcompute.pt` appears nowhere in `facts/*.json`. The defect is that the ledger's
+error entry contradicts an artifact in the same run's output directory, and the reason it does is
+that `metric_l1_fewshot` passes neither `--force` nor `--run`, so a re-score of the same checkpoint
+can only ever refuse. A second scoring pass over any already-scored checkpoint produces this row.
+
+**Not fixed, per audit rule 5 and because the right fix is a decision, not an edit.** Three options
+and they differ in what they cost: pass `--run` so each attempt versions its own artifact (keeps
+every generation, grows the directory); pass `--force` (loses the prior generations, which is exactly
+what `be.l1_3shot_retracted` was about); or have `metric_l1_fewshot` READ the existing artifact when
+one is present and record its accuracy rather than re-generating. The third is the only one that
+turns these rows into numbers without either discarding data or re-running a card job, and it is a
+change to what "scoring" means, so it belongs to whoever owns the metric.
