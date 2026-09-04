@@ -20,6 +20,7 @@ ever land in the index -- permanently dirty, aborting the next merge.
 """
 import fnmatch
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -302,6 +303,44 @@ def main():
         )
         sys.exit(1)
     print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
+
+    # Shared-files rule (T0, 2026-09-04): a staged edit to a listed shared file needs a live
+    # claim -- the announce is now a file (runs/claims/files/<path>.json), not a conversation.
+    # Three recorded incidents are the justification: a push rolled back 3b's build_corpus
+    # feature (2026-08-30), a `git checkout` erased another session's uncommitted device gate
+    # (2026-08-31), `git add -A` swept five sessions' work into one commit (d535674).
+    t0 = time.time()
+    # A MERGE COMMIT IS EXEMPT: the claim lives in the branch tree where the shared-file
+    # edit was committed, so main's hook could never see it. The branch commit already
+    # enforced the claim; the merge is integration, and merge_main.sh releases the claim
+    # (owner ones) afterwards.
+    _shared = ("train.py", "sft.py", "sft_math.py", "AGENTS.md")
+    _unclaimed = [p for p in _staged_all if p in _shared] if not merging else []
+    if _unclaimed:
+        _claims_dir = os.path.join(top, "runs", "claims", "files")
+        _missing = []
+        for p in _unclaimed:
+            _cp = os.path.join(_claims_dir, p.replace("/", "__") + ".json")
+            _live = False
+            if os.path.exists(_cp):
+                try:
+                    _rec = json.load(open(_cp, encoding="utf-8"))
+                    _live = (time.time() - _rec.get("time", 0)) <= 6 * 3600
+                except (OSError, ValueError):
+                    _live = False
+            if not _live:
+                _missing.append(p)
+        if _missing and os.environ.get("AUPAI_SHARED_FILE_OK") != "1":
+            print(
+                "REFUSING: editing a listed shared file without a live claim (Shared-files "
+                "rule). The announce is now a file, not a message:\n"
+                "  python scripts/harness.py claim-file acquire --path <file>\n"
+                f"unclaimed: {', '.join(_missing)}\n"
+                "A claim is released on merge (scripts/merge_main.sh).",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+    print(f"hook: shared-file claim {time.time() - t0:.2f}s", file=sys.stderr)
 
     t0 = time.time()
     fail = False
@@ -592,6 +631,11 @@ def main():
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
+        # file_claim: the shared-file claim acquirer (Shared-files rule, T0). Its selftest
+        # uses a temp dir and env-var USER, hitting no real claim path -- six worlds verify
+        # acquire/refuse/release/stale/release-all. Runs at commit because a hook whose
+        # busiest path is "who may edit a shared file" must be caught if it stops working.
+        "scripts/file_claim.py",
         # The process sweeper. Its selftest is pure classification over fixture ps rows and a
         # temp tree -- no processes signalled, nothing killed -- so it runs on every commit. It is
         # gated because the file's job is deciding what to SIGTERM: a classifier that widens by
