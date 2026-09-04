@@ -45,14 +45,13 @@ Design fixed for both arms; b0 chooses the rest inside these bounds:
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if <= -0.010 nat (the size of
    the N2 params effect), null if |delta| < 0.003, in between is "measured, not adopted".
-2. Split: a closed-book fact probe against a reasoning probe. The fact probe is an API-name
-   cloze over a held-out slice of code_py_starcoder (registered in the holdout registry before
-   launch): gold = the true attribute, function or keyword-argument name after a `module.` or
-   call prefix, scored against 3 real names from the same module. Re-scoped from 'English
-   encyclopedic domain' when e1 measured that mix_200m_8b has none (textbook_30b is Chinese
-   synthetic tutorials, wiki is absent). The reasoning probe is
-   (l1_fewshot answer-present, 3 demos, existing). The claim "memory buys knowledge, not
-   reasoning" is the fact delta exceeding the reasoning delta by more than both SEs.
+2. Split, a difference-in-differences: an API-name cloze (4-way, real names from the same
+   module) drawn from two regions of the code_py_starcoder cache the arms read -- SEEN rows the
+   arms train on and the never-read tail (74.6% of the pool) as UNSEEN. delta_seen minus
+   delta_unseen, both arm-minus-control block-paired, above both SEs is "memory buys knowledge";
+   delta_unseen alone is generalisation and readout 1 already has it. Region boundaries and
+   seeds are pinned in the item file. No slice is carved, no registry entry is written. Fallback
+   domain textbook_30b (Chinese). The reasoning probe is l1_fewshot answer-present, 3 demos.
 3. Scaling: M2 vs M1 gives the slope of loss against memory size; two points plus the control
    are a line, not a law, and the doc says so.
 4. Diagnostics, logged every 100 steps to `runs/memory_diag.jsonl`: fraction of values
