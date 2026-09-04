@@ -20,6 +20,7 @@
    "measured": "2026-08-30",
    "source": "literature search (WebSearch + arXiv sweeps, 2026-08-30)",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params = 206.13M incl. embedding, peak = 296 TFLOPS (fp8; denominator resolved by arithmetic in eff.fb_mfu: 6*206.13M*73K/296e12 = 30.5% reproduces the briefing's 31%, 148 bf16 gives 61%)",
     "searched": [
      "H20 LLM training MFU",
      "H20 FP8 \u8bad\u7ec3 MFU \u5c0f\u6a21\u578b",
@@ -106,6 +107,7 @@
    "measured": "2026-08-30",
    "source": "0830v1 0.2b run (AttnRes arm) + e1 bench_eff2.py --arm no_attn_res, 2026-08-30",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; this config's denominator_tflops = 296)",
     "gpu": "H20",
     "precision": "fp8",
     "batch": 16,
@@ -153,6 +155,7 @@
    "measured": "2026-08-30",
    "source": "aupai train.py:93,111,211,225,351 (read-only inspection)",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS fp8 / 148 bf16 (train.py:2276 default); this entry measures no MFU, the mention is an unmeasured hypothesis",
     "method": "read-only inspection",
     "lines": "train.py 93,111,211,225,351"
    },
@@ -538,6 +541,7 @@
    "measured": "2026-08-30",
    "source": "A/B: nccl_ab_baseline vs nccl_ab_simple, 3xGPU4-6, batch16/seq4096, fp8, compiled, vocab=32776",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; train.py:2276 default, this config's fp8 flag)",
     "gpus": "3xH20 (GPU4,5,6)",
     "batch": 16,
     "seq": 4096,
@@ -918,6 +922,7 @@
    "measured": "2026-08-31",
    "source": "runs/p02_sc_base.log, runs/p02_sc_patched.log, bench_short_conv2.py",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; train.py:2276 default, this config's fp8 flag)",
     "cards": 7,
     "mix": "mix_scale_0.2b.json",
     "batch": 16,
@@ -980,6 +985,7 @@
    "measured": "2026-08-31",
    "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; train.py:2276 default, this config's fp8 flag)",
     "mix": "mix_scale_0.2b",
     "dim": 1024,
     "layers": 12,
@@ -1000,6 +1006,7 @@
    "measured": "2026-08-31",
    "source": "runs/t52_p1_base.log, runs/t52_p1_b32.log, runs/t52_p2_maxauto.log",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; train.py:2276 default, this config's fp8 flag)",
     "mix": "mix_scale_0.2b",
     "seq": 4096,
     "fp8": true,
@@ -1040,6 +1047,7 @@
    "measured": "2026-08-31",
    "source": "runs/t56_profile.log, bench_eff/t56_attr.py@1a8622a; trace on the pod at /work/aupai/bench_eff/ddp_trace_rank0.json (257 MB, 2026-08-31 13:27, not committed)",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8, H20; train.py:2276 default, this config's fp8 flag)",
     "task": "t56 / tilerl-4",
     "cards": 1,
     "card_id": 7,
@@ -1615,6 +1623,7 @@
    "measured": "2026-09-01",
    "source": "runs/t57_seam.log (TRACKED and present; removed 2026-09-02 on a pod-side absence and restored), probes/t57_seam.py@1c470e7, docs/lessons/flash_recompile_seam_design.md",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS (fp8; runs/t57_seam.log records fp8 True); the 31% is incidental color, not this entry's measurement",
     "task": "t57",
     "cards": 1,
     "card_id": 7,
@@ -2034,6 +2043,7 @@
    "measured": "2026-09-01",
    "source": "probes/t66_depth_shape.py@4016bdc on GPU2; cross-reference b0 t71 (c13fdc8) for the O(L^2) AttnRes source-read count",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 148 TFLOPS (bf16 vendor peak; this entry's uncertainty field already labels its MFU as derived 6ND/148)",
     "task": "500M depth shape, fb/user order",
     "shape": "d=1024 layers=32 heads=8 ffn_hidden=3072, head_dim 128 (FlashKDA)",
     "params_M": 493.6,
@@ -2074,6 +2084,7 @@
    "measured": "2026-09-01",
    "source": "probes/t66_depth_shape.py@4016bdc; retracted by its own matched pair the same day",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 TFLOPS fp8 / 148 bf16 (train.py:2276 default); this entry's point is that its retracted rows compared a 148-denominator MFU to a 296-denominator one",
     "retracted_rows": {
      "l12_compiled_b16_mfu_pct": 16.0,
      "l32_EAGER_b4_mfu_pct": 14.2
@@ -2157,6 +2168,7 @@
    "measured": "2026-09-01",
    "source": "scripts/w7_peak.sh@116f665 + scripts/w7_driver.sh@3a83593, cards 1-7; pod-only log w7_b32a1 (container /work/aupai/runs); train.py:2604 peak field added in 661e5ce",
    "config": {
+     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding; this entry measures no MFU, its mentions are analogies to the 148-vs-296 denominator error in eff.depth_is_not_the_mfu_gap",
     "d": 1024,
     "layers": 32,
     "heads": 8,
@@ -2397,6 +2409,7 @@
    "measured": "2026-09-02",
    "source": "python3 scripts/trace_classes.py runs/trace_p200m_3step.json --steps 3 at pod stamp cd1f9e6; peaks from facts/efficiency.json#eff.fp8_gemm_at_realizable_peak and #eff.gpu4_peak_flops",
    "config": {
+     "mfu_basis": "this entry's MFU is a per-op roofline ratio (measured ms / ideal ms against this config's flop_peak: 279.6 TFLOPS fp8, 136.7 bf16), NOT 6*n_params*tps/peak_tflops; the training-MFU formula is 6*n_params*tps/peak_tflops, n_params incl. embedding, peak = 296 fp8 / 148 bf16 by default",
     "model": "206.13M, L12 d1024 heads8 ffn3072, 3 MLA + 9 KDA, AttnRes ON",
     "launch": "--batch 16 --accum 2, seq 4096, fp8, compile on, grad_ckpt off",
     "cards": "4 (indices 0-3)",
