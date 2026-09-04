@@ -50,12 +50,22 @@ MIN_ROUNDTRIP = 0.98
 
 
 class OursModel:
-    def __init__(self, ckpt, tok_path, device):
+    def __init__(self, ckpt, tok_path, device, cu_path="cu_none"):
         from scripts.loader import load_checkpoint, load_tokenizer  # noqa: PLC0415
 
         self.model, self.cfg = load_checkpoint(ckpt, device=device, dtype=torch.bfloat16)
         self.tok = load_tokenizer(tok_path, self.cfg)
         self.device = device
+        # cu_path="doc_cu" passes the document mask, the same spelling and the same helper as
+        # eval/domain_loss.py:245. This metric decodes a WHOLE PACKED ROW to one text at :272 and
+        # scores it as one undivided sequence, so without the mask attention reads across the
+        # document boundaries inside that row while training used doc_cu_seqlens (audit_0904 E10).
+        # HFModel takes no cu: a foreign model has no such argument, which is why the control arm
+        # is unaffected and why a doc_cu run compares our arm against its own cu_none run, not
+        # against the control.
+        if cu_path not in ("cu_none", "doc_cu"):
+            raise ValueError(f"cu_path must be 'doc_cu' or 'cu_none', got {cu_path!r}")
+        self.cu_path = cu_path
         self.n_params = sum(p.numel() for p in self.model.parameters())
 
     def encode(self, s):
@@ -63,8 +73,13 @@ class OursModel:
 
     def logprobs(self, ids):
         x = torch.tensor([ids], device=self.device)
+        cu = None
+        if self.cu_path == "doc_cu":
+            from train import doc_cu_seqlens  # noqa: PLC0415  (CPU callers need no train)
+            from scripts.loader import EOS_ID  # noqa: PLC0415
+            cu = doc_cu_seqlens(x, EOS_ID)
         with torch.no_grad():
-            out = self.model(x)
+            out = self.model(x, cu=cu) if cu is not None else self.model(x)
         lg = (out[0] if isinstance(out, tuple) else out)[0].float()
         return torch.log_softmax(lg, -1)
 
@@ -203,6 +218,10 @@ def main():
     ap.add_argument("--max_ctx", type=int, default=2048)
     ap.add_argument("--preds", help="jsonl, appended per domain; rerun resumes from it")
     ap.add_argument("--out", help="summary json")
+    ap.add_argument("--cu_path", choices=["cu_none", "doc_cu"], default="cu_none",
+                    help="doc_cu passes the document mask to our arm's forward; cu_none is "
+                         "what every published row was taken with (E10). Ignored under --hf: "
+                         "a foreign model has no cu argument.")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
 
@@ -220,7 +239,13 @@ def main():
 
     ours_tok = load_tokenizer(a.tokenizer, None)
     mix = json.load(open(a.mix, encoding="utf-8"))
-    m = HFModel(a.ckpt, a.device) if a.hf else OursModel(a.ckpt, a.tokenizer, a.device)
+    # REFUSE BEFORE LOADING, not after: loading a 438M checkpoint to then exit wastes the load,
+    # and a refusal that runs after the work is a refusal nobody sees in time.
+    if a.hf and a.cu_path != "cu_none":
+        sys.exit("REFUSING: --cu_path is meaningless under --hf; a foreign model takes no cu "
+                 "argument, so this run would silently be a cu_none run under a doc_cu name.")
+    m = (HFModel(a.ckpt, a.device) if a.hf
+         else OursModel(a.ckpt, a.tokenizer, a.device, cu_path=a.cu_path))
     # val_seqs -> _domain_seqs compares every cache stamp against train.VOCAB_ID, which starts
     # None and is set only by train.build_tokenizer -- which no eval calls. Without this the
     # guard reports "cache dirty" when the process simply has no fingerprint, and that is why
@@ -298,6 +323,10 @@ def main():
         "unweighted_mean_bpb": sum(out.values()) / len(out),
         "n_domains": len(out), "n_domains_total": len(mix["domains"]),
         "skipped": skipped,
+        # THE RECORD SAYS WHICH PATH. Every other field is identical between a cu_none run
+        # and a doc_cu run of the same checkpoint, so a reader cannot otherwise tell, and
+        # 0 of 60 published score_matrix rows said (E1/E5).
+        "cu_path": "n/a (hf)" if a.hf else a.cu_path,
         "reading": "bits per UTF-8 byte of the held-out rows train.py holds out, decoded to "
                    "text so both arms score the SAME bytes with their own tokenizers",
         "boundary": "NOT comparable to domain_loss.py's numbers: that metric is nats per TOKEN "
