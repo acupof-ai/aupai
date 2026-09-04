@@ -1,0 +1,91 @@
+{
+ "question": "is the N8 fix's corpus gain leak removal or a row-edge effect? On single-document rows there are ZERO interior boundaries, so leak removal predicts no gain at row positions 0-2 and the row-edge effect predicts the same gain as anywhere",
+ "arms": {
+  "fixed": "ckpt_b0_n8_fixed.pt",
+  "current": "ckpt_b0_sd_unlooped.pt"
+ },
+ "rows": 53,
+ "domains": [
+  "code_py_rp1t",
+  "code_py_starcoder",
+  "en_c4_stage2",
+  "math_owm_stage2",
+  "textbook_30b",
+  "zh_web"
+ ],
+ "edge_positions": [
+  0,
+  1,
+  2
+ ],
+ "resolution_method": "T-parity: the same rows right-padded with <eos> by 64, same arm, so the measured tokens are identical and only chunk_kda's tiling changes. NOT a repeat run -- scoring one checkpoint twice at the same shapes is bitwise deterministic and reported 0.000000, a floor of nothing.",
+ "resolution": 0.0,
+ "resolution_fixed": 0.0,
+ "resolution_current": 0.0,
+ "edge_gap_fixed_minus_current": 0.05472845251455283,
+ "rest_gap_fixed_minus_current": -0.019731890108990013,
+ "edge_mean": {
+  "fixed": 4.731678878736196,
+  "fixed_padded": 4.731678878736196,
+  "current": 4.6769504262216435,
+  "current_padded": 4.6769504262216435
+ },
+ "rest_mean": {
+  "fixed": 1.5449045775462897,
+  "fixed_padded": 1.671013516725844,
+  "current": 1.5646364676552798,
+  "current_padded": 1.7034806583747761
+ },
+ "per_domain": {
+  "math_owm_stage2": {
+   "edge_tokens": 21,
+   "rows": 7,
+   "fixed": 4.447446323576427,
+   "current": 4.321724982488723,
+   "gap": 0.12572134108770427,
+   "resolution": 0.0
+  },
+  "en_c4_stage2": {
+   "edge_tokens": 3,
+   "rows": 1,
+   "fixed": 4.219403584798177,
+   "current": 4.400053024291992,
+   "gap": -0.1806494394938154,
+   "resolution": 0.0
+  },
+  "textbook_30b": {
+   "edge_tokens": 3,
+   "rows": 1,
+   "fixed": 4.448576927185059,
+   "current": 3.4279677073160806,
+   "gap": 1.020609219868978,
+   "resolution": 0.0
+  },
+  "zh_web": {
+   "edge_tokens": 21,
+   "rows": 7,
+   "fixed": 6.429554167247954,
+   "current": 6.7094428198678155,
+   "gap": -0.27988865261986184,
+   "resolution": 0.0
+  },
+  "code_py_starcoder": {
+   "edge_tokens": 42,
+   "rows": 14,
+   "fixed": 4.659481888725644,
+   "current": 4.5423060939425515,
+   "gap": 0.11717579478309226,
+   "resolution": 0.0
+  },
+  "code_py_rp1t": {
+   "edge_tokens": 69,
+   "rows": 23,
+   "fixed": 4.379967399265455,
+   "current": 4.314777909845546,
+   "gap": 0.06518948941990921,
+   "resolution": 0.0
+  }
+ },
+ "subset_is_not_the_corpus": "single-document rows exist only where rows hold few documents, so the pooled number is dominated by those domains and the per-domain table is the result; pooled is a footnote",
+ "reading": "the pooled edge gap +0.054728 exceeds the 0.000000 resolution, and 6 of 6 domains exceed their own. On rows with ZERO interior boundaries leak removal predicts no gain, so a gain here is the ROW-EDGE effect; rest-of-row gap -0.019732. Read the per-domain table before the pooled number: the subset is not the corpus."
+}
