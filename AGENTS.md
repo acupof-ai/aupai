@@ -270,7 +270,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 17 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 §179 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 68 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 §180 §183 §184 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 70 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 §180 §183 §184 §186 §187 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 4 | §4 §24 §44 §182 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 8 | §7 §13 §25 §51 §59 §136 §166 §181 |
 | State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
