@@ -1,0 +1,25 @@
+{
+ "statistic": "B-A per block with B=ckpt_b0_headmix_armB.pt#cu, A=ckpt_b0_headmix_armA.pt#cu",
+ "n_blocks": 576,
+ "row_weighted_mean": 0.08737963484600186,
+ "sd": 0.025852799055283596,
+ "se": 0.0010771999606368164,
+ "t": 81.11737656799113,
+ "token_weighted_mean": 0.08737963484600186,
+ "n_tokens": 2359296,
+ "positive": 576,
+ "negative": 0,
+ "ties": 0,
+ "sign_test_p_one_sided": 4.043174611952195e-174,
+ "domains": [
+  "chat_qa",
+  "chatml",
+  "code_py_rp1t",
+  "code_py_starcoder",
+  "cot",
+  "en_c4_stage2",
+  "math_owm_stage2",
+  "textbook_30b",
+  "zh_web"
+ ]
+}
