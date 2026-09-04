@@ -116,8 +116,16 @@ def main():
     #     drops its questions and a planted holdout question stops being recognised.
     #     Run as a subprocess so it writes into the fixture tree, not the repo.
     def _hashes(tree):
+        # HOLDOUT_ALLOW_PARTIAL, because this fixture IS a partial tree on purpose: it copies
+        # the eval files that exist here (5 of 13) and de-registers one, so main()'s
+        # cross-machine refusal fires and writes nothing. Without the override the three
+        # assertions below read "no hash file" and the test reports 10/13 -- measured
+        # 2026-09-04, the same afternoon the refusal landed. The override is the documented
+        # way to say "a partial set is what I want here", and what this test asserts is the
+        # SHRINK between two partial sets, which needs both to exist.
+        env = dict(os.environ, HOLDOUT_ALLOW_PARTIAL="1")
         r = subprocess.run([sys.executable, os.path.join(tree, "datagen", "holdout.py")],
-                           capture_output=True, text=True, cwd=tree, timeout=300)
+                           capture_output=True, text=True, cwd=tree, timeout=300, env=env)
         hp = os.path.join(tree, "data", "eval", "holdout_hashes.txt")
         if not os.path.exists(hp):
             return None, r.stdout + r.stderr
