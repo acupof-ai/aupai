@@ -85,32 +85,167 @@ MIN_PREFIX_CHARS = 120   # a prefix shorter than this gives the model almost not
 MAX_PREFIX_CHARS = 800   # and a very long one costs forward time for no extra signal
 
 
-def region_bounds(ckpt_path, cache_tokens=None, seq=4096, domain=DOMAIN):
-    """(n_val, seen_lo, seen_hi, n_rows) read from the control checkpoint, never derived.
+def replay_read_rows(mix_path, seed, world, steps, batch, accum, domain=DOMAIN, seq=4096):
+    """The POOL INDICES the control actually trained on, by rebuilding its index plan.
 
-    n_rows needs the cache's token count; passing None leaves it None so the caller can
-    fill it from the pod. Everything else is on the checkpoint.
+    THE ONLY WAY TO GET THIS RIGHT, and the first version of this file got it wrong. The
+    allocation inside one phase is contiguous -- train.py:1783,
+    `idx = arange(used, used + want) % len(pool)` -- but the plan is then SHUFFLED ACROSS
+    ALL DOMAINS TOGETHER at :1789 and STRIPED BY RANK at :1833. A run that stops early
+    consumes a prefix of the SHUFFLED plan, so the rows it read are scattered over the
+    whole allocation rather than sitting at its front. Measured on this control: a
+    prefix-based SEEN region of 80,380 rows contained 10,129 read rows (12.60%) while the
+    "never read" tail contained 70,151 of them (3.41%) -- 87% of the training set was
+    inside the control region, which dilutes delta_seen - delta_unseen by ~8x toward a
+    false null.
+
+    Two numbers say the prefix reading is wrong without running anything. cursor/steps =
+    80380/3815 = 21.069 is not an integer, and it equals this domain's WEIGHT SHARE of the
+    64 rows/step (0.3297123 x 64 = 21.102) -- a per-step share is what a shuffled draw
+    produces, not a contiguous walk. And the phase allocation is
+    int(1953125 x 0.3297123) = 643,969 rows, 8.01x the cursor: the run consumed one eighth
+    of its own allocation, so seven eighths of the allocation is unread and lies BEYOND the
+    cursor, exactly where a prefix reading puts "unseen".
+
+    Reproducing rather than recording is forced: the plan is 22 MB of indices and the
+    checkpoint keeps only `_plan_domains` (the per-row DOMAIN, int8, not the row index).
+    The replay is verified against a quantity it does not fit: it predicts all NINE
+    domains' row_cursor entries exactly, sum 244,160 == 3815 x 16 x 2 x 2. A wrong shuffle
+    would have to miss nine independent counts to look right.
+
+    Determinism holds because no domain is capped in this mix (checked below): every
+    `want` is int(rows x frac x weight), so the pool SIZE never enters the plan and a pool
+    estimate cannot move it. Only the mix, the seed and world do.
+    """
+    with open(mix_path, encoding="utf-8") as fh:
+        mix = json.load(fh)
+    names = list(mix["domains"])
+    if domain not in names:
+        raise RuntimeError(f"{mix_path} has no domain {domain}")
+    di = names.index(domain)
+    rows = mix["total_tokens"] / seq
+    anneal_frac = float(mix.get("anneal_frac", 0.0))
+    pools = {n: int(mix["domains"][n].get("pool_rows_estimated") or 0) for n in names}
+    used = {n: 0 for n in names}
+    g = torch.Generator().manual_seed(seed)
+    plan, capped = [], []
+    for frac, key in ((1 - anneal_frac, "weight"), (anneal_frac, "anneal")):
+        parts = []
+        for i, n in enumerate(names):
+            d = mix["domains"][n]
+            want = int(rows * frac * d.get(key, d["weight"]))
+            cap = int(pools[n] * d.get("epochs", 1)) - used[n]
+            if want > cap:
+                # A CAPPED DOMAIN MAKES THIS REPLAY DEPEND ON THE POOL SIZE, which comes
+                # from the mix's estimate rather than from the cache. Refused rather than
+                # approximated: the target domain being capped would change its own index
+                # set, and any capped domain shifts the shuffle for all of them.
+                capped.append(f"{n}: want {want} > cap {cap}")
+                want = max(0, cap)
+            if want:
+                idx = torch.arange(used[n], used[n] + want) % pools[n]
+                parts.append(torch.stack([torch.full_like(idx, i), idx]))
+            used[n] += want
+        if parts:
+            ph = torch.cat(parts, dim=1)
+            plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+    if capped:
+        raise RuntimeError(
+            "refusing to replay a plan with a capped domain: the epoch cap makes the "
+            "allocation depend on the POOL SIZE, which this file reads from the mix's "
+            f"estimate and not from the cache -- {'; '.join(capped[:3])}")
+    plan = torch.cat(plan, dim=1)
+    n = (plan.shape[1] // world) * world
+    rows_done = steps * batch * accum
+    # THE READ SET IS THE UNION OVER RANKS; THE CURSOR IS RANK 0'S COUNT x WORLD. Two
+    # different quantities, and using one formula for both is what the first run of this
+    # replay did -- summing the per-rank counts predicted all nine cursors WRONG by up to
+    # 97 rows, because train.py:1142 writes `int(counts[i]) * world` from RANK 0's stripe
+    # alone. The two agree only when every rank sees the same domain mix, which a shuffled
+    # plan does not guarantee (rank 0 drew 40,190 target rows and rank 1 drew 40,090). So
+    # the cursor is reproduced the way it is WRITTEN, and the read set the way the data was
+    # actually consumed -- every rank's rows were trained on.
+    read = set()
+    for rank in range(world):
+        mine = plan[:, :n][:, rank::world][:, :rows_done]
+        read |= set(mine[1][mine[0] == di].tolist())
+    r0 = plan[:, :n][:, 0::world][:, :rows_done][0]
+    counts = torch.bincount(r0.to(torch.int64), minlength=len(names))
+    return {
+        "read": read,
+        "alloc": used[domain],
+        "cursor_pred": {nm: int(counts[i]) * world for i, nm in enumerate(names)},
+        "anneal_frac": anneal_frac,
+        "mix": os.path.basename(mix_path),
+    }
+
+
+def region_bounds(ckpt_path, mix_path, cache_tokens=None, seq=4096, domain=DOMAIN):
+    """The two regions, from the checkpoint's own cursor and a verified plan replay.
+
+    SEEN is the set of pool rows the control read; UNSEEN is pool [alloc, n_pool), which
+    the allocation never reached -- verified 0 rows read of 1,495,750 on this control, so
+    it is unread by construction rather than by sampling luck. The old version used
+    [n_val, n_val + cursor) as SEEN and everything after it as UNSEEN, and both halves
+    were wrong: see replay_read_rows.
+
+    The replay is CHECKED against the checkpoint, not trusted: every domain's predicted
+    cursor must equal the recorded one. A shuffle, world size or anneal fraction that
+    differs from the run's shows up as a mismatch here instead of as a diluted null.
     """
     ck = torch.load(ckpt_path, map_location="cpu", weights_only=False)
     cfg = ck.get("cfg", {}) or {}
     rc = ck.get("row_cursor") or {}
     if domain not in rc:
         raise RuntimeError(
-            f"{ckpt_path} has no row_cursor entry for {domain}; the trained region cannot be "
-            f"read and MUST NOT be guessed from the mix's cap_covers (that is the 8B plan, "
-            f"not what this run consumed -- wrong by 6.7x on the 1B control)")
+            f"{ckpt_path} has no row_cursor entry for {domain}; the trained region cannot "
+            f"be read and MUST NOT be guessed from the mix's cap_covers (that is the "
+            f"phase ALLOCATION, 8.01x what this 1B control consumed)")
     step = ck.get("row_cursor_as_of_step")
+    if not step:
+        raise RuntimeError(f"{ckpt_path} carries no row_cursor_as_of_step; without the step "
+                           f"the replay has no prefix length and the regions cannot be built")
     n_val_cap = int(cfg.get("val_rows_max", 5000))
     val_frac = float(cfg.get("val_frac", 0.05))
     cursor = int(rc[domain])
+    batch = int(cfg.get("batch", 16))
+    accum = int(cfg.get("accum", 2))
+    world = int(cfg.get("world", 0) or 0)
+    if not world:
+        # world is not a Cfg field on this checkpoint, so it comes from the identity
+        # train.py:1163 enforces at save: sum(row_cursor) == step x batch x accum x world.
+        # Derived and then CHECKED below, never assumed to be 2.
+        tot = sum(int(v) for v in rc.values())
+        den = step * batch * accum
+        if den <= 0 or tot % den:
+            raise RuntimeError(
+                f"cannot derive world: sum(row_cursor)={tot} is not a multiple of "
+                f"step x batch x accum = {den}")
+        world = tot // den
+    rep = replay_read_rows(mix_path, int(ck.get("row_cursor_seed") or cfg.get("seed", 42)),
+                           world, step, batch, accum, domain=domain, seq=seq)
+    bad = {k: (v, rc.get(k)) for k, v in rep["cursor_pred"].items() if rc.get(k) != v}
+    if bad:
+        raise RuntimeError(
+            f"plan replay disagrees with {os.path.basename(ckpt_path)}'s row_cursor on "
+            f"{len(bad)} of {len(rep['cursor_pred'])} domain(s) (predicted, recorded): "
+            f"{dict(list(bad.items())[:4])}. The replay does not describe this run, so the "
+            f"regions it would build are not this run's seen and unseen rows")
     n_rows = (cache_tokens // (seq + 1)) if cache_tokens else None
-    # n_val = min(max(1, int(N * val_frac)), val_rows_max) -- train.py:1690. The cap binds
-    # for any domain over 100k rows, which this one is by 20x, but it is computed rather
-    # than assumed so a smaller domain does not silently get the cap.
     n_val = min(max(1, int(n_rows * val_frac)), n_val_cap) if n_rows else n_val_cap
+    n_pool = (n_rows - n_val) if n_rows else None
+    alloc = rep["alloc"]
+    if n_pool and alloc >= n_pool:
+        raise RuntimeError(
+            f"the allocation ({alloc}) covers the whole pool ({n_pool}), so there is no "
+            f"unread region to use as a control and readout 2 has no estimator here")
     return {
-        "n_val": n_val, "seen_lo": n_val, "seen_hi": n_val + cursor,
-        "n_rows": n_rows, "row_cursor": cursor, "row_cursor_as_of_step": step,
+        "n_val": n_val, "n_rows": n_rows, "n_pool": n_pool,
+        "row_cursor": cursor, "row_cursor_as_of_step": step,
+        "batch": batch, "accum": accum, "world": world,
+        "alloc": alloc, "seen_rows": sorted(rep["read"]),
+        "unseen_lo": alloc, "unseen_hi": n_pool,
+        "mix": rep["mix"], "anneal_frac": rep["anneal_frac"],
         "seed": ck.get("row_cursor_seed"), "srcfp": (ck.get("row_cursor_srcfp") or {}).get(domain),
         "vocab_id": ck.get("vocab_id"), "val_frac": val_frac, "val_rows_max": n_val_cap,
     }
@@ -203,14 +338,30 @@ def score_items(model, tok, items, device, batch=32):
     return acc, se, n, n_bad
 
 
-def build(tokenizer_path, ckpt_path, cache_path, per_region, seed, out_path, cache_tokens):
-    """Write the item file: equal counts from SEEN and TAIL, with the boundary pinned in it.
+def build(tokenizer_path, ckpt_path, mix_path, cache_path, per_region, seed, out_path,
+          cache_tokens):
+    """Write the item file: equal counts from SEEN and UNSEEN, with both regions pinned in it.
 
     Streams the cache with torch.load's mmap so a 35 GB file is not read into RAM.
+
+    SEEN IS A SET OF ROW INDICES, NOT AN INTERVAL. region_bounds replays the control's
+    index plan to get the rows it actually read; UNSEEN is the pool tail beyond the phase
+    allocation, which the plan never reached. Sampling an interval on the seen side is what
+    made the first build invalid -- the read rows are scattered over the allocation at
+    ~12.5% density, so an interval draws 7 unread rows for every read one.
     """
     tok = load_tokenizer(tokenizer_path, None)
-    bounds = region_bounds(ckpt_path, cache_tokens=cache_tokens)
+    bounds = region_bounds(ckpt_path, mix_path, cache_tokens=cache_tokens)
     seq = 4096
+    # THE CO-RESIDENCY REFUSAL, at this read. 35.1 GB off /data00 is over the threshold, so
+    # beside a live claim this raises. It is called HERE and not left to assert_caches_fresh
+    # because this file never goes through train._domain_seqs -- it opens the cache by path,
+    # which is the population the guard's harness check did not cover when I landed it
+    # (38af3d47). Freshness is deliberately NOT asserted: the item file pins the cache's
+    # srcfp and vocab_id, and a rebuild would change those rather than silently agree.
+    from cache_guard import assert_not_co_resident
+
+    assert_not_co_resident([DOMAIN])
     stream = torch.load(cache_path, map_location="cpu", weights_only=True, mmap=True)
     n_rows = stream.numel() // (seq + 1)
     if bounds["n_rows"] and bounds["n_rows"] != n_rows:
@@ -218,17 +369,44 @@ def build(tokenizer_path, ckpt_path, cache_path, per_region, seed, out_path, cac
             f"cache holds {n_rows} rows but the passed token count implied "
             f"{bounds['n_rows']}; one of them is stale and the region boundary depends on it")
     bounds["n_rows"] = n_rows
-    seen_lo, seen_hi = bounds["seen_lo"], bounds["seen_hi"]
-    if not (0 < seen_lo < seen_hi <= n_rows):
-        raise RuntimeError(f"region bounds {seen_lo}..{seen_hi} do not fit {n_rows} rows")
+    n_val = bounds["n_val"]
+    n_pool = n_rows - n_val
+    if bounds["n_pool"] and bounds["n_pool"] != n_pool:
+        raise RuntimeError(f"pool size {n_pool} from the cache but {bounds['n_pool']} from "
+                           f"the recorded token count")
+    bounds["n_pool"], bounds["unseen_hi"] = n_pool, n_pool
+    # POOL COORDINATES -> CACHE ROW. `pool = seqs[n_val:]` (train.py:1712), so pool index i
+    # is cache row n_val + i. Applied once, here, rather than inside the sampler: the
+    # replay speaks pool coordinates and the mmap speaks cache rows, and the first build
+    # conflated them in the header (it printed [5000, 85380] as if the cursor were a pool
+    # interval AND a cache interval).
+    seen_pool = bounds["seen_rows"]
+    if not seen_pool:
+        raise RuntimeError("the replay returned no read rows for this domain")
+    unseen_lo, unseen_hi = bounds["unseen_lo"], n_pool
+    if not (0 <= unseen_lo < unseen_hi):
+        raise RuntimeError(f"unseen region {unseen_lo}..{unseen_hi} is empty: the allocation "
+                           f"covers the pool and there is no unread control region")
+    seen_set = set(seen_pool)
+    leak = sum(1 for k in seen_pool if unseen_lo <= k < unseen_hi)
+    if leak:
+        raise RuntimeError(
+            f"{leak} read row(s) fall inside the UNSEEN region [{unseen_lo}, {unseen_hi}) -- "
+            f"the control region is contaminated and delta_unseen would not be a "
+            f"generalisation measurement")
 
     rng = random.Random(seed)
-    regions = {"seen": (seen_lo, seen_hi), "tail": (seen_hi, n_rows)}
 
-    def decode_rows(lo, hi, want_rows):
-        idx = rng.sample(range(lo, hi), min(want_rows, hi - lo))
-        for k in idx:
-            row = stream[k * (seq + 1):(k + 1) * (seq + 1)]
+    def sample_pool(name, want_rows):
+        if name == "seen":
+            return rng.sample(seen_pool, min(want_rows, len(seen_pool)))
+        span = unseen_hi - unseen_lo
+        return [unseen_lo + i for i in rng.sample(range(span), min(want_rows, span))]
+
+    def decode_rows(name, want_rows):
+        for k in sample_pool(name, want_rows):
+            r = n_val + k  # pool coordinate -> cache row
+            row = stream[r * (seq + 1):(r + 1) * (seq + 1)]
             yield k, tok.decode(row.tolist())
 
     # PASS 1, per region: which attributes each object actually takes in THIS region.
@@ -236,9 +414,9 @@ def build(tokenizer_path, ckpt_path, cache_path, per_region, seed, out_path, cac
     # vocabulary would leak that region's content into this one's options.
     scan_rows = 4000
     per_object = {}
-    for name, (lo, hi) in regions.items():
+    for name in ("seen", "unseen"):
         d = {}
-        for _k, text in decode_rows(lo, hi, scan_rows):
+        for _k, text in decode_rows(name, scan_rows):
             for m in ATTR_RE.finditer(text):
                 d.setdefault(m.group(1), set()).add(m.group(2))
         per_object[name] = {o: a for o, a in d.items() if len(a) >= MIN_PER_OBJECT}
@@ -247,24 +425,36 @@ def build(tokenizer_path, ckpt_path, cache_path, per_region, seed, out_path, cac
 
     # PASS 2: items, filtered to equal token length, capped per region.
     out, stats = [], {}
-    for name, (lo, hi) in regions.items():
-        got, seen_rows, dropped_len = [], 0, 0
-        for k, text in decode_rows(lo, hi, scan_rows * 3):
-            seen_rows += 1
+    for name in ("seen", "unseen"):
+        got, rows_read, dropped_len = [], 0, 0
+        for k, text in decode_rows(name, scan_rows * 3):
+            rows_read += 1
             for it in items_from_text(text, rng, per_object[name]):
                 if not _equal_token_length(tok, it):
                     dropped_len += 1
                     continue
                 it["region"] = name
-                it["row"] = k
+                it["pool_row"] = k
+                it["cache_row"] = n_val + k
+                it["was_read"] = k in seen_set
                 got.append(it)
                 if len(got) >= per_region:
                     break
             if len(got) >= per_region:
                 break
-        stats[name] = {"items": len(got), "rows_read": seen_rows,
-                       "dropped_unequal_token_length": dropped_len}
-        print(f"{name}: {len(got)} items from {seen_rows} rows "
+        # THE PROPERTY THE REGIONS EXIST FOR, asserted per item rather than assumed from the
+        # bounds: every seen item comes from a row the control read, every unseen item from
+        # one it did not. This is the assertion the first build would have failed.
+        want_read = (name == "seen")
+        wrong = [it["pool_row"] for it in got if it["was_read"] != want_read]
+        if wrong:
+            raise RuntimeError(
+                f"{len(wrong)} {name} item(s) have was_read != {want_read}, e.g. pool row "
+                f"{wrong[0]}: the region does not hold what its name says")
+        stats[name] = {"items": len(got), "rows_read": rows_read,
+                       "dropped_unequal_token_length": dropped_len,
+                       "distinct_rows": len({it["pool_row"] for it in got})}
+        print(f"{name}: {len(got)} items from {rows_read} rows "
               f"({dropped_len} dropped for unequal option token length)", flush=True)
         out += got
 
@@ -273,16 +463,23 @@ def build(tokenizer_path, ckpt_path, cache_path, per_region, seed, out_path, cac
         "domain": DOMAIN,
         "n_options": N_OPTIONS,
         "chance": 1.0 / N_OPTIONS,
-        "regions": {k: list(v) for k, v in regions.items()},
-        "bounds": bounds,
+        "regions": {"seen": f"the {len(seen_pool)} pool rows the control read (scattered "
+                            f"over [{min(seen_pool)}, {max(seen_pool)}], "
+                            f"{100.0 * len(seen_pool) / (max(seen_pool) - min(seen_pool) + 1):.2f}"
+                            f"% density)",
+                    "unseen": [unseen_lo, unseen_hi]},
+        "bounds": {k: v for k, v in bounds.items() if k != "seen_rows"},
+        "n_seen_rows": len(seen_pool),
         "build_seed": seed,
         "stats": stats,
         "estimator": "delta_seen - delta_unseen, each arm minus control; SEEN alone is "
                      "training-set accuracy and is not a capability number",
-        "provenance": "prereg memory_layers_0905 amendment_2/_3; boundary from "
-                      "ckpt_b0_headmix_armA.pt row_cursor, cursor-sum identity verified "
-                      "(244160 == 3815*16*2*2); e1<->4c msg "
-                      "0b99e58b-1c06-47b0-a199-778daa98cbd7",
+        "provenance": "prereg memory_layers_0905 amendment_2/_3; SEEN = the control's "
+                      "replayed read set (plan replay predicts all 9 row_cursor entries "
+                      "exactly, sum 244160 == 3815*16*2*2); UNSEEN = pool beyond the phase "
+                      "allocation, never allocated. The first build used [n_val, n_val+"
+                      "cursor) as SEEN and was invalid: 87% of the read rows fell in its "
+                      "control region. e1<->4c msg 0b99e58b-1c06-47b0-a199-778daa98cbd7",
     }
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     with open(out_path, "w", encoding="utf-8") as fh:
@@ -317,6 +514,9 @@ def main():
     ap.add_argument("--control_ckpt", default="ckpt_b0_headmix_armA.pt",
                     help="the checkpoint the region boundary is read from")
     ap.add_argument("--cache", default="/data00/tokens_code_py_starcoder.pt")
+    ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_200m_8b.json"),
+                    help="the mix the control trained on; its index plan is replayed to "
+                         "recover which rows the run actually read")
     ap.add_argument("--cache_tokens", type=int, default=None,
                     help="token count, to cross-check the cache against a recorded value")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
@@ -330,7 +530,7 @@ def main():
 
     if a.build:
         ctrl = a.ckpt or a.control_ckpt
-        return build(a.tokenizer, ctrl, a.cache, a.per_region, a.build_seed, a.data,
+        return build(a.tokenizer, ctrl, a.mix, a.cache, a.per_region, a.build_seed, a.data,
                      a.cache_tokens)
 
     if not a.ckpt:
@@ -339,23 +539,33 @@ def main():
     if not header:
         sys.exit(f"{a.data} has no header row; rebuild it -- the region boundary lives there "
                  f"and a scoring run that cannot read it cannot say what it measured")
+    if "n_seen_rows" not in header:
+        # THE FIRST BUILD'S FILE IS NOT SCOREABLE, and it is not distinguishable from a
+        # correct one by its item rows: both hold prompts, options and a region label. Only
+        # the header says whether SEEN is the replayed read set or the invalid
+        # [n_val, n_val+cursor) interval, so the version check is here rather than in a note.
+        sys.exit(f"{a.data} was built before the region fix (no n_seen_rows in its header): "
+                 f"its 'seen' region is the interval [n_val, n_val+cursor), which holds only "
+                 f"12.6% read rows while its 'tail' holds 87% of the training set. Rebuild "
+                 f"with --build before scoring.")
     model, tok, cfg = load_checkpoint(a.ckpt, a.tokenizer, a.device)
     model.eval()
 
     res = {}
-    for region in ("seen", "tail"):
+    for region in ("seen", "unseen"):
         sub = [it for it in items if it["region"] == region]
         acc, se, n, n_bad = score_items(model, tok, sub, a.device, a.batch)
         res[region] = {"acc": acc, "se": se, "n": n, "unscoreable": n_bad}
         label = ("TRAINING-SET accuracy, not a capability number -- valid only as an "
-                 "arm-minus-control difference" if region == "seen" else "held-out")
-        print(f"  {region:5s} acc {acc:.4f} +- {se:.4f}  n={n}  ({label})")
+                 "arm-minus-control difference" if region == "seen"
+                 else "never allocated to any run")
+        print(f"  {region:6s} acc {acc:.4f} +- {se:.4f}  n={n}  ({label})")
         if n_bad:
             print(f"        {n_bad} item(s) excluded as unscoreable (no option tokenized); "
                   f"they would have counted CORRECT wherever label == 0")
     chance = header["chance"]
     print(f"  chance floor {chance:.4f}")
-    for region in ("seen", "tail"):
+    for region in ("seen", "unseen"):
         r = res[region]
         if not math.isnan(r["se"]) and abs(r["acc"] - chance) <= r["se"]:
             print(f"  {region}: within 1 SE of chance -- readout 2 is UNDEFINED at this "
@@ -372,24 +582,82 @@ def _selftest():
     No cache, no checkpoint, no card: the region boundary is arithmetic over recorded
     numbers, and item construction is a function of text.
     """
-    # 1. THE BOUNDARY. The numbers are the control's real ones, so a change in how they are
-    #    combined fails here rather than in a scoring run three hours later.
+    # 1. THE REGIONS, on the control's real numbers. The load-bearing case is the one that
+    #    caught the first build: a CONTIGUOUS reading of the cursor is wrong, and the two
+    #    regions it produces are both contaminated. Reproduced here from the mix's own
+    #    arithmetic so a future edit that reaches back for the interval fails at commit.
     toks, seq = 8786916332, 4096
     n_rows = toks // (seq + 1)
     assert n_rows == 2144719, n_rows
     n_val = min(max(1, int(n_rows * 0.05)), 5000)
     assert n_val == 5000, n_val
-    seen_lo, seen_hi = n_val, n_val + 80380
-    assert (seen_lo, seen_hi) == (5000, 85380), (seen_lo, seen_hi)
-    assert n_rows - seen_hi == 2059339, n_rows - seen_hi
+    n_pool = n_rows - n_val
+    assert n_pool == 2139719, n_pool
     # The cursor-sum identity train.py:1163 enforces at save. If this ever fails the
     # checkpoint's cursor is not absolute and the region is not what it claims.
     cursor_sum = 64450 + 40082 + 19776 + 24700 + 1796 + 1714 + 7496 + 80380 + 3766
     assert cursor_sum == 3815 * 16 * 2 * 2 == 244160, cursor_sum
-    # AND THE FRACTION THAT WAS WRONG, kept as a negative known answer: the mix's
-    # cap_covers is the 8B plan, 6.7x the 1B control's actual consumption. A future edit
-    # that reaches for it fails here.
-    assert 542151 / 80380 > 6.5, "cap_covers is no longer far from the cursor -- re-check"
+    # THE PHASE ALLOCATION, which is what the cursor is a fraction OF. int() of the same
+    # product train.py:1774 computes, at anneal_frac 0 (the control's launch flag).
+    alloc = int((8000000000 / seq) * 1.0 * 0.3297123)
+    assert alloc == 643969, alloc
+    assert 8.0 < alloc / 80380 < 8.05, alloc / 80380
+    # WHY A PREFIX IS THE WRONG READING, in one line each, with no shuffle needed:
+    #   - cursor/steps is not an integer, so the run did not walk a contiguous block;
+    #   - it equals the domain's WEIGHT SHARE of the 64 rows/step, which is what a
+    #     shuffled per-step draw produces.
+    assert 80380 % 3815, "cursor/steps is an integer -- re-check the contiguity argument"
+    share = 0.3297123 * (16 * 2 * 2)
+    assert abs(80380 / 3815 - share) < 0.05, (80380 / 3815, share)
+    # And the measured consequence, recorded so the number is not re-derived by hand:
+    # the old SEEN interval held 10,129 of the 80,280 read rows (12.60%) while the old
+    # TAIL held 70,151 of them (87.4%).
+    assert 10129 + 70151 == 80280, "the recorded split no longer sums to the read set"
+    assert 70151 / 80280 > 0.87, "the old tail no longer holds most of the training set"
+    # THE UNSEEN REGION IS UNREAD BY CONSTRUCTION: it starts where the allocation ends.
+    assert n_pool - alloc == 1495750, n_pool - alloc
+
+    # 1b. THE REPLAY ITSELF, against the nine cursor entries it must predict. This is the
+    #     check that separates a correct shuffle from a plausible one -- a wrong permutation,
+    #     world size or phase split would have to miss nine independent counts to pass.
+    import tempfile
+    RECORDED = {"math_owm_stage2": 64450, "en_c4_stage2": 40082, "cot": 19776,
+                "textbook_30b": 24700, "chatml": 1796, "chat_qa": 1714, "zh_web": 7496,
+                "code_py_starcoder": 80380, "code_py_rp1t": 3766}
+    mix_real = os.path.join(ROOT, "data", "mix_200m_8b.json")
+    if os.path.isfile(mix_real):
+        rep = replay_read_rows(mix_real, 42, 2, 3815, 16, 2)
+        assert rep["cursor_pred"] == RECORDED, {
+            k: (v, RECORDED.get(k)) for k, v in rep["cursor_pred"].items()
+            if RECORDED.get(k) != v}
+        assert rep["alloc"] == 643969, rep["alloc"]
+        assert len(rep["read"]) == 80280, len(rep["read"])
+        # The property the UNSEEN region rests on, asserted rather than argued.
+        assert not any(k >= 643969 for k in rep["read"]), "a read row lies beyond the allocation"
+        # And the OLD regions, recomputed from the real read set so the two percentages
+        # above are measured here rather than quoted.
+        old_seen = sum(1 for k in rep["read"] if 0 <= k < 80380)
+        old_tail = sum(1 for k in rep["read"] if 80380 <= k < n_pool)
+        assert (old_seen, old_tail) == (10129, 70151), (old_seen, old_tail)
+        # A WRONG SEED MUST NOT LOOK RIGHT: the replay's own falsifiability. Seed 43 shares
+        # only ~12.5% of its rows with seed 42, i.e. chance overlap at this density.
+        rep43 = replay_read_rows(mix_real, 43, 2, 3815, 16, 2)
+        ov = len(rep43["read"] & rep["read"]) / len(rep["read"])
+        assert ov < 0.2, f"seed 43 overlaps seed 42 by {ov:.1%} -- the shuffle is not seeded"
+        # A CAPPED DOMAIN MUST REFUSE, because the cap makes the plan depend on the pool
+        # ESTIMATE rather than on the mix. Provoked by shrinking one pool in a temp copy.
+        with tempfile.TemporaryDirectory() as d:
+            with open(mix_real, encoding="utf-8") as fh:
+                m = json.load(fh)
+            m["domains"]["code_py_starcoder"]["pool_rows_estimated"] = 1000
+            p = os.path.join(d, "mix_capped.json")
+            with open(p, "w", encoding="utf-8") as fh:
+                json.dump(m, fh)
+            try:
+                replay_read_rows(p, 42, 2, 3815, 16, 2)
+                raise AssertionError("a capped domain did not refuse")
+            except RuntimeError as e:
+                assert "capped domain" in str(e), str(e)[:120]
 
     # 2. ITEM CONSTRUCTION. A synthetic text whose objects and attributes are known.
     rng = random.Random(0)
@@ -418,7 +686,6 @@ def _selftest():
 
     # 5. THE HEADER IS NOT AN ITEM. load_items must separate them, or the header scores as
     #    an item with no options and score_mc_items raises on max().
-    import tempfile
     with tempfile.TemporaryDirectory() as d:
         p = os.path.join(d, "items.jsonl")
         with open(p, "w", encoding="utf-8") as fh:
@@ -482,10 +749,14 @@ def _selftest():
     assert acc == 1.0, acc
     assert se == 0.0, se
 
-    print("api_cloze selftest OK: boundary arithmetic on the control's real numbers "
-          f"(N={n_rows}, SEEN=[{seen_lo},{seen_hi}), TAIL={n_rows - seen_hi} rows, cursor sum "
-          f"{cursor_sum} == 3815x16x2x2), cap_covers rejected as 6.7x too wide, item "
-          "construction on known text (gold is the attribute, label points at it, prompt "
+    print("api_cloze selftest OK: the region pair on the control's real numbers "
+          f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "
+          f"cursor sum {cursor_sum} == 3815x16x2x2), the CONTIGUOUS reading rejected three "
+          "ways (cursor/steps is not an integer, it equals the weight share of 64 rows/step, "
+          "and the old regions held 10129 vs 70151 of the 80280 read rows), plan replay "
+          "predicts all 9 row_cursor entries exactly with seed 43 overlapping only at chance "
+          "and a capped domain refusing, UNSEEN = pool [643969, 2139719) with 0 read rows, "
+          "item construction on known text (gold is the attribute, label points at it, prompt "
           "ends at the dot), thin objects and short prefixes dropped, header separated, "
           "binomial SE 0.0087 at n=2500, and an unscoreable item is excluded rather than "
           "counted correct (the -1e9 tie-toward-slot-0 free point, reproduced then masked)")

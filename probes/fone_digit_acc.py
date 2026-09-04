@@ -51,6 +51,11 @@ def main():
     # and the helper owns the name.
     train.Cfg.fone = True
     cache = train._domain_cache_path(a.domain)
+    # The co-residency refusal: a whole non-mmap read of one domain's FoNE cache off
+    # /data00 (e1, 2026-09-05 -- by-path readers were outside the guard's population).
+    from cache_guard import assert_not_co_resident
+
+    assert_not_co_resident([a.domain])
     ids, vals = torch.load(cache, map_location="cpu", weights_only=True)
     # Last rows of the cache: training consumes from the front, so the tail is the
     # least-seen (held-out) part.

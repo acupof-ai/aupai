@@ -161,6 +161,14 @@ def main():
 
     pool_rows = {}
     mix = json.load(open(mix_path, encoding="utf-8"))
+    # The co-residency refusal, before the first cache is touched. mmap keeps resident
+    # memory small but the READ is still off /data00, which is the quantity the "no lane
+    # card" rule measures (e1, 2026-09-05: this file reads by path, so the guard's
+    # _domain_seqs chokepoint never saw it).
+    sys.path.insert(0, os.path.join(ROOT, "eval"))
+    from cache_guard import assert_not_co_resident
+
+    assert_not_co_resident(list(mix["domains"]))
     for name in mix["domains"]:
         cache = os.path.join(a.cache_dir, f"tokens_{name}.pt")
         if not os.path.exists(cache):
