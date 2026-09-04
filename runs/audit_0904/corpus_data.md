@@ -100,3 +100,91 @@ relation to the stamped `zh_web` dir is a blind spot, see 6).
    becomes a default, or should the guard union all mix-named domains?
 4. CD-6: are the 24 web_cci3_p* dirs + 115 loose batch files deletion candidates (they are
    in no mix), or are they archived intentionally?
+
+## Pair check (b0, 2026-09-04)
+
+Recomputed four findings independently — CD-1, CD-2 and CD-4 as 3b asked, plus CD-3 as the
+controller directed. Every stamp below was opened on the pod in this pass, not read from
+3b's quoted numbers. **All four hold.** Two are sharper than published, and one of 3b's
+supporting statements is wrong in a way that does not touch its finding.
+
+### CD-1 — HOLDS
+`python3 -c` over `data/corpus/<d>/build_corpus_stats.json` on the pod, three domains:
+
+    zh_web         7 keys ['domain','filters','filters_fp','fingerprint','n_shards','tokens','tokens_status']
+    textbook_30b   7 keys  (identical key set)
+    wiki_chat      7 keys  (identical key set)
+
+`tokens_config` absent from all three, so `zh_web`'s `tokens = 21293403945` with
+`tokens_status = 'measured'` records no sample size and no counting convention. Contrast
+`cot`, 14 keys, opened in the same pass. Confirmed: the 21.29e9 figure is NOT reproducible
+from the stamp. Note the word `measured` is doing real damage here — it is the same value
+`tokens_status` carries on domains that DO record their method, so the field cannot
+distinguish "counted" from "extrapolated".
+
+### CD-2 — HOLDS, and the two counts check by AST rather than by grep
+`CANONICAL_STATS_KEYS` parsed out of `datagen/build_corpus.py:593`: **15 keys**, and the
+holdout-shaped subset is empty (searched for `holdout`, `eval`, `contam`):
+
+    ['domain','reasons','kept','kept_chars','kept_tokens','filters','workers','n_shards',
+     'filters_fp','fingerprint','near_dedup','near_dedup_note','tokens','tokens_status','tokens_config']
+
+`REGISTRY` counted by `ast.parse` on `datagen/holdout.py` (not by grepping `"path"`, which
+would also match nested dicts): **13 entries**. `EVAL_FILES` at :230 is
+`[os.path.join(ROOT, e["path"]) for e in REGISTRY.values()]` — derived, as published.
+So no stamp can record which holdout population a domain was built against. Confirmed.
+
+### CD-3 — HOLDS, four values quoted from the reopened stamps
+Both stamps opened on the pod:
+
+    code_py_starcoder  kept=6180174  kept_chars=0  kept_tokens=0  tokens=8744830156
+    code_py_rp1t       kept=209668   kept_chars=0  kept_tokens=0  tokens=421239303
+
+Exactly 3b's numbers. Both are 15-key stamps and both carry `tokens_config` naming a
+3-shard byte extrapolation, so the zeroed fields sit beside a populated one — which is what
+makes the zero readable as a value rather than as an absence.
+
+### CD-4 — HOLDS, and it is broader than published
+`datagen/corpus_fingerprint.py:49` `fp_filters` hashes `name + "\0" + sha256(content)` for
+every `filters/*.py`, sorted, and takes nothing else: no profile, no `--filters` argument,
+no per-domain parameter. Published as "identical across domains with different filters".
+Measured over **all 47 stamps on the pod**, not the 11 audited domains: `filters_fp` takes
+**three** values (`33462c13868a2194`, `88ee503b38941bf4`, `None`) while the `filters` field
+takes at least eight distinct descriptions. `starcoder-python-ast`, `chatml-render`,
+`chat-original`, `rp1t-python-ast` and `light` ALL carry `33462c13868a2194`. So the
+collision is not an edge case between two similar profiles — it is the normal state.
+
+### CD-1's mechanism, corrected and strengthened — three writers, none of which asserts
+CD-1's evidence column cites `datagen/build_corpus.py:664` as *requiring* `tokens_config`.
+It does not require it, and what is actually there is worse.
+
+`build_corpus.py` writes `tokens`, `tokens_status = "measured"` and `tokens_config` in ONE
+branch, :678-681, all three together after a successful `count_shards`. So a stamp carrying
+`tokens` and `tokens_status = "measured"` **without** `tokens_config` cannot have been
+written by that branch at all — and zh_web's is exactly that shape (7 keys, `tokens`
+21293403945, `tokens_status` "measured", mtime 2026-08-31 11:05 on the pod). `build_corpus.py`
+does call `_assert_canonical_stats` at :687 immediately before writing, so a stamp it
+produced would have been checked.
+
+`data/corpus/*/build_corpus_stats.json` has at least **four** writers:
+`datagen/build_corpus.py`, `datagen/build_cot.py:97`, `datagen/code_dedup_build.py:162`,
+`datagen/build_code_tests_v1.py:408`. Grepped for the assertion in each of the latter three:
+**zero occurrences in all three** (`grep -c _assert_canonical_stats` → 0, 0, 0). Each
+assembles its own dict literal — `build_cot.py:90-96` writes `srcfp`, `criterion`, `schema`,
+`docs_in`, `docs_kept`, `reject_checks`, `tokens_kept`, `check4`, of which only `n_shards`
+and `filters` are canonical keys at all.
+
+So CD-1's finding is right and its severity is understated: the canonical schema is not a
+schema for this file, it is a schema for one of four writers. A reader who checks
+`CANONICAL_STATS_KEYS` to learn what a stamp guarantees learns nothing about the three
+quarters of writers that never consult it. Same population-before-property shape as CD-2 and
+as the audit charter's principle 3 — the guarded set is narrower than the set the property is
+about.
+
+I did not identify which writer produced zh_web's 7-key stamp; that is 3b's area and needs
+the 2026-08-31 build history, not the current tree. What is established here is that a
+conforming writer could not have produced it and that three non-asserting writers exist.
+
+### Not checked by me
+CD-5 (`check_corpus_filters_fp` population) and CD-6 (dead `web_cci3_p*` dirs and loose
+`batch_*.jsonl`) — outside the four assigned, and CD-6 is accepted record-only.
