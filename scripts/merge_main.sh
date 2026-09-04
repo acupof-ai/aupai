@@ -11,9 +11,14 @@ for _ in $(seq 1 120); do
   if mkdir "$LOCK" 2>/dev/null; then
     trap 'rmdir "$LOCK"' EXIT
     if git -C "$MAIN" merge --no-edit "$1"; then exit 0; fi
-    if [ -n "$(git -C "$MAIN" diff --name-only --diff-filter=U)" ]; then
+    if [ -e "$MAIN/.git/MERGE_HEAD" ]; then
+      if [ -n "$(git -C "$MAIN" diff --name-only --diff-filter=U)" ]; then
+        why="$1 conflicts with main: run 'git merge main' in your worktree, resolve there, commit, retry"
+      else
+        why="the merge commit was refused (hook or harness check above): fix on your branch, retry"
+      fi
       git -C "$MAIN" merge --abort
-      echo "merge_main: $1 conflicts with main; aborted so the integration tree stays clean. Run 'git merge main' in your worktree, resolve there, commit, retry." >&2
+      echo "merge_main: aborted so the integration tree stays clean; $why" >&2
     fi
     exit 1
   fi
