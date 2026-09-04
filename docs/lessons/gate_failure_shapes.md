@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (64 model-project incidents) and docs/lessons/infra_incidents.md (85 pod/infra incidents); 33 closed incidents removed 2026-09-04 (149 = 64 + 85); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (76 model-project incidents) and docs/lessons/infra_incidents.md (85 pod/infra incidents); 33 closed incidents removed 2026-09-04 (161 = 76 + 85); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -51,10 +51,10 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 ## Checks to write (top 5 by product)
 
 - **R2** (66 incidents, 264h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
-- **R6** (32 incidents, 64h): every number carries its basis. Owner: blank.
-- **R1** (17 incidents, 51h): verify premises before acting, sources before citing. Owner: blank.
+- **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
+- **R1** (18 incidents, 54h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
-- **R4** (8 incidents, 24h): failures must be loud. Owner: blank.
+- **R4** (10 incidents, 30h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
@@ -116,7 +116,7 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (28 incidents)
+### R2-g Criterion answers an adjacent question (29 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
@@ -125,26 +125,26 @@ The metric measures a neighbour property, not the one asked.
 - §177: an arm's flags said it carried a 1.07B-parameter memory table; the criterion (the flags the run was given) did not measure the property (which of two code paths consumed them), and the arm would have trained as the control and reported a clean null.
 - §184: excluding a parameter from the fp32 master copy would have left it read every forward and never updated; the criterion (is the exclusion correct) did not measure the property (who clears its gradient), and the diagnostics would have shown a healthy pool.
 
-Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176, §177, §178, §184).
+Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176, §177, §178, §184, §191).
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
-33 incidents (12 infra, 21 model), ~2h each, 66h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
+34 incidents (12 infra, 22 model), ~2h each, 68h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
 
 - §1: a number was quoted without its source type; the source type (measured / extrapolated / inferred) determined whether the number could be compared to another.
 - §55: a number's resolution was finer than its basis; the extra digits were noise, not precision.
 - §185: a memory budget was costed at 6 bytes per parameter from a bf16 table nobody had set; the tensors are fp32 and the gradient was omitted, so the real figure is 12 and the 2048^2 arm OOMed after construction succeeded.
 
-Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185).
+Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185, §192).
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-17 incidents (11 infra, 6 model), ~3h each, 51h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+18 incidents (11 infra, 7 model), ~3h each, 54h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139, §175, §179).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §139, §175, §179, §190).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 
@@ -157,12 +157,12 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-8 incidents (6 infra, 2 model), ~3h each, 24h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+10 incidents (7 infra, 3 model), ~3h each, 30h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181).
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193).
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
@@ -175,12 +175,13 @@ Cannot see: whether a retraction reached every consumer of the original ruling (
 
 ## R3. Artifacts carry their producer's identity; missing identity refuses, never rebuilds
 
-3 incidents (2 infra, 1 model), ~4h each, 12h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
+5 incidents (2 infra, 3 model), ~4h each, 20h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
 
 - §4: an artifact with no producer identity was silently rebuilt; the rebuild used a different producer, and the artifact's meaning changed. Missing identity must refuse, not rebuild.
 - §24: a checkpoint with no recipe provenance was scored; the score was attributed to a recipe the checkpoint did not run.
+- §189: a close written without --started stamped the row with its own write time and minted a third identity for a run that never existed; the ledger's fold key is (name, started), so the verdict and the numbers now sit on a phantom row.
 
-Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44).
+Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44, §189).
 
 ## R10. What happened only on the pod did not happen; bring it back to the repo the same day
 
