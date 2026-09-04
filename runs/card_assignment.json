@@ -62,7 +62,7 @@
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
- "block_cards": "1,2",
+ "block_cards": "4,6",
  "lane_card": "5,7",
  "note": "2026-09-04T19:43Z fb: block_cards names the NEXT launch's cards only (1,2 = M1). harness launch allocates the whole block, so a multi-arm block launches one arm on every card. || 2026-09-04T19:30Z fb: all 8 cards ours (user order 2026-09-05). M1 1+2, M2 4+6, M3 0+3 (1448x1448), lanes 5 and 7. || 2026-09-04T16:44Z fb (USER ORDER: memory layers program, docs/standards/memory_layers_0905.md): M1 on 1+2, M2 on 4+6, world 2 each; lane 5; card 0 spare unassigned; card 3 foreign; card 7 the user's. M2 launches only after M1 prints step 100 clean. || 2026-09-04T06:47Z fb (USER ORDER): cards 4+5 -> b0 head-hybrid A/B arm A (layer-level 3:1 baseline, attn_every=4), cards 0+6 -> arm B (per-layer 6 KDA + 2 MLA heads), world 2 each, 1B tokens on mix_200m_8b, doc_cu block-paired + HumanEval BPB pre-registered in roadmap_0903.md before launch; cards 1,2,3 tileRL (not aupai); card 7 the user's; the block grant covers exactly these two runs and ends when both rows land. || 2026-09-04 (fb, commit time): NO aupai job may start on cards 0-3 without a new grant line here: the params leg and Stage E arm 1 are finished, and cards 1,2,3 hold tileRL jobs from /work/tl-rl (not aupai). launch_block_granted=false is the decision: no block is granted (harness accepts this since 60640a4f). || REVISED 2026-09-03: the block is cards 0-3 for the 206M data leg at world 4. The 2026-09-02 grant of ALL EIGHT cards is SUPERSEDED -- it was made for the 500M/20B run, that run is not running, and two of its eight cards are now held by the user's own tilerl and acc_spec containers. card_claim reports 4 and 7 as ORPHAN because it can see our claims and not another container's ownership; their pids are invisible to ps in this namespace, so they are not ours to read and not ours to kill. Recorded as a BOUNDARY, not as an orphan to reclaim. || The superseded grant's own text is kept below under superseded_2026_09_02 rather than deleted: it holds the costs that were accepted when the lane was given up, and the reasons a decision was taken do not stop being true when the decision is narrowed. | 2026-09-04T08:33Z fb: arm A moved to 4+2 because card 5 was taken by a foreign process after the grant; block now 0,2,4,6 | 2026-09-04T09:07Z fb: arm B moved to 6+1 because card 0 was taken by a foreign job after the grant; block now 1,2,4,6. Foreign jobs have taken granted cards twice today (5, then 0): a grant is not a reservation the other container reads. | 2026-09-04T11:12Z fb: block shrinks to 1,6 (arm B still training); card 4 becomes the lane so the arms' end-of-run scoring can run -- armA's scoring already failed once on a grant with no lane | 2026-09-04T11:45Z fb: card 2 lent to b0 for armB's doc_cu pass so the two arms score in parallel instead of armB's scorer FATALing again on the single lane; explicit lend from an idle block, one job",
  "verified": "2026-09-03: memory_measured at world=4 is a real measurement for THIS shape, not an extrapolation from another world size and not from another model -- 61.01 GiB peak (max over 50 windows, range 60.95-61.01) at 206.1M d1024 L12 b16 accum2 seq4096 without grad_ckpt, 34.57 GiB headroom, recorded in runs/memory_peaks.json as world 4. The world=8 verification below belongs to the 493.6M L32 model and covers nothing about this leg; all three earlier peaks are that model's.",
@@ -73,14 +73,14 @@
  },
  "cards": {
   "0-3": "card 0 FOREIGN since ~2026-09-04T09:07Z (host pid 481564), released from the grant; card 1 -> arm B; card 2 -> arm A; card 3 FOREIGN (host pid 481563)",
-  "4": "RESERVED 2026-09-04T19:43Z -> M2 after M1 step 100 clean; block_cards is re-granted to 4,6 at that launch",
+  "4": "GRANTED 2026-09-04T22:53Z -> b0 memory arm M2 (512x512, world 2) -- the block for this launch; M1 on 1,2 (step 420, 0.8991), M3 on 0,3 (launched 22:47Z)",
   "5": "LANE since 2026-09-05: probes, smoke, e1 control floor; one job at a time",
-  "6": "RESERVED 2026-09-04T19:43Z -> M2 after M1 step 100 clean; block_cards is re-granted to 4,6 at that launch",
+  "6": "GRANTED 2026-09-04T22:53Z -> b0 memory arm M2 (512x512, world 2) -- the block for this launch; M1 on 1,2 (step 420, 0.8991), M3 on 0,3 (launched 22:47Z)",
   "7": "LANE since 2026-09-04T19:30Z: milestone scoring; the user's job ended (0 MiB at 2026-09-04T19:30Z); one job at a time",
-  "0": "RESERVED 2026-09-04T19:43Z -> M3 (1448x1448) after its --peak-only; block_cards re-granted to 0,3 at that launch",
-  "1": "GRANTED 2026-09-04T19:43Z -> b0 memory arm M1 (world 2) -- the block for this launch",
-  "2": "GRANTED 2026-09-04T19:43Z -> b0 memory arm M1 (world 2) -- the block for this launch",
-  "3": "RESERVED 2026-09-04T19:43Z -> M3 (1448x1448) after its --peak-only; block_cards re-granted to 0,3 at that launch"
+  "0": "HELD by b0_mem_m3 (running since 2026-09-04T22:47Z); not in block_cards while another arm launches",
+  "1": "HELD by b0_mem_m1 (running since 2026-09-04T22:35Z, claim pid 915851); not in block_cards while another arm launches",
+  "2": "HELD by b0_mem_m1 (running since 2026-09-04T22:35Z, claim pid 915851); not in block_cards while another arm launches",
+  "3": "HELD by b0_mem_m3 (running since 2026-09-04T22:47Z); not in block_cards while another arm launches"
  },
  "lane_note": "2026-09-04T16:44Z fb: lane 5 -> b0 50-step smoke of the memory arm first, then probes/milestones; one job at a time",
  "superseded_2026_09_02": {
