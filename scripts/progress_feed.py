@@ -273,7 +273,7 @@ def friction_section():
 MEM_STATUS = {
     "model": "实现完",
     "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "重发已起（卡 1+2，world 2，setsid 形状）；缓存加载，首条 step 约 13 分钟后",
+    "m1": "在跑：step 10/3815，loss 7.361，26K tok/s（预热中，停跑线看 step 30）",
     "m2": "未跑",
     "scored": "未打分",
 }
