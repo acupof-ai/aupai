@@ -966,13 +966,30 @@ def gate_launch_command(root, mix_path, world, cmd=None):
 def _recorded_cmd(root):
     """(cmd, source) for the run that is running, from runs/experiments.jsonl.
 
-    The register is append-only and folded by name, so the LAST row for a name wins --
-    an earlier failed attempt of the same run must not be read as the live command.
+    FOLDED TERMINAL-WINS, through exp.fold -- the register's one reduction. This function used
+    to fold by POSITION (`latest[name] = r` over the file), which is the rule exp.py:40-56 and
+    harness.py:2016 both document as wrong and had already been converted away from: a union
+    merge concatenates two branches' rows in whatever order it likes, and a pod pull re-appends
+    a run's `running` row, so a start event landing AFTER a close reopens a finished run.
+
+    MEASURED 2026-09-04, and it was blocking a launch rather than allowing one:
+    e1_c11_doccu_rescore closed `ok` at 05:41 and a pod pull appended its `running` row after
+    that close. This function then saw TWO rows claiming running (b0_se_16lnew_1b and the
+    finished one) and returned None with "2 runs claim status running" -- so the gate had no
+    command to check and could not clear b0's launch. Verified on one event list: terminal-wins
+    gives [b0_se_16lnew_1b], position gives both.
+
+    Also folding on (name, started) rather than name alone, which is what makes an earlier
+    FAILED attempt of the same name a different run instead of a shadow of the live one.
+
+    The except-fallback repeats terminal-wins inline rather than reverting to position, for
+    harness.py:2025's reason: a missing exp.py must degrade to the correct answer, not to the
+    one this change exists to delete.
     """
     p = os.path.join(root, "runs", "experiments.jsonl")
     if not os.path.exists(p):
         return None, "runs/experiments.jsonl does not exist"
-    latest = {}
+    evs = []
     try:
         with open(p, encoding="utf-8") as fh:
             for ln in fh:
@@ -981,10 +998,27 @@ def _recorded_cmd(root):
                     continue
                 r = json.loads(ln)
                 if r.get("name"):
-                    latest[r["name"]] = r
+                    evs.append(r)
     except (OSError, ValueError) as e:
         return None, f"runs/experiments.jsonl unreadable: {e}"
-    running = [r for r in latest.values() if r.get("status") == "running" and r.get("cmd")]
+    try:
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__))))
+        from exp import fold
+        folded = list(fold(evs))
+    except Exception:
+        out = {}
+        for r in evs:
+            key = (r.get("name"), r.get("started"))
+            prev = out.get(key)
+            if (prev is not None and prev.get("status") != "running"
+                    and r.get("status") == "running"):
+                continue
+            if (prev is not None and prev.get("status") == "retracted"
+                    and r.get("status") != "retracted"):
+                continue
+            out[key] = r
+        folded = list(out.values())
+    running = [r for r in folded if r.get("status") == "running" and r.get("cmd")]
     if not running:
         return None, "no row with status running and a cmd field"
     if len(running) > 1:
