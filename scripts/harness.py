@@ -114,6 +114,60 @@ _TIMEOUT_STATE = os.path.join(ROOT, "runs", "check_timeouts.json")
 #: Consecutive timeouts before a TIMEOUT becomes a FAIL.
 _TIMEOUT_STRIKES = 2
 
+#: Cached answer to "can this process reach the pod at all", None until asked.
+_POD_REACHABLE = None
+#: How long the reachability probe may take. Short on purpose: this exists to tell an
+#: unreachable host from a slow check, and a probe that itself hangs answers neither.
+_POD_PROBE_TIMEOUT = 8
+
+
+def pod_reachable():
+    """Whether ~/bin/pod answers at all, measured ONCE per process. (bool, why).
+
+    6e's ruling, 2026-09-04, from a commit refused twice while the tn tunnel flapped: an auth=pod
+    check with the pod unreachable must SKIP naming the reason, never time out and block a commit it
+    has nothing to say about. Three states present identically as a TimeoutError today and the
+    deadline mechanism cannot separate them:
+
+      a hang            what the deadline exists for. Raise nothing, fix the check.
+      cost growth       snapshot_logs_say_so_at_the_tail reads 84 tracked logs at ~0.11s each and
+                        will cross ANY fixed deadline as runs/ fills. A bigger number buys time,
+                        not a fix.
+      unreachable host  nothing to measure. Not the check's fault and not the repo's.
+
+    Raising deadlines is the wrong lever for two of the three, which is why this exists rather than
+    another _CHECK_TIMEOUTS entry. On an unreachable pod the check SKIPs and its strike counter is
+    NOT incremented -- a check that never got to run has not struck out, and banking strikes against
+    a dropped tunnel is what produced "has not actually run since" on two checks that both pass by
+    hand (2.9s and 9.3s, measured at load avg 6.5).
+
+    ONE PROBE PER PROCESS, cached. `harness check` runs 83 checks and ~20 are auth=pod; probing per
+    check would multiply a dead tunnel's timeout by twenty. The cache is per-process on purpose: a
+    tunnel that comes back mid-run is not worth the complexity, and the next run re-probes.
+
+    Cheap by construction -- `true` in the container, not a file read -- so it measures the tunnel
+    and nothing else.
+    """
+    global _POD_REACHABLE
+    if _POD_REACHABLE is not None:
+        return _POD_REACHABLE
+    pod = os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod):
+        _POD_REACHABLE = (False, "~/bin/pod is not installed on this machine")
+        return _POD_REACHABLE
+    try:
+        r = subprocess.run([pod, "true"], capture_output=True, text=True,
+                           timeout=_POD_PROBE_TIMEOUT)
+        ok = r.returncode == 0
+        why = "" if ok else (f"~/bin/pod exited {r.returncode}: "
+                             f"{(r.stderr or r.stdout or '').strip()[:80]}")
+    except subprocess.TimeoutExpired:
+        ok, why = False, f"~/bin/pod did not answer within {_POD_PROBE_TIMEOUT}s (tunnel down)"
+    except OSError as e:
+        ok, why = False, f"~/bin/pod could not be run: {e}"
+    _POD_REACHABLE = (ok, why)
+    return _POD_REACHABLE
+
 
 class SelftestSkip(Exception):
     """A broken world cannot be built on this checkout (missing untracked file).
@@ -14575,7 +14629,23 @@ def cmd_free_card(argv):
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a card to free")
     ap.add_argument("--settle", type=int, default=8, help="window over which a card must stay idle")
     a = ap.parse_args(argv)
-    lane = [c.strip() for c in _allocation_cards(False).split(",") if c.strip()]
+    # ROOT, EXPLICITLY, and it is the reason CI red #4 could not be tested. _allocation_cards
+    # defaults `root` to ROOT -- the harness's own tree -- so free-card read the live grant no
+    # matter what directory it ran in, and scripts/test_free_card.py could fake nvidia-smi but had
+    # no way to fake the allocation. Its verdict therefore moved with whatever the controller
+    # granted an hour ago: 2eccf977 cleared the head-hybrid grant and the test went red on CI while
+    # passing on any checkout that predated the clear. AUPAI_ALLOC_ROOT names the tree to read the
+    # two allocation files from, so a caller can supply a fixture; unset it stays ROOT, which is the
+    # production behaviour and the only correct one for a real launch (a job must not get its cards
+    # from whatever directory it was started in).
+    alloc_root = os.environ.get("AUPAI_ALLOC_ROOT") or ROOT
+    # raise_on_false STAYS SET. free-card hands a card to a job that is about to allocate on it, so
+    # it is a launch-side caller in _grant_cards' sense: an explicit launch_block_granted=false is
+    # the controller saying the block is not available, and falling back from it is what put a launch
+    # on cards 0-6 with a false grant sitting right there. A check reads with it clear; this is not
+    # a check. The refusal reaching stderr and rc=1 is the correct behaviour and is what
+    # test_free_card's no-grant case asserts.
+    lane = [c.strip() for c in _allocation_cards(False, root=alloc_root).split(",") if c.strip()]
     if not lane:
         print("no lane card in the allocation", file=sys.stderr)
         return 1
