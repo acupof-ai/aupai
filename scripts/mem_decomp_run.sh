@@ -57,7 +57,12 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 
 OUT=runs/mem_decomp_0905.jsonl
 LOG=runs/mem_decomp_0905.log
-: > "$OUT"
+# $OUT IS NOT TRUNCATED, and a cell whose row is already in it is skipped. A rerun after a
+# crash then costs only the cells that did not finish: off and m1 were complete and correct
+# when the m1 cell hung in its save, and re-measuring them would spend 8 minutes of card time
+# to reproduce two rows I already have. RESET=1 forces the whole sweep.
+[ -n "${RESET:-}" ] && : > "$OUT"
+touch "$OUT"
 
 # THE CLAIM NAMES torchrun, NOT THIS SHELL, and it is taken per config rather than once for
 # the script. card_claim refuses a shell pid on sight (de-34) and it is right to: a shell
@@ -70,17 +75,29 @@ LOG=runs/mem_decomp_0905.log
 CLAIM=""
 trap '[ -n "$CLAIM" ] && python3 scripts/card_claim.py release --name "$CLAIM" >/dev/null 2>&1 || true' EXIT
 
+# Is this cell's row already recorded? Keyed on the memory CONFIG, not on the cell name --
+# the name lives only in this script while the config is what the row carries.
+have_row() {
+  python3 scripts/mem_decomp_table.py --has "$1" "$2" "$3" "$OUT"
+}
+
 run_one() {
-  local tag=$1 rc job a0; shift
+  local tag=$1 v=$2 k=$3 ly=$4 rc job a0; shift 4
+  if have_row "$v" "$k" "$ly"; then
+    echo "$tag SKIP (row already in $OUT)" >> "$LOG"
+    return 0
+  fi
   echo "=== $tag ===" >> "$LOG"
   # NOT --peak-only: that mode returns before the JSON record is built, so the regions would
-  # print to the log and never land in a row anything can tabulate. The cost is save+val at
-  # the end of each config, which is outside the timed steps.
+  # print to the log and never land in a row anything can tabulate. --skip-save-val instead:
+  # measured on the m1 cell, save is 33.6 s and val 5.7 s against a 2.0 s step, and the m1
+  # cell HUNG there -- rank 0 saving alone for half a minute with no collective between the
+  # ranks. Neither number feeds this table.
   torchrun --nproc_per_node="$NPROC" --master_port=29611 \
     scripts/profile_step_cost.py \
     --mix data/mix_200m_8b.json \
     --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 \
-    --batch 16 --accum 2 --steps 20 --warmup 8 \
+    --batch 16 --accum 2 --steps 20 --warmup 8 --skip-save-val \
     --json "$OUT" "$@" >> "$LOG" 2>&1 &
   job=$!
 
@@ -117,10 +134,13 @@ run_one() {
 # rc is captured per config and the loop does not stop on one failure: a config that OOMs
 # still leaves the others comparable, and a missing row is visible in the table while a
 # killed script would look like a machine problem.
-run_one off --mem_values 0
-run_one m1  --mem_values 1048576 --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse
-run_one k16 --mem_values 1048576 --mem_top_k 16 --mem_layers 3,6,9 --no-mem_sparse
-run_one l1  --mem_values 1048576 --mem_top_k 32 --mem_layers 6     --no-mem_sparse
-run_one m2  --mem_values 262144  --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse
+# tag, then the (values, top_k, layers) the skip check keys on, then the flags. The config
+# appears twice on purpose and the table's --has reads the row rather than this line, so a
+# disagreement between the two shows up as a cell that reruns, never as a mislabelled row.
+run_one off 0       32 3,6,9 --mem_values 0
+run_one m1  1048576 32 3,6,9 --mem_values 1048576 --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse
+run_one k16 1048576 16 3,6,9 --mem_values 1048576 --mem_top_k 16 --mem_layers 3,6,9 --no-mem_sparse
+run_one l1  1048576 32 6     --mem_values 1048576 --mem_top_k 32 --mem_layers 6     --no-mem_sparse
+run_one m2  262144  32 3,6,9 --mem_values 262144  --mem_top_k 32 --mem_layers 3,6,9 --no-mem_sparse
 
 echo "ALL-DONE" >> "$LOG"
