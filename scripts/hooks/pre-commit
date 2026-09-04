@@ -679,6 +679,11 @@ def main():
         # neither: they swap card_claim.CLAIM_DIR to a temp dir and set CUDA_VISIBLE_DEVICES
         # themselves. No card, no data, ~1s.
         "scripts/loader.py",
+        # merge_main.sh's already-an-ancestor WARN. Two real git repos in a temp dir, ~1s, no
+        # card and no data: the property is the ORDER of two git calls, and a fixture that stubs
+        # git cannot show it -- after a fast-forward the branch IS an ancestor, so the check
+        # placed after the merge would fire on every successful merge.
+        "scripts/test_merge_main_ancestor.py",
         # The other 14 flagless runnable test_*.py, registered together on 2026-09-04 when
         # check_selftests_are_gated's population widened from "contains the string
         # --selftest" to "a tracked test_*.py that runs when executed". Each was RUN ONCE
