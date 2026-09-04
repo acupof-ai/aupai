@@ -526,6 +526,7 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--batch", type=int, default=32)
     ap.add_argument("--json", action="store_true")
+    ap.add_argument("--out", help="write the result JSON here (score_matrix's runner contract)")
     a = ap.parse_args()
 
     if a.build:
@@ -565,14 +566,42 @@ def main():
                   f"they would have counted CORRECT wherever label == 0")
     chance = header["chance"]
     print(f"  chance floor {chance:.4f}")
+    undefined = []
     for region in ("seen", "unseen"):
         r = res[region]
         if not math.isnan(r["se"]) and abs(r["acc"] - chance) <= r["se"]:
+            undefined.append(region)
             print(f"  {region}: within 1 SE of chance -- readout 2 is UNDEFINED at this "
                   f"scale on this region, not null (prereg memory_layers_0905)")
+    # THE HALF-DIFFERENCE THIS ONE CHECKPOINT CAN CARRY, and nothing more. The estimator is
+    # delta_seen - delta_unseen where each delta is arm MINUS CONTROL, so a single run
+    # produces two accuracies and not a knowledge number. Recorded as the two regions plus
+    # their gap so the caller subtracting two records has both halves; `within_region_gap`
+    # is NOT the readout -- it is seen minus unseen on ONE model, which is contaminated by
+    # anything that makes the seen region easier than the unseen one for every model
+    # (different files, different API mix). Only the arm-minus-control difference of these
+    # gaps removes that.
+    out = {
+        "regions": res,
+        "chance": chance,
+        "within_region_gap": (res["seen"]["acc"] - res["unseen"]["acc"]
+                              if not (math.isnan(res["seen"]["acc"])
+                                      or math.isnan(res["unseen"]["acc"])) else None),
+        "gap_note": "seen minus unseen on ONE checkpoint; readout 2 is the ARM MINUS CONTROL "
+                    "difference of this gap (prereg memory_layers_0905 amendment_2/_4). This "
+                    "number alone is not evidence of memorisation",
+        "undefined_regions": undefined,
+        "n_seen_rows": header.get("n_seen_rows"),
+        "item_file": os.path.relpath(a.data, ROOT),
+        "bounds": header["bounds"],
+        "ckpt": a.ckpt,
+    }
+    print(f"  gap (seen - unseen, ONE model, not the readout): {out['within_region_gap']}")
     if a.json:
-        print(json.dumps({"regions": res, "chance": chance,
-                          "bounds": header["bounds"], "ckpt": a.ckpt}, ensure_ascii=False))
+        print(json.dumps(out, ensure_ascii=False))
+    if a.out:
+        with open(a.out, "w", encoding="utf-8") as fh:
+            json.dump(out, fh, ensure_ascii=False)
     return 0
 
 
