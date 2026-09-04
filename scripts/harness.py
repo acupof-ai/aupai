@@ -14963,6 +14963,12 @@ _UNFROZEN_ALLOWLIST = {
     # b0-17's lr knob, same reasoning as fp32_master: freezing it would declare settled the very
     # thing arms 2 and 3 are run to settle. MOVE IT INTO _FROZEN_KEYS if an untied head ships.
     "head_lr",
+    # The sparse memory's lr and weight decay. Here rather than in _FROZEN_KEYS for head_lr's
+    # reason: they are optimizer knobs, not architecture. mem_lr 0.02 is a starting value taken
+    # from Lample et al.'s ratio to the backbone lr and not a measurement, so freezing it would
+    # declare settled a number nobody has measured. The architecture keys that DO decide what the
+    # model is -- mem_values, mem_top_k, mem_layers, mem_sparse -- are frozen.
+    "mem_lr", "mem_wd",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
