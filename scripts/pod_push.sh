@@ -228,6 +228,36 @@ if [ $ALL -eq 1 ]; then
     ~/bin/pod "cd /work/aupai && rm -f -- ${dels[*]}"
     echo "deleted: ${dels[*]}"
   fi
+  # THE LEDGERS, BOTH DIRECTIONS, because pod_push excludes runs/ by design and nothing
+  # else ran the reverse path. Measured 2026-09-04 (6e): e1_31b_loop_500 and
+  # params_leg_final_score_matrix were closed on main for hours and still read `running` on
+  # the pod, no_ghost_running was NO-GO there, and b0's Stage E arm 2 did not launch on a
+  # lane the ledger said was busy. A ledger the two sides disagree about is worse than a
+  # stale one: each side's guard is correct about its own file and wrong about the world.
+  #
+  # ORDER: pull first (pod rows home), then push (closes out to the pod). The pull direction
+  # is what makes the push safe -- pushing first would send closes for rows whose pod-side
+  # events this repo has not yet seen, and append_pod_rows keys on (name, started), so a row
+  # only the pod knows about would get a second event rather than being folded onto.
+  #
+  # REFUSE ON EITHER DIRECTION'S ERROR, before the manifest ships. pod_pull_ledgers returns
+  # nonzero when an append fails or a re-read cannot verify it, and a manifest that vouches
+  # for a tree whose ledgers half-synced is the state that reads as clean and is not.
+  # Conflicts where both sides hold different non-empty values are NOT an error -- the tool
+  # reports them and stops, because a human decides which measurement is right.
+  echo "pod_push --all: ledgers, pull then push"
+  if ! python3 scripts/pod_pull_ledgers.py --apply; then
+    echo "REFUSING: pulling pod ledger rows home failed -- not pushing the manifest." >&2
+    echo "  The pod holds rows this repo lacks; fix that first or the manifest vouches" >&2
+    echo "  for a tree whose ledgers disagree with the pod's." >&2
+    exit 1
+  fi
+  if ! python3 scripts/pod_pull_ledgers.py --push --apply; then
+    echo "REFUSING: pushing local ledger closes to the pod failed -- manifest not shipped." >&2
+    echo "  Rows closed here still read running there, which is what makes no_ghost_running" >&2
+    echo "  NO-GO on the pod and blocks the next launch." >&2
+    exit 1
+  fi
   # The manifest last: it must describe exactly what landed.
   ~/bin/podput data/pod_head_manifest.txt /work/aupai/data/pod_head_manifest.txt
   ~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
