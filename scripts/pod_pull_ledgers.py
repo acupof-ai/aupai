@@ -91,17 +91,25 @@ def _keys():
 
 
 def read_pod(rel, pod_root=POD_ROOT):
-    """(text, error). A MISSING file is an error, never an empty ledger.
+    """(text, error). A MISSING file is an error; an EMPTY one is an empty ledger.
 
-    runs/review.jsonl does not exist on the pod today. Returning "" for it would report
-    "0 pod-only rows", which reads as agreement when it means the question was not asked --
-    the shape this repo has bought three times (unmeasured labelled as absent)."""
+    runs/review.jsonl did not exist on the pod at all, and returning "" for that would report
+    "0 pod-only rows", which reads as agreement when it means the question was not asked -- the
+    shape this repo has bought three times (unmeasured labelled as absent).
+
+    AN EMPTY FILE IS A DIFFERENT FACT AND WAS BEING FOLDED INTO THE SAME ERROR. Under 6e's ruling
+    of 2026-09-04 the two absent ledgers were created on the pod as empty files so the transport is
+    symmetric -- and nothing changed, because `not r.stdout.strip()` still returned the error, the
+    survey still reported `n_local 0` for them (the error path reports zeros for BOTH sides), and
+    all 168 local review rows stayed unsendable. An empty ledger has a defined answer to "what do
+    you hold": nothing. Only a file that is not there has no answer.
+
+    The distinction now decides the direction: an empty pod file means every local row is
+    local-only, which is exactly what the push exists to send."""
     p = f"{pod_root}/{rel}"
     r = subprocess.run([os.path.expanduser("~/bin/pod"), f"cat {p}"], capture_output=True, text=True)
-    if r.returncode != 0 or (not r.stdout and "No such file" in (r.stderr or "")):
+    if r.returncode != 0 or "No such file" in (r.stderr or ""):
         return None, f"unreadable on the pod ({(r.stderr or 'rc=%d' % r.returncode).strip()[:90]})"
-    if not r.stdout.strip():
-        return None, "empty or absent on the pod"
     return r.stdout, None
 
 
@@ -729,6 +737,61 @@ def _selftest():
     assert len(rows) == len(_ledgers())
     assert all(r[5] for r in rows), f"a missing pod file reported no error: {rows}"
     assert all(not r[3] for r in rows), "a missing file must offer no rows to append"
+
+    # AN EMPTY POD FILE IS NOT A MISSING ONE, and the two were folded into one error until
+    # 2026-09-04. Under 6e's ruling the two absent ledgers were created on the pod as empty files
+    # so the transport is symmetric -- and nothing changed: `not r.stdout.strip()` still returned
+    # the error, the survey reported n_local 0 for them too (the error path zeroes BOTH sides), and
+    # all 168 local review rows stayed unsendable. An empty ledger has a defined answer to "what do
+    # you hold" -- nothing -- and under --push that answer means every local row is local-only.
+    #
+    # READ_POD ITSELF IS THE SUBJECT, not the survey. The first version of this case passed a stub
+    # reader returning ("", None), which BYPASSES read_pod -- so reverting the fix left it green:
+    # a case that tests the caller cannot test the callee's classification. It fakes the pod
+    # COMMAND instead, one layer lower, so the branch under test actually runs.
+    _real_run = subprocess.run
+
+    def _fake_cat(argv, **kw):
+        class _R:
+            returncode = 0
+            stdout = ""          # the file exists and is empty
+            stderr = ""
+        return _R()
+
+    try:
+        subprocess.run = _fake_cat
+        _txt, _err = read_pod("runs/review.jsonl", pod_root="/work/aupai")
+    finally:
+        subprocess.run = _real_run
+    assert _err is None, f"an EMPTY pod file must not be an error: {_err!r}"
+    assert _txt == "", f"an empty pod file reads as empty text, got {_txt!r}"
+
+    def _fake_absent(argv, **kw):
+        class _R:
+            returncode = 1
+            stdout = ""
+            stderr = "cat: /work/aupai/runs/review.jsonl: No such file or directory"
+        return _R()
+
+    try:
+        subprocess.run = _fake_absent
+        _txt2, _err2 = read_pod("runs/review.jsonl", pod_root="/work/aupai")
+    finally:
+        subprocess.run = _real_run
+    assert _err2 and _txt2 is None, (
+        f"an ABSENT pod file must still error -- 'not asked' must never read as 'agreed': "
+        f"{_txt2!r}, {_err2!r}")
+
+    # And the consequence in the survey: an empty pod file offers every local row to the push.
+    def _empty_pod(rel, pod_root):
+        return "", None
+
+    _erows = {r[0]: r for r in survey(reader=_empty_pod, push=True)}
+    _rev = _erows["runs/review.jsonl"]
+    assert _rev[5] is None and _rev[1] == 0, f"empty pod file: {_rev[5]}, {_rev[1]}"
+    assert _rev[2] > 0 and len(_rev[3]) > 0, (
+        f"the LOCAL count and the sendable set must be real for an empty pod file, got "
+        f"{_rev[2]} local and {len(_rev[3])} sendable -- the error path used to zero both sides")
 
     # A CLOSE MUST CROSS TO THE POD, and this is the case the row-level push could never
     # reach: a close is a second EVENT under an existing key, so diff_rows never calls it
