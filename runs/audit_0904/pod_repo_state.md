@@ -9,10 +9,12 @@ source: pod reads 2026-09-04 03:45-04:05Z via ~/bin/pod and tn exec; repo reads 
 Owner tilerl, pair b0. **Partial at the 3 h mark**, per the standard's "a partial at
 3 hours beats a complete one at 6". What is not yet done is listed in §5, not omitted.
 
-Audit only: nothing was deleted, killed, moved or repaired. Two findings describe live
-processes; both are reported, neither was touched.
+Audit only: nothing was deleted, killed, moved or repaired. Two findings described live
+processes; both were reported, neither was touched, and **both ended on their own during
+the audit** (PR-11): the `/work/tl-ab` job on card 7 and the Stage E training run, which
+exited normally into its scoring chain.
 
-Ten findings: six S2, four S3, **no S1**. PR-1 and PR-3 were drafted S1 and restated S2 on
+Eleven findings: six S2, five S3, **no S1**. PR-1 and PR-3 were drafted S1 and restated S2 on
 the controller's ruling — no published number or decision is wrong; what is wrong is a
 label that conflates two properties (see PR-1).
 
@@ -71,6 +73,7 @@ cross-checked against `etimes` (seconds since start, zone-free).
 | KEEP pins (`*milestone_*`) | 22 | 22 | all, by inode |
 | KEEP-claimed names in the 09-04 candidates file | 37 | 37 | all |
 | rolling `.stepN` checkpoints | 153 | 153 | all, by inode |
+| container processes (PR-11 sweep) | 4,306 | 4,306 | all |
 
 ## 4. Findings
 
@@ -86,6 +89,7 @@ cross-checked against `etimes` (seconds since start, zone-free).
 | PR-8 | S2 | 26 (fact id, checkpoint) references exist across `facts/*.json` | existence test on the pod at 03:5xZ | **16 present, 10 absent.** Two of the ten are **my parser's artifacts**, not real: `ckpt_params_leg_438m_3p76b.pt{'statistic':` and `...step{2500` come from splitting a brace-expansion string and a nested dict, so the true absent count is **8**. The 8 overlap the `ckpt_facts_sources_present` WARN already in the harness — this is not a new discovery, it is a second instrument agreeing |
 | PR-9 | S2 | `runs/pod_ckpt_candidates_2026-09-04.txt` line 15 records the inode-pin mechanism (§162): a KEEP line in a text file is invisible to the roller, which exempts by inode | pod: `st_ino` of every `*.pt*`, cross-referenced against names containing `.milestone_`; selector `*.pt.step*` minus `.interrupt` = 153 (b0's `ckpt_*.step[0-9]*` = 149; the difference is the bare-prefix `ckpt.pt.stepN` files) | **153 rolling `.stepN` files, 12 inode-pinned, 141 unpinned.** Of the 141, exactly **one is named as the source of a live fact**: `ckpt_pretrain_15b_s1.pt.step15000` → `be.adjacent_checkpoint_jitter`. Its run is **not active** (see PR-10), so no roller will rotate it today — the exposure is latent, not live. The other 140 belong to finished runs no fact cites |
 | PR-10 | S3 | — | `ps -eo pid,etimes,args` in the container: pid `1238204`, **255,245 s = 2.95 days**, `tail -f runs/ms_ckpt_pretrain_15b_s1.pt.step15500.log` | An orphaned `tail -f` has held a file descriptor since 2026-09-01. Harmless (no GPU, negligible CPU, the log is not large) and **not killed** — reported per the audit's no-kill rule. It is the reason a naive `ps | grep pretrain_15b_s1` reads as "that run is alive", which is what made PR-9's exposure look live before the cmdline was read |
+| PR-11 | S3 | The container runs the jobs the roster names | `ps -eo pid,ppid,stat,etimes,rss,args` in-container + `tn exec` host cmdline/cgroup, 2026-09-04T04:33-04:40Z | **4,306 processes, 3,958 of them zombies** (92%), all ppid 1 — `sleep infinity` never reaps. Growing ~300/day, 2 in the ten minutes watched. S3 not S2 because nothing is near a limit: `pids.current` 4,647 vs cgroup `pids.max` **max**, 4,307 PIDs vs `pid_max` 4,194,303, zombie RSS 0. Live non-zombie 347: **307** `tail -F events.jsonl` (cwd `/sgl-workspace/sglang`, one per ~305 s from Aug 30 12:09 to Aug 31 12:05, then stopped), 17 `tail -f /work/*.log` (another project), 6 stale `tail -f runs/*.log`, **3 non-terminating `until [ -f … ]` loops** waiting on `data/code_supply/measure_{partial,minhash}.json` — neither file exists and that directory has not been written since Aug 30 14:47, so they poll every 8-12 s forever with no iteration cap. Full breakdown and the unaccounted list in the PR-11 section below |
 
 ## 5. What this audit has NOT checked
 
@@ -253,3 +257,91 @@ otherwise.
 repository, the KV pool code is mine, and `48ae458` — the commit that supersedes the fact —
 is my own. I recomputed the arithmetic from the file rather than from memory of having
 written it. Discount accordingly.
+
+## PR-11 — systematic orphan sweep (2026-09-04T04:33-04:40Z, read-only)
+
+Assigned after the partial: every container process holding a GPU or older than 1 h, with
+what accounts for it. **No kills.** The untraced PID 2878900 folds in here.
+
+### Population
+
+`ps -eo pid,ppid,stat,etimes,rss,args` inside the container, plus `tn exec` on the host for
+cmdline and cgroup where the container view is namespaced.
+
+| class | count | accounted? |
+|---|---|---|
+| **zombies** (`stat ~ Z`, all reparented to pid 1) | **3,958** | **unaccounted** — see below |
+| `tail -n 0 -F /work/aupai/runs/events.jsonl` | **307** | **unaccounted**, but not ours: cwd is `/sgl-workspace/sglang` |
+| `tail -f /work/*.log` (wlad, rec, mcc, fus, amp, scalemmlu, …) | 17 | not ours — `/work/*.log`, another project's logs |
+| `tail -f runs/*.log` (aupai logs) | 6 | **unaccounted** — leftover watchers, oldest 2.98 d |
+| `until [ -f … ]` wait-loops | 3 | **unaccounted, and non-terminating** — see below |
+| live GPU processes | 2 | **accounted**: arm 1's scoring chain |
+| `sleep infinity` (pid 1, container init) | 1 | accounted — the container's entrypoint |
+| **live non-zombie total** | **347** | |
+
+Total processes 4,306; 92% are zombies.
+
+### The zombies are still accumulating, and nothing reaps them
+
+All 3,958 have **ppid 1**, which is `sleep infinity` — a shell builtin that never calls
+`wait()`. By age: **5 under 1 h, 321 in 1–24 h, 3,632 over 24 h**; 2 created in the ten
+minutes I watched, so roughly **300/day**. By name: `python3` 3,095, `bash` 662, `python`
+51, `pt_elastic` 35, `python3.12` 21, `sleep` 16.
+
+**Severity S3, not S2, and the reason is measured**: `pids.current` is 4,647 against a
+cgroup `pids.max` of `max`, and 4,307 PIDs against `pid_max` 4,194,303. Nothing is near a
+limit, each zombie holds only a PID and its exit status (RSS 0), and no work is blocked. It
+is unbounded growth with ~4,000 head start and no ceiling in sight — worth fixing, not
+worth interrupting the audit for.
+
+### Three wait-loops that can never finish
+
+```
+138628  until [ -f data/code_supply/measure_partial.json ]; do sleep 8;  done   4.60 d
+143189  until [ -f data/code_supply/measure_partial.json ]; do sleep 12; done   4.59 d
+154607  until [ -f data/code_supply/measure_minhash.json ]; do sleep 10; done   4.58 d
+```
+
+cwd `/work/aupai` for all three. **Neither file exists**, and
+`data/code_supply/` has not been written since **Aug 30 14:47** — it holds only
+`measure_exact.json` and `measure_fertility.json`. The producers died 4.6 days ago; these
+poll every 8–12 s forever. Harmless in resource terms (RSS ~4 MB each, a sleep per tick)
+and a clean example of the shape `AGENTS.md` already warns about: **every `until`/`find`
+loop carries an iteration cap.** These have none.
+
+### PID 2878900 — resolved, and the resolution corrects PR-3's population
+
+`nvidia-smi` listed it at 40,240 MiB at 03:49:0xZ; it was absent from the next query
+seconds later and is **GONE** from the host `/proc` now. It was almost certainly a
+transient phase of the `/work/tl-ab` job, whose main PID **2880373 has also now ended** on
+its own. **Card 7 is idle; all eight cards read 0 MiB except card 5 (2,244 MiB, foreign).**
+The job PR-1/PR-3 describe is over, and nothing was killed to end it.
+
+### A false alarm I generated inside this sweep, and the mechanism
+
+Reading the two current GPU PIDs from `nvidia-smi` (3037812, 3067419) and testing them with
+`ls /proc/<pid>` **inside the container** returned "No such file", which reads as *both GPU
+holders are foreign*. They are not: from the host they are
+`eval/score_matrix.py --ckpt ckpt_b0_se_16lnew_1b.pt` and `eval/lambada_en.py`, both in
+cgroup `827d3e58…` — **ours**, arm 1's scoring chain. `nvidia-smi` reports **host** PIDs
+while container `ps` shows **namespaced** ones, so testing a host PID against the container
+`/proc` always fails. This is PR-1's mechanism a second time: an identity question answered
+with an instrument whose namespace does not match the one the identifier came from.
+
+Consequence for the report: **the Stage E training job also finished during the sweep**
+(pids 2453605/2453606, 52 GB each, alive at 03:49Z, gone by 04:37Z). It exited normally —
+`runs/b0_se_16lnew_1b.log` shows the run completing and the scoring chain proceeding
+through lambada_zh, math_v2_like and domain_bpb. Not a crash, and not caused by anything
+here.
+
+### Unaccounted list — what gets acted on after the audit closes
+
+1. **3,958 zombies**, growing ~300/day, ppid 1 (`sleep infinity` never reaps). Needs an
+   init that waits, or the spawner to reap its own children.
+2. **307 `tail -F events.jsonl`**, cwd `/sgl-workspace/sglang`, one per ~305 s between
+   **Aug 30 12:09 and Aug 31 12:05**, then stopped. Not ours to kill — the cwd says
+   another project — but they hold FDs on **our** events file.
+3. **3 non-terminating wait-loops** on files whose producers died 2026-08-30.
+4. **6 stale `tail -f runs/*.log`** on aupai logs, up to 2.98 d old, including PR-10's.
+
+Every one is read-only-safe to kill by exact PID; none was killed.
