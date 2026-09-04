@@ -42,6 +42,11 @@ CLAIM_DIR = os.environ.get("AUPAI_CLAIM_DIR") or os.path.join(ROOT, "runs", "cla
 # Below this, a card counts as free. Idle H20s report a few MiB of context, and the settle
 # windows elsewhere in the repo use the same figure.
 FREE_MIB = 64
+# The seam nvidia_fds reads through, so the selftest can build a /proc-shaped world on macOS.
+PROC_ROOT = "/proc"
+# How long a launch waits for the job to open a device. Measured 1.33s on the pod in the harness
+# wrapper shape; 90s is ~68x that and is NOT waiting for build_mix, which runs after set_device.
+DEVICE_WAIT_S = 90.0
 
 
 def _now():
@@ -179,6 +184,71 @@ def _cvd_mismatch(pid, cards):
     if got == want:
         return None
     return val, f"visible {sorted(got) or ['none']} vs claimed {sorted(want)}"
+
+
+def nvidia_fds(pid):
+    """How many nvidia device fds pid holds, or None when that cannot be read.
+
+    None IS NOT ZERO and never refuses, the same rule _cvd follows for an absent
+    CUDA_VISIBLE_DEVICES. /proc does not exist on macOS, where the selftest runs, so a predicate
+    that refused on an unreadable pid would refuse every claim on a laptop for a reason that has
+    nothing to do with cards.
+
+    Why fds and not nvidia-smi: `nvidia-smi --query-compute-apps` inside the pod's container
+    reports HOST-namespace pids -- 3796003/3796004 while the container's own ranks were
+    842276/842277 (measured 2026-09-04). Matching a claim against that list would refuse every
+    correct claim on the pod. /proc/<pid>/fd is namespace-local and agrees with the process it
+    describes.
+
+    Measured on the pod, cards 3/4, the harness wrapper shape: `import torch` alone opens 0,
+    torch.cuda.set_device opens 34 within 1.3s and 48 shortly after, torchrun itself holds 36,
+    a rank holds 52. So >0 means the process has actually touched a card, and 0 on a live
+    non-shell process is the b0_mem_m1 defect: at that instant the pid exists, is not a shell,
+    and holds no device.
+
+    PROC_ROOT is the seam the selftest moves, like FOREIGN_ROOT -- macOS cannot produce a real
+    /proc, so the worlds build one out of real directories and real symlinks."""
+    try:
+        entries = os.listdir(f"{PROC_ROOT}/{pid}/fd")
+    except OSError:
+        return None
+    n = 0
+    for e in entries:
+        try:
+            if "nvidia" in os.readlink(f"{PROC_ROOT}/{pid}/fd/{e}"):
+                n += 1
+        except OSError:
+            continue  # the fd closed between listdir and readlink
+    return n
+
+
+def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
+    """The descendant of pid that holds a GPU device, waiting up to `deadline`. (pid, fds) or None.
+
+    THE WAIT AND THE CHECK ARE ONE CONDITION, which is the whole point. Polling until a
+    descendant is "not a shell" returns at t=0.11s on the pod, 1.22s before any device fd exists,
+    so it answers a question nobody asked. Polling until a descendant HOLDS a device closes both
+    halves: the pid is the job, and it is provably on a card at claim time.
+
+    Deadline 90s against a measured 1.33s. It does not have to cover build_mix's cache load --
+    train.py calls setup_ddp (torch.cuda.set_device, train.py:2019-2023) at :2248 and build_mix
+    only at :2355, so devices are open seconds after exec even on a run that then spends 2.5
+    minutes reading 156 GB.
+
+    Returns None when /proc is unreadable, so a caller on macOS falls back rather than waiting
+    90s for an answer that cannot arrive. Callers must distinguish that from a real timeout:
+    ask nvidia_fds(pid) is None."""
+    end = time.time() + deadline
+    while True:
+        for p, _a in _job_descendants(pid):
+            n = nvidia_fds(p)
+            if n is None:
+                return None  # no /proc: this predicate has no opinion here
+            if n:
+                return p, n
+        if not _alive(pid) or time.time() >= end:
+            return None
+        time.sleep(interval)
 
 
 def _alive(pid):
@@ -584,6 +654,32 @@ def acquire(name, cards, wait=0, note="", pid=None):
                     f"cards the job can see, or relaunch with the variable set to "
                     f"{','.join(str(c) for c in cards)}. (Read at exec time: a value set inside "
                     f"the process after start is invisible here and never refuses.)")
+            # REFUSE A PID THAT HOLDS NO CARD. The shell refusal above is necessary and not
+            # sufficient: measured on the pod in the harness wrapper shape, the first non-shell
+            # descendant appears at t=0.11s holding ZERO device fds and the first fd appears at
+            # t=1.33s -- a 1.22s window in which a pid passes every test above and is not yet on
+            # a card. b0_mem_m1's claim landed in exactly that window: the claimed 842204 held 0
+            # fds while 842220/842240 held 36 and rank 842276 held 52, so `status` reported STALE
+            # plus "ORPHAN card 1 holds 1179 MiB with no claim" for a correctly running arm, and
+            # any sweep could have reclaimed two cards from under it.
+            #
+            # None (no /proc, e.g. macOS) proceeds -- see nvidia_fds.
+            devs = nvidia_fds(holder)
+            if devs == 0:
+                holders = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
+                holders = [(p, a, n) for p, a, n in holders if n]
+                msg = (f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
+                       f"A claim on a process that is not on a card protects nothing: the card "
+                       f"reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).")
+                if holders:
+                    msg += "\nIts descendants that DO hold a device -- claim one of these:\n" + "\n".join(
+                        f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in holders[:6])
+                else:
+                    msg += ("\nNo descendant holds one yet either. Wait for the job to reach "
+                            "torch.cuda.set_device (~1.3s after exec, measured) and claim then.")
+                return False, msg
+            if devs:
+                claim["device_fds"] = devs
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
             try:
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
@@ -1103,8 +1199,181 @@ def _selftest():
             tree.kill()
             tree.wait()
 
+    # ------------------------------------------------------- 4c item 1, 2026-09-05
+    # A CLAIM MUST NAME A PID THAT HOLDS A CARD. b0_mem_m1: the claimed 842204 held 0 device fds
+    # while 842220/842240 held 36 and rank 842276 held 52, so status reported STALE plus "ORPHAN
+    # card 1 holds 1179 MiB with no claim" for a correctly running arm.
+    #
+    # macOS HAS NO /proc, so the fd worlds are built out of real directories and real symlinks
+    # and read through PROC_ROOT. That is the same seam FOREIGN_ROOT uses. It does mean these
+    # cases prove the COUNTING and the REFUSAL, not that /proc/<pid>/fd on Linux looks like this
+    # -- the shape was measured on the pod instead (torch import 0 fds, set_device 34 then 48,
+    # torchrun 36, a rank 52) and that measurement is what the numbers here stand in for.
+    _saved_proc = PROC_ROOT
+    proot = tempfile.mkdtemp(prefix="proc_")
+
+    def _fake_proc(pid, nvidia=0, other=0):
+        fd = os.path.join(proot, str(pid), "fd")
+        os.makedirs(fd, exist_ok=True)
+        for i in range(nvidia):
+            os.symlink(f"/dev/nvidia{i}", os.path.join(fd, str(i)))
+        for i in range(other):
+            os.symlink("/dev/null", os.path.join(fd, str(100 + i)))
+
+    try:
+        globals()["PROC_ROOT"] = proot
+        _fake_proc(4242, nvidia=52, other=9)
+        _case(nvidia_fds(4242) == 52,
+              f"nvidia_fds counts only nvidia links, not every fd ({nvidia_fds(4242)} of 61)")
+        _fake_proc(4243, nvidia=0, other=7)
+        _case(nvidia_fds(4243) == 0, "a process with fds but no device reads 0, not None")
+
+        # W4, THE NEGATIVE CONTROL, and the load-bearing case of the four. An unreadable pid must
+        # read None and None must never refuse -- /proc does not exist on macOS, so a predicate
+        # that refused here would refuse every claim on a laptop and turn this selftest red for a
+        # reason unrelated to cards. Asserting only "0 refuses" would pass a version that treats
+        # unreadable as 0, which is precisely the version that breaks every laptop.
+        _case(nvidia_fds(999999) is None, "an unreadable pid reads None, which is not 0")
+        me_ok, me_msg = acquire("w4_noproc", ["4"], pid=me)
+        _case(me_ok, f"W4: a claim proceeds when the device cannot be read ({me_msg[:52]})")
+        if me_ok:
+            got = _read(os.path.join(CLAIM_DIR, claim_file("w4_noproc", ["4"])))
+            _case("device_fds" not in (got or {}),
+                  "and it records no device_fds rather than recording 0")
+            release("w4_noproc")
+
+        # W1: the claimed pid holds nothing while a descendant holds a card. THIS process is the
+        # holder, so its real descendants are whatever the selftest spawned -- give it a fake
+        # /proc entry with 0 and let the refusal name what it found.
+        _fake_proc(me, nvidia=0, other=4)
+        ok, msg = acquire("w1_nodev", ["4"], pid=me)
+        _case(not ok and "holds no GPU device fd" in msg,
+              f"W1: a pid holding 0 device fds is refused ({msg.splitlines()[0][:58]})")
+        _case(not ok and ("--pid" in msg or "No descendant holds one yet" in msg),
+              "and the refusal says what to claim instead, not just that it failed")
+
+        # And the positive: the same pid with a device is accepted, and the count is recorded.
+        # Without this case W1 passes for a version that refuses everything.
+        _fake_proc(me, nvidia=36)
+        ok, msg = acquire("w1_dev", ["4"], pid=me)
+        _case(ok, f"W1 positive: the same pid WITH a device is accepted ({msg[:48]})")
+        if ok:
+            got = _read(os.path.join(CLAIM_DIR, claim_file("w1_dev", ["4"])))
+            _case((got or {}).get("device_fds") == 36,
+                  f"and the claim records device_fds={(got or {}).get('device_fds')}")
+            release("w1_dev")
+
+        # W2: wait_for_device must not bind a pid that exits during the poll. A dead wrapper ends
+        # the wait -- the deadline is the backstop, not the mechanism, or a launch whose job died
+        # at once would block for the full 90s.
+        dead = subprocess.Popen(["bash", "-c", "exit 0"])
+        dead.wait()
+        t0 = time.time()
+        got = wait_for_device(dead.pid, deadline=5.0, interval=0.1)
+        el = time.time() - t0
+        _case(got is None and el < 2.0,
+              f"W2: a pid that is gone ends the wait at once, claiming nothing ({el:.2f}s)")
+
+        # W2b: a live pid whose descendants never open a device times out. Bounded, and it
+        # returns None rather than the pid it found -- "not a shell" is no longer sufficient.
+        #
+        # `; true` FORCES THE FORK. Without it bash EXECs the single command and the wrapper pid
+        # BECOMES python, so there is no descendant at all -- and then W2b passes because the
+        # world is empty rather than because the timeout works, which is §186 exactly. Measured:
+        # 0 descendants, the case green, the accept path below unreachable. The de-34 world
+        # documents the same trap; it caught this one 20 lines later.
+        idle = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(1.0)
+            kids2 = _job_descendants(idle.pid)
+            _case(bool(kids2), f"world: the idle tree has a python descendant ({len(kids2)})")
+            for q, _a in kids2:
+                _fake_proc(q, nvidia=0, other=3)
+            t0 = time.time()
+            got = wait_for_device(idle.pid, deadline=1.5, interval=0.1)
+            _case(got is None, "W2b: a descendant that never opens a device is not claimed")
+            _case(time.time() - t0 >= 1.4, "and the wait actually waited its deadline")
+        finally:
+            for q, _a in _descendants(idle.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            idle.kill()
+            idle.wait()
+
+        # W3, AND IT DOES NOT BEHAVE THE WAY THE SPEC ASSUMED. "keep walking the tree from the
+        # wrapper" is not available: when the intermediate shell exits, the job REPARENTS to init
+        # and leaves the wrapper's subtree entirely. MEASURED on this laptop -- outer bash 79367,
+        # its python at ppid 1, _job_descendants(79367) == [] with the python still running.
+        # A ppid walk cannot see a process that is no longer a descendant, on either platform.
+        #
+        # So the honest behaviour is a TIMEOUT that claims nothing, which the launcher already
+        # reports. That is safe (no wrong pid is bound) and it is a real limit, not a fix: a job
+        # launched through a shell that exits gets no claim at all. The pod's own launches do not
+        # have this shape -- harness's wrapper waits for torchrun, and the setsid form detaches
+        # deliberately before the claim is attempted -- which is why this is recorded rather than
+        # worked around.
+        orph = subprocess.Popen(
+            ["bash", "-lc", 'bash -c \'python3 -c "import time; time.sleep(8)" & exit 0\'; sleep 8'],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True)
+        try:
+            time.sleep(1.5)
+            reparented = [(q, pp) for q, pp, a in _ps_table() if "time.sleep(8)" in a and pp == 1]
+            _case(bool(reparented),
+                  f"world: the job really did reparent out of the tree (ppid 1): {reparented[:1]}")
+            _case(not _job_descendants(orph.pid),
+                  "W3: the ppid walk cannot see it -- so the poll finds nothing to claim")
+            for q, _pp in reparented:
+                _fake_proc(q, nvidia=48)
+            got = wait_for_device(orph.pid, deadline=1.0, interval=0.1)
+            _case(got is None,
+                  "and it claims nothing even though a process on a card exists (a limit, "
+                  "not a fix: an exited intermediate shell yields no claim)")
+        finally:
+            for q, _pp, a in _ps_table():
+                if "time.sleep(8)" in a:
+                    try:
+                        os.kill(q, 9)
+                    except OSError:
+                        pass
+            orph.kill()
+            orph.wait()
+
+        # The accept path end to end: a wrapper whose live descendant holds a device is found and
+        # returned. Without it every case above passes for a wait_for_device that returns None
+        # unconditionally (§186: an absence assertion is satisfied by code that never runs).
+        good = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(1.0)
+            kids3 = _job_descendants(good.pid)
+            for q, _a in kids3:
+                _fake_proc(q, nvidia=52)
+            got = wait_for_device(good.pid, deadline=3.0, interval=0.1)
+            _case(got is not None and got[1] == 52,
+                  f"the accept path returns the device-holding descendant: {got}")
+            _case(got is not None and got[0] in {q for q, _a in kids3},
+                  "and it is a real descendant, not the wrapper")
+        finally:
+            for q, _a in _descendants(good.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            good.kill()
+            good.wait()
+    finally:
+        globals()["PROC_ROOT"] = _saved_proc
+        shutil.rmtree(proot, ignore_errors=True)
+
     # ------------------------------------------------------------------ 6e ruling 2026-09-04
     # FOREIGN: a card runs/card_assignment.json marks as another container's or the user's must
+
     # NOT print as ORPHAN. ORPHAN's instruction is "find it and reclaim it", and e1 got
     # "ORPHAN card 7 27,809 MiB" for the user's own job -- the third reader of that line would
     # have acted on it. Both directions, and the negative is the load-bearing one: the SAME
