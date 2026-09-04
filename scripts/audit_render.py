@@ -164,8 +164,13 @@ def read_report(path):
     pair_checks = {}
     m = re.search(r"##\s*Pair check(.*?)(?=\n## |\Z)", text, re.S | re.I)
     if m:
-        for pm in re.finditer(r"\b([A-Z]{1,3}-?\d+)\b.*?\b(held|failed)\b", m.group(1)):
-            pair_checks[pm.group(1)] = pm.group(2)
+        for pm in re.finditer(
+            r"\b([A-Z]{1,3}-?\d+)\b.*?\b(held|holds?|fails?|failed)\b",
+            m.group(1),
+            re.I,
+        ):
+            verdict = "held" if pm.group(2).lower().startswith("h") else "failed"
+            pair_checks[pm.group(1)] = verdict
 
     blind_spots, open_qs = [], []
     section = None
@@ -528,6 +533,10 @@ A non-finding table later in the same section must be ignored, not unparsed:
 ## 6. Open questions
 
 1. decide something
+
+## Pair check
+
+T-1 holds on the numbers; T-2 fails the sign check.
 """
     shuffled = good.replace(
         "| id | sev | claim as published | evidence | what contradicts it |",
@@ -542,6 +551,7 @@ A non-finding table later in the same section must be ignored, not unparsed:
         assert rep["findings"][2]["evidence"] == "`grep -c 'a\\|b'` returns 0"
         assert rep["findings"][3]["severity"] == "ND"
         assert not rep["unparsed"], rep["unparsed"]
+        assert rep["pair_checks"] == {"T-1": "held", "T-2": "failed"}, rep["pair_checks"]
         assert rep["blind_spots"] == ["nothing"]
         assert rep["open_qs"] == ["decide something"]
         open(ap, "w").write(shuffled)
