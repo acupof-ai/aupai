@@ -1,0 +1,315 @@
+# deletion plan from pod_ckpt_candidates_2026-09-04.txt, scan of 361 files
+rm ckpt_0830v1_0.2b.pt.ep1    # 0.89 GB
+rm ckpt_0830v1_0.3b.pt.ep1    # 0.89 GB
+rm ckpt_0830v1_0.4b.pt.ep1    # 0.89 GB
+rm ckpt_0830v1_0.8b.pt.ep1    # 0.89 GB
+rm ckpt_0830v1_1.6b.pt.ep1    # 0.89 GB
+rm ckpt_0830v1_1.6b.pt.step1000    # 0.96 GB
+rm ckpt_0830v1_3.24b.pt.step1000    # 0.96 GB
+rm ckpt_0830v1_3.24b.pt.step2000    # 0.96 GB
+rm ckpt_0830v1_3.24b.pt.step3000    # 0.96 GB
+rm ckpt_0830v1_repeat4.pt.step1000    # 0.96 GB
+rm ckpt_0830v1_repeat4.pt.step2000    # 0.96 GB
+rm ckpt_ablation_base.pt.ep1    # 0.41 GB
+rm ckpt_b4_no_bv.pt    # 0.41 GB
+rm ckpt_b4_no_bv.pt.ep1    # 0.89 GB
+rm ckpt_b4_no_sg.pt    # 0.41 GB
+rm ckpt_b4_no_sg.pt.ep1    # 0.89 GB
+rm ckpt_b4_profile.pt    # 0.41 GB
+rm ckpt_b4_profile.pt.ep1    # 0.89 GB
+rm ckpt_b7_bucket25.pt    # 0.41 GB
+rm ckpt_b7_bucket25.pt.ep1    # 0.89 GB
+rm ckpt_b7_bucket50.pt    # 0.41 GB
+rm ckpt_b7_bucket50.pt.ep1    # 0.89 GB
+rm ckpt_b_b16.pt.ep1    # 0.41 GB
+rm ckpt_b_b16_ar.pt.ep1    # 0.41 GB
+rm ckpt_b_b24.pt.ep1    # 0.41 GB
+rm ckpt_b_b32.pt.ep1    # 0.41 GB
+rm ckpt_c_b32_ar4.pt.ep1    # 0.41 GB
+rm ckpt_combo_b50_simple.pt    # 0.41 GB
+rm ckpt_combo_b50_simple.pt.ep1    # 0.89 GB
+rm ckpt_d_g6_dm.pt.ep1    # 0.41 GB
+rm ckpt_d_g8_nodm.pt.ep1    # 0.41 GB
+rm ckpt_dm_docmask.pt.ep1    # 0.41 GB
+rm ckpt_dm_nodocmask.pt.ep1    # 0.41 GB
+rm ckpt_f_b32_base.pt.ep1    # 0.41 GB
+rm ckpt_fullmla_0.2b_0830.pt    # 0.41 GB
+rm ckpt_fullmla_0.2b_0830.pt.ep1    # 0.89 GB
+rm ckpt_g_b24_ar4.pt.ep1    # 0.41 GB
+rm ckpt_k4_11b_lr05.pt.ep1    # 0.41 GB
+rm ckpt_k5_arith_bpe.pt.step200    # 0.48 GB
+rm ckpt_k5_clean_0827.pt.ep1    # 0.89 GB
+rm ckpt_k5_clean_0827.pt.step1000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step10000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step11000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step12000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step2000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step3000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step4000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step5000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step6000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step7000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step8000    # 0.96 GB
+rm ckpt_k5_clean_0827.pt.step9000    # 0.96 GB
+rm ckpt_k6_arith2.pt.step200    # 0.48 GB
+rm ckpt_k6_arith2.pt.step400    # 0.48 GB
+rm ckpt_k6_arith3.pt.step200    # 0.48 GB
+rm ckpt_k6_arith4.pt.step200    # 0.48 GB
+rm ckpt_k6_arith4.pt.step400    # 0.48 GB
+rm ckpt_k6_arith5.pt.step200    # 0.48 GB
+rm ckpt_k6_arith5.pt.step400    # 0.48 GB
+rm ckpt_k6_fone.pt.ep1    # 0.89 GB
+rm ckpt_k6_fone.pt.step10000    # 0.96 GB
+rm ckpt_k6_fone.pt.step11000    # 0.96 GB
+rm ckpt_k6_fone.pt.step12000    # 0.96 GB
+rm ckpt_k7_v3.pt.ep1    # 0.89 GB
+rm ckpt_k7_v3.pt.step1000    # 0.96 GB
+rm ckpt_k7_v3.pt.step2000    # 0.96 GB
+rm ckpt_k7_v3.pt.step3000    # 0.96 GB
+rm ckpt_k8_v3_fone.pt.ep1    # 0.89 GB
+rm ckpt_k8_v3_fone.pt.step1000    # 0.96 GB
+rm ckpt_k8_v3_fone.pt.step2000    # 0.96 GB
+rm ckpt_k8_v3_fone.pt.step3000    # 0.96 GB
+rm ckpt_lrprobe_0.85.pt    # 0.99 GB
+rm ckpt_lrprobe_0.85.pt.ep1    # 2.04 GB
+rm ckpt_lrprobe_1.2.pt    # 0.99 GB
+rm ckpt_lrprobe_1.2.pt.ep1    # 2.04 GB
+rm ckpt_nccl_ab_baseline.pt    # 0.41 GB
+rm ckpt_nccl_ab_baseline.pt.ep1    # 0.89 GB
+rm ckpt_nccl_bucket25.pt    # 0.41 GB
+rm ckpt_nccl_bucket25.pt.ep1    # 0.89 GB
+rm ckpt_nccl_bucket50.pt    # 0.41 GB
+rm ckpt_nccl_bucket50.pt.ep1    # 0.89 GB
+rm ckpt_p02_a1_s2.pt    # 0.39 GB
+rm ckpt_p02_a1_s2.pt.ep1    # 0.84 GB
+rm ckpt_p02_fp32m_s0.pt    # 0.41 GB
+rm ckpt_p02_fp32m_s0.pt.ep1    # 1.37 GB
+rm ckpt_p02_fp32m_s1.pt    # 0.41 GB
+rm ckpt_p02_fp32m_s1.pt.ep1    # 1.37 GB
+rm ckpt_p02_fp32m_s2.pt    # 0.41 GB
+rm ckpt_p02_fp32m_s2.pt.ep1    # 1.37 GB
+rm ckpt_p02_fp32m_s3.pt    # 0.41 GB
+rm ckpt_p02_fp32m_s3.pt.ep1    # 1.37 GB
+rm ckpt_p02_probe_s0.pt    # 0.41 GB
+rm ckpt_p02_probe_s0.pt.ep1    # 0.89 GB
+rm ckpt_p02_rep_s2.pt    # 0.41 GB
+rm ckpt_p02_rep_s2.pt.ep1    # 0.89 GB
+rm ckpt_p02_s0.pt    # 0.41 GB
+rm ckpt_p02_s0.pt.ep1    # 0.89 GB
+rm ckpt_p02_s1.pt    # 0.41 GB
+rm ckpt_p02_s1.pt.ep1    # 0.89 GB
+rm ckpt_p02_s2.pt    # 0.41 GB
+rm ckpt_p02_s2.pt.ep1    # 0.89 GB
+rm ckpt_p02_s3.pt    # 0.41 GB
+rm ckpt_p02_s3.pt.ep1    # 0.89 GB
+rm ckpt_p02_sc_base.pt    # 0.41 GB
+rm ckpt_p02_sc_base.pt.ep1    # 0.89 GB
+rm ckpt_p02_sc_patched.pt    # 0.41 GB
+rm ckpt_p02_sc_patched.pt.ep1    # 0.89 GB
+rm ckpt_p03.pt    # 0.41 GB
+rm ckpt_p03.pt.ep1    # 0.89 GB
+rm ckpt_p04.pt    # 0.41 GB
+rm ckpt_p04.pt.ep1    # 0.89 GB
+rm ckpt_p08.pt    # 0.41 GB
+rm ckpt_p08.pt.ep1    # 0.89 GB
+rm ckpt_p16.pt    # 0.41 GB
+rm ckpt_p16.pt.ep1    # 0.89 GB
+rm ckpt_p16.pt.step1000    # 0.96 GB
+rm ckpt_p324.pt.ep1    # 0.89 GB
+rm ckpt_p324.pt.step1000    # 0.96 GB
+rm ckpt_p324.pt.step2000    # 0.96 GB
+rm ckpt_p324.pt.step3000    # 0.96 GB
+rm ckpt_p47_s1.pt    # 0.41 GB
+rm ckpt_p47_s1.pt.ep1    # 0.89 GB
+rm ckpt_p47_s1.pt.step25    # 0.96 GB
+rm ckpt_p47_s1.pt.step50    # 0.96 GB
+rm ckpt_p47_s2.pt    # 0.41 GB
+rm ckpt_p47_s2.pt.ep1    # 0.89 GB
+rm ckpt_p47_s2.pt.step100    # 0.96 GB
+rm ckpt_p47_s2.pt.step75    # 0.96 GB
+rm ckpt_pretrain_15b_s1.pt.ep1    # 0.89 GB
+rm ckpt_pretrain_15b_s1.pt.step15500    # 0.96 GB
+rm ckpt_pretrain_30b_s2.pt.step25500    # 0.96 GB
+rm ckpt_pretrain_30b_s2.pt.step26000    # 0.96 GB
+rm ckpt_proberesume.pt    # 0.99 GB
+rm ckpt_proberesume.pt.ep1    # 2.04 GB
+rm ckpt_proberesume.pt.step20    # 2.11 GB
+rm ckpt_proberesume.pt.step40    # 2.11 GB
+rm ckpt_proberesume.pt.step60    # 2.11 GB
+rm ckpt_profile_noattn.pt    # 0.41 GB
+rm ckpt_profile_noattn.pt.ep1    # 0.89 GB
+rm ckpt_profile_probe.pt    # 0.41 GB
+rm ckpt_profile_probe.pt.ep1    # 0.89 GB
+rm ckpt_rehearse_join.pt    # 0.41 GB
+rm ckpt_rehearse_join.pt.ep1    # 0.89 GB
+rm ckpt_rehearse_resume.pt    # 0.41 GB
+rm ckpt_rehearse_resume.pt.ep1    # 0.89 GB
+rm ckpt_sft_p324_v1.pt    # 0.41 GB
+rm ckpt_sft_p324_v1.pt.step200    # 0.48 GB
+rm ckpt_sft_p324_v1.pt.step400    # 0.48 GB
+rm ckpt_sft_p324_v2.pt.step200    # 0.48 GB
+rm ckpt_sft_p324_v2.pt.step400    # 0.48 GB
+rm ckpt_sft_p324_v3.pt.step200    # 0.48 GB
+rm ckpt_sft_p324_v3.pt.step400    # 0.48 GB
+rm ckpt_sft_p324_v4.pt.step200    # 0.48 GB
+rm ckpt_sft_p324_v4.pt.step400    # 0.48 GB
+rm ckpt_sft_p324_v5.pt.step200    # 0.48 GB
+rm ckpt_sft_p324_v5.pt.step400    # 0.48 GB
+rm ckpt_shape500_b32.pt    # 0.99 GB
+rm ckpt_shape500_b32.pt.ep1    # 2.04 GB
+rm ckpt_shape500_probe.pt    # 0.99 GB
+rm ckpt_shape500_probe.pt.ep1    # 2.04 GB
+rm ckpt_single_gpu.pt    # 0.41 GB
+rm ckpt_single_gpu.pt.ep1    # 0.89 GB
+rm ckpt_sw_ar4_72.pt.ep1    # 0.41 GB
+rm ckpt_sw_base72.pt.ep1    # 0.41 GB
+rm ckpt_t38_kill.pt.step20    # 0.96 GB
+rm ckpt_t38_kill.pt.step40    # 0.96 GB
+rm ckpt_t38_ref.pt    # 0.41 GB
+rm ckpt_t38_ref.pt.ep1    # 0.89 GB
+rm ckpt_t38_ref.pt.step20    # 0.96 GB
+rm ckpt_t38_ref.pt.step40    # 0.96 GB
+rm ckpt_t38_ref.pt.step60    # 0.96 GB
+rm ckpt_t38_resume.pt    # 0.41 GB
+rm ckpt_t38_resume.pt.ep1    # 0.89 GB
+rm ckpt_t38_resume.pt.step60    # 0.96 GB
+rm ckpt_t52_p1_base.pt    # 0.41 GB
+rm ckpt_t52_p1_base.pt.ep1    # 0.89 GB
+rm ckpt_tb05.pt.ep1    # 0.89 GB
+rm ckpt_tb36.pt.ep1    # 0.89 GB
+rm ckpt_twin_nocursor.pt    # 0.41 GB
+rm ckpt_twin_nocursor.pt.ep1    # 0.89 GB
+rm ckpt_w7_b16a2.pt    # 0.99 GB
+rm ckpt_w7_b16a2.pt.ep1    # 2.04 GB
+rm ckpt_w7_b32a1.pt.ep1    # 2.04 GB
+rm ckpt_warmup_smoke.pt    # 0.41 GB
+rm ckpt_warmup_smoke.pt.ep1    # 0.89 GB
+rm ckpt_warmup_smoke_w20.pt    # 0.41 GB
+rm ckpt_warmup_smoke_w20.pt.ep1    # 0.89 GB
+rm ckpt_warmup_smoke_w3.pt    # 0.41 GB
+rm ckpt_warmup_smoke_w3.pt.ep1    # 0.89 GB
+# 189 file(s), 150.9 GB
+# 122 candidate(s) NOT in the plan:
+#   ckpt_0830v1_3.24b.pt.ep1: a live KEEP line claims it
+#   ckpt_ab_fp32logits_base.pt: section C, no deadline was ever set for it
+#   ckpt_ab_fp32logits_base.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_ab_fp32logits_base.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_fp32logits_fp32logits.pt: section C, no deadline was ever set for it
+#   ckpt_ab_fp32logits_fp32logits.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_ab_fp32logits_fp32logits.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_shapelr_base.pt: section C, no deadline was ever set for it
+#   ckpt_ab_shapelr_base.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_shapelr_shapelr.pt: section C, no deadline was ever set for it
+#   ckpt_ab_shapelr_shapelr.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_ab_shapelr_shapelr.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_untiehead_untiehead.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_untieheadlr_untieheadlr.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_valueembed_valueembed.pt: section C, no deadline was ever set for it
+#   ckpt_ab_valueembed_valueembed.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_zi_base.pt: section C, no deadline was ever set for it
+#   ckpt_ab_zi_base.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_ab_zi_base.pt.step500: section C, no deadline was ever set for it
+#   ckpt_ab_zi_zeroinit.pt: section C, no deadline was ever set for it
+#   ckpt_ab_zi_zeroinit.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_ab_zi_zeroinit.pt.step500: section C, no deadline was ever set for it
+#   ckpt_b0_n8_fixed.milestone_keep_b0_arm.pt: a live KEEP line claims it
+#   ckpt_b0_n8_fixed.pt: a live KEEP line claims it
+#   ckpt_b0_n8_fixed.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_b0_n8_fixed.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_b0_n8_fixed.pt.step2000: section C, no deadline was ever set for it
+#   ckpt_b0_n8_fixed.pt.step3000: section C, no deadline was ever set for it
+#   ckpt_b0_sd_equalcompute.milestone_keep_b0_arm.pt: a live KEEP line claims it
+#   ckpt_b0_sd_equalcompute.pt: a live KEEP line claims it
+#   ckpt_b0_sd_equalcompute.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_b0_sd_equalcompute.pt.step2000: section C, no deadline was ever set for it
+#   ckpt_b0_sd_equalcompute.pt.step3000: section C, no deadline was ever set for it
+#   ckpt_b0_sd_equalcompute.pt.step4000: section C, no deadline was ever set for it
+#   ckpt_b0_sd_looped.milestone_keep_b0_stagedarm.pt: section C, no deadline was ever set for it
+#   ckpt_b0_sd_looped.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_b0_sd_looped.pt.step3250: section C, no deadline was ever set for it
+#   ckpt_b0_sd_looped.pt.step3500: section C, no deadline was ever set for it
+#   ckpt_b0_sd_looped.pt.step3750: section C, no deadline was ever set for it
+#   ckpt_b0_sd_smoke.pt: section C, no deadline was ever set for it
+#   ckpt_b0_sd_smoke.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_b0_sd_smoke.pt.step4: section C, no deadline was ever set for it
+#   ckpt_b0_sd_unlooped.milestone_keep_b0_stagedarm.pt: section C, no deadline was ever set for it
+#   ckpt_b0_sd_unlooped.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_b0_sd_unlooped.pt.step3250: section C, no deadline was ever set for it
+#   ckpt_b0_sd_unlooped.pt.step3500: section C, no deadline was ever set for it
+#   ckpt_b0_sd_unlooped.pt.step3750: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt.step200: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt.step400: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt.step600: section C, no deadline was ever set for it
+#   ckpt_control_ours.pt.step800: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.milestone_earlyanchor_step7000.pt: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.milestone_earlyanchor_step7500.pt: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt: a live KEEP line claims it
+#   ckpt_data_leg_206m_8b.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt.step14000: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt.step14500: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt.step15000: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt.step7000: section C, no deadline was ever set for it
+#   ckpt_data_leg_206m_8b.pt.step7500: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt.step200: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt.step400: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt.step600: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.01.pt.step800: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt.step200: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt.step400: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt.step600: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.03.pt.step800: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt.step200: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt.step400: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt.step600: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr0.3.pt.step800: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt.step1000: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt.step200: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt.step400: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt.step600: section C, no deadline was ever set for it
+#   ckpt_e1_27_lr1.0.pt.step800: section C, no deadline was ever set for it
+#   ckpt_e2e_tmp.pt: section C, no deadline was ever set for it
+#   ckpt_e2e_tmp.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_e2e_tmp_resume.pt: section C, no deadline was ever set for it
+#   ckpt_e2e_tmp_resume.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_e2e_tmp_sft.pt: section C, no deadline was ever set for it
+#   ckpt_n7_stageb_looped.pt: section C, no deadline was ever set for it
+#   ckpt_n7_stageb_looped.pt.step200: section C, no deadline was ever set for it
+#   ckpt_n7_stageb_unlooped.pt: section C, no deadline was ever set for it
+#   ckpt_n7_stageb_unlooped.pt.step200: section C, no deadline was ever set for it
+#   ckpt_n7c_looped.pt: section C, no deadline was ever set for it
+#   ckpt_n7c_looped.pt.step250: section C, no deadline was ever set for it
+#   ckpt_n7c_looped.pt.step500: section C, no deadline was ever set for it
+#   ckpt_n7c_p3.pt: a live KEEP line claims it
+#   ckpt_n7c_p3.pt.step250: a live KEEP line claims it
+#   ckpt_n7c_p3.pt.step500: section C, no deadline was ever set for it
+#   ckpt_n7c_p7.pt: section C, no deadline was ever set for it
+#   ckpt_n7c_p7.pt.step250: section C, no deadline was ever set for it
+#   ckpt_n7c_p7.pt.step500: section C, no deadline was ever set for it
+#   ckpt_n7c_unlooped.pt: section C, no deadline was ever set for it
+#   ckpt_n7c_unlooped.pt.step250: section C, no deadline was ever set for it
+#   ckpt_n7c_unlooped.pt.step500: section C, no deadline was ever set for it
+#   ckpt_p200m_4b_0902.milestone_keep_b0_step2500.pt: section C, no deadline was ever set for it
+#   ckpt_p200m_4b_0902.milestone_keep_b0_step3000.pt: section C, no deadline was ever set for it
+#   ckpt_p200m_4b_0902.milestone_keep_b0_step3500.pt: section C, no deadline was ever set for it
+#   ckpt_p200m_4b_0902.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_p500m_20b_0902.milestone_keep_b0_step2500.pt: section C, no deadline was ever set for it
+#   ckpt_params_leg_438m_3p76b.pt: a live KEEP line claims it
+#   ckpt_params_leg_438m_3p76b.pt.ep1: section C, no deadline was ever set for it
+#   ckpt_params_leg_438m_3p76b.pt.step6000: section C, no deadline was ever set for it
+#   ckpt_params_leg_438m_3p76b.pt.step6500: section C, no deadline was ever set for it
+#   ckpt_params_leg_438m_3p76b.pt.step7000: section C, no deadline was ever set for it
+#   ckpt_pretrain_15b_s1.milestone_15b.pt: a milestone hardlink -- deleting it unpins what it protects
+#   ckpt_pretrain_30b_s2.milestone_22b_step24000.pt: a milestone hardlink -- deleting it unpins what it protects
+#   ckpt_run.milestone_15b_step16000.pt: a milestone hardlink -- deleting it unpins what it protects
+#   ckpt_sft_p324_v4.pt: named in be.sft_v4_code500 -- a fact's subject, whose deletion makes that number unrecomputable
+#   ckpt_w7_b32a1.pt: named in eff.w7_peak_memory_b32_fits -- a fact's subject, whose deletion makes that number unrecomputable
+# This script does not delete. Run the rm lines yourself, then regenerate the listing so the after-state is recorded.
