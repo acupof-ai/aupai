@@ -376,9 +376,19 @@ def _job_descendants(pid, table=None):
 def _read(path):
     try:
         with open(path, encoding="utf-8") as fh:
-            return json.load(fh)
+            got = json.load(fh)
     except (OSError, ValueError):
         return None
+    # NORMALISE cards ON THE WAY IN, so no reader has to. acquire() normalises what it writes
+    # (:674), but a row already on disk was written by an older build or by a caller that passed
+    # ints -- and one such row made `status()` raise TypeError out of `','.join(c['cards'])` for
+    # every peer, not just its author (2026-09-06, e1's probe). A reader of a shared lock file
+    # must survive a row it did not write; the alternative is that one bad claim takes down the
+    # tool that answers "who holds what". Non-list `cards` is left alone for the callers that
+    # already treat a missing or odd field as absent.
+    if isinstance(got, dict) and isinstance(got.get("cards"), list):
+        got["cards"] = [str(c) for c in got["cards"]]
+    return got
 
 
 def claims():
@@ -672,6 +682,23 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
     wait_for_device has already established the fact it asserts."""
 
     os.makedirs(CLAIM_DIR, exist_ok=True)
+    # CARDS ARE NORMALISED TO STR ONCE, HERE, and the alternative is what happened on 2026-09-06:
+    # e1's probe passed [int(card)], the claim FILE was written correctly (claim_file already
+    # str()s for its filename), and then the success return raised
+    # `TypeError: sequence item 0: expected str instance, int found` out of `','.join(cards)`.
+    # Every caller in the repo passes strings -- loader.py:456 splits CVD, harness passes CVD
+    # tokens -- so the int path had never been exercised and four joins over `cards` were left
+    # int-unsafe while two adjacent ones str()'d defensively.
+    #
+    # THE FAILURE MODE IS WORSE THAN A BAD MESSAGE, which is why this is normalised rather than
+    # patched at the join: the exception fires AFTER the claim file exists, so the caller's
+    # `ok, msg = acquire(...)` raises and every reasonable caller reports the claim FAILED on a
+    # card it is now holding. e1's probe then skipped its release (guarded on `claimed`) and ran
+    # a full pass printing "running UNCLAIMED" while the claim sat on disk -- the exact inverse of
+    # 2026-09-05, when the same probe really was unclaimed and said so. And the int-carrying row
+    # persisted: it made `card_claim.py status` raise the same TypeError at :1030 for EVERY peer,
+    # so one probe's argument type broke the shared tool that answers "who holds what".
+    cards = [str(c) for c in cards]
     mine = os.path.join(CLAIM_DIR, claim_file(name, cards))
     deadline = time.time() + wait
     while True:
@@ -2073,6 +2100,51 @@ def _selftest():
         kid_set.wait()
         kid_trap.kill()
         kid_trap.wait()
+
+    # INT CARDS. Both halves of this were live defects on 2026-09-06, found by running the tool
+    # and not by reading it, so both are provoked here rather than asserted about.
+    #
+    # (a) acquire MUST RETURN, not raise, when a caller passes ints. Every in-repo caller passes
+    #     strings (loader.py:456 splits CVD; harness passes CVD tokens), so the int path had never
+    #     run and four joins over `cards` were int-unsafe while two adjacent ones str()'d. The
+    #     exception fired AFTER the claim file was written, which is the part that matters: the
+    #     caller's `ok, msg = acquire(...)` raised, so it reported the claim FAILED on a card it
+    #     was holding, skipped its release, and ran a full pass printing "running UNCLAIMED" with
+    #     the claim sitting on disk. A message-formatting bug turned into a lock-accounting lie.
+    _icards = [7, 3]
+    try:
+        ok_i, msg_i = acquire("int_cards", _icards, pid=me)
+        _case(ok_i and "7,3" in msg_i,
+              f"ints are accepted and the success message names the cards ({msg_i})")
+    except Exception as e:  # noqa: BLE001 -- the pre-fix behaviour, and it must not come back
+        _case(False, f"acquire RAISED on int cards: {type(e).__name__}: {e}")
+    #     THE CALLER'S ARGUMENT IS NOT MUTATED. acquire normalises a local rebinding; if it ever
+    #     normalised in place, a caller reusing its own list would find it silently retyped.
+    _case(_icards == [7, 3], f"the caller's list is unchanged ({_icards})")
+    #     AND THE ROW ON DISK CARRIES STRINGS, so no reader inherits the type.
+    _live_i, _ = claims()
+    _row_i = [c for c in _live_i if c["name"] == "int_cards"]
+    _case(len(_row_i) == 1 and all(isinstance(c, str) for c in _row_i[0]["cards"]),
+          f"the claim row stores str cards ({_row_i[0]['cards'] if _row_i else 'MISSING'})")
+    _case(release("int_cards", cards=_icards)[0], "and an int-cards release finds its file")
+
+    # (b) status MUST SURVIVE A ROW IT DID NOT WRITE. The int-carrying row above was written by
+    #     one probe and made `card_claim.py status` raise the same TypeError for EVERY peer -- one
+    #     caller's argument type took down the shared tool that answers "who holds what". Written
+    #     here by hand, bypassing acquire, because that is the only way a row like this reaches
+    #     disk now that acquire normalises: an older build, or a hand-edited file.
+    _hand = os.path.join(CLAIM_DIR, "legacy_ints.9.json")
+    with open(_hand, "w", encoding="utf-8") as fh:
+        json.dump({"name": "legacy_ints", "cards": [9], "pid": me, "cmdline": "python3 selftest",
+                   "acquired": "2026-09-06 00:00:00", "note": "hand-written int row"}, fh)
+    try:
+        _orph, _dup, _lines = status()
+        _case(any("legacy_ints" in ln for ln in _lines),
+              "status renders a hand-written int-cards row rather than raising for every peer "
+              "who runs it")
+    except Exception as e:  # noqa: BLE001
+        _case(False, f"status RAISED on an int-cards row: {type(e).__name__}: {e}")
+    os.unlink(_hand)
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")
