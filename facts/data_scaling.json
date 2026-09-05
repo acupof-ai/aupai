@@ -1,829 +1,867 @@
 {
- "facts": [
-  {
-   "id": "ds.muennighoff_formula",
-   "value": "L(U_D,R_N,R_D) = 521/(U_N + 5.3*U_N*(1-e^(-R_N/5.3)))^0.35 + 1488/(U_D + 15.4*U_D*(1-e^(-R_D/15.4)))^0.35 + 1.87, with U_N = 0.051*U_D; fitted R_D*=15.387756, R_N*=5.309743, alpha=beta=0.35, E=1.87",
-   "measured": "2026-08-30",
-   "source": "2023 paper; Muennighoff et al., Scaling Data-Constrained Language Models, arXiv 2305.16264, Eq.17 + Appendix A",
-   "config": {
-    "fit_range": "epochs 1-500, params 7M-9B, C4 subsets, GPT-2 architecture, cosine 10x decay per run, 5 seeds/dot"
-   },
-   "uncertainty": null,
-   "boundary": "fitted on GPT-2 architecture, English C4; KDA+MLA and Chinese are out of distribution",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.muennighoff_four_epoch",
-   "value": "8.7B model at 4 epochs (44B unique tokens) finishes +0.5% validation loss vs single-epoch (178B unique); downstream differences insignificant up to ~4 epochs (25% budget)",
-   "measured": "2026-08-30",
-   "source": "2023 paper; arXiv 2305.16264, Sec.6-7",
-   "config": {
-    "model": "8.7B params",
-    "data": "C4",
-    "schedule": "cosine 10x decay, no early stopping, shuffled after each epoch",
-    "seeds": 5
-   },
-   "uncertainty": null,
-   "boundary": "measured at 8.7B; the paper's fit covers 7M-9B but this specific number is an 8.7B point — 200M is in the fit range, not a direct measurement",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.muennighoff_per_epoch_decay",
-   "value": "each repeated epoch worth ~94% of the previous pass (delta~0.06 for data, ~0.19 for parameters); at R_D* repeated tokens worth on average 1-1/e ~ 63% of fresh; hard ceiling: effective data plateaus at ~16.4x the unique corpus regardless of epochs",
-   "measured": "2026-08-30",
-   "source": "2023 paper; arXiv 2305.16264, Sec.5 + Appendix A",
-   "config": {
-    "fit_range": "epochs 1-500, 7M-9B params, C4"
-   },
-   "uncertainty": null,
-   "boundary": "delta is a fit constant, not a per-size measurement; no per-size repetition-tolerance table is published",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.muennighoff_size_epoch_interaction",
-   "value": "R_N*=5.3 < R_D*=15.4, so excess parameters decay faster than repeated data; data-constrained efficient frontier allocates compute to more epochs over more parameters; validated: a 27%-smaller model beat the Chinchilla-suggested model at 9.3e21 FLOPs / 25B unique tokens",
-   "measured": "2026-08-30",
-   "source": "2023 paper; arXiv 2305.16264, Sec.5, 8",
-   "config": {
-    "range": "7M-9B params, C4"
-   },
-   "uncertainty": null,
-   "boundary": "interaction is captured only through the R_N*/R_D* terms; no direct small-vs-large repetition-tolerance split",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.muennighoff_mitigations",
-   "value": "no dropout or regularization durability test (speculative only); reshuffling after each epoch is standard, not ablated; mixing code gives ~2x effective tokens even for natural-language eval, safe to ~50% code; perplexity filtering helped, deduplication did not help downstream",
-   "measured": "2026-08-30",
-   "source": "2023 paper; arXiv 2305.16264, Sec.6, 9",
-   "config": {
-    "range": "7M-9B params, C4 + The Stack"
-   },
-   "uncertainty": null,
-   "boundary": "code-mix result is natural-language eval; math eval not tested",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.chinchilla_approach1",
-   "value": "fixed-N data-scaling protocol: for each parameter count N, train 4 models on horizons spanning a factor of 16x; each run its own cosine schedule matched to its horizon (LR drops 10x); cosine overshoot >25% noticeably degrades performance",
-   "measured": "2026-08-30",
-   "source": "2022 paper; Hoffmann et al., Chinchilla, arXiv 2203.15556, Sec.3 Approach 1",
-   "config": {
-    "models": "70M-16B",
-    "tokens": "5B-500B",
-    "peak_lr": "2e-4 smallest models, 1.25e-4 largest"
-   },
-   "uncertainty": null,
-   "boundary": "smallest stated budget 5B tokens; no 200M-specific curve; all runs <1 epoch",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.chinchilla_exponents",
-   "value": "L(N,D) = E + A/N^0.34 + B/D^0.28, E=1.69, A=406.4, B=410.7",
-   "measured": "2026-08-30",
-   "source": "2022 paper; arXiv 2203.15556, Sec.4",
-   "config": {
-    "fit_on": "smoothed training loss, MassiveText domains, <1 epoch"
-   },
-   "uncertainty": null,
-   "boundary": "fitted on their corpus and schedule; beta=0.28 is the prior for a 200M fit, not a measurement at 200M",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.chinchilla_readout",
-   "value": "scaling curves fit on smoothed TRAINING loss as unbiased estimate of test loss under the infinite-data assumption; downstream evals (MMLU, BIG-bench, etc.) used only for the final Chinchilla model",
-   "measured": "2026-08-30",
-   "source": "2022 paper; arXiv 2203.15556, Sec.4",
-   "config": {
-    "type": "paper readout",
-    "paper": "arXiv 2203.15556 Sec.4",
-    "assumption": "infinite-data"
-   },
-   "uncertainty": null,
-   "boundary": "infinite-data assumption fails in the repeated-data regime — training loss is then biased by memorization and held-out loss is required",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.kaplan_min_regime",
-   "value": "power-law fits broke at the smallest dataset (~22M tokens, 40 updates/epoch — 'a different regime'); fits poor for smallest D; valid only after an initial transient; 3000-step warmup (~1.57B tokens at their batch)",
-   "measured": "2026-08-30",
-   "source": "2020 paper; Kaplan et al., Scaling Laws for Neural Language Models, arXiv 2001.08361, Sec.3-5",
-   "config": {
-    "models": "768-1.5B non-embedding (fits from 1e3 params)",
-    "data": "22M-23B tokens (WebText2)",
-    "schedule": "3000-step warmup + cosine to zero"
-   },
-   "uncertainty": null,
-   "boundary": "warmup token count is arithmetic from their batch (512x1024), not stated; their batch is 5.24e5 tokens/step",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.kaplan_noise",
-   "value": "run-to-run variation ~0.05 in loss; results at convergence largely independent of LR schedule as long as LR not too small and decay not too fast",
-   "measured": "2026-08-30",
-   "source": "2020 paper; arXiv 2001.08361, Sec.5",
-   "config": {
-    "schedule_experiments": "3M-param model"
-   },
-   "uncertainty": null,
-   "boundary": "schedule-independence measured at 3M params and at convergence — a 200M curve's per-point readouts must still be annealed to be comparable",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.wsd_minicpm",
-   "value": "WSD: constant-LR stable phase + exponential decay tail (f=0.5^((s-S)/T)); MiniCPM decay = 5000 steps / 20B tokens (~1.4% of total), peak LR 0.01, batch 3.93M; HQ data in decay beats same data in SFT (GSM8K 27.7->42.3 on 2.4B)",
-   "measured": "2026-08-30",
-   "source": "2024 paper; MiniCPM, arXiv 2404.06395, Sec.6",
-   "config": {
-    "models": "2.4B, 1.2B",
-    "total_tokens": "~1.4T (2.4B)"
-   },
-   "uncertainty": null,
-   "boundary": "validated as a training strategy at 1.2-2.4B; not validated as a scaling-curve readout method at any scale",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.wsm_mechanism",
-   "value": "WSM = weighted average of recent checkpoints (mean average of last n, save every 25B tokens); window n=12 sufficient; merge duration is the critical factor, surpassing checkpoint interval and merge quantity; merging and LR decay are alternative pathways, not complementary",
-   "measured": "2026-08-30",
-   "source": "2025 paper; WSM, arXiv 2507.17634, Sec.3-4",
-   "config": {
-    "model": "Ling-mini MoE, 16.3B total / 1.4B active",
-    "base_run": "10.2T tokens"
-   },
-   "uncertainty": null,
-   "boundary": "single model, MoE, 1.4B active params; no dense or sub-1B results",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.wsm_proxy",
-   "value": "within ONE constant-LR run, WSM merges (4 checkpoints over preceding 100B tokens) at 2T/4T/6T/8T/10T milestones 'consistently and closely mirror' full 100B-token decay runs started at each milestone; WSM is 'a reliable, high-fidelity proxy for estimating a model's post-anneal potential at any point during training'",
-   "measured": "2026-08-30",
-   "source": "2025 paper; arXiv 2507.17634, Sec.4.3.1",
-   "config": {
-    "model": "Ling-mini 1.4B active",
-    "milestones": "2T-10T tokens"
-   },
-   "uncertainty": null,
-   "boundary": "the only direct evidence that one run can yield multiple valid scaling-curve readouts; scale 1.4B active, MoE",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.wsm_vs_wsd",
-   "value": "WSM mean-merge vs WSD best checkpoint: +1.3 points average (up to +2.7 MATH, +2.4 HumanEval, +2.1 MMLU-Pro); Table 1 base 62.67->63.95; merge algorithms: 1-sqrt 64.06 > mean 63.95 > EMA 63.01",
-   "measured": "2026-08-30",
-   "source": "2025 paper; arXiv 2507.17634, Tables 1-3",
-   "config": {
-    "model": "Ling-mini 1.4B active",
-    "eval": "average benchmark points"
-   },
-   "uncertainty": null,
-   "boundary": "single model; downstream points, not loss",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.wsqd",
-   "value": "WSqD: horizon-independent base LR (cooldown only at the end); matches or outperforms carefully tuned WSD across multiple horizons with one reused peak LR, up to 10% less compute for the same validation loss",
-   "measured": "2026-08-30",
-   "source": "2026 paper; WSqD, yuxinchen2020.github.io/publications/WSqD_schedule.pdf",
-   "config": {
-    "data": "SlimPajama",
-    "horizons": "15000/30000/45000/60000 iterations",
-    "optimizer": "AdamW"
-   },
-   "uncertainty": "model sizes not extracted from the PDF text",
-   "boundary": "solves peak-LR transfer across horizons, not the anneal-per-point cost",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.lr_decay_waste",
-   "value": "aggressive LR decay wastes the best data: curriculum benefit vanishes as decay strengthens; optimal ending LR ~1/3 of peak (1e-3 vs standard 1e-5 at peak 3e-3); constant LR + EMA of last checkpoints (CMA) and moderate decay each recover the benefit; combined +1.64% average accuracy over random shuffle + standard decay",
-   "measured": "2026-08-30",
-   "source": "2025 paper; How Learning Rate Decay Wastes Your Best Data, arXiv 2511.18903",
-   "config": {
-    "model": "Qwen2.5-1.5B",
-    "tokens": "30B",
-    "data": "DCLM-Baseline",
-    "peak_lr": "3e-3"
-   },
-   "uncertainty": null,
-   "boundary": "1.5B only; effect shown on both validation loss and downstream accuracy",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.smollm2_anneal",
-   "value": "SmolLM2-1.7B anneal = last 1T of 11T (9%), linear decay to 0, WSD peak 5e-4; anneal mix 58% web / 24% Stack-Edu / 14% math / 4% Cosmopedia v2; per-domain anneal weights are designed, not ablated",
-   "measured": "2026-08-30",
-   "source": "2025 paper; SmolLM2, arXiv 2502.02737",
-   "config": {
-    "models": "135M/360M/1.7B"
-   },
-   "uncertainty": null,
-   "boundary": "no per-domain anneal-composition ablation exists in the paper",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.mathhard_resolution",
-   "value": "math-hard resolves +-1.1pt at 2-3% pass rate (n=1032); a 4.1% vs 2.9% gap is z=1.44, p=0.15",
-   "measured": "2026-08-29",
-   "source": "aupai EXPERIMENTS.md + docs/lessons/adversarial_review.md@59d751b3 scoreboard (deleted in the 0830v1 reset at 7359a56f; recoverable by sha)",
-   "config": {
-    "n": 1032
-   },
-   "uncertainty": null,
-   "boundary": "cannot resolve the ~0.01-0.1 loss deltas a scaling-curve fit needs; usable only as a final-model sanity check",
-   "status": "measured"
-  },
-  {
-   "id": "ds.project_corpus",
-   "value": "corpus 3.24B tokens total; model 166M non-embedding params = 19.5 tokens/param (Chinchilla-optimal ~20); SmolLM2-1.7B reference ~6000 tokens/param",
-   "measured": "2026-08-30",
-   "source": "aupai-3b census, relayed by aupai-fb",
-   "config": {
-    "mix": "data/mix_scale_3.24b.json",
-    "model_nonembedding_params_M": 166,
-    "census_by": "aupai-3b"
-   },
-   "uncertainty": null,
-   "boundary": "3b's measurement; not independently re-verified by e1",
-   "status": "measured"
-  },
-  {
-   "id": "ds.trainpy_steps",
-   "value": "train.py Cfg DEFAULTS (read-only inspection of train.py:119-124): warmup 20 steps, batch 32, seq 4096, accum 1; at 6 GPUs = 786,432 tokens/step; warmup = 15.7M tokens; a 0.2B-token point = 254 steps = 12.7x warmup. DEFAULT-AS-ACTUAL CORRECTION (2026-08-30 audit): the ladder runs do NOT use these defaults -- actual is 7 GPUs (GPU1-7), batch 16, accum 2 = 917,504 tokens/step, so the 0.2b point = 218 steps (eff.warmup_absolute_not_fractional, de's smoke test). The ladder's warmup=20 is the v1.2 pre-registered choice, which happens to equal the default -- do not read the default as the run config (third error class: defaults are not actuals).",
-   "measured": "2026-08-30",
-   "source": "aupai train.py:119-124 (read-only inspection)",
-   "config": {
-    "defaults": {
-     "gpus": 6,
-     "per_gpu_batch": 32,
-     "accum": 1,
-     "warmup": 20
-    },
-    "ladder_actual": {
-     "gpus": 7,
-     "per_gpu_batch": 16,
-     "accum": 2,
-     "tokens_per_step": 917504,
-     "0.2b_steps": 218
-    },
-    "distinction": "defaults documented as defaults; ladder actual from run configs"
-   },
-   "uncertainty": "defaults are accurate as of 2026-08-30; ladder actual is from the 0.2b smoke-test config (eff.warmup_absolute_not_fractional)",
-   "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 218 actual steps is 5.5x that",
-   "status": "measured"
-  },
-  {
-   "id": "ds.scaling_fit_protocol",
-   "value": "pre-registered protocol for fitting L(D)=E+B/D^beta over the six budget points (docs/lessons/scaling_fit_protocol.md, v1.10, frozen before the points run): Chinchilla recipe verbatim (Huber delta=1e-3, L-BFGS-B, 252-start grid, linear space); ACCEPT RMS<=0.05 / WEAK <=0.10 / FAIL else; U-shape (++--++), monotone drift (run>=4 all >0.01), endpoint same-sign patterns falsify the form regardless of RMS; LOO beta delta>0.15 is an imprecision flag not a falsifier; single-point tree = rerun once / investigate root cause / endpoint voids the curve. Quantity = aggregate val NLL at the final checkpoint on a fixed val set. fb's mix-composition hypothesis resolved: domain weights are identical at all six points (measured 0.3238/0.4962/0.0757/0.0495/0.0252/0.0177/0.0118), the schedule is interleaved (randperm per phase), and the within-domain pool IS shuffled before the val carve-out (train.py:1129, random.Random(Cfg.seed).shuffle, seed=42 in Cfg and persisted via vars(cfg), 2c7ccf4) -- every budget point eats a random prefix of the same shuffled cache, so composition is constant in expectation and D is the only systematic variable. v1.1 corrections (fb ruling): (a) v1.0's 'source-ordered prefix' concern was wrong -- it audited build_corpus.py but not train.py's tokenization-cache layer; the pod's train.py was 142 files behind HEAD with nothing to say so (de shipped pod_drift guard); (b) warmup = fixed 20 steps for all six points (v1.2, de's smoke-test measurement overturned v1.1's pure-1%): on the 0.2b point (218 steps, same seed/data, mix_smoke_warmup.json) warmup=2 gave final val 3.658 vs warmup=20's 3.135 -- 0.52 worse at every recorded step; floor 2 did not crash but full LR arrived too early, the direction went bad and never recovered. Both schemes bias beta the SAME way (small points spend a larger fraction at low LR -> small-point loss high -> beta overestimated); the proportional scheme's bias is measured larger, so fixed steps wins. Residual confound stays in the protocol's interpretation section: warmup share 9.2% (0.2b) -> 0.57% (3.24b), beta is overestimated, report with the number. Lesson: a confound-removal fix can introduce a larger same-direction bias; which is smaller is measured, not reasoned. Preconditions for the six runs: shared tokenization cache (same corpus snapshot + vocab_id), frozen corpus snapshot fingerprinted in PROVENANCE, fixed 20-step warmup. Fitter: scripts/fit_scaling.py (selftest: noise-free recovery, noisy ACCEPT, pattern detection) v1.3 (threshold provenance audit + old-ladder warmup base correction): (1) drift p corrected 22/64=34% -> 16/64=25% (exact count of 6-bit sign strings with a run >=4; 34% irreproducible, recorded not reconstructed); (2) endpoint criterion clarified to delta_noise=0.05, not the Huber delta=1e-3 (under 1e-3 the condition is near-vacuous, reduces to sign alone); (3) new section 8 provenance table -- every threshold labeled measured/chosen/borrowed/derived, the 0.05 reuse across all three frozen docs declared deliberate (1x Kaplan run-to-run); (4) OLD-LADDER WARMUP BASE CORRECTED (third error class: default-as-actual): v1.1's 'old ladder confound 16x' was computed from Cfg.warmup=20 (train.py default); e1 read the actual run log (retired_pre0830v2/runs/0830v1_0.2b.log, launched with --warmup 150) -> true shares 69% (0.2b, 150/218) and 4.2% (3.24b, 150/3537), ratio 16.4x -- both components wrong, ratio coincidentally close; the fixed-20 ruling stands (de's 3.658 vs 3.135 supports it independently); (5) source-labeling rule: every number must state its source (literature / our measurement / code default); reproducible != right-source -- all three 2026-08-30 errors (n=277 misattribution, one/two-sided, default-as-actual) had correct arithmetic and fail only on source v1.5 (sigma-conditional thresholds, written before sigma-hat is measured): 44's 4-seed same-config run at 0.2b (3 df) will give sigma-hat; ACCEPT threshold = 1.14*sigma-hat (null 95th percentile: E[RMS]=0.71sigma under 6pts/3params/df=3, chi^2_3 95th = 7.815), WEAK ceiling = 2.28*sigma-hat; the fixed 0.05 was always this rule at Kaplan sigma (1.14*0.044=0.05); if sigma-hat > 0.07 the fixed 0.05 is void (a perfect fit passes only ~half the time). df=3 boundary: RMS itself is uncertain +-40% (1/sqrt(6)), the ACCEPT/WEAK boundary sits inside a single reading's CI -- RMS is coarse screening only, section 4 sign patterns (p=3.1%, sigma-independent) and profile CIs are the primary judges. Huber caveat: delta=1e-3 at sigma~0.05 makes the fit effectively L1, the chi^2 derivation is an L2 approximation -- within +-0.02 of a threshold, parametric bootstrap with the actual fitter decides (escape hatch pre-registered). sigma-hat measured at 0.2b is a conservative upper bound for the ladder; e1's attn A/B shares the same sigma-hat v1.6 corrects v1.5's direction error: sigma-hat from the smallest point is an UPPER BOUND on the ladder's sigma, but in the ACCEPT rule (RMS <= 1.14*sigma-hat) an over-estimate loosens the threshold -> false ACCEPT -- 'conservative upper bound' was anti-conservative for the verdict. Pre-registered asymmetric reading: ACCEPT carries a 'noise-loose' label (WEAK semantics: interpolation ok, extrapolation banned), FAIL is hard (a true tighter threshold would only make it harder); the sigma-independent judges (section 4 sign patterns p=3.1%, profile CIs) are primary. De-labeling rule (pre-registered, zero cost): after ACCEPT, residual RMS is an implicit estimate of sigma_ladder (E[RMS]=0.71*sigma if the form holds); if RMS < 0.71*sigma-hat(0.2b), sigma's D-decline is confirmed and the noise-loose label is removed -- this is a pre-registered de-labeling, not post-hoc threshold tuning. Declined fb's option (b) (2 extra seeds at 3.24b to measure sigma-D dependence): df=1 gives sigma a ~70x CI, df=2 still 8x -- 200-300 GPU-min for an unreadable number; the de-labeling rule gives the same information free. Conditional pre-registration: if an ACCEPT verdict becomes load-bearing for a decision-tree branch and the de-labeling condition does not fire, measure then v1.7 (simplified/traditional mix, pre-registered before 44's count arrives): code-verified token path -- train.py:1161 shuffles domain texts at cache build (seed-fixed, shared cache) and build_mix randperms per phase, so every budget point eats a random prefix of the same shuffled pool -> script fraction is constant across points (SE < 0.2% even at the smallest point); the sequential-slicing worry is excluded. Same structure as the constant-noise-fraction argument: D'=c*D absorbed by B, beta/shape/double/R immune; only E's absolute value and external comparisons are affected. Thresholds hang on the CONTRIBUTION p_trad*deltaE_script, not the fraction: deltaE_script = per-script val NLL gap (traditional minus simplified) measured directly on the strongest checkpoint (no fertility guessing); <=0.05 nat no action; 0.05-0.10 E's corpus label carries the mix term as uncertainty; >0.10 fertility-correct D (D'=D*(1-p+p/k), k measured from tokenizer) and report both fits, E reported as mixed-corpus floor never model ceiling. Val set (first 5000 rows/domain of the shuffled cache) is matched to train in script distribution v1.8 (fb reconnaissance + direction trap): deltaE measured BOTH per-token and per-char (deltaE_char = E_trad_token*k_trad - E_simp_token*k_simp, k measured 1.164x corpus-level) -- traditional text's higher fertility means finer segmentation, so per-token NLL can be LOWER on traditional (easier per-token prediction); sign rule pre-registered: deltaE_token < 0 must NOT be read as 'traditional better' (segmentation artifact), information-level read uses deltaE_char only. Threshold uses |p_trad*deltaE_token| (E is per-token; materiality is direction-free). Recon prior (not decision, 44 full count decides): p_trad ~15.2% doc-level / 14.8% char-level from first 3 shards (biased if corpus is source-ordered), k ~1.164x; if |deltaE_token| ~ 0.3 the contribution ~0.045 -- sitting on the threshold. D-axis repetition fact: web_hq total ~1.434B tokens (62 shards sampled); the 3.24b point needs ~1.05B at 32.4% weight -> epoch 0.73, NO point repeats web_hq once, no repetition confound on D. v1.9 (fb supply measurement, pre-registered before the 3.24b log is seen): D for every point must be read from that run's `tokens scheduled` log line (train.py:1384), never from the mix json's total_tokens -- the mix file is a budget not a supply; record D_requested/D_scheduled/gap per point. Tolerance threshold (derived from the noise floor, independent of the observed gap -- D-error leverage = 0.085*epsilon nat, needs epsilon~59% to move the fit, rounded to 10%; written AFTER the 1.53% gap was known, labelled post-hoc per repo convention same as the 'null landing does not certify a cell' amendment: the derivation is prior, the writing is not): |gap|/D_requested <= 10% absorbed as rounding (leverage < 0.01 nat = 1/5 of noise); >10% declares a CURVE BOUNDARY at D_scheduled, extrapolation beyond banned. Independent mix-shift clause: any domain epoch cap shifting its share >1pt of total mix is declared regardless of D-gap. v1.9.1 correction (same day, fb exact row counts): the wiki 6.4% shortage was a sampling-estimate artifact (a +-2% error bar used to make a sub-bar claim); exact counts (3.6285B total) put six domains on their supply to the row -- the real cap is the VAL SPLIT: train.py:1348 carves n_val before the pool exists and the epoch cap measures len(pool), so each of six domains is capped by its own n_val (49.7M tokens total = 1.53% of the 3.24b budget), web_hq's +383.6M surplus does not redistribute; ONLY the 3.24b point binds (all five smaller points checked, no caps). Predicted gap 1.53% < 10% threshold -> absorbed as rounding, gap recorded, no boundary declared; mix-shift recheck: largest share shift is web_hq +0.51pt (relative rise as total shrinks), all <1pt, clause not triggered. v1.9.2 honesty correction: the 'picked before seeing 1.53%' claim was wrong -- the derivation (noise floor -> ~59% -> 10%) references no observed gap and is the genuinely prior part, but the clause was written after the 1.53% was known; labelled post-hoc per repo convention; the refuted 6.4% wiki-shortage clause deleted from the threshold justification. v1.10 (sigma-hat measured, before the ladder runs): sigma-hat = 0.0516 (df=3, ds.seed_variance_0p2b, 1.47x the borrowed 0.035 which was a fit residual conflated with seed variance); v1.5's sigma-conditional rule filled with no new judgement: ACCEPT RMS <= 0.0588 (1.14*sigma-hat), WEAK <= 0.1176 (2.28*sigma-hat), de-labeling line 0.0366 (0.71*sigma-hat); the fixed 0.05 table is retired (it was always this rule at Kaplan sigma 0.044); expected RMS 0.0366, gate sits 1.6x above expectation. df=3 sigma interval (~0.6-2.9x) stays out of the gate per v1.5/v1.6: 0.0588 carries the df=3 label, sigma-independent judges (section 4 sign patterns p=3.1%, profile CIs) are primary, ACCEPT carries the noise-loose label, FAIL is hard",
-   "measured": "2026-08-30",
-   "source": "docs/lessons/scaling_fit_protocol.md; scripts/fit_scaling.py; train.py:1283-1356; data/mix_scale_*.json",
-   "config": {
-    "points": "0.2b/0.3b/0.4b/0.8b/1.6b/3.24b (16.2x span)",
-    "noise_anchor": "val measurement ~0.005-0.01 nat (35000 blocks); run-to-run ~0.05 (Kaplan, no internal replicate)",
-    "protocol_version": "v1.8",
-    "old_ladder_warmup": "actual --warmup 150 (e1 log read), NOT Cfg default 20; shares 69%/4.2%, ratio 16.4x"
-   },
-   "uncertainty": "the run-to-run noise anchor is literature (Kaplan), not internally replicated; B and beta are ridge-degenerate over a 16x span (noise-free fit recovered B=10000 vs true 6000 at nearly identical loss) -- the beta profile CI is the honest read",
-   "boundary": "protocol frozen before the first new budget point runs; changes only via a new version",
-   "status": "measured"
-  },
-  {
-   "id": "ds.scaling_decision_tree",
-   "value": "pre-registered decision tree for what to do after the six points are fit (docs/lessons/scaling_decision_tree.md v1.8, frozen before the points run): three mechanical reads -- doubling gain d_double=(L(Dmax)-E)(1-2^-beta), asymptote gap R=L(Dmax)-E, recognition levels (math twin / minimal pairs / LAMBADA at Dmax) -- drive the branches: d_double>=0.05 and R>0.10 -> extend D; R<0.05 -> data scaling done, read recognition: twin>0.75 + pairs>0.75 + LAMBADA>0.30 + generative<0.02 = recognition ceiling (knowledge present, production absent) -> SFT first, scale N only if SFT fails to move generation; twin<0.60 or pairs<0.60 = knowledge absent -> change data recipe. v1.1 adds the reweight branch (section 2a): triggered when E2 per-domain slope spread max-min > 2xSE and the flattest-slope domain's weight >=10% (web_hq: -0.123 vs textbook/en -0.26, weight 32.4%); anti-trigger = offsets differ but slopes equal (offset is intrinsic entropy, not waste -- never reweight on offsets alone); when d_double<0.05 reweight is the only live data-side action, when >=0.05 reweight goes first (zero new corpus, one mix json) and its result calibrates whether E2 slopes predict reallocation gains. Reweight read pre-registered: same-D old/new mix checkpoints, aggregate val NLL improvement >0.05 = lever holds, <=0.05 = lever retired. Shift capped at 10pt of weight (linearity untested beyond). Identification limit: E2 domains co-varied across the ladder, slopes are ranked observations not causal marginals -- the reweight run IS the experiment. Fixed-N optimum: D* = smallest D with L(D)<=E+0.05 (within noise of the asymptote); the curve values only the 'more data' option, the tree puts alternatives on the same ruler. Fit-failure branches pre-registered (U-shape -> regime boundary, monotone drift -> wrong form, RMS>0.10 -> panel-only decision). Thresholds anchored to run-to-run noise (0.05, Kaplan) and the known-answer calibrations v1.2 adds section 3d (architecture migration of the recognition thresholds, written before the points run): the 0.75/0.75/0.30/0.02 thresholds are absolute claims (twin 0.75 = 3:1 discrimination), old-arch measurements were only feasibility evidence; after the six points, before reading the Dmax branch, re-run known-answer on the new arch's strongest checkpoint -- spread <60pt cuts the metric, reading below the absolute threshold lowers it by the fraction-of-demonstrated-range rule (two-way: 0.5+0.557*(ceiling-0.5), 0.557=(0.75-0.5)/(0.949-0.5); LAMBADA: 0.843*ceiling, 0.843=0.30/0.356; pass@1 stays absolute 0.02), recalibrated numbers frozen before the branch read, weakening reported. Section 6 table now labels every threshold measured/chosen with its source; the four 0.05s declared the same deliberate 1x-noise reuse v1.3 adds the corpus-quality interpretation clause (section 4 supplement, written before the points run): web_hq skipped the top-40% quality-head cut this version, so the six points train on a dirtier corpus than declared. Rules frozen: E is 'this corpus's floor', not 'the model's ceiling' -- no external comparison (Chinchilla 1.69 etc.); R=L(Dmax)-E is immune to ADDITIVE entropy (both terms shift, R unchanged), the misfire risk is only the non-additive case (noise tokens bend the curve flat at smaller D, capacity saturated on noise), unmeasurable until 44's W/F; R<0.05 reads as 'scaling done ON THIS CORPUS'; if section 3b (recognition absent) triggers, dirty corpus is a known suspect and the quality cut is the first recipe-change candidate; beta is immune to a constant noise fraction (D'=c*D absorbed by B only, beta unchanged) -- the warmup overestimate remains the only known beta bias. W/F is the pre-registered falsifier: E_W < E_dirty-0.05 -> floor was inflated, tree re-walked on W curve; R_W>0.10 where R_dirty<0.05 -> non-additive flattening confirmed, extend-D reopens on clean corpus; both within 0.05 -> the cut is worth ~0 at this scale. fb's intuition that 'R is compressed by entropy' was refined in the clause: additive entropy cancels in R. v1.6 flags the steep pole as single-source: textbook/en (both -0.26) share the source chinese-cosmopedia (en domain is 85% Chinese, cause traced to build_domains.sh:32 merging cosmopedia_extra.jsonl + en_textbook.jsonl, container label read as language label) -- the slope spread's steep end is one source counted twice, not two independent witnesses; trigger reading unchanged, reweight direction argument narrowed to 'web_hq -> cosmopedia'. v1.7: section 5 RMS>0.10 aligned to 2.28*sigma-hat = 0.1176 (was 2.3x Kaplan sigma; the 0.10-0.1176 band would have contradicted the protocol). v1.8 (expressive-ability ladder read, frozen before 3.24b lands): GAP = L2-O1 (74pt at 0.2b: two-way 90.4% vs open acc@1 16.0%) is the steering quantity for the user's 表达能力 target; O1 is not in the SKIP class (old-arch 3.24b held-out 35.6% demonstrates headroom, acc@5/acc@1 = 2.3x internal structure, seed noise s_O1=1.02pt df=3 << 74pt gap); noise floor self-calibrated from the 4 seeds (be.panel_expressive_seed_variance: s_L2=0.54, s_O1=1.02, s_O5=1.47, s_CE=1.27, s_GAP=0.90pt; readable move >= 4.65*s_M -> L2 2.5/O1 4.8/O5 6.8/CE 5.9/GAP 4.2pt); four shapes pre-registered -- A volume (O1 moves, gap narrows -> composition hypothesis weakened), B composition (L2/CE move, O1 flat -> hypothesis survives, 10x needs composition change), C both-move, D unreadable; mechanism premise measured: cosmopedia template concentration 6.38x web_hq (44, mlm.corpus.cosmopedia_template_concentration), necessity holds, consequence is the ladder's; the ladder can FALSIFY the composition hypothesis but not confirm it (flat at 3.24b does not prove flat at 36B); the 10x build MUST include a same-mix control arm or the hypothesis is not falsifiable by it; 0.2b composition A/B declined -- not for lack of resolution (O1 4v4 MDE = 2.4pt is readable) but wrong scale (tests 0.2b, hypothesis is about 36B); the val-NLL resolution failure (MDE 0.20) does not generalise to O1 -- the over-reach correction recorded",
-   "measured": "2026-08-30",
-   "source": "docs/lessons/scaling_decision_tree.md; docs/lessons/scaling_fit_protocol.md",
-   "config": {
-    "freeze": "before the first new budget point runs; changes only via a new version",
-    "noise_anchor": "0.05 nat run-to-run (Kaplan, no internal replicate)",
-    "tree_version": "v1.5",
-    "corpus_quality": "web_hq = ALL web shards (data/corpus/web/ merged in), no quality cut ever applied this version; W/F (44) is the falsifier"
-   },
-   "uncertainty": "the recognition thresholds (0.75/0.60/0.30/0.02) are anchored to old-architecture measurements; the new architecture's levels may shift them -- but the thresholds are frozen, so a shift shows up as a branch taken, not a moved threshold",
-   "status": "measured"
-  },
-  {
-   "id": "ds.threshold_provenance_audit",
-   "value": "2026-08-30 audit of every threshold in the three frozen docs (panel / fit protocol / decision tree), fb-ordered after resolution numbers were found wrong. Three independent error classes found, all source errors not arithmetic: (1) misattribution -- 8.4pt is the n=277 minimal-pair MDE quoted at n=1040 (math v2), propagated to fb's 5000->3.9pt anchor and b0's report; (2) one/two-sided -- LAMBADA 3.6pt used one-sided z_a=1.645 inside a two-sided-frozen panel (correct 4.1pt); (3) default-as-actual -- the old ladder's warmup confound was computed from Cfg.warmup=20 (train.py default) while the actual runs launched with --warmup 150 (e1 log read): true shares 69%/4.2% ratio 16.4x, not 7.9%/0.5% ratio 16x (ratio coincidentally close). Also fixed: drift p 22/64=34% -> 16/64=25% (irreproducible, exact count is 16); endpoint delta ambiguity (Huber 1e-3 vs noise 0.05) clarified to 0.05. Rule established: every number carries its source (literature / our measurement / code default); reproducible-by-formula and right-source are separate properties -- arithmetic auditing catches none of these. The 0.05 noise anchor's multiple roles (ACCEPT boundary, d_double line, R-done line, D* band, reweight success line) declared one deliberate reuse of Kaplan run-to-run 0.05",
-   "measured": "2026-08-30",
-   "source": "docs/lessons/base_eval_panel.md (v1.3); docs/lessons/scaling_fit_protocol.md (v1.3); docs/lessons/scaling_decision_tree.md (v1.2); retired_pre0830v2/runs/0830v1_0.2b.log (e1 log read)",
-   "config": {
-    "error_classes": [
-     "misattribution",
-     "one/two-sided",
-     "default-as-actual"
-    ],
-    "all_three": "source errors, arithmetic correct",
-    "source_rule": "literature / our measurement / code default, stated per number"
-   },
-   "uncertainty": "the 3.9pt and 34% origins could not be reconstructed; both recorded as irreproducible rather than guessed",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.attn_ab_read_protocol",
-   "value": "pre-registered read rules for e1's KDA vs full-attention A/B (docs/lessons/attn_ab_read_protocol.md, frozen before results): arms --attn_every 1 (12x GatedMLA, 194M) vs --attn_every 4 (9 KDA + 3 GatedMLA, 206M, +5.8%), 4 seeds x 2 arms at 0.2b. (1) MDE: e1's 0.035 is irreproducible -- it assumes seed SD s=0.015 but internal seed variance has never been measured (only anchor: Kaplan 0.05 -> MDE 0.12); frozen rule is self-calibrating: threshold = 2.371*s_pooled from the 8 runs' own seed spread (t_0.975,6+t_0.8,6)*sqrt(2/4), with the df=6 uncertainty band [0.64s, 2.20s] reported -- gap inside the band = no resolution. (2) Primary metric = aggregate val NLL (one number, same quantity as the scaling fit); all 7 per-domain NLLs are secondary diagnostics, all reported, cherry-picking banned, decision claims need Bonferroni 0.05/7. (3) Panel secondaries (CLiMP/LAMBADA/math v2) are trend-only at 0.2b, not in the decision, unless between-arm spread > metric MDE AND readings above floor+MDE. Decision tree: full-attention wins >= threshold -> ladder switches to attn_every 1 (timing fb's call -- switching mid-ladder mixes architectures); KDA wins >= threshold -> unreadable alone (capacity confound is binary, margin size does not resolve it), mandatory balance arm --ffn_hidden 3392 with param counts verified from run logs within +-1%; |gap| < threshold -> KDA stays, '0.2b no resolution', re-ask at 3.24b on the ladder's own checkpoints (e1's original 'no sig diff -> delete KDA' violates the empty-cell rule, void) Scheduling and gate added 2026-08-30 (fb scheduling, gate threshold pre-registered here): step 1 runs 4x attn_every 4 seeds unconditionally (24 min; seed 0 = ladder's 0.2b point, spread = sigma-hat df=3, 44's F arm); step 2 computes MDE = 2.371*s_4; GATE: MDE <= 0.08 -> run 4x attn_every 1 (0.08 = ceiling of the realistic 0.01-0.05 arch-gap range at 200M/0.2b; an MDE past the ceiling can only produce a predictable 'no resolution', waste), MDE > 0.08 -> defer the whole A/B to 3.24b (free re-ask on ladder checkpoints). The sigma-hat CI (df=3, factor 6.5x) does NOT enter the gate: at MDE_point=0.08 the probability true MDE <= 0.08 is ~50%, the band cannot move the gate informatively -- using it would be noise-as-information; the CI's job is in the read (gap inside [1.52s, 5.22s] = no resolution). Timing ruling (fb): the A/B fully completes before the ladder starts -- no mid-ladder arch switch ever; if it ever arises, finish the current arch and re-run the whole curve on the other (a mixed-arch curve is not a bad curve, it is a meaningless one). GATE FIRED 2026-08-30: sigma-hat = 0.0516 (df=3, ds.seed_variance_0p2b, s0 3.691/s1 3.762/s2 3.679/s3 3.638); MDE per the frozen formula = 2.371*0.0516 = 0.1223 (fb's normal-approx 2.8*s*sqrt(1/2) = 0.1021; both > 0.08, ruling robust to formula choice) -> attn_every 1 arm does NOT run at 0.2b (8+8 would reach 0.0722 and still miss, not a seed-count problem); KDA A/B deferred to the 3.24b checkpoint (free re-ask on ladder checkpoints). fb committed the branch at 20e1b7a before seeing the number. e1's MDE~0.035 formally recorded irreproducible (required s=0.015, measured 1.47x; a fit residual borrowed as seed variance). Kaplan sanity: 0.0516 < 0.10, no trend-only degradation. Paired-design amendment (section 6, written before e1's probe lands): same-seed both arms -> paired-t MDE = (t_0.975,n-1 + t_0.8,n-1)*s_d/sqrt(n), df=n-1; gate 0.08 requires s_d <= 0.008/0.026/0.0385/0.056 at n=2/3/4/6; sigma_d = sigma*sqrt(2(1-rho)) needs rho >= 0.7-0.8 to be viable; min n=2 (df=0 has no MDE); gate input is the probe's s_d not sigma-hat=0.0516 (a new quantity); falsifier pre-registered: probe sigma_d ~ sigma*sqrt(2) (rho~0) -> pairing bought nothing, independent economics already failed -> A/B dead at 200M; same-seed same-arm probe gives lower bound sigma_d >= sqrt(2)*sigma_nondet; costs ~103 GPU-min per 3.24b run, 4+4 paired ~824 min (721 with ladder-seed reuse), nothing before the ladder finishes. fb's 'free re-ask at 3.24b' retracted (6bb6035): the ladder produces attn_every 4 only. df=1 reading rule: probe 2 has 2 pairs (df=1, s_d CI factor ~31x); point estimate decides, but if n=4 probe MDE lands within +-20% of the 0.08 gate, add a 3rd pair (~12 GPU-min, df=2) before committing 3.24b. Probe execution (fb): paired against s2/s3 not s0/s1 (s0/s1 ran before the 06:30:37 train.py edit; verified neutral but a small-effect measurement should not spend it); probe 1 re-runs seed 2 vs existing s2 (half cost, tests reproducibility on a checkpoint the curve uses). fb's normal-approx relapse corrected: n=2 needs rho>=0.988, n=4 needs rho>=0.721 -- the probe is really asking whether rho clears 0.7. Section 7 (non-inferiority variant, frozen at tilerl's request): the one-sided NI formula delta_res = (t_0.95,df + t_0.80,df)*s*sqrt(1/n1+1/n2) is the standard NI design (H0: Delta <= -delta, power 0.8 at Delta=0), t-values verified (df=6: 1.943+0.906=2.849, df=14: 2.629, df=30: 2.551); design rules: size n so delta_res <= tolerance, if unaffordable declare unanswerable (a boundary design decides nothing -- n=4/delta_res=0.104/tolerance 0.103 has ~79% power at Delta=0 and fails NI on any observed small loss); tolerance must be DERIVED from a measured exchange rate (eff.throughput_quality_exchange_rate: 0.103 = 0.910 nat/e-fold * ln(1.120)), frozen before the study, never chosen; tolerance slope must be the LOCAL slope at the study scale, not a two-point secant (0.910 from 0.2b/0.3b overestimates at 3.24b where the curve flattens -- wait for the ladder fit, same rule as don't-fit-threshold-after-seeing); ds.mde_recomputed_from_measured_sigma=0.1021 is the TWO-SIDED z-approx, not the NI formula (0.104) -- do not cite it for NI; applies to any 'did the change cost more than delta' question (Block AttnRes, 10x control arm)",
-   "measured": "2026-08-30",
-   "source": "docs/lessons/attn_ab_read_protocol.md; aupai-fb task 2026-08-30; e1's A/B design",
-   "config": {
-    "arms": "attn_every 1 (194M) vs 4 (206M)",
-    "seeds": "4 per arm",
-    "mde_formula": "2.371*s_pooled, self-calibrating",
-    "sigma_hat_source": "44's 4-seed 0.2b run, shared with the scaling fit (protocol v1.5 section 9)",
-    "gate": "MDE=2.371*s_4; <=0.08 run arm, >0.08 defer to 3.24b"
-   },
-   "uncertainty": "s_pooled at df=6 has a 3.4x uncertainty band; a gap inside it is unreadable by construction",
-   "status": "recorded"
-  },
-  {
-   "id": "ds.facts_audit_2026_08_30",
-   "value": "sampled audit of facts currency (docs/lessons/facts_audit_2026-08-30.md): 20 measured facts sampled seed 20260830 from a population of 98, criteria pre-registered before sampling (C1 arch anchor on old-arch unlabeled, C2 stale corpus state, C3 changed code defaults treated as actual). 1/20 stale (5%, Wilson 95% CI [0.9%, 23.6%]): ds.trainpy_steps computed 254 steps/0.2b point from train.py defaults (6 GPU/batch 32/accum 1) while the ladder actually runs 7 GPU/batch 16/accum 2 = 218 steps -- the default-as-actual error class again, evidence it is systemic not one-off; fixed (defaults vs ladder_actual split). The other 19 hold: 9 mlm.src.* external metadata (version-pinned, cannot expire by construction), tokenizer/contamination/data-quality measurements anchor fixed datasets, eff.* facts anchor the new arch. Limitation: 45% of the sample is external metadata; among the 11 stale-capable facts the rate is 1/11 ~9%. No evidence of mass staleness -- the six-point reading will not cite a batch of dead anchors. Recommendation to de (not applied): facts_well_formed checks field presence not currency; add a soft warning for measured facts whose config carries old-arch markers without an OLD-arch-only label",
-   "measured": "2026-08-30",
-   "source": "docs/lessons/facts_audit_2026-08-30.md; facts/*.json",
-   "config": {
-    "seed": 20260830,
-    "n_sampled": 20,
-    "population": 98,
-    "criteria": [
-     "C1 old-arch anchor unlabeled",
-     "C2 stale corpus state",
-     "C3 changed defaults as actual"
-    ]
-   },
-   "uncertainty": "Wilson CI wide [0.9%, 23.6%]; sample composition (45% external metadata) limits the staleness rate estimate",
-   "status": "measured"
-  },
-  {
-   "id": "ds.seed_variance_0p2b",
-   "value": 0.0516,
-   "unit": "nat (val NLL standard deviation across seeds)",
-   "measured": "2026-08-30",
-   "source": "p02_s0..s3, four 0.2b points differing only in --seed; runs/score_matrix.jsonl + runs/p02_seeds*.log",
-   "config": {
-    "val_nll": {
-     "s0": 3.691,
-     "s1": 3.762,
-     "s2": 3.679,
-     "s3": 3.638
-    },
-    "mean": 3.6925,
-    "range": 0.124,
-    "df": 3,
-    "estimator": "sample standard deviation over 4 seeds",
-    "run_config": "7 cards (GPU 1-7), batch 16 accum 2, warmup 20 absolute, vocab 32784, bucket_cap_mb 50, chunk_size 32, AttnRes Full, attn_every 4, NoPE, fp8; mix data/mix_scale_0.2b.json; corpus fp web_hq 30838d423348b2e5",
-    "code_boundary": "s0 and s1 ran train.py before the 06:30:37 edit that made bucket_cap_mb a Cfg field; s2 and s3 ran after. The five frozen values were verified identical across all four from s0's own log, and the edit moved recorded metadata rather than computation.",
-    "supersedes": "the assumed 0.035, which was a FIT RESIDUAL borrowed as a seed variance. A residual carries model misspecification; seed variance does not. Two experiments (lessons-e1's KDA A/B, lessons-44's W/F) were designed against the conflation."
-   },
-   "uncertainty": "3 df -- the sigma confidence interval at 3 df is wide (roughly 0.6x to 2.9x); treat 0.0516 as the point estimate it is",
-   "status": "measured",
-   "boundary": "measured at the 0.2b budget point on this mix and architecture; says nothing about seed variance at larger D, where more steps may average seed effects down"
-  },
-  {
-   "id": "ds.nondeterminism_washes_out",
-   "value": "CONFIRMED AND GIVEN A df (tilerl twin run, 2026-09-01): a second same-seed same-config pair measures max spread 0.094 nat and step-10 spread 0.022 nat over 110 steps, 1 card, smoke mix, n=2. This replaces the n=1 magnitude read below with an estimate: sigma_nondet, expressed as observed max-spread, is 0.094 nat and the step-10 figure sits inside the 0.02-0.05 band the original rerun reported. The band holds at a different scale, card count and mix than it was measured on.\n\nTHE USE THIS WAS PUT TO, and the half that was wrong. A pad_dynamic_shapes A/B showed 1.83 nat at step 10 between arms sharing seed and config. Against this fact's band that is 37x the top, so it could not be nondeterminism, and I predicted the fault was in the measurement shim. It was not: pad_dynamic_shapes ITSELF changes which kernels run and their accumulation order, and the ON arm regresses 0.83 nat at 8.8x the twin floor. The fact correctly excluded nondeterminism as the cause and gave no information about what the cause was -- a floor tells you a difference is real, never what produced it.\n\nsame-seed same-arm rerun (s2 vs rerun, attn_every 4, 0.2b, same code/config): per-step losses diverge from step 10 (spread 0.02-0.05 nat through training) but final val converges -- 3.680 vs 3.679, diff 0.001. Nondeterminism enters and does not accumulate; the optimizer washes the perturbation out. sigma_nondet ~ 0.0009 as a point read (E|d|=1.128*sigma for a single paired difference; n=1, no df -- a magnitude read, not an estimate). Three consequences: (1) sigma-hat=0.0516 (ds.seed_variance_0p2b) is essentially PURE seed variance -- the gate number measures what it claims; (2) a step-by-step loss diff between two runs is NOT evidence of a real difference at this magnitude -- run comparisons read final val only, anyone diffing training curves to argue for a change would be fooled; (3) paired-design lower bound sigma_d >= sqrt(2)*sigma_nondet ~ 0.0014, not binding at any n (attn_ab_read_protocol section 6)",
-   "measured": "2026-09-01",
-   "source": "fb probe 1: rerun of seed 2 attn_every 4 vs existing ckpt_p02_s2; runs/p02_seeds*.log",
-   "config": {
-    "budget": "0.2b",
-    "arm": "attn_every 4",
-    "seed": 2,
-    "same_code_revision_both_runs": true,
-    "twin_2026_09_01": {
-     "max_spread_nat": 0.094,
-     "step10_spread_nat": 0.022,
-     "steps": 110,
-     "cards": 1,
-     "mix": "smoke",
-     "n": 2,
-     "df": 1,
-     "note": "same seed, same config, no flag; the floor a same-seed A/B is judged against"
-    }
-   },
-   "uncertainty": "n=2 gives df=1: this is an estimate but a weak one, and it is single-card on the smoke mix while the gates that cite it are judged on 7 cards at stage-1 shapes. A floor measured in one configuration does not transfer to another -- the fp8 head A/B therefore runs its own baseline+twin in the real 7-card config rather than reusing this number.",
-   "status": "measured",
-   "boundary": "measured at 0.2b/218 steps; whether nondeterminism accumulates at larger D is untested"
-  },
-  {
-   "id": "ds.mde_recomputed_from_measured_sigma",
-   "value": 0.1021,
-   "unit": "nat (MDE for a symmetric 4-vs-4 comparison at 0.2b)",
-   "measured": "2026-08-30",
-   "source": "2.8 * 0.0516 * sqrt(1/4 + 1/4), sigma from ds.seed_variance_0p2b",
-   "config": {
-    "mde_by_design": {
-     "4+4": 0.1021,
-     "8+8": 0.0722,
-     "8+1": 0.1532
-    },
-    "pre_registered_gate": 0.08,
-    "decision": "4+4 MDE 0.1021 is OUTSIDE the 0.08 gate, so the second four runs (attn_every 1, seeds 0-3) do NOT happen; the KDA A/B moves to the 3.24b checkpoint where it is free",
-    "pre_registration": "the sigma-hat <= 0.040 / > 0.040 branch was committed at 20e1b7a while s2 was at step 170/217 and s3 had not started",
-    "fit_gate_consequence": "ACCEPT is RMS <= 1.14 sigma = 0.0588, not the 0.05 quoted this round; that figure assumed sigma = 0.035. Expected RMS of a 3-parameter fit through 6 points is 0.71 sigma = 0.0366.",
-    "formula_note": "0.1021 is the NORMAL approximation 2.8*s*sqrt(1/4+1/4). The protocol's frozen value is the t-version (t.975,6 + t.80,6)*s_4 = 0.1223. Both exceed the 0.08 gate, so the ruling is robust to the choice -- but cite the t-version against the protocol; comparing 0.1021 to a frozen 0.1223 is the discrepancy this note exists to prevent.",
-    "mde_t_version": 0.1223,
-    "do_not_confuse_with": "the non-inferiority delta_res = (t.95,df + t.80,df)*s*sqrt(1/n1+1/n2), frozen as attn_ab_read_protocol.md section 7. At n=4/arm that reads 0.104 against this entry's 0.1021 -- the near-equality is a COINCIDENCE, not agreement. This entry is two-sided DETECTION under a normal approximation; that one is one-sided NON-INFERIORITY under a t-form. They answer different questions and citing one for the other is wrong even when the numbers match."
-   },
-   "uncertainty": "inherits the 3 df on sigma",
-   "status": "measured"
-  },
-  {
-   "id": "ds.scaling_fit_six_point",
-   "value": "Six-point fit of L(D)=E+B/D^beta per frozen protocol v1.10 (scripts/fit_scaling.py): E=2.003, B=30000 (sits at grid edge), beta=0.513. RMS=0.0206, max|resid|=0.0384; residuals +0.0384/-0.0207/+0.0002/-0.0207/-0.0002/+0.0144, sign pattern +-+--+. VERDICT: ACCEPT, and de-labeled -- RMS 0.0206 < 0.71*sigma-hat=0.0366, so the noise-loose label is removed and ACCEPT is hard (sigma decreases with D, as v1.6 predicted). No S4 falsifier fires: no U-shape, no monotone drift, no LOO beta instability (max |delta beta|=0.0031), endpoints not same-sign. Profile-likelihood beta CI is VACUOUS (spans the full 0.01-5 grid): under Huber delta=1e-3 all residuals are in the L1 zone, objective ~1e-4, so Delta=3.84 dwarfs the surface -- the L2 chi2 construct does not apply (protocol S9 Huber warning, same phenomenon); beta identification rests on LOO stability. Local slope at 3.1955b: -0.212 nat/e-fold (LOO range -0.20 to -0.25) -- for tilerl's non-inferiority tolerance at 3.24b: 0.212*ln(1.120)=0.024 nat, 4.3x tighter than the 0.103 secant-based tolerance (the curve bends flat, as fb predicted); attn_ab_read_protocol S7 requires the local slope, this is it. Warmup confound stands: beta is overestimated (protocol reading warning). D gaps: five small points 0% (no cap, verified), p324 scheduled 3.1955B vs requested 3.2449B = 1.522% < 10% -> absorbed per S11; the 1.53% prediction (train.py:1348/1362, integer row counts, pre-run) confirmed to three digits. p16 residual -0.0002: the 1.6b panel oddity is not in the NLL.",
-   "measured": "2026-08-30",
-   "source": "scripts/fit_scaling.py (frozen protocol v1.10); aupai-fb six-point val NLL + p324 log line",
-   "config": {
-    "D_scheduled_B": [
-     0.2,
-     0.3,
-     0.4,
-     0.8,
-     1.6,
-     3.1955
-    ],
-    "val_nll": [
-     3.691,
-     3.322,
-     3.159,
-     2.792,
-     2.57,
-     2.415
-    ],
-    "fit": "Huber delta=1e-3, L-BFGS-B, 252-start grid, D in raw tokens",
-    "beta": 0.5131,
-    "E": 2.0026,
-    "B": 30000,
-    "rms": 0.0206,
-    "max_resid": 0.0384,
-    "local_slope_3p24b_nat_per_efold": -0.2116,
-    "tilerl_tolerance_3p24b_nat": 0.024
-   },
-   "uncertainty": "beta CI vacuous under the frozen Huber/profile method (L1 at this noise scale); B at grid edge; beta overestimated by the warmup confound; E and B individually poorly identified (L1 flat region) but the fitted curve and its local slope are LOO-stable",
-   "status": "measured"
-  },
-  {
-   "id": "ds.code_source_reachability",
-   "value": "实测(pod, curl -4 强制 IPv4):IPv6 出口整体坏——curl 默认先试 IPv6,本 pod IPv6 路由坏(Errno 99),回退 IPv4 即通,所以必须 -4/强制 IPv4(之前 urllib/HEAD 探测不回落 IPv4,系统性假象)。curl -4 实测:数据直连 host 通、API host 真堵。data.together.xyz(RedPajama-1T github 98 采样文件)HTTP 200 每文件 2.66GB=260GB raw/~30B token,可达;hf-mirror resolve 通(fineweb2 484MB 200);hf-mirror API 路由 403 反爬;huggingface.co 及其 datasets-server 即使 IPv4 也 timeout(rc 28),真堵;the_pile(the-eye.eu)到 SSL 校验失败 rc 60,需 -k;codeparrot-clean 仓库在(307),parquet 路径待定。",
-   "measured": "2026-08-30",
-   "source": "pod 实测 conn.py/probe2-6.py/msco.py;pod 经 ~/bin/pod 执行 urllib HEAD/GET",
-   "config": {
-    "hosts": [
-     "huggingface.co",
-     "hf-mirror.com",
-     "www.modelscope.cn"
-    ],
-    "method": "urllib HEAD/GET timeout 15-25",
-    "pod": "iv-yeozpb5g5cbw80bls64e"
-   },
-   "uncertainty": "the_pile 需 -k;codeparrot parquet 路径待定;.co 是否区域堵(仅测了这台 pod)未证",
-   "status": "measured"
-  },
-  {
-   "id": "ds.code_fertility_redpajama",
-   "value": "frozen-vocab on RedPajama-1T github, EXACT full-file token count (no extrapolation within file): file_0 (uncompressed jsonl, 2,658,456,835 B, 334,662 docs) = 751,303,817 tokens, 2.287B chars => chars/token=3.04, tok/file-byte=0.283. x98 files => 73.6B tokens total (content-hash-shuffled manifests => files homogeneous). EARLIER 85.7B was tok/text-byte(0.329) x file-bytes -- the cross-denominator error fb flagged (meta+jsonl overhead makes file-bytes > text bytes); corrected to the exact 73.6B. Branch >=8B firm; code cell not supply-limited.",
-   "measured": "2026-08-30",
-   "source": "pod 实测: /data00/aupai_raw/code_supply/github_00.sampled.jsonl + tokenizers.Tokenizer.from_file(data/tokenizer.json); measure3.py; curl -4 从 data.together.xyz",
-   "config": {
-    "tokenizer": "data/tokenizer.json (冻结 32,784)",
-    "numerator": "tokens=tokenizer.encode(text).ids 求和",
-    "denominator": "UTF-8 bytes / UTF-8 chars of same text",
-    "sample": "前 ~300MB 连续段,47,028 docs",
-    "sampling_note": "content-hash 打散文件名,n=1 文件采样近全体",
-    "sampling_uncertainty": "n=1 文件;跨语言(Python/C)tok/byte 有差异但打散使单文件≈混合"
-   },
-   "uncertainty": "x98 assumes within-file token count ~ file-interian; gate (tokens/word on code) unmeasured",
-   "status": "measured"
-  },
-  {
-   "id": "ds.code_cross_source_dup_unmeasured",
-   "value": "codeparrot 与 RedPajama-1T github 的跨源近重率 NOT MEASURED (status unmeasured). 合并可用 token 因此是上界 (UPPER bound), 不是净值。",
-   "claim": "codeparrot-clean 与 RedPajama-1T github 的跨源近重率 (决定合并可用 token 是净值还是上界)",
-   "audit": "纯 Python MinHash (build_corpus MinHashLSH 128-perm/16-band) 在 1.81GB(codeparrot) x 2.66GB(RedPajama 采样) 上跑 >1h 未完成 codeparrot 种子段, 故停。停因: 73.6B code 格需求 8.0B 的 9 倍, 且 codeparrot 预期贡献 <=0.6B, 该近重率只微调一个 不影响任何分支的数; 为它花一小时是错误优先级 (fb 2026-08-30 批准停)。",
-   "measured": "2026-08-30",
-   "source": "minhash2.py on pod (stopped); datagen/build_corpus.py MinHashLSH",
-   "config": {
-    "lsh": "MinHashLSH 128-perm/16-band ~0.8 Jaccard",
-    "input": "codeparrot 1.81GB parquet + RedPajama-1T github 2.66GB jsonl",
-    "elapsed_before_stop": ">1h on codeparrot seed phase",
-    "stopped": "2026-08-30, does not change any branch"
-   },
-   "uncertainty": "该数未测; 若日后需要, 改用矢量化 MinHash 或采样池",
-   "status": "unmeasured",
-   "refuted_by": "the stopped cross-source MinHash run would produce the number; until it runs the upper-bound claim stands",
-   "boundary": "合并可用 token 是上界非净值; '73.6B+0.6B' 不得当净值引用"
-  },
-  {
-   "id": "ds.code_mining_feasibility",
-   "value": "2.0B code-with-tests 格 4M 样本(500 tok/样本),即使 λ=1 也要 4M 次生成——任何预算外,瓶颈是件数非单价(fb)。挖而非造。RedPajama-1T github 采样文件实测(334,662 docs):7.6% repo(13,733/180,828)同时含 impl+test;26.96% doc(90,224)落双全 repo,test 文件 8.25%。对 73.6B 外推=多维 B token 可执行验证池,过滤可得、零生成。grep 层面可行性成立(上界,runnable-pair 过滤会缩不拦)。配执行信号的验证式天然存在于带测试的仓库,nanochat 同路(d62dd3e)。λ 因此只服务 SFT/评测规模(万级),不服务 2.0B 预训练格。",
-   "measured": "2026-08-31",
-   "source": "pod 实测 datagen/scan_scm_tests.py on data/raw/code_supply/github_00.sampled.jsonl (334,662 docs)",
-   "config": {
-    "file": "github_00.sampled.jsonl (2.66GB, 334,662 docs)",
-    "test_heuristic": "path regex test/spec/_test",
-    "repos": 180828,
-    "repos_both": 13733,
-    "docs_in_both": 90224,
-    "docs_in_both_frac": 0.2696,
-    "test_docs_frac": 0.1493,
-    "lambda_pilot": 0.72,
-    "gen_per_usable": 1.38
-   },
-   "uncertainty": "repo 双全是上界;runnable-pair(import 匹配、能跑)过滤会显著缩,未测真实配对数;采样 n=1 文件",
-   "status": "measured"
-  },
-  {
-   "id": "ds.second_resume_rereads_one_segment",
-   "value": "RETRACTED 2026-09-02, same day, by the fix its own uncertainty asked for. The defect described below was real on the code that produced the p500m checkpoints, and is gone from main: 52aec31 adds `+ int(_base.get(n, 0))` at train.py:1030, where _base is the cursor build_mix APPLIED (train.py:1580), so a post-resume save writes an ABSOLUTE row count instead of a segment count. VERIFIED on three real checkpoints of the current run, read on the pod with the equality the uncertainty named -- sum(row_cursor) == row_cursor_as_of_step x batch x accum x world, rows/step = 16x2x8 = 256: step500 128,000 = 500x256; interrupt.step832 212,992 = 832x256; interrupt.step1192 305,152 = 1192x256. Only the third has discriminating power -- it was written after a resume at origin 832, where absolute and segment-only disagree (305,152 against 92,160), and 305,152 - 212,992 = 92,160 = 360x256 is exactly the 360 steps of that segment added in. The first two sit at origin 0, where both implementations give the same number and the old code would also read green. THE COST OF LEAVING THIS AT status=measured: on 2026-09-02 the controller session chose to resume the 200M run from step832 rather than step1192 to avoid the re-read this entry predicts, discarding 360 steps = 1.36 card-hours against a risk that no longer existed. A fact whose code has been fixed is not merely stale; it is acted on. WHAT SURVIVES: the p500m numbers below are a correct reading of the old behaviour, and eff.resume_inflates_total_steps cites its 8,192-row overlap for that run. WHAT DOES NOT: any prediction about a resume on current main.\n\nThe row cursor counts ONE SEGMENT and does not accumulate, so the SECOND and every later resume re-reads rows the run has already trained on. train.py:1387 computes rows_done = (step - _origin) * batch * accum, and :2309 sets _origin = resume_step, so a checkpoint written after a resume describes only the rows THAT resume drew -- not the run's total. Measured on p500m_20b_0902 (de and tilerl, independently, same hour): the nine domain cursors in .interrupt.step32 sum to 8,192 = 32x256, correct because that segment started at origin 0; the cursors in .interrupt.step83 sum to 13,056 = 51x256, while step 83 had truly consumed 21,248 = 83x256. Neither checkpoint records the total, and nothing raises. Relaunching from .interrupt.step83 seeded used[] with 13,056 against FULL pools, so rows 13,056..21,248 were read a SECOND time: 8,192 rows, 33.5M tokens, 0.168% of the 20B budget. Those rows are at epoch 2.0 while the corpus around them is at 1.0. Nine srcfp fingerprints matched and no domain reset to row 0, so de-13's discard fix is confirmed working in production by the same artifact.",
-   "measured": "2026-09-02",
-   "source": "train.py:1387,2309; ckpt_p500m_20b_0902.pt.interrupt.step32 and .step83 row_cursor fields",
-   "config": {
-    "run": "p500m_20b_0902",
-    "batch": 32,
-    "accum": 1,
-    "world": 8,
-    "rows_per_step": 256,
-    "cursor_sum_step32": 8192,
-    "cursor_sum_step83": 13056,
-    "true_consumption_at_step83": 21248,
-    "reread_rows": 8192,
-    "reread_tokens": 33554432,
-    "reread_frac_of_20B": 0.00168,
-    "corpus_rows": 4882812,
-    "how_it_happened": "segment 1 fresh -> SIGTERM at 32; segment 2 --resume step32 -> SIGTERM at 83; segment 3 --resume step83, hand-written, is the second resume. supervise_run.sh allows exactly one automatic resume for this reason; the second was a human relaunch, which is how the cost came to be measured rather than assumed.",
-    "refutation": {
-     "run": "p200m_4b_0902",
-     "rows_per_step": 256,
-     "batch": 16,
-     "accum": 2,
-     "world": 8,
-     "checkpoints": {
-      "ckpt_p200m_4b_0902.pt.step500": {
-       "as_of_step": 500,
-       "cursor_sum": 128000,
-       "origin": 0
+  "facts": [
+    {
+      "id": "ds.muennighoff_formula",
+      "value": "L(U_D,R_N,R_D) = 521/(U_N + 5.3*U_N*(1-e^(-R_N/5.3)))^0.35 + 1488/(U_D + 15.4*U_D*(1-e^(-R_D/15.4)))^0.35 + 1.87, with U_N = 0.051*U_D; fitted R_D*=15.387756, R_N*=5.309743, alpha=beta=0.35, E=1.87",
+      "measured": "2026-08-30",
+      "source": "2023 paper; Muennighoff et al., Scaling Data-Constrained Language Models, arXiv 2305.16264, Eq.17 + Appendix A",
+      "config": {
+        "fit_range": "epochs 1-500, params 7M-9B, C4 subsets, GPT-2 architecture, cosine 10x decay per run, 5 seeds/dot"
       },
-      "ckpt_p200m_4b_0902.pt.interrupt.step832": {
-       "as_of_step": 832,
-       "cursor_sum": 212992,
-       "origin": 0
+      "uncertainty": null,
+      "boundary": "fitted on GPT-2 architecture, English C4; KDA+MLA and Chinese are out of distribution",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_four_epoch",
+      "value": "8.7B model at 4 epochs (44B unique tokens) finishes +0.5% validation loss vs single-epoch (178B unique); downstream differences insignificant up to ~4 epochs (25% budget)",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.6-7",
+      "config": {
+        "model": "8.7B params",
+        "data": "C4",
+        "schedule": "cosine 10x decay, no early stopping, shuffled after each epoch",
+        "seeds": 5
       },
-      "ckpt_p200m_4b_0902.pt.interrupt.step1192": {
-       "as_of_step": 1192,
-       "cursor_sum": 305152,
-       "origin": 832
-      }
-     },
-     "segment_only_would_write_at_1192": 92160,
-     "discriminating_checkpoints": [
-      "ckpt_p200m_4b_0902.pt.interrupt.step1192"
-     ],
-     "source_command": "torch.load(ckpt, mmap=True) on the pod; header only, no tensors read"
+      "uncertainty": null,
+      "boundary": "measured at 8.7B; the paper's fit covers 7M-9B but this specific number is an 8.7B point — 200M is in the fit range, not a direct measurement",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_per_epoch_decay",
+      "value": "each repeated epoch worth ~94% of the previous pass (delta~0.06 for data, ~0.19 for parameters); at R_D* repeated tokens worth on average 1-1/e ~ 63% of fresh; hard ceiling: effective data plateaus at ~16.4x the unique corpus regardless of epochs",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.5 + Appendix A",
+      "config": {
+        "fit_range": "epochs 1-500, 7M-9B params, C4"
+      },
+      "uncertainty": null,
+      "boundary": "delta is a fit constant, not a per-size measurement; no per-size repetition-tolerance table is published",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_size_epoch_interaction",
+      "value": "R_N*=5.3 < R_D*=15.4, so excess parameters decay faster than repeated data; data-constrained efficient frontier allocates compute to more epochs over more parameters; validated: a 27%-smaller model beat the Chinchilla-suggested model at 9.3e21 FLOPs / 25B unique tokens",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.5, 8",
+      "config": {
+        "range": "7M-9B params, C4"
+      },
+      "uncertainty": null,
+      "boundary": "interaction is captured only through the R_N*/R_D* terms; no direct small-vs-large repetition-tolerance split",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.muennighoff_mitigations",
+      "value": "no dropout or regularization durability test (speculative only); reshuffling after each epoch is standard, not ablated; mixing code gives ~2x effective tokens even for natural-language eval, safe to ~50% code; perplexity filtering helped, deduplication did not help downstream",
+      "measured": "2026-08-30",
+      "source": "2023 paper; arXiv 2305.16264, Sec.6, 9",
+      "config": {
+        "range": "7M-9B params, C4 + The Stack"
+      },
+      "uncertainty": null,
+      "boundary": "code-mix result is natural-language eval; math eval not tested",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_approach1",
+      "value": "fixed-N data-scaling protocol: for each parameter count N, train 4 models on horizons spanning a factor of 16x; each run its own cosine schedule matched to its horizon (LR drops 10x); cosine overshoot >25% noticeably degrades performance",
+      "measured": "2026-08-30",
+      "source": "2022 paper; Hoffmann et al., Chinchilla, arXiv 2203.15556, Sec.3 Approach 1",
+      "config": {
+        "models": "70M-16B",
+        "tokens": "5B-500B",
+        "peak_lr": "2e-4 smallest models, 1.25e-4 largest"
+      },
+      "uncertainty": null,
+      "boundary": "smallest stated budget 5B tokens; no 200M-specific curve; all runs <1 epoch",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_exponents",
+      "value": "L(N,D) = E + A/N^0.34 + B/D^0.28, E=1.69, A=406.4, B=410.7",
+      "measured": "2026-08-30",
+      "source": "2022 paper; arXiv 2203.15556, Sec.4",
+      "config": {
+        "fit_on": "smoothed training loss, MassiveText domains, <1 epoch"
+      },
+      "uncertainty": null,
+      "boundary": "fitted on their corpus and schedule; beta=0.28 is the prior for a 200M fit, not a measurement at 200M",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.chinchilla_readout",
+      "value": "scaling curves fit on smoothed TRAINING loss as unbiased estimate of test loss under the infinite-data assumption; downstream evals (MMLU, BIG-bench, etc.) used only for the final Chinchilla model",
+      "measured": "2026-08-30",
+      "source": "2022 paper; arXiv 2203.15556, Sec.4",
+      "config": {
+        "type": "paper readout",
+        "paper": "arXiv 2203.15556 Sec.4",
+        "assumption": "infinite-data"
+      },
+      "uncertainty": null,
+      "boundary": "infinite-data assumption fails in the repeated-data regime — training loss is then biased by memorization and held-out loss is required",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.kaplan_min_regime",
+      "value": "power-law fits broke at the smallest dataset (~22M tokens, 40 updates/epoch — 'a different regime'); fits poor for smallest D; valid only after an initial transient; 3000-step warmup (~1.57B tokens at their batch)",
+      "measured": "2026-08-30",
+      "source": "2020 paper; Kaplan et al., Scaling Laws for Neural Language Models, arXiv 2001.08361, Sec.3-5",
+      "config": {
+        "models": "768-1.5B non-embedding (fits from 1e3 params)",
+        "data": "22M-23B tokens (WebText2)",
+        "schedule": "3000-step warmup + cosine to zero"
+      },
+      "uncertainty": null,
+      "boundary": "warmup token count is arithmetic from their batch (512x1024), not stated; their batch is 5.24e5 tokens/step",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.kaplan_noise",
+      "value": "run-to-run variation ~0.05 in loss; results at convergence largely independent of LR schedule as long as LR not too small and decay not too fast",
+      "measured": "2026-08-30",
+      "source": "2020 paper; arXiv 2001.08361, Sec.5",
+      "config": {
+        "schedule_experiments": "3M-param model"
+      },
+      "uncertainty": null,
+      "boundary": "schedule-independence measured at 3M params and at convergence — a 200M curve's per-point readouts must still be annealed to be comparable",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsd_minicpm",
+      "value": "WSD: constant-LR stable phase + exponential decay tail (f=0.5^((s-S)/T)); MiniCPM decay = 5000 steps / 20B tokens (~1.4% of total), peak LR 0.01, batch 3.93M; HQ data in decay beats same data in SFT (GSM8K 27.7->42.3 on 2.4B)",
+      "measured": "2026-08-30",
+      "source": "2024 paper; MiniCPM, arXiv 2404.06395, Sec.6",
+      "config": {
+        "models": "2.4B, 1.2B",
+        "total_tokens": "~1.4T (2.4B)"
+      },
+      "uncertainty": null,
+      "boundary": "validated as a training strategy at 1.2-2.4B; not validated as a scaling-curve readout method at any scale",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_mechanism",
+      "value": "WSM = weighted average of recent checkpoints (mean average of last n, save every 25B tokens); window n=12 sufficient; merge duration is the critical factor, surpassing checkpoint interval and merge quantity; merging and LR decay are alternative pathways, not complementary",
+      "measured": "2026-08-30",
+      "source": "2025 paper; WSM, arXiv 2507.17634, Sec.3-4",
+      "config": {
+        "model": "Ling-mini MoE, 16.3B total / 1.4B active",
+        "base_run": "10.2T tokens"
+      },
+      "uncertainty": null,
+      "boundary": "single model, MoE, 1.4B active params; no dense or sub-1B results",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_proxy",
+      "value": "within ONE constant-LR run, WSM merges (4 checkpoints over preceding 100B tokens) at 2T/4T/6T/8T/10T milestones 'consistently and closely mirror' full 100B-token decay runs started at each milestone; WSM is 'a reliable, high-fidelity proxy for estimating a model's post-anneal potential at any point during training'",
+      "measured": "2026-08-30",
+      "source": "2025 paper; arXiv 2507.17634, Sec.4.3.1",
+      "config": {
+        "model": "Ling-mini 1.4B active",
+        "milestones": "2T-10T tokens"
+      },
+      "uncertainty": null,
+      "boundary": "the only direct evidence that one run can yield multiple valid scaling-curve readouts; scale 1.4B active, MoE",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsm_vs_wsd",
+      "value": "WSM mean-merge vs WSD best checkpoint: +1.3 points average (up to +2.7 MATH, +2.4 HumanEval, +2.1 MMLU-Pro); Table 1 base 62.67->63.95; merge algorithms: 1-sqrt 64.06 > mean 63.95 > EMA 63.01",
+      "measured": "2026-08-30",
+      "source": "2025 paper; arXiv 2507.17634, Tables 1-3",
+      "config": {
+        "model": "Ling-mini 1.4B active",
+        "eval": "average benchmark points"
+      },
+      "uncertainty": null,
+      "boundary": "single model; downstream points, not loss",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.wsqd",
+      "value": "WSqD: horizon-independent base LR (cooldown only at the end); matches or outperforms carefully tuned WSD across multiple horizons with one reused peak LR, up to 10% less compute for the same validation loss",
+      "measured": "2026-08-30",
+      "source": "2026 paper; WSqD, yuxinchen2020.github.io/publications/WSqD_schedule.pdf",
+      "config": {
+        "data": "SlimPajama",
+        "horizons": "15000/30000/45000/60000 iterations",
+        "optimizer": "AdamW"
+      },
+      "uncertainty": "model sizes not extracted from the PDF text",
+      "boundary": "solves peak-LR transfer across horizons, not the anneal-per-point cost",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.lr_decay_waste",
+      "value": "aggressive LR decay wastes the best data: curriculum benefit vanishes as decay strengthens; optimal ending LR ~1/3 of peak (1e-3 vs standard 1e-5 at peak 3e-3); constant LR + EMA of last checkpoints (CMA) and moderate decay each recover the benefit; combined +1.64% average accuracy over random shuffle + standard decay",
+      "measured": "2026-08-30",
+      "source": "2025 paper; How Learning Rate Decay Wastes Your Best Data, arXiv 2511.18903",
+      "config": {
+        "model": "Qwen2.5-1.5B",
+        "tokens": "30B",
+        "data": "DCLM-Baseline",
+        "peak_lr": "3e-3"
+      },
+      "uncertainty": null,
+      "boundary": "1.5B only; effect shown on both validation loss and downstream accuracy",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.smollm2_anneal",
+      "value": "SmolLM2-1.7B anneal = last 1T of 11T (9%), linear decay to 0, WSD peak 5e-4; anneal mix 58% web / 24% Stack-Edu / 14% math / 4% Cosmopedia v2; per-domain anneal weights are designed, not ablated",
+      "measured": "2026-08-30",
+      "source": "2025 paper; SmolLM2, arXiv 2502.02737",
+      "config": {
+        "models": "135M/360M/1.7B"
+      },
+      "uncertainty": null,
+      "boundary": "no per-domain anneal-composition ablation exists in the paper",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.mathhard_resolution",
+      "value": "math-hard resolves +-1.1pt at 2-3% pass rate (n=1032); a 4.1% vs 2.9% gap is z=1.44, p=0.15",
+      "measured": "2026-08-29",
+      "source": "aupai EXPERIMENTS.md + docs/lessons/adversarial_review.md@59d751b3 scoreboard (deleted in the 0830v1 reset at 7359a56f; recoverable by sha)",
+      "config": {
+        "n": 1032
+      },
+      "uncertainty": null,
+      "boundary": "cannot resolve the ~0.01-0.1 loss deltas a scaling-curve fit needs; usable only as a final-model sanity check",
+      "status": "measured"
+    },
+    {
+      "id": "ds.project_corpus",
+      "value": "corpus 3.24B tokens total; model 166M non-embedding params = 19.5 tokens/param (Chinchilla-optimal ~20); SmolLM2-1.7B reference ~6000 tokens/param",
+      "measured": "2026-08-30",
+      "source": "aupai-3b census, relayed by aupai-fb",
+      "config": {
+        "mix": "data/mix_scale_3.24b.json",
+        "model_nonembedding_params_M": 166,
+        "census_by": "aupai-3b"
+      },
+      "uncertainty": null,
+      "boundary": "3b's measurement; not independently re-verified by e1",
+      "status": "measured"
+    },
+    {
+      "id": "ds.trainpy_steps",
+      "value": "train.py Cfg DEFAULTS (read-only inspection of train.py:119-124): warmup 20 steps, batch 32, seq 4096, accum 1; at 6 GPUs = 786,432 tokens/step; warmup = 15.7M tokens; a 0.2B-token point = 254 steps = 12.7x warmup. DEFAULT-AS-ACTUAL CORRECTION (2026-08-30 audit): the ladder runs do NOT use these defaults -- actual is 7 GPUs (GPU1-7), batch 16, accum 2 = 917,504 tokens/step, so the 0.2b point = 218 steps (eff.warmup_absolute_not_fractional, de's smoke test). The ladder's warmup=20 is the v1.2 pre-registered choice, which happens to equal the default -- do not read the default as the run config (third error class: defaults are not actuals).",
+      "measured": "2026-08-30",
+      "source": "aupai train.py:119-124 (read-only inspection)",
+      "config": {
+        "defaults": {
+          "gpus": 6,
+          "per_gpu_batch": 32,
+          "accum": 1,
+          "warmup": 20
+        },
+        "ladder_actual": {
+          "gpus": 7,
+          "per_gpu_batch": 16,
+          "accum": 2,
+          "tokens_per_step": 917504,
+          "0.2b_steps": 218
+        },
+        "distinction": "defaults documented as defaults; ladder actual from run configs"
+      },
+      "uncertainty": "defaults are accurate as of 2026-08-30; ladder actual is from the 0.2b smoke-test config (eff.warmup_absolute_not_fractional)",
+      "boundary": "Kaplan's fit breakdown was at 40 updates/epoch; 218 actual steps is 5.5x that",
+      "status": "measured"
+    },
+    {
+      "id": "ds.scaling_fit_protocol",
+      "value": "pre-registered protocol for fitting L(D)=E+B/D^beta over the six budget points (docs/lessons/scaling_fit_protocol.md, v1.10, frozen before the points run): Chinchilla recipe verbatim (Huber delta=1e-3, L-BFGS-B, 252-start grid, linear space); ACCEPT RMS<=0.05 / WEAK <=0.10 / FAIL else; U-shape (++--++), monotone drift (run>=4 all >0.01), endpoint same-sign patterns falsify the form regardless of RMS; LOO beta delta>0.15 is an imprecision flag not a falsifier; single-point tree = rerun once / investigate root cause / endpoint voids the curve. Quantity = aggregate val NLL at the final checkpoint on a fixed val set. fb's mix-composition hypothesis resolved: domain weights are identical at all six points (measured 0.3238/0.4962/0.0757/0.0495/0.0252/0.0177/0.0118), the schedule is interleaved (randperm per phase), and the within-domain pool IS shuffled before the val carve-out (train.py:1129, random.Random(Cfg.seed).shuffle, seed=42 in Cfg and persisted via vars(cfg), 2c7ccf4) -- every budget point eats a random prefix of the same shuffled cache, so composition is constant in expectation and D is the only systematic variable. v1.1 corrections (fb ruling): (a) v1.0's 'source-ordered prefix' concern was wrong -- it audited build_corpus.py but not train.py's tokenization-cache layer; the pod's train.py was 142 files behind HEAD with nothing to say so (de shipped pod_drift guard); (b) warmup = fixed 20 steps for all six points (v1.2, de's smoke-test measurement overturned v1.1's pure-1%): on the 0.2b point (218 steps, same seed/data, mix_smoke_warmup.json) warmup=2 gave final val 3.658 vs warmup=20's 3.135 -- 0.52 worse at every recorded step; floor 2 did not crash but full LR arrived too early, the direction went bad and never recovered. Both schemes bias beta the SAME way (small points spend a larger fraction at low LR -> small-point loss high -> beta overestimated); the proportional scheme's bias is measured larger, so fixed steps wins. Residual confound stays in the protocol's interpretation section: warmup share 9.2% (0.2b) -> 0.57% (3.24b), beta is overestimated, report with the number. Lesson: a confound-removal fix can introduce a larger same-direction bias; which is smaller is measured, not reasoned. Preconditions for the six runs: shared tokenization cache (same corpus snapshot + vocab_id), frozen corpus snapshot fingerprinted in PROVENANCE, fixed 20-step warmup. Fitter: scripts/fit_scaling.py (selftest: noise-free recovery, noisy ACCEPT, pattern detection) v1.3 (threshold provenance audit + old-ladder warmup base correction): (1) drift p corrected 22/64=34% -> 16/64=25% (exact count of 6-bit sign strings with a run >=4; 34% irreproducible, recorded not reconstructed); (2) endpoint criterion clarified to delta_noise=0.05, not the Huber delta=1e-3 (under 1e-3 the condition is near-vacuous, reduces to sign alone); (3) new section 8 provenance table -- every threshold labeled measured/chosen/borrowed/derived, the 0.05 reuse across all three frozen docs declared deliberate (1x Kaplan run-to-run); (4) OLD-LADDER WARMUP BASE CORRECTED (third error class: default-as-actual): v1.1's 'old ladder confound 16x' was computed from Cfg.warmup=20 (train.py default); e1 read the actual run log (retired_pre0830v2/runs/0830v1_0.2b.log, launched with --warmup 150) -> true shares 69% (0.2b, 150/218) and 4.2% (3.24b, 150/3537), ratio 16.4x -- both components wrong, ratio coincidentally close; the fixed-20 ruling stands (de's 3.658 vs 3.135 supports it independently); (5) source-labeling rule: every number must state its source (literature / our measurement / code default); reproducible != right-source -- all three 2026-08-30 errors (n=277 misattribution, one/two-sided, default-as-actual) had correct arithmetic and fail only on source v1.5 (sigma-conditional thresholds, written before sigma-hat is measured): 44's 4-seed same-config run at 0.2b (3 df) will give sigma-hat; ACCEPT threshold = 1.14*sigma-hat (null 95th percentile: E[RMS]=0.71sigma under 6pts/3params/df=3, chi^2_3 95th = 7.815), WEAK ceiling = 2.28*sigma-hat; the fixed 0.05 was always this rule at Kaplan sigma (1.14*0.044=0.05); if sigma-hat > 0.07 the fixed 0.05 is void (a perfect fit passes only ~half the time). df=3 boundary: RMS itself is uncertain +-40% (1/sqrt(6)), the ACCEPT/WEAK boundary sits inside a single reading's CI -- RMS is coarse screening only, section 4 sign patterns (p=3.1%, sigma-independent) and profile CIs are the primary judges. Huber caveat: delta=1e-3 at sigma~0.05 makes the fit effectively L1, the chi^2 derivation is an L2 approximation -- within +-0.02 of a threshold, parametric bootstrap with the actual fitter decides (escape hatch pre-registered). sigma-hat measured at 0.2b is a conservative upper bound for the ladder; e1's attn A/B shares the same sigma-hat v1.6 corrects v1.5's direction error: sigma-hat from the smallest point is an UPPER BOUND on the ladder's sigma, but in the ACCEPT rule (RMS <= 1.14*sigma-hat) an over-estimate loosens the threshold -> false ACCEPT -- 'conservative upper bound' was anti-conservative for the verdict. Pre-registered asymmetric reading: ACCEPT carries a 'noise-loose' label (WEAK semantics: interpolation ok, extrapolation banned), FAIL is hard (a true tighter threshold would only make it harder); the sigma-independent judges (section 4 sign patterns p=3.1%, profile CIs) are primary. De-labeling rule (pre-registered, zero cost): after ACCEPT, residual RMS is an implicit estimate of sigma_ladder (E[RMS]=0.71*sigma if the form holds); if RMS < 0.71*sigma-hat(0.2b), sigma's D-decline is confirmed and the noise-loose label is removed -- this is a pre-registered de-labeling, not post-hoc threshold tuning. Declined fb's option (b) (2 extra seeds at 3.24b to measure sigma-D dependence): df=1 gives sigma a ~70x CI, df=2 still 8x -- 200-300 GPU-min for an unreadable number; the de-labeling rule gives the same information free. Conditional pre-registration: if an ACCEPT verdict becomes load-bearing for a decision-tree branch and the de-labeling condition does not fire, measure then v1.7 (simplified/traditional mix, pre-registered before 44's count arrives): code-verified token path -- train.py:1161 shuffles domain texts at cache build (seed-fixed, shared cache) and build_mix randperms per phase, so every budget point eats a random prefix of the same shuffled pool -> script fraction is constant across points (SE < 0.2% even at the smallest point); the sequential-slicing worry is excluded. Same structure as the constant-noise-fraction argument: D'=c*D absorbed by B, beta/shape/double/R immune; only E's absolute value and external comparisons are affected. Thresholds hang on the CONTRIBUTION p_trad*deltaE_script, not the fraction: deltaE_script = per-script val NLL gap (traditional minus simplified) measured directly on the strongest checkpoint (no fertility guessing); <=0.05 nat no action; 0.05-0.10 E's corpus label carries the mix term as uncertainty; >0.10 fertility-correct D (D'=D*(1-p+p/k), k measured from tokenizer) and report both fits, E reported as mixed-corpus floor never model ceiling. Val set (first 5000 rows/domain of the shuffled cache) is matched to train in script distribution v1.8 (fb reconnaissance + direction trap): deltaE measured BOTH per-token and per-char (deltaE_char = E_trad_token*k_trad - E_simp_token*k_simp, k measured 1.164x corpus-level) -- traditional text's higher fertility means finer segmentation, so per-token NLL can be LOWER on traditional (easier per-token prediction); sign rule pre-registered: deltaE_token < 0 must NOT be read as 'traditional better' (segmentation artifact), information-level read uses deltaE_char only. Threshold uses |p_trad*deltaE_token| (E is per-token; materiality is direction-free). Recon prior (not decision, 44 full count decides): p_trad ~15.2% doc-level / 14.8% char-level from first 3 shards (biased if corpus is source-ordered), k ~1.164x; if |deltaE_token| ~ 0.3 the contribution ~0.045 -- sitting on the threshold. D-axis repetition fact: web_hq total ~1.434B tokens (62 shards sampled); the 3.24b point needs ~1.05B at 32.4% weight -> epoch 0.73, NO point repeats web_hq once, no repetition confound on D. v1.9 (fb supply measurement, pre-registered before the 3.24b log is seen): D for every point must be read from that run's `tokens scheduled` log line (train.py:1384), never from the mix json's total_tokens -- the mix file is a budget not a supply; record D_requested/D_scheduled/gap per point. Tolerance threshold (derived from the noise floor, independent of the observed gap -- D-error leverage = 0.085*epsilon nat, needs epsilon~59% to move the fit, rounded to 10%; written AFTER the 1.53% gap was known, labelled post-hoc per repo convention same as the 'null landing does not certify a cell' amendment: the derivation is prior, the writing is not): |gap|/D_requested <= 10% absorbed as rounding (leverage < 0.01 nat = 1/5 of noise); >10% declares a CURVE BOUNDARY at D_scheduled, extrapolation beyond banned. Independent mix-shift clause: any domain epoch cap shifting its share >1pt of total mix is declared regardless of D-gap. v1.9.1 correction (same day, fb exact row counts): the wiki 6.4% shortage was a sampling-estimate artifact (a +-2% error bar used to make a sub-bar claim); exact counts (3.6285B total) put six domains on their supply to the row -- the real cap is the VAL SPLIT: train.py:1348 carves n_val before the pool exists and the epoch cap measures len(pool), so each of six domains is capped by its own n_val (49.7M tokens total = 1.53% of the 3.24b budget), web_hq's +383.6M surplus does not redistribute; ONLY the 3.24b point binds (all five smaller points checked, no caps). Predicted gap 1.53% < 10% threshold -> absorbed as rounding, gap recorded, no boundary declared; mix-shift recheck: largest share shift is web_hq +0.51pt (relative rise as total shrinks), all <1pt, clause not triggered. v1.9.2 honesty correction: the 'picked before seeing 1.53%' claim was wrong -- the derivation (noise floor -> ~59% -> 10%) references no observed gap and is the genuinely prior part, but the clause was written after the 1.53% was known; labelled post-hoc per repo convention; the refuted 6.4% wiki-shortage clause deleted from the threshold justification. v1.10 (sigma-hat measured, before the ladder runs): sigma-hat = 0.0516 (df=3, ds.seed_variance_0p2b, 1.47x the borrowed 0.035 which was a fit residual conflated with seed variance); v1.5's sigma-conditional rule filled with no new judgement: ACCEPT RMS <= 0.0588 (1.14*sigma-hat), WEAK <= 0.1176 (2.28*sigma-hat), de-labeling line 0.0366 (0.71*sigma-hat); the fixed 0.05 table is retired (it was always this rule at Kaplan sigma 0.044); expected RMS 0.0366, gate sits 1.6x above expectation. df=3 sigma interval (~0.6-2.9x) stays out of the gate per v1.5/v1.6: 0.0588 carries the df=3 label, sigma-independent judges (section 4 sign patterns p=3.1%, profile CIs) are primary, ACCEPT carries the noise-loose label, FAIL is hard",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/scaling_fit_protocol.md; scripts/fit_scaling.py; train.py:1283-1356; data/mix_scale_*.json",
+      "config": {
+        "points": "0.2b/0.3b/0.4b/0.8b/1.6b/3.24b (16.2x span)",
+        "noise_anchor": "val measurement ~0.005-0.01 nat (35000 blocks); run-to-run ~0.05 (Kaplan, no internal replicate)",
+        "protocol_version": "v1.8",
+        "old_ladder_warmup": "actual --warmup 150 (e1 log read), NOT Cfg default 20; shares 69%/4.2%, ratio 16.4x"
+      },
+      "uncertainty": "the run-to-run noise anchor is literature (Kaplan), not internally replicated; B and beta are ridge-degenerate over a 16x span (noise-free fit recovered B=10000 vs true 6000 at nearly identical loss) -- the beta profile CI is the honest read",
+      "boundary": "protocol frozen before the first new budget point runs; changes only via a new version",
+      "status": "measured"
+    },
+    {
+      "id": "ds.scaling_decision_tree",
+      "value": "pre-registered decision tree for what to do after the six points are fit (docs/lessons/scaling_decision_tree.md v1.8, frozen before the points run): three mechanical reads -- doubling gain d_double=(L(Dmax)-E)(1-2^-beta), asymptote gap R=L(Dmax)-E, recognition levels (math twin / minimal pairs / LAMBADA at Dmax) -- drive the branches: d_double>=0.05 and R>0.10 -> extend D; R<0.05 -> data scaling done, read recognition: twin>0.75 + pairs>0.75 + LAMBADA>0.30 + generative<0.02 = recognition ceiling (knowledge present, production absent) -> SFT first, scale N only if SFT fails to move generation; twin<0.60 or pairs<0.60 = knowledge absent -> change data recipe. v1.1 adds the reweight branch (section 2a): triggered when E2 per-domain slope spread max-min > 2xSE and the flattest-slope domain's weight >=10% (web_hq: -0.123 vs textbook/en -0.26, weight 32.4%); anti-trigger = offsets differ but slopes equal (offset is intrinsic entropy, not waste -- never reweight on offsets alone); when d_double<0.05 reweight is the only live data-side action, when >=0.05 reweight goes first (zero new corpus, one mix json) and its result calibrates whether E2 slopes predict reallocation gains. Reweight read pre-registered: same-D old/new mix checkpoints, aggregate val NLL improvement >0.05 = lever holds, <=0.05 = lever retired. Shift capped at 10pt of weight (linearity untested beyond). Identification limit: E2 domains co-varied across the ladder, slopes are ranked observations not causal marginals -- the reweight run IS the experiment. Fixed-N optimum: D* = smallest D with L(D)<=E+0.05 (within noise of the asymptote); the curve values only the 'more data' option, the tree puts alternatives on the same ruler. Fit-failure branches pre-registered (U-shape -> regime boundary, monotone drift -> wrong form, RMS>0.10 -> panel-only decision). Thresholds anchored to run-to-run noise (0.05, Kaplan) and the known-answer calibrations v1.2 adds section 3d (architecture migration of the recognition thresholds, written before the points run): the 0.75/0.75/0.30/0.02 thresholds are absolute claims (twin 0.75 = 3:1 discrimination), old-arch measurements were only feasibility evidence; after the six points, before reading the Dmax branch, re-run known-answer on the new arch's strongest checkpoint -- spread <60pt cuts the metric, reading below the absolute threshold lowers it by the fraction-of-demonstrated-range rule (two-way: 0.5+0.557*(ceiling-0.5), 0.557=(0.75-0.5)/(0.949-0.5); LAMBADA: 0.843*ceiling, 0.843=0.30/0.356; pass@1 stays absolute 0.02), recalibrated numbers frozen before the branch read, weakening reported. Section 6 table now labels every threshold measured/chosen with its source; the four 0.05s declared the same deliberate 1x-noise reuse v1.3 adds the corpus-quality interpretation clause (section 4 supplement, written before the points run): web_hq skipped the top-40% quality-head cut this version, so the six points train on a dirtier corpus than declared. Rules frozen: E is 'this corpus's floor', not 'the model's ceiling' -- no external comparison (Chinchilla 1.69 etc.); R=L(Dmax)-E is immune to ADDITIVE entropy (both terms shift, R unchanged), the misfire risk is only the non-additive case (noise tokens bend the curve flat at smaller D, capacity saturated on noise), unmeasurable until 44's W/F; R<0.05 reads as 'scaling done ON THIS CORPUS'; if section 3b (recognition absent) triggers, dirty corpus is a known suspect and the quality cut is the first recipe-change candidate; beta is immune to a constant noise fraction (D'=c*D absorbed by B only, beta unchanged) -- the warmup overestimate remains the only known beta bias. W/F is the pre-registered falsifier: E_W < E_dirty-0.05 -> floor was inflated, tree re-walked on W curve; R_W>0.10 where R_dirty<0.05 -> non-additive flattening confirmed, extend-D reopens on clean corpus; both within 0.05 -> the cut is worth ~0 at this scale. fb's intuition that 'R is compressed by entropy' was refined in the clause: additive entropy cancels in R. v1.6 flags the steep pole as single-source: textbook/en (both -0.26) share the source chinese-cosmopedia (en domain is 85% Chinese, cause traced to build_domains.sh:32 merging cosmopedia_extra.jsonl + en_textbook.jsonl, container label read as language label) -- the slope spread's steep end is one source counted twice, not two independent witnesses; trigger reading unchanged, reweight direction argument narrowed to 'web_hq -> cosmopedia'. v1.7: section 5 RMS>0.10 aligned to 2.28*sigma-hat = 0.1176 (was 2.3x Kaplan sigma; the 0.10-0.1176 band would have contradicted the protocol). v1.8 (expressive-ability ladder read, frozen before 3.24b lands): GAP = L2-O1 (74pt at 0.2b: two-way 90.4% vs open acc@1 16.0%) is the steering quantity for the user's 表达能力 target; O1 is not in the SKIP class (old-arch 3.24b held-out 35.6% demonstrates headroom, acc@5/acc@1 = 2.3x internal structure, seed noise s_O1=1.02pt df=3 << 74pt gap); noise floor self-calibrated from the 4 seeds (be.panel_expressive_seed_variance: s_L2=0.54, s_O1=1.02, s_O5=1.47, s_CE=1.27, s_GAP=0.90pt; readable move >= 4.65*s_M -> L2 2.5/O1 4.8/O5 6.8/CE 5.9/GAP 4.2pt); four shapes pre-registered -- A volume (O1 moves, gap narrows -> composition hypothesis weakened), B composition (L2/CE move, O1 flat -> hypothesis survives, 10x needs composition change), C both-move, D unreadable; mechanism premise measured: cosmopedia template concentration 6.38x web_hq (44, mlm.corpus.cosmopedia_template_concentration), necessity holds, consequence is the ladder's; the ladder can FALSIFY the composition hypothesis but not confirm it (flat at 3.24b does not prove flat at 36B); the 10x build MUST include a same-mix control arm or the hypothesis is not falsifiable by it; 0.2b composition A/B declined -- not for lack of resolution (O1 4v4 MDE = 2.4pt is readable) but wrong scale (tests 0.2b, hypothesis is about 36B); the val-NLL resolution failure (MDE 0.20) does not generalise to O1 -- the over-reach correction recorded",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/scaling_decision_tree.md; docs/lessons/scaling_fit_protocol.md",
+      "config": {
+        "freeze": "before the first new budget point runs; changes only via a new version",
+        "noise_anchor": "0.05 nat run-to-run (Kaplan, no internal replicate)",
+        "tree_version": "v1.5",
+        "corpus_quality": "web_hq = ALL web shards (data/corpus/web/ merged in), no quality cut ever applied this version; W/F (44) is the falsifier"
+      },
+      "uncertainty": "the recognition thresholds (0.75/0.60/0.30/0.02) are anchored to old-architecture measurements; the new architecture's levels may shift them -- but the thresholds are frozen, so a shift shows up as a branch taken, not a moved threshold",
+      "status": "measured"
+    },
+    {
+      "id": "ds.threshold_provenance_audit",
+      "value": "2026-08-30 audit of every threshold in the three frozen docs (panel / fit protocol / decision tree), fb-ordered after resolution numbers were found wrong. Three independent error classes found, all source errors not arithmetic: (1) misattribution -- 8.4pt is the n=277 minimal-pair MDE quoted at n=1040 (math v2), propagated to fb's 5000->3.9pt anchor and b0's report; (2) one/two-sided -- LAMBADA 3.6pt used one-sided z_a=1.645 inside a two-sided-frozen panel (correct 4.1pt); (3) default-as-actual -- the old ladder's warmup confound was computed from Cfg.warmup=20 (train.py default) while the actual runs launched with --warmup 150 (e1 log read): true shares 69%/4.2% ratio 16.4x, not 7.9%/0.5% ratio 16x (ratio coincidentally close). Also fixed: drift p 22/64=34% -> 16/64=25% (irreproducible, exact count is 16); endpoint delta ambiguity (Huber 1e-3 vs noise 0.05) clarified to 0.05. Rule established: every number carries its source (literature / our measurement / code default); reproducible-by-formula and right-source are separate properties -- arithmetic auditing catches none of these. The 0.05 noise anchor's multiple roles (ACCEPT boundary, d_double line, R-done line, D* band, reweight success line) declared one deliberate reuse of Kaplan run-to-run 0.05",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/base_eval_panel.md (v1.3); docs/lessons/scaling_fit_protocol.md (v1.3); docs/lessons/scaling_decision_tree.md (v1.2); retired_pre0830v2/runs/0830v1_0.2b.log (e1 log read)",
+      "config": {
+        "error_classes": [
+          "misattribution",
+          "one/two-sided",
+          "default-as-actual"
+        ],
+        "all_three": "source errors, arithmetic correct",
+        "source_rule": "literature / our measurement / code default, stated per number"
+      },
+      "uncertainty": "the 3.9pt and 34% origins could not be reconstructed; both recorded as irreproducible rather than guessed",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.attn_ab_read_protocol",
+      "value": "pre-registered read rules for e1's KDA vs full-attention A/B (docs/lessons/attn_ab_read_protocol.md, frozen before results): arms --attn_every 1 (12x GatedMLA, 194M) vs --attn_every 4 (9 KDA + 3 GatedMLA, 206M, +5.8%), 4 seeds x 2 arms at 0.2b. (1) MDE: e1's 0.035 is irreproducible -- it assumes seed SD s=0.015 but internal seed variance has never been measured (only anchor: Kaplan 0.05 -> MDE 0.12); frozen rule is self-calibrating: threshold = 2.371*s_pooled from the 8 runs' own seed spread (t_0.975,6+t_0.8,6)*sqrt(2/4), with the df=6 uncertainty band [0.64s, 2.20s] reported -- gap inside the band = no resolution. (2) Primary metric = aggregate val NLL (one number, same quantity as the scaling fit); all 7 per-domain NLLs are secondary diagnostics, all reported, cherry-picking banned, decision claims need Bonferroni 0.05/7. (3) Panel secondaries (CLiMP/LAMBADA/math v2) are trend-only at 0.2b, not in the decision, unless between-arm spread > metric MDE AND readings above floor+MDE. Decision tree: full-attention wins >= threshold -> ladder switches to attn_every 1 (timing fb's call -- switching mid-ladder mixes architectures); KDA wins >= threshold -> unreadable alone (capacity confound is binary, margin size does not resolve it), mandatory balance arm --ffn_hidden 3392 with param counts verified from run logs within +-1%; |gap| < threshold -> KDA stays, '0.2b no resolution', re-ask at 3.24b on the ladder's own checkpoints (e1's original 'no sig diff -> delete KDA' violates the empty-cell rule, void) Scheduling and gate added 2026-08-30 (fb scheduling, gate threshold pre-registered here): step 1 runs 4x attn_every 4 seeds unconditionally (24 min; seed 0 = ladder's 0.2b point, spread = sigma-hat df=3, 44's F arm); step 2 computes MDE = 2.371*s_4; GATE: MDE <= 0.08 -> run 4x attn_every 1 (0.08 = ceiling of the realistic 0.01-0.05 arch-gap range at 200M/0.2b; an MDE past the ceiling can only produce a predictable 'no resolution', waste), MDE > 0.08 -> defer the whole A/B to 3.24b (free re-ask on ladder checkpoints). The sigma-hat CI (df=3, factor 6.5x) does NOT enter the gate: at MDE_point=0.08 the probability true MDE <= 0.08 is ~50%, the band cannot move the gate informatively -- using it would be noise-as-information; the CI's job is in the read (gap inside [1.52s, 5.22s] = no resolution). Timing ruling (fb): the A/B fully completes before the ladder starts -- no mid-ladder arch switch ever; if it ever arises, finish the current arch and re-run the whole curve on the other (a mixed-arch curve is not a bad curve, it is a meaningless one). GATE FIRED 2026-08-30: sigma-hat = 0.0516 (df=3, ds.seed_variance_0p2b, s0 3.691/s1 3.762/s2 3.679/s3 3.638); MDE per the frozen formula = 2.371*0.0516 = 0.1223 (fb's normal-approx 2.8*s*sqrt(1/2) = 0.1021; both > 0.08, ruling robust to formula choice) -> attn_every 1 arm does NOT run at 0.2b (8+8 would reach 0.0722 and still miss, not a seed-count problem); KDA A/B deferred to the 3.24b checkpoint (free re-ask on ladder checkpoints). fb committed the branch at 20e1b7a before seeing the number. e1's MDE~0.035 formally recorded irreproducible (required s=0.015, measured 1.47x; a fit residual borrowed as seed variance). Kaplan sanity: 0.0516 < 0.10, no trend-only degradation. Paired-design amendment (section 6, written before e1's probe lands): same-seed both arms -> paired-t MDE = (t_0.975,n-1 + t_0.8,n-1)*s_d/sqrt(n), df=n-1; gate 0.08 requires s_d <= 0.008/0.026/0.0385/0.056 at n=2/3/4/6; sigma_d = sigma*sqrt(2(1-rho)) needs rho >= 0.7-0.8 to be viable; min n=2 (df=0 has no MDE); gate input is the probe's s_d not sigma-hat=0.0516 (a new quantity); falsifier pre-registered: probe sigma_d ~ sigma*sqrt(2) (rho~0) -> pairing bought nothing, independent economics already failed -> A/B dead at 200M; same-seed same-arm probe gives lower bound sigma_d >= sqrt(2)*sigma_nondet; costs ~103 GPU-min per 3.24b run, 4+4 paired ~824 min (721 with ladder-seed reuse), nothing before the ladder finishes. fb's 'free re-ask at 3.24b' retracted (6bb6035): the ladder produces attn_every 4 only. df=1 reading rule: probe 2 has 2 pairs (df=1, s_d CI factor ~31x); point estimate decides, but if n=4 probe MDE lands within +-20% of the 0.08 gate, add a 3rd pair (~12 GPU-min, df=2) before committing 3.24b. Probe execution (fb): paired against s2/s3 not s0/s1 (s0/s1 ran before the 06:30:37 train.py edit; verified neutral but a small-effect measurement should not spend it); probe 1 re-runs seed 2 vs existing s2 (half cost, tests reproducibility on a checkpoint the curve uses). fb's normal-approx relapse corrected: n=2 needs rho>=0.988, n=4 needs rho>=0.721 -- the probe is really asking whether rho clears 0.7. Section 7 (non-inferiority variant, frozen at tilerl's request): the one-sided NI formula delta_res = (t_0.95,df + t_0.80,df)*s*sqrt(1/n1+1/n2) is the standard NI design (H0: Delta <= -delta, power 0.8 at Delta=0), t-values verified (df=6: 1.943+0.906=2.849, df=14: 2.629, df=30: 2.551); design rules: size n so delta_res <= tolerance, if unaffordable declare unanswerable (a boundary design decides nothing -- n=4/delta_res=0.104/tolerance 0.103 has ~79% power at Delta=0 and fails NI on any observed small loss); tolerance must be DERIVED from a measured exchange rate (eff.throughput_quality_exchange_rate: 0.103 = 0.910 nat/e-fold * ln(1.120)), frozen before the study, never chosen; tolerance slope must be the LOCAL slope at the study scale, not a two-point secant (0.910 from 0.2b/0.3b overestimates at 3.24b where the curve flattens -- wait for the ladder fit, same rule as don't-fit-threshold-after-seeing); ds.mde_recomputed_from_measured_sigma=0.1021 is the TWO-SIDED z-approx, not the NI formula (0.104) -- do not cite it for NI; applies to any 'did the change cost more than delta' question (Block AttnRes, 10x control arm)",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/attn_ab_read_protocol.md; aupai-fb task 2026-08-30; e1's A/B design",
+      "config": {
+        "arms": "attn_every 1 (194M) vs 4 (206M)",
+        "seeds": "4 per arm",
+        "mde_formula": "2.371*s_pooled, self-calibrating",
+        "sigma_hat_source": "44's 4-seed 0.2b run, shared with the scaling fit (protocol v1.5 section 9)",
+        "gate": "MDE=2.371*s_4; <=0.08 run arm, >0.08 defer to 3.24b"
+      },
+      "uncertainty": "s_pooled at df=6 has a 3.4x uncertainty band; a gap inside it is unreadable by construction",
+      "status": "recorded"
+    },
+    {
+      "id": "ds.facts_audit_2026_08_30",
+      "value": "sampled audit of facts currency (docs/lessons/facts_audit_2026-08-30.md): 20 measured facts sampled seed 20260830 from a population of 98, criteria pre-registered before sampling (C1 arch anchor on old-arch unlabeled, C2 stale corpus state, C3 changed code defaults treated as actual). 1/20 stale (5%, Wilson 95% CI [0.9%, 23.6%]): ds.trainpy_steps computed 254 steps/0.2b point from train.py defaults (6 GPU/batch 32/accum 1) while the ladder actually runs 7 GPU/batch 16/accum 2 = 218 steps -- the default-as-actual error class again, evidence it is systemic not one-off; fixed (defaults vs ladder_actual split). The other 19 hold: 9 mlm.src.* external metadata (version-pinned, cannot expire by construction), tokenizer/contamination/data-quality measurements anchor fixed datasets, eff.* facts anchor the new arch. Limitation: 45% of the sample is external metadata; among the 11 stale-capable facts the rate is 1/11 ~9%. No evidence of mass staleness -- the six-point reading will not cite a batch of dead anchors. Recommendation to de (not applied): facts_well_formed checks field presence not currency; add a soft warning for measured facts whose config carries old-arch markers without an OLD-arch-only label",
+      "measured": "2026-08-30",
+      "source": "docs/lessons/facts_audit_2026-08-30.md; facts/*.json",
+      "config": {
+        "seed": 20260830,
+        "n_sampled": 20,
+        "population": 98,
+        "criteria": [
+          "C1 old-arch anchor unlabeled",
+          "C2 stale corpus state",
+          "C3 changed defaults as actual"
+        ]
+      },
+      "uncertainty": "Wilson CI wide [0.9%, 23.6%]; sample composition (45% external metadata) limits the staleness rate estimate",
+      "status": "measured"
+    },
+    {
+      "id": "ds.seed_variance_0p2b",
+      "value": 0.0516,
+      "unit": "nat (val NLL standard deviation across seeds)",
+      "measured": "2026-08-30",
+      "source": "p02_s0..s3, four 0.2b points differing only in --seed; runs/score_matrix.jsonl + runs/p02_seeds*.log",
+      "config": {
+        "val_nll": {
+          "s0": 3.691,
+          "s1": 3.762,
+          "s2": 3.679,
+          "s3": 3.638
+        },
+        "mean": 3.6925,
+        "range": 0.124,
+        "df": 3,
+        "estimator": "sample standard deviation over 4 seeds",
+        "run_config": "7 cards (GPU 1-7), batch 16 accum 2, warmup 20 absolute, vocab 32784, bucket_cap_mb 50, chunk_size 32, AttnRes Full, attn_every 4, NoPE, fp8; mix data/mix_scale_0.2b.json; corpus fp web_hq 30838d423348b2e5",
+        "code_boundary": "s0 and s1 ran train.py before the 06:30:37 edit that made bucket_cap_mb a Cfg field; s2 and s3 ran after. The five frozen values were verified identical across all four from s0's own log, and the edit moved recorded metadata rather than computation.",
+        "supersedes": "the assumed 0.035, which was a FIT RESIDUAL borrowed as a seed variance. A residual carries model misspecification; seed variance does not. Two experiments (lessons-e1's KDA A/B, lessons-44's W/F) were designed against the conflation."
+      },
+      "uncertainty": "3 df -- the sigma confidence interval at 3 df is wide (roughly 0.6x to 2.9x); treat 0.0516 as the point estimate it is",
+      "status": "measured",
+      "boundary": "measured at the 0.2b budget point on this mix and architecture; says nothing about seed variance at larger D, where more steps may average seed effects down"
+    },
+    {
+      "id": "ds.nondeterminism_washes_out",
+      "value": "CONFIRMED AND GIVEN A df (tilerl twin run, 2026-09-01): a second same-seed same-config pair measures max spread 0.094 nat and step-10 spread 0.022 nat over 110 steps, 1 card, smoke mix, n=2. This replaces the n=1 magnitude read below with an estimate: sigma_nondet, expressed as observed max-spread, is 0.094 nat and the step-10 figure sits inside the 0.02-0.05 band the original rerun reported. The band holds at a different scale, card count and mix than it was measured on.\n\nTHE USE THIS WAS PUT TO, and the half that was wrong. A pad_dynamic_shapes A/B showed 1.83 nat at step 10 between arms sharing seed and config. Against this fact's band that is 37x the top, so it could not be nondeterminism, and I predicted the fault was in the measurement shim. It was not: pad_dynamic_shapes ITSELF changes which kernels run and their accumulation order, and the ON arm regresses 0.83 nat at 8.8x the twin floor. The fact correctly excluded nondeterminism as the cause and gave no information about what the cause was -- a floor tells you a difference is real, never what produced it.\n\nsame-seed same-arm rerun (s2 vs rerun, attn_every 4, 0.2b, same code/config): per-step losses diverge from step 10 (spread 0.02-0.05 nat through training) but final val converges -- 3.680 vs 3.679, diff 0.001. Nondeterminism enters and does not accumulate; the optimizer washes the perturbation out. sigma_nondet ~ 0.0009 as a point read (E|d|=1.128*sigma for a single paired difference; n=1, no df -- a magnitude read, not an estimate). Three consequences: (1) sigma-hat=0.0516 (ds.seed_variance_0p2b) is essentially PURE seed variance -- the gate number measures what it claims; (2) a step-by-step loss diff between two runs is NOT evidence of a real difference at this magnitude -- run comparisons read final val only, anyone diffing training curves to argue for a change would be fooled; (3) paired-design lower bound sigma_d >= sqrt(2)*sigma_nondet ~ 0.0014, not binding at any n (attn_ab_read_protocol section 6)",
+      "measured": "2026-09-01",
+      "source": "fb probe 1: rerun of seed 2 attn_every 4 vs existing ckpt_p02_s2; runs/p02_seeds*.log",
+      "config": {
+        "budget": "0.2b",
+        "arm": "attn_every 4",
+        "seed": 2,
+        "same_code_revision_both_runs": true,
+        "twin_2026_09_01": {
+          "max_spread_nat": 0.094,
+          "step10_spread_nat": 0.022,
+          "steps": 110,
+          "cards": 1,
+          "mix": "smoke",
+          "n": 2,
+          "df": 1,
+          "note": "same seed, same config, no flag; the floor a same-seed A/B is judged against"
+        }
+      },
+      "uncertainty": "n=2 gives df=1: this is an estimate but a weak one, and it is single-card on the smoke mix while the gates that cite it are judged on 7 cards at stage-1 shapes. A floor measured in one configuration does not transfer to another -- the fp8 head A/B therefore runs its own baseline+twin in the real 7-card config rather than reusing this number.",
+      "status": "measured",
+      "boundary": "measured at 0.2b/218 steps; whether nondeterminism accumulates at larger D is untested"
+    },
+    {
+      "id": "ds.mde_recomputed_from_measured_sigma",
+      "value": 0.1021,
+      "unit": "nat (MDE for a symmetric 4-vs-4 comparison at 0.2b)",
+      "measured": "2026-08-30",
+      "source": "2.8 * 0.0516 * sqrt(1/4 + 1/4), sigma from ds.seed_variance_0p2b",
+      "config": {
+        "mde_by_design": {
+          "4+4": 0.1021,
+          "8+8": 0.0722,
+          "8+1": 0.1532
+        },
+        "pre_registered_gate": 0.08,
+        "decision": "4+4 MDE 0.1021 is OUTSIDE the 0.08 gate, so the second four runs (attn_every 1, seeds 0-3) do NOT happen; the KDA A/B moves to the 3.24b checkpoint where it is free",
+        "pre_registration": "the sigma-hat <= 0.040 / > 0.040 branch was committed at 20e1b7a while s2 was at step 170/217 and s3 had not started",
+        "fit_gate_consequence": "ACCEPT is RMS <= 1.14 sigma = 0.0588, not the 0.05 quoted this round; that figure assumed sigma = 0.035. Expected RMS of a 3-parameter fit through 6 points is 0.71 sigma = 0.0366.",
+        "formula_note": "0.1021 is the NORMAL approximation 2.8*s*sqrt(1/4+1/4). The protocol's frozen value is the t-version (t.975,6 + t.80,6)*s_4 = 0.1223. Both exceed the 0.08 gate, so the ruling is robust to the choice -- but cite the t-version against the protocol; comparing 0.1021 to a frozen 0.1223 is the discrepancy this note exists to prevent.",
+        "mde_t_version": 0.1223,
+        "do_not_confuse_with": "the non-inferiority delta_res = (t.95,df + t.80,df)*s*sqrt(1/n1+1/n2), frozen as attn_ab_read_protocol.md section 7. At n=4/arm that reads 0.104 against this entry's 0.1021 -- the near-equality is a COINCIDENCE, not agreement. This entry is two-sided DETECTION under a normal approximation; that one is one-sided NON-INFERIORITY under a t-form. They answer different questions and citing one for the other is wrong even when the numbers match."
+      },
+      "uncertainty": "inherits the 3 df on sigma",
+      "status": "measured"
+    },
+    {
+      "id": "ds.scaling_fit_six_point",
+      "value": "Six-point fit of L(D)=E+B/D^beta per frozen protocol v1.10 (scripts/fit_scaling.py): E=2.003, B=30000 (sits at grid edge), beta=0.513. RMS=0.0206, max|resid|=0.0384; residuals +0.0384/-0.0207/+0.0002/-0.0207/-0.0002/+0.0144, sign pattern +-+--+. VERDICT: ACCEPT, and de-labeled -- RMS 0.0206 < 0.71*sigma-hat=0.0366, so the noise-loose label is removed and ACCEPT is hard (sigma decreases with D, as v1.6 predicted). No S4 falsifier fires: no U-shape, no monotone drift, no LOO beta instability (max |delta beta|=0.0031), endpoints not same-sign. Profile-likelihood beta CI is VACUOUS (spans the full 0.01-5 grid): under Huber delta=1e-3 all residuals are in the L1 zone, objective ~1e-4, so Delta=3.84 dwarfs the surface -- the L2 chi2 construct does not apply (protocol S9 Huber warning, same phenomenon); beta identification rests on LOO stability. Local slope at 3.1955b: -0.212 nat/e-fold (LOO range -0.20 to -0.25) -- for tilerl's non-inferiority tolerance at 3.24b: 0.212*ln(1.120)=0.024 nat, 4.3x tighter than the 0.103 secant-based tolerance (the curve bends flat, as fb predicted); attn_ab_read_protocol S7 requires the local slope, this is it. Warmup confound stands: beta is overestimated (protocol reading warning). D gaps: five small points 0% (no cap, verified), p324 scheduled 3.1955B vs requested 3.2449B = 1.522% < 10% -> absorbed per S11; the 1.53% prediction (train.py:1348/1362, integer row counts, pre-run) confirmed to three digits. p16 residual -0.0002: the 1.6b panel oddity is not in the NLL.",
+      "measured": "2026-08-30",
+      "source": "scripts/fit_scaling.py (frozen protocol v1.10); aupai-fb six-point val NLL + p324 log line",
+      "config": {
+        "D_scheduled_B": [
+          0.2,
+          0.3,
+          0.4,
+          0.8,
+          1.6,
+          3.1955
+        ],
+        "val_nll": [
+          3.691,
+          3.322,
+          3.159,
+          2.792,
+          2.57,
+          2.415
+        ],
+        "fit": "Huber delta=1e-3, L-BFGS-B, 252-start grid, D in raw tokens",
+        "beta": 0.5131,
+        "E": 2.0026,
+        "B": 30000,
+        "rms": 0.0206,
+        "max_resid": 0.0384,
+        "local_slope_3p24b_nat_per_efold": -0.2116,
+        "tilerl_tolerance_3p24b_nat": 0.024
+      },
+      "uncertainty": "beta CI vacuous under the frozen Huber/profile method (L1 at this noise scale); B at grid edge; beta overestimated by the warmup confound; E and B individually poorly identified (L1 flat region) but the fitted curve and its local slope are LOO-stable",
+      "status": "measured"
+    },
+    {
+      "id": "ds.code_source_reachability",
+      "value": "实测(pod, curl -4 强制 IPv4):IPv6 出口整体坏——curl 默认先试 IPv6,本 pod IPv6 路由坏(Errno 99),回退 IPv4 即通,所以必须 -4/强制 IPv4(之前 urllib/HEAD 探测不回落 IPv4,系统性假象)。curl -4 实测:数据直连 host 通、API host 真堵。data.together.xyz(RedPajama-1T github 98 采样文件)HTTP 200 每文件 2.66GB=260GB raw/~30B token,可达;hf-mirror resolve 通(fineweb2 484MB 200);hf-mirror API 路由 403 反爬;huggingface.co 及其 datasets-server 即使 IPv4 也 timeout(rc 28),真堵;the_pile(the-eye.eu)到 SSL 校验失败 rc 60,需 -k;codeparrot-clean 仓库在(307),parquet 路径待定。",
+      "measured": "2026-08-30",
+      "source": "pod 实测 conn.py/probe2-6.py/msco.py;pod 经 ~/bin/pod 执行 urllib HEAD/GET",
+      "config": {
+        "hosts": [
+          "huggingface.co",
+          "hf-mirror.com",
+          "www.modelscope.cn"
+        ],
+        "method": "urllib HEAD/GET timeout 15-25",
+        "pod": "iv-yeozpb5g5cbw80bls64e"
+      },
+      "uncertainty": "the_pile 需 -k;codeparrot parquet 路径待定;.co 是否区域堵(仅测了这台 pod)未证",
+      "status": "measured"
+    },
+    {
+      "id": "ds.code_fertility_redpajama",
+      "value": "frozen-vocab on RedPajama-1T github, EXACT full-file token count (no extrapolation within file): file_0 (uncompressed jsonl, 2,658,456,835 B, 334,662 docs) = 751,303,817 tokens, 2.287B chars => chars/token=3.04, tok/file-byte=0.283. x98 files => 73.6B tokens total (content-hash-shuffled manifests => files homogeneous). EARLIER 85.7B was tok/text-byte(0.329) x file-bytes -- the cross-denominator error fb flagged (meta+jsonl overhead makes file-bytes > text bytes); corrected to the exact 73.6B. Branch >=8B firm; code cell not supply-limited.",
+      "measured": "2026-08-30",
+      "source": "pod 实测: /data00/aupai_raw/code_supply/github_00.sampled.jsonl + tokenizers.Tokenizer.from_file(data/tokenizer.json); measure3.py; curl -4 从 data.together.xyz",
+      "config": {
+        "tokenizer": "data/tokenizer.json (冻结 32,784)",
+        "numerator": "tokens=tokenizer.encode(text).ids 求和",
+        "denominator": "UTF-8 bytes / UTF-8 chars of same text",
+        "sample": "前 ~300MB 连续段,47,028 docs",
+        "sampling_note": "content-hash 打散文件名,n=1 文件采样近全体",
+        "sampling_uncertainty": "n=1 文件;跨语言(Python/C)tok/byte 有差异但打散使单文件≈混合"
+      },
+      "uncertainty": "x98 assumes within-file token count ~ file-interian; gate (tokens/word on code) unmeasured",
+      "status": "measured"
+    },
+    {
+      "id": "ds.code_cross_source_dup_unmeasured",
+      "value": "codeparrot 与 RedPajama-1T github 的跨源近重率 NOT MEASURED (status unmeasured). 合并可用 token 因此是上界 (UPPER bound), 不是净值。",
+      "claim": "codeparrot-clean 与 RedPajama-1T github 的跨源近重率 (决定合并可用 token 是净值还是上界)",
+      "audit": "纯 Python MinHash (build_corpus MinHashLSH 128-perm/16-band) 在 1.81GB(codeparrot) x 2.66GB(RedPajama 采样) 上跑 >1h 未完成 codeparrot 种子段, 故停。停因: 73.6B code 格需求 8.0B 的 9 倍, 且 codeparrot 预期贡献 <=0.6B, 该近重率只微调一个 不影响任何分支的数; 为它花一小时是错误优先级 (fb 2026-08-30 批准停)。",
+      "measured": "2026-08-30",
+      "source": "minhash2.py on pod (stopped); datagen/build_corpus.py MinHashLSH",
+      "config": {
+        "lsh": "MinHashLSH 128-perm/16-band ~0.8 Jaccard",
+        "input": "codeparrot 1.81GB parquet + RedPajama-1T github 2.66GB jsonl",
+        "elapsed_before_stop": ">1h on codeparrot seed phase",
+        "stopped": "2026-08-30, does not change any branch"
+      },
+      "uncertainty": "该数未测; 若日后需要, 改用矢量化 MinHash 或采样池",
+      "status": "unmeasured",
+      "refuted_by": "the stopped cross-source MinHash run would produce the number; until it runs the upper-bound claim stands",
+      "boundary": "合并可用 token 是上界非净值; '73.6B+0.6B' 不得当净值引用"
+    },
+    {
+      "id": "ds.code_mining_feasibility",
+      "value": "2.0B code-with-tests 格 4M 样本(500 tok/样本),即使 λ=1 也要 4M 次生成——任何预算外,瓶颈是件数非单价(fb)。挖而非造。RedPajama-1T github 采样文件实测(334,662 docs):7.6% repo(13,733/180,828)同时含 impl+test;26.96% doc(90,224)落双全 repo,test 文件 8.25%。对 73.6B 外推=多维 B token 可执行验证池,过滤可得、零生成。grep 层面可行性成立(上界,runnable-pair 过滤会缩不拦)。配执行信号的验证式天然存在于带测试的仓库,nanochat 同路(d62dd3e)。λ 因此只服务 SFT/评测规模(万级),不服务 2.0B 预训练格。",
+      "measured": "2026-08-31",
+      "source": "pod 实测 datagen/scan_scm_tests.py on data/raw/code_supply/github_00.sampled.jsonl (334,662 docs)",
+      "config": {
+        "file": "github_00.sampled.jsonl (2.66GB, 334,662 docs)",
+        "test_heuristic": "path regex test/spec/_test",
+        "repos": 180828,
+        "repos_both": 13733,
+        "docs_in_both": 90224,
+        "docs_in_both_frac": 0.2696,
+        "test_docs_frac": 0.1493,
+        "lambda_pilot": 0.72,
+        "gen_per_usable": 1.38
+      },
+      "uncertainty": "repo 双全是上界;runnable-pair(import 匹配、能跑)过滤会显著缩,未测真实配对数;采样 n=1 文件",
+      "status": "measured"
+    },
+    {
+      "id": "ds.second_resume_rereads_one_segment",
+      "value": "RETRACTED 2026-09-02, same day, by the fix its own uncertainty asked for. The defect described below was real on the code that produced the p500m checkpoints, and is gone from main: 52aec31 adds `+ int(_base.get(n, 0))` at train.py:1030, where _base is the cursor build_mix APPLIED (train.py:1580), so a post-resume save writes an ABSOLUTE row count instead of a segment count. VERIFIED on three real checkpoints of the current run, read on the pod with the equality the uncertainty named -- sum(row_cursor) == row_cursor_as_of_step x batch x accum x world, rows/step = 16x2x8 = 256: step500 128,000 = 500x256; interrupt.step832 212,992 = 832x256; interrupt.step1192 305,152 = 1192x256. Only the third has discriminating power -- it was written after a resume at origin 832, where absolute and segment-only disagree (305,152 against 92,160), and 305,152 - 212,992 = 92,160 = 360x256 is exactly the 360 steps of that segment added in. The first two sit at origin 0, where both implementations give the same number and the old code would also read green. THE COST OF LEAVING THIS AT status=measured: on 2026-09-02 the controller session chose to resume the 200M run from step832 rather than step1192 to avoid the re-read this entry predicts, discarding 360 steps = 1.36 card-hours against a risk that no longer existed. A fact whose code has been fixed is not merely stale; it is acted on. WHAT SURVIVES: the p500m numbers below are a correct reading of the old behaviour, and eff.resume_inflates_total_steps cites its 8,192-row overlap for that run. WHAT DOES NOT: any prediction about a resume on current main.\n\nThe row cursor counts ONE SEGMENT and does not accumulate, so the SECOND and every later resume re-reads rows the run has already trained on. train.py:1387 computes rows_done = (step - _origin) * batch * accum, and :2309 sets _origin = resume_step, so a checkpoint written after a resume describes only the rows THAT resume drew -- not the run's total. Measured on p500m_20b_0902 (de and tilerl, independently, same hour): the nine domain cursors in .interrupt.step32 sum to 8,192 = 32x256, correct because that segment started at origin 0; the cursors in .interrupt.step83 sum to 13,056 = 51x256, while step 83 had truly consumed 21,248 = 83x256. Neither checkpoint records the total, and nothing raises. Relaunching from .interrupt.step83 seeded used[] with 13,056 against FULL pools, so rows 13,056..21,248 were read a SECOND time: 8,192 rows, 33.5M tokens, 0.168% of the 20B budget. Those rows are at epoch 2.0 while the corpus around them is at 1.0. Nine srcfp fingerprints matched and no domain reset to row 0, so de-13's discard fix is confirmed working in production by the same artifact.",
+      "measured": "2026-09-02",
+      "source": "train.py:1387,2309; ckpt_p500m_20b_0902.pt.interrupt.step32 and .step83 row_cursor fields",
+      "config": {
+        "run": "p500m_20b_0902",
+        "batch": 32,
+        "accum": 1,
+        "world": 8,
+        "rows_per_step": 256,
+        "cursor_sum_step32": 8192,
+        "cursor_sum_step83": 13056,
+        "true_consumption_at_step83": 21248,
+        "reread_rows": 8192,
+        "reread_tokens": 33554432,
+        "reread_frac_of_20B": 0.00168,
+        "corpus_rows": 4882812,
+        "how_it_happened": "segment 1 fresh -> SIGTERM at 32; segment 2 --resume step32 -> SIGTERM at 83; segment 3 --resume step83, hand-written, is the second resume. supervise_run.sh allows exactly one automatic resume for this reason; the second was a human relaunch, which is how the cost came to be measured rather than assumed.",
+        "refutation": {
+          "run": "p200m_4b_0902",
+          "rows_per_step": 256,
+          "batch": 16,
+          "accum": 2,
+          "world": 8,
+          "checkpoints": {
+            "ckpt_p200m_4b_0902.pt.step500": {
+              "as_of_step": 500,
+              "cursor_sum": 128000,
+              "origin": 0
+            },
+            "ckpt_p200m_4b_0902.pt.interrupt.step832": {
+              "as_of_step": 832,
+              "cursor_sum": 212992,
+              "origin": 0
+            },
+            "ckpt_p200m_4b_0902.pt.interrupt.step1192": {
+              "as_of_step": 1192,
+              "cursor_sum": 305152,
+              "origin": 832
+            }
+          },
+          "segment_only_would_write_at_1192": 92160,
+          "discriminating_checkpoints": [
+            "ckpt_p200m_4b_0902.pt.interrupt.step1192"
+          ],
+          "source_command": "torch.load(ckpt, mmap=True) on the pod; header only, no tensors read"
+        }
+      },
+      "boundary": "The FIRST resume is immune -- its origin is 0, so its segment count is the run total. From the second resume on, the rows re-read equal the length of the FIRST segment, whatever that was. Here: 8,192 rows = 33.5M tokens = 0.168%. The quantity does not grow with later resumes; it is re-paid once per resume beyond the first. AS OF 52aec31 the boundary is moot on main: no resume re-reads a segment, because the count written is absolute. The boundary still describes any checkpoint written before 52aec31 (2026-09-02 18:10 +0800), which includes every p500m_20b_0902 interrupt file.",
+      "uncertainty": "The refutation rests on one post-resume checkpoint. That is enough to kill the claim -- the claim predicted 92,160 and the file says 305,152 -- but it does not establish that the absolute count is right for every shape: all three files come from one run at one (batch, accum, world), and a checkpoint saved mid-accumulation or with a domain whose cursor was DISCARDED (corpus fp change, seed change) is untested. The discard path is the one to watch: train.py:1580 sets _base only in the branch that applied the cursor, so a discarded domain contributes 0 to _base by design, and the equality would then fail legitimately -- the assert must not fire there. NOT DONE: the equality is not yet asserted in train.py at save and at resume-load. That is queued with the plan-length fix on the de branch and needs the same unfreeze window; until it lands, nothing stops a regression.",
+      "status": "retracted",
+      "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
+      "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
+      "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names.",
+      "retracted_value": []
+    },
+    {
+      "id": "ds.beta_data_leg_206m_early",
+      "value": 0.5909,
+      "unit": "dimensionless (exponent beta in L = E + B*D^-beta)",
+      "measured": "2026-09-03",
+      "status": "measured",
+      "source": "runs/data_leg_206m_8b.log, 12 val points steps 500..6000",
+      "config": {
+        "run": "data_leg_206m_8b",
+        "model": "206.1M d1024 L12 h8 ffn3072",
+        "mix": "data/mix_200m_8b.json",
+        "world": 4,
+        "cards": "0-3",
+        "tokens_per_step": 524288,
+        "fp8": true,
+        "grad_ckpt": false,
+        "triple": "geometric k=3 on STEPS (500,1500,4500) = 0.262B/0.786B/2.359B tokens",
+        "estimator": "10-point least squares on L = E + B*D^-beta, D in TOKENS. The pre-registered estimator was the closed form on the geometric triple (500,1500,4500); it is kept below as triple_500_1500_4500 but is NOT the reported value -- see uncertainty.",
+        "nine_point_fit": {
+          "E": 1.9261,
+          "B": 147800.0,
+          "beta": 0.6262,
+          "max_abs_residual": 0.01078,
+          "residual_signs": "-++--++--",
+          "longest_same_sign_run": 2
+        },
+        "triple_500_1500_4500": {
+          "beta": 0.6471,
+          "ratio": 2.0359,
+          "infimum": 1.0,
+          "margin": 1.0359
+        },
+        "triple_spread": {
+          "(500,1000,1500)": {
+            "beta": 0.6468,
+            "ratio": 2.4522,
+            "infimum": 1.7095,
+            "margin": 0.7427
+          },
+          "(1000,1500,2000)": {
+            "beta": 1.2838,
+            "ratio": 2.2115,
+            "infimum": 1.4094,
+            "margin": 0.8021
+          },
+          "(500,1500,4500)": {
+            "beta": 0.6471,
+            "ratio": 2.0359,
+            "infimum": 1.0,
+            "margin": 1.0359
+          },
+          "(1000,2000,4000)": {
+            "beta": 0.453,
+            "ratio": 1.3689,
+            "infimum": 1.0,
+            "margin": 0.3689
+          },
+          "(500,2000,5000)": {
+            "beta": 0.5363,
+            "ratio": 2.8418,
+            "infimum": 1.5129,
+            "margin": 1.3288
+          }
+        },
+        "existence_pretest": "(L1-L2)/(L2-L3) > ln(d2/d1)/ln(d3/d2). The infimum is 1 ONLY for a geometric triple; stating the gate as '> 1' passes triples that have no beta>0 -- b0 found a ladder level at ratio 1.6364 whose infimum is 1.7095. Report the margin, not the pass.",
+        "ten_point_fit": {
+          "note": "superseded by twelve_point_fit; kept because the drift below is the finding"
+        },
+        "twelve_point_fit": {
+          "E": 1.8986,
+          "B_tokens": null,
+          "B_steps": 32.15,
+          "beta": 0.5909,
+          "max_abs_residual": 0.01003,
+          "residual_signs": "-++--++---++",
+          "longest_same_sign_run": 3,
+          "sign_changes": 5,
+          "expected_sign_changes_if_random": 5.5
+        },
+        "beta_drifts_with_window": {
+          "4pt_to_step2000": 0.7694,
+          "9pt_to_4500": 0.6262,
+          "10pt_to_5000": 0.6215,
+          "12pt_to_6000": 0.5909,
+          "cumulative": -0.1785,
+          "monotone": true,
+          "precedent": "pretrain_15b_s1 drifted 0.6486 (first 4) to 0.4187 (all 32), -0.23, converging only near step 16000 (b0)"
+        },
+        "triple_spread_is_a_range": "The five triples recorded earlier still span exactly 0.8308; each triple's beta uses only its own three points and does not move when the run produces more. The 1.1914 spread is over NINE triples -- it grew because four triples were ADDED, not because the curve degraded. A sample range only ever grows with sample size, so 'more points gave a wider spread' is not evidence about the data. The claim that survives is the least-squares drift, which is computed on a fixed estimator over a growing window and is monotone.",
+        "triples_9": {
+          "(2000,4000,6000)": {
+            "beta": 0.1146,
+            "margin": 0.1114,
+            "usable": false,
+            "why": "margin below 0.2, where beta's relative error reaches the 30% scale; this close to the no-solution boundary the value is not a number"
+          },
+          "(1000,2000,4000)": 0.453,
+          "(1500,3000,6000)": 0.5204,
+          "(500,1500,4500)": 0.6471,
+          "(500,1000,1500)": 0.6468,
+          "(500,1000,2000)": 0.7558,
+          "(500,2000,5000)": 0.5363,
+          "(1000,1500,2000)": 1.2838,
+          "(2000,3000,4500)": 1.306
+        },
+        "fixed_estimator_sliding_window": {
+          "estimator": "geometric k=2, (d, 2d, 4d), the SAME shape at three different starts -- not a change of estimator",
+          "(500,1000,2000)": {
+            "beta": 0.7558,
+            "margin": 0.6886,
+            "quantisation_bound": 0.0138
+          },
+          "(1000,2000,4000)": {
+            "beta": 0.453,
+            "margin": 0.3689,
+            "quantisation_bound": 0.0205
+          },
+          "(1500,3000,6000)": {
+            "beta": 0.5204,
+            "margin": 0.4343,
+            "quantisation_bound": 0.0247
+          },
+          "reading": "The three span 0.3028 while each carries a quantisation bound of 0.014-0.025: they disagree by 12 to 22 times their own uncertainty, and all three margins clear the 0.2 usability floor. THE EVIDENCE IS THE DISAGREEMENT, NOT A TREND. A true single-parameter power law returns the same beta from every window within noise; no direction or monotonicity needs to be claimed, and with n=3 none could be. b0 offered this as a weak trend claim; it is a strong consistency failure."
+        }
+      },
+      "uncertainty": "THE DOMINANT TERM IS ESTIMATOR CHOICE. Nine three-point triples on this curve give beta from 0.1146 to 1.3060. Beyond that, the least-squares value itself is NOT STATIONARY: it fell monotonically 0.7694 -> 0.6262 -> 0.6215 -> 0.5909 as the window grew from 4 to 12 points, -0.18 cumulative, reproducing the direction measured on pretrain_15b_s1 (-0.23 over 32 points, converging only near step 16000). A single number with an error bar is the wrong shape for this quantity in this window. Never quote it with a rounding-derived bound.",
+      "boundary": "CLOSED 2026-09-03 at step 6000 by fb+b0: the finding is that this curve does not follow a single-parameter power law over the observed window, and more points make the fit's beta move rather than settle. Evidence: three windows of ONE fixed estimator (geometric k=2) returning 0.7558 / 0.4530 / 0.5204, disagreeing by 12-22x their own quantisation bounds -- a consistency failure that needs no trend; monotone least-squares drift -0.18 over a growing window, max|residual| 20.1x print precision, and the pretrain_15b_s1 precedent. NOT evidence: the widening three-point range, which widened because triples were added. The sign test reads as noise (longest run 3, 5 changes against 5.5 expected) and that only rules out a systematic one-way deviation. beta does NOT enter the params-vs-data comparison, which reads two equal-FLOPs legs off their final domain loss; the step-13500 triple is cancelled because it would add one more three-point estimate to a spread already spanning 1.19.",
+      "guard_phrases": [
+        "the data exponent is 0.647",
+        "beta = 0.647 +- 0.007",
+        "beta = 0.6215 +- 0.007"
+      ]
+    },
+    {
+      "id": "ds.n2_params_vs_data_matched_compute",
+      "value": -0.01077,
+      "unit": "nats/token, paired per-block delta (params leg minus data leg); negative = params leg better",
+      "measured": "2026-09-03",
+      "status": "measured",
+      "source": "runs/b0_23_n2_verdict.json; eval/block_paired.py --from runs/b0_23_blocks.jsonl runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt ckpt_params_leg_438m_3p76b.pt",
+      "config": {
+        "statistic": "paired delta over BLOCKS, n=576 (9 domains x 64 blocks x 4096 tokens = 2,359,296 tokens)",
+        "sd": 0.039713,
+        "se": 0.001655,
+        "t": -6.51,
+        "sign_test": "227 up, 349 down, 0 tie; one-sided p 2.10e-07",
+        "arms": {
+          "data_leg": "206.1282M (d1024 L12 h8 ffn3072) x 7.999586B tokens (15258 steps)",
+          "params_leg": "438.363756M (d1536 L12 h12 ffn4608) x 3.761766B tokens (7175 steps)"
+        },
+        "compute_match": "params x tokens 1649.0219 vs 1648.9403 = 1.000049x, i.e. 0.005% apart. This is what makes the comparison a BUDGET ALLOCATION result and not 'a bigger model scores better': parameter ratio 2.127x, token ratio 0.470x.",
+        "shared": "both legs: same mix data/mix_200m_8b.json, same seed 42, same schedule (warmup 300, warmdown 0.1, anneal_frac 0), batch 16 accum 2 world 4, fp8, no grad_ckpt; identical vocab_id 0bce3584bc24f255, identical corpus_fp on all 9 domains, identical env_fp",
+        "per_domain": {
+          "chatml": {
+            "mean_d": -0.03752,
+            "se": 0.0088,
+            "t": -4.26,
+            "down_of_64": 51
+          },
+          "cot": {
+            "mean_d": -0.02177,
+            "se": 0.00185,
+            "t": -11.79,
+            "down_of_64": 61
+          },
+          "chat_qa": {
+            "mean_d": -0.02168,
+            "se": 0.00909,
+            "t": -2.39,
+            "down_of_64": 39
+          },
+          "textbook_30b": {
+            "mean_d": -0.00866,
+            "se": 0.00239,
+            "t": -3.62,
+            "down_of_64": 42
+          },
+          "math_owm_stage2": {
+            "mean_d": -0.00737,
+            "se": 0.00263,
+            "t": -2.8,
+            "down_of_64": 37
+          },
+          "code_py_starcoder": {
+            "mean_d": -0.00155,
+            "se": 0.00154,
+            "t": -1.01,
+            "down_of_64": 34
+          },
+          "en_c4_stage2": {
+            "mean_d": -0.00026,
+            "se": 0.00203,
+            "t": -0.13,
+            "down_of_64": 30
+          },
+          "code_py_rp1t": {
+            "mean_d": 0.00088,
+            "se": 0.002,
+            "t": 0.44,
+            "down_of_64": 25
+          },
+          "zh_web": {
+            "mean_d": 0.001,
+            "se": 0.00393,
+            "t": 0.25,
+            "down_of_64": 30
+          }
+        },
+        "reading": "7 of 9 domains favour the params leg and 5 are individually significant at |t|>2, but the gain is CONCENTRATED in chatml/cot/chat_qa. Both code domains and en_c4 sit inside noise, and code_py_rp1t and zh_web have the opposite sign. Since the project targets coding and math, the headline negative must not be read as 'more parameters help code': at this budget they did not measurably.",
+        "scale_reference": "0.0142 nat is the mixing-weight lesson (docs/lessons); this delta is 0.76x that -- same order, so neither negligible nor route-changing.",
+        "weighting": "row- and token-weighted means are IDENTICAL (-0.010770) because every block is 4096 tokens. That is an identity on this data, not a check: weight correctness rests on eval/block_paired.py --selftest's 10/90/400 fixture.",
+        "integrity": "block-sum reconstruction 9/9: each domain's summed ce_sum / 262,144 reproduces its own reported loss, drift 2.4e-07 to 4.5e-05, all of it from the reported value keeping 4 decimals. A file truncated mid-write still parses, so this is the check that separates complete from parseable (gate_failure_shapes 158)."
+      },
+      "uncertainty": "BOTH CHECKPOINTS POSTDATE THE CHECKPOINT LISTING and therefore read [absent] to ckpt_facts_sources_present: runs/pod_ckpt_candidates_2026-09-02.txt is a 13:58Z snapshot, while ckpt_data_leg_206m_8b.pt was written 2026-09-03 12:40 and ckpt_params_leg_438m_3p76b.pt 2026-09-03 18:47 (both verified present on the pod at 19:10Z, 892,199,291 and 1,854,896,463 bytes). The check's own docstring says a FAIL on a checkpoint newer than the listing means REFRESH THE LISTING, not KEEP-claim -- and that file carries five sessions' KEEP claims, so refreshing it is not a single session's edit. This note is the interim unblock the check names. THE FOLD THAT ALMOST LOST THE MEASUREMENT: both source files key ckpt_data_leg_206m_8b.pt -- runs/b0_23_blocks.jsonl with 576 blocks, runs/score_matrix.jsonl with 0 (scored 32 min before per_row output existed, because score_matrix.py called domain_loss_seqs without per_row; fixed 370cbc20). The ledger convention fold-by-key-last-row-wins, applied literally, kept the blockless row and made block_paired refuse with 'no per-block data' for a checkpoint whose blocks were in hand. The two rows are not two versions of one measurement -- one payload strictly contains the other -- so _rec_by_name now folds by payload (28cad589). Also: the params leg's steps 4400-4550 shared card 0 with another job, 21.0K vs 47.0K tok/s/gpu; the 47.0K rate is the median EXCLUDING that range, not a whole-run average. Loss inside minus outside is -0.0642 +/- 0.0564 (t -1.14), but the step-to-step loss sd of 0.1715 is 95x this delta's SE, so those windows have no resolution to detect a contention effect on the weights; the evidence that there was none is e1 reproducing its arm's loss to 0.001 on another card.",
+      "boundary": "SEED SIGMA IS UNMEASURED for this pair. The SE 0.001655 is the sampling error of the delta over the shared val blocks; it is NOT reseeding spread, which ds.seed_variance_0p2b measures at 0.0516 nat for a different question (the 0.24 quoted in earlier drafts was 2x that fact's config range 0.124, not its sd). Whether 0.0108 exceeds seed noise needs one more leg per arm at a different seed and that was not run. Both legs also share one mix and one val set, so this is the exchange rate ON THIS CORPUS at ~1.65e3 (M-params x B-tokens), not a general Chinchilla claim; a single point in the ratio 2.127x/0.470x, with no third arm to say whether the optimum lies beyond it. PATH (E3, audit 2026-09-04): both legs were scored on the cu_none path -- no document boundaries declared, see eff.eval_path_cu_artifact_ce, whose pooled artifact is 7.6x this delta. The cu_none verdict is RETRACTED as a direction (E20): the doc_cu re-score (C11, 53c39d82) gives paired mean −0.000920 nat, SE 0.001661, t −0.55, while the sign test reverses (329/576 params worse, p 3.6e-04) — two summaries of the same 576 blocks disagree, so no direction is put forward; resolution needs a second seed per arm."
+    },
+    {
+      "id": "ds.b_unidentified_from_val_traces",
+      "value": "The data exponent b in L(D) = a*D^-b + c is NOT MEASURABLE from a 200M run's periodic val trace. On both b0 head-mix arms -- 7 points over a 7.0x token range (0.131B to 0.918B), the trace's own per-point noise 0.0388 (armA) and 0.0423 (armB) nat -- every b from 0.114 to 1.000 (armA) and 0.107 to 1.000 (armB) admits some c that fits within that noise. The best fits (armA b=0.4975 c=1.851 RMSE=0.0111; armB b=0.8060 c=2.180 RMSE=0.0056) are grid points in a flat valley, not estimates: the admissible interval spans 8.7x and 9.3x respectively.",
+      "unit": "dimensionless exponent; noise and RMSE in nat/token",
+      "measured": "2026-09-05",
+      "source": "probes/fit_data_exponent.py --tok_per_step 262144 --log runs/b0_headmix_armA_val_trace.log , and again with --log runs/b0_headmix_armB_val_trace.log . Each excerpt holds the `step N/3815 val X` lines of that arm's pod training log, pulled into the repo 2026-09-05, with the pod file's line count and sha256 in a header comment; the full pod logs are not in the repo. Traces: armA 2.917/2.589/2.464/2.399/2.343/2.284/2.241 and armB 2.932/2.604/2.502/2.420/2.384/2.358/2.338 at steps 500..3500.",
+      "config": {
+        "tokens_per_step": "262144 = batch 16 x accum 2 x seq 4096 x world 2, from the arms' launch lines in runs/experiments.jsonl",
+        "arms": "ckpt_b0_headmix_armA / armB, 206,128,200 dense params, d1024 L12 h8 ffn3072, mix_200m_8b.json, seed 42",
+        "estimator": "least squares in LOSS space (a closed-form at each gridded (b,c)); b on a 0.0025 grid over [0.005,1.0], c on a min(loss)/460 grid",
+        "noise": "estimated from the trace's own second differences, sqrt(sum d2^2/n)/sqrt(6); an UPPER bound, since real curvature inflates it -- the safe direction, as it widens the admissible interval",
+        "excluded": "the epoch-end `ep 1/1 ... val` line, computed with Cfg.val_batches_full=100 where the periodic lines use Cfg.val_batches=20 -- a different estimator on a different sample, and it sits where the fit is most sensitive"
+      },
+      "uncertainty": "THIS IS A STATEMENT ABOUT THE DESIGN, NOT ABOUT b. b may well be near the Chinchilla-family 0.095; this fact says these traces cannot tell. Verified that the limit is the data and not the fitter: on synthetic curves the fitter recovers b to within 0.01 and c to 0.03 (grid resolution; the truth itself fits to 1e-9) at zero noise, the same 7-point/7.0x design loses b at 0.039 nat whatever the truth, and widening the range to 128x at the SAME noise narrows the interval again. Two further caveats: the periodic val estimator reads only 20 batches so its noise is what it is by design, and the second-difference noise estimate cannot separate measurement error from genuine curvature.",
+      "boundary": "Applies to fitting b from a single run's in-training val trace at this scale and range. It does NOT say a data-scaling exponent is unmeasurable here: the fix is a longer lever (more decades of D) and/or a lower-noise estimator (full-prefix val, or per-token BPB on a fixed held-out set), not more points inside 7x. A design that needs b -- any statement of the form 'an r-fold data advantage shows as R*(1-r^-b) nat' -- must either measure b on a wider range first or carry the whole [0.11, 1.00] range through its own error bars.",
+      "guard_phrases": [
+        "b = 0.095",
+        "the data exponent is",
+        "fitted b",
+        "power-law exponent measured"
+      ],
+      "status": "measured"
+    },
+    {
+      "id": "ds.paired_token_corr_206m",
+      "value": "Per-token loss correlation between the two 206M b0 head-mix arms on the val prefix they both scored: corr = 0.9568 over 262,144 tokens / 64 documents of code_py_starcoder. Pairing therefore buys 4.79x on the SE of the mean difference (sd_diff 0.6382 nat against 3.0568 if the arms were independent). BLOCK-PAIRED SCORING IS LOAD-BEARING and stays the default estimator.",
+      "unit": "dimensionless correlation; sd and SE in nat/token",
+      "measured": "2026-09-06",
+      "status": "measured",
+      "source": "probes/arm_token_corr.py --ckpt_a ckpt_b0_headmix_armA.pt --ckpt_b ckpt_b0_headmix_armB.pt --device cuda:0 --allow_cuda --domain code_py_starcoder --rows 64 --batch 2, on pod card 5; full log runs/arm_corr_p2.log",
+      "config": {
+        "arms": "ckpt_b0_headmix_armA / armB, 206,128,200 dense params, d1024 L12 h8 ffn3072, seed 42",
+        "domain": "code_py_starcoder",
+        "rows_scored": 64,
+        "n_tokens": 262144,
+        "val_prefix_rows": 5000,
+        "cache_rows": 2144719,
+        "corr": 0.9568,
+        "mean_a": 1.2047,
+        "mean_b": 1.2668,
+        "mean_diff": -0.062009,
+        "sd_a": 2.1288,
+        "sd_b": 2.1936,
+        "sd_diff": 0.63815,
+        "sd_diff_if_independent": 3.05676,
+        "se_diff_naive": 0.0012464,
+        "se_diff_cluster": 0.0022197,
+        "deff": 3.1716,
+        "pairing_gain_vs_unpaired": 4.79,
+        "rows_are_the_val_prefix": "train.py:1989 takes val = seqs[:n_val] per domain, a deterministic prefix, so these are the tokens the arms actually validated on rather than a fresh sample",
+        "estimator": "per-token cross-entropy from both checkpoints on identical tokens; corr is the Pearson correlation of the two per-token loss vectors. Forward in bf16 under autocast, loss in fp32 -- the .float() is outside the autocast block because the loss is the quantity being correlated"
+      },
+      "uncertainty": "THE 4.79x IS DERIVED FROM sd_diff, NOT FROM THE CLUSTERED SE, and the two disagree here. deff = 3.17: tokens within a document are not independent, so the clustered SE 0.0022197 is 1.7809x the naive 0.0012464 -- exactly sqrt(deff), verified. The correlation itself is a per-token statistic and is not corrected by deff, but any DESIGN number taken from it must use the clustered SE. Reading the gain against an unpaired NAIVE SE compares a corrected quantity to an uncorrected one; the honest statement is that pairing removes 79% of the difference SD (0.638 of 3.057) and that the surviving SE is 0.00222 nat, clustered.\n\nTHE 4.79 IS THE MEASURED RATIO sd_indep/sd_diff AND NOT THE CLOSED FORM. 1/sqrt(1-corr) gives 4.8139, which is 0.5% higher, because that form assumes the two arms have EQUAL variance and they do not: sd_a 2.1288 against sd_b 2.1936. The measured ratio is the one reported. Recording this because the closed form is the natural way to check the number and it does not reproduce it -- a reader who recomputes 4.81 has not found an error.\n\nONE DOMAIN, ONE PAIR OF ARMS, 64 DOCUMENTS. corr is measured on code_py_starcoder only, and these two arms differ by a head-mix ratio -- two arms differing in a way that changes what the model attends to could correlate less. No claim is made for another domain or another arm pair; the pre-registered read (prereg b0_head_hybrid_3to1#paired_corr_decision) was stated for corr >= 0.90 and 0.9568 clears it on this evidence.\n\nBOTH SOURCE CHECKPOINTS ARE [deletion-candidate] AND ARE NOT KEEP-CLAIMED, disclosed rather than claimed around. ckpt_b0_headmix_armA.pt (candidate 2026-09-04_11:09) is on the prune plan and unclaimed, and so is ckpt_b0_headmix_armB.pt (candidate 2026-09-04_11:37); both were verified present on the pod at 2026-09-06 20:5xZ, 892,198,775 and 901,971,685 bytes. NO KEEP CLAIM IS REQUESTED, and that is a decision rather than an omission: every number this fact asserts is in its config block -- corr, both means, both sds, sd_diff, both SEs, deff, the token and document counts -- so deletion costs the ability to RE-measure, not the measurement. 1.8 GB of disk to keep a re-run possible is not worth it for a readout whose verdict (pairing is load-bearing, corr >= 0.90) is already spent. A future reader who needs corr on another domain or another arm pair is running a new measurement anyway, not this one.",
+      "boundary": "206M dense, KDA+MLA, mix_200m_8b, one domain, one arm pair. Says nothing about correlation between arms that differ in data rather than architecture.",
+      "guard_phrases": [
+        "pairing buys",
+        "paired-BPB",
+        "block-paired",
+        "corr 0.95"
+      ]
     }
-   },
-   "boundary": "The FIRST resume is immune -- its origin is 0, so its segment count is the run total. From the second resume on, the rows re-read equal the length of the FIRST segment, whatever that was. Here: 8,192 rows = 33.5M tokens = 0.168%. The quantity does not grow with later resumes; it is re-paid once per resume beyond the first. AS OF 52aec31 the boundary is moot on main: no resume re-reads a segment, because the count written is absolute. The boundary still describes any checkpoint written before 52aec31 (2026-09-02 18:10 +0800), which includes every p500m_20b_0902 interrupt file.",
-   "uncertainty": "The refutation rests on one post-resume checkpoint. That is enough to kill the claim -- the claim predicted 92,160 and the file says 305,152 -- but it does not establish that the absolute count is right for every shape: all three files come from one run at one (batch, accum, world), and a checkpoint saved mid-accumulation or with a domain whose cursor was DISCARDED (corpus fp change, seed change) is untested. The discard path is the one to watch: train.py:1580 sets _base only in the branch that applied the cursor, so a discarded domain contributes 0 to _base by design, and the equality would then fail legitimately -- the assert must not fire there. NOT DONE: the equality is not yet asserted in train.py at save and at resume-load. That is queued with the plan-length fix on the de branch and needs the same unfreeze window; until it lands, nothing stops a regression.",
-   "status": "retracted",
-   "claim": "The row cursor counts one segment and does not accumulate, so the second and every later resume re-reads the rows of the first segment -- 8,192 rows / 33.5M tokens on p500m_20b_0902.",
-   "refuted_by": "52aec31 (train.py:1030 `+ int(_base.get(n, 0))`, with _base set at train.py:1580 in the branch that applied the cursor). Refutation MEASURED, not read off the diff: ckpt_p200m_4b_0902.pt.interrupt.step1192 carries sum(row_cursor) = 305,152 = 1192 x 256, the absolute count; the segment-only implementation this entry describes would have written 92,160.",
-   "audit": "de, 2026-09-02, after lessons-62 raised the numbers and 1e reported the 360-step loss. Three checkpoints of the live run read on the pod with torch.load(mmap=True) -- a header read, no tensors, the run untouched: as_of_step, row_cursor sum, cfg batch/accum, and row_cursor_refused (absent on all three). The equality holds on all three. Discriminating power was checked before believing it: step500 and step832 have origin 0, where absolute and segment-only coincide, so a known-answer set without a post-resume checkpoint is blind to exactly the defect it guards -- the same blind spot train.py:1000-1005 names.",
-   "retracted_value": []
-  },
-  {
-   "id": "ds.beta_data_leg_206m_early",
-   "value": 0.5909,
-   "unit": "dimensionless (exponent beta in L = E + B*D^-beta)",
-   "measured": "2026-09-03",
-   "status": "measured",
-   "source": "runs/data_leg_206m_8b.log, 12 val points steps 500..6000",
-   "config": {
-    "run": "data_leg_206m_8b",
-    "model": "206.1M d1024 L12 h8 ffn3072",
-    "mix": "data/mix_200m_8b.json",
-    "world": 4,
-    "cards": "0-3",
-    "tokens_per_step": 524288,
-    "fp8": true,
-    "grad_ckpt": false,
-    "triple": "geometric k=3 on STEPS (500,1500,4500) = 0.262B/0.786B/2.359B tokens",
-    "estimator": "10-point least squares on L = E + B*D^-beta, D in TOKENS. The pre-registered estimator was the closed form on the geometric triple (500,1500,4500); it is kept below as triple_500_1500_4500 but is NOT the reported value -- see uncertainty.",
-    "nine_point_fit": {
-     "E": 1.9261,
-     "B": 147800.0,
-     "beta": 0.6262,
-     "max_abs_residual": 0.01078,
-     "residual_signs": "-++--++--",
-     "longest_same_sign_run": 2
-    },
-    "triple_500_1500_4500": {
-     "beta": 0.6471,
-     "ratio": 2.0359,
-     "infimum": 1.0,
-     "margin": 1.0359
-    },
-    "triple_spread": {
-     "(500,1000,1500)": {
-      "beta": 0.6468,
-      "ratio": 2.4522,
-      "infimum": 1.7095,
-      "margin": 0.7427
-     },
-     "(1000,1500,2000)": {
-      "beta": 1.2838,
-      "ratio": 2.2115,
-      "infimum": 1.4094,
-      "margin": 0.8021
-     },
-     "(500,1500,4500)": {
-      "beta": 0.6471,
-      "ratio": 2.0359,
-      "infimum": 1.0,
-      "margin": 1.0359
-     },
-     "(1000,2000,4000)": {
-      "beta": 0.453,
-      "ratio": 1.3689,
-      "infimum": 1.0,
-      "margin": 0.3689
-     },
-     "(500,2000,5000)": {
-      "beta": 0.5363,
-      "ratio": 2.8418,
-      "infimum": 1.5129,
-      "margin": 1.3288
-     }
-    },
-    "existence_pretest": "(L1-L2)/(L2-L3) > ln(d2/d1)/ln(d3/d2). The infimum is 1 ONLY for a geometric triple; stating the gate as '> 1' passes triples that have no beta>0 -- b0 found a ladder level at ratio 1.6364 whose infimum is 1.7095. Report the margin, not the pass.",
-    "ten_point_fit": {
-     "note": "superseded by twelve_point_fit; kept because the drift below is the finding"
-    },
-    "twelve_point_fit": {
-     "E": 1.8986,
-     "B_tokens": null,
-     "B_steps": 32.15,
-     "beta": 0.5909,
-     "max_abs_residual": 0.01003,
-     "residual_signs": "-++--++---++",
-     "longest_same_sign_run": 3,
-     "sign_changes": 5,
-     "expected_sign_changes_if_random": 5.5
-    },
-    "beta_drifts_with_window": {
-     "4pt_to_step2000": 0.7694,
-     "9pt_to_4500": 0.6262,
-     "10pt_to_5000": 0.6215,
-     "12pt_to_6000": 0.5909,
-     "cumulative": -0.1785,
-     "monotone": true,
-     "precedent": "pretrain_15b_s1 drifted 0.6486 (first 4) to 0.4187 (all 32), -0.23, converging only near step 16000 (b0)"
-    },
-    "triple_spread_is_a_range": "The five triples recorded earlier still span exactly 0.8308; each triple's beta uses only its own three points and does not move when the run produces more. The 1.1914 spread is over NINE triples -- it grew because four triples were ADDED, not because the curve degraded. A sample range only ever grows with sample size, so 'more points gave a wider spread' is not evidence about the data. The claim that survives is the least-squares drift, which is computed on a fixed estimator over a growing window and is monotone.",
-    "triples_9": {
-     "(2000,4000,6000)": {
-      "beta": 0.1146,
-      "margin": 0.1114,
-      "usable": false,
-      "why": "margin below 0.2, where beta's relative error reaches the 30% scale; this close to the no-solution boundary the value is not a number"
-     },
-     "(1000,2000,4000)": 0.453,
-     "(1500,3000,6000)": 0.5204,
-     "(500,1500,4500)": 0.6471,
-     "(500,1000,1500)": 0.6468,
-     "(500,1000,2000)": 0.7558,
-     "(500,2000,5000)": 0.5363,
-     "(1000,1500,2000)": 1.2838,
-     "(2000,3000,4500)": 1.306
-    },
-    "fixed_estimator_sliding_window": {
-     "estimator": "geometric k=2, (d, 2d, 4d), the SAME shape at three different starts -- not a change of estimator",
-     "(500,1000,2000)": {
-      "beta": 0.7558,
-      "margin": 0.6886,
-      "quantisation_bound": 0.0138
-     },
-     "(1000,2000,4000)": {
-      "beta": 0.453,
-      "margin": 0.3689,
-      "quantisation_bound": 0.0205
-     },
-     "(1500,3000,6000)": {
-      "beta": 0.5204,
-      "margin": 0.4343,
-      "quantisation_bound": 0.0247
-     },
-     "reading": "The three span 0.3028 while each carries a quantisation bound of 0.014-0.025: they disagree by 12 to 22 times their own uncertainty, and all three margins clear the 0.2 usability floor. THE EVIDENCE IS THE DISAGREEMENT, NOT A TREND. A true single-parameter power law returns the same beta from every window within noise; no direction or monotonicity needs to be claimed, and with n=3 none could be. b0 offered this as a weak trend claim; it is a strong consistency failure."
-    }
-   },
-   "uncertainty": "THE DOMINANT TERM IS ESTIMATOR CHOICE. Nine three-point triples on this curve give beta from 0.1146 to 1.3060. Beyond that, the least-squares value itself is NOT STATIONARY: it fell monotonically 0.7694 -> 0.6262 -> 0.6215 -> 0.5909 as the window grew from 4 to 12 points, -0.18 cumulative, reproducing the direction measured on pretrain_15b_s1 (-0.23 over 32 points, converging only near step 16000). A single number with an error bar is the wrong shape for this quantity in this window. Never quote it with a rounding-derived bound.",
-   "boundary": "CLOSED 2026-09-03 at step 6000 by fb+b0: the finding is that this curve does not follow a single-parameter power law over the observed window, and more points make the fit's beta move rather than settle. Evidence: three windows of ONE fixed estimator (geometric k=2) returning 0.7558 / 0.4530 / 0.5204, disagreeing by 12-22x their own quantisation bounds -- a consistency failure that needs no trend; monotone least-squares drift -0.18 over a growing window, max|residual| 20.1x print precision, and the pretrain_15b_s1 precedent. NOT evidence: the widening three-point range, which widened because triples were added. The sign test reads as noise (longest run 3, 5 changes against 5.5 expected) and that only rules out a systematic one-way deviation. beta does NOT enter the params-vs-data comparison, which reads two equal-FLOPs legs off their final domain loss; the step-13500 triple is cancelled because it would add one more three-point estimate to a spread already spanning 1.19.",
-   "guard_phrases": [
-    "the data exponent is 0.647",
-    "beta = 0.647 +- 0.007",
-    "beta = 0.6215 +- 0.007"
-   ]
-  },
-  {
-   "id": "ds.n2_params_vs_data_matched_compute",
-   "value": -0.01077,
-   "unit": "nats/token, paired per-block delta (params leg minus data leg); negative = params leg better",
-   "measured": "2026-09-03",
-   "status": "measured",
-   "source": "runs/b0_23_n2_verdict.json; eval/block_paired.py --from runs/b0_23_blocks.jsonl runs/score_matrix.jsonl --arms ckpt_data_leg_206m_8b.pt ckpt_params_leg_438m_3p76b.pt",
-   "config": {
-    "statistic": "paired delta over BLOCKS, n=576 (9 domains x 64 blocks x 4096 tokens = 2,359,296 tokens)",
-    "sd": 0.039713,
-    "se": 0.001655,
-    "t": -6.51,
-    "sign_test": "227 up, 349 down, 0 tie; one-sided p 2.10e-07",
-    "arms": {
-     "data_leg": "206.1282M (d1024 L12 h8 ffn3072) x 7.999586B tokens (15258 steps)",
-     "params_leg": "438.363756M (d1536 L12 h12 ffn4608) x 3.761766B tokens (7175 steps)"
-    },
-    "compute_match": "params x tokens 1649.0219 vs 1648.9403 = 1.000049x, i.e. 0.005% apart. This is what makes the comparison a BUDGET ALLOCATION result and not 'a bigger model scores better': parameter ratio 2.127x, token ratio 0.470x.",
-    "shared": "both legs: same mix data/mix_200m_8b.json, same seed 42, same schedule (warmup 300, warmdown 0.1, anneal_frac 0), batch 16 accum 2 world 4, fp8, no grad_ckpt; identical vocab_id 0bce3584bc24f255, identical corpus_fp on all 9 domains, identical env_fp",
-    "per_domain": {
-     "chatml": {
-      "mean_d": -0.03752,
-      "se": 0.0088,
-      "t": -4.26,
-      "down_of_64": 51
-     },
-     "cot": {
-      "mean_d": -0.02177,
-      "se": 0.00185,
-      "t": -11.79,
-      "down_of_64": 61
-     },
-     "chat_qa": {
-      "mean_d": -0.02168,
-      "se": 0.00909,
-      "t": -2.39,
-      "down_of_64": 39
-     },
-     "textbook_30b": {
-      "mean_d": -0.00866,
-      "se": 0.00239,
-      "t": -3.62,
-      "down_of_64": 42
-     },
-     "math_owm_stage2": {
-      "mean_d": -0.00737,
-      "se": 0.00263,
-      "t": -2.8,
-      "down_of_64": 37
-     },
-     "code_py_starcoder": {
-      "mean_d": -0.00155,
-      "se": 0.00154,
-      "t": -1.01,
-      "down_of_64": 34
-     },
-     "en_c4_stage2": {
-      "mean_d": -0.00026,
-      "se": 0.00203,
-      "t": -0.13,
-      "down_of_64": 30
-     },
-     "code_py_rp1t": {
-      "mean_d": 0.00088,
-      "se": 0.002,
-      "t": 0.44,
-      "down_of_64": 25
-     },
-     "zh_web": {
-      "mean_d": 0.001,
-      "se": 0.00393,
-      "t": 0.25,
-      "down_of_64": 30
-     }
-    },
-    "reading": "7 of 9 domains favour the params leg and 5 are individually significant at |t|>2, but the gain is CONCENTRATED in chatml/cot/chat_qa. Both code domains and en_c4 sit inside noise, and code_py_rp1t and zh_web have the opposite sign. Since the project targets coding and math, the headline negative must not be read as 'more parameters help code': at this budget they did not measurably.",
-    "scale_reference": "0.0142 nat is the mixing-weight lesson (docs/lessons); this delta is 0.76x that -- same order, so neither negligible nor route-changing.",
-    "weighting": "row- and token-weighted means are IDENTICAL (-0.010770) because every block is 4096 tokens. That is an identity on this data, not a check: weight correctness rests on eval/block_paired.py --selftest's 10/90/400 fixture.",
-    "integrity": "block-sum reconstruction 9/9: each domain's summed ce_sum / 262,144 reproduces its own reported loss, drift 2.4e-07 to 4.5e-05, all of it from the reported value keeping 4 decimals. A file truncated mid-write still parses, so this is the check that separates complete from parseable (gate_failure_shapes 158)."
-   },
-   "uncertainty": "BOTH CHECKPOINTS POSTDATE THE CHECKPOINT LISTING and therefore read [absent] to ckpt_facts_sources_present: runs/pod_ckpt_candidates_2026-09-02.txt is a 13:58Z snapshot, while ckpt_data_leg_206m_8b.pt was written 2026-09-03 12:40 and ckpt_params_leg_438m_3p76b.pt 2026-09-03 18:47 (both verified present on the pod at 19:10Z, 892,199,291 and 1,854,896,463 bytes). The check's own docstring says a FAIL on a checkpoint newer than the listing means REFRESH THE LISTING, not KEEP-claim -- and that file carries five sessions' KEEP claims, so refreshing it is not a single session's edit. This note is the interim unblock the check names. THE FOLD THAT ALMOST LOST THE MEASUREMENT: both source files key ckpt_data_leg_206m_8b.pt -- runs/b0_23_blocks.jsonl with 576 blocks, runs/score_matrix.jsonl with 0 (scored 32 min before per_row output existed, because score_matrix.py called domain_loss_seqs without per_row; fixed 370cbc20). The ledger convention fold-by-key-last-row-wins, applied literally, kept the blockless row and made block_paired refuse with 'no per-block data' for a checkpoint whose blocks were in hand. The two rows are not two versions of one measurement -- one payload strictly contains the other -- so _rec_by_name now folds by payload (28cad589). Also: the params leg's steps 4400-4550 shared card 0 with another job, 21.0K vs 47.0K tok/s/gpu; the 47.0K rate is the median EXCLUDING that range, not a whole-run average. Loss inside minus outside is -0.0642 +/- 0.0564 (t -1.14), but the step-to-step loss sd of 0.1715 is 95x this delta's SE, so those windows have no resolution to detect a contention effect on the weights; the evidence that there was none is e1 reproducing its arm's loss to 0.001 on another card.",
-   "boundary": "SEED SIGMA IS UNMEASURED for this pair. The SE 0.001655 is the sampling error of the delta over the shared val blocks; it is NOT reseeding spread, which ds.seed_variance_0p2b measures at 0.0516 nat for a different question (the 0.24 quoted in earlier drafts was 2x that fact's config range 0.124, not its sd). Whether 0.0108 exceeds seed noise needs one more leg per arm at a different seed and that was not run. Both legs also share one mix and one val set, so this is the exchange rate ON THIS CORPUS at ~1.65e3 (M-params x B-tokens), not a general Chinchilla claim; a single point in the ratio 2.127x/0.470x, with no third arm to say whether the optimum lies beyond it. PATH (E3, audit 2026-09-04): both legs were scored on the cu_none path -- no document boundaries declared, see eff.eval_path_cu_artifact_ce, whose pooled artifact is 7.6x this delta. The cu_none verdict is RETRACTED as a direction (E20): the doc_cu re-score (C11, 53c39d82) gives paired mean −0.000920 nat, SE 0.001661, t −0.55, while the sign test reverses (329/576 params worse, p 3.6e-04) — two summaries of the same 576 blocks disagree, so no direction is put forward; resolution needs a second seed per arm."
-  },
-  {
-   "id": "ds.b_unidentified_from_val_traces",
-   "value": "The data exponent b in L(D) = a*D^-b + c is NOT MEASURABLE from a 200M run's periodic val trace. On both b0 head-mix arms -- 7 points over a 7.0x token range (0.131B to 0.918B), the trace's own per-point noise 0.0388 (armA) and 0.0423 (armB) nat -- every b from 0.114 to 1.000 (armA) and 0.107 to 1.000 (armB) admits some c that fits within that noise. The best fits (armA b=0.4975 c=1.851 RMSE=0.0111; armB b=0.8060 c=2.180 RMSE=0.0056) are grid points in a flat valley, not estimates: the admissible interval spans 8.7x and 9.3x respectively.",
-   "unit": "dimensionless exponent; noise and RMSE in nat/token",
-   "measured": "2026-09-05",
-   "source": "probes/fit_data_exponent.py --tok_per_step 262144 --log runs/b0_headmix_armA_val_trace.log , and again with --log runs/b0_headmix_armB_val_trace.log . Each excerpt holds the `step N/3815 val X` lines of that arm's pod training log, pulled into the repo 2026-09-05, with the pod file's line count and sha256 in a header comment; the full pod logs are not in the repo. Traces: armA 2.917/2.589/2.464/2.399/2.343/2.284/2.241 and armB 2.932/2.604/2.502/2.420/2.384/2.358/2.338 at steps 500..3500.",
-   "config": {
-    "tokens_per_step": "262144 = batch 16 x accum 2 x seq 4096 x world 2, from the arms' launch lines in runs/experiments.jsonl",
-    "arms": "ckpt_b0_headmix_armA / armB, 206,128,200 dense params, d1024 L12 h8 ffn3072, mix_200m_8b.json, seed 42",
-    "estimator": "least squares in LOSS space (a closed-form at each gridded (b,c)); b on a 0.0025 grid over [0.005,1.0], c on a min(loss)/460 grid",
-    "noise": "estimated from the trace's own second differences, sqrt(sum d2^2/n)/sqrt(6); an UPPER bound, since real curvature inflates it -- the safe direction, as it widens the admissible interval",
-    "excluded": "the epoch-end `ep 1/1 ... val` line, computed with Cfg.val_batches_full=100 where the periodic lines use Cfg.val_batches=20 -- a different estimator on a different sample, and it sits where the fit is most sensitive"
-   },
-   "uncertainty": "THIS IS A STATEMENT ABOUT THE DESIGN, NOT ABOUT b. b may well be near the Chinchilla-family 0.095; this fact says these traces cannot tell. Verified that the limit is the data and not the fitter: on synthetic curves the fitter recovers b to within 0.01 and c to 0.03 (grid resolution; the truth itself fits to 1e-9) at zero noise, the same 7-point/7.0x design loses b at 0.039 nat whatever the truth, and widening the range to 128x at the SAME noise narrows the interval again. Two further caveats: the periodic val estimator reads only 20 batches so its noise is what it is by design, and the second-difference noise estimate cannot separate measurement error from genuine curvature.",
-   "boundary": "Applies to fitting b from a single run's in-training val trace at this scale and range. It does NOT say a data-scaling exponent is unmeasurable here: the fix is a longer lever (more decades of D) and/or a lower-noise estimator (full-prefix val, or per-token BPB on a fixed held-out set), not more points inside 7x. A design that needs b -- any statement of the form 'an r-fold data advantage shows as R*(1-r^-b) nat' -- must either measure b on a wider range first or carry the whole [0.11, 1.00] range through its own error bars.",
-   "guard_phrases": [
-    "b = 0.095",
-    "the data exponent is",
-    "fitted b",
-    "power-law exponent measured"
-   ],
-   "status": "measured"
-  }
- ]
+  ]
 }

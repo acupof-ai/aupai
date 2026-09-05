@@ -171,12 +171,21 @@ def claim_own_card(name, device):
         else:
             card = str(local)
         ok, msg = acquire(
-            "e1_arm_token_corr", [int(card)], pid=os.getpid(), require_device=True,
+            "e1_arm_token_corr", [card], pid=os.getpid(), require_device=True,
             note="claimed from inside the probe after torch.cuda.set_device",
         )
         return ok, msg
     except Exception as e:  # noqa: BLE001 -- see the docstring: never kill the run over this
-        return False, f"claim attempt raised {type(e).__name__}: {e}"
+        # A RAISE HERE MEANS "DON'T KNOW", NOT "NOT CLAIMED", and saying the wrong one cost a
+        # release. MEASURED 2026-09-06: card_claim.acquire wrote the claim file and THEN raised
+        # TypeError formatting its own success message (int cards, since fixed at
+        # card_claim.py:674), so this handler returned False on a card the process was holding.
+        # main() guards its release on that flag, so the claim leaked while the log said "running
+        # UNCLAIMED" -- the exact inverse of the truth, and the inverse of 2026-09-05's real
+        # unclaimed run. The release is now attempted regardless, so an unknown state cannot leak
+        # a card; a release with no claim is a no-op that reports so.
+        return False, (f"claim attempt raised {type(e).__name__}: {e} -- state UNKNOWN, not "
+                       f"proven unclaimed; the release will run anyway")
 
 
 def release_own_card():
@@ -256,6 +265,7 @@ def main():
 
     losses = {}
     claimed = False
+    attempted = False
     try:
         for tag, path in (("a", a.ckpt_a), ("b", a.ckpt_b)):
             print(f"  loading {path}", flush=True)
@@ -274,6 +284,7 @@ def main():
             # claim_own_card. Unclaimed is REPORTED, not fatal: the measurement is still valid,
             # and a probe that refuses to run because bookkeeping failed wastes the card window.
             if not claimed:
+                attempted = True
                 claimed, cmsg = claim_own_card("e1_arm_token_corr", a.device)
                 print(f"  card claim: {'held' if claimed else 'NOT HELD'} -- {cmsg}", flush=True)
                 if not claimed:
@@ -283,9 +294,15 @@ def main():
             losses[tag] = token_losses(model, X, Y, a.batch, a.device)
             del model
     finally:
-        if claimed:
+        # RELEASE ON `attempted`, NOT ON `claimed`. A claim attempt that RAISED leaves the state
+        # unknown, and card_claim's failure mode is to write the file and then raise -- so a
+        # release guarded on `claimed` skips exactly the case where a card is held and nobody
+        # thinks so (measured 2026-09-06; the claim sat on disk for the whole run and then made
+        # `card_claim.py status` raise for every peer). A release with no claim is a no-op that
+        # says so, which is cheaper than a leak.
+        if attempted:
             ok, rmsg = release_own_card()
-            print(f"  card release: {'ok' if ok else 'FAILED'} -- {rmsg}", flush=True)
+            print(f"  card release: {'ok' if ok else 'no-op or FAILED'} -- {rmsg}", flush=True)
 
     st = paired_stats(losses["a"], losses["b"], rpt)
     st.update(
@@ -583,7 +600,14 @@ def _selftest():
         assert kinds.index("load") < kinds.index("claim"), kinds
         assert kinds.index("claim") < kinds.index("score"), kinds
         assert kinds[-1] == "release", f"release is not last: {kinds}"
-        assert _events[kinds.index("claim")][1] == [7], _events[kinds.index("claim")][1]
+        # THE PHYSICAL CARD, AS A STRING. `["7"]` and not `[7]`: card_claim's contract is the
+        # CUDA_VISIBLE_DEVICES token, and every other caller passes strings (loader.py:456 splits
+        # CVD). This assertion read `== [7]` while the code passed `[int(card)]`, and that
+        # agreement is what hid the defect -- both sides were the one type card_claim's own
+        # message formatting could not handle, so the claim file was written and then acquire
+        # raised out of `','.join(cards)`. Fixed on both sides 2026-09-06; card_claim.py:674 now
+        # normalises so no future caller can reproduce it, and this line pins the convention.
+        assert _events[kinds.index("claim")][1] == ["7"], _events[kinds.index("claim")][1]
 
         # THE CUDA LOAD ASKS FOR bf16. This is the world that fails on the pre-fix path: the old
         # line was `load_checkpoint(path, device=a.device)`, i.e. dtype None, which on cuda means
@@ -663,6 +687,38 @@ def _selftest():
         assert [e[0] for e in _events][-1] == "release", (
             f"a crash mid-scoring left the card CLAIMED: {[e[0] for e in _events]}"
         )
+
+        # AND THE RELEASE RUNS WHEN THE CLAIM *RAISED*, which is a different world from the two
+        # above and the one that actually leaked a card. THE REAL SHAPE, measured 2026-09-06:
+        # card_claim.acquire wrote the claim file and THEN raised formatting its own success
+        # message, so claim_own_card's handler returned False on a card the process was holding.
+        # A release guarded on `claimed` skipped -- the claim sat on disk for the whole run while
+        # the log printed "running UNCLAIMED", and that row later made `card_claim.py status`
+        # raise for every peer. Both worlds above pass with the guard on `claimed`: the first
+        # never fails the claim, the second fails LATER than the claim. Only this one separates
+        # "claim failed" from "claim outcome unknown".
+        _events.clear()
+        _fake_losses.boom = False
+
+        def _raise_after_writing(name, cards, pid=None, require_device=False, note=""):
+            # Records the claim, exactly as card_claim did (the file was written), then raises
+            # the way it did on the return-message join.
+            _events.append(("claim", cards))
+            raise TypeError("sequence item 0: expected str instance, int found")
+
+        _stub2.acquire = _raise_after_writing
+        try:
+            main()
+        finally:
+            _stub2.acquire = _acq
+        _kinds_r = [e[0] for e in _events]
+        assert "claim" in _kinds_r, _kinds_r
+        assert _kinds_r[-1] == "release", (
+            f"a claim that RAISED after writing its file left the card unreleased: {_kinds_r}. "
+            f"The release must be guarded on whether a claim was ATTEMPTED, not on whether it "
+            f"was reported held -- an exception means the state is unknown, not that no card is "
+            f"held, and card_claim's own failure mode is to write the file and then raise."
+        )
     finally:
         _fake_losses.boom = False
         for k, v in _orig.items():
@@ -700,7 +756,13 @@ def _selftest():
 
         _real_curdev = torch.cuda.current_device
         torch.cuda.current_device = lambda: 0
-        for vis, want in (("7", 7), ("2,5", 2), ("", 0)):
+        # STRINGS, not ints. card_claim's contract is the CUDA_VISIBLE_DEVICES token and every
+        # other caller passes strings (loader.py:456 splits CVD). This tuple read (7, 2, 0) while
+        # the code passed [int(card)] -- the two agreed, which is exactly why neither noticed that
+        # ints were the one type card_claim's own success message could not format: it wrote the
+        # claim file and then raised out of `','.join(cards)`, so the probe reported NOT HELD on a
+        # card it held (2026-09-06).
+        for vis, want in (("7", "7"), ("2,5", "2"), ("", "0")):
             _seen.clear()
             if vis:
                 os.environ["CUDA_VISIBLE_DEVICES"] = vis
