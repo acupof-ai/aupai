@@ -649,6 +649,23 @@ def main():
         print("nothing to score: pass --ckpt", file=sys.stderr)
         return 2
 
+    # THE CARD IS CLAIMED, because this process takes one. Measured 2026-09-04: 11 files load a
+    # checkpoint and name cuda while 10 reference card_claim nowhere, so runs/claims/ sat empty
+    # on the pod while lane jobs held cards all day. A readout that does not claim is invisible
+    # to card_held_without_claim and to every other job's co-residency check -- including the
+    # one that correctly refused this experiment's doc_cu pass an hour ago.
+    #
+    # NOT gated on a live claim of its own: unlike domain_loss this readout reads no token
+    # cache. It touches the 1000-item file (509 KB) and one checkpoint, so there is no
+    # whole-cache read to be co-resident with and nothing here to refuse.
+    if a.device.startswith("cuda"):
+        import torch
+
+        if torch.cuda.is_available():
+            from loader import claim_my_cards
+
+            claim_my_cards("novel_ops_4way", note=f"{len(a.ckpt)} ckpt(s), readout_1")
+
     items, got = load_items()
     print(f"items {len(items)} at sha {got[:16]}... (prereg primary hash)")
     res = {}
