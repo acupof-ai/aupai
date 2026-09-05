@@ -186,82 +186,151 @@ def p0_fp8_constraint(device):
     return out
 
 
+def situ(a, b, w2_apply, beta1=4.0, beta2=25.0):
+    """model.SwiGLU's activation, applied to whatever the second matmul is.
+
+    THE SAME FUNCTION ON BOTH SIDES, and it is not cosmetic. model.py:344-345 is the SiTU
+    bounded form -- beta1*tanh(a/beta1)*sigmoid(b), then beta2*tanh(w2(gate)/beta2) -- which is
+    two tanh and two divides the plain a*sigmoid(b) does not pay. Measured 2026-09-05: the first
+    version of this bench ran SiTU on the dense side and a*sigmoid(b) on the MoE side, so the
+    dense baseline carried elementwise work the MoE paths did not and the ratio flattered the
+    MoE. b0 found it by reading the source. A dispatch ratio between two different functions is
+    not a dispatch ratio."""
+    import torch
+    gate = beta1 * torch.tanh(a / beta1) * torch.sigmoid(b)
+    return beta2 * torch.tanh(w2_apply(gate) / beta2)
+
+
 def p1_dispatch(device, dtype=None):
-    """Dense SwiGLU vs _grouped_mm vs sort-and-loop, at equal active compute, fwd and bwd."""
+    """Dense SwiGLU vs _grouped_mm vs sort-and-loop, at equal active compute, fwd and bwd.
+
+    WHAT THE TIMED REGION MUST CONTAIN, after b0's review (2026-09-05). Three asymmetries in
+    the first version all pushed the same way, which is the tell:
+
+      1. the activation differed (see situ above)
+      2. NO TIMED PATH RAN THE SHARED EXPERT. N_SHARED entered the ratio formula and the print
+         but not one line of timed code, so the grouped path did T*TOP_K rows and was credited
+         with T*(TOP_K+N_SHARED) -- exactly 0.75 of the work it was scored against. The
+         import-time equal-compute assertion certified a configuration the bench never ran.
+      3. the gather and the offsets were built OUTSIDE the timed closures: ~25 MiB per step of
+         traffic the real arm pays and the bench did not, with no dense counterpart.
+
+    So: same activation both sides, the shared expert inside f_grouped as one dense matmul, and
+    routing + gather + offsets inside every timed closure. The dense path pays its own honest
+    cost and nothing else."""
     import torch
     dtype = dtype or torch.bfloat16
     T = SEQ
     x = torch.randn(T, D, device=device, dtype=dtype, requires_grad=True)
     w13, w2 = build_moe(dtype, device)
-    order, offs, counts = route(x.detach())
-    # The dense control is the real module, not a re-implementation, so the baseline is what
-    # the model actually runs.
+    # The shared expert: every token goes through it, so it is a plain dense FFN at the expert
+    # width, not a grouped call. Its cost is the N_SHARED term of the ratio.
+    sh13 = (torch.randn(2 * EXPERT_FFN, D, device=device, dtype=dtype) * D ** -0.5).t()
+    sh2 = (torch.randn(D, EXPERT_FFN, device=device, dtype=dtype) * EXPERT_FFN ** -0.5).t()
+
     from model import SwiGLU
 
     class _C:
         d, ffn_hidden = D, DENSE_FFN
     dense = SwiGLU(_C()).to(device=device, dtype=dtype)
 
-    xs = x.detach().repeat_interleave(TOP_K, 0)[order].contiguous().requires_grad_(True)
-
-    # AN EXPLICIT CONTIGUOUS GRAD, not `.sum().backward()`. Measured 2026-09-05: sum's backward
-    # builds its grad by EXPANDING a scalar, so the tensor reaching _grouped_mm's backward has
-    # stride [0, 0] and the op refuses it -- "Invalid strides/sizes, got [0, 0] for strides and
-    # [12288, 1024] for sizes". That is a property of how the loss was written, not of the
-    # dispatch path being measured, and it would have been reported as "grouped_mm does not
-    # support backward". Both paths get the same real grad so the comparison stays like-for-like.
-    gy_moe = torch.ones(T * TOP_K, D, device=device, dtype=dtype)
     gy_dense = torch.ones(T, D, device=device, dtype=dtype)
+    gy_moe = torch.ones(T * TOP_K, D, device=device, dtype=dtype)
+    gy_sh = torch.ones(T, D, device=device, dtype=dtype)
 
     def f_dense():
         dense(x).backward(gy_dense)
         x.grad = None
 
+    def _gather():
+        """Routing, sort and gather -- INSIDE the timed region, because the arm pays it."""
+        order, offs, _ = route(x.detach())
+        xs = x.detach().repeat_interleave(TOP_K, 0)[order].contiguous().requires_grad_(True)
+        return xs, offs
+
     def f_grouped():
+        xs, offs = _gather()
         h = torch._grouped_mm(xs, w13, offs=offs)
         a, b = h.chunk(2, dim=-1)
-        y = torch._grouped_mm((a * torch.sigmoid(b)).contiguous(), w2, offs=offs)
+        y = situ(a, b, lambda g: torch._grouped_mm(g.contiguous(), w2, offs=offs))
+        # THE SHARED EXPERT, which every token also traverses.
+        hs = x @ sh13
+        sa, sb = hs.chunk(2, dim=-1)
+        ys = situ(sa, sb, lambda g: g @ sh2)
         y.backward(gy_moe)
-        xs.grad = None
+        ys.backward(gy_sh)
+        x.grad = None
 
     def f_loop():
-        start = 0
-        acc = []
+        xs, offs = _gather()
+        start, acc = 0, []
         for e in range(N_EXPERTS):
             end = int(offs[e])
             if end > start:
                 h = xs[start:end] @ w13[e]
                 a, b = h.chunk(2, dim=-1)
-                acc.append((a * torch.sigmoid(b)) @ w2[e])
+                acc.append(situ(a, b, lambda g, _e=e: g @ w2[_e]))
             start = end
+        hs = x @ sh13
+        sa, sb = hs.chunk(2, dim=-1)
+        ys = situ(sa, sb, lambda g: g @ sh2)
         torch.cat(acc).backward(gy_moe)
-        xs.grad = None
+        ys.backward(gy_sh)
+        x.grad = None
 
+    order0, offs0, counts = route(x.detach())
     res = {"dtype": str(dtype), "tokens": T, "top_k": TOP_K, "n_experts": N_EXPERTS,
-           "expert_ffn": EXPERT_FFN, "dense_ffn": DENSE_FFN,
+           "n_shared": N_SHARED, "expert_ffn": EXPERT_FFN, "dense_ffn": DENSE_FFN,
            "compute_ratio": compute_ratio(),
+           "shared_expert_timed": True, "gather_inside_timed_region": True,
+           "same_activation_both_sides": True,
            "expert_load": {"min": int(counts.min()), "max": int(counts.max()),
                            "mean": float(counts.float().mean())}}
-    # THE TWO DISPATCH PATHS MUST COMPUTE THE SAME FUNCTION, checked before either is timed.
-    # They hold the same weights, but a layout change (the transpose _grouped_mm requires) or an
-    # offsets convention slip would leave both paths fast, both paths finite, and one of them
-    # computing something else -- a ratio between two different functions is not a dispatch cost.
+
+    # THE TIED-WEIGHTS WITNESS, and it is a PRECONDITION rather than a diagnostic: if the MoE
+    # machinery with one expert does not reproduce the dense module's own output, then whatever
+    # the timed paths compute is not the dense FFN and no ratio between them means anything.
+    # This is the check the first version lacked -- it asserted the FORMULA and never asked the
+    # CODE what it computed.
+    #
+    # BOTH TIMED MoE PATHS ARE WITNESSED, not just the grouped one (4c, 2026-09-05). A loop that
+    # drifted from dense would otherwise be invisible here AND consistent with the paths-agree
+    # check, since that check compares the two MoE paths to EACH OTHER -- two paths that drifted
+    # together would agree perfectly and both be wrong. Each is compared to the dense module.
     with torch.no_grad():
-        h_g = torch._grouped_mm(xs.detach(), w13, offs=offs)
-        a_g, b_g = h_g.chunk(2, dim=-1)
-        y_g = torch._grouped_mm((a_g * torch.sigmoid(b_g)).contiguous(), w2, offs=offs)
-        parts, s = [], 0
-        for e in range(N_EXPERTS):
-            en = int(offs[e])
-            if en > s:
-                hh = xs.detach()[s:en] @ w13[e]
-                aa, bb = hh.chunk(2, dim=-1)
-                parts.append((aa * torch.sigmoid(bb)) @ w2[e])
-            s = en
-        y_l = torch.cat(parts)
-        dmax = float((y_g.float() - y_l.float()).abs().max())
-    res["paths_agree_max_abs_diff"] = dmax
-    res["paths_agree"] = dmax < 0.05  # bf16 over a 1024-term reduction; not a bitwise claim
+        xt = torch.randn(64, D, device=device, dtype=dtype)
+        w13_t = dense.w13.weight.detach().t().unsqueeze(0).contiguous().transpose(-2, -1)
+        w2_t = dense.w2.weight.detach().t().unsqueeze(0).contiguous().transpose(-2, -1)
+        offs_t = torch.tensor([64], device=device, dtype=torch.int32)
+        yd = dense(xt)
+        hg = torch._grouped_mm(xt, w13_t, offs=offs_t)
+        ag, bg = hg.chunk(2, dim=-1)
+        yg = situ(ag, bg, lambda g: torch._grouped_mm(g.contiguous(), w2_t, offs=offs_t))
+        wit_g = float((yg.float() - yd.float()).abs().max())
+        # The LOOP path's own arithmetic, through the same single tied expert.
+        hl = xt @ w13_t[0]
+        al, bl = hl.chunk(2, dim=-1)
+        yl = situ(al, bl, lambda g: g @ w2_t[0])
+        wit_l = float((yl.float() - yd.float()).abs().max())
+    wit = max(wit_g, wit_l)
+    res["tied_weights_witness_max_abs_diff"] = wit
+    res["tied_weights_witness_grouped"] = wit_g
+    res["tied_weights_witness_loop"] = wit_l
+    # THRESHOLD FROM THE MEASURED NOISE FLOOR, not a round number. Measured 2026-09-05 on CPU at
+    # both fp32 and bf16: the same function through both expressions differs by EXACTLY 0.0,
+    # while the activation defect this witness exists to catch (plain a*sigmoid(b) instead of
+    # SiTU) shows 0.023-0.025 on outputs of scale 0.75. A 0.05 tolerance -- which is what I first
+    # wrote -- sits ABOVE the defect and would have passed the broken world it was written for.
+    # 1e-3 is 23x below the defect signal and still far above a bf16 reduction's noise on CUDA.
+    res["tied_weights_witness_ok"] = wit < 1e-3
+    if not res["tied_weights_witness_ok"]:
+        which = "grouped" if wit_g >= 1e-3 else "loop"
+        res["verdict"] = (f"REFUSED: the {which} path, holding the dense module's own weights "
+                          f"in one expert, does not reproduce its output (grouped {wit_g:.4f}, "
+                          f"loop {wit_l:.4f}). No ratio reported -- the paths do not compute "
+                          "the same function.")
+        return res
+
     for name, fn in (("dense", f_dense), ("grouped_mm", f_grouped), ("loop", f_loop)):
         try:
             res[name + "_ms"] = _sync_time(fn, iters=20)
@@ -271,7 +340,6 @@ def p1_dispatch(device, dtype=None):
         for k in ("grouped_mm", "loop"):
             if k + "_ms" in res:
                 res[k + "_ratio_to_dense"] = res[k + "_ms"] / res["dense_ms"]
-    # THE PREDICTION, checked here rather than in prose afterwards.
     g = res.get("grouped_mm_ratio_to_dense")
     lo = res.get("loop_ratio_to_dense")
     res["prediction"] = {"grouped_mm_within_1.3x": None if g is None else g <= 1.3,
