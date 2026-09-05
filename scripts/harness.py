@@ -1325,8 +1325,30 @@ def check_selftests_are_gated(root):
                    if "/" in g and g.endswith((".py", ".sh"))
                    and not os.path.exists(os.path.join(root, g)))
     if stale:
-        return FAIL, (f"{len(stale)} hook map entry(ies) name a file that does not exist, "
-                      f"so the map claims coverage of something deleted: {', '.join(stale[:4])}")
+        # WHICH DIRECTION, said out loud. "deleted" and "registered before it was written" are
+        # both a map entry with no file, and the message only named the first -- so 8a06c567
+        # (mine) registered scripts/test_eta_window.py in two maps ahead of writing it, main went
+        # red for every session, and the FAIL sent readers looking through `git log` for a
+        # deletion that never happened. `git cat-file` separates them: a path that exists in HEAD
+        # was deleted from the worktree, one that does not never existed. The fix differs too --
+        # a deletion means drop the entry, a premature registration means write the file or drop
+        # the entry until you do.
+        never, deleted = [], []
+        for g in stale:
+            rc = subprocess.run(["git", "-C", root, "cat-file", "-e", f"HEAD:{g}"],
+                                capture_output=True).returncode
+            (deleted if rc == 0 else never).append(g)
+        parts = []
+        if deleted:
+            parts.append(f"{len(deleted)} name a file DELETED from the worktree but present in "
+                         f"HEAD, so the map claims coverage of something gone: "
+                         f"{', '.join(deleted[:4])}")
+        if never:
+            parts.append(f"{len(never)} name a file that has NEVER existed in HEAD -- registered "
+                         f"before it was written, which inverts the map: an entry is a claim the "
+                         f"file is there. Write it, or drop the entry until you do: "
+                         f"{', '.join(never[:4])}")
+        return FAIL, f"{len(stale)} hook map entry(ies) name a missing file. " + "; ".join(parts)
     have = set()
     # walk_tracked, not an os.listdir over four hand-named directories. The list was
     # ("eval", "scripts", "datagen", "probes"), so mathbank/ was outside what the check

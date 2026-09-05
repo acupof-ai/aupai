@@ -472,8 +472,9 @@ def main():
             f"  git merge --no-edit main\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
-            f"A commit staging ONLY union-merged ledgers (runs/*.jsonl) is exempt and needs "
-            f"no flag; this one stages "
+            f"A commit staging ONLY files git resolves with merge=union (per .gitattributes; "
+            f"NOT every runs/*.jsonl -- runs/prereg.jsonl is amended in place and is not one) "
+            f"is exempt and needs no flag; this one stages "
             f"{', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:4]) or 'nothing'}.\n"
             f"Deliberate exception (reproducing something that only fails on the older "
             f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
@@ -1350,6 +1351,19 @@ def main():
         # than a smaller number, because the old expression's max(1, ...) floors an explicit zero
         # back up to one row -- so a test asserting "fewer rows held back" passes on the defect.
         "scripts/test_mix_val_frac.py",
+        # NOT YET REGISTERED: scripts/test_eta_window.py, the printed ETA's window mean. 8a06c567
+        # (mine) registered it here and on train.py's trigger list before writing it, and the file
+        # has never existed in any commit or any worktree -- so selftests_are_gated FAILed on main
+        # for every session until it was found by a merge 40 minutes later. A map entry is a claim
+        # that the file is there; registering ahead of the file inverts the check, which exists to
+        # catch a registration whose subject was DELETED and cannot tell that from one never
+        # written. The test waits on its subject: `eta = (total_steps - step) * dt / 10`
+        # (train.py:3322) extrapolates one 10-step interval over all 19,151 remaining steps, so a
+        # 54s interval printed 29 lost hours and every checkpoint save printed ~99h -- and train.py
+        # is frozen for p500m_20b_0902. Both land together in the stop window: the assertion is a
+        # BOUND (one interval moves the ETA by at most 1/N of what it moved before), never
+        # "smaller", because any smoothing passes "smaller" including one that swallows the spike,
+        # and a swallowed save is worse than a visible one.
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
