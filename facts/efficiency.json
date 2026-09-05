@@ -3182,6 +3182,62 @@
    "uncertainty": "the move_mount route is verified for read and write on a probe directory; it has not yet survived a container restart, which it will not -- the mount lives as long as the container",
    "boundary": "Does not cover whether a kubelet action (pod restart, volume remount) removes the mount, and does not make the mount durable. Durability needs a bootstrap stage that re-runs it.",
    "status": "measured"
+  },
+  {
+   "id": "eff.moe_scaled_grouped_mm_no_group_constraint",
+   "claim": "torch._scaled_grouped_mm imposes no group-size constraint on the fp8 MoE path at our per-expert shapes",
+   "value": "Every swept group size ran and produced finite output: 1, 7, 8, 15, 16, 17, 31, 32, 64, 128, 256 rows per expert, 32 groups per call. No alignment refusal at any size. The group_size*T % 16 constraint carried over from the FlashKDA note does NOT apply to this op on this build.",
+   "measured": "2026-09-05",
+   "source": "scripts/moe_dispatch_bench.py --phase p0, card 7, runs/moe_bench.jsonl",
+   "config": {
+    "source_type": "measured on the pod, one card",
+    "torch": "2.11.0+cu129",
+    "gpu": "NVIDIA H20 (sm90)",
+    "op": "torch._scaled_grouped_mm, e4m3 operands, bf16 out",
+    "shapes": "a (g*32, 1024) fp8; mat2 32 x (1536, 1024) transposed; offs = cumulative ends",
+    "group_sizes_swept": [
+     1,
+     7,
+     8,
+     15,
+     16,
+     17,
+     31,
+     32,
+     64,
+     128,
+     256
+    ],
+    "api_shape_requirements_found": [
+     "mat2 must be transposed: a contiguous (E, K, N) operand is refused with 'Expected mat2 to be transposed' at EVERY group size",
+     "scale_a must have one entry per ROW of a, not a scalar ('scale must have the same length as mat for arg 0')",
+     "scale_b must be 2D, (E, N), not 1D ('scale must be a 2D tensor, but got 1D for arg 1')"
+    ],
+    "recipe_unchanged": "tensorwise: every scale entry holds the same value; the SHAPE is the op's requirement, not a change of quantization recipe"
+   },
+   "uncertainty": "the sweep covers group sizes 1-256 at one (K, N); a constraint that appears only at other K or N would not be seen here",
+   "boundary": "NOT an API contract -- an observed property of this build at these shapes. A torch upgrade re-opens the question and this row must be re-measured, not carried forward.",
+   "status": "recorded",
+   "audit": "the first three runs reported 'refused at every group size' and each was a defect in the CALL, not the op: contiguous mat2, then scalar scales, then 1D scale_b. A refusal at every input is evidence about your call."
+  },
+  {
+   "id": "eff.moe_no_recompile_on_token_dependent_shapes",
+   "claim": "torch.compile does not recompile per step on token-dependent MoE expert shapes, so capacity padding is not needed",
+   "value": "1 compile over 12 steps with a DIFFERENT routing every step. Capacity padding also gives 1 compile, and costs 1.5x padding waste. Decision: no capacity padding in the MoE design.",
+   "measured": "2026-09-05",
+   "source": "scripts/moe_dispatch_bench.py --phase p2, card 7, runs/moe_bench.jsonl",
+   "config": {
+    "source_type": "measured on the pod, one card",
+    "torch": "2.11.0+cu129",
+    "gpu": "NVIDIA H20 (sm90)",
+    "counter": "torch._dynamo.utils.counters['frames']['ok'], not wall-clock -- a slow step can be a recompile, a cache miss, or thermal, and only the counter distinguishes them",
+    "steps": 12,
+    "routing": "re-drawn each step from a Zipf-ish distribution, so per-expert row counts move every step",
+    "padding_waste_if_used": 1.5
+   },
+   "uncertainty": "12 steps at one shape; a recompile triggered by a rarer shape class (e.g. an expert receiving zero rows) would not necessarily appear",
+   "boundary": "the compiled region is the two grouped GEMMs and the gating activation, not a full training step; a larger compiled region has more chances to specialize on a dynamic shape",
+   "status": "recorded"
   }
  ]
 }
