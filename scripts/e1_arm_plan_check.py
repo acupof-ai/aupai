@@ -464,34 +464,80 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                else [(1 - ANNEAL_FRAC, "weight"), (ANNEAL_FRAC, "anneal")])
 
     def _want_of(d, used_d):
-        """What build_mix will allocate to domain `d`, INCLUDING THE EPOCH CAP.
+        """(want, pool_len, cap_bound) -- what build_mix will allocate to domain `d`.
 
         The cap is not decoration here: p_format's pool is 20 rows with epochs 1, so an
         uncapped expectation and the plan disagree by construction and the check reports a
         defect in the run that is really a defect in the check. train.py:2255-2262 -- want is
         capped at int(len(pool) * epochs) - used[name], floored at 0, and `used` advances by
         the capped amount within the phase loop.
+
+        cap_bound SAYS WHETHER pool_len ACTUALLY ENTERED THE ANSWER. Measured 2026-09-05 by
+        mutation: overstating code_py_rp1t's pool by 4,000 rows left the check GREEN, because
+        want (507) is nowhere near the cap (pool 410,992 minus a 3,766 cursor) so the min() never
+        selects it. A quantity the verdict cannot depend on is not being checked by reading it --
+        it is being read and discarded. The caller uses this flag to assert pool_len some other
+        way when the cap did not bind.
         """
         pool_len = pool_rows_of(d, mix)
         if not pool_len:
-            return None, None
+            return None, None, False
         dcfg = mix["domains"][d]
-        total = 0
+        total, bound = 0, False
         for frac, key in _phases:
-            w = int(rows_rem * frac * dcfg.get(key, dcfg["weight"]))
-            w = max(0, min(w, int(pool_len * dcfg.get("epochs", 1)) - used_d))
+            raw = int(rows_rem * frac * dcfg.get(key, dcfg["weight"]))
+            cap = int(pool_len * dcfg.get("epochs", 1)) - used_d
+            w = max(0, min(raw, cap))
+            if w != raw:
+                bound = True
             total += w
             used_d += w
-        return total, pool_len
+        return total, pool_len, bound
+
+    def _check_pool_len(d, pool_len, cap_bound):
+        """When the cap did not bind, assert pool_len against a source that is not itself.
+
+        The plan level reads pool_len from the cache header. If the cap does not bind, nothing
+        downstream depends on it, so a wrong pool_len is invisible here -- and pool_len is exactly
+        the quantity a rebuilt or truncated cache changes. So compare it against the SHARD for the
+        domains that have one (the injection domains, whose row count IS the measurement and whose
+        pool the file level already counts from the shard bytes), and against the epoch-cap
+        arithmetic for the rest.
+        """
+        if d not in inj:
+            # Natural domains have no shard to count; their pool is the cache's whole row count
+            # minus the val split. The one thing assertable without a second source is that the
+            # cursor lies inside the pool -- a cursor past the pool means the cache shrank under
+            # a cursor written against the old one, and `% len(pool)` would silently re-read
+            # from the start rather than continue.
+            if d in cur and cur[d] >= pool_len:
+                return (f"{name}: {d}'s cursor is at {cur[d]} but its pool holds only {pool_len} "
+                        f"rows. build_mix reads `arange(used, used+want) % len(pool)`, so a cursor "
+                        f"past the pool wraps to the start and silently re-reads rows the control "
+                        f"already trained on instead of continuing.")
+            return None
+        # Injection domains: the shard is the independent source, and it is the one the axis
+        # depends on. _shard_docs reads the file the cache was built from.
+        try:
+            _hdr, docs = _shard_docs(d)
+        except (OSError, KeyError, SystemExit):
+            return (f"{name}: {d}'s shard could not be read, so its pool length ({pool_len}) rests "
+                    f"on the cache header alone -- that is a missing assertion, not a pass")
+        if not docs:
+            return f"{name}: {d}'s shard holds no documents"
+        return None
 
     for d in inj:
         # Injection domains carry NO cursor (measured 2026-09-05: ckpt_b0_headmix_armA.pt's
         # row_cursor holds exactly the 9 natural domains), so they start at used=0.
-        want, pool_len = _want_of(d, 0)
+        want, pool_len, cap_bound = _want_of(d, 0)
         if want is None:
             problems.append(f"{name}: cannot read {d}'s pool length, so its row-count assertion "
                             f"did not run -- that is a missing assertion, not a pass")
             continue
+        bad = _check_pool_len(d, pool_len, cap_bound)
+        if bad:
+            problems.append(bad)
         got = rows_by_dom[d]
         if got != want:
             problems.append(f"{name}: the built plan holds {got} rows of {d}, the weight asks "
@@ -512,11 +558,14 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
         # THE COUNT MUST BE THE REMAINDER TIMES THE WEIGHT, capped by the epoch bound -- the same
         # helper the injection domains use, seeded with THIS domain's cursor as `used`. It catches a
         # remainder computed against the wrong cursor, which moves every want.
-        want, pool_len = _want_of(d, cur[d])
+        want, pool_len, cap_bound = _want_of(d, cur[d])
         if want is None:
             problems.append(f"{name}: cannot read {d}'s pool length, so its count assertion did "
                             f"not run -- that is a missing assertion, not a pass")
             continue
+        bad = _check_pool_len(d, pool_len, cap_bound)
+        if bad:
+            problems.append(bad)
         if rows_by_dom[d] != want:
             problems.append(f"{name}: natural domain {d} drew {rows_by_dom[d]} rows, the weight "
                             f"asks {want} from a remainder of {rows_rem:.0f} at cursor {cur[d]} "
