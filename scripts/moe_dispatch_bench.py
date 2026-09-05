@@ -323,16 +323,27 @@ def p2_recompile(device):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--phase", choices=["p0", "p1", "p2", "all"], default="all")
+    ap.add_argument("--experts", type=int, default=None,
+                    help="routed expert count. Default 32; the prereg's E1 is 24 routed + 1 "
+                         "shared. Active compute does NOT move with this (it is set by k and w) "
+                         "but DISPATCH does: N is the number of groups the grouped GEMM walks, "
+                         "so a ratio measured at 32 does not describe a 24-expert arm.")
     ap.add_argument("--json", default=None, help="append the result row here")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
 
+    if a.experts:
+        # Module-level because route/build_moe/p0 all read the constant. Set BEFORE any phase
+        # runs and recorded in the row, so a ratio can never be read without its expert count.
+        globals()["N_EXPERTS"] = a.experts
+
     import torch
     dev = _dev()
     rec = {"phase": a.phase, "torch": torch.__version__,
            "gpu": torch.cuda.get_device_name(0),
+           "n_experts": N_EXPERTS, "top_k": TOP_K, "expert_ffn": EXPERT_FFN,
            "compute_ratio": compute_ratio()}
     if a.phase in ("p0", "all"):
         rec["p0"] = p0_fp8_constraint(dev)
