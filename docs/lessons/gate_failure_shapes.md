@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (103 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (191 = 103 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (107 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (195 = 107 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (92 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (96 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-92 incidents (34 infra, 58 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+96 incidents (34 infra, 62 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -75,7 +75,7 @@ Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABS
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219).
 
-### R2-b Population narrower than the property (24 incidents)
+### R2-b Population narrower than the property (26 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -86,20 +86,23 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §216: a negative control passed on every laptop because the pod mount is absent there — green was a signal about a different world; on the pod it would have tokenized into the live shared cache dir.
 - §222: an assertion read claims()'s *.json glob as the claims directory; a duplicate written as <file>.dup survived — a reader-based assertion inherits the reader's blind spot.
 - §223: a module test asserted optimizer-group membership and never called .step(); green at 10/10 while the Muon 4-D stack died at the first optimizer step on the card — a new parameter class is a new citizen for every subsystem that dispatches on shape or type.
+- §224: a cleanup sweep sat behind 26 sys.exit(1) calls in main(), so it only ran on a commit that had already passed every gate — a cleanup placed after the gates cleans up only when nothing needed cleaning.
+- §225: a hook edited on a branch runs main's old copy, so the change appeared to work — a test result attributed to code that did not produce it.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225).
 
-### R2-c Mutation did not take (5 incidents)
+### R2-c Mutation did not take (6 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
 - §90: a mutation was applied but never landed in the running process; the check "passed" because the world was never mutated.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
 - §221: a test recomputed the quantity outside the function and asserted its own arithmetic — the function under test was never called, so no mutant of it can reach the test.
+- §227: a refusal raises SystemExit (BaseException, not Exception); the test's `except Exception` let it through, so the mutation was caught by the process dying, not by the assertion.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227).
 
-### R2-d Parser reads prose as code (10 incidents)
+### R2-d Parser reads prose as code (11 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
@@ -109,8 +112,9 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 - §205: a placeholder-survival guard fired on a correct substitution — the template's own documentation line names the placeholder, and a whole-file scan read that comment as an unsubstituted token; fourth instance of the self-satisfying needle.
 - §217: a whole-file substring assertion survived a mutation repointing both executable lines, because the block's own comment named the real path — prose vouching for code that had stopped agreeing with it.
+- §226: two regexes over a Python literal were wrong in opposite directions (182 with a revspec from a comment, 149 of 177 one-per-line); ast.literal_eval cannot disagree with the literal by construction.
 
-Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212, §217).
+Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212, §217, §226).
 
 ### R2-e Fixture built from the implementation (5 incidents)
 
