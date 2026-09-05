@@ -358,8 +358,14 @@ def _selftest():
             load_items(p)
             bad.append("load_items ACCEPTED a set whose items hash is not the pinned one -- the "
                        "floor and MDE belong to the pinned items")
-        except SystemExit:
-            pass
+        except SystemExit as e:
+            # THE MESSAGE, not merely the type. A bare `except SystemExit` is satisfied by any
+            # refusal, so a second one added upstream would let this world pass with the hash
+            # check never having run (62, 2026-09-06: the same shape as a mutant caught by a
+            # neighbouring assertion instead of its own).
+            if "items sha256" not in str(e):
+                bad.append(f"load_items refused the tampered set, but for another reason: "
+                           f"{str(e)[:160]}. This world cannot tell the hash check ran.")
         try:
             load_items(p, verify=False)
         except SystemExit:
@@ -514,8 +520,15 @@ def _selftest():
         score(_Stub({}), _DeadTok(), fx, "cpu", num_id=None, batch_size=8)
         bad.append("an item whose options all failed to tokenize was SCORED rather than "
                    "refused -- with label 0 it would have counted correct without being scored")
-    except SystemExit:
-        pass
+    except SystemExit as e:
+        # Same narrowing, and here it matters more: 62 traced the M7/M10 mutants and found the
+        # ZeroDivisionError in _mean_preds arriving BEFORE this handler, so the crash was
+        # masking the coverage rather than replacing it. With the incidental crash removed both
+        # mutants print this world's own BUG line. Keying on the text makes that visible without
+        # having to read a traceback.
+        if "could not be scored" not in str(e):
+            bad.append(f"the unscorable-item world saw a refusal it did not ask for: "
+                       f"{str(e)[:160]}. The -1e9/argmax-0 check may not have run at all.")
 
     # 7. THE SUBSTRING TRAP, the 116 items whose instruction contains their own gold. The
     #    continuation must be located by token count: a string-located slice scores the
