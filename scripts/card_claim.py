@@ -589,11 +589,69 @@ def claim_file(name, cards):
     return f"{name}.{tag}.json" if tag else f"{name}.json"
 
 
-def acquire(name, cards, wait=0, note="", pid=None, require_device=False):
+def _resolve_to_device_holder(holder, deadline):
+    """(pid, None) for the ONE descendant of `holder` on a card, or (None, why).
+
+    Wired to the CLI as `acquire --wait-for-device [SECONDS]`. wait_for_device has existed and been
+    selftested since 2026-09-05 and was reachable only from _selftest and harness.py, so every
+    hand-run acquire had to reinvent the poll -- and the refusal it hit already printed the pid to
+    claim while offering no way to act on it. e1 hit that 60 times in one day.
+
+    ONE DESCENDANT OR NONE. Several holders means the operator has to choose: e1's script had two
+    candidates, the probe and the card_claim call itself, and a launcher that picks for them is
+    wrong half the time and silent about it. Listing them is the answer.
+
+    THE TIMEOUT MESSAGE IS A DIFFERENT SENTENCE from the immediate refusal, deliberately. Both say
+    "this pid is not the job", and if they read alike nobody can tell whether they waited. 60 slow
+    refusals are worse than 60 fast ones.
+    """
+    on_card = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
+    on_card = [(p, a, n) for p, a, n in on_card if n]
+    if len(on_card) > 1:
+        return None, (
+            f"pid {holder} has {len(on_card)} descendants holding a device, so --wait-for-device "
+            f"cannot choose one for you:\n" + "\n".join(
+                f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in on_card[:6])
+            + "\nName the one that IS the job with --pid.")
+    if len(on_card) == 1:
+        return on_card[0][0], None
+
+    got = wait_for_device(holder, deadline=deadline)
+    if got is None:
+        if nvidia_fds(os.getpid()) is None:
+            return None, (
+                f"pid {holder} is not the job and this host cannot follow it: /proc is unreadable "
+                f"here (macOS), so --wait-for-device has no opinion. Pass --pid explicitly.")
+        if not _alive(holder):
+            return None, (f"pid {holder} exited while --wait-for-device was polling, so it never "
+                          f"had a descendant on a card. Nothing was claimed.")
+        return None, (
+            f"no descendant of pid {holder} opened a GPU device in {deadline}s -- it is still "
+            f"alive, so this is a TIMEOUT and not a dead job. If it never launches one (an "
+            f"interactive shell), waiting longer will not help and this is the wrong pid to "
+            f"claim; if it is a launcher still in startup, raise the seconds.")
+    return got[0], None
+
+
+def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_for_device_s=None):
     """Claim `cards` for `name`, waiting up to `wait` seconds. Returns (ok, message).
 
     Refuses rather than sharing: this is a lock, not a message. The previous arrangement was a
     message -- two sessions each announced a launch and both proceeded.
+
+    wait_for_device_s: when the named holder is a shell, or holds no device fd, follow it to the
+    python/torchrun descendant that IS on a card and claim that instead, polling up to this many
+    seconds. None (the default) keeps the refusals exactly as they were.
+
+    THE FLAG IS OFF BY DEFAULT AND THAT IS NOT TIMIDITY. scripts/loader.py's claim_my_cards path
+    claims ITSELF before opening the device it named through CVD, so it holds zero device fds by
+    construction and has no descendant to follow; a poll there would wait out its deadline and
+    then refuse a correct claim. The flag belongs to the hand-run and launcher shapes, where a
+    wrapper shell has spawned, or is about to spawn, the job.
+
+    IT RESOLVES ONE DESCENDANT, NEVER TWO. If several descendants hold a device, they are listed
+    and the claim refuses: e1's own script had two candidates (the probe and the card_claim call
+    itself), and picking for the operator would be picking wrong half the time.
 
     require_device: refuse a holder that holds no GPU device fd. DEFAULT FALSE, and the default
     is the design. There are two claim shapes and only one of them can honour that predicate:
@@ -657,19 +715,31 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False):
             # The claim must name the process that dies WITH the job. A shell is either about to
             # exec away or about to outlive it, and neither is that process.
             if _argv0_is_shell(_cmdline(holder)):
-                kids = _job_descendants(holder)
-                msg = (f"pid {holder} is a shell, not the job: "
-                       f"{_cmdline(holder)[:90]!r}\n"
-                       f"A claim on a shell fails both ways -- the shell exits and the card "
-                       f"reads ORPHAN, or it lingers and the card reads held after the job is "
-                       f"gone (both happened 2026-09-03).")
-                if kids:
-                    msg += "\nIts python/torchrun descendants -- claim one of these:\n" + "\n".join(
-                        f"    --pid {p}  {a[:96]}" for p, a in kids[:6])
+                # FOLLOW THE SHELL TO ITS JOB when asked. The refusal below already prints the
+                # descendant to claim, and e1 hit it 60 times in one day: every refusal named the
+                # right pid and there was no way to act on it except retyping it. That is the whole
+                # gap -- not the detection.
+                if wait_for_device_s is not None:
+                    resolved, why = _resolve_to_device_holder(holder, wait_for_device_s)
+                    if resolved is None:
+                        return False, why
+                    holder = resolved
                 else:
-                    msg += ("\nIt has no python/torchrun descendant yet. Claim after the job "
-                            "starts, or pass --pid explicitly.")
-                return False, msg
+                    kids = _job_descendants(holder)
+                    msg = (f"pid {holder} is a shell, not the job: "
+                           f"{_cmdline(holder)[:90]!r}\n"
+                           f"A claim on a shell fails both ways -- the shell exits and the card "
+                           f"reads ORPHAN, or it lingers and the card reads held after the job is "
+                           f"gone (both happened 2026-09-03).")
+                    if kids:
+                        msg += ("\nIts python/torchrun descendants -- claim one of these, or pass "
+                                "--wait-for-device to follow it automatically:\n" + "\n".join(
+                                    f"    --pid {p}  {a[:96]}" for p, a in kids[:6]))
+                    else:
+                        msg += ("\nIt has no python/torchrun descendant yet. Claim after the job "
+                                "starts, pass --pid explicitly, or pass --wait-for-device to poll "
+                                "until one is on a card.")
+                    return False, msg
             claim = {"name": name, "cards": list(cards), "pid": holder,
                      "cmdline": _cmdline(holder), "acquired": _now(), "note": note}
             # REFUSE A DISAGREEING CUDA_VISIBLE_DEVICES. The claim says which cards this job may
@@ -704,19 +774,34 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False):
             #
             # None (no /proc, e.g. macOS) proceeds -- see nvidia_fds.
             devs = nvidia_fds(holder)
-            if devs == 0 and require_device:
-                holders = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
-                holders = [(p, a, n) for p, a, n in holders if n]
-                msg = (f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
-                       f"A claim on a process that is not on a card protects nothing: the card "
-                       f"reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).")
-                if holders:
-                    msg += "\nIts descendants that DO hold a device -- claim one of these:\n" + "\n".join(
-                        f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in holders[:6])
+            if devs == 0 and (require_device or wait_for_device_s is not None):
+                if wait_for_device_s is not None:
+                    resolved, why = _resolve_to_device_holder(holder, wait_for_device_s)
+                    if resolved is None:
+                        return False, why
+                    holder = resolved
+                    devs = nvidia_fds(holder)
+                    # claim was built above with the OLD holder, so both fields are rewritten.
+                    # Missing this leaves a claim naming the wrapper while device_fds names the
+                    # rank -- a claim that looks verified and protects the wrong process.
+                    claim["pid"] = holder
+                    claim["cmdline"] = _cmdline(holder)
                 else:
-                    msg += ("\nNo descendant holds one yet either. Wait for the job to reach "
-                            "torch.cuda.set_device (~1.3s after exec, measured) and claim then.")
-                return False, msg
+                    holders = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
+                    holders = [(p, a, n) for p, a, n in holders if n]
+                    msg = (f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
+                           f"A claim on a process that is not on a card protects nothing: the card "
+                           f"reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).")
+                    if holders:
+                        msg += ("\nIts descendants that DO hold a device -- claim one of these, or "
+                                "pass --wait-for-device:\n" + "\n".join(
+                                    f"    --pid {p}  ({n} device fds)  {a[:82]}"
+                                    for p, a, n in holders[:6]))
+                    else:
+                        msg += ("\nNo descendant holds one yet either. Wait for the job to reach "
+                                "torch.cuda.set_device (~1.3s after exec, measured) and claim "
+                                "then, or pass --wait-for-device to poll.")
+                    return False, msg
             if devs:
                 claim["device_fds"] = devs
             # O_EXCL: two acquirers racing on the same name must not both believe they won.
@@ -1151,8 +1236,14 @@ def _selftest():
         inner = 'python3 -c "import time; time.sleep(30)"'
         if shutil.which("setsid"):
             inner = f"setsid env DE34=1 {inner}"
+        # TWO python children, not one. The second exists for de45's ambiguity refusal: the case
+        # 4c named is e1's real shape -- a script whose shell had two candidate descendants, the
+        # probe and the card_claim call itself -- and with a single child that assertion cannot run
+        # at all. Adding it costs one sleep and makes the refusal testable; the de34 cases below
+        # take kids[0] and are unaffected by a sibling.
+        second = 'python3 -c "import time; time.sleep(30)"'
         tree = subprocess.Popen(
-            ["bash", "-lc", f"{inner}; true"],
+            ["bash", "-lc", f"{second} & {inner}; true"],
             stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
             start_new_session=True)
         time.sleep(1.5)
@@ -1173,6 +1264,67 @@ def _selftest():
               "acquire refuses a shell pid and lists its python descendants")
         if ok:
             release("de34_shell")
+        _case("--wait-for-device" in msg,
+              "and the refusal offers the flag that acts on what it just printed")
+
+        # de45: --wait-for-device FOLLOWS the shell to its job instead of refusing. This world has
+        # no GPU, so wait_for_device returns None and the resolver takes its no-device branch --
+        # which is the honest limit of a laptop world and is asserted as such rather than skipped.
+        # On the pod the same call resolves to the rank; here it must produce the TIMEOUT sentence,
+        # distinguishable from the immediate refusal, which is the property that keeps 60 refusals
+        # from becoming 60 indistinguishable slow ones.
+        okw, msgw = acquire("de45_follow", ["7"], pid=shell_pid, wait_for_device_s=2)
+        if nvidia_fds(os.getpid()) is None:
+            _case(not okw and "cannot follow it" in msgw and "/proc" in msgw,
+                  f"--wait-for-device says /proc is unreadable here rather than polling for an "
+                  f"answer that cannot arrive: {msgw[:70]}")
+        else:
+            _case(not okw and ("TIMEOUT" in msgw or "opened a GPU device in 2s" in msgw),
+                  f"--wait-for-device times out with its OWN sentence, not the immediate "
+                  f"refusal's: {msgw[:70]}")
+            _case("is a shell" not in msgw,
+                  "and the timeout message is not the shell refusal reworded -- a reader can tell "
+                  "which one they got")
+        if okw:
+            release("de45_follow")
+        # NEGATIVE CONTROL, or the case above passes for any flag value: without the flag the same
+        # pid gets the immediate shell refusal, which is a DIFFERENT message.
+        okn, msgn = acquire("de45_noflag", ["7"], pid=shell_pid)
+        _case(not okn and "is a shell" in msgn and msgn != msgw,
+              "without the flag the same pid gets the immediate shell refusal, a different message")
+        if okn:
+            release("de45_noflag")
+
+        # TWO DESCENDANTS ON A CARD MUST REFUSE, not pick. This is e1's actual shape -- their
+        # script had two candidates, the probe and the card_claim call itself -- and it cannot be
+        # built on a laptop, because it needs two processes holding real device fds. nvidia_fds is
+        # stubbed to answer for the pids this world DOES have, so the branch under test runs on the
+        # real _job_descendants output rather than on an invented tree.
+        if kids:
+            _real_fds = nvidia_fds
+            try:
+                # One holder: resolves. Two: refuses. The stub differs between the two cases only
+                # in HOW MANY pids it says are on a card, which is the variable under test.
+                _one = {kids[0][0]}
+                globals()["nvidia_fds"] = lambda p: (4 if p in _one else
+                                                     (0 if p == shell_pid else _real_fds(p)))
+                got, why = _resolve_to_device_holder(shell_pid, 2)
+                _case(got == kids[0][0] and why is None,
+                      f"one descendant on a card resolves to it (pid {got})")
+                if len(kids) > 1:
+                    _many = {p for p, _a in kids}
+                    globals()["nvidia_fds"] = lambda p: (4 if p in _many else
+                                                         (0 if p == shell_pid else _real_fds(p)))
+                    got2, why2 = _resolve_to_device_holder(shell_pid, 2)
+                    _case(got2 is None and "cannot choose one for you" in (why2 or "")
+                          and "--pid" in (why2 or ""),
+                          "two descendants on a card REFUSE and list them, rather than picking")
+                else:
+                    _case(False,
+                          f"world: only {len(kids)} descendant, so the ambiguity refusal did not "
+                          f"run -- the case 4c named (e1's two candidates) is unexercised")
+            finally:
+                globals()["nvidia_fds"] = _real_fds
 
         # The job itself is accepted.
         job_pid = kids[0][0] if kids else None
@@ -1873,6 +2025,14 @@ def main():
                          "wait_for_device). NOT for a process claiming itself before it opens "
                          "the device it named through CUDA_VISIBLE_DEVICES -- that holds zero "
                          "fds by construction (scripts/loader.py claim_my_cards)")
+    ap.add_argument("--wait-for-device", nargs="?", type=int, const=90, default=None,
+                    metavar="SECONDS",
+                    help="when --pid is a shell or holds no device fd, follow it to the ONE "
+                         "python/torchrun descendant that IS on a card and claim that, polling up "
+                         "to SECONDS (default 90, matching harness launch's own poll). Refuses, "
+                         "listing them, if several descendants hold a device -- choosing for you "
+                         "would be wrong half the time. Off unless passed: a process claiming "
+                         "ITSELF has no descendant to follow and would just wait out the deadline")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -1904,7 +2064,8 @@ def main():
         ap.error("--cards is required for acquire")
     cards = [c.strip() for c in a.cards.split(",") if c.strip()]
     ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note, pid=a.pid,
-                      require_device=a.require_device)
+                      require_device=a.require_device,
+                      wait_for_device_s=a.wait_for_device)
     print(msg, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 

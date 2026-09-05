@@ -1,0 +1,13 @@
+# EXCERPT of the pod's runs/b0_headmix_armA.log (421 lines, sha256 96c28c2e80fa6ca9...):
+# only the `step N/3815 val X` lines, which is what probes/fit_data_exponent.py reads.
+# The epoch-end `ep 1/1 ... val` line is deliberately absent -- it uses
+# Cfg.val_batches_full=100 where these use Cfg.val_batches=20, a different estimator.
+# Pulled 2026-09-05 so facts/data_scaling.json#ds.b_unidentified_from_val_traces cites a
+# path that exists in this repo rather than one only on the pod.
+step 500/3815 val 2.917
+step 1000/3815 val 2.589
+step 1500/3815 val 2.464
+step 2000/3815 val 2.399
+step 2500/3815 val 2.343
+step 3000/3815 val 2.284
+step 3500/3815 val 2.241
