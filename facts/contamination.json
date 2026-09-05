@@ -1046,11 +1046,59 @@
      "test_pool_overlap_by_key": 0,
      "test_pool_overlap_by_text": 0
     },
-    "supersedes": "the sets emitted earlier on 2026-09-05, whose prompts carried an ambiguous carry rule and whose operands field dropped any operand equal to 1, 2 or 3. Nothing was scored against those files."
+    "supersedes": "the sets emitted earlier on 2026-09-05, whose prompts carried an ambiguous carry rule and whose operands field dropped any operand equal to 1, 2 or 3. Nothing was scored against those files.",
+    "reading_divergence_on_S": {
+     "S_test": {
+      "add_until_differs": 467,
+      "n": 1000,
+      "pct": 46.7,
+      "ignore_carry_differs": 726,
+      "pct_ignore": 72.6
+     },
+     "S_pool": {
+      "add_until_differs": 2030,
+      "n": 4096,
+      "pct": 49.6,
+      "ignore_carry_differs": 3032,
+      "pct_ignore": 74.0
+     },
+     "P_test": {
+      "add_until_differs": 0,
+      "n": 1000,
+      "ignore_carry_differs": 0
+     },
+     "P_pool": {
+      "add_until_differs": 0,
+      "n": 4096,
+      "ignore_carry_differs": 0
+     },
+     "note": "Measured ON THESE FILES. Earlier-quoted 46.8/72.1/48.3 were computed on the PRE-regeneration files and are wrong for these; e1 caught the discrepancy by reproducing independently. P is 0 by design -- its no-carry invariant is asserted in the generator -- so all three readings agree on every P item."
+    },
+    "carry_fire_distribution": {
+     "S_test": {
+      "0": 274,
+      "1": 625,
+      "2": 100,
+      "3": 1
+     },
+     "S_pool": {
+      "0": 1064,
+      "1": 2634,
+      "2": 395,
+      "3": 3
+     },
+     "P_test": {
+      "0": 1000
+     },
+     "P_pool": {
+      "0": 4096
+     },
+     "source": "e1's independent count, 2026-09-05, reproduced here"
+    }
    },
    "unit": "sha256 of the file as committed",
    "measured": "2026-09-05",
-   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row",
+   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58)",
    "config": {
     "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
     "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
@@ -1058,7 +1106,7 @@
     "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings"
    },
    "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
-   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so.",
+   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set.",
    "status": "measured"
   }
  ]
