@@ -62,6 +62,29 @@ CURSOR_ROWS = 244160
 #: n64 1639->1638, n256 6557->6556). One row is ~39 document exposures in an interleaved shard;
 #: at n1 that is ~40 of 1,000 documents at ZERO exposures while the axis reads 1.
 ANNEAL_FRAC = 0.0
+#: --max_steps the launch lines pass, and it is an ABSOLUTE TOTAL, not a segment length.
+#:
+#: 4315 = 3815 (ckpt_b0_headmix_armA.pt's step) + 500 (the 32,000-row remainder / 64 rows per step
+#: at batch 16 x accum 2 x world 2). train.py:3094 adds the resume step to the recipe's total
+#: (`total_steps += resume_step`) and :3097 clamps it (`total_steps = min(total_steps,
+#: args.max_steps)`), so a flag holding the SEGMENT length clamps the total below the step the run
+#: resumed at and the loop exits on its first pass at :3260.
+#:
+#: Measured 2026-09-05: control_arm launched with --max_steps 500, printed `WSD JOIN: resumed at
+#: step 3815/500`, saved a checkpoint at step 3816 -- ONE step, 173 of 176 tensors differing from
+#: armA by at most 3.125e-02 -- and logged "training succeeded but this run produced NO metrics".
+#: It exited nonzero only because scoring found no free lane card; with one free it would have
+#: scored one step of armA's own mix and entered the ledger as the experiment's floor.
+MAX_STEPS = 4314
+#: Rows per optimizer step ON ONE RANK, which is what train.py:3082 divides by:
+#: `total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))` and Xtr is THIS RANK's rows.
+#: So the divisor is batch x accum = 32, not batch x accum x world = 64. Getting this wrong is how
+#: the segment came out 500 instead of 499: the plan's 31,994 rows lose their odd column
+#: (train.py:2315), stripe to 15,997 per rank, and 15,997 // 32 = 499 -- the last partial batch of
+#: 32 rows is dropped, and the same 499 falls out for every arm (n64/n256 at 31,996 rows stripe to
+#: 15,998, still 499).
+ROWS_PER_STEP_PER_RANK = 16 * 2
+WORLD = 2
 
 
 def _shard_docs(domain):
@@ -261,7 +284,7 @@ def check_arm(name, n, verbose=True):
 
 
 def _ckpt_cursor(path):
-    """(cursor dict, seed, srcfp, reason-it-is-absent) from the checkpoint the arms resume.
+    """(cursor dict, seed, srcfp, step, reason-it-is-absent) from the checkpoint the arms resume.
 
     THE CURSOR HAS TO COME FROM THE CHECKPOINT, not from CURSOR_ROWS. check_plan's natural-domain
     assertions -- the domain drew rows at all, and it drew the count its cursor and weight name --
@@ -271,17 +294,66 @@ def _ckpt_cursor(path):
     rows the control already trained on. Found 2026-09-05 before the pod run, by reading
     main() rather than the function (main called check_plan(name, n) and never passed a
     cursor -- the parameter had no caller).
+
+    THE STEP COMES BACK TOO, for the --max_steps assertion in check_plan: train.py treats
+    --max_steps as an absolute total and clamps `total_steps` to it AFTER adding the resume step,
+    so a flag holding the segment length silently ends the run on its first pass.
+
+    mmap=True: this reads a 892 MB checkpoint for four small keys.
     """
     if not os.path.exists(path):
-        return None, None, None, f"checkpoint absent at {path}"
+        return None, None, None, None, f"checkpoint absent at {path}"
     import torch
-    ck = torch.load(path, map_location="cpu", weights_only=False)
+    ck = torch.load(path, map_location="cpu", weights_only=False, mmap=True)
     cur = ck.get("row_cursor")
+    step = ck.get("step")
     if not cur:
         why = ck.get("row_cursor_refused") or "the checkpoint carries no row_cursor key"
-        return None, None, None, str(why)
+        return None, None, None, step, str(why)
     return (dict(cur), ck.get("row_cursor_seed"), dict(ck.get("row_cursor_srcfp") or {}),
-            None)
+            step, None)
+
+
+def check_step_budget(ckpt_step, plan_rows):
+    """MAX_STEPS must be an absolute total that leaves room for the plan. Returns [problems].
+
+    THE ASSERTION NO OTHER GATE PERFORMS, and the one whose absence cost the first control_arm
+    launch. Everything else here certifies the PLAN -- which rows, which domains, from which
+    cursor -- and that plan was CORRECT: 31,994 rows, right cursor, five greens. The loop then ran
+    ONE step over it, because train.py:3094-3097 is
+
+        if _cursor_seeded and resume_step: total_steps += resume_step   # 500 -> 4315
+        if args.max_steps:                total_steps = min(total_steps, args.max_steps)  # -> 500
+
+    and 500 < the resumed step 3815, so `step >= total_steps` held immediately (:3260). The run
+    saved at step 3816 and logged "training succeeded". A plan check that never reads the step
+    budget cannot see this, so it is read here.
+    """
+    out = []
+    if ckpt_step is None:
+        return ["the checkpoint carries no step, so the --max_steps assertion did not run -- "
+                "that is a missing assertion, not a pass"]
+    if ckpt_step >= MAX_STEPS:
+        out.append(f"MAX_STEPS {MAX_STEPS} is not greater than the checkpoint's step {ckpt_step}. "
+                   f"train.py:3097 clamps total_steps to --max_steps AFTER :3094 adds the resume "
+                   f"step, so the loop exits on its first pass and the run saves a checkpoint one "
+                   f"step past the one it resumed. --max_steps is an ABSOLUTE TOTAL: pass "
+                   f"{ckpt_step} + segment, not the segment.")
+        return out
+    segment = MAX_STEPS - ckpt_step
+    # MIRRORS train.py EXACTLY, in its order, because an off-by-one here reads as a defect in the
+    # run: :2315 drops the plan's odd last column, the stripe halves it, and :3082 floor-divides
+    # ONE RANK's rows by batch x accum -- so a final partial batch is dropped too. Computing this
+    # as plan_rows // (batch*accum*world) gives 500 where train.py gives 499.
+    striped = (plan_rows // WORLD) * WORLD
+    want = (striped // WORLD) // ROWS_PER_STEP_PER_RANK
+    if segment != want:
+        out.append(f"MAX_STEPS {MAX_STEPS} leaves {segment} step(s) after the checkpoint's "
+                   f"{ckpt_step}, but the plan holds {plan_rows} rows = {want} step(s) "
+                   f"({striped} after the world-{WORLD} truncation, {striped // WORLD} per rank, "
+                   f"{ROWS_PER_STEP_PER_RANK} rows per step per rank). The run would "
+                   f"{'stop before consuming the plan' if segment < want else 'run past it'}.")
+    return out
 
 
 def pool_rows_of(domain, mix):
@@ -653,7 +725,7 @@ def main():
     a = ap.parse_args()
     todo = [(n, k) for n, k in ARMS if a.arm is None or n == a.arm]
     allp, skips = [], []
-    cur = seed = srcfp = None
+    cur = seed = srcfp = ckpt_step = None
     if a.plan:
         # THE CURSOR IS READ ONCE, HERE, and a missing one SKIPS the plan level rather than
         # building a fresh plan and calling it a pass. Before 2026-09-05 main called
@@ -661,7 +733,7 @@ def main():
         # assertions were skipped on `d not in cur`, and the pod run would have printed
         # "file arithmetic + built plan / PASS" while asserting nothing about the resume.
         ck = a.ckpt if os.path.isabs(a.ckpt) else os.path.join(ROOT, a.ckpt)
-        cur, seed, srcfp, why = _ckpt_cursor(ck)
+        cur, seed, srcfp, ckpt_step, why = _ckpt_cursor(ck)
         if cur is None:
             skips.append(f"all arms: {why} -- the plan level needs the resumed checkpoint's "
                          f"row_cursor, and without it the two cursor assertions do not run")
@@ -674,6 +746,16 @@ def main():
                 skips.append(f"{name}: {skip}")
             else:
                 allp += pp
+            # THE STEP BUDGET, per arm, because each arm's plan is its own row count and the
+            # segment must match it. Run even when check_plan skipped: the step arithmetic needs
+            # only the mix and the checkpoint, not the token caches, so it is answerable off-pod
+            # where the plan level is not -- and it is the assertion that would have caught the
+            # one-step control_arm.
+            with open(os.path.join(ROOT, "data", f"mix_e1_{name}.json"), encoding="utf-8") as fh:
+                _m = json.load(fh)
+            _rem = _m["total_tokens"] / _m["seq"] - sum(cur.values())
+            _rows = sum(int(_rem * v["weight"]) for v in _m["domains"].values())
+            allp += [f"{name}: {p}" for p in check_step_budget(ckpt_step, _rows)]
     for p in allp:
         print(f"BUG {p}", file=sys.stderr)
     for s in skips:
