@@ -305,6 +305,23 @@ def main():
     s.add_argument(
         "--hypothesis", default="", help="what this run is meant to test, written BEFORE it starts"
     )
+    # WHAT THE RUN IS FOR, as a field rather than prose in --notes. harness launch requires it and
+    # passes it here; a row written by hand may omit it, and the absence is then honest -- no
+    # backfill and no default, because a class the tooling chose says nothing about intent.
+    # 4c's ruling 2026-09-05: the baseline for any metric over this field starts the day the
+    # writer lands, and rows before it read null rather than a guessed value.
+    s.add_argument("--class", dest="run_class", default="",
+                   help="incremental (a number nobody has) | confirmatory (reproduces a known "
+                        "number) | infra-verification (proves a tool works, not a model "
+                        "measurement). Empty on a hand-written row means unstated, not zero.")
+    # WHICH CARDS, as a field. harness launch has appended "; cards N" to --notes since the
+    # allocation moved to the grant file, so the information existed and only 1 of 243 folded rows
+    # could be READ for it -- "which card was this on" is the first question asked when two jobs
+    # collide, and answering it meant grepping free text with 14 different phrasings. A field the
+    # metric can group by, and prose stays prose.
+    s.add_argument("--cards", default="",
+                   help="the cards this run holds, CSV (e.g. 5 or 0,1,2,3,4,5,6). Empty means "
+                        "unstated -- for a CPU/corpus job pass 'none' rather than leaving it blank")
     d = sub.add_parser("done")
     d.add_argument("--name", required=True)
     d.add_argument("--result", default="")
@@ -356,6 +373,14 @@ def main():
                 "cmd": a.cmd,
                 "notes": a.notes,
                 "hypothesis": a.hypothesis,
+                # Only when given: absent means unstated (every row before 2026-09-05), "" would
+                # be indistinguishable from it, and a metric must be able to tell "nobody said"
+                # from "said nothing". harness launch always supplies one.
+                **({"class": a.run_class} if a.run_class else {}),
+                # Same absent-vs-empty rule: no key means unstated (every row before 2026-09-05),
+                # and a CPU job passes "none" so that "no cards" is a stated answer rather than a
+                # gap. harness launch always supplies one.
+                **({"cards": a.cards} if a.cards else {}),
                 "result": "",
                 "finding": "",
                 "decision": "",
