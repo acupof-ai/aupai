@@ -438,7 +438,22 @@ Seven views (44, 84, 58, 98, 62, tilerl-0a, db; tilerl-25 declined). Points of a
 
 1. **Conversion-rate curve on a registered held-out skill (62's design, with 84's and db's controls).** n ∈ {1, 8, 64, 512, 4096} examples, two seeds, measure accuracy on held-out instances. Register the skill as absent from pretraining (13-gram scanner, holdout registry) before touching it. The fact is the SHAPE of accuracy against log n: if a handful of examples gets most of the way, the prior is the expensive part and we have more of it than we think; if it needs 10^3-10^4, the prior is absent at 200M. Ten runs × a few hours on one card each — fits 8 cards in a day. db's gates apply: pass@k gate before spending a card, resolution before hypothesis, contamination screening, frozen prompt format, rollouts (not steps) as the x-axis, and a negative-control arm (constant reward).
 
-2. **RLVR sample-efficiency curve across pretraining-token checkpoints (db's design).** Two or three checkpoints from the ladder that differ ONLY in pretraining tokens (0.4b / 1.6b / 3.24b — identical mixes, scaled total_tokens), then RLVR with a verifiable reward and measure pass@1 vs rollouts consumed. The deliverable: d(capability)/d(RL sample) as a function of pretraining tokens. This directly tests "sample efficiency is bought by prior structure, not the update rule" — if the curve steepens with more pretraining tokens, the prior is doing the work. Prerequisite: measure generation throughput first (db has not measured it; it is the binding constraint at 200M).
+2. **RLVR sample efficiency, read out on the constructed S/P sets.** **RETIRED AND
+REPLACED 2026-09-05 (fb ruling).** The original design was db's: two or three ladder
+checkpoints differing ONLY in pretraining tokens (0.4b / 1.6b / 3.24b — identical mixes,
+scaled total_tokens), RLVR with a verifiable reward, pass@1 vs rollouts consumed, to test
+"sample efficiency is bought by prior structure, not the update rule". Its readout was
+math-500, and that is why it was retired: math-500 sits at 30% containment
+(`facts/contamination.json#cont.holdout_v2`), so it cannot separate retrieval from
+reasoning at all, while the S/P sets are constructed-absent — the operator, its rule and
+its phrasing were invented 2026-09-05, after every corpus in the mix was built
+(`cont.novel_operator_collision`, and the sets' own `absence_basis` header field). Those
+are two different epistemic classes, not two points on a containment scale, so this is a
+replacement rather than a refinement. What experiment 2 now is, and every constant it
+fixes: `docs/standards/rlvr_exp2_recipe.md`. The deliverable is unchanged in kind —
+capability per token consumed, two columns (generated primary, trained-on secondary)
+against the same pretraining baseline. db's prerequisite also stands unchanged: generation
+throughput is unmeasured and is the binding constraint at 200M.
 
 3. **Measure b (the power-law exponent) on this mix, on existing checkpoints.** 58's prerequisite: cheap, CPU-side, uses existing b0 arms. Determines whether the paired-BPB design is load-bearing (b < 0.2) or whether unpaired suffices. Also measures per-token loss correlation between arms. No GPU needed. Can run immediately, in parallel with the GPU pause. tilerl-25's driver check (535.161.08 vs sm90 kernel validation) is a 10-minute prerequisite for any GPU experiment.
 
