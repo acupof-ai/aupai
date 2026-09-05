@@ -9934,6 +9934,115 @@ def _busy_training_cards(train_cards):
 CARD_HELD_MIB = 1000
 
 
+def check_gpu_entry_points_claim(root):
+    """Every file that loads a checkpoint AND moves it to a device reaches a claim.
+
+    de-55. MEASURED 2026-09-05: 31 files do that and 23 of them called card_claim nowhere, so
+    runs/claims/ sat empty on the pod while lane jobs held cards all day. The consequence is already
+    detected by card_held_without_claim -- but that check is pod-only and reports SKIP off-pod, so
+    the gap was invisible in CI and in every laptop run. This one is static and runs anywhere.
+
+    THE PREDICATE IS THE POINT. de-55's row said 10 files, from "loads a checkpoint and NAMES cuda",
+    which matches 53 files including every one that mentions the word in prose. Reading a device MOVE
+    -- .to(dev), device="cuda", .cuda() -- gives 31, and that is the population the rule is about.
+
+    Reaching a claim means one of three, all equivalent for the property "the card is named":
+      * calls claim_my_cards or card_claim.acquire itself
+      * passes a cuda device to loader.load_checkpoint, which claims (step 2)
+      * is a launcher-claimed trainer: run_ddp.sh / harness launch acquires for train/sft, and a
+        second acquire under a different name would clash with the launcher's own
+    """
+    import re as _re
+    exempt = {
+        # The 7-card block. run_ddp.sh -> harness launch acquires, and the trainer inherits the
+        # card from it; claiming again under another name clashes with the launcher's claim.
+        "train.py": "launcher-claimed (run_ddp.sh / harness launch)",
+        "sft.py": "launcher-claimed (scripts/run_sft.sh)",
+        "sft_math.py": "launcher-claimed (scripts/run_sft.sh)",
+        # A laptop path, deliberately: it is how a person talks to a checkpoint with no pod involved.
+        "infer_local.py": "laptop inference path, not a pod lane job",
+    }
+    move = _re.compile(r'\.to\(\s*(?:dev|device|DEV|"cuda|\'cuda)|device\s*=\s*["\']cuda|\.cuda\(\)')
+    # `import card_claim` and `from card_claim import ...` both count, because a file may wrap
+    # acquire in its own helper: probes/arm_token_corr.py has claim_own_card(), which claims
+    # correctly, does `from card_claim import acquire`, and calls it as a bare `acquire(...)`. My
+    # first two versions of this pattern called that file uncovered -- once for the helper name and
+    # once for the import form. The property is "this file reaches a claim", not "this file spells it
+    # one of the ways I thought of", so the criterion is the MODULE reference, which every route to
+    # a claim must contain and no other route does.
+    claims = _re.compile(r'claim_my_cards|card_claim\.acquire|import card_claim|from card_claim import')
+    # device= ANYWHERE in the call, not within N characters of the open paren. My first version
+    # bounded the match at 200 chars and missed
+    #   load_checkpoint(os.path.join(ROOT, a.fixed), device=dev, dtype=torch.bfloat16)
+    # because the path expression pushed `device=` past the window on the following line. A window is
+    # a guess about formatting; matching to the closing paren is the call.
+    cuda_load = _re.compile(
+        r'load_checkpoint\((?:[^()]|\([^()]*\))*device\s*=\s*(?:["\']cuda|dev\b|device\b|DEV\b)',
+        _re.S)
+    missing, seen = [], 0
+    for d in ("", "eval", "scripts", "probes", "algorithms"):
+        p = os.path.join(root, d) if d else root
+        if not os.path.isdir(p):
+            continue
+        for f in sorted(os.listdir(p)):
+            if not f.endswith(".py"):
+                continue
+            rel = os.path.join(d, f) if d else f
+            try:
+                s = open(os.path.join(p, f), encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if not ("load_checkpoint" in s or "torch.load(" in s) or not move.search(s):
+                continue
+            seen += 1
+            if rel in exempt or claims.search(s) or cuda_load.search(s):
+                continue
+            missing.append(rel)
+    if missing:
+        return FAIL, (f"{len(missing)} of {seen} file(s) load a checkpoint onto a device without "
+                      f"reaching a claim, so the card reads ORPHAN and a second job may take it: "
+                      f"{', '.join(missing[:8])}"
+                      + (f" (+{len(missing) - 8} more)" if len(missing) > 8 else "")
+                      + ". Add loader.claim_my_cards(<name>) at the device move, or pass "
+                        "device='cuda' to load_checkpoint, which claims.")
+    # A PASS OVER AN EMPTY POPULATION IS NOT A PASS. 33 files match today; zero means the predicate
+    # stopped matching -- a refactor renamed the device move, or this is a tree with no entry points
+    # -- and either way the check verified nothing while printing green. Caught by my own broken
+    # world, which reported "0 file(s) all reach a claim" because it mutated a file the predicate
+    # never selected, and read as a pass.
+    if seen == 0:
+        return FAIL, ("no file in this tree loads a checkpoint onto a device, which cannot be true "
+                      "of the repo: the device-move predicate has stopped matching (a rename, or a "
+                      "partial tree) and this check is verifying an empty set")
+    return PASS, (f"{seen} checkpoint-to-device file(s) all reach a claim "
+                  f"({len(exempt)} exempt: launcher-claimed trainers and the laptop path)")
+
+
+def _broken_gpu_entry_points_claim():
+    """A REAL covered file with its claim stripped -- mutation, not a hand-written world.
+
+    scripts/b0_n8_reuse_gate.py is IN the population by the check's own predicate: it does
+    `load_checkpoint(CKPT, dtype=bf16)` then `mdl = mdl.cuda()`, and it calls claim_my_cards. Strip
+    that call and it is exactly the state 23 files were in on 2026-09-05.
+
+    My first world used eval/score_matrix.py and reported PASS on 0 FILES: score_matrix claims but
+    never matches the device-MOVE pattern, so it was never in the population and the world mutated a
+    file the check ignores. A broken world must be built from a file the check actually reads, and
+    the tell was the count in the evidence line -- "0 file(s) all reach a claim" is a pass over an
+    empty set, which is what a vacuous world looks like when it does not raise.
+    """
+    src = os.path.join(ROOT, "scripts", "b0_n8_reuse_gate.py")
+    s = open(src, encoding="utf-8", errors="replace").read()
+    if "claim_my_cards" not in s or ".cuda()" not in s:
+        raise SelftestSkip("scripts/b0_n8_reuse_gate.py no longer claims or no longer moves to a "
+                           "device; the world needs a covered in-population file to uncover")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "b0_n8_reuse_gate.py"), "w", encoding="utf-8").write(
+        s.replace("claim_my_cards", "_claim_removed_by_selftest"))
+    return d
+
+
 def check_card_held_without_claim(root):
     """A card holding real memory that no live claim names.
 
@@ -12710,6 +12819,15 @@ CHECKS = [
         _broken_tasks_stale,
     ),
     (
+        "gpu_entry_points_claim",
+        "every file that loads a checkpoint onto a device reaches a card claim",
+        "23 of 31 such files claimed nothing on 2026-09-05, so runs/claims/ sat empty on the pod "
+        "while lane jobs held cards all day; card_held_without_claim detects the consequence but is "
+        "pod-only and SKIPs off-pod, so nothing saw the gap in CI",
+        check_gpu_entry_points_claim,
+        _broken_gpu_entry_points_claim,
+    ),
+    (
         "card_held_without_claim",
         "every card holding real memory is named by a live claim in this tree",
         "e1's Stage A held card 5 for 15 minutes with the claim written in its laptop tree, so nothing on the pod said the card was held (2026-09-03)",
@@ -12873,6 +12991,9 @@ EVIDENCE = {
     # repo: resolving a sha needs the object database, which the pod's tree does not have.
     "run_commits_resolve": "repo",
     "keep_claim_reasons_live": "repo",
+    # repo: it reads SOURCE, not cards. That is the point of it existing beside the pod-only
+    # card_held_without_claim, which SKIPs off-pod and so could not see the 23-file gap in CI.
+    "gpu_entry_points_claim": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
