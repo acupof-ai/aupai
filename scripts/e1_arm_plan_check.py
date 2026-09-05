@@ -29,7 +29,7 @@ That world is attempted and SKIPS with a named reason when the caches are absent
 here is not the same claim as a green run there. It prints which level ran.
 
 THE WORLD-2 STRIPE IS WHY BOTH RANKS ARE BUILT when the plan level does run. The plan is striped
-`plan[:, rank::world]` (train.py:2241), so rank 0 alone holds about half the exposures and a
+`plan[:, rank::world]` (train.py:2316), so rank 0 alone holds about half the exposures and a
 per-rank count would read n/2 and look like a defect. The claim "each document appears exactly n
 times" is a claim about the UNION of the ranks, which is what the model sees.
 """
@@ -263,9 +263,9 @@ def check_arm(name, n, verbose=True):
 def _ckpt_cursor(path):
     """(cursor dict, seed, srcfp, reason-it-is-absent) from the checkpoint the arms resume.
 
-    THE CURSOR HAS TO COME FROM THE CHECKPOINT, not from CURSOR_ROWS. check_plan's two
-    cursor assertions -- a natural domain drew rows at all, and its FIRST drawn row is its
-    cursor -- both begin `if d not in cur`, so an empty cur skips them silently and
+    THE CURSOR HAS TO COME FROM THE CHECKPOINT, not from CURSOR_ROWS. check_plan's natural-domain
+    assertions -- the domain drew rows at all, and it drew the count its cursor and weight name --
+    both begin `if d not in cur`, so an empty cur skips them silently and
     build_mix is handed row_cursor=None, which builds a FRESH plan. The check then prints
     PASS having asserted nothing about the thing it exists to assert: that no arm re-reads
     rows the control already trained on. Found 2026-09-05 before the pod run, by reading
@@ -296,16 +296,25 @@ def pool_rows_of(domain, mix):
     Read from the TOKEN CACHE, not recomputed from the corpus: the cache is what build_mix
     reshapes, and this whole check exists because a count recomputed alongside the thing it
     checks cannot disagree with it.
+
+    mmap=True, SO THIS READS THE HEADER AND NOT THE TENSOR. The previous form was
+    `torch.load(cp, map_location="cpu").shape[0]`, which pulls the whole file in to learn a
+    shape: 85.2 GB for zh_web, which eval/cache_guard rightly refused while cards 0 were held
+    by tilerl-mathrun2, killing three of five solo arms on 2026-09-05. Measured on the pod
+    (/proc/self/io around the call): mmap reports the shape at 0.0 MB rchar, and on the three
+    domains small enough to load both ways -- chatml, chat_qa, code_py_rp1t -- the mmap shape
+    equals the full-load shape exactly, where the full load charges 156.0 / 152.8 / 1683.4 MB.
+    So the co-residency call is gone from this function: there is no longer a large read for it
+    to refuse, and leaving a refusal in front of a header read would refuse a cost that is not
+    paid. The caches are flat 1-D token tensors (train.py:1958 `data[: n*(seq+1)].view(-1, seq+1)`),
+    so shape[0] // (seq+1) is the row count under either load.
     """
     import train
     cp = train._domain_cache_path(domain)
     if not os.path.exists(cp):
         return 0
-    sys.path.insert(0, os.path.join(ROOT, "eval"))
-    import cache_guard
-    cache_guard.assert_not_co_resident([domain])
     import torch
-    n_rows = int(torch.load(cp, map_location="cpu", weights_only=False).shape[0]
+    n_rows = int(torch.load(cp, map_location="cpu", weights_only=True, mmap=True).shape[0]
                  ) // (mix["seq"] + 1)
     dcfg = mix["domains"][domain]
     if "val_frac" in dcfg:
@@ -325,7 +334,7 @@ def check_plan(name, n, cursor=None, cursor_seed=None, cursor_srcfp=None):
     absent -- a skip that read as a pass would be the worst outcome here, because this is the
     only assertion that would survive a change to build_mix's own arithmetic.
 
-    Both ranks, unioned: the plan is striped plan[:, rank::world] (train.py:2241), so rank 0
+    Both ranks, unioned: the plan is striped plan[:, rank::world] (train.py:2316), so rank 0
     holds about half the exposures and a single-rank count reads n/2.
     """
     import train
@@ -338,9 +347,10 @@ def check_plan(name, n, cursor=None, cursor_seed=None, cursor_srcfp=None):
     # guard sits behind an earlier return and can never fire on the path that needs it.
     if not cursor:
         return [f"{name}: check_plan called with NO cursor, so build_mix would build a FRESH plan "
-                f"and both cursor assertions (a natural domain drew rows; its first drawn row is "
-                f"its cursor) would be skipped on `d not in cur`. A PASS would then say nothing "
-                f"about whether the arm re-reads rows the control already trained on."], None
+                f"and the natural-domain assertions (the domain drew rows; it drew the count its "
+                f"cursor and weight name) would be skipped on `d not in cur`. A PASS would then "
+                f"say nothing about whether the arm re-reads rows the control already trained "
+                f"on."], None
     missing = [d for d in mix["domains"]
                if not os.path.exists(train._domain_cache_path(d))]
     if missing:
@@ -391,52 +401,106 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                         f"check's CURSOR_ROWS is {CURSOR_ROWS}. Every want the file-level "
                         f"check computed used the wrong remainder.")
     rows_by_dom = collections.Counter()
-    # THE SET OF POOL INDICES EACH DOMAIN DRAWS, unioned over both ranks. Not the LOWEST index,
-    # which was the first version of this and was wrong twice over: build_mix reads
-    # `torch.arange(used, used+want) % len(pool)` so a cursor past one epoch WRAPS and the lowest
-    # drawn index is not the cursor; and the plan is shuffled per phase (`ph[:, randperm]`), so
-    # "lowest" is not even a stable quantity. Two natural domains reported lowest > cursor, which
-    # no wrap of an arange can produce -- the tell that the premise, not the plan, was broken.
+    # THE ROW COUNT PER DOMAIN, FROM Cfg._plan_domains -- NOT from build_mix's return value.
     #
-    # The set is exact under both: a wrap permutes which indices are drawn but the SET still equals
-    # arange(cursor, cursor+want) % len(pool), and a shuffle does not change a set at all. It also
-    # still separates the failure the count cannot see -- a discarded cursor restarts at row 0 and
-    # draws the same COUNT from a different SET (4c's premise, 2026-09-05).
-    drawn = collections.defaultdict(set)
+    # WHAT WAS WRONG HERE (found 2026-09-05 on the pod, 10 BUG lines, all of them artifacts):
+    # this read `mine, _val = train.build_mix(...)` and then `mine[0] == di` / `mine[1][sel]`.
+    # build_mix does not return the plan. It returns the TOKEN tensor, shape (rows, seq+1):
+    # train.py:2319 `out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)` and
+    # train.py:2333 `return out, vcat`. So `mine[0]` was ROW ZERO'S TOKEN IDS compared against a
+    # domain index, and `mine[1][sel]` was row one's token ids read as pool indices. The counts
+    # that came out summed to 9 rows across a 31,994-row plan, and eight domains reported "drew 0
+    # rows" while train.py's own mix lines in the same output showed them drawing thousands.
+    #
+    # The (domain, pool_index) plan is LOCAL to build_mix: train.py:2316 `mine = plan[:, :n][:,
+    # rank::world]`, consumed at :2324 `out[m] = pools[name][mine[1][m]]`, never returned. What
+    # escapes is Cfg._plan_domains (:2317, int8, one domain index per row of THIS rank's plan) --
+    # enough for the count, and it carries no pool index, which is why the set assertion below
+    # cannot be built from it and reads bytes instead.
+    plan_dom = {}
     for rank in (0, 1):
-        mine, _val = train.build_mix(mix_path, tok, rank == 0, False, rank=rank, world=2,
-                                     row_cursor=cur or None, cursor_seed=cursor_seed,
-                                     cursor_srcfp=cursor_srcfp)
+        out, _val = train.build_mix(mix_path, tok, rank == 0, False, rank=rank, world=2,
+                                    row_cursor=cur or None, cursor_seed=cursor_seed,
+                                    cursor_srcfp=cursor_srcfp)
+        pd = getattr(train.Cfg, "_plan_domains", None)
+        if pd is None:
+            problems.append(f"{name}: build_mix published no Cfg._plan_domains, so the per-domain "
+                            f"row count could not be read -- that is a missing assertion, not a "
+                            f"pass (train.py:2317 sets it)")
+            return problems, None
+        if int(pd.shape[0]) != int(out.shape[0]):
+            # The two must describe the same rows or the count is about a different plan than
+            # the tokens. Cheap, and it is the assertion that would have caught the defect above.
+            problems.append(f"{name}: Cfg._plan_domains holds {int(pd.shape[0])} rows but the "
+                            f"token tensor holds {int(out.shape[0])} -- they do not describe the "
+                            f"same plan, so neither the count nor the row-count assertions are "
+                            f"meaningful")
+            return problems, None
+        plan_dom[rank] = int(pd.shape[0])
         for di, dname in enumerate(names):
-            sel = mine[0] == di
-            k = int(sel.sum())
-            rows_by_dom[dname] += k
-            if k:
-                drawn[dname] |= {int(v) for v in mine[1][sel].tolist()}
-    for d in inj:
-        # The REMAINDER, as above: build_mix subtracts the cursor before computing want.
-        # SUMMED OVER THE PHASES build_mix will run, which is the arithmetic the plan does:
-        # `want = int(rows * frac * weight)` once per phase, and int() truncates in EACH, so
-        # sum(int(rows*frac*w)) can be a row less than int(rows*w). Computing it phase by phase
-        # rather than as a single int() is what makes this assertion correct at any ANNEAL_FRAC
-        # instead of only at 0 -- the single-phase form was right only because the launch passes
-        # --anneal_frac 0, and a check that is right by coincidence goes wrong when the coincidence
-        # ends (train.py:2174 builds `phases` from Cfg.anneal_frac).
-        rows_rem = mix["total_tokens"] / mix["seq"] - sum(cur.values() or [0])
-        _phases = ([(1.0, "weight")] if not ANNEAL_FRAC
-                   else [(1 - ANNEAL_FRAC, "weight"), (ANNEAL_FRAC, "anneal")])
+            rows_by_dom[dname] += int((pd == di).sum())
+        del out, pd
+    # EVERY DOMAIN INDEX IN THE PLAN IS A DOMAIN THIS CHECK KNOWS. Without it a plan carrying an
+    # index past len(names) would contribute to no domain's count and every count would still
+    # agree -- the shape of the defect this rewrite fixes, where a wrong axis produced counts that
+    # summed to 9 out of 31,994 and nothing compared the parts to the whole.
+    if sum(rows_by_dom[d] for d in names) != sum(plan_dom.values()):
+        problems.append(f"{name}: the per-domain counts sum to "
+                        f"{sum(rows_by_dom[d] for d in names)} but the plan holds "
+                        f"{sum(plan_dom.values())} rows across both ranks -- some rows carry a "
+                        f"domain index this check did not count.")
+    # THE REMAINDER AND THE PHASES, hoisted: both loops below assert against them, and computing
+    # them once is what keeps the injection and natural assertions talking about the same plan.
+    # build_mix subtracts the cursor from the budget ONCE, globally (train.py:2251
+    # `rows = max(0.0, rows - spent)`), and then applies each domain's weight to that remainder.
+    # SUMMED OVER THE PHASES build_mix will run: `want = int(rows * frac * weight)` once per phase,
+    # and int() truncates in EACH, so sum(int(rows*frac*w)) can be a row less than int(rows*w).
+    # Phase by phase rather than a single int() is what makes this correct at any ANNEAL_FRAC
+    # instead of only at 0 -- the single-phase form was right only because the launch passes
+    # --anneal_frac 0, and a check that is right by coincidence goes wrong when the coincidence
+    # ends (train.py:2174 builds `phases` from Cfg.anneal_frac).
+    rows_rem = mix["total_tokens"] / mix["seq"] - sum(cur.values() or [0])
+    _phases = ([(1.0, "weight")] if not ANNEAL_FRAC
+               else [(1 - ANNEAL_FRAC, "weight"), (ANNEAL_FRAC, "anneal")])
+
+    def _want_of(d, used_d):
+        """What build_mix will allocate to domain `d`, INCLUDING THE EPOCH CAP.
+
+        The cap is not decoration here: p_format's pool is 20 rows with epochs 1, so an
+        uncapped expectation and the plan disagree by construction and the check reports a
+        defect in the run that is really a defect in the check. train.py:2255-2262 -- want is
+        capped at int(len(pool) * epochs) - used[name], floored at 0, and `used` advances by
+        the capped amount within the phase loop.
+        """
+        pool_len = pool_rows_of(d, mix)
+        if not pool_len:
+            return None, None
         dcfg = mix["domains"][d]
-        want = sum(int(rows_rem * frac * dcfg.get(key, dcfg["weight"]))
-                   for frac, key in _phases)
+        total = 0
+        for frac, key in _phases:
+            w = int(rows_rem * frac * dcfg.get(key, dcfg["weight"]))
+            w = max(0, min(w, int(pool_len * dcfg.get("epochs", 1)) - used_d))
+            total += w
+            used_d += w
+        return total, pool_len
+
+    for d in inj:
+        # Injection domains carry NO cursor (measured 2026-09-05: ckpt_b0_headmix_armA.pt's
+        # row_cursor holds exactly the 9 natural domains), so they start at used=0.
+        want, pool_len = _want_of(d, 0)
+        if want is None:
+            problems.append(f"{name}: cannot read {d}'s pool length, so its row-count assertion "
+                            f"did not run -- that is a missing assertion, not a pass")
+            continue
         got = rows_by_dom[d]
         if got != want:
             problems.append(f"{name}: the built plan holds {got} rows of {d}, the weight asks "
                             f"{want} (summed over {len(_phases)} phase(s) at anneal_frac "
-                            f"{ANNEAL_FRAC}). The cap bound, or the stripe dropped rows.")
-    # 4c's assertion: A NATURAL DOMAIN CONTINUES FROM ITS CURSOR RATHER THAN RESTARTING. This is
-    # the one that catches a floored budget and a discarded cursor, both of which are silent: a
-    # floored budget draws nothing at all, and a discarded cursor draws the SAME row count from
-    # row 0 -- re-reading rows the control already saw while every count still matches.
+                            f"{ANNEAL_FRAC}, pool {pool_len}). The stripe dropped rows.")
+    # 4c's assertion, AS MUCH OF IT AS THE PLAN'S PUBLISHED STATE SUPPORTS: a natural domain
+    # continues from its cursor rather than restarting. The floored-budget half is fully covered
+    # here (it draws nothing at all, so a count sees it). The discarded-cursor half is NOT covered
+    # by this loop and is stated as uncovered below rather than assumed away.
     for d in nat:
         if d not in cur:
             continue
@@ -445,33 +509,37 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                             f"{cur[d]}; a budget that floors to zero after the cursor "
                             f"subtraction looks exactly like this.")
             continue
-        # THE SET OF DRAWN INDICES IS THE ARANGE FROM THE CURSOR, modulo the pool length. This is
-        # the assertion that separates a continued cursor from a discarded one: a discarded cursor
-        # restarts at row 0, drawing the SAME COUNT from a DIFFERENT SET, so no count check can see
-        # it. Stated as a set because the read wraps at the pool length and the plan is shuffled
-        # per phase -- neither changes the set, and both break any statement about a first or
-        # lowest index.
-        #
-        # The pool length comes from the domain's TOKEN CACHE, minus its val split -- the same
-        # quantity build_mix computes as len(pools[name]). Read from the cache rather than
-        # recomputed from the corpus, for the reason the cache cross-check above exists.
-        pool_len = pool_rows_of(d, mix)
-        want_n = rows_by_dom[d]
-        if not pool_len:
-            problems.append(f"{name}: cannot read {d}'s pool length, so the set assertion below "
-                            f"did not run -- that is a missing assertion, not a pass")
+        # THE COUNT MUST BE THE REMAINDER TIMES THE WEIGHT, capped by the epoch bound -- the same
+        # helper the injection domains use, seeded with THIS domain's cursor as `used`. It catches a
+        # remainder computed against the wrong cursor, which moves every want.
+        want, pool_len = _want_of(d, cur[d])
+        if want is None:
+            problems.append(f"{name}: cannot read {d}'s pool length, so its count assertion did "
+                            f"not run -- that is a missing assertion, not a pass")
             continue
-        expect = {(cur[d] + i) % pool_len for i in range(want_n)}
-        if drawn[d] != expect:
-            extra = sorted(drawn[d] - expect)[:3]
-            miss = sorted(expect - drawn[d])[:3]
-            problems.append(
-                f"{name}: natural domain {d} drew {want_n} rows but not the {want_n} the cursor "
-                f"names. Expected arange({cur[d]}, {cur[d] + want_n}) % {pool_len}; "
-                f"{len(drawn[d] - expect)} row(s) outside it (e.g. {extra}) and "
-                f"{len(expect - drawn[d])} of it missing (e.g. {miss}). A cursor discarded "
-                f"and restarted at row 0 draws this same COUNT from a different SET, which is "
-                f"the failure no count check can see.")
+        if rows_by_dom[d] != want:
+            problems.append(f"{name}: natural domain {d} drew {rows_by_dom[d]} rows, the weight "
+                            f"asks {want} from a remainder of {rows_rem:.0f} at cursor {cur[d]} "
+                            f"(pool {pool_len}). The remainder was computed against a different "
+                            f"cursor, or the epoch cap bound.")
+    # WHAT THIS CHECK DOES NOT COVER, stated because a silent gap reads as a pass. A cursor that is
+    # DISCARDED (train.py:2201 corpus-fingerprint drift, :2190 sample_seed drift) makes a domain
+    # restart at row 0, drawing the SAME COUNT from a DIFFERENT SET -- invisible to every assertion
+    # above. Asserting the set needs the pool indices, and those never leave build_mix (:2324).
+    # Two things make the gap narrow rather than open:
+    #   - train.py:2236 REFUSES to start when any cursor would be discarded, unless
+    #     --allow_partial_cursor is passed. The launch lines do not pass it, so a discarded cursor
+    #     is a crash and not a silent restart.
+    #   - Cfg._cursor_discarded is published (:2231), and the assertion below reads it.
+    # So this reads the flag build_mix sets rather than re-deriving the fact.
+    disc = list(getattr(train.Cfg, "_cursor_discarded", []) or [])
+    if disc:
+        problems.append(f"{name}: build_mix discarded {len(disc)} cursor(s) -- "
+                        f"{'; '.join(disc[:4])}. Those domains restart at row 0 and re-read rows "
+                        f"the control already trained on, at an unchanged row count.")
+    if not getattr(train.Cfg, "_cursor_seeded", False):
+        problems.append(f"{name}: Cfg._cursor_seeded is False, so NO domain's cursor seeded the "
+                        f"plan -- every natural domain restarted at row 0 (train.py:2230).")
     return problems, None
 
 
