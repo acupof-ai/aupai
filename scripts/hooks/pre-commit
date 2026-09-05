@@ -1351,15 +1351,6 @@ def main():
         # than a smaller number, because the old expression's max(1, ...) floors an explicit zero
         # back up to one row -- so a test asserting "fewer rows held back" passes on the defect.
         "scripts/test_mix_val_frac.py",
-        # The printed ETA's window mean. Registered here AND on train.py's trigger list, same
-        # reason as the line above: the arithmetic lives in train.main, not in this file. The old
-        # `eta = (total_steps - step) * dt / 10` extrapolated the last 10-step interval over all
-        # 19,151 remaining steps, so one 54s interval printed 29 lost hours and every checkpoint
-        # save printed ~99h. The assertion is a BOUND -- one interval moves the ETA by at most 1/N
-        # of what it moved before -- not "smaller": any smoothing passes "smaller", including one
-        # that swallows the spike, and a swallowed spike is worse than the spike because then the
-        # save goes invisible. Also pins RunLog._STEP_RE against the appended field. ~1s, no card.
-        "scripts/test_eta_window.py",
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1735,7 +1726,6 @@ def main():
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
-                     "scripts/test_eta_window.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
