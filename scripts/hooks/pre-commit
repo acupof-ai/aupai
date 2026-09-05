@@ -941,6 +941,7 @@ def main():
         "scripts/mem_master_cell.py",
         "scripts/gen_ledger_transport_schema.py",
         "scripts/test_table_master_resync.py",
+        "scripts/test_mem_defaults_frozen.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
@@ -1283,10 +1284,16 @@ def main():
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
+        # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
+        # behaviour is split across them: the selection lives in model.ProductKeyMemory.forward
+        # and the optimizer grouping in train.build_optimizers, and b0's two flags
+        # (--mem_sel_lr, --mem_query_norm) each move one of the two.
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
-                     "scripts/test_untie_head.py"},                          # 42.6s
+                     "scripts/test_untie_head.py",
+                     "scripts/test_mem_defaults_frozen.py"},                 # 42.6s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
-                     "scripts/test_value_embed.py"},                         # 36.3s
+                     "scripts/test_value_embed.py",
+                     "scripts/test_mem_defaults_frozen.py"},                 # 36.3s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s
