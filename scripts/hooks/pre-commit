@@ -897,6 +897,14 @@ def main():
         # deleting the exemption passed. All five worlds are now mutation-verified.
         "scripts/test_pending_claim.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        # conversion_rate_0905's PRIMARY readout. 1.4s, no card, no model: its ten worlds run on
+        # stub models whose preference is a fact of the fixture. Registered rather than exempted
+        # because the numbers it produces are the experiment's answer, and three of its worlds
+        # exist only because the mutant they catch SURVIVED an earlier version -- an inverted
+        # argmax, a mean row that ignored option length, and a continuation span that included
+        # prompt tokens. It also asserts the pinned items hash, so an item-set change that would
+        # invalidate the registered floor and MDE stops here.
+        "eval/novel_ops_4way.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
         # NEEDS_DATA. It caught two defects in its own file before that file's first commit:
@@ -1768,6 +1776,15 @@ def main():
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
         # verify_artifact and the transcriber, so a change to either file can break it.
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
+        # novel_ops_4way delegates its scoring to run_eval.score_mc_items and asserts on that
+        # function's own contract: the continuation is sliced by token id, and an item whose
+        # options all failed to tokenize must not read as correct. So an edit to run_eval.py is
+        # exactly what can break it, and two of its worlds were built by mutating run_eval
+        # rather than the readout. 1.4s.
+        "eval/run_eval.py": {"eval/novel_ops_4way.py"},
+        # And the item set: the readout pins its sha256, so a rebuild of the items has to run
+        # the readout that scores them or the pinned hash goes stale silently.
+        "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
