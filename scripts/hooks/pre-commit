@@ -1279,6 +1279,10 @@ def main():
         # audit 0904 page renderer: its selftest parses fixture reports in a temp dir --
         # no repo data, no card -- and covers the charter's broken world (shuffled columns).
         "scripts/audit_render.py",
+        # Policy metrics: its selftest pins the two regexes against their real 2026-09-05
+        # false positives ("blocks.1._mem_registered", "_ROW_CHECKSUM_BLOCK" must not read
+        # as blocked verdicts; a bare-name misroute row must match).
+        "scripts/policy_metrics.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
