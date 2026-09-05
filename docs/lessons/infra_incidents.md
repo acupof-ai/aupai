@@ -374,6 +374,10 @@ open: a check that flags a claimed card at ~0% util for N minutes; none exists. 
 A rank-0-only phase inside a world-2 job desynchronised the ranks: profile_step_cost times save (33.6 s here) and val after the loop, save runs on rank 0 alone, and rank 1 entered the next collective with nothing to meet. The cells' timings were already complete and correct when it hung, so the failure cost card time and no data. Fixed by `--skip-save-val`, which skips both and still writes the JSON row (`--peak-only` skips them but returns before the record is built). Evidence: scripts/profile_step_cost.py, commit acfb67bb.
 open: manual — nothing checks that a multi-rank script's post-loop phases are collective or rank-symmetric.
 
+### §214 (2026-09-05, R8)
+A live job ran on a shared card with no claim, and every reader read it as an orphan. tilerl-25's re-score held card 0 live; `card_claim status`, the sweep, and nvidia-smi all showed unclaimed memory, which reads identically to a dead process's residue for as long as it takes to ask the owner — and that interval is exactly the window a sweep kills in. The claim-write is the only thing that separates "orphan" from "unclaimed live job", so the defect is the launch that never wrote a claim, not the readings. check_card_held_without_claim WARNs after the fact; nothing refuses the launch. Evidence: tilerl report 2026-09-05, runs/card_assignment.json.
+open: a launch path that does not write a claim refuses before it starts; none exists.
+
 ## R9. Run a deletion candidate before judging it
 
 ### §39 (2026-09-01, R9)

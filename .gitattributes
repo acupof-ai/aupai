@@ -27,6 +27,21 @@ runs/friction.jsonl merge=union
 # is the only field separating two runs of one arm. The KEYS entry now exists (ledger_audit.py).
 runs/memory_diag.jsonl merge=union
 
+# The MoE-arm diagnostics ledger (readout 4 of moe_0905). Union for the same reason as the rest:
+# concurrent branches both append at EOF, and row identity is a key, never line position.
+#
+# LANDED WITH ITS WRITER, IN ONE COMMIT, and that is the whole lesson of the block above: the
+# memory ledger had a writer for a full DAY with no transport in either direction, so 25 rows
+# behind three stopped arms lived only on the pod and rescuing them needed the deliberate-exception
+# flag. Three registrations, not one -- this line, the data/ledger_schema.json entry, and the
+# scripts/ledger_audit.py KEYS entry, which is what pod_pull_ledgers derives its file list from.
+#
+# ROW IDENTITY IS (name, step, ts). A MoE arm relaunched after a stop rule fires restarts at step
+# 10 and re-visits every step the previous run wrote, and a relaunch is the EXPECTED case here
+# rather than a contingency -- measured on the memory ledger, where (name, step) collided three
+# ways on b0_mem_m1's relaunch while (name, step, ts) gave 28 distinct over 28 rows.
+runs/moe_diag.jsonl merge=union
+
 # EXPERIMENTS.md is DERIVED (exp.py render from runs/experiments.jsonl), so "pick a side" is
 # never the right resolution: the driver regenerates it. MEASURED 2026-09-04 that it needs
 # one -- two branches each adding a row and rendering produce a real
