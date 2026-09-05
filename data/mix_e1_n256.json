@@ -4,10 +4,11 @@
     "WEIGHTS ARE ROW-DERIVED, not token-derived (4c's ruling 2026-09-05). build_mix computes its budget as total_tokens/seq (4096) while a pool packs at seq+1 (4097), so a weight from a token count asks int(tok/4096) rows of a tok//4097-row pool and the epoch cap binds by one row at n8/n64/n256. Row-derived: want == pool exactly. The unit mismatch is build_mix's and is filed to be fixed AFTER both launches -- E1's control ran under the old arithmetic.",
     "w_S = 0.2029687500 (20.2969% of the arm) = 6495 rows; w_P = 0.0006250000 = 20 rows; natural domains x 0.7964062034. S 26,611,200 tokens and P 84,434 both MEASURED.",
     "Both injection domains carry val_frac: 0 (train.py's per-domain override, scripts/test_mix_val_frac.py). Without it the 5% split comes off the FRONT of the shard and the realised exposure count is 0.95n against an axis that says n.",
-    "The base mix's weights sum to 1.0000000585, not 1; the scale divides by that sum so this arm does not inherit the 5.85e-08 error."
+    "The base mix's weights sum to 1.0000000585, not 1; the scale divides by that sum so this arm does not inherit the 5.85e-08 error.",
+    "TOTAL_TOKENS IS THE RESUMED RUN'S, NOT THE ARM'S. build_mix computes rows = total_tokens/seq and then SUBTRACTS the resume cursor: `spent = sum(used.values()); rows = max(0.0, rows - spent)`. ckpt_b0_headmix_armA.pt's row_cursor sums to 244,160 rows (1.000B tokens, as_of_step 3815, cursor_seed 42), so an arm carrying only its own 131,072,000 would floor to 0 rows and raise 'refusing to train on an empty plan'. 1,131,151,360 = 244,160 + 32,000 rows, leaving the intended 32,000-row remainder. THE WEIGHTS DO NOT CHANGE: `want = int(rows * frac * weight)` reads the ALREADY-REDUCED rows, so a weight is a share of the arm's own 32,000 rows, not of the resumed budget. Verified numerically -- as committed the wants are 25/202/1623/6495, the shard row counts exactly; rescaling them against the 276,160-row total would have given 2/23/188/752, an 8.6x cut."
   ],
-  "total_tokens": 131072000,
-  "total_rows": 32000,
+  "total_tokens": 1131151360,
+  "total_rows": 276160,
   "seq": 4096,
   "anneal_frac": 0.0,
   "warmdown": 0.1,
