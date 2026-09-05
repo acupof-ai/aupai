@@ -1033,7 +1033,7 @@
           "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
           "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
           "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59",
-          "data/probes/novel_ops/S_test_4way.jsonl": "90c56990149bca4ebd3134ea503747084e3381876a6ca1afdb05ecc6cbe81b85"
+          "data/probes/novel_ops/S_test_4way.jsonl": "75286df83530ea219aaffdb6b78aedd4025c9c1963edcd9c20c39431637d0f84"
         },
         "rows_per_file": {
           "test": 1000,
@@ -1197,17 +1197,17 @@
         },
         "four_way_content_free_floor": {
           "floor_by_program": {
-            "diamond_chain": 0.33,
-            "diamond_chain4": 0.288
+            "diamond_chain": 0.364,
+            "diamond_chain4": 0.294
           },
           "worst_rule_by_program": {
-            "diamond_chain": "smallest",
-            "diamond_chain4": "closest_sum"
+            "diamond_chain": "nearest_mean_of_options",
+            "diamond_chain4": "closest_2a1"
           },
           "chance": 0.25,
-          "battery": "23 rules that read the four options and the operands and never apply the operator; mathbank/emit_novel_ops_4way.py:_battery()",
+          "battery": "29 rules that read the four options and the operands and never apply the operator; mathbank/emit_novel_ops_4way.py:_battery()",
           "scored_per_program": "REQUIRED. The floor differs by program and a pooled mean cancels opposite-leaning halves: in v3 closest_3sum was 0.4980 on diamond_chain4 (z=+12.81) and 0.0140 on diamond_chain (z=-12.19), pooling to 0.2560, which the pooled battery read as chance.",
-          "why_not_0.25": "Structural on 3-operand chains. Gold is the largest of four on only 23 of diamond_chain's 500 items, because sign_slip (3a+2b+1 on positive operands) and wrong_order both exceed gold, so the best reachable value-rank marginal is [23,159,159,159] -> 0.318 (e1, 2026-09-05). Measured 0.330 is at that feasible edge. Closing it would need a ladder rung that undershoots gold on 3-operand chains; fb ruled 2026-09-05 that no further rungs are added.",
+          "why_not_0.25": "Structural on 3-operand chains. Gold is the largest of four on only 23 of diamond_chain's 500 items, because sign_slip (3a+2b+1 on positive operands) and wrong_order both exceed gold, so the best reachable value-rank marginal is [23,159,159,159] -> 0.318 (e1, 2026-09-05). The displaced rank-0 mass lands in the middle ranks, where a SPREAD statistic reads it: nearest_mean_of_options picks value rank 1 on 354 of chain's 500 items and rank 2 on 146, never rank 0 or 3, and chain's gold sits at [23,150,162,165] so ranks 1-2 hold 312/500 against a flat 250 -- 0.3640. On diamond_chain4, where the rank marginal IS flat, the same rule scores 0.1840. That is the same infeasibility read by a different statistic, not a new leak family, and it is why balancing one more key does not converge: the mass moves to whatever reads it next. fb ruled 2026-09-05 that no further rungs are added and there is no v5.",
           "operational_floor": "the no-injection control arm's own score, not this number. This is the prior.",
           "superseded_versions": {
             "v1": {
@@ -1225,14 +1225,33 @@
               "leak": "per-program maxima 0.3840 diamond_chain (smallest) and 0.4980 diamond_chain4 (closest_3sum), against a pooled battery maximum of 0.2920",
               "cause": "the three marginals were balanced over the pooled 1000 rows. The two programs reach different key sets, so a pooled target is met by over-filling one program's reachable keys against the other's.",
               "found_by": "e1"
+            },
+            "v4_header_only": {
+              "sha256": "90c56990149bca4ebd3134ea503747084e3381876a6ca1afdb05ecc6cbe81b85",
+              "note": "the same 1000 items (tail sha 78132162cea92202d745ad263bf174086c5c24a20dad9bdcb94f12d12639ddd9 on both) with a header recording 0.330/0.288, the maximum over a 23-rule battery. Superseded by adding six rules, not by rebuilding."
             }
           },
-          "certifies": "the battery DETECTS a leak and cannot certify the absence of the next one. The rules are all 'gold is an affine functional of the operands and each distractor perturbs one term', an unbounded family: rank, then proximity to 3*a1, then proximity to 3*sum were closed in that order and each fix exposed the next."
+          "certifies": "the battery DETECTS a leak and cannot certify the absence of the next one. The rules are all 'gold is an affine functional of the operands and each distractor perturbs one term', an unbounded family: rank, then proximity to 3*a1, then proximity to 3*sum were closed in that order and each fix exposed the next.",
+          "is_a_lower_bound_not_a_certificate": "The recorded floor is the maximum over the rules that are IN the battery, so it can only rise as rules are added. It rose twice on this frozen artifact without the items changing: 0.330 -> 0.364 on diamond_chain when e1 contributed nearest_mean_of_options (0.3640, z=+5.89) and 0.288 -> 0.294 on diamond_chain4 with closest_2a1. All 1000 items are byte-identical across those two readings; only the measured maximum moved. Treat it as a lower bound on the achievable floor. The operational floor is the no-injection control arm's own score, which absorbs every member of the family including the unenumerated ones.",
+          "mde_two_arm": {
+            "diamond_chain": {
+              "from": 0.364,
+              "must_reach": 0.4498,
+              "points": 8.58
+            },
+            "diamond_chain4": {
+              "from": 0.294,
+              "must_reach": 0.3752,
+              "points": 8.12
+            },
+            "config": "two-arm, alpha=.05, power=.80, n=500 per program; e1 (lessons-58)",
+            "pooled": "NOT REPORTED. Pooling is the statistic that hid a z=+12.81 cell against a z=-12.19 one in v3."
+          }
         }
       },
       "unit": "sha256 of the file as committed",
       "measured": "2026-09-05",
-      "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58); the 4-way set's per-program floor from python3 mathbank/emit_novel_ops_4way.py --selftest (11 worlds, world 8 rebuilds v3's pooled shape and requires it to fail the per-program threshold), reproduced independently by e1 (lessons-58)",
+      "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58); the 4-way set's per-program floor from python3 mathbank/emit_novel_ops_4way.py --selftest (11 worlds, world 8 rebuilds v3's pooled shape and requires it to fail the per-program threshold), reproduced independently by e1 (lessons-58); nearest_mean_of_options and closest_2a1 contributed by e1 (lessons-58) and reproduced here, raising the recorded maximum without changing an item",
       "config": {
         "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
         "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
@@ -1241,7 +1260,7 @@
         "emitter_4way": "mathbank/emit_novel_ops_4way.py at v4, SHUFFLE_SEED=20260907"
       },
       "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
-      "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on. The 4-way set's content-free floor is 0.330 (diamond_chain) / 0.288 (diamond_chain4), NOT 0.25, and it must be scored per program: see value.four_way_content_free_floor. A pooled 4-way number is not interpretable.",
+      "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on. The 4-way set's content-free floor is 0.364 (diamond_chain) / 0.294 (diamond_chain4), NOT 0.25, and it must be scored per program: see value.four_way_content_free_floor. A pooled 4-way number is not interpretable. That floor is a maximum over the battery's rules and rose twice on an unchanged artifact as rules were added; it is a lower bound, not a certificate that no rule scores higher.",
       "status": "measured"
     },
     {

@@ -391,6 +391,18 @@ def _battery():
     """Content-free rules: each reads the four OPTIONS and the OPERANDS and never applies
     the operator. One definition, read by both the selftest and write()'s header, so a rule
     added after a leak is found is measured in the artifact too.
+
+    THE BATTERY DOES NOT GATE diamond_chain, and adding a rule to it is not a request to
+    close that rule. `nearest_mean_of_options` scores 0.3640 on diamond_chain (e1,
+    2026-09-05, reproduced here) and is in this dict so the recorded maximum is the true
+    one -- the maximum over the rules that happen to be here is otherwise a number that
+    reads as a floor and is not one. Balancing it would move the displaced mass to whatever
+    statistic reads it next: gold cannot be the largest of four on more than 23 of chain's
+    500 items, so SOME statistic always finds where the missing rank-0 mass went. Its pick
+    profile shows the mechanism -- it selects value rank 1 on 354 items and rank 2 on 146,
+    never rank 0 or 3, and chain's gold sits at [23,150,162,165] so ranks 1-2 hold 312/500
+    against a flat 250. On chain4, where the rank marginal IS flat, the same rule scores
+    0.1840. Not a new leak family: the same infeasibility read by a spread statistic.
     """
     return {
         "largest": lambda o, p: max(o),
@@ -401,6 +413,9 @@ def _battery():
         "farthest_zero": lambda o, p: max(o, key=abs),
         "only_negative": lambda o, p: ([v for v in o if v < 0] or [o[0]])[0],
         "median_high": lambda o, p: sorted(o)[2],
+        "nearest_mean_of_options": lambda o, p: min(o, key=lambda v: abs(v - sum(o) / len(o))),
+        "farthest_mean_of_options": lambda o, p: max(o, key=lambda v: abs(v - sum(o) / len(o))),
+        "closest_median_of_options": lambda o, p: min(o, key=lambda v: abs(v - sorted(o)[1])),
         "fewest_digits": lambda o, p: min(o, key=lambda v: (len(str(abs(v))), v)),
         "most_digits": lambda o, p: max(o, key=lambda v: (len(str(abs(v))), v)),
         "nonneg_then_smallest": lambda o, p: min([v for v in o if v >= 0] or list(o)),
@@ -412,6 +427,9 @@ def _battery():
         "closest_3sum": lambda o, p: min(o, key=lambda v: abs(v - 3 * sum(p))),
         "closest_mean": lambda o, p: min(o, key=lambda v: abs(v - sum(p) / len(p))),
         "closest_3a1_m2a2": lambda o, p: min(o, key=lambda v: abs(v - (3 * p[0] - 2 * p[1]))),
+        "closest_3a1_m2a2_p1": lambda o, p: min(o, key=lambda v: abs(v - (3 * p[0] - 2 * p[1] + 1))),
+        "closest_2a1": lambda o, p: min(o, key=lambda v: abs(v - 2 * p[0])),
+        "closest_msum": lambda o, p: min(o, key=lambda v: abs(v + sum(p))),
         "closest_prod": lambda o, p: min(o, key=lambda v: abs(v - p[0] * p[1])),
         "closest_prod_all": lambda o, p: min(o, key=lambda v: abs(v - math.prod(p))),
         "closest_m2alast": lambda o, p: min(o, key=lambda v: abs(v + 2 * p[-1])),
@@ -474,13 +492,23 @@ def _selftest():
     #     to 0.2560 (e1, 2026-09-05). A pooled mean cannot see a partition whose halves lean
     #     opposite ways, so the aggregate assertion certified a set that was half broken.
     #
-    #     THE THRESHOLDS ARE THE MEASURED FLOORS, NOT 0.30. diamond_chain cannot reach 0.25:
-    #     gold is the largest of four on only 23 of its 500 items, because two rungs exceed
-    #     it by construction on a 3-operand chain. Its balanced floor is 0.330; chain4's is
-    #     0.288. These are ceilings on the leak, checked with slack for the marginal item,
-    #     not aspirations -- a threshold below what the construction can deliver is a red
-    #     that no edit can clear (fb ruling 2026-09-05: no further ladder rungs).
-    FLOOR = {"diamond_chain": 0.36, "diamond_chain4": 0.32}
+    #     THE THRESHOLDS ARE THE MEASURED FLOORS, NOT 0.30, AND diamond_chain's IS 0.3640.
+    #     Gold is the largest of four on only 23 of chain's 500 items, because two rungs
+    #     exceed it by construction on a 3-operand chain, so its rank marginal cannot be
+    #     flatter than [23,159,159,159]. The displaced mass lands in the middle ranks and a
+    #     spread statistic reads it there: `nearest_mean_of_options` scores 0.3640 on chain
+    #     and 0.1840 on chain4, where the marginal IS flat (e1, 2026-09-05, reproduced).
+    #     Balancing that rule too would move the mass to whatever statistic reads it next --
+    #     rank, prox-3a1, prox-3sum and this one were each closed in turn and each fix
+    #     exposed the next, which is the non-convergence the header names. fb ruled
+    #     2026-09-05: no further rungs, no v5.
+    #
+    #     SO THIS ASSERTION IS A REGRESSION GUARD, NOT A CERTIFICATE. The thresholds sit a
+    #     little above each program's measured maximum so a rebuild that makes the set WORSE
+    #     goes red, and nothing here says a rule under the threshold is absent -- the battery
+    #     samples an unbounded family. The operational floor is the no-injection control
+    #     arm's own score, which absorbs every member including the unenumerated ones.
+    FLOOR = {"diamond_chain": 0.40, "diamond_chain4": 0.32}
     battery = _battery()
     by_prog = collections.defaultdict(list)
     for it in items:
