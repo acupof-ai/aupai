@@ -92,6 +92,38 @@ SCOPE = [
     # git's pathspec and fnmatch differ from shell globbing here and a second pattern
     # added "to be safe" would have been dead.
     "data/probes/*.jsonl",
+    # THE OTHER data/ PATHS POD-SIDE CODE READS, added with the check that found them
+    # (check_pod_reads_are_scoped). Each is named as a string literal by a .py that is itself in
+    # SCOPE, i.e. ships to the pod and runs there, so each could sit stale there indefinitely with
+    # pod_sync_check green -- the api_cloze failure exactly. MEASURED 2026-09-05: all six that
+    # exist on the pod match HEAD today, so this is closing an exposure, not a live divergence.
+    #
+    # NAMED AS DIRECTORY GLOBS, not as nine paths: data/eval/* is the holdout registry that
+    # datagen/holdout.py reads and every contamination scan joins against, and enumerating its
+    # members means the next holdout added is unscoped again. data/corpus/sample/* is the 2,000-doc
+    # sample a checkout ships -- it is NOT the corpus (data/corpus/<domain>/ is gitignored and
+    # stays out), so it is small and text.
+    "data/eval/*",
+    "data/synthetic/*.jsonl",
+    "data/corpus/sample/*",
+    # FOUND BY check_pod_reads_are_scoped'S SECOND FORM, and one of them was LIVE. The check first
+    # scanned only slash-literals ("data/x/y.json") and so could not see the incident's own file:
+    # eval/api_cloze.py:79 builds it as os.path.join(ROOT, "data", "probes", "api_cloze.jsonl"),
+    # which exists in the source only as segments. Adding the joined form found 6 more unscoped
+    # paths -- and data/PROVENANCE.md was STALE ON THE POD at that moment, 507 lines against
+    # HEAD's 555, missing among other things the note that /data00/tokens_code_rp1t.pt is the FULL
+    # 7.57B corpus and not the subset ("the two must not be confused when reading epochs"). Every
+    # gate was green. That is the api_cloze shape found by a check instead of by an incident.
+    #
+    # data/ledger_transport_schema.json was ABSENT there, which is the loud case (its reader
+    # crashes) rather than the silent one, but it belongs in the manifest for the same reason
+    # data/ledger_schema.json does: a writer validates against it at every call.
+    "data/PROVENANCE.md",
+    "data/ledger_transport_schema.json",
+    "data/raw/*_manifest.txt",
+    "data/rl/*.jsonl",
+    "data/t2s_table.json",
+    "data/token_cache_pools.json",
     "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",
