@@ -746,6 +746,14 @@ def main():
         # 316-item result reached an audit. A test whose subject is "this tool must refuse" has to
         # run at commit time, or the refusal can be removed with nothing going red.
         "scripts/test_e1_28_leak_scan.py",
+        # The MoE-vs-checkpoint config guard in sft_math.py. A TEST FILE, no flag. CPU only:
+        # its worlds are the live Cfg's real MoE values mutated one field at a time, and it
+        # stubs liger_kernel -- pod-only, imported at sft_math module scope -- rather than
+        # SKIPping, because a check that cannot run where people commit is not a check.
+        # Registered because moe_top_k and moe_layers change ROUTING and leave every tensor
+        # shape intact, so load_state_dict accepts a mismatch and the SFT silently trains a
+        # different model than the one that was pretrained.
+        "scripts/test_sft_moe_cfg.py",
         # humaneval gold BPB: its selftest needs no data and no model -- a uniform-distribution
         # stand-in has a known answer (log2(V) bits/byte exactly), which is what pins the bit
         # conversion, the byte divisor, the prompt-carries-no-loss split, and the refusal to

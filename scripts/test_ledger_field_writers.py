@@ -85,8 +85,9 @@ def _report(fails):
         return 1
     print("test_ledger_field_writers ok: class and cards are written only when given and absent "
           "otherwise (so 243 pre-field rows read null, not \"\"), 'none' is a stated cards answer, "
-          "and defect_caught keeps the opposite rule -- '' is written because a review that found "
-          "nothing is a different fact from no review")
+          "defect_caught keeps the opposite rule -- '' is written because a review that found "
+          "nothing is a different fact from no review -- and produces/decides are required with "
+          "empty and whitespace-only refused, the refusal appending no row")
     return 0
 
 
@@ -189,6 +190,50 @@ def main():
                                      f"defect_caught={row['defect_caught']!r}. Absent means no "
                                      f"review has reported yet; writing '' would make every "
                                      f"unreviewed close read as a review that found nothing.")
+        finally:
+            harness.TASKS_PATH = saved_tasks
+
+        # ---- harness task add: produces and decides (4c's ruling (ii), 2026-09-05) ----
+        # These two are REQUIRED, which makes their failure mode the opposite of the three above:
+        # nothing can omit them on a new row, so the risk is not absence but a value that satisfies
+        # argparse while stating nothing. required=True accepts --produces "" and --produces "   ".
+        # A row carrying "" is WORSE than the 62 rows carrying no key at all: no key means the field
+        # did not exist when the row was written, "" means the question was asked and had no answer.
+        saved_tasks = harness.TASKS_PATH
+        try:
+            add_cases = [
+                ("7 produces and decides land on the row",
+                 ["--produces", "kept GB/h at N=32", "--decides", "C++ lane first if > 8"], 0),
+                ("8 empty --produces is refused",
+                 ["--produces", "", "--decides", "C++ lane first if > 8"], 1),
+                ("9 whitespace-only --decides is refused",
+                 ["--produces", "kept GB/h at N=32", "--decides", "   "], 1),
+            ]
+            for label, extra, want_rc in add_cases:
+                d = os.path.join(tmp, label.split()[0] + "add")
+                os.makedirs(os.path.join(d, "runs"))
+                harness.TASKS_PATH = os.path.join(d, "runs", "tasks.jsonl")
+                argv = ["add", "--owner", "de", "--socket", "uds:/tmp/x.sock", "--task", "t",
+                        "--why", "w", "--pair", "44", "--prior", "defect-fix"] + extra
+                rc = harness.cmd_task(argv)
+                rows = _rows(harness.TASKS_PATH)
+                if rc != want_rc:
+                    fails.append(f"{label}: rc={rc}, expected {want_rc}")
+                if want_rc == 0:
+                    if not rows:
+                        fails.append(f"{label}: no row written")
+                    else:
+                        row = rows[-1]
+                        for k, v in (("produces", "kept GB/h at N=32"),
+                                     ("decides", "C++ lane first if > 8")):
+                            if row.get(k) != v:
+                                fails.append(f"{label}: row's {k} is {row.get(k)!r}, not {v!r}. "
+                                             f"Declared-and-unwired is the shape --cards shipped "
+                                             f"as; only the written row shows it.")
+                elif rows:
+                    fails.append(f"{label}: the refusal still wrote a row: {rows[-1].get('produces')!r}"
+                                 f"/{rows[-1].get('decides')!r}. A refusal that appends is not a "
+                                 f"refusal -- the register would carry the row the gate rejected.")
         finally:
             harness.TASKS_PATH = saved_tasks
     finally:

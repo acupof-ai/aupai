@@ -9467,7 +9467,20 @@ def cmd_task(argv):
                    help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
-    a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--reading", default=None,
+                   help="how the number is read: thresholds, direction, what a null means. Written "
+                        "BEFORE the result exists. Narrower than it used to be, because --produces "
+                        "now carries the quantity: the triple mirrors exp.py's, where --produces is "
+                        "the hypothesis's quantity, --reading is how the finding is derived from it, "
+                        "and --decides is the decision")
+    a.add_argument("--produces", required=True,
+                   help="the number or answer this task yields THAT NOBODY HAS, e.g. 'kept GB/h at "
+                        "N=32'. Not the artifact path (--evidence carries that at close) and not the "
+                        "activity: a quantity, so that its absence at close is visible")
+    a.add_argument("--decides", required=True,
+                   help="what changes depending on that value, e.g. 'C++ lane goes first if kept "
+                        "GB/h > 8'. A task nobody can name a decision for does not open -- that is "
+                        "the field's whole purpose, and non-empty is the only check")
     a.add_argument("--pair", required=True,
                    help="the second session who agreed this task before it started, and who "
                         "second-reads it after; NOT a co-executor and not the owner -- the pair "
@@ -9532,6 +9545,17 @@ def cmd_task(argv):
                       f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
                       "they are different", file=sys.stderr)
                 return 1
+        # REQUIRED IS NOT NON-EMPTY. argparse's required=True is satisfied by `--produces ""`, so
+        # the one check 4c specified would be bypassed by the shortest possible input -- and a row
+        # carrying "" is worse than a row carrying nothing, because it reads as an answered question.
+        # Whitespace too: "   " passes a truthiness test on the raw string.
+        for flag, val in (("--produces", args.produces), ("--decides", args.decides)):
+            if not str(val).strip():
+                print(f"refusing: {flag} is empty. It is required because a task nobody can name a "
+                      f"number and a decision for does not open; an empty value states that the "
+                      f"question was asked and had no answer, which is a different and false claim.",
+                      file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
@@ -9542,6 +9566,8 @@ def cmd_task(argv):
             "task": args.task,
             "why": args.why,
             "reading": args.reading,
+            "produces": args.produces,
+            "decides": args.decides,
             "blocked_on": args.blocked_on,
             "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
@@ -18084,10 +18110,21 @@ def cmd_launch(rest):
     """
     ap = argparse.ArgumentParser(prog="harness launch")
     ap.add_argument("name", help="run name (also the log and exp row name)")
-    ap.add_argument("--class", dest="run_class", required=True, choices=RUN_CLASSES,
+    # NOT required=True, and that is a correction of my own defect rather than a weakening.
+    # Landed required at 315755cc; E1's relaunch died in argparse at 08:02Z 2026-09-05 because the
+    # pre-registered launch line was written before the flag existed. A required flag on the SHARED
+    # launcher breaks every launch line already written, in the one place a session types blind and
+    # a failure costs a card-hour rather than a retry. 4c's rule from it: a new required launcher
+    # flag ships with a one-day default plus a WARN naming the flag, then flips to required.
+    #
+    # So: default None, WARN when absent, and exp.py still writes NO key in that case -- absent
+    # stays absent, per the same absent-vs-empty rule the field exists for. Flip to required on
+    # 2026-09-06 once every live launch line carries it.
+    ap.add_argument("--class", dest="run_class", default=None, choices=RUN_CLASSES,
                     help="what this run is FOR: incremental (produces a number nobody has), "
                          "confirmatory (reproduces a number we or someone else already has), or "
-                         "infra-verification (proves a tool works; not a measurement of the model)")
+                         "infra-verification (proves a tool works; not a measurement of the model). "
+                         "WARNs when omitted; required from 2026-09-06")
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
     ap.add_argument("--gate-timeout", type=int, default=None,
@@ -18287,12 +18324,19 @@ def cmd_launch(rest):
     # Recorded for every launch, not only the overridden ones, so the answer does not depend on
     # remembering which flag was used.
     launcher += f"; cards {cards or '(none)'}" + (" (--cards)" if args.cards is not None else "")
+    # THE WARN, in place of the refusal that killed E1's relaunch. Loud enough to be acted on, and
+    # it does not stop a card-hour. `--class` is omitted from the argv entirely when absent -- a
+    # `"--class", None` would pass the literal string "None" and land it in the row as a class.
+    if not args.run_class:
+        print(f"WARN: {args.name} carries no --class. State what this run is FOR: "
+              f"{'/'.join(RUN_CLASSES)}. Required from 2026-09-06; the row is written with no "
+              f"class key, which reads as unstated rather than as a class.", file=sys.stderr)
     subprocess.run(
         [sys.executable, os.path.join(HERE, "exp.py"),
          "start", "--name", args.name,
          "--cmd", " ".join(cmd),
          "--notes", f"launcher: harness launch {launcher}" + (f"; gate {gate_note}" if gate_note else ""),
-         "--class", args.run_class,
+         *(("--class", args.run_class) if args.run_class else ()),
          "--cards", (cards or "none"),
          "--hypothesis", args.hypothesis],
         check=True,
