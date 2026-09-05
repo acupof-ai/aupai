@@ -776,6 +776,37 @@ def gate_vocab_id(root, mix_path, world):
     return GO, f"one vocab_id across {len(cks)} of our checkpoints: {v}{excl}"
 
 
+def _gate9_verdict(fail_lines, index_scoped, n_ran, here):
+    """(state, why, excluded) for gate 9's FAIL lines: index-scoped ones do not gate.
+
+    A FUNCTION BOTH THE GATE AND ITS SELFTEST CALL, which is the whole point of it existing.
+    MEASURED 2026-09-05: the selftest first RE-IMPLEMENTED this partition inline, so mutating
+    the gate's own exclusion changed nothing the selftest could see -- three of four mutants
+    survived, including "exclude nothing", the original bug. A test that reimplements its
+    subject tests the copy.
+
+    A launch is gated on the repository's content. The invoking tree's git index is not that: it
+    is one session's uncommitted intent, seconds old, private to one worktree. shared_file_claim
+    FAILed inside gate 9 naming AGENTS.md, staged in the integration tree by a merge in flight,
+    and since its EVIDENCE is `repo` the partition returned NOGO -- two pending launches blocked.
+    """
+    fails = [ln.strip() for ln in fail_lines if "[FAIL]" in ln]
+    excluded = [f for f in fails if _fail_name(f) in index_scoped]
+    kept = [f for f in fails if _fail_name(f) not in index_scoped]
+    note = ""
+    if excluded:
+        # NAMED, never silently dropped: the FAIL is real and the committer still has to deal
+        # with it -- it is just not a fact about the tree's fitness to launch from.
+        note = (f"; {len(excluded)} index-scoped FAIL not gated here (a staged edit is one "
+                f"session's intent, not the repo's content): "
+                f"{', '.join(_fail_name(f) for f in excluded)}")
+    if kept:
+        state, why = _partition_fails(kept, here, n_ran)
+        if state is not None:
+            return state, why + note, excluded
+    return GO, note, excluded
+
+
 def gate_checks_and_drift(root, mix_path, world):
     """9. harness check has 0 FAIL and the pod does not diverge from main.
 
@@ -783,12 +814,9 @@ def gate_checks_and_drift(root, mix_path, world):
     and its "and the pod" was read as "on the pod" by two sessions on 2026-09-05, sending them
     after a pod-side mechanism for a FAIL that came from this laptop's own tree.
 
-    INDEX-SCOPED CHECKS ARE EXCLUDED. A launch is gated on the repository's content, and the
-    invoking tree's git index is not that: it is one session's uncommitted intent, seconds old
-    and private to one worktree. MEASURED 2026-09-05, cost two pending launches: shared_file_claim
-    FAILed here naming AGENTS.md, staged in the integration tree by a merge in flight, and since
-    its EVIDENCE is `repo` the partition returned NOGO. Excluding by DERIVATION rather than by
-    name (harness.index_scoped_checks reads the check bodies for `--cached`, `diff-index` and
+    INDEX-SCOPED CHECKS ARE EXCLUDED -- see _gate9_verdict, which holds that partition and is
+    called by the selftest too. Excluded by DERIVATION rather than by name
+    (harness.index_scoped_checks reads the check bodies for `--cached`, `diff-index` and
     _staged_index_env), so the next index-reading check is excluded when it is written rather
     than after it blocks a launch. The commit-time gate is unaffected: the pre-commit hook is
     where a staged shared-file edit is refused, and that has not moved."""
@@ -808,22 +836,10 @@ def gate_checks_and_drift(root, mix_path, world):
                       f"nothing ran, which is not the same as nothing failed"
                       + (f": {out.stderr.strip().splitlines()[-1][:70]}" if out.stderr.strip() else ""))
     where = _tree_identity(root)
-    fails = [ln.strip() for ln in ran if "[FAIL]" in ln]
-    index_scoped = _index_scoped_names(root)
-    excluded = [f for f in fails if _fail_name(f) in index_scoped]
-    fails = [f for f in fails if _fail_name(f) not in index_scoped]
-    note = ""
-    if excluded:
-        # NAMED, never silently dropped: the FAIL is real and the committer still has to deal
-        # with it -- it is just not a fact about the tree's fitness to launch from.
-        note = (f"; {len(excluded)} index-scoped FAIL not gated here (a staged edit is one "
-                f"session's intent, not the repo's content): "
-                f"{', '.join(_fail_name(f) for f in excluded)}")
-    if fails:
-        state, why = _partition_fails(fails, _here(), len(ran))
-        if state is not None:
-            return state, f"{why} [{where}]{note}"
-    return GO, f"harness check: {len(ran)} checks ran, 0 FAIL [{where}]{note}"
+    state, why, _excluded = _gate9_verdict(ran, _index_scoped_names(root), len(ran), _here())
+    if state != GO:
+        return state, f"{why} [{where}]"
+    return GO, f"harness check: {len(ran)} checks ran, 0 FAIL [{where}]{why}"
 
 
 def _tree_identity(root):
@@ -1911,10 +1927,13 @@ def selftest():
     # staged by a merge in flight, and its EVIDENCE=repo made the partition return NOGO, blocking
     # two launches on one session's index.
     #
-    # Called on the PARTITION rather than through a world, because the property is about which
-    # FAIL lines gate: building a world that stages a shared file would test git's index, not the
-    # partition, and the world's own `harness check` would then have to be trusted to produce the
-    # line. Constructed lines are the subject here.
+    # CALLS _gate9_verdict, THE GATE'S OWN PARTITION, on constructed [FAIL] lines. The first
+    # version reimplemented that partition here, and MEASURED 2026-09-05 three of four mutants
+    # survived because of it: mutating the gate's exclusion changed nothing this test could see.
+    # A test that reimplements its subject tests the copy. Constructed lines rather than a world
+    # that stages a file, because the property is about which FAIL lines gate -- a real world
+    # would test git's index and would need its own `harness check` to be trusted to emit the
+    # line.
     _idx = _index_scoped_names(ROOT)
     if "shared_file_claim" not in _idx:
         bad.append("index_scoped_checks does not name shared_file_claim -- either the derivation "
@@ -1925,28 +1944,24 @@ def selftest():
     _ran = ["  [PASS] x ok"] * 40
 
     def _verdict(lines):
-        """gate 9's own partition step, on constructed [FAIL] lines."""
-        fails = [ln.strip() for ln in lines if "[FAIL]" in ln]
-        excluded = [f for f in fails if _fail_name(f) in _idx]
-        kept = [f for f in fails if _fail_name(f) not in _idx]
-        if kept:
-            st, _why = _partition_fails(kept, _here(), len(_ran))
-            if st is not None:
-                return st, len(excluded)
-        return GO, len(excluded)
+        st, why, excluded = _gate9_verdict(lines, _idx, len(_ran), _here())
+        return st, len(excluded), why
 
-    _st, _nex = _verdict(_ran + [_idx_line])
+    _st, _nex, _why = _verdict(_ran + [_idx_line])
     if _st != GO:
         bad.append(f"an index-scoped FAIL alone gated the launch ({_st}) -- a staged file is one "
                    f"session's uncommitted intent, not the repository's content")
     if _nex != 1:
         bad.append(f"the index-scoped FAIL was not counted as excluded ({_nex}) -- it must be "
                    f"NAMED in the verdict, never silently dropped: the committer still owes it")
-    _st2, _ = _verdict(_ran + [_repo_line])
+    if "shared_file_claim" not in _why:
+        bad.append(f"the verdict does not NAME the excluded check ({_why[:60]!r}) -- an excluded "
+                   f"FAIL that nobody can see in the output has been dropped, not excluded")
+    _st2, _, _ = _verdict(_ran + [_repo_line])
     if _st2 == GO:
         bad.append("a repo-scoped FAIL (pinned_ids) did NOT gate the launch -- the exclusion "
                    "widened past the index and gate 9 stopped gating")
-    _st3, _nex3 = _verdict(_ran + [_idx_line, _repo_line])
+    _st3, _, _ = _verdict(_ran + [_idx_line, _repo_line])
     if _st3 == GO:
         bad.append("an index-scoped FAIL beside a repo-scoped one made the launch GO -- the "
                    "exclusion must remove only its own line, not the whole verdict")
