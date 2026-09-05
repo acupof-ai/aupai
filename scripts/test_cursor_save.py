@@ -1,31 +1,41 @@
 #!/usr/bin/env python3
 """save_checkpoint must write the row cursor, for every shape `cfg` arrives in (de-8 D1).
 
-THIS TEST FAILS ON train.py AS OF 2026-09-01 12:20, and that is the point of landing it
-first. `train.py:1289` rebinds `cfg` to a dict on every path:
+THE DEFECT THIS WAS WRITTEN AGAINST, fixed 2026-09-01. save_checkpoint rebound `cfg` to a
+dict before reading the cursor:
 
-    :1289   cfg = cfg if isinstance(cfg, dict) else vars(cfg)
-    :1315   cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
+    cfg = cfg if isinstance(cfg, dict) else vars(cfg)
+    cur = getattr(cfg, "_row_cursor", None) if not isinstance(cfg, dict) else None
 
-so by :1315 the isinstance test is always true, `cur` is always None, and the whole
-`if cur:` block -- row_cursor, row_cursor_as_of_step, row_cursor_srcfp, row_cursor_seed --
-never executes. No checkpoint any run has ever written carries a cursor. Verified on the
-live pod: ckpt_pretrain_30b_s2.pt.step21500 has keys [cfg, vocab_id, corpus_fp, env_fp,
-step] and no row_cursor; the stage-1 checkpoint has one only because replay_cursor.py
-injected it, which its row_cursor_reconstructed marker records.
+so the isinstance test was always true, `cur` was always None, and the whole `if cur:` block
+-- row_cursor, row_cursor_as_of_step, row_cursor_srcfp, row_cursor_seed -- never executed. No
+checkpoint any run had ever written carried a cursor. Verified on the live pod at the time:
+ckpt_pretrain_30b_s2.pt.step21500 had keys [cfg, vocab_id, corpus_fp, env_fp, step] and no
+row_cursor; the stage-1 checkpoint had one only because replay_cursor.py injected it, which
+its row_cursor_reconstructed marker records.
+
+NO LINE NUMBERS FOR IT HERE, and the failure path computes them instead of quoting them
+(_d1_present). This file used to name :1289 and :1315 in three places and print a fixed
+"D1 is open: train.py:1289 ..." on EVERY failure. When an unrelated change broke the fixture,
+that string sent a reader to two lines that are now an Adagrad append and a length assertion
+(e1, 2026-09-06). A hardcoded cause is a claim about a tree nobody re-read.
 
 Why this test rather than the de-7 rehearsal that already passed: the rehearsal exercised
-the RECONSTRUCTION path -- replay_cursor writes the dict, a resume reads it -- which
-touches neither :1289 nor :1315. The production writer was never called by any test. This
+the RECONSTRUCTION path -- replay_cursor writes the dict, a resume reads it -- which touches
+neither the rebind nor the guard. The production writer was never called by any test. This
 one calls save_checkpoint itself, which is the only thing that would have caught it.
 
 Three cfg shapes because train.py passes the Cfg CLASS while other callers pass an
 instance or a namespace, and `vars()` behaves differently on each (mappingproxy vs dict).
 A fix that works for one and not the others is the same defect wearing a smaller hat.
 
+The cfg here is hand-built, so it does not learn about new required fields from build_mix:
+when the writer gained _plan_world, this file broke and the hook did not run it, because it
+was on no trigger list (fixed on main in e2f83c5e).
+
     python3 scripts/test_cursor_save.py
 
-Exit 0 = the cursor survives every shape. Exit 1 = D1 is still open.
+Exit 0 = the cursor survives every shape. Exit 1 = the failure names its own cause.
 """
 
 import os
@@ -73,6 +83,42 @@ def shapes(mid_run=False):
     inst = Cfg()
     ns = types.SimpleNamespace(**{k: v for k, v in vars(Cfg).items() if not k.startswith("__")})
     return [("Cfg class", Cfg), ("instance", inst), ("SimpleNamespace", ns)]
+
+
+def _d1_present():
+    """Is the ORIGINAL D1 defect back -- a `cfg = ... vars(cfg)` rebind before the cursor read?
+
+    Computed, not asserted. This function replaced a fixed string that every failure printed
+    verbatim: "D1 is open: train.py:1289 rebinds cfg to a dict, so the guard at :1315 always
+    takes its else-None branch." Those line numbers were true when the file was written and
+    are now an Adagrad append and a length assertion, so when an unrelated change broke this
+    file the message sent a reader to two innocent lines (e1, 2026-09-06, cost them minutes).
+    A hardcoded cause is a claim about a tree nobody re-read.
+
+    Returns the rebind's line number, or None. By AST over save_checkpoint's own body: an
+    assignment to `cfg` whose value calls vars(), textually before the first `_row_cursor`
+    read. A grep cannot scope it to one function.
+    """
+    import ast
+
+    src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    fn = next((n for n in ast.walk(ast.parse(src))
+               if isinstance(n, ast.FunctionDef) and n.name == "save_checkpoint"), None)
+    if fn is None:
+        return None
+    reads = [n.lineno for n in ast.walk(fn)
+             if isinstance(n, ast.Constant) and n.value == "_row_cursor"]
+    first_read = min(reads) if reads else None
+    for n in ast.walk(fn):
+        if not isinstance(n, ast.Assign):
+            continue
+        if not any(getattr(t, "id", None) == "cfg" for t in n.targets):
+            continue
+        if any(isinstance(c, ast.Call) and getattr(c.func, "id", "") == "vars"
+               for c in ast.walk(n)):
+            if first_read is None or n.lineno < first_read:
+                return n.lineno
+    return None
 
 
 def main():
@@ -254,8 +300,16 @@ def main():
         print("FAIL: save_checkpoint dropped the cursor")
         for b in bad:
             print(f"  {b}")
-        print("\nD1 is open: train.py:1289 rebinds cfg to a dict, so the guard at :1315 "
-              "always takes its else-None branch.")
+        _rebind = _d1_present()
+        if _rebind:
+            print(f"\nD1 is open: train.py:{_rebind} rebinds cfg to a dict before the cursor "
+                  f"read, so every `getattr(cfg, ...) if not isinstance(cfg, dict)` guard below "
+                  f"it takes its else-None branch.")
+        else:
+            print("\nNot D1: no `cfg = ... vars(cfg)` rebind precedes the cursor read in "
+                  "save_checkpoint, so the cause is above and not the de-8 defect. A required "
+                  "field newly added to the writer is the likeliest one -- this file builds "
+                  "cfg by hand and does not learn about new fields from build_mix.")
         return 1
     print(f"OK: row_cursor and row_cursor_srcfp survive all {len(shapes())} cfg shapes, "
           f"plan-complete and mid-run")

@@ -21,7 +21,7 @@ resume (origin 832), so absolute and segment-only disagree there; 305,152 - 212,
 92,160 = 360 x 256 is that segment added in whole. The other two sit at origin 0, where
 both implementations produce the same number -- the PRE-fix code passes on them. A
 known-answer set without a post-resume checkpoint is blind to exactly the defect the
-assert guards, which is the blind spot train.py:1000-1005 already names in prose.
+assert guards, which is the blind spot save_checkpoint's own comment already names in prose.
 
 The negative case is therefore built at origin 832, not at origin 0.
 
@@ -76,7 +76,7 @@ def _plan_full(origin, step, per_domain=None):
 
 
 def _stripe(full, rank=0, world=WORLD):
-    """This rank's stripe, sliced off the full plan exactly as build_mix does at :2415.
+    """This rank's stripe, sliced off the full plan exactly as build_mix slices `mine`.
 
     Derived, not invented a second time: the two vectors have to describe one plan, or the
     fixture can be self-consistent while disagreeing with the code it tests."""
@@ -119,9 +119,11 @@ def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag=
 def _call_sites(src):
     """(lineno, arg-count) for every save_checkpoint call in `src`, by AST.
 
-    A grep cannot do this: `save_checkpoint(` matches its own `def` at train.py:986, so a
-    text test stays green on a tree where the call site was deleted (de, 2026-09-03, de-30
-    shipped exactly that defect and read 9/9).
+    A grep cannot do this: `save_checkpoint(` matches its own `def` line too, so a text test
+    stays green on a tree where the call site was deleted (de, 2026-09-03, de-30 shipped
+    exactly that defect and read 9/9). No line number quoted here on purpose -- this file's
+    sibling printed two stale ones for weeks and sent a reader chasing them (e1, 2026-09-06);
+    the numbers this function reports are read from the tree it is running against.
     """
     import ast
 
@@ -145,8 +147,9 @@ def _check_call_sites(bad):
 
     The identity above cannot fire on a call that omits `step`: save_checkpoint skips the
     whole row_cursor block when step is None, so the checkpoint is written with no cursor at
-    all and every assertion in this file passes vacuously. The run-end save at train.py:2647
-    was that call until de-31. Two silent consequences, and neither raises:
+    all and every assertion in this file passes vacuously. The RUN-END save was that call
+    until de-31 -- named by role, not by line, because the line has moved twice since and a
+    stale one is worse than none. Two silent consequences, and neither raises:
 
       no step  the .pt carries no row_cursor, so a resume restarts every domain at row 0 and
                re-reads the corpus. Resuming had to use .ep1, which is why it survived.
