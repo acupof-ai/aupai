@@ -6,17 +6,20 @@
     "on this team. On 2026-09-01 three non-team sessions were given work because an",
     "idle status in ListAgents was read as ownership. Idle does not derive",
     "membership; a produced artifact or the session's own word does.",
-    "Post to a topic and everyone sees it. Send a socket message and only one does."
+    "Post to a topic and everyone sees it. Send a socket message and only one does.",
+    "2026-09-05 fb: ADDRESSING STANDARD. Send to the socket in this file, or to listagents_name with its [ref] appended -- never a bare name. Names collide (lessons-e1 is NOT e1; lessons-23/c1 are not on this team) and the channel a grant commit names (e.g. 'via tilerl-27') is a grant channel, never the runner. Before the first send of a session, run ListAgents and match name+ref against this file; if they disagree, this file is updated first. A misrouted message goes back to its sender, and the sender re-reads this file. Incidents: 2026-09-01 three non-team sessions dispatched; 2026-09-05 b0's bench review sent to tilerl-27 then to a session outside the team."
   ],
   "members": [
     {
       "name": "fb",
-      "socket": "uds:/tmp/cc-socks/1a0b5e.sock",
+      "socket": "use listagents_name [ref]; the old 1a0b5e socket is dead",
       "role": "controller",
       "topics": [
         "*"
       ],
-      "note": "rulings, card allocation, launch; the run's supervisor of record"
+      "note": "rulings, card allocation, launch; the run's supervisor of record",
+      "listagents_name": "aupai-4c",
+      "listagents_ref": "61638d"
     },
     {
       "name": "tilerl",
@@ -26,7 +29,9 @@
         "shape_recipe",
         "supervision"
       ],
-      "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03."
+      "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03.",
+      "listagents_name": "tilerl-0a",
+      "listagents_ref": "59e76a"
     },
     {
       "name": "b0",
@@ -36,7 +41,9 @@
         "mix",
         "architecture"
       ],
-      "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b)."
+      "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b).",
+      "listagents_name": "lessons-62",
+      "listagents_ref": "a7fc18"
     },
     {
       "name": "e1",
@@ -45,16 +52,20 @@
       "topics": [
         "launch_gate"
       ],
-      "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03."
+      "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03.",
+      "listagents_name": "lessons-58",
+      "listagents_ref": "e0c880"
     },
     {
       "name": "3b",
-      "socket": "uds:/tmp/cc-socks/5207.sock",
+      "socket": "uds:/tmp/cc-socks/22008.sock",
       "role": "data",
       "topics": [
         "corpus"
       ],
-      "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03."
+      "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03.",
+      "listagents_name": "aupai-84",
+      "listagents_ref": "5c9ee3"
     },
     {
       "name": "de",
@@ -64,7 +75,9 @@
         "instruments",
         "launch_gate"
       ],
-      "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03."
+      "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03.",
+      "listagents_name": "aupai-db",
+      "listagents_ref": "4e353c"
     },
     {
       "name": "44",
@@ -73,14 +86,18 @@
       "topics": [
         "readout"
       ],
-      "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03."
+      "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
+      "listagents_name": "lessons-44",
+      "listagents_ref": "c5bf0d"
     },
     {
       "name": "98",
       "socket": "uds:/tmp/cc-socks/34653.sock",
       "role": "reporting",
       "topics": [],
-      "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03."
+      "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03.",
+      "listagents_name": "aupai-98",
+      "listagents_ref": "2d0371"
     }
   ],
   "not_on_this_team": [
