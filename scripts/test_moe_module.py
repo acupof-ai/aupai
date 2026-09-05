@@ -413,7 +413,17 @@ def main():
         import train as _t
         src = inspect.getsource(_t.main)
         problems = []
-        i_guard = src.find('if getattr(Cfg, "moe_experts", 0) and not fp8:')
+        # FOUND BY PREFIX, NOT BY THE WHOLE LINE. The old form matched the exact literal
+        # `... and not fp8:` and the guard has since grown a term -- `and not bf16_only` when
+        # --bf16 landed (da5ef8bf) -- so the exact match stopped finding a guard that was right
+        # there, and the test reported "no guard in train.main" for a widened one. That is the
+        # worst shape of failure available here: it reads as the guard being GONE. Worse, it went
+        # unnoticed, because this test is on model.py's trigger list and not train.py's, so the
+        # commit that widened the guard never ran it. Matching the condition's stable prefix and
+        # taking the rest of the line lets a term be ADDED without a false alarm, while the four
+        # worlds below still decide whether the resulting condition is correct.
+        _anchor = 'if getattr(Cfg, "moe_experts", 0) and not fp8'
+        i_guard = src.find(_anchor)
         i_cast = src.find("raw_model = raw_model.to(torch.bfloat16)")
         if i_guard < 0:
             problems.append("no `moe_experts and not fp8` guard in train.main")
@@ -437,13 +447,26 @@ def main():
                     break
                 _block.append(_l)
             body = textwrap.dedent("\n".join(_block))
-            worlds = (("moe on, fp8 off", 24, False, False, True),
-                      ("moe on, fp8 on", 24, True, True, False),
-                      ("moe off, fp8 off", 0, False, False, False),
-                      ("moe on, amp off", 24, False, True, True))
-            for label, n_exp, fp8, argfp8, must_raise in worlds:
+            # THE WORLDS CARRY bf16_only AND args.bf16 because the guard reads both since
+            # da5ef8bf. Omitting them does not make the check lenient -- it makes it die on
+            # NameError inside the `except Exception` below, which prints "could not exercise"
+            # and counts as a BUG for a reason unrelated to the guard's logic. The two --bf16
+            # worlds are the ones the flag exists for: --bf16 alone must PASS (it is the cast,
+            # so the experts do reach bf16) and --bf16 with amp off must REFUSE (bf16_only is
+            # `args.bf16 and amp`, so the flag would be set and do nothing).
+            worlds = (
+                # label, n_experts, fp8, args.fp8, bf16_only, args.bf16, must_raise
+                ("moe on, neither flag", 24, False, False, False, False, True),
+                ("moe on, fp8 on", 24, True, True, False, False, False),
+                ("moe off, neither flag", 0, False, False, False, False, False),
+                ("moe on, fp8 asked, amp off", 24, False, True, False, False, True),
+                ("moe on, bf16 on", 24, False, False, True, True, False),
+                ("moe on, bf16 asked, amp off", 24, False, False, False, True, True),
+            )
+            for label, n_exp, fp8, argfp8, bf16o, argbf16, must_raise in worlds:
                 env = {"Cfg": type("C", (), {"moe_experts": n_exp}),
-                       "fp8": fp8, "args": type("A", (), {"fp8": argfp8})}
+                       "fp8": fp8, "bf16_only": bf16o,
+                       "args": type("A", (), {"fp8": argfp8, "bf16": argbf16})}
                 try:
                     exec(compile(body, "guard", "exec"), env)  # noqa: S102
                     if must_raise:
@@ -453,14 +476,15 @@ def main():
                         problems.append(f"{label}: guard refused a valid run")
                     else:
                         msg = str(ex)
-                        for want in ("bfloat16", "--fp8", "_grouped_mm"):
+                        for want in ("bfloat16", "--fp8", "--bf16", "_grouped_mm"):
                             if want not in msg:
                                 problems.append(f"{label}: message omits {want}")
         ok = not problems
         bad += 0 if ok else 1
-        print(f"  {'ok  ' if ok else 'BUG '} train.main's fp8 refusal fires in the two worlds that "
-              f"need it and stays silent in the two that do not (dense-without-fp8 included), sits "
-              f"before the bf16 cast, and names _grouped_mm and --fp8"
+        print(f"  {'ok  ' if ok else 'BUG '} train.main's fp8/bf16 refusal fires in the three "
+              f"worlds that need it and stays silent in the three that do not (dense-without-"
+              f"flags and --bf16 included), sits before the bf16 cast, and names _grouped_mm, "
+              f"--fp8 and --bf16"
               f"{'' if ok else ' -- ' + '; '.join(problems)}")
     except Exception as e:  # noqa: BLE001
         bad += 1

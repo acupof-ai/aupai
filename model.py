@@ -802,41 +802,104 @@ class MoEFFN(nn.Module):
         self.top_k = int(getattr(cfg, "moe_top_k", 3))
         self.n_shared = int(getattr(cfg, "moe_shared", 1))
         w = int(getattr(cfg, "moe_expert_ffn", 0) or 0)
+        # THE LATENT VARIANT, off unless moe_latent is set (prereg moe_0905 amendment 13). The
+        # routed experts run in a PROJECTED width: down-project d -> d_latent once per token,
+        # route and run the experts entirely at d_latent, up-project back to d. The point is the
+        # dispatch payload and the expert matmul dimensions, both of which shrink with d_latent;
+        # at the registered cell (d_latent 384) the payload is 0.38x the 24-expert arm's.
+        #
+        # THE SHARED EXPERT KEEPS ITS OWN WIDTH, which is why moe_shared_ffn exists. Under the
+        # latent variant the equal-active budget is spent on three things instead of two, so the
+        # shared expert cannot also be at expert_ffn without breaking parity -- and letting it
+        # move is what makes an EXACT parity-and-parameter match possible at all (measured: with
+        # the shared width pinned at 768 there is no integer solution, and with it free there are
+        # three at 1.000x the 24-expert arm's routed parameters). It defaults to expert_ffn, so
+        # every existing config keeps its shape.
+        self.d_latent = int(getattr(cfg, "moe_latent", 0) or 0)
+        w_sh = int(getattr(cfg, "moe_shared_ffn", 0) or 0) or w
         if w <= 0:
             raise ValueError("moe_expert_ffn must be > 0 when moe_experts > 0")
         if self.top_k < 1 or self.top_k > self.n_routed:
             raise ValueError(
                 f"moe_top_k {self.top_k} must be in [1, moe_experts {self.n_routed}]")
+        if self.d_latent < 0:
+            raise ValueError(f"moe_latent {self.d_latent} must be >= 0 (0 = off)")
+        if self.d_latent and self.n_shared != 1:
+            raise ValueError(
+                f"moe_latent with moe_shared {self.n_shared}: the latent parity below counts ONE "
+                f"shared expert at moe_shared_ffn. Use moe_shared 1, or extend the parity "
+                f"expression before using more")
         # EQUAL-ACTIVE PARITY, refused rather than warned. This is the property the whole arm
         # rests on: an arm at 1.25x active compute measures compute, not sparsity.
-        active = (self.top_k + self.n_shared) * w
-        if active != cfg.ffn_hidden:
-            raise ValueError(
-                f"active FFN width {active} != dense ffn_hidden {cfg.ffn_hidden}: "
-                f"(moe_top_k {self.top_k} + moe_shared {self.n_shared}) * moe_expert_ffn {w} "
-                f"must equal ffn_hidden exactly, or the arm differs from the control in FLOPs as "
-                f"well as in sparsity and readout 1's delta is unattributable. "
-                f"ffn_hidden {cfg.ffn_hidden} admits moe_top_k in "
-                f"{sorted(k - self.n_shared for k in range(2, cfg.ffn_hidden + 1) if cfg.ffn_hidden % k == 0 and k - self.n_shared >= 1)[:8]}"
-                f" at the matching widths")
+        if self.d_latent:
+            # COUNTED IN MULTIPLIES, not in widths, because the latent arm spends its budget on
+            # three different shapes: the two projections (d x d_latent each, every token), the
+            # routed experts at the LATENT width (3 * d_latent * expert_ffn per expert, top_k of
+            # them), and the shared expert at the FULL width (3 * d * moe_shared_ffn). The dense
+            # SwiGLU costs 3 * d * ffn_hidden. Equality of those two totals is the constraint;
+            # the width-product form above cannot express it.
+            active_mul = (2 * d * self.d_latent
+                          + 3 * self.top_k * self.d_latent * w
+                          + 3 * d * w_sh)
+            dense_mul = 3 * d * cfg.ffn_hidden
+            if active_mul != dense_mul:
+                raise ValueError(
+                    f"latent MoE active multiplies {active_mul} != dense {dense_mul}: "
+                    f"2*d*d_latent ({2 * d * self.d_latent}) + 3*top_k*d_latent*expert_ffn "
+                    f"({3 * self.top_k * self.d_latent * w}) + 3*d*shared_ffn "
+                    f"({3 * d * w_sh}) must equal 3*d*ffn_hidden exactly, or the arm differs "
+                    f"from the control in FLOPs as well as in sparsity and readout 1's delta is "
+                    f"unattributable. The registered cell is d_latent 384, expert_ffn 2048, "
+                    f"moe_shared_ffn 512 at d 1024 / ffn_hidden 3072")
+        else:
+            active = (self.top_k + self.n_shared) * w
+            if active != cfg.ffn_hidden:
+                raise ValueError(
+                    f"active FFN width {active} != dense ffn_hidden {cfg.ffn_hidden}: "
+                    f"(moe_top_k {self.top_k} + moe_shared {self.n_shared}) * moe_expert_ffn {w} "
+                    f"must equal ffn_hidden exactly, or the arm differs from the control in FLOPs as "
+                    f"well as in sparsity and readout 1's delta is unattributable. "
+                    f"ffn_hidden {cfg.ffn_hidden} admits moe_top_k in "
+                    f"{sorted(k - self.n_shared for k in range(2, cfg.ffn_hidden + 1) if cfg.ffn_hidden % k == 0 and k - self.n_shared >= 1)[:8]}"
+                    f" at the matching widths")
+        self.shared_ffn = w_sh
         self.expert_ffn = w
         # STORED (E, N, K) AND TRANSPOSED AT USE. _grouped_mm needs a transposed mat2 on CUDA;
         # keeping the parameter in (E, N, K) means the transpose is a view and no copy happens in
         # the hot path. Held as one stacked Parameter per matrix rather than a ModuleList: the
         # grouped op consumes per-expert matrices with a row offset, so a list would be stacked
         # on every call and the arm would pay for the stacking.
-        self.w13 = nn.Parameter(torch.empty(self.n_routed, 2 * w, d))
-        self.w2 = nn.Parameter(torch.empty(self.n_routed, d, w))
-        # THE SHARED EXPERT is a plain dense FFN at the expert width -- every token traverses it,
-        # so there is nothing to route and a grouped call would be pure overhead.
-        self.sh13 = nn.Linear(d, 2 * w, bias=False)
-        self.sh2 = nn.Linear(w, d, bias=False)
+        # THE EXPERTS' INPUT/OUTPUT WIDTH IS d_latent UNDER THE LATENT VARIANT, d otherwise. This
+        # one name is the whole shape difference: w13 is (E, 2w, de) and w2 is (E, de, w), so the
+        # grouped matmuls shrink in their contracted dimension and the rows dispatched to each
+        # expert are de wide instead of d.
+        de = self.d_latent or d
+        self.w13 = nn.Parameter(torch.empty(self.n_routed, 2 * w, de))
+        self.w2 = nn.Parameter(torch.empty(self.n_routed, de, w))
+        # THE PROJECTIONS, latent variant only. No bias and no activation between them and the
+        # experts: they exist to change the width the routed path runs at, not to add a
+        # nonlinearity, and an activation here would make the arm a different architecture than
+        # the one registered. Initialised at their own fan_in like everything else below.
+        if self.d_latent:
+            self.down = nn.Linear(d, self.d_latent, bias=False)
+            self.up = nn.Linear(self.d_latent, d, bias=False)
+        # THE SHARED EXPERT is a plain dense FFN, always at the FULL width d and its own
+        # moe_shared_ffn -- it is not routed, so there is nothing for a latent projection to save
+        # on it, and putting it behind the projection would change what every token traverses.
+        self.sh13 = nn.Linear(d, 2 * w_sh, bias=False)
+        self.sh2 = nn.Linear(w_sh, d, bias=False)
         self.router = nn.Linear(d, self.n_routed, bias=False)
         # THE SAME INITIALISATION THE DENSE FFN GETS, per expert. nn.Linear's default is
         # kaiming_uniform on fan_in, so an expert of width w initialised as if it were width
         # ffn_hidden would start at the wrong scale and the arm's first steps would measure the
         # initialisation. Each expert matrix is initialised at ITS own fan_in.
-        for t, fan_in in ((self.w13, d), (self.w2, w)):
+        #
+        # `de`, NOT `d`, FOR w13 UNDER THE LATENT VARIANT, and this line is why the variant needed
+        # a test rather than a read: w13 contracts over the expert INPUT width, which the latent
+        # projection changes from d to d_latent. Leaving `d` here would init 24 experts at
+        # 1/sqrt(1024) when their fan_in is 384 -- a 1.63x scale error, silent, and exactly the
+        # "first steps measure the initialisation" failure this comment already warns about.
+        for t, fan_in in ((self.w13, de), (self.w2, w)):
             bound = 1.0 / math.sqrt(fan_in)
             with torch.no_grad():
                 t.uniform_(-bound, bound)
@@ -935,6 +998,13 @@ class MoEFFN(nn.Module):
         # a dtype the routed path could not use. Casting once removes that asymmetry rather than
         # relying on two mechanisms to agree.
         xw = flat.to(self.w13.dtype)
+        # THE ROUTED PATH'S INPUT IS THE PROJECTION, latent variant only. Down-project ONCE per
+        # token, before the gather: projecting after would run d->d_latent top_k times per token
+        # instead of once and break the parity the constructor asserts. The router still reads the
+        # FULL-width token (logits are computed above from `flat`), because routing is a decision
+        # about the token and not about its projection -- and because a d_latent-width router
+        # would be a second architecture change bundled into this one.
+        xr = self.down(xw) if self.d_latent else xw
         # THE EXPERT DTYPE MUST BE bf16, AND THIS IS A REFUSAL RATHER THAN A CAST (4c's ruling (c),
         # 2026-09-05). torch._grouped_mm's eager kernel accepts fp32 and its META registration does
         # not, so under torch.compile an fp32 model raises "Expected inputs of BF16 type but got
@@ -966,7 +1036,7 @@ class MoEFFN(nn.Module):
         # torch.float32" instead of a message naming the cause. A guard that the compiler can
         # elide is not a guard. It lives in train.py, before the first step, where the model's
         # dtype is a plain fact.
-        rows = xw[tok[order]]
+        rows = xr[tok[order]]
         h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)
         a, b = h.chunk(2, dim=-1)
         y = self._situ(a, b, lambda g: torch._grouped_mm(
@@ -980,10 +1050,24 @@ class MoEFFN(nn.Module):
         # bf16 has 8 mantissa bits, and the same argument that put the optimizer's master copy in
         # fp32 (train.py's fp32_master, 91% of bf16 updates were bit-identical no-ops) applies to
         # a sum of three weighted contributions. Cast once at the return instead.
+        #
+        # THE ACCUMULATOR IS d_latent WIDE UNDER THE LATENT VARIANT, and the gated sum happens
+        # THERE, before the up-projection. Two reasons it is this way round and not the other: the
+        # up-projection is linear, so up(sum_k g_k * y_k) == sum_k g_k * up(y_k) and the cheaper
+        # form is exact rather than an approximation; and projecting each of the top_k
+        # contributions separately would cost top_k up-projections per token, which breaks the
+        # parity the constructor asserts.
+        de = self.d_latent or d
         gflat = gate.reshape(-1)[order]
-        out = torch.zeros(n, d, device=x.device, dtype=torch.float32)
+        out = torch.zeros(n, de, device=x.device, dtype=torch.float32)
         out.index_add_(0, tok[order], y.float() * gflat[:, None])
-        # THE SHARED EXPERT, which every token also traverses. Fed from the SAME cast input.
+        if self.d_latent:
+            # UP-PROJECT ONCE, in the accumulator's dtype rather than casting back first: `up` is
+            # an nn.Linear so autocast decides its compute dtype, and the fp32 accumulation above
+            # is preserved through the projection's input.
+            out = self.up(out.to(xw.dtype)).float()
+        # THE SHARED EXPERT, which every token also traverses. Fed from the SAME cast input at the
+        # FULL width -- it is not routed, so the latent projection does not apply to it.
         hs = self.sh13(xw)
         sa, sb = hs.chunk(2, dim=-1)
         out = out + self._situ(sa, sb, self.sh2).float()
