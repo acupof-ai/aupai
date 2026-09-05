@@ -198,6 +198,9 @@ def score(model, tok, items, device, num_id=None, batch_size=None):
     # worlds in the selftest run exactly as before. Both scoring calls are inside it -- the
     # summed pass here and _option_sums' pass below -- because a normalisation control taken
     # under a different numeric regime than the number it controls is not a control.
+    # autocast on the same terms as domain_loss.py:252: enabled only on cuda, so the stub-model
+    # worlds run exactly as before. no_grad now lives on score_mc_items itself (its sibling
+    # score_mc always had it; the split left it behind), so it is not repeated here.
     with torch.autocast("cuda", dtype=torch.bfloat16, enabled=str(device).startswith("cuda")):
         preds, labels, scored = score_mc_items(model, tok, mc, device,
                                                batch_size=batch_size or MC_BATCH, num_id=num_id)
