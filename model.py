@@ -935,6 +935,37 @@ class MoEFFN(nn.Module):
         # a dtype the routed path could not use. Casting once removes that asymmetry rather than
         # relying on two mechanisms to agree.
         xw = flat.to(self.w13.dtype)
+        # THE EXPERT DTYPE MUST BE bf16, AND THIS IS A REFUSAL RATHER THAN A CAST (4c's ruling (c),
+        # 2026-09-05). torch._grouped_mm's eager kernel accepts fp32 and its META registration does
+        # not, so under torch.compile an fp32 model raises "Expected inputs of BF16 type but got
+        # mat_a.dtype=torch.float32 and mat_b.dtype=torch.float32" -- measured on card 1: eager
+        # fp32/fp32 returns fp32, compiled fp32/fp32 raises, both bf16 paths fine.
+        #
+        # The model reaches bf16 only under --fp8 (train.py:2786-2789, `fp8 = args.fp8 and amp`).
+        # run_ddp.sh passes --fp8; scripts/test_e2e.py invoked train.py without it, so the walk ran
+        # a configuration the launch never runs and found this.
+        #
+        # NOT CHECKED AT CONSTRUCTION, and this is why: nn.Parameter is fp32 by default, so EVERY
+        # MoEFFN is fp32 when __init__ returns -- verified 2026-09-05 -- and the cast to bf16
+        # happens later, on the whole model. A constructor assert would refuse every arm including
+        # the one that works. The first forward is the earliest point where the dtype is the one
+        # the run will use.
+        #
+        # NOT A SILENT CAST TO bf16 EITHER: that would change the arithmetic of an fp32 arm without
+        # anyone asking, which is the same objection amendments 6/7 raise about the fp8/bf16
+        # confound. A crash naming its cause costs one run; a silent precision change costs the
+        # interpretation of every number the arm produces.
+        # THE bf16 REQUIREMENT IS ENFORCED AT LAUNCH, NOT HERE, and the attempt to put it here is
+        # why the comment says so. torch._grouped_mm's eager kernel accepts fp32 while its META
+        # registration does not, so only the COMPILED path is bf16-only -- an unconditional raise in
+        # forward refused all 10 CPU checks, which run this module in fp32 where eager is correct.
+        # Scoping it with `torch.compiler.is_compiling()` does not work either: dynamo traces the
+        # raise, turns it into a graph break, and re-runs the segment in eager where the condition
+        # is False -- measured 2026-09-05, the user still received the op's own
+        # "Expected inputs of BF16 type but got mat_a.dtype=torch.float32 and mat_b.dtype=
+        # torch.float32" instead of a message naming the cause. A guard that the compiler can
+        # elide is not a guard. It lives in train.py, before the first step, where the model's
+        # dtype is a plain fact.
         rows = xw[tok[order]]
         h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)
         a, b = h.chunk(2, dim=-1)
