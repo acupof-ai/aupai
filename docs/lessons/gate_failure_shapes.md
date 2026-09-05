@@ -119,6 +119,8 @@ A fixture derived from the implementation's handled branches or the live file ca
 - §98: a fixture had the same form as the formula under test; it could not detect a form error, only a value error.
 - §220: the unclipped baseline was computed by the function under test, so an inverted-ratio mutant inverted both sides and the inequality still held — a test comparing code against itself.
 
+Generalization (e1, 2026-09-05): a differential assertion has power only if its two sides can fail differently. A same-function baseline (§220) and a self-recomputed baseline (§221) are the two ways to lose that, in opposite directions, and both were hit within twenty minutes on one assertion. The operational check is to name where the expected value comes from before writing the comparison: "the function I am testing" and "logic I reimplemented" are both wrong answers; the right one is a property of the fixture with the call under test appearing in the comparison.
+
 Cannot see: whether the fixture's construction is independent of the code it tests (§80, §97, §220).
 
 ### R2-f Guard reads the wrong field (6 incidents)
