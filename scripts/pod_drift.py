@@ -86,6 +86,11 @@ SCOPE = [
     # The class, not just this instance: a tracked path admitted under data/ by the pre-commit
     # ALLOWED list and absent from SCOPE is a defect until someone writes down why the pod does
     # not need it. docs/lessons/drift_scope_blind_spot.md; no check joins the two lists yet.
+    # Subdirectories included: this one pattern also matches data/probes/novel_ops/*.jsonl,
+    # the constructed-operator curve sets the scorer reads on the pod. Verified with
+    # `git ls-files 'data/probes/*.jsonl'` (5 paths, 4 of them in novel_ops/), because
+    # git's pathspec and fnmatch differ from shell globbing here and a second pattern
+    # added "to be safe" would have been dead.
     "data/probes/*.jsonl",
     "facts/*.json",
     "scripts/*.json",
