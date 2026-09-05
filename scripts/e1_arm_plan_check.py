@@ -55,20 +55,35 @@ CURSOR_ROWS = 244160
 
 
 def _shard_docs(domain):
-    """(_s_index, _exposure) per document line of a shard, in file order.
+    """(header, [(_s_index, _exposure)]) for a shard, the header from its sidecar.
 
     File order is what matters: _domain_seqs concatenates documents in the order they appear and
     packs them into seq+1 rows, so the k-th document lands in row k*len/(seq+1) -- but this
     function is only used for the COUNTS, which are order-independent, and for the header.
+
+    THE HEADER IS A SIDECAR, not line 1. It was in-band until 2026-09-05, which is what made
+    every injection domain's cache build raise KeyError: 'content' -- train._jsonl_content reads
+    that key on every line with no header skip. datagen/build_s_inject.py now writes
+    <shard>.meta.json and asserts the shard itself is readable; this reads the same pair.
     """
     p = os.path.join(ROOT, "data", "corpus", domain, f"{domain}_000.jsonl")
+    meta = p + ".meta.json"
     header, docs = None, []
+    if os.path.exists(meta):
+        with open(meta, encoding="utf-8") as fh:
+            header = json.load(fh)
     with open(p, encoding="utf-8") as fh:
         for line in fh:
             r = json.loads(line)
             if r.get("_header"):
-                header = r
-                continue
+                # An in-band header means the shard predates the sidecar and its cache CANNOT be
+                # built. Refuse rather than skip: skipping is what let the old format reach the pod.
+                raise SystemExit(
+                    f"REFUSING: {os.path.relpath(p, ROOT)} carries an in-band _header line. "
+                    f"train._jsonl_content reads [\"content\"] on every line with no header skip, "
+                    f"so this domain's token cache cannot be built. Rebuild with "
+                    f"datagen/build_s_inject.py, which writes the header to "
+                    f"{os.path.basename(meta)}.")
             docs.append((r["_s_index"], r["_exposure"]))
     return header, docs
 
@@ -164,8 +179,16 @@ def check_arm(name, n, verbose=True):
         with open(p, encoding="utf-8") as fh:
             for line in fh:
                 r = json.loads(line)
-                if not r.get("_header"):
-                    toks += len(tk.encode(r["text"]).ids)
+                # THE SAME KEY train._jsonl_content READS, and every line is a document now: the
+                # header moved to a sidecar on 2026-09-05 because an in-band one made the cache
+                # build raise KeyError: 'content'. Reading "text" here would have counted zero
+                # tokens against the rebuilt shards and reported every pool as empty.
+                if "_header" in r:
+                    raise SystemExit(
+                        f"REFUSING: {os.path.relpath(p, ROOT)} carries an in-band _header line, so "
+                        f"train._jsonl_content cannot build this domain's cache. Rebuild with "
+                        f"datagen/build_s_inject.py.")
+                toks += len(tk.encode(r["content"]).ids)
         pool_rows = toks // (mix["seq"] + 1)
         want = int(budget_rows * mix["domains"][d]["weight"])
         nums[f"{d}_pool_rows"] = pool_rows
