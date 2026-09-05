@@ -47,8 +47,14 @@ def main():
     from tokenizers import Tokenizer  # noqa: PLC0415
 
     import model as M  # noqa: PLC0415
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
+
+    # de-55 step 3. This script loads to CPU and moves to the card at `mdl.cuda()` below, so
+    # load_checkpoint's own claim (which fires on a cuda device argument) does not cover it. Claimed
+    # explicitly rather than by switching the load to device="cuda": facts cite this script's
+    # numbers, and an added claim cannot change them, where moving the load could.
+    claim_my_cards("b0_n8_reuse_gate", note="bitwise reuse gate")
 
     ref = None
     with open(REF, encoding="utf-8") as fh:
