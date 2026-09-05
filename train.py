@@ -203,6 +203,16 @@ class Cfg:
     moe_top_k = 3    # routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn
     moe_shared = 1   # must equal ffn_hidden exactly or MoEFFN refuses -- equal-ACTIVE parity,
     moe_expert_ffn = 768  # which is what makes a loss delta attributable to sparsity not FLOPs
+    # THE LATENT VARIANT, off by default so every existing config keeps its shape (prereg
+    # moe_0905 amendment 13). moe_latent > 0 runs the ROUTED experts in a projected width:
+    # d -> moe_latent once per token, experts entirely at moe_latent, moe_latent -> d after the
+    # gated sum. moe_shared_ffn lets the always-on shared expert keep its own width, which is what
+    # makes an EXACT parity-and-parameter match possible -- with it pinned to moe_expert_ffn there
+    # is no integer solution at all. Registered cell: moe_latent 384, moe_expert_ffn 2048,
+    # moe_shared_ffn 512, which is exact parity (2*1024*384 + 3*3*384*2048 + 3*1024*512 =
+    # 9,437,184 = 3*d*ffn_hidden) at 1.000x the 24-expert arm's routed parameters.
+    moe_latent = 0        # 0 = off; >0 = routed-expert width after the down-projection
+    moe_shared_ffn = 0    # 0 = follow moe_expert_ffn; >0 = the shared expert's own inner width
     moe_layers = "0-11"  # block indices that are MoE; "0-11", "0,3,6" or a list (see _moe_layers)
     # THE BALANCER'S TWO CONSTANTS, pre-registered and NOT tuned after seeing a curve. Borrowed
     # from facts/moe.json (DeepSeek-V3 arXiv:2412.19437 2.1.2/4.2) at 60x our per-expert token
@@ -2555,6 +2565,14 @@ def main():
         "moe_top_k": "MoE: routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden exactly or MoEFFN refuses",
         "moe_shared": "MoE: always-on shared experts (1 = the charter's cell)",
         "moe_expert_ffn": "MoE: inner width of ONE expert (768 at ffn_hidden 3072 with top-3 + shared)",
+        "moe_latent": "MoE: routed-expert width after a d->latent down-projection (0 = off). The "
+                      "experts run entirely at this width and the gated sum is up-projected once; "
+                      "parity is then counted in MULTIPLIES, not widths. Registered cell: 384 with "
+                      "moe_expert_ffn 2048 and moe_shared_ffn 512",
+        "moe_shared_ffn": "MoE: the always-on shared expert's own inner width (0 = follow "
+                          "moe_expert_ffn). Exists because the latent variant spends its parity "
+                          "budget on three shapes, and a free shared width is what makes an exact "
+                          "parity-and-parameter match possible",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -3356,6 +3374,11 @@ def main():
         # which the cursor does not relieve it of (tilerl's challenge, fb's ruling).
         i0 = 0 if getattr(Cfg, "_cursor_seeded", False) else step * Cfg.batch * Cfg.accum
         t0 = time.time()
+        # Cumulative validation seconds, printed beside each pass's own. Steady-state seconds
+        # (prereg#moe_0905 amendment_12_steady_state) is stepping time, and validation runs
+        # INSIDE the tps window at :3357 from the same `now - t_log`, so it has to be subtracted
+        # rather than assumed. Reset per epoch alongside t0, which is what it is read against.
+        _val_s_total = 0.0
         last = 0.0
         t_log = time.time()
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
@@ -3515,6 +3538,7 @@ def main():
                             pass
                         os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
+                    _t_val = time.time()
                     v = validate(
                         model,
                         raw_model,
@@ -3529,7 +3553,20 @@ def main():
                         Wva,
                     )
                     if is_main:
-                        runlog(f"step {step}/{total_steps} val {v:.3f}")
+                        # THE VALIDATION PASS'S OWN SECONDS, and the cumulative total, so the
+                        # wall-clock readout does not have to estimate them. prereg#moe_0905
+                        # amendment_12_steady_state: the adopt comparison is steady-state
+                        # seconds, and both terms it needs were previously unmeasurable from a
+                        # DENSE arm's log. tps at :3354 prints `{:.0f}K` (+/-0.8%, so a
+                        # 3815-step extrapolation spans ~110s), and full-precision tok/s reached
+                        # only moe_diag/memory_diag -- neither of which a dense arm writes, so
+                        # the pair had a precise clock on one side and a rounded one on the
+                        # other. `val_s` here plus `s/step` on the step line give both arms the
+                        # same estimator at ~0.1%.
+                        _val_s = time.time() - _t_val
+                        _val_s_total += _val_s
+                        runlog(f"step {step}/{total_steps} val {v:.3f} "
+                               f"val_s {_val_s:.2f} val_s_total {_val_s_total:.1f}")
                 if is_main and step % 10 == 0:
                     now = time.time()
                     dt = now - t_log
@@ -3571,6 +3608,19 @@ def main():
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
+                        # FULL PRECISION, AT THE END OF THE LINE. `{tps/1e3:.0f}K` above rounds
+                        # to +/-0.8%, which is +/-110s on a 3815-step extrapolation, and it is
+                        # the ONLY timing a dense arm's log carried -- full-precision tok/s
+                        # reached moe_diag (:3549) and memory_diag (:3466), and a dense arm
+                        # writes neither. This field is the same window's seconds-per-step
+                        # unrounded, so steady-state seconds is computable on any arm at ~0.1%.
+                        #
+                        # APPENDED, NOT INSERTED, and that is load-bearing rather than tidy:
+                        # RunLog._STEP_RE (train.py:46) ends with `([\d.]+)K tok/s/gpu \| MFU
+                        # (\d+)%` and matches on ADJACENCY, so a field placed between those two
+                        # would silently stop every trackio metric on this line while the log
+                        # looked richer. test_step_line_parses covers exactly that.
+                        f" | s/step {dt / 10:.4f}"
                     )
                 # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
                 # that placement is the whole correctness argument: the fraction the stop rule
