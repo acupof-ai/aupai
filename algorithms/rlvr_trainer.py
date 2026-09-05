@@ -21,6 +21,7 @@ Usage: torchrun --nproc_per_node=8 algorithms/rlvr.py --resume ckpt_sft.pt
 
 import argparse
 import copy
+import json
 import math
 import os
 import random
@@ -35,6 +36,10 @@ RLVR_PATH = os.path.join(ROOT, "data", "rl", "rlvr_math.jsonl")
 CKPT_RLVR = os.path.join(ROOT, "ckpt_rlvr.pt")
 
 MAX_PROMPT = 512  # + max_new 512 = 1024 generation context
+#: Steps after which an all-degenerate run refuses instead of continuing to exit 0 with an
+#: unchanged checkpoint. 20 is ~2 minutes at the default shape and is not a tuning knob: any
+#: value works as long as it is reached before a human walks away.
+DEGEN_REFUSE_STEPS = 20
 
 try:
     from .rlvr_reward import reward_fn
@@ -91,6 +96,7 @@ def gspo_loss(
     amp,
     clip_eps=0.2,
     kl_beta=0.02,
+    old_lp=None,
 ):
     """GSPO (arXiv 2507.18071): sequence-level importance ratio + sequence-level clip.
 
@@ -107,7 +113,20 @@ def gspo_loss(
     seq_lp, gen_t, mask = seq_logprob(model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
     with torch.no_grad():
         ref_lp, _, _ = seq_logprob(ref_model, prompt_ids, gen_ids_list, group_size, max_new, ddp, device, amp)
-        old_lp = seq_lp.detach()  # one optimizer step per rollout, so old == current
+    # THE OLD POLICY IS THE ROLLOUT POLICY, and it must be passed in. Until 2026-09-05 this
+    # line read `old_lp = seq_lp.detach()` -- the same forward -- so ratio = exp(seq_lp -
+    # seq_lp.detach()) was identically 1.0, the clip at 1 +/- clip_eps could never bind, and
+    # --clip_eps was a live flag that changed nothing at any value. What remained was plain
+    # policy gradient plus the KL term, which is what the module docstring calls GRPO.
+    #
+    # The caller caches it: gen_model produced these rollouts and IS the old policy, so its
+    # log-probs cost one no_grad forward at rollout time and no extra forward here. Falling
+    # back to the old behaviour would restore the defect silently, so a missing old_lp raises.
+    if old_lp is None:
+        raise ValueError(
+            "gspo_loss needs old_lp, the rollout policy's sequence log-probs. Computing it "
+            "from the current forward makes the ratio identically 1 and the clip inert; see "
+            "the comment above.")
     ratio = torch.exp(seq_lp - old_lp)
     surr = torch.min(ratio * adv, torch.clamp(ratio, 1 - clip_eps, 1 + clip_eps) * adv)
     # k3 estimator: unbiased, non-negative, with a non-zero gradient at theta == theta_old, so the anchor pulls.
@@ -244,6 +263,23 @@ def main():
         )
 
     n_degenerate = 0
+    # TOTALS, separate from the per-interval counters below, which reset every 10 steps.
+    # n_degenerate is a per-interval count printed as `degen N`; nothing summed it, so a run
+    # in which EVERY group was degenerate at EVERY step printed a small number 50 times and
+    # exited 0 with a checkpoint identical to its input. These three survive the reset and
+    # decide the refusal at DEGEN_REFUSE_STEPS and the exit code at the end.
+    tot_groups = 0
+    tot_degenerate = 0
+    tot_opt_steps = 0
+    # TOKEN ACCOUNTING, the experiment's x-axis (fb ruling 2026-09-05). Two columns because
+    # they answer different questions and differ by the kept fraction: `generated` is every
+    # sampled token including zero-reward rollouts -- what the capability actually costs --
+    # and `trained_on` is only what reached the loss. Neither existed; the log dict held
+    # `n`, a count of RESPONSES.
+    tot_tok_generated = 0
+    tot_tok_trained = 0
+    tot_truncated = 0  # rollouts that hit max_new: they score 0 and look like wrong answers
+    tok_ledger = os.path.join(ROOT, "runs", f"rlvr_tokens_{os.path.basename(args.out)}.jsonl")
     log = {"reward": 0.0, "n": 0, "loss": 0.0, "n_loss": 0, "gnorm": 0.0, "gen": 0.0}
 
     def save_ckpt(path, step):
@@ -284,7 +320,15 @@ def main():
                 rewards = [
                     reward_fn(tok.decode(g, skip_special_tokens=True), item["answer"]) for g in gen_ids_list
                 ]
-                groups.append((prompt_ids, gen_ids_list, rewards))
+                # THE OLD POLICY'S LOG-PROBS, cached here because gen_model produced these
+                # rollouts and so IS the old policy. One no_grad forward on the model that
+                # just sampled; gspo_loss then has a real ratio instead of exp(x - x) == 1.
+                # It must be taken BEFORE the optimizer step that follows, which is why it
+                # lives at rollout time and not next to the loss.
+                with torch.no_grad():
+                    old_lp, _, _ = seq_logprob(gen_model, prompt_ids, gen_ids_list,
+                                               args.group_size, args.max_new, ddp, device, amp)
+                groups.append((prompt_ids, gen_ids_list, rewards, old_lp.detach()))
         gen_time = time.time() - t0
 
         # Sync ranks before DDP all-reduce: generation time varies per rank.
@@ -295,15 +339,39 @@ def main():
         # std=0 -> adv=0 -> zero gradient, so a forward/backward on them is
         # pure waste. The keep-decision is all-reduced with MAX so every rank
         # runs the same forward count and DDP stays in lockstep.
-        keep = torch.tensor([1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r in groups], device=device)
+        keep = torch.tensor([1.0 if 0 < sum(r) < len(r) else 0.0 for _, _, r, _ in groups], device=device)
         if ddp:
             dist.all_reduce(keep, op=dist.ReduceOp.MAX)
         kept = [g for g, k in zip(groups, keep.tolist()) if k > 0.5]
         n_degenerate += len(groups) - len(kept)
+        tot_groups += len(groups)
+        tot_degenerate += len(groups) - len(kept)
+        # GENERATED tokens: every sampled token, kept groups and dropped ones alike. Counted
+        # here rather than after the keep so a run that drops everything still reports what
+        # it spent -- which is the case the refusal below exists for.
+        for _p, gl, _r, _o in groups:
+            tot_tok_generated += sum(len(g) for g in gl)
+            tot_truncated += sum(1 for g in gl if len(g) >= args.max_new)
         if not kept:
             # Skipping is safe: all ranks reached the same conclusion from the same tensor.
             if is_main:
                 runlog(f"step {step}/{args.steps} all groups degenerate, skipped")
+            # REFUSE RATHER THAN FINISH. Every group degenerate at every step means no
+            # gradient is ever applied: the loop `continue`s before the forward, the run
+            # exits 0, and args.out is bit-identical to args.resume. "No gradient was ever
+            # applied" and "RL did not help" then produce the same artifact, and only this
+            # refusal separates them. The commonest cause is a reward that can never fire --
+            # rlvr_reward requires \boxed{} in the GENERATION, so a set whose answers are
+            # plain integers scores 0 on every rollout (measured 2026-09-05 on the novel_ops
+            # sets: reward_fn("42","42") == 0.0).
+            if step >= DEGEN_REFUSE_STEPS and tot_degenerate == tot_groups:
+                raise SystemExit(
+                    f"refusing: all {tot_groups} groups degenerate over the first "
+                    f"{DEGEN_REFUSE_STEPS} steps, so no optimizer step has run and the "
+                    f"output checkpoint would equal the input. Either every reward is 0 "
+                    f"(check that the reward can fire on THIS data -- rlvr_reward needs "
+                    f"\\boxed{{}} in the generation) or every reward is 1. Rewards seen: "
+                    f"{sorted({r for _p, _g, rs, _o in groups for r in rs})}")
             continue
 
         # --- 3. GSPO loss (fp32 master gets grads via the bf16/FP8 model) ---
@@ -321,9 +389,15 @@ def main():
                 amp,
                 clip_eps=args.clip_eps,
                 kl_beta=args.kl_beta,
+                old_lp=old_lp,
             )
-            for prompt_ids, gen_ids_list, rewards in kept
+            for prompt_ids, gen_ids_list, rewards, old_lp in kept
         ]
+        # TRAINED-ON tokens: only what reached the loss. The secondary column -- signal per
+        # token of supervision -- against `generated` above, which is what the capability
+        # cost. They differ by the kept fraction and nothing else, so both come from one run.
+        for _p, gl, _r, _o in kept:
+            tot_tok_trained += sum(len(g) for g in gl)
         loss = torch.stack(losses).mean()
         loss_val = loss.item()
 
@@ -344,6 +418,10 @@ def main():
                 print(f"step {step}/{args.steps} NaN, skipped", flush=True)
             continue
         opt.step()
+        # AFTER opt.step(), not next to the loss: a non-finite gnorm `continue`s three lines
+        # up, so a counter incremented earlier would credit a step that never applied a
+        # gradient -- which is the exact confusion the refusal above exists to prevent.
+        tot_opt_steps += 1
 
         # sync master -> both bf16 copies
         with torch.no_grad():
@@ -352,8 +430,8 @@ def main():
             for n, p in gen_model.named_parameters():
                 p.data.copy_(master[n].data)
 
-        log["reward"] += sum(sum(r) for _, _, r in groups)
-        log["n"] += sum(len(r) for _, _, r in groups)
+        log["reward"] += sum(sum(r) for _, _, r, _ in groups)
+        log["n"] += sum(len(r) for _, _, r, _ in groups)
         log["loss"] += loss_val
         log["n_loss"] += 1
         log["gnorm"] += gnorm
@@ -361,8 +439,13 @@ def main():
 
         # --- 3. Log every 10 steps (globally averaged) ---
         if step % 10 == 0:
+            # The token totals ride the SAME all-reduce as the rest: they are per-rank
+            # counts and the x-axis is the run's, not rank 0's. Under DDP every rank samples
+            # the same prompts but generates independently, so the tokens differ per rank.
             t = torch.tensor(
-                [log["reward"], log["n"], log["loss"], log["n_loss"], log["gnorm"], log["gen"]],
+                [log["reward"], log["n"], log["loss"], log["n_loss"], log["gnorm"], log["gen"],
+                 float(tot_tok_generated), float(tot_tok_trained), float(tot_truncated),
+                 float(tot_groups), float(tot_degenerate)],
                 device=device,
             )
             if ddp:
@@ -372,8 +455,27 @@ def main():
                 runlog(
                     f"step {step}/{args.steps} acc {acc:.3f} "
                     f"loss {t[2] / max(t[3], 1):.4f} gnorm {t[4] / max(t[3], 1):.3f} "
-                    f"gen {t[5] / 10:.0f}s degen {n_degenerate}"
+                    f"gen {t[5] / 10:.0f}s degen {n_degenerate} "
+                    # BOTH COLUMNS, every interval: generated is every sampled token
+                    # (zero-reward rollouts included), trained is what reached the loss.
+                    # This is the experiment's x-axis and nothing counted it before.
+                    f"tok_gen {int(t[6])} tok_trained {int(t[7])} trunc {int(t[8])}"
                 )
+                # THE LEDGER ROW, appended not printed. The log line above is for a human
+                # watching; the x-axis of the experiment has to be machine-readable, and a
+                # number that exists only inside a formatted string is a number someone has
+                # to re-derive with a regex. RunLog has no row API -- it tees prints and
+                # regex-scrapes them for trackio -- so this writes its own file.
+                # group_size/max_new/batch ride along because the ratio between the two token
+                # columns is fixed by them: without the shape the columns cannot be compared
+                # across runs.
+                with open(tok_ledger, "a", encoding="utf-8") as _fh:
+                    _fh.write(json.dumps({
+                        "step": step, "tok_generated": int(t[6]), "tok_trained": int(t[7]),
+                        "truncated": int(t[8]), "groups": int(t[9]), "degenerate": int(t[10]),
+                        "opt_steps": tot_opt_steps, "group_size": args.group_size,
+                        "max_new": args.max_new, "batch": args.batch, "world": world,
+                    }) + "\n")
                 # 30-step smoothing: a 10-step window is noise; save when the smoothed mean makes a new peak.
                 acc_hist.append(acc)
                 acc_hist[:] = acc_hist[-3:]
@@ -396,8 +498,21 @@ def main():
 
     if is_main:
         runlog.plot()
+        runlog(f"totals: opt_steps {tot_opt_steps} groups {tot_groups} degenerate "
+               f"{tot_degenerate} tok_generated {tot_tok_generated} tok_trained "
+               f"{tot_tok_trained} truncated {tot_truncated}")
     if ddp:
         dist.destroy_process_group()
+    # A RUN THAT NEVER STEPPED MUST NOT EXIT 0. The refusal at DEGEN_REFUSE_STEPS catches the
+    # all-degenerate case early, but a run can still reach the end with zero applied gradients
+    # by a different route -- every step NaN-skipped, or a step count below the refusal
+    # threshold. In all of them args.out is bit-identical to args.resume, and the artifact is
+    # indistinguishable from "RL did not help" unless the exit code says otherwise.
+    if tot_opt_steps == 0:
+        raise SystemExit(
+            f"refusing: {args.steps} step(s) ran and NO optimizer step was applied "
+            f"({tot_degenerate} of {tot_groups} groups degenerate). {args.out} equals "
+            f"{args.resume}; this is not a trained checkpoint.")
 
 
 if __name__ == "__main__":
