@@ -114,13 +114,25 @@ def claims():
 
 
 def release_all(owner, paths=None):
-    """Release every claim owned by `owner` (all guarded paths, or the listed ones).
+    """Release every claim owned by `owner` -- read from the claim DIRECTORY, not a list.
 
-    merge_main.sh calls this after a merge to hand shared files back: the claim that
-    let the branch commit pass is no longer needed once the edit is merged.
+    It used to iterate SHARED_FILES, the four announce-before-editing paths. But `acquire`
+    takes any path, so a claim on anything else was never released by a merge and sat for
+    the full 6h TTL. MEASURED 2026-09-05: a claim on docs/lessons/efficiency_gap_views.md
+    was live while merge_main printed "released 0 claim(s): none", and the manual release
+    then worked -- the release path disagreeing with the acquire path, with the merge's own
+    output saying everything was fine.
+
+    Same shape as the substr(16) bug this function's caller was fixed for a few hours
+    earlier: both made the release silently do nothing and print a line that reads as
+    success. That one could not release ANY branch's claims; this one could not release any
+    claim outside four hardcoded names.
+
+    `paths` still narrows the release when a caller wants that; the default is now every
+    claim this owner holds.
     """
     if paths is None:
-        paths = SHARED_FILES
+        paths = list(claims().keys())
     removed = []
     for p in paths:
         rec = claim(p)
@@ -207,6 +219,19 @@ def _selftest():
         if not claim("train.py"): fails.append("release-all dropped a foreign claim")
         rc, _ = run("release", "--path", "train.py")
         if rc != 0: fails.append("release train.py(other) failed")
+        # RELEASE-ALL MUST REACH A PATH OUTSIDE SHARED_FILES. Every world above claims one of
+        # the four announce-before-editing paths, so all of them passed while release_all
+        # iterated that hardcoded tuple -- a selftest whose population is exactly the set the
+        # bug did not affect. MEASURED 2026-09-05: a live claim on
+        # docs/lessons/efficiency_gap_views.md while merge_main printed "released 0 claim(s):
+        # none". acquire takes any path, so release-all must scan the claim directory.
+        rc, _ = run("acquire", "--path", "docs/lessons/some_doc.md")
+        if rc != 0: fails.append("acquire non-SHARED_FILES path failed")
+        rc, out = run("release-all", "--owner", "st_owner")
+        if rc != 0: fails.append(f"release-all (unlisted path) failed: {out}")
+        if claim("docs/lessons/some_doc.md"):
+            fails.append("release-all left a claim on a path outside SHARED_FILES -- it is "
+                         "iterating a hardcoded list rather than the claim directory")
         # THE DEFAULT OWNER IGNORES $USER. The worlds above all pass --owner explicitly, so they
         # pass just as well when the default is $USER -- which is `bytedance` for every session
         # here, i.e. no scoping at all. LAUNCH_OWNER wins; with it unset the worktree name is
@@ -236,7 +261,7 @@ def _selftest():
         import shutil; shutil.rmtree(d, ignore_errors=True)
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"file_claim selftest: {'PASS (8 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"file_claim selftest: {'PASS (9 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
