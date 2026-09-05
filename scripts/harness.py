@@ -8914,7 +8914,15 @@ FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
 # Named values rather than free text, so the metric can count them; the two axes coexisting in
 # one field is a deliberate flattening -- a row has exactly one cause and forcing a second field
 # would produce rows with one of them empty.
-FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect")
+# The kinds `harness friction` accepts. MEASURED 2026-09-05: the ledger carried 14 distinct kinds and
+# only 5 were in this tuple, because 9 arrived from writers that do not go through the CLI -- hand-
+# appended rows and merge_main.sh:334, which emits kind="override" when AUPAI_CONTROLLER=1 bypasses the
+# second-reader gate. "override" is here now because a writer already emits it; the rest is what
+# `friction_kinds_cover_ledger` exists to catch, since a tuple that rejects a kind its own repo writes
+# is a vocabulary nobody consults.
+FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect", "override",
+                  "resolution", "gate", "near_miss", "dependency", "blocked", "process_failure",
+                  "correctness", "attribution-correction", "coordination")
 
 
 def _friction_rows(path=None):
@@ -9932,6 +9940,79 @@ def _busy_training_cards(train_cards):
 
 
 CARD_HELD_MIB = 1000
+
+
+def check_friction_kinds_cover_ledger(root):
+    """Every kind PRESENT in runs/friction.jsonl is one `harness friction` would accept.
+
+    MEASURED 2026-09-05: 14 distinct kinds in the ledger, 5 in FRICTION_KINDS. The other 9 --
+    resolution, gate, near_miss, dependency, blocked, process_failure, correctness,
+    attribution-correction, coordination -- could not have come through the CLI, whose parser has
+    `choices=FRICTION_KINDS`, so they were hand-appended or written by another writer. One of those
+    writers is in this repo: merge_main.sh appends kind="override" when AUPAI_CONTROLLER=1 bypasses the
+    second-reader gate, a kind its own tuple rejected.
+
+    WHY THIS DIRECTION. The reverse check -- every tuple entry appears in the ledger -- would FAIL on a
+    kind that is simply rare, and `misroute` and `defect` both sit at 0 legitimately. What is actually
+    broken is a vocabulary that rejects what the repo writes: a metric grouping by kind then reads 9
+    categories it has no definition for, and a session that reaches for the CLI with an honest kind is
+    refused and hand-appends instead, which is how the drift compounds.
+    """
+    p = os.path.join(root, "runs", "friction.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/friction.jsonl in this tree"
+    seen = {}
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            k = json.loads(line).get("kind")
+        except json.JSONDecodeError:
+            continue
+        if k:
+            seen[k] = seen.get(k, 0) + 1
+    unknown = {k: n for k, n in seen.items() if k not in FRICTION_KINDS}
+    if unknown:
+        return FAIL, ("kind(s) in the ledger that `harness friction --kind` would refuse: "
+                      + ", ".join(f"{k} ({n} row{'s' if n > 1 else ''})"
+                                  for k, n in sorted(unknown.items(), key=lambda x: -x[1]))
+                      + ". Add them to FRICTION_KINDS or fix the writer; a vocabulary that rejects "
+                        "what this repo writes sends the next session to a hand-append.")
+    if not seen:
+        return FAIL, ("the ledger holds no row with a `kind` at all, so this check has nothing to "
+                      "verify -- either every row lost the field or the reader is looking at the "
+                      "wrong file")
+    return PASS, f"{len(seen)} kind(s) over {sum(seen.values())} row(s), all accepted by the CLI"
+
+
+def _broken_friction_kinds_cover_ledger():
+    """The REAL ledger with one row's kind renamed to something the tuple does not carry.
+
+    Mutation of a real artifact: the first row that has a kind gets `<kind>_unregistered`, which is
+    exactly the shape of the 9 kinds found in the wild -- a plausible word nobody added to the tuple.
+    """
+    src = os.path.join(ROOT, "runs", "friction.jsonl")
+    if not os.path.exists(src):
+        raise SelftestSkip("no runs/friction.jsonl to mutate")
+    lines = [ln for ln in open(src, encoding="utf-8") if ln.strip()]
+    hit = None
+    for i, ln in enumerate(lines):
+        try:
+            obj = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("kind"):
+            obj["kind"] = f"{obj['kind']}_unregistered"
+            lines[i] = json.dumps(obj, ensure_ascii=False) + "\n"
+            hit = i
+            break
+    if hit is None:
+        raise SelftestSkip("no friction row carries a kind; the world needs one to rename")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    with open(os.path.join(d, "runs", "friction.jsonl"), "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+    return d
 
 
 def check_gpu_entry_points_claim(root):
@@ -12819,6 +12900,15 @@ CHECKS = [
         _broken_tasks_stale,
     ),
     (
+        "friction_kinds_cover_ledger",
+        "every kind in runs/friction.jsonl is one `harness friction` would accept",
+        "14 kinds in the ledger against 5 in FRICTION_KINDS on 2026-09-05; merge_main.sh writes "
+        "kind=override, which its own tuple rejected, so 9 kinds arrived by hand-append and a "
+        "metric grouping by kind had no definition for two thirds of them",
+        check_friction_kinds_cover_ledger,
+        _broken_friction_kinds_cover_ledger,
+    ),
+    (
         "gpu_entry_points_claim",
         "every file that loads a checkpoint onto a device reaches a card claim",
         "23 of 31 such files claimed nothing on 2026-09-05, so runs/claims/ sat empty on the pod "
@@ -12994,6 +13084,8 @@ EVIDENCE = {
     # repo: it reads SOURCE, not cards. That is the point of it existing beside the pod-only
     # card_held_without_claim, which SKIPs off-pod and so could not see the 23-file gap in CI.
     "gpu_entry_points_claim": "repo",
+    # repo: it reads the committed ledger, not machine state.
+    "friction_kinds_cover_ledger": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
