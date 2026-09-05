@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (114 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (202 = 114 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (118 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (206 = 118 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (102 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (106 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-102 incidents (34 infra, 68 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+106 incidents (34 infra, 72 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (11 incidents)
+### R2-a No broken world (13 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -72,12 +72,14 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §219: the next filter over the same sample rejected the only file the first non-merge commit touched (.jsonl not in the extension list); both were caught only because the world FAILs rather than skips when it cannot find its subject.
 - §228: a world copied from real files was too incomplete for the subject to import (only scripts/ on sys.path; `from train import ...` died at module scope); the subject's ModuleNotFoundError read as the subject being broken. An import error in a fixture's verdict is a fixture bug until proven otherwise.
 - §231: agreement between two things that share an error is not evidence — a fixture with no power to disagree (one directory, so cwd and $MAIN are the same path) reported agreement and it read as confirmation; a differential fixture must be fed an input where the two sides are known to differ.
+- §235: a fixture that copies a module to a temp dir relocates every path it derives from `__file__`; ROOT pointed at a .git-less temp dir, `is_pod(ROOT)` read True, and the branch under test was dead in every mutant while every assertion still ran — a passing mutation run in the wrong world; the discipline is one world-validity assertion before the mutants run (the relocated root must satisfy the property the code keys on).
+- §238: `want == pool_rows` passed on five arms and two reviews because both sides were derived from one token count that missed the per-document `<eos>`; the undercount cancelled and the comparison had no way to be unequal. A comparison whose two sides share a producer cannot fail — one side must be replaced by a reading from a different path (the system under test's own output). The cheap arms (20/25 rows) were structurally incapable of showing the defect, and the typed constants had been wrong in all three prior versions.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231).
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231, §235, §238).
 
-### R2-b Population narrower than the property (28 incidents)
+### R2-b Population narrower than the property (30 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -92,8 +94,10 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §225: a hook edited on a branch runs main's old copy, so the change appeared to work — a test result attributed to code that did not produce it.
 - §229: a gate on main read its evidence ledger from the working tree (bare `open()` where every git call used `-C "$MAIN"`); a branch-only review row satisfied the second-reader gate that exists to certify somebody else signed — a gate's inputs must come from the same namespace as the thing it gates.
 - §232: a ledger-diff signature over six fields reported set-equal pairs whose rows differed only in the fields it dropped; a comparison that exists to surface disagreements must sign the whole row, since any excluded field is a disagreement it cannot see.
+- §236: a check's deepest assertions were dead in every environment — main() never passed the cursor parameter, so cur was {} and both cursor assertions skipped; the off-pod review recorded "plan level SKIPPED, designed behavior", which was correct AND the concealment. A check whose deepest assertion runs in one environment only cannot be reviewed in the others; argument-level refusals must fire before environment gates so the depth is reachable in the review environment.
+- §237: a rank-written diagnostic ledger held 2 rows/step (missing `if is_main` guard), and the steps that logged "write FAILED" were the only CLEAN ones — rank 1's crash prevented the duplicate write, so the failure log inverted data quality and a reader averaging it double-weighted 5 of 7 windows. The report also read steps 10-100 and concluded "healthy" while the ledger ran to 400 with entropy already 0.99→0.89: point values against a threshold cannot see direction. A "FAILED" line is never grounds to exclude a step without checking the row count, and a verdict is scoped to the steps read.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232, §236, §237).
 
 ### R2-c Mutation did not take (8 incidents)
 

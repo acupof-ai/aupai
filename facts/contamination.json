@@ -1330,47 +1330,52 @@
       "value": {
         "shards": {
           "s_inject_n1": {
-            "sha256": "4d1f9af1db46232c35a14b9ad93e8ab6aecf1e72184173c1e0042e9a52844ebd",
-            "lines": 1001,
+            "sha256": "57b0caef51332a735625fc16d275f2c1ba09c8ca1a77799061afc3eef63fd4d2",
+            "lines": 1000,
             "documents": 1000,
-            "exposures": 1
+            "exposures": 1,
+            "sidecar_sha256": "efb83a96f49dbb5fa767eb593073356a59f68f1f19f3958254168a99f9fc9cc3"
           },
           "s_inject_n8": {
-            "sha256": "79fea9ef3079d4293e1775a8552df110019930985509cfd5ede7f06aa06031e7",
-            "lines": 8001,
+            "sha256": "198f5cb0a4907f68646de8090b9e9f92a15a7eaa32df8bc37a04d4d91ec40a71",
+            "lines": 8000,
             "documents": 8000,
-            "exposures": 8
+            "exposures": 8,
+            "sidecar_sha256": "16cc0044102d96c99398fd7363205a61f8f671de6c8c73025144c35b6efe9cac"
           },
           "s_inject_n64": {
-            "sha256": "9c107863590aa454c4db98849cd3d2da6d76433eb4c11049ec9b43c8f5dd4cd4",
-            "lines": 64001,
+            "sha256": "9b393d503785dd1873c7d9d64c370b3126848f67e99f516771212f164cdefe89",
+            "lines": 64000,
             "documents": 64000,
-            "exposures": 64
+            "exposures": 64,
+            "sidecar_sha256": "394450057fbe8eb73101410ed8a66d93f41986e27107698831236b5c2466b8bd"
           },
           "s_inject_n256": {
-            "sha256": "f9dbf542fbbdd36347194603d3d9c7e14932c971e3d401284019d0ced7c16fc5",
-            "lines": 256001,
+            "sha256": "033279950fb6fb47e4555b33ac5b721f2b81d37609c6280c28473e1bff76a00f",
+            "lines": 256000,
             "documents": 256000,
-            "exposures": 256
+            "exposures": 256,
+            "sidecar_sha256": "6950a48a7b813bc2e7226bb3eb67804f1e68102d270c363c81693352fd842775"
           },
           "p_format": {
-            "sha256": "3d9bdcd4a23dc612f01854b0bdd644c16e7293bd1bd477227b4059f914eed881",
-            "lines": 1001,
+            "sha256": "02862ce450a5fbad8d551378d961ebc3014b97d7780a00614bbedad317c5a042",
+            "lines": 1000,
             "documents": 1000,
-            "exposures": 1
+            "exposures": 1,
+            "sidecar_sha256": "fe32caadbdc63a8827d1e79e7e1759263bd346df25775ee867a3e4f790f919aa"
           }
         },
-        "path_form": "data/corpus/<name>/<name>_000.jsonl -- one directory per shard, one file, first line a header object, then one {text, _s_index, _exposure} per line. The _000 suffix is required: train.py's SHARD_RE is `_\\d{3,}\\.jsonl$` and _domain_seqs REFUSES a non-matching name rather than skipping it.",
-        "lines_is_documents_plus_one": "every count above is documents + 1 header line; the header is not a training document",
+        "path_form": "data/corpus/<name>/<name>_000.jsonl -- one directory per shard, one file, EVERY line a document {content, _s_index, _exposure}; the header lives beside it in <name>_000.jsonl.meta.json. The _000 suffix is required: train.py's SHARD_RE is `_\\d{3,}\\.jsonl$` and _domain_seqs REFUSES a non-matching name rather than skipping it; the sidecar's name does NOT match, which is why _domain_seqs ignores it.",
         "built_twice_and_compared": {
           "why": "the shards are gitignored (.gitignore:28, `data/corpus/*/`), so they cannot travel by commit and cannot be pushed with scripts/pod_push.sh. Each side builds them from committed code, and the shas are the only evidence the two sides hold the same corpus. 114.6 MB locally; podput of a 256k-document shard was not attempted.",
           "local": "/Users/bytedance/code/aupai-e1, shasum -a 256",
-          "pod": "/work/aupai, sha256sum, driven by runs/s_inject_pod_build.sh",
-          "result": "all five identical on both sides, and the line counts identical",
-          "pod_shas_recomputed_not_read": "the five pod digests above came from running sha256sum on the pod's files, NOT from reading the SHA lines the build script wrote into its log on the pod. The log's lines agree. It is not cited as a source and does not exist in this tree -- facts_well_formed FAILED on the first version of this entry for citing it, correctly: a source path absent from the tree is a citation nobody can follow."
+          "pod": "/work/aupai, sha256sum, driven by the committed builder at main 2007250b",
+          "result": "all five identical on both sides, and the line counts identical -- re-established after the rebuild, not carried over from the retracted measurement",
+          "pod_had_no_stale_caches": "checked before the rebuild: all five tokens_<domain>.pt were ABSENT under /mnt/data02/tokens, so no cache built from the retracted format survives to be read as fresh. This mattered: a cache stamped with a matching vocab and srcfp would have been reused, and the arm would have trained on the old encoding's rows.",
+          "old_dirs_kept": "the retracted shards were MOVED to /work/aupai/_old_shards_0905 rather than deleted -- write_shard refuses an existing directory, and the old files are the reference the equivalence check reads."
         },
         "provenance": {
-          "builder": "datagen/build_s_inject.py at c97dbeea, file sha256 6391daea660bdecf405d2eccc439148578e42881e8ccc41c792dd7cc5c998d72",
+          "builder": "datagen/build_s_inject.py at 93adbadd, which now asserts the shard contract on its own output (shard_contract: every line parses, has \"content\", no \"_header\"; the filename matches train.py's SHARD_RE; non-empty; sidecar present). The retracted build was c97dbeea, file sha256 6391daea660bdecf405d2eccc439148578e42881e8ccc41c792dd7cc5c998d72.",
           "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88 -- a committed script, not an inline command, because ~/bin/pod re-parses argv in a shell: parentheses raise a syntax error and quotes are word-split. It calls /usr/bin/python3 by absolute path.",
           "source_pools": {
             "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
@@ -1390,7 +1395,9 @@
           "distinct_documents": "1000 in every shard, all five",
           "copies_per_document": "exactly n_exposures, uniform -- 1/8/64/256, no document over- or under-represented",
           "documents_per_exposure": "exactly 1000 in every exposure of every shard",
-          "interleaving": "a seeded permutation over all (document, exposure) pairs, not contiguous blocks -- so n256's 256th copy of a document is not adjacent to its 255th"
+          "interleaving": "a seeded permutation over all (document, exposure) pairs, not contiguous blocks. Measured as the largest FIRST appearance position, which contiguous blocks bound at 1000: n8 4396, n64 7539, n256 7531, and n1/p_format 999 because a single exposure has nothing to interleave.",
+          "every_line_readable": "no line carries _header and every line carries \"content\", checked on all 330,000 lines -- the property whose absence stopped the launch.",
+          "re_measured_after_the_rebuild": "all of the above were re-run against the rebuilt files, not carried over from the retracted measurement."
         },
         "test_set_disjointness": {
           "S_pool x S_test_4way overlap by (program, operands)": 0,
@@ -1398,9 +1405,37 @@
           "S_test_4way": "1000 rows, 1000 distinct (program, operands) keys, 1000 distinct instruction strings",
           "what_this_does_not_say": "disjointness of KEYS and of the instruction string, not of the skill. The injected documents teach the operator with worked steps on other operands, which is the intervention -- the experiment measures transfer to unseen operands, so key-level disjointness is the requirement and semantic novelty is not claimed here."
         },
-        "document_form": "instruction, then the worked chain one step per line, then the bare answer. Measured on s_inject_n1's first document: the same instruction string the test uses, then `3 * 7 - 2 * 5 + 1 = 12` style lines including the carry line `-11 + 10 = -1`, then `18`."
+        "document_form": "instruction, then the worked chain one step per line, then the bare answer -- unchanged by the rebuild, and now under the key \"content\" rather than \"text\". Measured on s_inject_n1's first document: the same instruction string the test uses, then `3 * 7 - 2 * 5 + 1 = 12` style lines including the carry line `-11 + 10 = -1`, then `18`.",
+        "lines_is_documents": "every line is a document, so lines == documents. This replaces lines_is_documents_plus_one: the header was the +1 and it is no longer in the file.",
+        "retracted_value": {
+          "what": "the five sha256 digests and line counts measured 2026-09-05T09:1xZ, superseded by a REBUILD in the same format-fixing change (93adbadd), not by a re-measurement of the same bytes.",
+          "why": "the shards were unreadable by the trainer. train._jsonl_content (train.py:1361) is json.loads(ln)[\"content\"] on every non-blank line with no header skip, and these shards wrote {\"text\": ...} doc lines under a {\"_header\": true} first line. All five token caches raised KeyError: 'content' when built on the pod, so no arm could start. Each fault was independently fatal (measured: header+text raises, header+content raises, content-with-no-header reads).",
+          "digests": {
+            "s_inject_n1": {
+              "sha256": "4d1f9af1db46232c35a14b9ad93e8ab6aecf1e72184173c1e0042e9a52844ebd",
+              "lines": 1001
+            },
+            "s_inject_n8": {
+              "sha256": "79fea9ef3079d4293e1775a8552df110019930985509cfd5ede7f06aa06031e7",
+              "lines": 8001
+            },
+            "s_inject_n64": {
+              "sha256": "9c107863590aa454c4db98849cd3d2da6d76433eb4c11049ec9b43c8f5dd4cd4",
+              "lines": 64001
+            },
+            "s_inject_n256": {
+              "sha256": "f9dbf542fbbdd36347194603d3d9c7e14932c971e3d401284019d0ced7c16fc5",
+              "lines": 256001
+            },
+            "p_format": {
+              "sha256": "3d9bdcd4a23dc612f01854b0bdd644c16e7293bd1bd477227b4059f914eed881",
+              "lines": 1001
+            }
+          },
+          "corpus_content_unchanged": "the rebuild changed the ENCODING, not the corpus. Verified row by row against the retracted files: document counts identical (1000/8000/64000/256000/1000), every document's text identical in file order, every (_s_index, _exposure) pair identical in file order, and each sidecar equal to the old header minus its _header key. So the exposure schedule the arms measure is the one this entry always described, and runs/prereg.jsonl#conversion_rate_0905 needs no amendment for it."
+        }
       },
-      "source": "shasum -a 256 data/corpus/*/[ps]*_000.jsonl locally and sha256sum on the pod at /work/aupai, both recomputed live at 2026-09-05T09:1xZ. The pod build also wrote its own SHA lines to a log under runs/ on the pod; that log is NOT cited as a source and NOT in this tree, because a log line records the build moment and would still read correct if the file changed afterwards. Structure, header and disjointness counts from a direct read of every row of all five shards plus data/probes/novel_ops/S_test_4way.jsonl and data/probes/novel_ops/S_pool.jsonl; builder datagen/build_s_inject.py@c97dbeea --selftest passes",
+      "source": "shasum -a 256 data/corpus/<name>/<name>_000.jsonl and its .meta.json in /Users/bytedance/code/aupai-e1, and sha256sum on the pod at /work/aupai, both recomputed live 2026-09-05 after the rebuild at 93adbadd. All five agree across the two sides, and the line counts agree. The pod digests were computed by running sha256sum on the pod's files, not read back from any build log.",
       "config": {
         "builder": "datagen/build_s_inject.py at c97dbeea",
         "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88",
@@ -1409,7 +1444,7 @@
         "base_seed": 20260906,
         "for": "runs/prereg.jsonl#conversion_rate_0905 -- the five world-2 arms of experiment 1 (n1, n8, n64, n256, control_arm), 500 steps each"
       },
-      "uncertainty": "The digests are exact and they agree across two independent builds. What they cannot say is that either build is the one a future run will read: the shards are gitignored, so a checkout does not carry them and `harness check` cannot verify them from the tree. A differing digest after a rebuild means the CODE or the SOURCE POOL changed, because build_s_inject.py is deterministic at these seeds -- and build_s_inject.py REFUSES to overwrite an existing shard directory for exactly that reason (a rebuild at a different seed changes the exposure schedule while the vocab and source stamps still match, so a stale cache would look fresh).",
+      "uncertainty": "The digests are exact and they agree across two independent builds. What they cannot say is that either build is the one a future run will read: the shards are gitignored, so a checkout does not carry them and `harness check` cannot verify them from the tree. A run reads a TOKEN CACHE, not these files, and the cache's freshness is judged by vocab + corpus fingerprint + sample seed -- so the load-bearing evidence for any given run is that its cache was built from a corpus whose fingerprint matches, which this entry does not assert.",
       "boundary": "This entry freezes the CORPUS ARTIFACTS, not the readout and not the claim. It says nothing about what the arms measure; that is runs/prereg.jsonl#conversion_rate_0905 and the instrument it pins (cont.novel_ops_frozen_sets, whose four-way floor is 0.364 diamond_chain / 0.294 diamond_chain4 and must be read per program). The disjointness numbers are key-level and instruction-string-level only. p_format shares S's document FORM and differs in composition, and per cont.novel_ops_frozen_sets it also differs in operand magnitude (means 9.9 vs 48.6), so any S-minus-P number from these shards carries that confound. No arm has yet been scored against these shards: at the time of writing experiment 1 has not launched."
     }
   ]
