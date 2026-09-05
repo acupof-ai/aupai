@@ -1,0 +1,123 @@
+{
+  "_comment": [
+    "experiment 1 arm control_arm: runs/prereg.jsonl#conversion_rate_0905 amendment 6, 500 steps, world 2, cards 5+7.",
+    "WEIGHTS ARE ROW-DERIVED, not token-derived (4c's ruling 2026-09-05). build_mix computes its budget as total_tokens/seq (4096) while a pool packs at seq+1 (4097), so a weight from a token count asks int(tok/4096) rows of a tok//4097-row pool and the epoch cap binds by one row at n8/n64/n256. Row-derived: want == pool exactly. The unit mismatch is build_mix's and is filed to be fixed AFTER both launches -- E1's control ran under the old arithmetic.",
+    "w_S = 0.0000000000 (0.0000% of the arm) = 0 rows; w_P = 0.0006250000 = 20 rows; natural domains x 0.9993749415. S 0 tokens and P 84,434 both MEASURED.",
+    "Both injection domains carry val_frac: 0 (train.py's per-domain override, scripts/test_mix_val_frac.py). Without it the 5% split comes off the FRONT of the shard and the realised exposure count is 0.95n against an axis that says n.",
+    "The base mix's weights sum to 1.0000000585, not 1; the scale divides by that sum so this arm does not inherit the 5.85e-08 error."
+  ],
+  "total_tokens": 131072000,
+  "total_rows": 32000,
+  "seq": 4096,
+  "anneal_frac": 0.0,
+  "warmdown": 0.1,
+  "domains": {
+    "math_owm_stage2": {
+      "weight": 0.2641128538698195,
+      "epochs": 1,
+      "anneal": 0.2641128538698195,
+      "role": "math/reasoning. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 7,
+      "supply_tokens_one_epoch": 6513304690,
+      "cursor_used_rows": 0,
+      "fingerprint": "1e687e4b5ce37598",
+      "fingerprint_source": "read from data/corpus/math_owm_stage2/build_corpus_stats.json"
+    },
+    "en_c4_stage2": {
+      "weight": 0.16253106603968234,
+      "epochs": 1,
+      "anneal": 0.16253106603968234,
+      "role": "English general. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 8,
+      "supply_tokens_one_epoch": 2403694865,
+      "cursor_used_rows": 0,
+      "fingerprint": "05e0fc6f14704056",
+      "fingerprint_source": "read from data/corpus/en_c4_stage2/build_corpus_stats.json"
+    },
+    "cot": {
+      "weight": 0.08064406121901599,
+      "epochs": 4,
+      "anneal": 0.08064406121901599,
+      "role": "chain-of-thought. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 7,
+      "supply_tokens_one_epoch": 424056227,
+      "cursor_used_rows": 0,
+      "fingerprint": "388496b76ed9bf88",
+      "fingerprint_source": "read from data/corpus/cot/build_corpus_stats.json"
+    },
+    "textbook_30b": {
+      "weight": 0.10158178813994334,
+      "epochs": 1,
+      "anneal": 0.10158178813994334,
+      "role": "textbook/instructional. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 9,
+      "supply_tokens_one_epoch": 1610210330,
+      "cursor_used_rows": 0,
+      "fingerprint": "3f237c5191cb8571",
+      "fingerprint_source": "read from data/corpus/textbook_30b/build_corpus_stats.json"
+    },
+    "chatml": {
+      "weight": 0.007403399548077093,
+      "epochs": 4,
+      "anneal": 0.007403399548077093,
+      "role": "ChatML-rendered chat. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 7,
+      "supply_tokens_one_epoch": 38995846,
+      "cursor_used_rows": 0,
+      "fingerprint": "52a6b427818c90ff",
+      "fingerprint_source": "read from data/corpus/chatml/build_corpus_stats.json"
+    },
+    "chat_qa": {
+      "weight": 0.0072486663258805335,
+      "epochs": 4,
+      "anneal": 0.0072486663258805335,
+      "role": "The same QA rows in plain 问：/答： form, rendered into its own directory. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 6,
+      "supply_tokens_one_epoch": 38187650,
+      "cursor_used_rows": 0,
+      "fingerprint": "42a4bedde020ae66",
+      "fingerprint_source": "read from data/corpus/chat_qa/build_corpus_stats.json"
+    },
+    "zh_web": {
+      "weight": 0.030474639654428835,
+      "epochs": 1,
+      "anneal": 0.030474639654428835,
+      "role": "Chinese web, capped by the objective. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 7,
+      "supply_tokens_one_epoch": 21293403945,
+      "cursor_used_rows": 0,
+      "fingerprint": "a0d44fc44a289d60",
+      "fingerprint_source": "read from data/corpus/zh_web/build_corpus_stats.json"
+    },
+    "code_py_starcoder": {
+      "weight": 0.32950621053309165,
+      "epochs": 1,
+      "anneal": 0.32950621053309165,
+      "role": "code, Python only (ast. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 9,
+      "supply_tokens_one_epoch": 8744830156,
+      "cursor_used_rows": 0,
+      "fingerprint": "e1a14839e11f3e6f",
+      "fingerprint_source": "read from data/corpus/code_py_starcoder/build_corpus_stats.json"
+    },
+    "code_py_rp1t": {
+      "weight": 0.01587231467006087,
+      "epochs": 1,
+      "anneal": 0.01587231467006087,
+      "role": "code, Python only (ast. Weight is mix_200m_8b's x 0.9993749415 = (1 - w_S - w_P)/1.0000000585, so every ratio between two natural domains is exactly the control's while this arm's total is 1.",
+      "weight_decimals": 6,
+      "supply_tokens_one_epoch": 421239303,
+      "cursor_used_rows": 0,
+      "fingerprint": "63c2b3ce0e7dd989",
+      "fingerprint_source": "read from data/corpus/code_py_rp1t/build_corpus_stats.json"
+    },
+    "p_format": {
+      "weight": 0.000625,
+      "anneal": 0.000625,
+      "epochs": 1,
+      "val_frac": 0,
+      "weight_decimals": 10,
+      "role": "P format control: 1000 documents, ONE exposure in EVERY arm including control_arm -- its count must not vary with n or a P movement could not be read. 84,434 tokens MEASURED with data/tokenizer.json (84.43/doc, NOT S's 104: the prereg's 104 is S_pool's mean and applying it here asked 25 rows of a 20-row pool). Weight = 20 packed rows / 32000 budget rows. val_frac 0."
+    }
+  }
+}

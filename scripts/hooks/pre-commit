@@ -1292,6 +1292,14 @@ def main():
         # Muon.step() stacks same-shape params, baddbmm is 3-D only, and every dense parameter
         # is 2-D -- so the MoE experts are the first 3-D params this optimizer has ever seen.
         "scripts/test_muon_3d.py",
+        # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
+        # because the defect it guards lands in build_mix and not in this file: the 5% val split
+        # came off the FRONT of every domain including an injection shard whose row count IS the
+        # measurement, so experiment 1's realised exposure count was 0.95n against an axis reading
+        # n (n64 wanted 1,625 rows of a 1,542-row pool). `val_frac: 0` needs its own branch rather
+        # than a smaller number, because the old expression's max(1, ...) floors an explicit zero
+        # back up to one row -- so a test asserting "fewer rows held back" passes on the defect.
+        "scripts/test_mix_val_frac.py",
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1666,6 +1674,7 @@ def main():
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
+                     "scripts/test_mix_val_frac.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
