@@ -1071,21 +1071,44 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
     launch's argv against a registered probe, and a missing probe means the question has no
     subject -- a GO there would certify a comparison nobody has defined yet.
     """
-    probe = os.path.join(root, "data", "eval", "api_cloze.jsonl")
-    if not os.path.exists(probe):
-        return UNKNOWN, ("no data/eval/api_cloze.jsonl: no registered cloze probe, so no "
-                         "region for a launch to violate")
+    # BOTH PATHS, newest location first. The file moved data/eval/ -> data/probes/ on
+    # 2026-09-05 (32b4ed22) because everything under data/eval/ must be in holdout.py's
+    # REGISTRY, and REGISTRY drives EXCLUSION -- registering a probe drawn FROM the corpus
+    # on purpose would have deleted what it measures at the next corpus build. This gate
+    # hardcoded the old path and went UNKNOWN on every launch the moment it moved: UNKNOWN
+    # does not refuse, so the gate was off and said so in a line nobody reads at launch.
+    # A path is a join between two files that no check owns; carrying both is the cheap fix.
+    probe = None
+    for _rel in (os.path.join("data", "probes", "api_cloze.jsonl"),
+                 os.path.join("data", "eval", "api_cloze.jsonl")):
+        if os.path.exists(os.path.join(root, _rel)):
+            probe = os.path.join(root, _rel)
+            break
+    if probe is None:
+        return UNKNOWN, ("no api_cloze.jsonl under data/probes/ or data/eval/: no registered "
+                         "cloze probe, so no region for a launch to violate")
     try:
         with open(probe, encoding="utf-8") as fh:
             head = json.loads(fh.readline())
     except (OSError, ValueError) as e:
-        return NOGO, f"data/eval/api_cloze.jsonl header unreadable: {e}"
-    need = ("domain", "unseen_lo", "seed")
-    missing_hdr = [k for k in need if head.get(k) is None]
+        return NOGO, f"{os.path.relpath(probe, root)} header unreadable: {e}"
+    # READ FROM `bounds`, WHICH IS WHERE THE FILE PUTS THEM. The first version of this gate
+    # read unseen_lo/seed/mix off the header's top level -- a shape I assumed rather than
+    # opened, and the real file nests them under `bounds` (top level carries domain, chance,
+    # regions, n_seen_rows, stats). It went NO-GO on every launch with "header lacks
+    # unseen_lo, seed", which is the safe direction but for the wrong reason: a gate refusing
+    # because it cannot read its own subject would have been switched off by the first person
+    # to hit it. Top level is still consulted as a fallback so a future flattening does not
+    # break it again.
+    b = head.get("bounds") or {}
+    def _f(k):
+        return b.get(k, head.get(k))
+    need = {"domain": head.get("domain"), "unseen_lo": _f("unseen_lo"), "seed": _f("seed")}
+    missing_hdr = [k for k, v in need.items() if v is None]
     if missing_hdr:
         return NOGO, (f"cloze header lacks {', '.join(missing_hdr)}: the boundary this gate "
                       f"enforces is not stated in the file it protects")
-    dom, unseen_lo, want_seed = head["domain"], int(head["unseen_lo"]), int(head["seed"])
+    dom, unseen_lo, want_seed = need["domain"], int(need["unseen_lo"]), int(need["seed"])
     if cmd is None:
         cmd, src = _recorded_cmd(root)
         if cmd is None:
@@ -1102,7 +1125,7 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
     if d is None:
         return NOGO, (f"{launch_mix} does not name {dom}, the domain the cloze regions index; "
                       f"the probe cannot describe this run's data")
-    seq = int(head.get("seq") or 4096)
+    seq = int(_f("seq") or 4096)
     alloc = int((mix["total_tokens"] / seq) * d["weight"])
     bad = []
     if alloc != unseen_lo:
@@ -1112,8 +1135,11 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
                    f"allocation int(rows x weight)={alloc:,} != the probe's unseen_lo="
                    f"{unseen_lo:,}: the boundary moved, so the item file's row indices no "
                    f"longer mean what its header says")
-    want_mix = head.get("mix")
-    if want_mix and os.path.normpath(want_mix) != os.path.normpath(launch_mix):
+    # The header stores a BASENAME ("mix_200m_8b.json"); the launch line carries a path
+    # ("data/mix_200m_8b.json"). Compare basenames or every launch fails a name check on a
+    # difference that is not one.
+    want_mix = _f("mix")
+    if want_mix and os.path.basename(want_mix) != os.path.basename(launch_mix):
         bad.append(f"--mix {launch_mix} != the probe's {want_mix}: the regions were computed "
                    f"against that mix, and another one moves the allocation while the cache "
                    f"and its fingerprint stay identical -- nothing else would notice")
@@ -1416,12 +1442,14 @@ def selftest():
         _unseen_lo = int((_m["total_tokens"] / 4096) * _w0)   # from the UNMUTATED weight
         _m["domains"]["code_py_starcoder"]["weight"] = _w0 * 1.01
         json.dump(_m, open(_dst, "w"))
-        os.makedirs(os.path.join(dd, "data", "eval"), exist_ok=True)
-        with open(os.path.join(dd, "data", "eval", "api_cloze.jsonl"), "w",
+        os.makedirs(os.path.join(dd, "data", "probes"), exist_ok=True)
+        with open(os.path.join(dd, "data", "probes", "api_cloze.jsonl"), "w",
                   encoding="utf-8") as f:
-            f.write(json.dumps({"domain": "code_py_starcoder", "seq": 4096, "seed": 42,
-                                "unseen_lo": _unseen_lo, "mix": _CLOZE_MIX,
-                                "n_seen_rows": 80280}) + "\n")
+            # nested under `bounds`, the shape the real file ships
+            f.write(json.dumps({"_header": True, "domain": "code_py_starcoder",
+                                "n_seen_rows": 80280,
+                                "bounds": {"seq": 4096, "seed": 42, "unseen_lo": _unseen_lo,
+                                           "mix": os.path.basename(_CLOZE_MIX)}}) + "\n")
         os.makedirs(os.path.join(dd, "runs"), exist_ok=True)
         with open(os.path.join(dd, "runs", "experiments.jsonl"), "w", encoding="utf-8") as f:
             f.write(json.dumps({
@@ -2024,8 +2052,9 @@ def selftest():
         _mix0 = json.load(open(_mix_src, encoding="utf-8"))
         _alloc = int((_mix0["total_tokens"] / 4096)
                      * _mix0["domains"]["code_py_starcoder"]["weight"])
-        _hdr = {"domain": "code_py_starcoder", "unseen_lo": _alloc, "seed": 42, "seq": 4096,
-                "mix": "data/mix_200m_8b.json", "n_seen_rows": 80280}
+        _hdr = {"_header": True, "domain": "code_py_starcoder", "n_seen_rows": 80280,
+                "bounds": {"unseen_lo": _alloc, "seed": 42, "seq": 4096,
+                           "mix": "mix_200m_8b.json"}}
         for _label, _mut, _cmd, _want in (
             ("the control's own line", None, _CTRL, GO),
             ("a mix whose starcoder weight is nudged up",
@@ -2036,14 +2065,14 @@ def selftest():
             ("an arm at another seed", None, _CTRL.replace("--seed 42", "--seed 43"), NOGO),
         ):
             with tempfile.TemporaryDirectory(prefix="cloze_selftest_") as _d:
-                os.makedirs(os.path.join(_d, "data", "eval"))
+                os.makedirs(os.path.join(_d, "data", "probes"))
                 shutil.copy(_mix_src, os.path.join(_d, "data", "mix_200m_8b.json"))
                 if _mut:
                     _mp = os.path.join(_d, "data", "mix_200m_8b.json")
                     _m = json.load(open(_mp, encoding="utf-8"))
                     _m["domains"]["code_py_starcoder"][_mut[0]] = _mut[1]
                     json.dump(_m, open(_mp, "w"))
-                with open(os.path.join(_d, "data", "eval", "api_cloze.jsonl"), "w",
+                with open(os.path.join(_d, "data", "probes", "api_cloze.jsonl"), "w",
                           encoding="utf-8") as _f:
                     _f.write(json.dumps(_hdr) + "\n")
                 _s, _why = gate_cloze_regions(_d, "data/mix_200m_8b.json", 2, cmd=_cmd)

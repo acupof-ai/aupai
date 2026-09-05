@@ -334,6 +334,29 @@ class Cfg:
     # which is where Lample et al. put the memory lr relative to the backbone, and the smoke is
     # not a test of it. Whatever the arms run is recorded in the checkpoint's cfg.
     mem_lr = 0.02
+    # THE SELECTOR'S OWN LR: query + keys. -1.0 means "use mem_lr", which is exactly what the
+    # M1/M2/M3 arms ran -- all six memory tensors in ONE Adagrad group -- so the default is a
+    # no-op and test_arch_compat asserts the resulting groups are identical to today's.
+    #
+    # A sentinel rather than None, because a resumed cfg round-trips through JSON and a None there
+    # is indistinguishable from a field the older checkpoint did not have. -1.0 is not a usable lr
+    # in any branch, so it cannot be mistaken for a value someone chose.
+    #
+    # WHY THE SPLIT EXISTS. Those three arms collapsed under readout 4 (M1 pool_touched_frac
+    # 0.0945 at step 1000, key_gini 0.9192, entropy 0.927 of ln 32 = 3.466), and the collapse is
+    # in the SELECTION distribution: readout 6 read 1.09-1.25 of touched rows throughout, so the
+    # value writes land. On the CPU toy (probes/mem_usage_toy.py) a selector frozen at random init
+    # never collapses over 300 steps -- touched stays 1.0000, gini 0.175 -- so it is what the
+    # selector LEARNS, and lowering only the selector's lr moved touched from 0.078 to 1.000 over
+    # two orders of magnitude while the value table kept 0.02. That toy could not RANK the
+    # candidates (its two tasks respectively reward the collapse and never reach it), so this flag
+    # exists to let the six-cell real-data probe decide, not because the toy chose it.
+    mem_sel_lr = -1.0
+    # Query normalisation before the two half-key top-k: none (today's arms), l2 (per-half L2 on
+    # query and keys plus a learned temperature, no batch statistic), bn (Lample et al. 2019 3.3,
+    # BatchNorm1d on the query output). Consumed by model.ProductKeyMemory, which raises on any
+    # other value rather than falling back to none.
+    mem_query_norm = "none"
     mem_wd = 0.0  # weight decay on a sparsely-updated table decays the rows nobody read, which
     # is a slow uniform pull toward zero applied unevenly -- the rows read least are decayed
     # most, relative to their own update count. Adagrad also takes wd densely.
@@ -981,7 +1004,7 @@ def build_optimizers(model, cfg, master=None):
     short-conv kernels (were mis-routed to the 15x scalar lr) and AttnRes pseudo-queries. Base LRs
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
     muon, embed, scalar, arq, head = [], [], [], [], []
-    mem = []
+    mem, mem_sel = [], []
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
@@ -1012,7 +1035,20 @@ def build_optimizers(model, cfg, master=None):
         # train under two regimes with nothing recording it. NOT a substring test on "mem": that
         # would quietly widen to any future parameter whose name contains those three letters.
         if _is_mem_fqn(n):
-            mem.append(q)
+            # THE SELECTOR SPLIT, and it is a split of ONE group into two, not a new set of
+            # parameters: `mem` and `mem_sel` are disjoint and their union is what `mem` held
+            # before. At mem_sel_lr <= 0 (the default -1.0) everything goes to `mem` and the
+            # optimizer list is bit-for-bit today's -- asserted in test_arch_compat.
+            #
+            # THE SELECTOR IS query + keys, by suffix on the fqn rather than by ndim or by
+            # position: the keys are 3D and the query 2D, so a shape test would need to know both
+            # and would silently reclassify either if the module changed. `q_log_temp` (the l2
+            # arm's learned temperature) and `q_bn` (the bn arm's BatchNorm) belong with the
+            # selector for the same reason the query does -- they scale the scores the top-k reads.
+            if n.endswith(("query.weight", "keys", "q_log_temp")) or ".q_bn." in n:
+                mem_sel.append(q)
+            else:
+                mem.append(q)
             continue
         # THE THIRD ARM LIVES OR DIES HERE. An untied head that still lands in `embed` trains at
         # embed_lr 0.1 -- which is exactly arm 2 (untied, embed lr) and is a legitimate arm, but it
@@ -1073,6 +1109,14 @@ def build_optimizers(model, cfg, master=None):
                 fused=True,
             )
         )
+    # THE SELECTOR'S LR DECIDES WHETHER THERE ARE ONE OR TWO GROUPS. <= 0 is the sentinel for
+    # "no split", so the two lists are merged back before either group is built and the result is
+    # the single group the M1/M2/M3 arms ran. Merging here rather than at the branch above keeps
+    # the classification in one place and makes the no-split case one comparison.
+    _sel_lr = float(getattr(cfg, "mem_sel_lr", -1.0))
+    if _sel_lr <= 0:
+        mem = mem + mem_sel
+        mem_sel = []
     if mem:
         # ADAGRAD, NOT SPARSEADAM, and the reason is memory rather than convergence. Both accept
         # a sparse gradient; AdamW raises on one (measured, probes/mem_toy.py). Both allocate
@@ -1088,6 +1132,19 @@ def build_optimizers(model, cfg, master=None):
                 weight_decay=getattr(cfg, "mem_wd", 0.0),
             )
         )
+    if mem_sel:
+        # A SEPARATE OPTIMIZER, not a second param_group on the one above, because set_schedule
+        # scales every group by the same multiplier from its own initial_lr -- so two groups in one
+        # optimizer would work, but the step line's lr report and the `_names` zip below index
+        # optimizers, not groups. One optimizer per reported lr keeps the printed number and the
+        # thing it names the same object.
+        opts.append(
+            torch.optim.Adagrad(
+                mem_sel,
+                lr=_sel_lr,
+                weight_decay=getattr(cfg, "mem_wd", 0.0),
+            )
+        )
     for opt in opts:
         for g in opt.param_groups:
             g["initial_lr"] = g["lr"]
@@ -1097,9 +1154,15 @@ def build_optimizers(model, cfg, master=None):
     # than returned alongside: ten call sites unpack this list (sft.py:101, sft_math.py:181,
     # bench_eff/*, probes/, scripts/test_arch_*), and returning a tuple would break every one.
     # `arq` is present only when the model has attn_res pseudo-queries, so the zip below must
-    # not assume four.
+    # not assume four. `mem_sel` is present only when the selector split is on -- and it must be
+    # LAST, matching the append order above, or every name after it would label the wrong
+    # optimizer and the step line's lr report would attribute the selector's lr to the table.
     _names = (["muon", "embed", "scalar"] + (["head"] if head else [])
-              + (["arq"] if arq else []) + (["mem"] if mem else []))
+              + (["arq"] if arq else []) + (["mem"] if mem else [])
+              + (["mem_sel"] if mem_sel else []))
+    assert len(_names) == len(opts), (
+        f"{len(opts)} optimizers against {len(_names)} names: the step line reports lrs by "
+        f"zipping these two, and strict=False would silently drop the tail rather than raise")
     for opt, nm in zip(opts, _names, strict=False):
         opt.aupai_group = nm
     return opts
@@ -2160,6 +2223,7 @@ def main():
         "anneal_frac": "fraction of tokens using each domain's anneal weight (0 = no anneal, for a WSD stage-1)",
         "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
         "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
+        "mem_sel_lr": "sparse memory: separate lr for the SELECTOR (query + keys); <=0 keeps one group at mem_lr, which is what M1/M2/M3 ran",
     }.items():
         parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -2180,6 +2244,14 @@ def main():
     parser.add_argument("--mem_arm", type=str, default=None,
                         help="sparse memory: the ARM ID for runs/memory_diag.jsonl (m1/m2/m3). "
                              "Required with --mem_values; not derived from --name")
+    # A CHOICE, not a free string: model.ProductKeyMemory raises on an unknown value, and argparse
+    # refusing it here means the typo is caught before a 155 GiB cache load rather than after.
+    parser.add_argument("--mem_query_norm", type=str, default=None,
+                        choices=("none", "l2", "bn"),
+                        help="sparse memory: normalise the query before the half-key top-k. "
+                             "none = the M1/M2/M3 arms; l2 = per-half L2 on query and keys plus a "
+                             "learned temperature; bn = BatchNorm1d on the query output "
+                             "(Lample et al. 2019 3.3)")
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )

@@ -10,6 +10,21 @@ runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
 runs/friction.jsonl merge=union
+# The memory-arm diagnostics ledger (readouts 4 and 5 of memory_layers_0905). Append-only by
+# its own schema, so union is correct for the same reason as the rest.
+# ADDED 2026-09-05, after the file had existed for a day with no transport in EITHER direction:
+# it was absent from ledger_audit.KEYS, which is what pod_pull_ledgers derives its file list from,
+# and pod_push.sh excludes runs/ -- so the 25 rows behind three stopped arms lived only on the
+# pod. Missing here it also failed the pre-commit behind-main exemption, which reads this file,
+# so rescuing it needed the deliberate-exception flag.
+# ROW IDENTITY IS (name, step, ts), NOT (name, step) as this comment first said. An arm relaunched
+# under the same name restarts at step 10 and re-visits every step the previous run wrote, and
+# b0_mem_m1 was relaunched on 2026-09-05 (19:41 -> 22:35). Measured on the 25 real rows plus that
+# relaunch's first three diag steps: (name, step) collides 3 ways -- ('m1', 10) holding
+# pool_touched_frac 0.6516 and 0.3258, two different measurements under one key -- while
+# (name, step, ts) gives 28 distinct over 28 rows. On the real 25 alone both read 25/25, which is
+# why the cheaper key looks right until an arm is relaunched. The ledger carries no run id, so ts
+# is the only field separating two runs of one arm. The KEYS entry now exists (ledger_audit.py).
 runs/memory_diag.jsonl merge=union
 
 # EXPERIMENTS.md is DERIVED (exp.py render from runs/experiments.jsonl), so "pick a side" is
@@ -22,7 +37,6 @@ runs/memory_diag.jsonl merge=union
 # and untracked: this line alone gives a merge that cannot find its driver, the same shape as
 # a hook edited in a branch worktree. `harness install-hooks` writes the config;
 # `python3 scripts/merge_drivers.py --check` says whether both halves are present here.
-#
 # data/pod_head_manifest.txt had a driver and it is REMOVED: the file is untracked now, and
 # the driver never fired for it anyway. A merge driver only runs on a CONFLICT, and two
 # branches touching different manifest lines merge cleanly -- git spliced one side's line

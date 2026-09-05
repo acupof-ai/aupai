@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (83 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (170 = 83 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (86 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (173 = 86 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,15 +50,15 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (66 incidents, 264h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (77 incidents, 308h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (20 incidents, 60h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
-- **R4** (11 incidents, 33h): failures must be loud. Owner: blank.
+- **R4** (12 incidents, 36h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-75 incidents (34 infra, 41 model), ~4h each, 300h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+77 incidents (34 infra, 43 model), ~4h each, 308h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -71,7 +71,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153).
 
-### R2-b Population narrower than the property (17 incidents)
+### R2-b Population narrower than the property (18 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -79,7 +79,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §171: a perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population.
 - §201: a device-fd refusal verified only where it cannot fire (macOS, no /proc) reported nothing about where it does (pod, /proc present); all ten claim sites would have been refused on the pod.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203).
 
 ### R2-c Mutation did not take (3 incidents)
 
@@ -90,7 +90,7 @@ The mutation never landed or its verification reads the wrong signal.
 
 Cannot see: whether the mutation reached the code path the check exercises (§81).
 
-### R2-d Parser reads prose as code (7 incidents)
+### R2-d Parser reads prose as code (8 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
@@ -98,8 +98,9 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §94: a symbol's name was present in the file, read as "assigned"; the name appeared in a string, not an assignment.
 - §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
 - §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
+- §205: a placeholder-survival guard fired on a correct substitution — the template's own documentation line names the placeholder, and a whole-file scan read that comment as an unsubstituted token; fourth instance of the self-satisfying needle.
 
-Cannot see: whether a text match is reading behavior or prose (§56, §77, §141).
+Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205).
 
 ### R2-e Fixture built from the implementation (4 incidents)
 
@@ -160,12 +161,12 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-11 incidents (7 infra, 4 model), ~3h each, 33h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+12 incidents (7 infra, 5 model), ~3h each, 36h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197).
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204).
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
