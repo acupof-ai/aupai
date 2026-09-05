@@ -203,6 +203,16 @@ class Cfg:
     moe_top_k = 3    # routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn
     moe_shared = 1   # must equal ffn_hidden exactly or MoEFFN refuses -- equal-ACTIVE parity,
     moe_expert_ffn = 768  # which is what makes a loss delta attributable to sparsity not FLOPs
+    # THE LATENT VARIANT, off by default so every existing config keeps its shape (prereg
+    # moe_0905 amendment 13). moe_latent > 0 runs the ROUTED experts in a projected width:
+    # d -> moe_latent once per token, experts entirely at moe_latent, moe_latent -> d after the
+    # gated sum. moe_shared_ffn lets the always-on shared expert keep its own width, which is what
+    # makes an EXACT parity-and-parameter match possible -- with it pinned to moe_expert_ffn there
+    # is no integer solution at all. Registered cell: moe_latent 384, moe_expert_ffn 2048,
+    # moe_shared_ffn 512, which is exact parity (2*1024*384 + 3*3*384*2048 + 3*1024*512 =
+    # 9,437,184 = 3*d*ffn_hidden) at 1.000x the 24-expert arm's routed parameters.
+    moe_latent = 0        # 0 = off; >0 = routed-expert width after the down-projection
+    moe_shared_ffn = 0    # 0 = follow moe_expert_ffn; >0 = the shared expert's own inner width
     moe_layers = "0-11"  # block indices that are MoE; "0-11", "0,3,6" or a list (see _moe_layers)
     # THE BALANCER'S TWO CONSTANTS, pre-registered and NOT tuned after seeing a curve. Borrowed
     # from facts/moe.json (DeepSeek-V3 arXiv:2412.19437 2.1.2/4.2) at 60x our per-expert token
@@ -2407,6 +2417,14 @@ def main():
         "moe_top_k": "MoE: routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden exactly or MoEFFN refuses",
         "moe_shared": "MoE: always-on shared experts (1 = the charter's cell)",
         "moe_expert_ffn": "MoE: inner width of ONE expert (768 at ffn_hidden 3072 with top-3 + shared)",
+        "moe_latent": "MoE: routed-expert width after a d->latent down-projection (0 = off). The "
+                      "experts run entirely at this width and the gated sum is up-projected once; "
+                      "parity is then counted in MULTIPLIES, not widths. Registered cell: 384 with "
+                      "moe_expert_ffn 2048 and moe_shared_ffn 512",
+        "moe_shared_ffn": "MoE: the always-on shared expert's own inner width (0 = follow "
+                          "moe_expert_ffn). Exists because the latent variant spends its parity "
+                          "budget on three shapes, and a free shared width is what makes an exact "
+                          "parity-and-parameter match possible",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
