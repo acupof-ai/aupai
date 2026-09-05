@@ -187,16 +187,51 @@ def main():
         train.Cfg.anneal_frac = 0.10
         m3 = _mix(tmp, "disagree.json", {"inj": {"weight": 1.0, "epochs": 1, "anneal": 1.0}},
                   budget, anneal_frac=0.0)
+        _msgs = {}
         try:
             _r, _b, _l = _build(m3)
             FAILS.append("a mix declaring anneal_frac 0.0 against Cfg 0.10 was built anyway -- "
                          "the two schedule different runs and nothing here can tell an explicit "
                          "--anneal_frac from the class default")
         except RuntimeError as e:
-            msg = str(e)
-            for token in ("0.0", "0.1", "anneal_frac"):
-                if token not in msg:
-                    FAILS.append(f"the refusal does not name {token!r}: {msg[:120]}")
+            _msgs[(0.0, 0.10)] = str(e)
+
+        # 3b. THE SAME REFUSAL AT VALUES THAT CANNOT COLLIDE WITH THE PROSE. This second world
+        #     is what makes world 3's naming assertion real, and it exists because two of the
+        #     three tokens in the first version could not fail (e1, MEASURED): "anneal_frac"
+        #     appears in the literal "declares anneal_frac", and "0.1" is a substring of the
+        #     literal "int(0.1x)" the message explains the flooring with. Deleting ` and
+        #     Cfg.anneal_frac is {Cfg.anneal_frac}` -- exactly the failure this world is for --
+        #     fired none of the three. The one that worked, "0.0", worked only because float
+        #     formatting emits a trailing zero, so it was testing a repr.
+        #
+        #     Stripping the values out of the message does not fix that: str.replace removes the
+        #     prose occurrence too, so the collision disappears from both sides. What separates
+        #     prose from an interpolated value is that the PROSE IS CONSTANT ACROSS TWO WORLDS
+        #     and the values are not. 0.25 and 0.75 appear nowhere in the message's literal text,
+        #     so requiring each message to name its own pair is an assertion neither side of
+        #     which the author's prose can satisfy.
+        train.Cfg.anneal_frac = 0.75
+        m3b = _mix(tmp, "disagree2.json", {"inj": {"weight": 1.0, "epochs": 1, "anneal": 1.0}},
+                   budget, anneal_frac=0.25)
+        try:
+            _r, _b, _l = _build(m3b)
+            FAILS.append("a mix declaring anneal_frac 0.25 against Cfg 0.75 was built anyway")
+        except RuntimeError as e:
+            _msgs[(0.25, 0.75)] = str(e)
+
+        for (_dec, _cfg), _msg in _msgs.items():
+            for _label, _v in (("the mix's declared value", _dec), ("Cfg's value", _cfg)):
+                if str(_v) not in _msg:
+                    FAILS.append(f"the refusal does not state {_label} ({_v}): {_msg[:130]}")
+            if "anneal_frac" not in _msg:
+                FAILS.append(f"the refusal does not name the field: {_msg[:130]}")
+        # AND THE TWO MESSAGES MUST DIFFER. If they were identical the loop above would be
+        # satisfied by prose containing every digit it happens to need, which is the defect one
+        # level up. Different inputs producing one message is the shape, not the values.
+        if len(_msgs) == 2 and len(set(_msgs.values())) == 1:
+            FAILS.append("both refusals produced the SAME message, so it cannot be reporting "
+                         "the values it was given")
 
         # 4. THE CURSOR BASE DOES NOT SURVIVE A SECOND CALL.
         #    Call A resumes domain 'inj' at row 100 and publishes a base for it. Call B is a
