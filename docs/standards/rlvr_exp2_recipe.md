@@ -24,11 +24,14 @@ The S/P sets were built for **experiment 1** and their own fact says so
 (`cont.generator_families_in_owm`, config.why: "for the conversion-rate curve's skill (4c,
 synthesis experiment 1)"). Fusing the two is a design decision that appears in no document.
 
-**It is also the better experiment, for one reason:** the docs' version reads out on
-math-500, which sits at 30% containment (`cont.holdout_v2`), and db's own gate 3 says that
-makes the curve measure retrieval. The S/P sets have no such problem — the skill was
-constructed on 2026-09-05, after every corpus in the mix was built. So this recipe writes
-fb's version, and states the substitution as new rather than citing it.
+**It is also the better experiment, and the reason is a difference in kind rather than in
+degree** (e1's sharpening). The docs' version reads out on math-500 at 30% containment
+(`cont.holdout_v2`), which cannot separate retrieval from reasoning at all. The S/P sets
+are constructed-absent — the header's own `absence_basis` field says the operator, its rule
+and its phrasing "were invented 2026-09-05, after every corpus in the mix was built", and a
+scan is not what the claim rests on. Those are two epistemic classes, not two points on a
+containment scale. So this recipe writes fb's version, and states the substitution as new
+rather than citing it.
 
 What is lost by the substitution: the docs' version measures capability the model might
 plausibly acquire from RL on real math. This one measures acquisition of a skill the model
@@ -96,12 +99,14 @@ changes the level at which it is held:
 | format seen in training | ChatML (`format_prompt`, `rlvr_trainer.py:274`) | same ChatML wrapper on the same instances |
 | format at scoring | ChatML, identical string | ChatML, identical string |
 
-**Both arms are ChatML, both start from the SFT checkpoint.** This inverts fb's
-continuation ruling and the reason is `rlvr_trainer.py:193`: the tool refuses the other
-configuration, and its refusal encodes a measured fact — `be.l1_fewshot_p324` puts the
-format effect at **+38.2pt** with the model held fixed, which is larger than any effect
-this experiment could detect. Holding format fixed is what fb asked for; ChatML is the only
-level at which both arms can hold it.
+**Both arms are ChatML, both start from the SFT checkpoint. This is compliance with fb's
+ruling, not a deviation from it.** What fb asked for is that format not be a second
+variable. `rlvr_trainer.py:193` refuses base + continuation by classification, and its
+refusal cites the measured size of the thing being controlled: `be.l1_fewshot_p324` puts
+the format effect at **+38.2pt** with the model held fixed. An effect that large is not a
+nuisance parameter next to a conversion rate — it is bigger than the signal. Given the
+code, ChatML on the SFT checkpoint is the only configuration in which format is constant
+*and* both arms can run at all, so it is the only way to honour the instruction.
 
 The pretraining-token arm is *continued pretraining on S instances*, not RL — it is the
 denominator the RL arm is compared against, and it must see the identical prompt strings.
@@ -110,10 +115,20 @@ denominator the RL arm is compared against, and it must see the identical prompt
 
 **Not `rlvr_reward.py`.** Measured: `reward_fn("42", "42") == 0.0` — the reward path
 requires `\boxed{}` in the generation (`rlvr_reward.py:19-20, 86-88`) and the S/P sets
-contain no `\boxed{}` anywhere (grep: 0 in all four files). With a model not already
-emitting it, every reward is 0, every group has std 0, every advantage is 0, and the group
-is dropped as degenerate — **the run would train on nothing and report it as a low
-accuracy**, not as an error.
+contain no `\boxed{}` anywhere (grep: 0 in all 10,192 rows).
+
+**The failure is silent and total, not a low score.** e1 traced the path further than I
+did and is right: `keep = 1.0 if 0 < sum(r) < len(r) else 0.0` (`:298`) drops every
+all-zero group, then `if not kept: continue` (`:303`) skips the step *before* the forward.
+With `\boxed{}` absent, every group is degenerate at every step, so **the run takes zero
+optimizer steps and exits 0**, and the final checkpoint is bit-identical to the initial
+one. The only trace is `degen N` inside the periodic log line (`:375`), and `n_degenerate`
+resets to 0 each interval (`:384`) — a per-interval count, never a total. A 500-step run
+prints "all groups degenerate, skipped" 500 times and looks like a completed run.
+
+So the recipe also requires: **refuse when the degenerate fraction over the first 20 steps
+is 1.0.** "No gradient was ever applied" and "RL did not help" produce the same artifact,
+and only the refusal separates them.
 
 Per fb's ruling, the frozen prompts are not changed. A separate exact-match verifier:
 
@@ -122,15 +137,26 @@ Per fb's ruling, the frozen prompts are not changed. A separate exact-match veri
 - **Take the last, not any.** The answer string already appears somewhere in the
   *instruction* in 122 of 1000 S_test rows; a scorer searching prompt+completion jointly
   would false-positive at that rate.
-- Negative answers matter: 293 of 1000 S_test answers are negative, and `-55` tokenizes as
+- Negative answers matter: 284 of 1000 S_test answers are negative, and `-55` tokenizes as
   two tokens `['-','55']`. Match on the decoded string, never on token ids.
 - Guessing floor is low: the most common answer covers 2.7% of S_test, 1.6% of P_test.
+
 
 ## 5. Chosen constants, each with its reason
 
 | constant | value | chosen because |
 |---|---|---|
-| `--max_new` | **64** | measured: solution+answer is p95 54 tokens, max 60 over all 10,192 rows. The default 512 would spend 8× the generation budget on padding. **This is the single largest cost lever in the recipe.** |
+| `--max_new` | **64** | measured: reference solution+answer is p95 54 tokens, max 60 over all 10,192 rows. The default 512 would spend 8× the generation budget on padding. **This is the single largest cost lever in the recipe, and the least safe number in it** — see below |
+
+**The max_new caveat, e1's, and it cuts against the number I chose.** The p95 of 54 is a
+property of the *reference* solutions. What gets truncated is the *model's* generation, and
+a model that has not learned the format emits longer, not shorter. A generation cut at 64
+scores 0 under exact match and is then indistinguishable from a wrong answer — the metric
+degrades in the direction that looks like "the skill was not acquired", which is the one
+reading this experiment must not manufacture. So: **the log dict gets a truncation counter
+in the same patch as the token counter (§2), and 64 stands only until a pilot reports the
+p95 of actual generations.** If truncation exceeds ~1% of rollouts, raise it.
+
 | `--group_size` | **8** | the trainer's default and the pass@k gate's k. Also sets the FP8 pad q=2. |
 | `--batch` | **4** | trainer default; global, not per-GPU (§2) |
 | `--temperature` / `--top_p` | **0.8 / 0.95** | trainer defaults, and the pass@k gate is specified at 0.8 |
@@ -171,21 +197,25 @@ Curve points: pretraining-arm n in {1, 8, 64, 512, 4096} from `S_pool[:n]` (nest
 construction). The RL arm's x-values are wherever its token counter lands; the two curves
 are plotted against a shared token axis, which is the whole comparison.
 
-## 7. Gates before a card is spent
+## 7. Preconditions. None of these is closed, so this recipe is NOT schedulable
 
-1. **pass@8 − pass@1 ≥ 15pt** on `ckpt_sft_p324_v5.pt` (AGENTS.md hard rule,
+1. **Two more SFT runs**, on p04 and p16, on the same pack and recipe as p324's. Without
+   them "a curve across pretraining-token checkpoints" is a single point (§1). This is a
+   precondition of the same kind as the rest of this list, not a note in the prose (e1).
+2. **pass@8 − pass@1 ≥ 15pt** on `ckpt_sft_p324_v5.pt` (AGENTS.md hard rule,
    `eval/math_hard.py --k 8 --temperature 0.8`). If RL has no headroom to exploit, the curve
-   measures nothing. **This gate has not been run on this checkpoint.**
-2. **Generation throughput, measured.** `efficiency_gap_views.md:371` names this as the
+   measures nothing. Never run on this checkpoint.
+3. **Generation throughput, measured.** `efficiency_gap_views.md:371` names this as the
    prerequisite and says it is unmeasured: at 200M rollout throughput is the binding
    constraint, and nothing in `facts/efficiency.json` covers decode. Until it is measured,
    no schedule for this experiment is honest.
-3. **A negative control at the same rollout budget** — constant reward — or a rising curve
-   cannot be separated from drift under the KL anchor.
-4. **The MDE, pre-registered from n and the base rate**, before any hypothesis
-   (`efficiency_gap_views.md:376`). Not computed here: it needs the base rate from gate 1.
-5. **Sets verified by sha256** against `cont.novel_ops_frozen_sets` at run time. A curve
-   scored against any other hash is a different measurement.
+4. **The MDE, pre-registered from n and the base rate** (`efficiency_gap_views.md:376`).
+   Needs the base rate from precondition 2, so it cannot be computed here.
+5. **A pilot's generation-length p95**, to confirm or raise `max_new` (§5).
 
-Gates 1, 2 and 4 are open. **This recipe cannot be scheduled until they close**, and the
-two missing SFT runs (§1) sit in front of the multi-checkpoint version of it.
+Two more that are cheap and belong in the run itself rather than before it:
+
+- **A negative control at the same rollout budget** — constant reward — or a rising curve
+  cannot be separated from drift under the KL anchor.
+- **Sets verified by sha256** against `cont.novel_ops_frozen_sets` at run time. A curve
+  scored against any other hash is a different measurement.
