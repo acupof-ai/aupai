@@ -423,7 +423,20 @@ def main():
             if i_guard > i_cast:
                 problems.append("the guard is AFTER the bf16 cast, so it cannot prevent the "
                                 "fp32 run")
-            body = textwrap.dedent(src[i_guard - 4:src.index("    if fp8:", i_guard)])
+            # SLICE BY INDENTATION, not to the next `if fp8:` (e1's review of e64b549b). The old
+            # form sliced from the guard to the next occurrence of that literal, which is fine
+            # while the guard PRECEDES the cast and swallows unrelated lines once it does not --
+            # so a guard moved after the cast made the exec die on NameError instead of failing
+            # the ordering assertion. The mutant was caught, but by a crash, and a mutant that
+            # dies for the wrong reason is indistinguishable from one the test killed. Taking
+            # exactly the guard's own block makes the ordering assertion the thing that fires.
+            _lines = src[i_guard - 4:].split("\n")
+            _block = [_lines[0]]
+            for _l in _lines[1:]:
+                if _l.strip() and not _l.startswith("        "):
+                    break
+                _block.append(_l)
+            body = textwrap.dedent("\n".join(_block))
             worlds = (("moe on, fp8 off", 24, False, False, True),
                       ("moe on, fp8 on", 24, True, True, False),
                       ("moe off, fp8 off", 0, False, False, False),
