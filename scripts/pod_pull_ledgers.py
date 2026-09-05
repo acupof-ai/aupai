@@ -166,7 +166,7 @@ _OPEN_FIELDS = ("status", "state")
 _PROVENANCE = {"commit", "notes", "ended", "cmd", "socket", "reviewer"}
 
 
-def classify(local_row, pod_row):
+def classify(local_row, pod_row, local_events=None, pod_events=None):
     """Why a key present on BOTH sides differs. Returns 'stale' | 'result_only_on_pod' |
     'provenance_only' | 'contradicts'.
 
@@ -185,10 +185,36 @@ def classify(local_row, pod_row):
                           which is R10 exactly, and the reason de-36 exists.
       contradicts         both sides state a different non-empty value. A human decides.
 
+    THE EVENT SETS DECIDE BEFORE ANY FIELD DOES (6e's subset ruling, de-26). Each side folds
+    to its LAST row, so two sides holding the SAME events in different file order fold to
+    different rows and every field test then reports a difference that does not exist.
+    Measured on the live ledgers 2026-09-05 with full-row signatures: 2 collisions are that
+    shape (e1_c11_doccu_rescore and b0_mem_m3_peak_1195_master, |loc|=|pod|=2 and the sets
+    equal), 45 are the pod holding a strict SUBSET of the local events -- the pod is behind,
+    which is `stale` by definition and needs no field reasoning -- 0 are the reverse, and
+    exactly 2 hold events neither side has: b0_se_16lnew_1b and
+    ckpt_params_leg_438m_3p76b.pt/full. Those 2 are the ones a human must read.
+
+    THE SIGNATURE IS THE WHOLE ROW, and a narrower one silently agrees. My first pass keyed
+    on (key, status, state, result, evidence, ended) and called 4 pairs set-equal; two of
+    them differ in fields that list omits -- the 3b review row in `basis`/`item`/`verdict`,
+    the score_matrix row in its metrics -- so a real disagreement hashed to one signature
+    and would have been reported as agreement. A comparison whose job is to surface
+    disagreements must not choose which fields count.
+
+    The event arguments are optional so a caller with one row per side (the selftest's
+    field-level cases, and any future single-row use) still gets the field reasoning.
+
     Nothing in this class is ever applied. A local row is somebody's written decision --
     fb closed 62 of these as killed on 2026-09-01 -- and overwriting it from a stale pod
     copy would be an automated edit to a human's judgement in the direction of the older
     evidence."""
+    if local_events and pod_events:
+        if local_events == pod_events:
+            # Same events, different fold. The pod adds nothing.
+            return "stale"
+        if pod_events < local_events:
+            return "stale"
     disagree = [f for f, v in pod_row.items() if not _empty(v) and local_row.get(f) != v]
     if not disagree:
         return "stale"
@@ -239,19 +265,23 @@ def diff_rows(pod_rows, local_rows, keyfn):
     ruling issued on those numbers would have rewritten 53 correct local rows from rows
     the pod itself supersedes."""
     local, pod_last, order = {}, {}, []
+    local_events, pod_events = {}, {}
     for r in local_rows:
         local[keyfn(r)] = r
+        local_events.setdefault(keyfn(r), set()).add(json.dumps(r, sort_keys=True))
     for r in pod_rows:
         k = keyfn(r)
         if k not in pod_last:
             order.append(k)
         pod_last[k] = r
+        pod_events.setdefault(k, set()).add(json.dumps(r, sort_keys=True))
     missing, collisions = [], []
     for k in order:
         r = pod_last[k]
         if k in local:
             if local[k] != r:
-                collisions.append((k, classify(local[k], r), local[k], r))
+                collisions.append((k, classify(local[k], r, local_events.get(k), pod_events.get(k)),
+                                   local[k], r))
         else:
             missing.append(r)
     return missing, collisions
@@ -517,7 +547,17 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
             # the one class that reads as "the local row is the stale one". That is exactly
             # backwards for a close, and it is the reading under which someone discards it.
             # Caught by the selftest case below, not by reading this.
-            coll = [(k, classify(lrow, prow), lrow, prow) for k, _why, prow, lrow in coll]
+            # AND THE EVENT SETS SWAP WITH THEM. diff_rows built them for its own argument
+            # order, so reusing them here would hand the pod's events as local and reverse
+            # the subset test -- "the pod is behind" would read as "the repository is
+            # behind" and 45 stale rows would come back as something else.
+            _lev, _pev = {}, {}
+            for _r in local_rows:
+                _lev.setdefault(keys[rel](_r), set()).add(json.dumps(_r, sort_keys=True))
+            for _r in pod_rows:
+                _pev.setdefault(keys[rel](_r), set()).add(json.dumps(_r, sort_keys=True))
+            coll = [(k, classify(lrow, prow, _lev.get(k), _pev.get(k)), lrow, prow)
+                    for k, _why, prow, lrow in coll]
             # AND THE EVENTS UNDER SHARED KEYS, which `missing` cannot see: a close is a
             # second event under an existing key, so it is never `missing` and never applied
             # as a collision. Without this the push direction could not send the very rows
@@ -589,6 +629,23 @@ def main(argv=None):
             print(f"    CONTENT ONLY ON POD {k}  ({_which})")
             print(f"      pod   [{prow.get(_st)}] {str(prow.get(_which))[:88]}")
             print(f"      local [{lrow.get(_st)}] {str(lrow.get(_which))[:88]}")
+        for k, why, lrow, prow in [c for c in coll if c[1] == "contradicts"][:4]:
+            # PRINTED, not just counted. This is the only class that asks a human to decide,
+            # and until 2026-09-05 it printed a count and nothing else: "3 row(s) where both
+            # sides state a different non-empty value. A human decides which measurement is
+            # right" -- with no name, no field and no pair of values, so the decision it asks
+            # for cannot be made from the report. Every contested field is shown, because
+            # WHICH field is contested is the decision: a differing `result` is two
+            # measurements and a differing `status` is usually one side being older.
+            contested = sorted(
+                f for f in set(lrow) | set(prow)
+                if not _empty(lrow.get(f)) and not _empty(prow.get(f))
+                and lrow.get(f) != prow.get(f)
+            )
+            print(f"    BOTH SIDES DIFFER {k}  ({', '.join(contested) or 'no contested field'})")
+            for f in contested[:4]:
+                print(f"      {f}: pod {str(prow.get(f))[:64]!r}")
+                print(f"      {f}: loc {str(lrow.get(f))[:64]!r}")
     print()
     n_res = by_class.get("result_only_on_pod", 0)
     if n_res:
@@ -701,6 +758,49 @@ def _selftest():
     t_both = {"id": "b0-21", "state": "open", "reading": "the gate reads the grant"}
     t_other = {"id": "b0-21", "state": "open", "reading": "the gate reads the config"}
     assert classify(t_both, t_other) == "contradicts", classify(t_both, t_other)
+
+    # THE EVENT SETS DECIDE BEFORE THE FIELDS (6e's subset ruling, de-26). Driven through
+    # diff_rows rather than by calling classify with hand-built sets, because diff_rows is
+    # what builds them and a case that supplies its own would pass for a version where the
+    # wiring is missing entirely.
+    #
+    # EVERY SHAPE HERE IS ONE WHERE THE FIELD LOGIC ANSWERS DIFFERENTLY, which took a
+    # mutation run to get right. The first version used a start/close pair, and all three
+    # positive cases passed with the subset rule DELETED: whichever side folds to the
+    # `running` row trips the pre-existing _OPEN clause and the answer is already `stale`.
+    # A case whose assertion holds without the code it tests proves nothing about it. So both
+    # events under each key here are CLOSES with different results, where the field logic
+    # reaches `contradicts` and only the event sets can say otherwise.
+    ekf = keys["runs/experiments.jsonl"]
+    c_ok = {"name": "r", "started": "t", "status": "ok", "result": "val 2.218"}
+    c_drop = {"name": "r", "started": "t", "status": "dropped", "result": "void, wrong root"}
+    # (a) SAME EVENTS, OPPOSITE ORDER. Both sides hold both closes; each folds to a different
+    # one, so the field logic sees two different non-empty results and calls it a
+    # contradiction for a human to decide -- when the two sides hold identical rows. This is
+    # e1_c11_doccu_rescore and b0_mem_m3_peak_1195_master on the live ledgers.
+    _m, coll = diff_rows([c_ok, c_drop], [c_drop, c_ok], ekf)
+    assert not _m and len(coll) == 1 and coll[0][1] == "stale", \
+        f"same event set in opposite order must be stale, got {coll}"
+    assert classify(coll[0][2], coll[0][3]) == "contradicts", (
+        "the field logic must answer differently here, or this case does not test the rule")
+    # (b) POD HOLDS A STRICT SUBSET: 45 of 49 live collisions, every one the pod being behind.
+    _m, coll = diff_rows([c_ok], [c_ok, c_drop], ekf)
+    assert len(coll) == 1 and coll[0][1] == "stale", f"a pod subset must be stale, got {coll}"
+    assert classify(coll[0][2], coll[0][3]) == "contradicts", (
+        "the field logic must answer differently here, or this case does not test the rule")
+    # (c) NEGATIVE CONTROL, and the load-bearing half: when neither side's events contain the
+    # other's, the field logic must still run and still reach `contradicts`. Without this a
+    # blanket "sets differ -> stale" passes (a) and (b) while hiding every real disagreement.
+    c_other = {"name": "r", "started": "t", "status": "ok", "result": "val 9.999"}
+    _m, coll = diff_rows([c_other], [c_ok], ekf)
+    assert len(coll) == 1 and coll[0][1] == "contradicts", \
+        f"disjoint event sets must fall through to the field logic, got {coll}"
+    # (d) AND THE REVERSE SUBSET IS NOT STALE. The local side holding fewer events means the
+    # POD is ahead, which is content to bring home -- reversing the test would report those
+    # 45 rows backwards. It falls through to the fields, which is the point: not stale.
+    _m, coll = diff_rows([c_ok, c_drop], [c_ok], ekf)
+    assert len(coll) == 1 and coll[0][1] != "stale", \
+        f"a local subset means the pod is ahead, not stale, got {coll}"
     # A pod row carrying BOTH a new reading and a contested result is a contradiction, not a
     # copy: `_contested` is what stops one absent field from licensing the whole row.
     t_mixed_local = {"id": "b0-22", "state": "open", "result": "40.0%"}
@@ -1166,7 +1266,12 @@ def _selftest():
         "truncating it. EVENT UNION (6e, 2026-09-04): a local close crosses to a pod holding "
         "only the start and folds closed there, while an event the pod already has, a start "
         "OLDER than the pod's close, a whole key that is diff_rows' job, and a second close "
-        "with a different value are all refused -- the last staying a human's decision"
+        "with a different value are all refused -- the last staying a human's decision. "
+        "EVENT SETS BEFORE FIELDS (6e's subset ruling, de-26): same events in opposite order "
+        "and a pod holding a strict subset both read stale, a local subset reads "
+        "result_only_on_pod because the pod is ahead, and disjoint sets fall through to the "
+        "field logic and still reach contradicts -- the last is the control a blanket "
+        "sets-differ-means-stale would pass while hiding every real disagreement"
     )
     return 0
 
