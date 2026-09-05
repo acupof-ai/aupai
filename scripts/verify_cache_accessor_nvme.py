@@ -56,7 +56,9 @@ def main():
         print(f"REFUSING: record's `groups` is {type(groups).__name__}, expected a non-empty dict")
         return 1
 
-    os.environ.setdefault("AUPAI_TOKEN_CACHE_DIR", rec.get("dst", "/mnt/data02/tokens"))
+    sys.path.insert(0, os.path.join(ROOT, "eval"))
+    import cache_guard
+    os.environ.setdefault("AUPAI_TOKEN_CACHE_DIR", rec.get("dst") or cache_guard.NVME_CACHE_DIR)
     sys.path.insert(0, ROOT)
     import train
 

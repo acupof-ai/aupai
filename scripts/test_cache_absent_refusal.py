@@ -122,15 +122,36 @@ def _selftest():
         # make the negative control depend on live disk state.
         train.TOKEN_CACHE = os.path.join(d, "default", "pretrain_1b_tokens.pt")  # cache-path-ok: see above
         os.makedirs(os.path.dirname(train.TOKEN_CACHE), exist_ok=True)
+        # AND the NVMe step must be redirected too, or setting TOKEN_CACHE stops being enough.
+        # _token_cache_dir gained a middle step on 2026-09-05: env, else cache_guard.NVME_CACHE_DIR
+        # if it is a directory, else dirname(TOKEN_CACHE). On the POD that directory exists and holds
+        # the live caches, so with only TOKEN_CACHE redirected this control would resolve to
+        # /mnt/data02/tokens and tokenize probe_absent INTO THE SHARED CACHE DIR -- the 2026-09-02
+        # incident (a test writing a real cache beside a live run's) reproduced by the test written
+        # about it. It passes on a laptop only because the mount is absent there, which is exactly the
+        # live-disk dependence the comment above forbids.
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+        import cache_guard
+        old_nvme = cache_guard.NVME_CACHE_DIR
+        cache_guard.NVME_CACHE_DIR = os.path.join(d, "no_nvme_here")
         try:
-            train._domain_seqs(dom, _Tok(), is_main=True, ddp=False, workers=1)
-        except RuntimeError as e:
-            if "refusing to retokenize" in str(e):
-                fails.append("NEGATIVE CONTROL FAILED: the refusal fires with "
-                             "AUPAI_TOKEN_CACHE_DIR unset, so no fresh checkout could ever build "
-                             "its first cache")
-        except Exception:
-            pass  # any other failure is the stub tokenizer, not the refusal
+            resolved = train._token_cache_dir()
+            if resolved != os.path.dirname(train.TOKEN_CACHE):
+                fails.append(f"NEGATIVE CONTROL is not isolated: the accessor resolves to "
+                             f"{resolved}, not the temp dir. Any tokenizing below would land "
+                             f"outside this test's world.")
+            else:
+                try:
+                    train._domain_seqs(dom, _Tok(), is_main=True, ddp=False, workers=1)
+                except RuntimeError as e:
+                    if "refusing to retokenize" in str(e):
+                        fails.append("NEGATIVE CONTROL FAILED: the refusal fires with "
+                                     "AUPAI_TOKEN_CACHE_DIR unset, so no fresh checkout could ever "
+                                     "build its first cache")
+                except Exception:
+                    pass  # any other failure is the stub tokenizer, not the refusal
+        finally:
+            cache_guard.NVME_CACHE_DIR = old_nvme
     finally:
         train.DATA, train.TOKEN_CACHE, train.VOCAB_ID = old_data, old_cache, old_vid
         if old_env is not None:
