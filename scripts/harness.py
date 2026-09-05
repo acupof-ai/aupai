@@ -17759,6 +17759,66 @@ def _dev_wait():
     return card_claim.DEVICE_WAIT_S
 
 
+def _write_pending_claim(name, cards, wrapper_pid, note):
+    """Record the INTENT to hold cards, before the device poll can confirm it. Path, or None.
+
+    de-47. A job shorter than the device poll leaves NOTHING today: _device_pid_for blocks up to
+    DEVICE_WAIT_S waiting for a descendant to open a card, and if the job finishes first the poll
+    returns None, the launch prints a note to stderr, and no row is written anywhere. Three readers
+    then disagree with reality in the same direction: `card_claim.py status` shows the card
+    unclaimed, the sweep sees a card with memory and no claim and calls it ORPHAN, and a second
+    launch is free to take a card the first is still using at that instant.
+
+    A claim says who INTENDS to hold a resource and says nothing about whether the job is
+    progressing (AGENTS.md, the shared-resources rule). So the intent is recordable before the fact
+    is, and that is what this writes: state="pending", the WRAPPER pid, and the reason it is not yet
+    a real claim. `claims()` reads it like any other row -- its pid is the wrapper, which lives
+    exactly as long as the job, so a dead wrapper makes the row stale and reclaimable by the normal
+    path rather than by a special case.
+
+    NOT A SUBSTITUTE FOR THE REAL CLAIM. It is upgraded in place when the poll finds the device
+    holder (the file is rewritten with state="held" and the job's pid), and released when the poll
+    does not. Either way the window is covered and nothing is silent.
+
+    Written directly rather than through `card_claim.py acquire` because acquire REFUSES a shell by
+    design (de-34: a claim bound to a shell fails both ways) and the wrapper is a shell by
+    construction. Bypassing that refusal is only safe because this row is explicitly not a claim on
+    the shell: it is a pending marker whose whole content is "a job is starting here", and the
+    state field is what every reader must branch on.
+    """
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return None
+    try:
+        card_list = [c for c in str(cards).split(",") if c]
+        os.makedirs(card_claim.CLAIM_DIR, exist_ok=True)
+        p = os.path.join(card_claim.CLAIM_DIR, card_claim.claim_file(name, card_list))
+        row = {
+            "name": name,
+            "cards": card_list,
+            "pid": wrapper_pid,
+            "cmdline": card_claim._cmdline(wrapper_pid),
+            "acquired": card_claim._now(),
+            "note": note,
+            "state": "pending",
+            "why_pending": (
+                "harness launch wrote this BEFORE the device poll could name the job's own pid. "
+                "The pid here is the launch WRAPPER, which lives as long as the job, so this row "
+                "goes stale on its own when the job ends. It is upgraded to state=held with the "
+                "job's pid the moment a descendant opens a card, and released if none does. A job "
+                "shorter than the poll used to leave no row at all (de-47)."),
+        }
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(row, fh, ensure_ascii=False)
+        os.replace(tmp, p)
+        return p
+    except Exception:  # noqa: BLE001 -- a claim helper must never take the launch down
+        return None
+
+
 def _proc_readable():
     """Whether the device predicate can answer at all here. False on macOS: no /proc."""
     try:
@@ -18154,6 +18214,16 @@ def cmd_launch(rest):
     # first non-shell descendant rather than blocking 90s for an answer that cannot arrive.
     claim_name = None
     if cards and not args.no_gpu:
+        # PENDING FIRST, then the poll. de-47: a job shorter than DEVICE_WAIT_S finishes before any
+        # descendant is observed holding a card, and the launch then wrote nothing at all -- status
+        # showed the card unclaimed, the sweep called it ORPHAN, and a second launch could take it
+        # while the first was still on it. The pending row covers exactly that window and is
+        # upgraded or removed below, so the outcome is a row or a loud line, never silence.
+        pending_path = _write_pending_claim(args.name, cards, proc.pid,
+                                            f"harness launch {args.name} (pending)")
+        if pending_path:
+            print(f"claim  cards {cards} PENDING on wrapper pid {proc.pid} "
+                  f"(upgraded when the job opens a device)")
         claim_pid, claim_dev = None, None
         if _proc_readable():
             got = _device_pid_for(proc.pid)
@@ -18164,6 +18234,14 @@ def cmd_launch(rest):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
+            # The pending row is this name's claim file, so acquire would clash with itself.
+            # Remove it and let acquire write the real one -- the window it covered is over,
+            # because claim_pid is a process observed holding the card.
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
             # require_device only when the poll established it: on macOS the fallback picked
             # the first non-shell descendant without proving anything, so asserting it there
             # would refuse every laptop launch.
@@ -18177,13 +18255,43 @@ def cmd_launch(rest):
                 print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
         elif _proc_readable():
             _w = _dev_wait()
-            _why = (f"within {int(_w)}s" if _w else
-                    "before the job itself ended -- the poll waits while the wrapper lives, so "
-                    "this means the job exited")
-            print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
-                  f"device {_why}. A claim on a process that is not on a card protects nothing "
-                  f"(b0_mem_m1). Read the log.", file=sys.stderr)
+            # THE JOB MAY SIMPLY HAVE BEEN FAST, and that is not the same as never holding a card.
+            # wait_for_device stops polling when the wrapper dies, so a 3-second eval returns None
+            # here for the same reason an interactive shell does. Read the wrapper's exit code: the
+            # .rc file is written by the wrapper itself, so its presence means the job ran to
+            # completion. Distinguishing them is the whole point of de-47 -- one is a job that came
+            # and went, the other is a pid that was never going to hold a card.
+            _finished = os.path.exists(rc_path)
+            _rc = None
+            if _finished:
+                try:
+                    with open(rc_path) as _f:
+                        _rc = _f.read().strip()
+                except OSError:
+                    pass
+            if _finished:
+                print(f"claim  cards {cards}: the job finished (exit {_rc}) before a device fd was "
+                      f"observed, so the claim stayed PENDING and is now released. The cards were "
+                      f"declared for its whole life; nothing was silent. Short jobs take this path "
+                      f"by construction -- the poll ends when the wrapper does (de-47).")
+            else:
+                print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
+                      f"device within {int(_w)}s and the job has NOT exited. A claim on a process "
+                      f"that is not on a card protects nothing (b0_mem_m1). Read the log.",
+                      file=sys.stderr)
+            # Either way the pending row goes: a finished job needs no claim, and a live job that
+            # never opened a device is not one this row can honestly describe.
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
         else:
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
             print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
                   f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
 
