@@ -11292,6 +11292,161 @@ def _last_log_step(root, name):
     return max(steps) if steps else None
 
 
+def _read_scope(path):
+    """pod_drift.SCOPE as a list of literals, read from the file at `path`. None if unreadable.
+
+    Parsed rather than imported: the caller must be able to read a WORLD'S copy, and importing by
+    module name reads whichever one is on sys.path -- which is how a check that accepts `root`
+    ends up answering about ROOT.
+    """
+    try:
+        with open(path, encoding="utf-8") as f:
+            tree = ast.parse(f.read())
+    except (OSError, SyntaxError):
+        return None
+    for node in tree.body:
+        if isinstance(node, ast.Assign) and any(
+                isinstance(t, ast.Name) and t.id == "SCOPE" for t in node.targets):
+            try:
+                val = ast.literal_eval(node.value)
+            except ValueError:
+                return None
+            return [x for x in val if isinstance(x, str)]
+    return None
+
+
+def _data_paths_named_by_pod_code(root):
+    """(named, scoped, missing): tracked data/ paths that IN-SCOPE code names as a literal.
+
+    THE NARROW FORM, and the wide one was refuted by its own population. "A tracked path
+    admitted under data/ by the pre-commit ALLOWED list and absent from pod_drift SCOPE" was the
+    first proposal (4c called it cheap; it is, and it is wrong): MEASURED 2026-09-05, 191 tracked
+    paths match ALLOWED and 170 of them are outside SCOPE, 148 being data/corpus/sample/* which
+    the pod genuinely does not need since it has the real corpus. A check with 170 findings on a
+    clean tree is a permanent red, and a permanent red is the same as no signal.
+
+    What the incident actually was: data/probes/api_cloze.jsonl sat on the pod at its
+    pre-rewrite content -- credential row included -- while pod_sync_check reported "in sync
+    (463 files)", because data/ enters SCOPE only through three named patterns and a manifest
+    that does not list a path cannot assert anything about it. The count made the coverage look
+    total.
+
+    So the join is: a data/ path written as a string literal by a .py/.sh that is ITSELF in
+    SCOPE, i.e. code that ships to the pod and runs there. Measured: 76 such literals, 21 of
+    them tracked paths, 9 outside SCOPE. That is a readable number, and it is the right subject
+    -- a laptop-only tool naming a data path proves nothing about what the pod needs.
+
+    GLOBS AND DIRECTORY PREFIXES ARE SKIPPED. A literal with a `*` is a pattern the code expands
+    at runtime, so it names no single path to compare; counting it would report a finding nobody
+    can act on.
+    """
+    import subprocess as sp
+
+    # THE FILE LIST COMES FROM ROOT, THE SCOPE FROM THE WORLD, and the split is deliberate. A
+    # broken world is a partial tree -- this one holds a single pod_drift.py and no git repo at
+    # all -- so `git ls-files` there returns nothing and every question would answer "no paths",
+    # which is a PASS for a world built to FAIL. The subject of this check is the real tree's
+    # tracked files; the variable under test is SCOPE. Reading each from where it actually lives
+    # is what makes the world able to fire.
+    def _ls(args):
+        r = sp.run(["git", "-C", ROOT, "ls-files", *args], capture_output=True, text=True)
+        return set(r.stdout.split()) if r.returncode == 0 else set()
+
+    # SCOPE COMES FROM THE WORLD'S pod_drift.py, not from ROOT's. `import pod_drift` after
+    # inserting ROOT/scripts reads the LIVE file whatever `root` is, so the broken world -- whose
+    # whole content is a pod_drift.py with one SCOPE line removed -- would be read past and the
+    # FAIL branch would be unreachable. Same defect I shipped in the diag ancestor join: a check
+    # that takes `root` and then reads ROOT is not parameterised, it just looks it.
+    scope = _read_scope(os.path.join(root, "scripts", "pod_drift.py"))
+    if scope is None:
+        scope = _read_scope(os.path.join(ROOT, "scripts", "pod_drift.py"))
+    if scope is None:
+        return None, None, None
+    tracked = _ls([])
+    scoped = _ls(scope)
+    # TWO FORMS, and the second is the one that matters. A slash-literal regex alone CANNOT SEE
+    # THE INCIDENT'S OWN FILE: eval/api_cloze.py:79 writes
+    # `os.path.join(ROOT, "data", "probes", "api_cloze.jsonl")`, so the path exists in the source
+    # only as separate segments. Measured -- the literal form found 21 paths and data/probes/
+    # was not among them, i.e. the first version of this check would have passed the world it was
+    # written for. The joined form finds 24, api_cloze.jsonl included. Python code in this repo
+    # builds paths with os.path.join by convention, so the joined form is the common case and
+    # scanning only for slashes reads mostly .sh files and constants.
+    lit = re.compile(r"""['\"](data/[A-Za-z0-9._/*-]+)['\"]""")
+    join = re.compile(r'os\.path\.join\(\s*[A-Za-z_]+\s*,\s*"data"\s*,\s*'
+                      r'((?:"[^"]+"\s*,\s*)*"[^"]+")\s*\)')
+    named = {}
+    for p in sorted(scoped):
+        if not p.endswith((".py", ".sh")):
+            continue
+        try:
+            with open(os.path.join(ROOT, p), encoding="utf-8", errors="replace") as f:
+                text = f.read()
+        except OSError:
+            continue
+        hits = list(lit.findall(text))
+        for m in join.finditer(text):
+            hits.append("data/" + "/".join(re.findall(r'"([^"]+)"', m.group(1))))
+        for hit in hits:
+            if "*" in hit or hit.endswith("/"):
+                continue
+            if hit in tracked:
+                named.setdefault(hit, set()).add(p)
+    missing = {k: v for k, v in named.items() if k not in scoped}
+    return named, scoped, missing
+
+
+def check_pod_reads_are_scoped(root):
+    """Every tracked data/ path that pod-side code names must be in pod_drift's SCOPE.
+
+    Out of SCOPE means out of the manifest, and out of the manifest means pod_drift --check and
+    pod_sync_check.sh are silent about it -- not wrong, silent, while printing a file count that
+    reads as total coverage. The file can then be STALE on the pod indefinitely with every gate
+    green, which is what happened to data/probes/api_cloze.jsonl on 2026-09-05: the pod held its
+    pre-rewrite content, credential row and all, and it had to be pushed by hand.
+
+    STALENESS, NOT ABSENCE, is the failure this prevents, and that is why it is worth a check at
+    all: an absent file makes the reader crash on the pod and someone notices in minutes. A stale
+    one answers, with last week's content.
+    """
+    named, _scoped, missing = _data_paths_named_by_pod_code(root)
+    if named is None:
+        return SKIP, "cannot import scripts/pod_drift.py to read SCOPE"
+    if not named:
+        return SKIP, "no in-SCOPE .py/.sh names a tracked data/ path as a literal"
+    if missing:
+        rows = sorted((p, sorted(v)[0]) for p, v in missing.items())
+        return FAIL, (
+            f"{len(missing)} tracked data/ path(s) are read by code that ships to the pod and are "
+            f"NOT in pod_drift SCOPE, so the manifest cannot report them stale: "
+            + "; ".join(f"{p} (named by {by})" for p, by in rows[:4])
+            + (f" and {len(rows) - 4} more" if len(rows) > 4 else "")
+            + " -- add the path or its directory glob to SCOPE, or record why the pod does not "
+              "need it")
+    return PASS, f"{len(named)} data/ path(s) named by pod-side code, all in SCOPE"
+
+
+def _broken_pod_reads_are_scoped():
+    """The REAL tree with one SCOPE pattern removed -- mutated, never hand-written.
+
+    Dropping "data/probes/*.jsonl" reproduces the exact pre-2026-09-05 world: the file is still
+    tracked, still read by eval/api_cloze.py on the pod, and no longer in the manifest. That is
+    the incident, so the world is the incident rather than an invented one.
+    """
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "pod_drift.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    marker = '    "data/probes/*.jsonl",\n'
+    if marker not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "pod_drift.py"), "w", encoding="utf-8").write(
+        text.replace(marker, ""))
+    return d
+
+
 def _broken_memory_diag_fresh():
     """An open m1 arm whose newest diag row trips readout 5, built from the REAL ledger.
 
@@ -11496,6 +11651,20 @@ CHECKS = [
         "believe the test is isolated",
         check_fixture_not_live_state,
         _broken_fixture_not_live_state,
+    ),
+    (
+        "pod_reads_are_scoped",
+        "every tracked data/ path that pod-side code names is in pod_drift's SCOPE",
+        "data/probes/api_cloze.jsonl sat on the pod at its pre-rewrite content -- the live "
+        "third-party credential included -- while pod_sync_check.sh printed 'in sync (463 files)'. "
+        "data/ enters SCOPE through three named patterns only, and a manifest that does not list a "
+        "path cannot assert anything about it, so the count read as total coverage. Writing this "
+        "check found a SECOND live case with every gate green: data/PROVENANCE.md was 507 lines on "
+        "the pod against HEAD's 555, missing the note that /data00/tokens_code_rp1t.pt is the full "
+        "7.57B corpus and not the subset. Staleness, not absence, is the failure -- an absent file "
+        "crashes its reader and someone notices; a stale one answers with last week's content",
+        check_pod_reads_are_scoped,
+        _broken_pod_reads_are_scoped,
     ),
     (
         "memory_diag_fresh",
@@ -12169,6 +12338,10 @@ EVIDENCE = {
     "mutation_asserted_took": "repo",
     # repo: it reads tracked test files with ast and answers the same anywhere.
     "fixture_not_live_state": "repo",
+    # repo: the subject is git ls-files joined against pod_drift.SCOPE, both of which are the
+    # checkout's. On the pod git ls-files is empty, so the check degrades to its own SKIP before
+    # the auth rule is ever consulted.
+    "pod_reads_are_scoped": "repo",
     # pod: the diagnostics ledger and the run log are both WRITTEN on the training box, so a
     # laptop sees neither for a live arm. SKIP here is the honest answer, not a pass -- and
     # the run-log reader degrades to "log step unread" rather than a false red when the log
