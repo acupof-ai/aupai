@@ -194,8 +194,13 @@ def score(model, tok, items, device, num_id=None, batch_size=None):
             "row would divide summed log-probs by lengths from a different encoding."
         )
     mc = mc_items(items)
-    preds, labels, scored = score_mc_items(model, tok, mc, device,
-                                           batch_size=batch_size or MC_BATCH, num_id=num_id)
+    # autocast on the same terms as domain_loss.py:252: enabled only on cuda, so the stub-model
+    # worlds in the selftest run exactly as before. Both scoring calls are inside it -- the
+    # summed pass here and _option_sums' pass below -- because a normalisation control taken
+    # under a different numeric regime than the number it controls is not a control.
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=str(device).startswith("cuda")):
+        preds, labels, scored = score_mc_items(model, tok, mc, device,
+                                               batch_size=batch_size or MC_BATCH, num_id=num_id)
     # AN UNSCORED ITEM IS REFUSED, not excluded. score_mc excludes them from its mean, which is
     # right for a battery of many evals; here the MDE (0.4497/0.3755) was computed at n=1000,
     # so a quietly smaller denominator changes what the MDE is being compared to.
@@ -211,13 +216,14 @@ def score(model, tok, items, device, num_id=None, batch_size=None):
     if not torch.equal(labels, torch.tensor([it["label"] for it in items], dtype=labels.dtype)):
         raise AssertionError("score_mc_items returned labels that are not this set's labels")
 
-    lens = option_token_lens(tok, mc)
+    lens = option_token_lens(tok, mc)  # tokenizer only, no forward: outside the autocast block
     # The summed scores are not returned, so the mean row is taken by re-scoring with the
     # per-option lengths applied to the same call's output. score_mc_items gives only the
     # argmax, so the mean row needs the scores themselves: taken here by calling it once per
     # normalisation is NOT possible, so the mean pick is derived from a second pass that
     # divides. See _mean_preds.
-    mean_preds = _mean_preds(model, tok, mc, device, lens, batch_size or MC_BATCH)
+    with torch.autocast("cuda", dtype=torch.bfloat16, enabled=str(device).startswith("cuda")):
+        mean_preds = _mean_preds(model, tok, mc, device, lens, batch_size or MC_BATCH)
     return {
         "summed": accuracy_by_program(items, preds.tolist()),
         "mean": accuracy_by_program(items, mean_preds),
@@ -277,12 +283,23 @@ def _option_sums(model, tok, mc, device, batch_size):
 
 
 def score_checkpoint(ckpt, device="cuda", items=None, batch_size=None):
+    import torch
     from cache_guard import set_vocab_id
     from loader import load_checkpoint, load_tokenizer
 
     if items is None:
         items, _ = load_items()
-    model, cfg = load_checkpoint(ckpt, device=device)
+    # bfloat16, NOT the fp32 default, and the reason is measured rather than stylistic: KDA's
+    # Triton kernels raise `CUDA error: misaligned address` on fp32 weights outside autocast.
+    # MEASURED on the pod 2026-09-06, four shapes on one checkpoint at batch 4 x 64 tokens:
+    #   fp32 load, no autocast   -> misaligned address
+    #   fp32 load + autocast     -> OK
+    #   bf16 load, no autocast   -> OK
+    #   bf16 load + autocast     -> OK      <- domain_loss.py:252 and score_matrix.py:739
+    # The first row is what this file did, and it failed at EVERY batch (1/2/8) and EVERY length
+    # (16/64/256/512/4096) on every card, which is what made it look environmental. It is not:
+    # the same box scored two checkpoints an hour earlier through the bf16+autocast path.
+    model, cfg = load_checkpoint(ckpt, device=device, dtype=torch.bfloat16)
     set_vocab_id(cfg)
     # cfg IS REQUIRED and is the point: load_tokenizer asserts the tokenizer's size against
     # cfg.vocab_real and its fingerprint against cfg.vocab_id, so passing the checkpoint's own
