@@ -146,6 +146,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `prereg_amendments_dated` | every amendment of every `runs/prereg.jsonl` row carries a recoverable timestamp, under any of the three conventions in the file (`amended_N` beside the text, the date as a prefix inside `amendment_N`, or both in one `amended_N`); `amended_N` == `none` beside an `amendment_N` naming the gap passes | amend via `harness prereg amend`, which writes both keys with the date |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
 | `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
+| `test_integration_tree_guard` | the tasks/friction/board writers refuse in a tree checked out on `main` without `AUPAI_CONTROLLER=1`, and fail open where git cannot answer | the guard was widened or dropped; a refusal that fires in a `_tmp_repo()` world breaks every fixture, one that never fires puts rows back in the integration tree |
 
 ## Add a check
 
@@ -330,12 +331,14 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
+| `harness task` and `harness friction` write the ledger of the tree | `test_integration_tree_guard` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-39 rules: 18 checked, 21 manual. The count is regenerated from `harness check`'s
+56 rules: 25 checked, 31 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
-checked, 21 manual" while the code said 36/13/23, which is the same drift the table
-itself had before the check began reading it.
+checked, 21 manual" while the code said 36/13/23, and stale again at "39 rules: 18
+checked, 21 manual" on 2026-09-05, which is the same drift the table itself had before
+the check began reading it.
 
 ## Rules kept from before the reset
 
@@ -367,7 +370,7 @@ itself had before the check began reading it.
 
 **One worktree per session (from 2026-08-31 evening).** Six sessions in one working tree share one index: a file left dirty blocked others' moves four times in one afternoon, staged files were swept into other sessions' commits four times, and a hook built the manifest from another session's staged move. Rules replace none of this; isolation does.
 
-- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04).
+- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04). **Enforced from 2026-09-05, and the scope is all three ledgers — tasks, friction, and board.** The writers refuse when the tree they are about to append to is checked out on `main`, unless `AUPAI_CONTROLLER=1`. The predicate is the branch, not a path: a path test would hardcode one laptop's layout and be wrong on the pod and in CI. It fails open where git cannot answer (no repository, detached HEAD, git absent), because such a tree is not the integration tree and refusing there would break every `_tmp_repo()` fixture and every detached CI checkout. The refusal is at the write rather than the commit because by the time the hook refuses, the row is already dirty in the tree everyone merges through — which is what happened twice, ten minutes apart, before this existed.
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `scripts/merge_main.sh <name>` (a mkdir lock serialises merges into the shared integration worktree; two bare `git merge` calls in one tree raced on HEAD and the index, 2026-09-04); if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
 - **To hold the tree quiet, `scripts/merge_main.sh --hold`, then `--release`; never `mkdir` the lock directly.** `--hold` writes the holder file the waiters read, and a waiter refuses to remove a `deliberate=yes` hold even after its pid dies. A bare `mkdir` of the lock is indistinguishable from a crash between mkdir and the write, so a waiter clears it after a 3-second grace and merges into the window — measured 2026-09-05, when the controller's commits took the lock by hand and de's waiter removed it mid-commit. The flag existed before that and this line did not name it, which is the whole reason the hand-rolled path was the reachable one.
