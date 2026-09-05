@@ -2252,18 +2252,25 @@ def check_test_integration_tree_guard(root):
 
 
 def _broken_test_integration_tree_guard():
-    """The REAL suite against a harness.py whose guard never refuses -- the mutation the
-    incident is about, not a deleted file. Deleting the test would also FAIL, but that only
-    proves the check reads a path.
+    """The REAL suite against an integration_tree.py whose predicate answers True everywhere --
+    the mutation the incident is about, not a deleted file. Deleting the test would also FAIL,
+    but that only proves the check reads a path.
 
-    Placed at <tmp>/scripts/harness.py beside a real .git, because harness.py derives
+    TRUE-EVERYWHERE RATHER THAN FALSE-EVERYWHERE, because the suite has worlds in both
+    directions and this is the one that is dangerous in a way a reader would not notice: the
+    guard keeps refusing, so it looks alive, while CI, every standalone clone and all 27 of this
+    file's mkdtemp fixtures can no longer write. W3-W6 object.
+
+    Placed at <tmp>/scripts/, beside a real .git, because harness.py derives
     ROOT = dirname(dirname(__file__)): a bare temp dir repoints ROOT at a directory with no
     .git, where pod_drift.is_pod reads True, and a whole mutation run once passed in that wrong
     world with every mutant dying at one unrelated assertion (§235, 2026-09-05)."""
     src = os.path.join(ROOT, "scripts")
-    hp = os.path.join(src, "harness.py")
-    marker = '    if r.returncode != 0 or r.stdout.strip() != "main":\n        return False\n'
-    s = open(hp, encoding="utf-8").read()
+    itp = os.path.join(src, "integration_tree.py")
+    if not os.path.exists(itp):
+        return None
+    s = open(itp, encoding="utf-8").read()
+    marker = "    wt = os.path.join(common, \"worktrees\")\n"
     if s.count(marker) != 1:
         return None
     d = _tmp_repo()
@@ -2271,7 +2278,7 @@ def _broken_test_integration_tree_guard():
     subprocess.run(["git", "-C", d, "init", "-q", "."], capture_output=True, timeout=30)
     for f in os.listdir(src):
         t = os.path.join(d, "scripts", f)
-        if f != "harness.py" and not os.path.exists(t):
+        if f != "integration_tree.py" and not os.path.exists(t):
             try:
                 os.symlink(os.path.join(src, f), t)
             except OSError:
@@ -2283,9 +2290,8 @@ def _broken_test_integration_tree_guard():
                 os.symlink(s_extra, os.path.join(d, extra))
             except OSError:
                 pass
-    # Refuses on ANY repository: W3 (a branch) and the fail-open worlds must object.
-    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
-        s.replace(marker, "    if r.returncode != 0:\n        return False\n"))
+    open(os.path.join(d, "scripts", "integration_tree.py"), "w", encoding="utf-8").write(
+        s.replace(marker, marker + "    return True\n"))
     return d
 
 
@@ -2680,6 +2686,41 @@ def local_tokenizers():
 
 # -------------------------------------------------------------------------- checks
 #
+def index_scoped_checks():
+    """Check names whose subject is the INVOKING TREE'S GIT INDEX, derived from their source.
+
+    An index is not a property of the repository. It is one session's uncommitted intent,
+    seconds old, private to one working tree -- so a check reading it answers "is this commit
+    allowed" and never "is this tree fit to launch from". launch_gate's gate 9 must exclude
+    these, or one session's staged file becomes everybody's NOGO.
+
+    MEASURED 2026-09-05, and it cost two pending launches. shared_file_claim FAILed inside gate
+    9 naming AGENTS.md, which was staged in the integration tree by a merge in flight. Its
+    EVIDENCE is `repo`, so _partition_fails returned NOGO rather than UNKNOWN, and 98 read it as
+    a repository defect -- three sessions then chased a mechanism that did not exist (a
+    git-less-tree bug in the check, and the pod's manifest, neither of which the check reads).
+
+    DERIVED FROM THE BODIES, NOT A NAME LIST (4c's ruling). A list would have to be extended by
+    whoever adds the next index-reading check, i.e. by the person who does not yet know this
+    incident happened. Reading the source means the next one is excluded the moment it is
+    written. The markers are the three ways this file reaches an index: `git diff --cached`,
+    `git diff-index`, and _staged_index_env, whose whole purpose is handing a subprocess the
+    temporary index a path-scoped commit builds.
+    """
+    import inspect
+
+    markers = ("--cached", "diff-index", "_staged_index_env")
+    out = set()
+    for name, _asserts, _incident, run, _broken in CHECKS:
+        try:
+            src = inspect.getsource(run)
+        except (OSError, TypeError):
+            continue
+        if any(m in src for m in markers):
+            out.add(name)
+    return out
+
+
 # Each check is (name, asserts, incident, run, broken). `run(root)` -> (state, evidence);
 # `broken()` -> a temp root violating the condition, where run() must report FAIL.
 
@@ -9286,48 +9327,59 @@ FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect
 
 
 def refuse_in_integration_tree(what, path=None):
-    """A ledger writer refuses in the integration tree unless AUPAI_CONTROLLER=1.
+    """A ledger writer refuses in the integration tree.
 
     AGENTS.md's rule -- run `harness task` and `harness friction` in your worktree, never in
     the integration tree -- was prose, and prose is what people break for cause. Two rows
     landed in the integration tree ten minutes apart on 2026-09-05: b0's task row, then 44's
     board row. Nobody was careless; the tree is where you end up when a command refuses to run
-    in a worktree, and the rule's own coverage row says so ("the invoking directory is a shell
-    fact no artifact records").
+    in a worktree, and the rule's coverage row said so ("the invoking directory is a shell fact
+    no artifact records").
 
-    THE PREDICATE IS THE CHECKED-OUT BRANCH, NOT A PATH (4c's ruling 2026-09-05). A path test
-    would hardcode /Users/bytedance/code/aupai, which is one laptop's layout and is wrong on
-    the pod and in CI; `git symbolic-ref` answers about the tree the writer is actually about
-    to append to. main is the integration tree by definition here -- the controller is the only
-    session that commits there directly -- so the branch IS the property.
+    THE PREDICATE IS "THIS IS THE MAIN WORKTREE OF A COMMON GIT DIR THAT HAS LINKED WORKTREES",
+    in scripts/integration_tree.py, shared with scripts/hooks/pre-commit. It was `branch ==
+    "main"` for the first hours of its life and that was wrong within the day: the integration
+    tree was DETACHED on purpose (tilerl's flip, main 0425accb, 2026-09-05), which makes
+    symbolic-ref answer "HEAD" and turned all three guards OFF in the one tree they exist for.
+    A branch is a label anyone can change; being the tree other worktrees hang off is
+    structural. Read integration_tree.py before touching the predicate -- each of its clauses
+    is there because dropping it was measured to break a real world, and the second clause in
+    particular keeps CI and all 27 of this file's mkdtemp fixtures out.
 
     THE CONSEQUENCE THIS PREVENTS IS NOT THE ROW, IT IS THE DIRTY LEDGER. The row itself is
-    valid content; what breaks is that the integration tree's pre-commit hook refuses a
-    non-controller commit, so the append sits uncommitted in the tree every other session
-    merges through, and the next merge aborts on it. That is why the refusal is at the write
-    and not at the commit: by the time the hook speaks, the file is already dirty.
+    valid content; what breaks is that the integration tree's pre-commit hook refuses the
+    commit, so the append sits uncommitted in the tree every other session merges through, and
+    the next merge aborts on it. That is why the refusal is at the write and not at the commit:
+    by the time the hook speaks, the file is already dirty.
 
-    Fails OPEN on an unreadable branch, deliberately. If git cannot answer -- no repository, a
-    detached HEAD, git absent -- this cannot be the integration tree in any way that matters
-    (the integration tree is a checkout of main), and refusing there would break every
-    temp-dir fixture and every CI runner that lands detached. A guard whose broken state blocks
-    the write is a guard people disable.
+    NO AUPAI_CONTROLLER LIFT. It existed while merge_main.sh:425 appended a friction row from
+    the integration tree; the new merge_main writes its rows from the caller's worktree, so
+    nothing legitimately appends there any more (4c, 2026-09-05, confirmed as intent -- their
+    own rulings come from ../aupai-fb, which is a linked worktree and reads False).
+
+    Fails OPEN where git cannot answer -- no repository, git absent, git erroring. Such a tree
+    is not the integration tree by any definition, and refusing there would break every
+    temp-dir fixture and every CI runner. A guard whose broken state blocks the write is a
+    guard people disable. An UNIMPORTABLE predicate is different and says so loudly rather
+    than silently: with the tree detached there is no branch test left to fall back to, so a
+    swallowed ImportError would leave the integration tree wholly unguarded (tilerl's reasoning
+    in the hook, adopted here).
     """
-    if os.environ.get("AUPAI_CONTROLLER") == "1":
-        return False
     root = os.path.dirname(os.path.dirname(os.path.abspath(path))) if path else ROOT
     try:
-        r = subprocess.run(["git", "-C", root, "symbolic-ref", "--short", "HEAD"],
-                           capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+        from integration_tree import is_integration_tree
+    except Exception as e:
+        print(f"NOTE: the integration-tree guard could not load "
+              f"({type(e).__name__}: {e}); writing {what} unguarded -- check by hand that this "
+              f"is not the integration tree ({root})", file=sys.stderr)
         return False
-    if r.returncode != 0 or r.stdout.strip() != "main":
+    if not is_integration_tree(root):
         return False
-    print(f"refusing: {what} would write the ledger of the INTEGRATION TREE ({root}, on main).\n"
-          f"  That tree's pre-commit hook refuses a non-controller commit, so the row would sit\n"
-          f"  dirty in the tree every session merges through, and abort the next merge.\n"
-          f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.\n"
-          f"  Controller only: AUPAI_CONTROLLER=1 <cmd>.", file=sys.stderr)
+    print(f"refusing: {what} would write the ledger of the INTEGRATION TREE ({root}).\n"
+          f"  That tree's pre-commit hook refuses the commit, so the row would sit dirty in the\n"
+          f"  tree every session merges through, and abort the next merge.\n"
+          f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.",
+          file=sys.stderr)
     return True
 
 
@@ -13283,8 +13335,8 @@ CHECKS = [
     ),
     (
         "test_integration_tree_guard",
-        "tasks/friction/board writers refuse in the integration tree without AUPAI_CONTROLLER=1",
-        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's BRANCH is recorded, and the refusal has to be at the write because by the time the hook refuses the non-controller commit the ledger is already dirty in the tree everyone merges through",
+        "tasks/friction/board writers refuse in the integration tree -- the main worktree of a common git dir with linked worktrees",
+        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's IDENTITY is recorded, and the refusal has to be at the write because by the time the hook refuses the commit the ledger is already dirty in the tree everyone merges through. The first predicate read the branch and went inert hours later when the integration tree was detached on purpose (main 0425accb)",
         check_test_integration_tree_guard,
         _broken_test_integration_tree_guard,
     ),
