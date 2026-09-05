@@ -28,7 +28,13 @@ HOLDER=$LOCK/holder
 # direct parent is `timeout 30 /tmp/de_detect.sh`; bare, it is the invoking shell). The signal
 # disposition is NOT readable -- timeout sends SIGTERM when the deadline arrives and inherits nothing
 # beforehand -- so a trap cannot see this coming and only the process tree can.
-if [ "${MERGE_MAIN_ALLOW_TIMEOUT:-0}" != "1" ]; then
+# NOT FOR THE MODES THAT NEITHER MERGE NOR COMMIT. --selftest, --hold and --release take no lock
+# for a merge, run no hook, and finish in under a second, so a deadline cannot strand the shared
+# index in the way described above. The guard fired on `timeout 120 merge_main.sh --selftest`
+# (measured 2026-09-05, minutes after it landed) and refused to run the test of itself -- a guard
+# whose only failure was against its own verification.
+if [ "${MERGE_MAIN_ALLOW_TIMEOUT:-0}" != "1" ] && [ "$1" != "--selftest" ] && [ "$1" != "--hold" ] \
+   && [ "$1" != "--release" ]; then
   _parent_cmd=$(ps -o command= -p "$PPID" 2>/dev/null || true)
   case "$_parent_cmd" in
     *timeout\ *)
@@ -354,6 +360,27 @@ time.sleep(20)
   _gcase "touches neither file" docsonly accepted
   _gcase "lone revert is exempt" revonly accepted
   rm -rf "$_g"
+
+  # THE DEADLINE GUARD MUST NOT REFUSE THE MODES THAT NEITHER MERGE NOR COMMIT. It did:
+  # `timeout 120 bash scripts/merge_main.sh --selftest` was refused minutes after the guard
+  # landed, so the guard's only observed failure was against its own verification. Driven by
+  # running this script for real under a timeout, in both directions -- the exempt modes must
+  # exit 0 and a merge must still be refused -- because a case that only inspected the `case`
+  # pattern would pass for a version whose exemption never reached the branch.
+  _dcase() {  # $1=name $2=args $3=want exempt|refused
+    _out=$(timeout 20 bash "$0" $2 2>&1 || true)
+    case "$_out" in
+      *"REFUSING: this merge is running under"*) _got=refused;;
+      *) _got=exempt;;
+    esac
+    if [ "$_got" != "$3" ]; then
+      echo "  FAIL deadline guard, $1: want $3, got $_got" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   deadline guard, $1 -> $_got"
+    fi
+  }
+  _dcase "--selftest under a timeout is exempt" --selftest exempt
+  _dcase "a branch merge under a timeout is refused" _no_such_branch_selftest refused
 
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
   echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
