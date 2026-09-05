@@ -184,18 +184,44 @@ Per fb's ruling, **two columns against the same pretraining baseline**:
 |---|---|---|
 | **generated tokens** (primary) | every sampled token, zero-reward rollouts included | what does this capability cost in compute actually spent |
 | **trained-on tokens** (secondary) | tokens inside kept groups only | how much signal per token of supervision |
+| **consumed tokens** | 0 on this arm, always | the column experiment 1's arm fills, carried here so the two ledgers join |
 
-The ratio between the columns is fixed by the constants above — it is
+The ratio between the first two is fixed by the constants above — it is
 `kept_groups / total_groups`, nothing else — so both columns come from one run and the row
 records `group_size`, `max_new` and the kept fraction so the ratio is reconstructible.
+
+**Both ledgers carry all the column names, with the other side's at zero** (4c's ruling,
+2026-09-05). This arm generates and consumes nothing; experiment 1's continued-pretraining
+arm consumes and generates nothing. A single `tokens` column would add an exposure the model
+READS to a rollout the model WRITES, and the pretraining-vs-RL comparison these two ledgers
+exist for is exactly a comparison of those two quantities. The zero is written as a literal:
+a reader joining the ledgers cannot tell an absent column from an unrecorded one.
+`runs/rlvr_tokens_<out>.jsonl` carries `tok_generated`, `tok_trained` and `tok_consumed: 0`
+per logged step; experiment 1's row is `runs/prereg.jsonl#conversion_rate_0905`,
+`token_accounting`.
 
 The y-axis is **accuracy on S_test minus accuracy on P_test**, both at n=1000, matching the
 sets' own contract. P is not a baseline to subtract for noise; it is the format control. S
 and P rising together is format acquisition, S lagging and closing is the skill.
 
-Curve points: pretraining-arm n in {1, 8, 64, 512, 4096} from `S_pool[:n]` (nested by
-construction). The RL arm's x-values are wherever its token counter lands; the two curves
-are plotted against a shared token axis, which is the whole comparison.
+**S_test's readout and its floor are pinned to a sha, and the floor is not 25%.** The 4-way
+set is `data/probes/novel_ops/S_test_4way.jsonl`, and it must be scored **per program** —
+`diamond_chain` and `diamond_chain4` separately, never pooled. Content-free floor 0.364 and
+0.294 respectively (`facts/contamination.json#cont.novel_ops_frozen_sets`,
+`four_way_content_free_floor`); a pooled number cancelled a z=+12.81 cell against a z=−12.19
+one in an earlier build and read as chance. That floor is a maximum over the battery's rules
+and is a lower bound, not a certificate — it rose twice on a byte-identical artifact as rules
+were added. The operational floor is the no-injection control arm's own score. P_test's
+readout is **mean per-token NLL**, not 4-way: a 2-operand chain has no intermediate, so the
+carry never fires and all three readings agree on 1000/1000 items, which makes a 4-way P
+score a different quantity from a 4-way S score (e1's amendment 1).
+
+Curve points: pretraining-arm n in **{1, 8, 64, 256}**. 512 and 4096 are NOT run — at 104.0
+tokens/doc, 4096 exposures is 425,984,000 injected tokens against a 500-step arm's
+131,072,000, i.e. 325%, which is fine-tuning on S with pretraining mixed in rather than an
+injection. Above 256 the answer is reported as a bound, never as a measured zero (4c's ruling
+on e1's measurement). The RL arm's x-values are wherever its token counter lands; the two
+curves are plotted against a shared token axis, which is the whole comparison.
 
 ## 7. Preconditions. None of these is closed, so this recipe is NOT schedulable
 

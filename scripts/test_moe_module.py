@@ -64,7 +64,7 @@ def _cfg(**kw):
 
 def main():
     from model import MoEFFN, SwiGLU
-    bad, n = 0, 9
+    bad, n = 0, 10
 
     # 1. THE TIED-WEIGHTS WITNESS, and it is a precondition rather than a diagnostic. With one
     # routed expert (so the gate is a softmax over one score = 1.0) and one shared expert, both
@@ -303,6 +303,84 @@ def main():
     except Exception as e:  # noqa: BLE001 -- an import failure here is a finding, not a skip
         bad += 1
         print(f"  BUG  could not read the wiring: {type(e).__name__}: {e}")
+
+    # 10. bf16 EXPERT WEIGHTS WITH AN fp32 INPUT, UNDER AUTOCAST, which is what killed E1 before
+    # step 1 -- and the autocast is not decoration, it is what makes the check reproduce the
+    # failure instead of a nearby one.
+    #
+    # THE DEFECT, and why checks 1-9 could not see it: they build the module in the default fp32
+    # and feed it fp32, so mat_a.dtype == mat_b.dtype and _grouped_mm is satisfied. The run casts
+    # the model to bf16 (train.py:2743) and wraps the step in bf16 autocast (train.py:3064), and
+    # autocast covers nn.Linear but NOT _grouped_mm -- so the routed path received fp32
+    # activations against bf16 experts and dynamo's meta for aten._grouped_mm refused:
+    #
+    #   RuntimeError: Expected inputs of BF16 type but got mat_a.dtype=torch.float32
+    #   and mat_b.dtype=torch.bfloat16.        runs/b0_moe_e1.log:76, 2026-09-05T06:52Z
+    #
+    # The dense SwiGLU never showed it because BOTH its matmuls are nn.Linear, so autocast casts
+    # them for free; the arm's dispatch was the only unprotected matmul in the model.
+    #
+    # WITHOUT THE AUTOCAST THIS CHECK IS RED FOR THE WRONG REASON, measured while writing it: the
+    # bare fp32-into-bf16-module call dies one line earlier at `self.router(flat)` (model.py:893,
+    # an nn.Linear) and never reaches the dispatch. A check that goes red at the router would pass
+    # the moment someone fixed only the router, while the defect that stopped the run survived.
+    # So the module is exercised in the regime the run uses.
+    #
+    # RUN AGAINST THE PRE-FIX CODE (tilerl's spec item 4), by reverting only `xw = flat.to(...)` to
+    # `xw = flat` and re-execing model.py in memory: RuntimeError at model.py:939, which is
+    # `h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)` --
+    # "expected m1 and m2 to have the same dtype, but got: float != c10::BFloat16", the CPU wording
+    # of the pod's refusal. The mutation is applied to a STRING and exec'd, never written to disk.
+    #
+    # ON THE GATE, deliberately not a dtype assertion: the gate multiply and the top_k
+    # accumulation stay fp32 and only the return is cast, so this asserts the OUTPUT dtype tracks
+    # the input's -- the property the residual at model.py:1056 depends on.
+    try:
+        torch.manual_seed(7)
+        mb = MoEFFN(_cfg(moe_experts=8, moe_top_k=3, moe_expert_ffn=D // 4,
+                         moe_shared=1, ffn_hidden=D)()).to(torch.bfloat16)
+        mb.eval()
+        problems = []
+        with torch.autocast(device_type="cpu", dtype=torch.bfloat16), torch.no_grad():
+            o32 = mb(torch.randn(2, 5, D, dtype=torch.float32))   # the launch's exact combination
+            ob = mb(torch.randn(2, 5, D, dtype=torch.bfloat16))   # what model.py:1056 passes
+        if o32.dtype is not torch.float32:
+            problems.append(f"fp32 input returned {o32.dtype}, not the input dtype")
+        if ob.dtype is not torch.bfloat16:
+            problems.append(f"bf16 input returned {ob.dtype}, not the input dtype")
+        if not torch.isfinite(o32).all() or not torch.isfinite(ob).all():
+            problems.append("output is not finite")
+        # AND THE RED MUST COME FROM THE CAST'S ABSENCE, not from the module being unrunnable.
+        # Without this the check passes on any module that happens to run, which is how a witness
+        # stops discriminating.
+        with open(os.path.join(ROOT, "model.py")) as f:
+            _src = f.read()
+        _pre = _src.replace("        xw = flat.to(self.w13.dtype)\n", "        xw = flat\n", 1)
+        if _pre == _src:
+            problems.append("could not find the cast to revert -- this check no longer has a subject")
+        else:
+            _ns = {}
+            exec(compile(_pre, "model_without_the_cast.py", "exec"), _ns)  # noqa: S102
+            m_pre = _ns["MoEFFN"](_cfg(moe_experts=8, moe_top_k=3, moe_expert_ffn=D // 4,
+                                       moe_shared=1, ffn_hidden=D)()).to(torch.bfloat16)
+            m_pre.eval()
+            try:
+                with torch.autocast(device_type="cpu", dtype=torch.bfloat16), torch.no_grad():
+                    m_pre(torch.randn(2, 5, D, dtype=torch.float32))
+                problems.append("the module WITHOUT the cast ran fine -- the check proves nothing")
+            except RuntimeError as _e:
+                if "dtype" not in str(_e):
+                    problems.append(f"pre-fix code failed for another reason: {str(_e)[:80]}")
+        ok = not problems
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} under bf16 autocast, bf16 experts accept an fp32 "
+              f"input and the output follows the input dtype (fp32 -> {o32.dtype}, bf16 -> "
+              f"{ob.dtype}); reverting the cast raises the E1 step-0 dtype error at the dispatch"
+              f"{'' if ok else ' -- ' + '; '.join(problems)}")
+    except Exception as e:  # noqa: BLE001 -- a raise here is the defect, not a skip
+        bad += 1
+        print(f"  BUG  bf16 experts with an fp32 input raised {type(e).__name__}: "
+              f"{str(e)[:160]} -- this is the defect that killed E1 before step 1")
 
     print(f"test_moe_module: {n - bad}/{n} pass")
     return 1 if bad else 0
