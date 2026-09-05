@@ -20,7 +20,6 @@ letting the op reject it here.
 
     python3 scripts/test_moe_module.py
 """
-import math
 import os
 import sys
 
