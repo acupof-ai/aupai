@@ -18110,10 +18110,21 @@ def cmd_launch(rest):
     """
     ap = argparse.ArgumentParser(prog="harness launch")
     ap.add_argument("name", help="run name (also the log and exp row name)")
-    ap.add_argument("--class", dest="run_class", required=True, choices=RUN_CLASSES,
+    # NOT required=True, and that is a correction of my own defect rather than a weakening.
+    # Landed required at 315755cc; E1's relaunch died in argparse at 08:02Z 2026-09-05 because the
+    # pre-registered launch line was written before the flag existed. A required flag on the SHARED
+    # launcher breaks every launch line already written, in the one place a session types blind and
+    # a failure costs a card-hour rather than a retry. 4c's rule from it: a new required launcher
+    # flag ships with a one-day default plus a WARN naming the flag, then flips to required.
+    #
+    # So: default None, WARN when absent, and exp.py still writes NO key in that case -- absent
+    # stays absent, per the same absent-vs-empty rule the field exists for. Flip to required on
+    # 2026-09-06 once every live launch line carries it.
+    ap.add_argument("--class", dest="run_class", default=None, choices=RUN_CLASSES,
                     help="what this run is FOR: incremental (produces a number nobody has), "
                          "confirmatory (reproduces a number we or someone else already has), or "
-                         "infra-verification (proves a tool works; not a measurement of the model)")
+                         "infra-verification (proves a tool works; not a measurement of the model). "
+                         "WARNs when omitted; required from 2026-09-06")
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
     ap.add_argument("--gate-timeout", type=int, default=None,
@@ -18313,12 +18324,19 @@ def cmd_launch(rest):
     # Recorded for every launch, not only the overridden ones, so the answer does not depend on
     # remembering which flag was used.
     launcher += f"; cards {cards or '(none)'}" + (" (--cards)" if args.cards is not None else "")
+    # THE WARN, in place of the refusal that killed E1's relaunch. Loud enough to be acted on, and
+    # it does not stop a card-hour. `--class` is omitted from the argv entirely when absent -- a
+    # `"--class", None` would pass the literal string "None" and land it in the row as a class.
+    if not args.run_class:
+        print(f"WARN: {args.name} carries no --class. State what this run is FOR: "
+              f"{'/'.join(RUN_CLASSES)}. Required from 2026-09-06; the row is written with no "
+              f"class key, which reads as unstated rather than as a class.", file=sys.stderr)
     subprocess.run(
         [sys.executable, os.path.join(HERE, "exp.py"),
          "start", "--name", args.name,
          "--cmd", " ".join(cmd),
          "--notes", f"launcher: harness launch {launcher}" + (f"; gate {gate_note}" if gate_note else ""),
-         "--class", args.run_class,
+         *(("--class", args.run_class) if args.run_class else ()),
          "--cards", (cards or "none"),
          "--hypothesis", args.hypothesis],
         check=True,
