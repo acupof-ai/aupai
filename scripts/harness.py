@@ -17908,7 +17908,16 @@ _FROZEN_KEYS = (
     # MoEFFN refuses at construction -- so a silently-omitted value cannot produce a running
     # arm at the wrong compute, but it CAN produce a refused launch, and frozen is the state
     # that makes the omission visible in the launch line instead.
+    #   moe_latent and moe_shared_ffn (prereg#moe_0905 amendment 13) are the latent arm, and they
+    # CHANGE WHICH PARITY RULE APPLIES, which is why they cannot sit in the allow-list beside a
+    # throughput flag. With moe_latent set the width identity above does not hold: parity is
+    # counted in MULTIPLIES, 2*d*moe_latent + 3*moe_top_k*moe_latent*moe_expert_ffn +
+    # 3*d*moe_shared_ffn == 3*d*ffn_hidden (registered cell 384 / 2048 / 512 = 9,437,184). At the
+    # registered cell the two arms have IDENTICAL total params (800,965,704), so the launch line
+    # is the only place the difference is visible at all -- omit moe_latent from a resumed
+    # segment and it silently becomes the MoE-24 arm at the same parameter count.
     "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
+    "moe_latent", "moe_shared_ffn",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
