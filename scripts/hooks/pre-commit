@@ -18,6 +18,7 @@ Regenerating a derived file on every commit made it the top friction cause, and
 in a merge commit the regen ran after git had built the tree, so it could only
 ever land in the index -- permanently dirty, aborting the next merge.
 """
+import ast
 import fnmatch
 import glob
 import hashlib
@@ -68,6 +69,45 @@ ALLOWED = [
 def repo_root():
     return subprocess.run(["git", "rev-parse", "--show-toplevel"],
                           capture_output=True, text=True).stdout.strip()
+
+
+def _registered_selftest_paths():
+    """The repo-relative paths in this file's own SELFTEST_FILES literal, read with `ast`.
+
+    Read from source because SELFTEST_FILES is a LOCAL inside main(), defined ~400 lines after the
+    stale-copy sweep that needs it. The sweep has to run before any refusal can return -- that is
+    the whole point of its position -- so it cannot wait for a name bound later in the same function.
+
+    `ast.literal_eval` on the assignment node, not a regex over the text. Two regex versions were
+    written and both were wrong in opposite directions, which is the argument for the parser:
+
+      matching every quoted .py in the region      -> 182 paths, including
+                                                      "HEAD:scripts/credential_scan.py" from a git
+                                                      revspec in a comment
+      requiring exactly one quoted path per line   -> 149 of 177, because the map packs several
+                                                      entries onto one line
+
+    Neither error announced itself; both counts looked plausible. ast reads the literal python builds,
+    so it cannot disagree with the map by construction -- verified against the ast of the same file:
+    177 == 177, nothing missing, nothing extra.
+
+    Returns the empty set on any failure, and the sweep then degrades to the repo root -- where a copy
+    of a root-level selftest file lands anyway.
+    """
+    try:
+        tree = ast.parse(open(__file__, encoding="utf-8").read())
+    except (OSError, SyntaxError):
+        return set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            if isinstance(t, ast.Name) and t.id == "SELFTEST_FILES":
+                try:
+                    return {x for x in ast.literal_eval(node.value) if isinstance(x, str)}
+                except ValueError:
+                    return set()
+    return set()
 
 
 def _behind_main():
@@ -259,6 +299,52 @@ def main():
     import time
 
     t_start = time.time()
+
+    # SWEEP STALE .hookstaged_* COPIES HERE, FIRST, BEFORE ANY REFUSAL CAN RETURN.
+    #
+    # This sweep used to sit beside the selftest runner at the point where the copies are made,
+    # which is ~1200 lines and 26 `sys.exit(1)` calls further down. Every one of those refusals --
+    # behind-main, dirty index, credential scan, blob size, shared-file claim -- returns before the
+    # sweep, so the cleanup only ran on a commit that had already passed every gate. That is exactly
+    # backwards: the copies are left behind by a run that DIED, and the next commit attempt is the
+    # one most likely to be refused for an unrelated reason and never reach the cleanup.
+    #
+    # MEASURED 2026-09-05: runs/audit_0904/.hookstaged_dead_worlds.py sat in the working tree for
+    # hours across a dozen commits. runs/audit_0904/dead_worlds.py IS registered, so the directory
+    # was in the sweep's scope and the glob was correct -- the sweep was simply never reached,
+    # because every intervening commit hit the behind-main refusal first. A cleanup placed after the
+    # gates cleans up only when nothing needed cleaning.
+    #
+    # SCOPED BY READING THE MAP OUT OF THIS FILE'S OWN SOURCE, not by using SELFTEST_FILES.
+    # That name is a LOCAL defined at line ~697, four hundred lines below here, so referencing it at
+    # the top of main() is an UnboundLocalError on every commit -- ruff F821 caught it, and my own
+    # commits had passed because a hook edited in a branch worktree does not run until it is merged
+    # (.git/hooks/pre-commit resolves against main's worktree), so every commit that "verified" the
+    # hoist executed main's OLD copy of this file.
+    #
+    # Reading the literal is not a workaround for the ordering; it is the same information from the
+    # only place available this early. The alternative -- hoisting the 200-line SELFTEST_FILES
+    # literal to module scope -- moves a large diff for one line's benefit and would collide with
+    # every other session editing that map.
+    #
+    # SCOPED TO THE DIRECTORIES A COPY CAN LAND IN, not a recursive walk: the copy is written beside
+    # its source, so the reachable set is exactly the directories holding registered selftest files.
+    # A `**` glob from the repo root would stat through data/ -- 206 GB -- on every commit.
+    #
+    # NO COUNTER: scripts/test_hookstaged_sweep.py lifts these lines verbatim from `_sweep_dirs = `
+    # onward and exec's them, so any name bound ABOVE that line is a NameError in the test. Every
+    # name this block uses is bound inside it, and each removal already prints its own line.
+    _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in _registered_selftest_paths()}
+    _sweep_dirs.add(repo_root())
+    for _dir in _sweep_dirs:
+        for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
+            try:
+                os.unlink(_stale)
+                print(f"hook: removed stale {os.path.relpath(_stale, repo_root())} (a killed hook "
+                      f"run left it; it would refuse the next commit as an unregistered selftest "
+                      f"file)", file=sys.stderr)
+            except OSError:
+                pass
 
     # A commit in the INTEGRATION tree, on main, from a session that is not the
     # controller. Three sessions did this tonight (e1 x5, tilerl staged, one merge
@@ -705,6 +791,12 @@ def main():
         # a test checking only one. Six mutations verified, including both flags declared-but-unwired,
         # which is not hypothetical: --cards shipped that way and only reading the row showed it.
         "scripts/test_ledger_field_writers.py",
+        # de-55 step 2: load_checkpoint claims when it loads to cuda and claims NOTHING on cpu.
+        # Registered for the CPU world, which is the one that keeps the placement safe: an ungated
+        # acquire there refuses on every box with no CUDA_VISIBLE_DEVICES -- CI runs
+        # test_arch_compat where DEV == "cpu", and 7 of the 19 covered callers load to cpu and move
+        # later. A test checking only the cuda world would pass for the version that bricks CI.
+        "scripts/test_loader_claim.py",
         # A real cp -r of a real linked worktree must be refused, and the ORIGINAL worktree,
         # a plain checkout, and a `git worktree move`d tree must all still pass. The negative
         # controls are the load-bearing half: a gate that refuses every linked worktree would
@@ -1160,6 +1252,13 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
+        # the gap it closes is a gap that file has by construction: test_moe_module asserts
+        # which optimizer GROUP each parameter lands in and never calls .step(), so group
+        # membership was green through both of E1's deaths while the update itself was broken.
+        # Muon.step() stacks same-shape params, baddbmm is 3-D only, and every dense parameter
+        # is 2-D -- so the MoE experts are the first 3-D params this optimizer has ever seen.
+        "scripts/test_muon_3d.py",
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1451,36 +1550,12 @@ def main():
     # so a refusal that returns early would leave a .hookstaged_* file behind for the
     # next session to find dirty. The parallel tree could be left to rot; this cannot.
     staged_copies = []
-    # SWEEP STALE COPIES FIRST. The try/finally below removes these on every exit PATH, but not on
-    # every exit: a SIGKILL -- an operator's Ctrl-C twice, a timed-out foreground command, an OOM
-    # kill during a 3-minute selftest run -- takes the process without running finally, and the
-    # copies stay in the working tree. selftests_are_gated then reads them as unregistered selftest
-    # files and refuses the NEXT commit, which is a refusal caused by the previous run's death and
-    # naming a file nobody wrote. 98 was blocked twice today by exactly this and had to move them
-    # by hand.
+    # The stale-copy sweep that used to sit here now runs at the TOP of main(), before any refusal
+    # can return. It was unreachable in the case it exists for: a killed run leaves the copies, and
+    # the next commit attempt hits one of 26 earlier `sys.exit(1)` paths and never gets this far.
+    # Measured 2026-09-05 on runs/audit_0904/.hookstaged_dead_worlds.py, which survived a dozen
+    # commits with the glob and the scope both correct.
     #
-    # Swept HERE rather than excluded from the check, because the files are genuine garbage in the
-    # working tree either way: excluding the pattern would leave them for `git status`, for the next
-    # `git add -A`, and for anyone reading the directory. Removal is the fix; exclusion would only
-    # hide it. Safe to remove unconditionally: the name is derived from a registered selftest file,
-    # the content is a copy of a staged blob, and nothing but this loop ever reads one.
-    #
-    # SCOPED TO THE DIRECTORIES A COPY CAN LAND IN, not a recursive walk. The copy is written beside
-    # its source (`d, base = os.path.split(...)` below), so the reachable set is exactly the
-    # directories holding registered selftest files. A `**` glob from the repo root would stat its
-    # way through data/ -- 206 GB and hundreds of thousands of shards -- on every commit, which is
-    # the hook-duration problem this file already has too much of.
-    _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in SELFTEST_FILES}
-    _sweep_dirs.add(repo_root())
-    for _dir in _sweep_dirs:
-        for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
-            try:
-                os.unlink(_stale)
-                print(f"hook: removed stale {os.path.relpath(_stale, repo_root())} (a killed hook "
-                      f"run left it; it would refuse the next commit as an unregistered selftest "
-                      f"file)", file=sys.stderr)
-            except OSError:
-                pass
     # Files whose exemption is partial: run the flag that names the assertions which DO
     # work here, instead of skipping the file entirely.
     PARTIAL = {f: v[1] for f, v in NEEDS_DATA.items() if isinstance(v, tuple)}
@@ -1557,7 +1632,8 @@ def main():
                      "scripts/test_untie_head.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
-                     "scripts/moe_diag.py"},                                # 52.0s
+                     "scripts/test_muon_3d.py",
+                     "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
