@@ -1167,17 +1167,26 @@ def build_optimizers(model, cfg, master=None):
     # indexes opts[0] (Muon) and opts[1] (embed), so inserting a group earlier would repoint every
     # one of those readings, including scripts/embed_norm_sdr.py's ck["opt"][1].
     #
-    # DEFAULT = muon_lr, WHICH IS THE DENSE FFN'S OWN LR, resolved here rather than copied into
-    # Cfg so the two cannot drift. Ruling (f) says "the dense lr", and THERE IS NO cfg.lr -- I
-    # wrote `cfg.lr` first and it would have raised AttributeError at launch (Cfg carries muon_lr
-    # 0.01, embed_lr 0.1, scalar_lr 0.15 and no `lr`). muon_lr is the right reading of the ruling:
-    # the router should train at the rate the FFN it routes trains at, and the FFN is the Muon
-    # group. moe_router_lr > 0 overrides, and the value reaches ck["cfg"] either way so a reader
-    # never has to trust the launch line.
+    # DEFAULT = attn_res_lr (0.01), RULED BY 4c 2026-09-05 AFTER TWO WRONG ANSWERS. It is the
+    # repo's existing AdamW rate for a small learned MIXING MAP -- AttnRes's dynamic pseudo-query
+    # weights -- which is the closest analogue in this codebase to a router, so no new lr enters
+    # the arm.
+    #
+    # THE TWO THINGS IT IS NOT, recorded because each was written into this file first:
+    #   - NOT cfg.lr. There is no such field; it would have raised AttributeError at launch.
+    #   - NOT muon_lr. Under (c) the experts ARE the Muon group, so muon_lr is the expert rate --
+    #     and 4c's ruling (f) excludes deriving the router's rate from the expert group. The two
+    #     are also different optimizers, so "equal to the expert lr" was never a well-formed
+    #     comparison: a Muon lr and an AdamW lr are not the same unit.
+    # Both values are numerically 0.01 today. That coincidence is exactly why the REASON is
+    # written here: if muon_lr ever moves, the router must not follow it.
+    #
+    # moe_router_lr > 0 overrides, and the resolved value reaches ck["cfg"] either way, so a
+    # reader never has to trust the launch line.
     if moe_router:
         _r_lr = float(getattr(cfg, "moe_router_lr", -1.0))
         if _r_lr <= 0:
-            _r_lr = float(cfg.muon_lr)
+            _r_lr = float(getattr(cfg, "attn_res_lr", 0.01))
         opts.append(
             torch.optim.AdamW(
                 moe_router,
