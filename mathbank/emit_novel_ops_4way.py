@@ -15,28 +15,43 @@ so a model that picks one has told us which rule it applied -- the options are d
 not filler. The gold is the add-once fold. The ladder, in priority order, with how often
 each is reachable over the 1000 items:
 
-    add_until      467   add 10 until non-negative instead of exactly once
-    no_carry       726   ignore the carry rule entirely
-    wrong_order    984   evaluate left-to-right instead of right-to-left
-    swap_operands  500   read the rule as 3b - 2a + 1
-    sign_slip      298   read the minus as a plus
-    carry_20         0   add 20 instead of 10 (never needed; kept for regeneration)
-    coeff_swap      25   read the rule as 2a - 3b + 1
-    no_plus_one      0   drop the trailing +1 (never needed; kept for regeneration)
+    wrong_order    762   evaluate left-to-right instead of right-to-left
+    swap_operands  589   read the rule as 3b - 2a + 1 (with the carry dropped: see below)
+    add_until      379   add 10 until non-negative instead of exactly once
+    no_carry       379   ignore the carry rule entirely
+    sign_slip      301   read the minus as a plus
+    coeff_swap     300   read the rule as 2a - 3b + 1
+    no_plus_one    168   drop the trailing +1
+    carry_20       122   add 20 instead of 10
 
-An item takes the first three whose value is distinct from gold and from each other. The
-ladder exists because the obvious three collide often: only 457 of 1000 items have four
-distinct values under (gold, add_until, no_carry, wrong_order), and 25 items still need
-the seventh rung. Falling back to a random integer would make those items measure
-something else, so every option stays a rule-misreading.
+All eight are load-bearing. The ladder exists because the obvious three collide: only 457
+of 1000 items have four distinct values under (gold, add_until, no_carry, wrong_order).
+Falling back to a random integer would make those items measure something else, so every
+option stays a rule-misreading and the emitter RAISES instead.
 
-POSITION. Options are shuffled per item with a fixed seed and the label distribution is
-reported, because a set whose gold sits at index 0 more often than chance is a set a model
-can score above floor without reading the problem.
+TWO THINGS ARE BALANCED, and the second was missing from v1.
+
+POSITION -- which index holds the gold. Shuffled per item with a fixed seed, chi-square
+reported in the header.
+
+VALUE RANK -- where the gold sits among the four numbers, largest first. v1 balanced only
+the position, so "pick the 3rd-largest of the four numbers", a rule that never reads the
+problem, scored 0.6430: gold landed at rank 2 on 643 of 1000 items and the position
+chi-square could not see it (e1, 2026-09-05). Which three distractors an item takes is now
+chosen to flatten the rank, and to keep "gold is nearest zero" at its 1/4 chance share --
+balancing rank alone left that rule at 0.3500. The selftest runs a battery of eight
+content-free rules and fails any above 0.30.
+
+DIAGNOSTICITY, with one caveat. Each option is the answer under a different misreading, so
+which option a model picks says which rule it applied -- except swap_operands, which is a
+COMPOUND: its value matches 3b-2a+1 with the carry DROPPED, and the two component readings
+differ on 172 of 500 items (e1). Picking it is ambiguous between two errors. Kept as a
+distractor, named honestly in option_kinds.
 """
 
 import argparse
 import collections
+import itertools
 import json
 import os
 import random
@@ -99,8 +114,12 @@ LADDER = [
 ]
 
 
-def build_item(row, rng):
-    """One 4-way item. RAISES if three distinct distractors cannot be found."""
+def _candidates(row):
+    """(gold, [(name, value), ...]) -- every distinct distractor the ladder yields.
+
+    Returns ALL of them, not the first three: which three are chosen is a rank decision
+    made in build(), and a function that returned three could not make it.
+    """
     ops = _ops(row["instruction"])
     gold = _fold_r(ops, _once)
     if gold != row["answer"]:
@@ -108,38 +127,117 @@ def build_item(row, rng):
             f"REFUSING: the add-once fold gives {gold} but the source row's answer is "
             f"{row['answer']}. The 4-way set would then teach a different rule than the "
             f"source set scores: {row['instruction']!r}")
+    cands = []
     seen = {gold}
-    picked = []
     for name, fn in LADDER:
         v = fn(ops)
         if v not in seen:
             seen.add(v)
-            picked.append((name, v))
-        if len(picked) == N_OPTIONS - 1:
-            break
-    if len(picked) < N_OPTIONS - 1:
+            cands.append((name, v))
+    if len(cands) < N_OPTIONS - 1:
         raise SystemExit(
-            f"REFUSING: only {len(picked)} distinct distractor(s) for {row['instruction']!r}. "
+            f"REFUSING: only {len(cands)} distinct distractor(s) for {row['instruction']!r}. "
             f"Every rung of the ladder collides with gold or with another rung; add a rung "
             f"that is still a misreading of the rule rather than padding with a random int.")
+    return gold, cands
+
+
+def _rank_of(gold, trio):
+    """Gold's rank among the four option VALUES, largest first."""
+    return sorted([gold] + [v for _n, v in trio], reverse=True).index(gold)
+
+
+def _key_of(gold, trio):
+    """The two content-free properties a subset fixes: gold's value rank, and whether gold
+    is the option nearest zero.
+
+    Rank alone was not enough. Balancing it left "pick the option nearest zero" at 0.3500,
+    above the 0.30 the readout's power assumes -- the same class of leak one level down,
+    found by running the heuristic battery against the rank-balanced build rather than
+    assuming one fix covered the family.
+    """
+    four = [gold] + [v for _n, v in trio]
+    return _rank_of(gold, trio), min(four, key=abs) == gold
+
+
+def _choose(gold, cands, want_key):
+    """The first 3-subset with the wanted (rank, nearest-zero) key, else priority order.
+
+    Priority order is the ladder's, so an item that cannot reach the wanted key keeps the
+    old behaviour rather than being dropped.
+    """
+    for trio in itertools.combinations(cands, N_OPTIONS - 1):
+        if _key_of(gold, trio) == want_key:
+            return list(trio)
+    return list(cands[:N_OPTIONS - 1])
+
+
+def build_item(row, rng, want_key=None):
+    """One 4-way item, optionally with gold placed at a given (rank, nearest-zero) key."""
+    gold, cands = _candidates(row)
+    picked = _choose(gold, cands, want_key) if want_key is not None else list(cands[:N_OPTIONS - 1])
     opts = [("gold", gold)] + picked
     rng.shuffle(opts)
     return {
         "family": "S",
         "program": row["program"],
         "instruction": row["instruction"],
-        "operands": ops,
+        "operands": _ops(row["instruction"]),
         "options": [v for _n, v in opts],
         "label": [n for n, _v in opts].index("gold"),
+        "value_rank": _rank_of(gold, picked),
+        "gold_is_nearest_zero": min([gold] + [v for _n, v in picked], key=abs) == gold,
         "option_kinds": [n for n, _v in opts],
         "answer": gold,
     }
 
 
 def build(src=SRC):
+    """Items with gold's VALUE RANK balanced across the four positions.
+
+    WHY RANK AND NOT JUST POSITION. v1 shuffled the option positions -- which is what the
+    chi-square in the header measured -- and left the option VALUES alone. Gold then landed
+    at rank 2 (3rd largest) on 643 of 1000 items, so "pick the 3rd-largest of the four
+    numbers", a rule that never reads the problem, scored 0.6430 (e1, 2026-09-05). The
+    readout's floor is not 25% unless the value rank is balanced too.
+
+    The cause is structural in two rungs: sign_slip (3a+2b+1 on positive operands) is
+    ALWAYS greater than gold, 298/298, and wrong_order is greater on 648/984, so the two
+    most-used rungs crowd the top and push gold down to third.
+
+    The fix needs no new misreadings. Every item has at least three distinct distractors
+    from the existing ladder, and choosing WHICH three moves gold's rank: measured over all
+    1000 items, gold can be placed at rank 0 on 442, rank 1 on 714, rank 2 on 950, rank 3
+    on 839. Rank 0 is the scarce one -- gold is rarely the largest -- so the target is the
+    achievable near-flat split rather than exactly 25% each.
+
+    UNDER-FILLED FIRST, and items are processed in order of how few ranks they can reach,
+    so the constrained items claim their only option before the flexible ones use it up.
+    """
     rows = [json.loads(line) for line in list(open(src, encoding="utf-8"))[1:]]
     rng = random.Random(SHUFFLE_SEED)
-    return [build_item(r, rng) for r in rows]
+    reach = []
+    for i, r in enumerate(rows):
+        gold, cands = _candidates(r)
+        keys = {_key_of(gold, t) for t in itertools.combinations(cands, N_OPTIONS - 1)}
+        reach.append((len(keys), i, keys))
+    # TARGET SHARES, not equal buckets. Balancing the eight (rank, nearest-zero) cells
+    # evenly gives nearest-zero=True on 500 of 1000 -- worse than the 0.3500 it was meant to
+    # fix, because "gold is nearest zero" is ONE of four options and its chance share is
+    # 1/4, not 1/2. Each cell's target is therefore P(rank) x P(nearest-zero) = 0.25 x 0.25
+    # for True and 0.25 x 0.75 for False. Measured against the fix: rank 0.25 flat and
+    # nearest-zero at chance. The first version of this loop had the right mechanism and the
+    # wrong target, which is the same defect class as the thing it was fixing.
+    target = {(rk, nz): (0.25 * (0.25 if nz else 0.75)) for rk in range(N_OPTIONS)
+              for nz in (True, False)}
+    counts = collections.Counter()
+    want = {}
+    n_rows = len(rows)
+    for _n, i, keys in sorted(reach, key=lambda x: (x[0], x[1])):
+        # most under its target first, so a scarce cell is filled before a plentiful one
+        want[i] = min(keys, key=lambda k: (counts[k] - target[k] * n_rows, k))
+        counts[want[i]] += 1
+    return [build_item(r, rng, want_key=want[i]) for i, r in enumerate(rows)]
 
 
 def _label_hist(items):
@@ -162,6 +260,14 @@ def write(out=OUT, src=SRC):
                                        "applied. option_kinds names them per item."),
         "distractor_usage": dict(sorted(kinds.items())),
         "label_distribution": _label_hist(items),
+        "value_rank_distribution": dict(sorted(collections.Counter(
+            i["value_rank"] for i in items).items())),
+        "content_free_floor": ("every rule that reads only the four numbers scores at chance: "
+                               "3rd-largest 0.2500, nearest-zero 0.2490, smallest 0.2490, "
+                               "largest 0.2500. v1 let 3rd-largest score 0.6430 because gold "
+                               "landed at value rank 2 on 643 of 1000 items (e1, 2026-09-05); "
+                               "the option positions were shuffled but the option VALUES were "
+                               "not chosen, and the header's chi-square could not see it."),
         "absence_basis": ("inherited from the source set: the operator, its rule and its phrasing "
                           "were invented 2026-09-05, after every corpus in the mix was built. "
                           "facts/contamination.json#cont.novel_ops_frozen_sets"),
@@ -215,6 +321,34 @@ def _selftest():
         chi = sum((hist[k] - exp) ** 2 / exp for k in hist)
         if chi > 16.27:
             fails.append(f"gold position is not uniform: chi2={chi:.1f} > 16.27 (df=3, p=0.001), {hist}")
+    # 5b. NO CONTENT-FREE RULE BEATS THE FLOOR. The assertion v1 did not have, and the
+    #     reason it shipped a set where "pick the 3rd-largest of the four numbers" scored
+    #     0.6430 (e1, 2026-09-05): the chi-square above measures the label POSITION, and a
+    #     heuristic over the option VALUES is invisible to it. Every rule here reads only the
+    #     four numbers, never the problem, so any of them above 0.30 is headroom the readout
+    #     does not have. Run the battery, not one rule -- balancing rank alone left
+    #     nearest-zero at 0.3500.
+    battery = {
+        "largest": max,
+        "smallest": min,
+        "2nd_largest": lambda o: sorted(o, reverse=True)[1],
+        "3rd_largest": lambda o: sorted(o, reverse=True)[2],
+        "nearest_zero": lambda o: min(o, key=abs),
+        "farthest_zero": lambda o: max(o, key=abs),
+        "only_negative": lambda o: ([v for v in o if v < 0] or [o[0]])[0],
+        "median_high": lambda o: sorted(o)[2],
+    }
+    for name, fn in battery.items():
+        hit = sum(1 for it in items if it["options"][it["label"]] == fn(it["options"])) / len(items)
+        if hit > 0.30:
+            fails.append(f"content-free rule {name!r} scores {hit:.4f} on the set, above the "
+                         f"0.30 the readout's power assumes -- gold is distinguishable from "
+                         f"the distractors by value alone")
+    # 5c. GOLD'S VALUE RANK IS FLAT. The property 5b's 3rd_largest case depends on, asserted
+    #     directly so a regression names the cause rather than only the symptom.
+    rk = collections.Counter(it["value_rank"] for it in items)
+    if max(rk.values()) / len(items) > 0.30:
+        fails.append(f"gold's value rank is not flat: {dict(sorted(rk.items()))}")
     # 6. DETERMINISM: the same seed twice is the same set, or a rebuild silently rescores.
     if [i["options"] for i in build()] != [i["options"] for i in items]:
         fails.append("build() is not reproducible at its own seed")
@@ -233,7 +367,7 @@ def _selftest():
         LADDER[:] = saved
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"emit_novel_ops_4way selftest: {'PASS (7 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"emit_novel_ops_4way selftest: {'PASS (9 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
