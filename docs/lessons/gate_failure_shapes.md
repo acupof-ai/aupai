@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (102 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (190 = 102 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (103 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (191 = 103 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (91 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (92 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-91 incidents (34 infra, 57 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+92 incidents (34 infra, 58 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -75,7 +75,7 @@ Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABS
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219).
 
-### R2-b Population narrower than the property (23 incidents)
+### R2-b Population narrower than the property (24 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -85,8 +85,9 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §215: a battery of 19 content-free rules passed while the leak family it samples is unbounded; three closures in one day did not converge, and the battery certifies its sample, not the family.
 - §216: a negative control passed on every laptop because the pod mount is absent there — green was a signal about a different world; on the pod it would have tokenized into the live shared cache dir.
 - §222: an assertion read claims()'s *.json glob as the claims directory; a duplicate written as <file>.dup survived — a reader-based assertion inherits the reader's blind spot.
+- §223: a module test asserted optimizer-group membership and never called .step(); green at 10/10 while the Muon 4-D stack died at the first optimizer step on the card — a new parameter class is a new citizen for every subsystem that dispatches on shape or type.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223).
 
 ### R2-c Mutation did not take (5 incidents)
 
