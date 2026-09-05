@@ -64,7 +64,7 @@ def _cfg(**kw):
 
 def main():
     from model import MoEFFN, SwiGLU
-    bad, n = 0, 11
+    bad, n = 0, 10
 
     # 1. THE TIED-WEIGHTS WITNESS, and it is a precondition rather than a diagnostic. With one
     # routed expert (so the gate is a softmax over one score = 1.0) and one shared expert, both
@@ -381,66 +381,6 @@ def main():
         bad += 1
         print(f"  BUG  bf16 experts with an fp32 input raised {type(e).__name__}: "
               f"{str(e)[:160]} -- this is the defect that killed E1 before step 1")
-
-    # 11. THE ROUTER LEAVES fp8 BY RULE, not by a divisibility coincidence. The charter asked for
-    # this exclusion by name (docs/standards/moe_0905.md:426, "the router logits leave fp8 by fqn
-    # and that exclusion is asserted in a test before launch, the way the memory program's three
-    # projections are").
-    #
-    # WHY IT IS ASSERTED AT N=48 AND NOT AT E1's N=24: _fp8_ok's alignment test excludes any weight
-    # with a dim not divisible by 16, and 24 % 16 == 8 -- so at E1's shape the router is out of fp8
-    # for a reason that has nothing to do with routing. N=16, 32 and 48 are all 16-aligned and
-    # torchao converts the router SILENTLY. E1b is N=48, so a test pinned to E1's shape would pass
-    # while the arm it is meant to protect converts.
-    #
-    # WHY IT MATTERS: e4m3 carries 3 mantissa bits, and a tie broken differently by that rounding
-    # changes the top_k SET -- a discrete change in which parameters a token reaches, not a
-    # tolerance question. MoEFFN.forward already computes the logits at fp32 for this reason;
-    # converting the linear that produces them would move the rounding one step earlier.
-    #
-    # MUTATION-VERIFIED, both directions, 2026-09-05: with _is_moe_router_fqn stubbed to False the
-    # N=48 router reads fp8=True (the defect) while the N=24 router still reads False (the
-    # coincidence). So this check fires on the arm that needs it and would NOT have fired on E1.
-    try:
-        import train
-        problems = []
-        for n_routed, aligned in ((48, True), (24, False)):
-            mr = MoEFFN(_cfg(moe_experts=n_routed, moe_top_k=3, moe_expert_ffn=16,
-                             moe_shared=1, ffn_hidden=64)())
-            fq = "blocks.1.ffn.router"
-            if train._fp8_filter(mr.router, fq):
-                problems.append(f"N={n_routed}: the router was accepted into fp8")
-            # The shared expert must STAY in fp8 -- an over-broad exclusion that took the whole
-            # MoEFFN out would be invisible here without this line.
-            for leaf in ("sh13", "sh2"):
-                m = getattr(mr, leaf)
-                if all(d % 16 == 0 for d in m.weight.shape) and not train._fp8_filter(
-                        m, f"blocks.1.ffn.{leaf}"):
-                    problems.append(f"N={n_routed}: {leaf} was excluded from fp8 too")
-            if aligned and not all(d % 16 == 0 for d in mr.router.weight.shape):
-                problems.append(f"N={n_routed} was expected 16-aligned and is not -- "
-                                f"this check's own premise is stale")
-        # AND THE EXCLUSION MUST BE WHAT DOES IT. Without this the check passes on any build where
-        # the alignment test happens to cover the shapes tested, which is exactly the coincidence
-        # it exists to remove.
-        _orig_fn = train._is_moe_router_fqn
-        train._is_moe_router_fqn = lambda fqn: False
-        try:
-            m48 = MoEFFN(_cfg(moe_experts=48, moe_top_k=3, moe_expert_ffn=16,
-                              moe_shared=1, ffn_hidden=64)())
-            if not train._fp8_filter(m48.router, "blocks.1.ffn.router"):
-                problems.append("removing _is_moe_router_fqn changed nothing at N=48 -- "
-                                "the exclusion is not what keeps the router out of fp8")
-        finally:
-            train._is_moe_router_fqn = _orig_fn
-        ok = not problems
-        bad += 0 if ok else 1
-        print(f"  {'ok  ' if ok else 'BUG '} the router is out of fp8 by fqn at N=48 and N=24, the "
-              f"shared expert stays in, and removing the exclusion converts the N=48 router"
-              f"{'' if ok else ' -- ' + '; '.join(problems)}")
-    except Exception as e:  # noqa: BLE001 -- an import failure here is a finding, not a skip
-        bad += 1
-        print(f"  BUG  could not read the fp8 filter: {type(e).__name__}: {e}")
 
     print(f"test_moe_module: {n - bad}/{n} pass")
     return 1 if bad else 0

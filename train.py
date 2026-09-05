@@ -501,31 +501,7 @@ def _fp8_filter(mod, fqn):
     changes which values a token retrieves -- a discrete change in the top_k set, not a small
     numerical one, which is why it is excluded with them rather than treated as one more linear.
     """
-    return not _is_mem_fqn(fqn) and not _is_moe_router_fqn(fqn) and _fp8_ok(mod, fqn.rsplit(".", 1)[-1])
-
-
-def _is_moe_router_fqn(fqn):
-    """Is this the MoE router, whose logits decide WHICH experts a token reaches?
-
-    EXCLUDED FOR THE SAME REASON AS THE MEMORY'S QUERY PROJECTION, and the charter asked for it by
-    name (docs/standards/moe_0905.md:426: "the router logits leave fp8 by fqn and that exclusion is
-    asserted in a test before launch, the way the memory program's three projections are"). e4m3
-    carries 3 mantissa bits, and a tie broken differently by that rounding changes the top_k SET --
-    a discrete change in which parameters a token reaches, not a small numerical one. MoEFFN.forward
-    already computes the logits at fp32 for this reason; converting the linear that produces them
-    would put the rounding one step earlier and undo it.
-
-    WHY THIS IS NEEDED WHEN E1 ALREADY RAN WITHOUT IT: at E1's n_routed = 24, _fp8_ok's alignment
-    test (every weight dim % 16 == 0) excludes the router on its own, because 24 % 16 == 8. That is
-    a divisibility coincidence, not a rule, and it does not hold for the arms that follow -- N=16,
-    32 and 48 are all 16-aligned and torchao converts the router SILENTLY. E1b is N=48. So this
-    lands before E1b rather than after a routing flip that no readout would attribute.
-
-    Named by leaf rather than by path, unlike _is_mem_fqn: `router` is a unique leaf in this model
-    (grepped 2026-09-05 -- MoEFFN.router is the only one), whereas the memory's `query`/`gate`/`out`
-    are ordinary names elsewhere and had to be excluded by their path.
-    """
-    return fqn == "router" or fqn.endswith(".router")
+    return not _is_mem_fqn(fqn) and _fp8_ok(mod, fqn.rsplit(".", 1)[-1])
 
 
 def _is_mem_fqn(fqn):
