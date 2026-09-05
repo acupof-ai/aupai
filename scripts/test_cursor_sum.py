@@ -210,22 +210,42 @@ def _check_striping(bad, tmp):
     into n rows lands each domain's rows evenly across every stripe, which is what let the
     defect live in a file whose whole subject is the cursor.
 
-    The assertion is against a bincount over the full plan, computed here independently -- a
-    known answer, not a re-run of the code under test.
+    The assertion is against a bincount over the CONSUMED PREFIX of the full plan, computed
+    here independently -- a known answer, not a re-run of the code under test.
+
+    The plan is deliberately LONGER than what the run consumed (58's finding on the first
+    version of this file, 2026-09-06). Every fixture here used to be plan-complete, so
+    `_full[:rows_done * world]` was the identity slice in all of them and deleting the bound
+    outright -- `head = _full` -- left the file GREEN. The sum identity is not a substitute:
+    it catches the unbounded read on the no-discard path, but `_discarded` non-empty skips it
+    by design, and mid-plan plus a changed corpus fingerprint is ordinary under --auto-resume.
+    So the discard variant is asserted too, below.
     """
     as_of, origin = 40, 0
-    n = (as_of - origin) * BATCH * ACCUM * WORLD  # 40 x 16 x 2 x 8 = 10,240 rows
-    # Sizes chosen so none is a multiple of 8 and the stripes must split them unevenly.
+    consumed = (as_of - origin) * BATCH * ACCUM * WORLD  # 40 x 16 x 2 x 8 = 10,240 rows
+    n = consumed * 2  # the plan the run did NOT finish: 20,480 rows
+    # Sizes and seed searched for a fixture that reproduces BOTH directions at once: under
+    # the old computation s_inject reads 32 against a 25-row pool (the ckpt_e1_conv_n8
+    # direction, the damaging one) while p_format reads 72 against a truth of 104. A fixture
+    # with only the under direction would pass a `cursor > pool` guard, which is exactly the
+    # guard 58 measured as catching 3 of their 9 real violations.
     sizes = [25, 203, n - 228]
     assert all(s % WORLD for s in sizes[:2]), sizes
     dom = []
     for di, s in enumerate(sizes):
         dom += [di] * s
-    g = torch.Generator().manual_seed(7)
+    g = torch.Generator().manual_seed(21)
     full = torch.tensor(dom, dtype=torch.int8)[torch.randperm(n, generator=g)]
 
-    truth = torch.bincount(full.to(torch.int64), minlength=len(NAMES))
-    stripe0 = torch.bincount(_stripe(full).to(torch.int64), minlength=len(NAMES)) * WORLD
+    truth = torch.bincount(full[:consumed].to(torch.int64), minlength=len(NAMES))
+    whole = torch.bincount(full.to(torch.int64), minlength=len(NAMES))
+    if torch.equal(truth, whole):
+        bad.append(f"the striping fixture is PLAN-COMPLETE: the consumed prefix and the whole "
+                   f"plan give the same counts ({truth.tolist()}), so deleting the "
+                   f"rows_done*world bound would not be caught. Lengthen the plan")
+        return
+    stripe0 = torch.bincount(_stripe(full)[:consumed // WORLD].to(torch.int64),
+                             minlength=len(NAMES)) * WORLD
     if torch.equal(truth, stripe0):
         bad.append(f"the striping fixture is INERT: rank 0's count x world equals the truth "
                    f"({truth.tolist()}), so it cannot separate the two implementations. "
@@ -239,23 +259,59 @@ def _check_striping(bad, tmp):
     got = [ck["row_cursor"][nm] for nm in NAMES]
     want = truth.tolist()
     print(f"  striping      : got {got} want {want} (rank0 x world would write "
-          f"{stripe0.tolist()})")
+          f"{stripe0.tolist()}, whole plan {whole.tolist()})")
     if got != want:
-        bad.append(f"per-domain cursor is {got}, the plan actually consumed {want}. This is "
-                   f"58's defect: rank 0's stripe x world would write {stripe0.tolist()}")
+        bad.append(f"per-domain cursor is {got}, the plan's consumed prefix holds {want}. "
+                   f"58's defect writes {stripe0.tolist()}; an unbounded read writes "
+                   f"{whole.tolist()}")
     if sum(got) != as_of * ROWS_PER_STEP:
         bad.append(f"the striping case's sum is {sum(got)}, not {as_of * ROWS_PER_STEP} -- the "
                    f"fixture is wrong, not the code")
-    # And the over-count direction is the damaging one: a cursor past the pool makes stage 2
-    # skip the tail. Name it explicitly so a future reader knows which side to fear.
+    # BOTH DIRECTIONS, asserted separately. 58 measured a `cursor > pool` guard catching 3 of
+    # 9 real violations and calling two wholly-wrong checkpoints clean, so a fixture that
+    # reproduces only the over-pool direction would certify exactly the guard that misses the
+    # majority. Over-pool is the damaging one -- stage 2 skips the tail -- and under-plan is
+    # the one no bound can see.
     over = [(NAMES[i], int(stripe0[i]), sizes[i]) for i in range(len(NAMES))
             if int(stripe0[i]) > sizes[i]]
+    under = [(NAMES[i], int(stripe0[i]), int(truth[i])) for i in range(len(NAMES))
+             if int(stripe0[i]) != int(truth[i]) and int(stripe0[i]) <= sizes[i]]
     if not over:
         bad.append("no domain's rank0 x world count exceeds its pool, so this fixture does "
                    "not reproduce the ckpt_e1_conv_n8 direction (212 against a 204 pool)")
-    else:
+    if not under:
+        bad.append("no domain is wrong while staying under its pool, so this fixture would be "
+                   "fully caught by a `cursor > pool` bound -- the guard 58 measured as "
+                   "catching only 3 of 9 real violations")
+    if over and under:
         print(f"  over-count    : {', '.join(f'{nm} {c} against a {s}-row pool' for nm, c, s in over)}"
               f" under the old computation")
+        print(f"  under-count   : {', '.join(f'{nm} {c} against a true {t}' for nm, c, t in under)}"
+              f" -- invisible to any `cursor > pool` bound")
+
+    # THE DISCARD PATH, mid-plan, which has NO backstop (58, 2026-09-06). `_discarded`
+    # non-empty skips the sum identity by design -- a domain that restarted at row 0 is
+    # legitimately short -- so on this path the per-domain assertion is the only thing that
+    # can fire. Measured with the rows_done*world bound deleted: the no-discard case above is
+    # REFUSED by the identity (30,720 against a want of 10,240), and this one is WRITTEN, a
+    # cursor 3x past every pool, labelled row_cursor_sum_unchecked. Mid-plan plus a changed
+    # corpus fingerprint is ordinary under --auto-resume, not exotic.
+    p, ckd, errd = _save(tmp, as_of, origin, {n: 0 for n in NAMES}, full=full,
+                         discarded=[f"{NAMES[0]} (corpus abc -> def)"], tag="_stripe_disc")
+    if errd:
+        bad.append(f"the mid-plan discard case RAISED on a correct plan: {errd[:180]}")
+    else:
+        gotd = [ckd["row_cursor"][nm] for nm in NAMES]
+        if gotd != want:
+            bad.append(f"mid-plan WITH a discard: cursor {gotd}, the consumed prefix holds "
+                       f"{want}. The sum identity is skipped on this path, so this assertion "
+                       f"is the only backstop it has")
+        elif not ckd.get("row_cursor_sum_unchecked"):
+            bad.append("the mid-plan discard case did not record row_cursor_sum_unchecked, so "
+                       "a reader cannot tell the skipped sum from a checked one")
+        else:
+            print(f"  discard+midplan: got {gotd}, identity skipped and labelled -- the "
+                  f"per-domain assertion is this path's only backstop")
 
 
 def _check_no_full_plan_refuses(bad, tmp):
