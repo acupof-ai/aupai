@@ -941,6 +941,53 @@
    },
    "uncertainty": "humaneval/lambada hits are per-doc gram collisions, not problem-text leakage; the same gold sentence can hit multiple docs (not a distinct-holdout union) at these ~1e-6 rates.",
    "status": "measured"
+  },
+  {
+   "id": "cont.generator_families_in_owm",
+   "value": {
+    "sampled_docs": 40000,
+    "shards_sampled": 3,
+    "shards_total": 206,
+    "rates_pct": {
+     "age_ratio": 7.33,
+     "alloy_mixture": 0.425,
+     "work_rate": 0.228,
+     "clock_angle": 0.118,
+     "cryptarithm": 0.057,
+     "chicken_rabbit": 0.037,
+     "ant_crawl_solid": 0.003
+    },
+    "hits": {
+     "age_ratio": 2932,
+     "alloy_mixture": 170,
+     "work_rate": 91,
+     "clock_angle": 47,
+     "cryptarithm": 23,
+     "chicken_rabbit": 15,
+     "ant_crawl_solid": 1
+    },
+    "est_docs_domain_wide": {
+     "age_ratio": 201331,
+     "alloy_mixture": 11673,
+     "work_rate": 6249,
+     "clock_angle": 3227,
+     "cryptarithm": 1579,
+     "chicken_rabbit": 1030,
+     "ant_crawl_solid": 69
+    },
+    "finding": "every probed generator family is PRESENT in math_owm_stage2, including the most obscure in the bank"
+   },
+   "unit": "fraction of sampled docs containing family-characteristic phrasing",
+   "measured": "2026-09-05",
+   "source": "/tmp/famscan.py on the pod against /work/aupai/data/corpus/math_owm_stage2/*.jsonl; 3 shards drawn with Random(42), first 40,000 parseable docs, first 4,000 chars per doc",
+   "config": {
+    "probe": "family-characteristic regex, case-insensitive, NOT surface n-grams (e.g. age_ratio = 'how old' | 'years older' | 'age..ratio' | 'ages of')",
+    "population": "corpus on disk, NOT the row_cursor rows the model read -- an upper bound on what training saw for a domain read at 0.301 epochs",
+    "why": "asked to select a generator procedure family ABSENT from pretraining, for the conversion-rate curve's skill (4c, synthesis experiment 1)"
+   },
+   "uncertainty": "3 of 206 shards and 40,000 docs is a sample; rates carry binomial error and the domain-wide extrapolations assume shard homogeneity, which is not measured. The direction that matters is safe: these are presence findings, and a sample that FINDS a family cannot be wrong about presence.",
+   "status": "measured",
+   "boundary": "THIS METHOD CANNOT CERTIFY ABSENCE. By the rule of three, a family with 0 hits in 40,000 docs is bounded above at 0.0075%, i.e. still up to ~200 docs domain-wide -- so a zero here means 'not found', never 'not present'. Separately, a 13-gram containment scan is the WRONG instrument for a family-level question in either direction: it answers 'did this exact text appear', so a generator emitting fresh instances scores 0 on it while the procedure is thoroughly present -- the 7.33% age_ratio rate is invisible to 13-gram containment. Consequence, and the reason this fact exists: a skill that is absent from pretraining must be CONSTRUCTED, not selected; absence is then a property of how it was built rather than a claim a scan is asked to support."
   }
  ]
 }
