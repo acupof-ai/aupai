@@ -302,8 +302,14 @@ def p1_dispatch(device, dtype=None):
     # together would agree perfectly and both be wrong. Each is compared to the dense module.
     with torch.no_grad():
         xt = torch.randn(64, D, device=device, dtype=dtype)
-        w13_t = dense.w13.weight.detach().t().unsqueeze(0).contiguous().transpose(-2, -1)
-        w2_t = dense.w2.weight.detach().t().unsqueeze(0).contiguous().transpose(-2, -1)
+        # ONE transpose, not two. nn.Linear stores weight as (out, in) = (N, K), which is
+        # already build_moe's (E, N, K) layout once unsqueezed -- so the grouped operand is
+        # weight.unsqueeze(0).transpose(-2,-1), giving (E, K, N) with K == D. The first version
+        # did .t() FIRST and then transposed again, landing on (1, 2*ffn, d): the contraction
+        # dim read 2*ffn against an input of width d, and the op refused with "contraction
+        # dimension of mat_a and mat_b must match". Measured 2026-09-05 on card 7.
+        w13_t = dense.w13.weight.detach().unsqueeze(0).transpose(-2, -1)
+        w2_t = dense.w2.weight.detach().unsqueeze(0).transpose(-2, -1)
         offs_t = torch.tensor([64], device=device, dtype=torch.int32)
         yd = dense(xt)
         hg = torch._grouped_mm(xt, w13_t, offs=offs_t)
