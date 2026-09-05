@@ -355,6 +355,67 @@ def _check_no_full_plan_refuses(bad, tmp):
         print(f"  no full plan  : refused and recorded -- {ck['row_cursor_refused'][:90]}")
 
 
+def _check_world_source(bad, tmp):
+    """The world used for the prefix must be the one the PLAN was striped at.
+
+    save_checkpoint read os.environ["WORLD_SIZE"] while build_mix striped at
+    dist.get_world_size() -- two independent sources for one number (58, 2026-09-06). They
+    agree under torchrun, so no fixture built at one world can see the divergence; this one
+    sets them to DIFFERENT values and asserts the plan's wins. Without that, `rows_done *
+    world` slices a prefix the ranks never jointly consumed, silently.
+    """
+    import train
+
+    as_of, origin = 40, 0
+    consumed = as_of * BATCH * ACCUM * WORLD
+    n = consumed * 2
+    sizes = [25, 203, n - 228]
+    dom = []
+    for di, s in enumerate(sizes):
+        dom += [di] * s
+    g = torch.Generator().manual_seed(21)
+    full = torch.tensor(dom, dtype=torch.int8)[torch.randperm(n, generator=g)]
+    want = torch.bincount(full[:consumed].to(torch.int64), minlength=len(NAMES)).tolist()
+
+    cfg = FakeCfg()
+    cfg._plan_domains_full = full
+    cfg._plan_domains = _stripe(full, 0, WORLD)
+    cfg._plan_world = WORLD  # what build_mix striped at
+    cfg._plan_names = list(NAMES)
+    cfg._plan_step_origin = origin
+    cfg._row_cursor = {nm: 0 for nm in NAMES}
+    cfg._row_cursor_srcfp = {nm: "fp" for nm in NAMES}
+    cfg._row_cursor_base = {}
+    cfg._cursor_discarded = []
+    cfg._total_steps = 3814
+
+    p = os.path.join(tmp, "ck_worldsrc.pt")
+    prev = os.environ.get("WORLD_SIZE")
+    os.environ["WORLD_SIZE"] = str(WORLD * 2)  # a launcher that set only the environment
+    try:
+        train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=as_of)
+        err = None
+    except AssertionError as e:
+        err = str(e)
+    finally:
+        if prev is None:
+            os.environ.pop("WORLD_SIZE", None)
+        else:
+            os.environ["WORLD_SIZE"] = prev
+    if err:
+        bad.append(f"with WORLD_SIZE={WORLD * 2} and the plan striped at {WORLD}, the write "
+                   f"RAISED: {err[:170]}. The plan's world is the correct one and the "
+                   f"environment must not override it")
+        return
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    got = [ck["row_cursor"][nm] for nm in NAMES]
+    if got != want:
+        bad.append(f"the environment's WORLD_SIZE={WORLD * 2} won over the plan's {WORLD}: "
+                   f"cursor {got}, the prefix the ranks consumed holds {want}")
+    else:
+        print(f"  world source  : plan {WORLD} beat WORLD_SIZE={WORLD * 2}, got {got}")
+
+
 def main():
     bad = []
     tmp = tempfile.mkdtemp()
@@ -423,6 +484,7 @@ def main():
 
     _check_striping(bad, tmp)
     _check_no_full_plan_refuses(bad, tmp)
+    _check_world_source(bad, tmp)
 
     print()
     if bad:

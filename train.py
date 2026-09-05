@@ -1477,6 +1477,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _fps = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor_srcfp", None)
     _dom_idx = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains", None)
     _dom_full = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains_full", None)
+    _plan_world = None if isinstance(cfg, dict) else getattr(cfg, "_plan_world", None)
     _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
     _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
@@ -1536,7 +1537,11 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
             # below the plan length, wrong above it, which is the shape that survives
             # testing: stage 1 starts at 0, where absolute and relative are equal.
             rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
-            world = int(os.environ.get("WORLD_SIZE", 1))
+            # The world the PLAN was striped at, from build_mix, falling back to the
+            # environment only when no plan published one. The prefix is rows_done * world
+            # over a vector build_mix striped, so reading a different world here slices a
+            # prefix the ranks never jointly consumed (58, 2026-09-06).
+            world = _plan_world or int(os.environ.get("WORLD_SIZE", 1))
             # At world 1 the stripe IS the full plan -- `plan[:, 0::1]` is the identity -- so
             # the stripe answers the per-domain question exactly there and refusing would
             # discard a correct count. Above world 1 it does not, and there is no fallback.
@@ -2473,6 +2478,13 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # 30B plan's 3,662,109, so world 8 adds 3.2 MB/rank of host memory against an 892 MB
     # checkpoint. It is NOT saved into the .pt -- only the counts are.
     Cfg._plan_domains_full = plan[0, :n].to(torch.int8).clone()
+    # The world the plan was STRIPED at, published beside it. save_checkpoint needs the same
+    # number to size the prefix, and it used to read os.environ["WORLD_SIZE"] -- a second,
+    # independent source (58, 2026-09-06). They agree under torchrun, which sets both, and the
+    # only non-torchrun path is world 1 where the stripe is the full plan; but the count is
+    # `rows_done * world` against a vector striped at the other world, so a launcher that set
+    # one without the other would mis-slice the prefix with nothing raising. One source.
+    Cfg._plan_world = int(world)
     Cfg._plan_names = list(names)
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
     vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
