@@ -3,7 +3,10 @@
     "path": "runs/memory_diag.jsonl",
     "written_by": "train.py, every 100 steps, rank 0 only",
     "read_by": "harness check memory_diag_fresh; 98's progress page; readout 4 of memory_layers_0905",
-    "row_identity": ["name", "step"],
+    "row_identity": [
+      "name",
+      "step"
+    ],
     "append_only": true,
     "fields": {
       "name": {
@@ -69,6 +72,86 @@
         "type": "str",
         "required": false,
         "why": "wall clock, UTC, YYYY-MM-DD HH:MM:SS. The freshness check uses step distance, not time, because a stalled run keeps its last step while the clock advances -- so this is for humans reading the file, never for a gate."
+      }
+    }
+  },
+  "moe_diag": {
+    "path": "runs/moe_diag.jsonl",
+    "written_by": "train.py, every 100 steps, rank 0 only, via scripts/moe_diag.py log_diag",
+    "read_by": "harness check moe_diag_fresh; readout 4 of moe_0905 (usage < 0.50 at step 300, normalised entropy < 0.70 at step 500)",
+    "row_identity": [
+      "name",
+      "step",
+      "ts"
+    ],
+    "append_only": true,
+    "fields": {
+      "name": {
+        "type": "str",
+        "required": true,
+        "why": "the ARM name (e1, e1b), not the run kind. E1b is the layer-count axis against E1, so a ledger keyed only on step folds two arms into one curve; --mem_arm's analogue, from the launch line so it matches the experiments row and the checkpoint."
+      },
+      "step": {
+        "type": "int",
+        "required": true,
+        "min": 0,
+        "why": "optimizer step, not tokens: readout 4's stop rules are stated in steps (usage at 300, entropy at 500) and a reader must not have to convert."
+      },
+      "ts": {
+        "type": "str",
+        "required": true,
+        "why": "UTC timestamp, and it is part of the ROW IDENTITY rather than decoration. A relaunched arm re-visits its own step numbers, so (name, step) is not unique across runs of one arm -- measured on the memory ledger, where it collided three ways on a relaunch. The ledger carries no run id, so ts is the only field separating two runs."
+      },
+      "window_steps": {
+        "type": "int",
+        "required": true,
+        "min": 1,
+        "why": "how many steps the counters in this row cover. REQUIRED, not optional, because every other metric here is a per-window statistic and a fraction without its window length is not comparable to another row's: the memory ledger's windows were 1-10, 11-20, 21-30, 31-100 then every 100 (diagnostics(reset=True) clears the counters), and a trend read across those windows had to be withdrawn. 44's review of moe_0905 made this field a condition."
+      },
+      "usage_frac": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "max": 1.0,
+        "why": "fraction of routed experts receiving at least one token in the window -- readout 4's collapse detector, STOP below 0.50 at step 300. A FRACTION, not a count, because E1 has 24 routed experts and E1b has 48 and readout 3 compares them."
+      },
+      "entropy_norm": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "max": 1.0,
+        "why": "token-count entropy over experts divided by ln(N) -- STOP below 0.70 at step 500. Normalised so the bar is one number across expert counts; unnormalised entropy at 24 experts and at 48 are not on the same scale."
+      },
+      "load_gini": {
+        "type": "float",
+        "required": true,
+        "min": 0.0,
+        "max": 1.0,
+        "why": "Gini of the per-expert token counts. Carried alongside usage_frac because the two separate the collapse shapes: every expert can receive a token (usage 1.0) while one takes most of them, which is the regime the balancer is supposed to prevent and usage_frac alone cannot see."
+      },
+      "tokens": {
+        "type": "int",
+        "required": true,
+        "min": 0,
+        "why": "routed token-slots counted in the window (tokens x top_k, summed over the window's steps). The denominator behind every fraction above, written so a reader can tell 'no forward ran' (0) from 'perfectly collapsed' -- both of which would otherwise print as usage_frac 0.0."
+      },
+      "n_routed": {
+        "type": "int",
+        "required": false,
+        "min": 1,
+        "why": "routed experts in the arm, so a row is readable without joining to the launch line."
+      },
+      "top_k": {
+        "type": "int",
+        "required": false,
+        "min": 1,
+        "why": "routed experts per token, same reason."
+      },
+      "tok_s_gpu": {
+        "type": "float",
+        "required": false,
+        "min": 0.0,
+        "why": "throughput at this step. OPTIONAL here, unlike in memory_diag: readout 5's 0.85 bar is read at steps 30 and 100 only, because from step 200 on the memory arms shared the machine and a same-step comparison after 100 measures co-residency rather than the architecture (facts/memory_layers.json#mem.m1_throughput_cost). Written when known, omitted rather than defaulted when not."
       }
     }
   }
