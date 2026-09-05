@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Data distribution at a glance: per-domain token counts vs the mix target.
 
-Counts come from the pretokenized caches (/data00/tokens_<domain>.pt, exact and
-instant) when present; otherwise data/corpus/<domain>/*.jsonl is tokenized with
-the project tokenizer and cached in <corpus>/.counts.json, so the first run
+Counts come from the pretokenized caches (train._domain_cache_path(domain), which follows
+AUPAI_TOKEN_CACHE_DIR -- exact and instant) when present; otherwise data/corpus/<domain>/*.jsonl
+is tokenized with the project tokenizer and cached in <corpus>/.counts.json, so the first run
 counts and every later run is free.
 
     python datagen/data_overview.py [--mix data/mix_scale_3.24b.json] [--corpus data/corpus]
@@ -16,6 +16,12 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+# harness.py lives in scripts/, and this file moved from scripts/ to datagen/ on 2026-08-31
+# (c3a47e8f). The move left `import harness` resolving against a directory that no longer holds
+# it, so this script and datagen/check_mix.py have both died at import ever since -- five days
+# with no symptom, because nothing runs them and no check covers an entry point that fails on
+# line 20. datagen/pretokenize.py got this line in the same commit; these two did not.
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import harness  # single source of truth for the configured mix
 
@@ -26,8 +32,16 @@ TOK_PATH = train.TOK_PATH
 
 
 def cache_tokens(domain):
-    """Token count from the pretokenized cache: int32, 4 bytes each, plus a small header."""
-    p = os.path.join(os.path.dirname(TOKEN_CACHE), f"tokens_{domain}.pt")
+    """Token count from the pretokenized cache: int32, 4 bytes each, plus a small header.
+
+    train._domain_cache_path, not os.path.dirname(TOKEN_CACHE) + a hand-spelled name. TOKEN_CACHE
+    is the literal "/data00/pretrain_1b_tokens.pt", so taking its dirname pinned this reader to
+    the container overlay and it kept doing so after the caches moved to NVMe on 2026-09-05 --
+    datagen/check_mix.py:39 calls this and reports a domain as MISSING when the file is simply
+    somewhere else, then :47 divides a byte count from the wrong copy into a row count. The
+    accessor also owns the _fone suffix, which a hand-spelled stem drops silently.
+    """
+    p = train._domain_cache_path(domain)
     return os.path.getsize(p) // 4 if os.path.exists(p) else None
 
 
