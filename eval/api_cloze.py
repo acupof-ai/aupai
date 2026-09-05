@@ -620,7 +620,11 @@ def main():
     ap.add_argument("--ckpt", help="checkpoint to score, or the control for --build")
     ap.add_argument("--control_ckpt", default="ckpt_b0_headmix_armA.pt",
                     help="the checkpoint the region boundary is read from")
-    ap.add_argument("--cache", default="/data00/tokens_code_py_starcoder.pt")
+    ap.add_argument("--cache", default=None,
+                    help="token cache to read; default tokens_code_py_starcoder.pt under "
+                         "train._token_cache_dir(), which follows AUPAI_TOKEN_CACHE_DIR. It used "
+                         "to be a hardcoded /data00 path, so it would have kept reading the "
+                         "overlay copy after the caches moved to NVMe")
     ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_200m_8b.json"),
                     help="the mix the control trained on; its index plan is replayed to "
                          "recover which rows the run actually read")
@@ -638,7 +642,12 @@ def main():
 
     if a.build:
         ctrl = a.ckpt or a.control_ckpt
-        return build(a.tokenizer, ctrl, a.mix, a.cache, a.per_region, a.build_seed, a.data,
+        cache = a.cache
+        if cache is None:
+            sys.path.insert(0, ROOT)
+            import train
+            cache = train._domain_cache_path("code_py_starcoder")
+        return build(a.tokenizer, ctrl, a.mix, cache, a.per_region, a.build_seed, a.data,
                      a.cache_tokens)
 
     if not a.ckpt:
