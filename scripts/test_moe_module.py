@@ -20,6 +20,7 @@ letting the op reject it here.
 
     python3 scripts/test_moe_module.py
 """
+import inspect
 import os
 import sys
 
@@ -64,7 +65,7 @@ def _cfg(**kw):
 
 def main():
     from model import MoEFFN, SwiGLU
-    bad, n = 0, 10
+    bad, n = 0, 11
 
     # 1. THE TIED-WEIGHTS WITNESS, and it is a precondition rather than a diagnostic. With one
     # routed expert (so the gate is a softmax over one score = 1.0) and one shared expert, both
@@ -381,6 +382,89 @@ def main():
         bad += 1
         print(f"  BUG  bf16 experts with an fp32 input raised {type(e).__name__}: "
               f"{str(e)[:160]} -- this is the defect that killed E1 before step 1")
+
+    # 12. A MoE ARM WITHOUT --fp8 IS REFUSED BEFORE THE FIRST STEP (4c's ruling (c), 2026-09-05).
+    #
+    # THE DEFECT: torch._grouped_mm's eager kernel accepts fp32 and its META registration does not,
+    # so under torch.compile an fp32 grouped GEMM raises "Expected inputs of BF16 type but got
+    # mat_a.dtype=torch.float32 and mat_b.dtype=torch.float32". train.py casts the model to bf16
+    # only inside `if fp8:`, so a MoE run without --fp8 keeps fp32 experts and dies at step 0.
+    # Found by scripts/test_e2e.py, which invokes train.py directly and passed no --fp8 -- the walk
+    # ran a configuration the launch never runs, which is the walk working (runs/e2e_moe.log [3]).
+    #
+    # THE GUARD IS EXECUTED, NOT GREPPED, and the first version of this check was the grep. It
+    # asserted the source contained the condition and that it preceded the cast -- both true of a
+    # guard whose body is `pass`, and both true of one whose condition is inverted. This repo has
+    # paid for that exact shape before (a check that read source text while the behaviour was
+    # wrong). So the guard's own lines are extracted from train.main and RUN, in the four worlds
+    # that decide whether it is right:
+    #   moe on,  fp8 off -> must refuse           (E1's configuration under test_e2e)
+    #   moe on,  fp8 on  -> must be silent        (the launch; a guard that fires here blocks E1)
+    #   moe off, fp8 off -> must be silent        (every dense arm ever run, incl. the control)
+    #   moe on,  --fp8 given but amp off -> must refuse, and say so distinctly
+    # The third world is the one an over-broad guard breaks, and it is not hypothetical: the
+    # control this arm is scored against runs dense.
+    #
+    # Ordering is still checked, because a guard placed after the cast is dead code that behaves
+    # correctly in isolation.
+    try:
+        import textwrap
+
+        import train as _t
+        src = inspect.getsource(_t.main)
+        problems = []
+        i_guard = src.find('if getattr(Cfg, "moe_experts", 0) and not fp8:')
+        i_cast = src.find("raw_model = raw_model.to(torch.bfloat16)")
+        if i_guard < 0:
+            problems.append("no `moe_experts and not fp8` guard in train.main")
+        elif i_cast < 0:
+            problems.append("could not find the bf16 cast to order the guard against")
+        else:
+            if i_guard > i_cast:
+                problems.append("the guard is AFTER the bf16 cast, so it cannot prevent the "
+                                "fp32 run")
+            # SLICE BY INDENTATION, not to the next `if fp8:` (e1's review of e64b549b). The old
+            # form sliced from the guard to the next occurrence of that literal, which is fine
+            # while the guard PRECEDES the cast and swallows unrelated lines once it does not --
+            # so a guard moved after the cast made the exec die on NameError instead of failing
+            # the ordering assertion. The mutant was caught, but by a crash, and a mutant that
+            # dies for the wrong reason is indistinguishable from one the test killed. Taking
+            # exactly the guard's own block makes the ordering assertion the thing that fires.
+            _lines = src[i_guard - 4:].split("\n")
+            _block = [_lines[0]]
+            for _l in _lines[1:]:
+                if _l.strip() and not _l.startswith("        "):
+                    break
+                _block.append(_l)
+            body = textwrap.dedent("\n".join(_block))
+            worlds = (("moe on, fp8 off", 24, False, False, True),
+                      ("moe on, fp8 on", 24, True, True, False),
+                      ("moe off, fp8 off", 0, False, False, False),
+                      ("moe on, amp off", 24, False, True, True))
+            for label, n_exp, fp8, argfp8, must_raise in worlds:
+                env = {"Cfg": type("C", (), {"moe_experts": n_exp}),
+                       "fp8": fp8, "args": type("A", (), {"fp8": argfp8})}
+                try:
+                    exec(compile(body, "guard", "exec"), env)  # noqa: S102
+                    if must_raise:
+                        problems.append(f"{label}: guard did NOT refuse")
+                except SystemExit as ex:
+                    if not must_raise:
+                        problems.append(f"{label}: guard refused a valid run")
+                    else:
+                        msg = str(ex)
+                        for want in ("bfloat16", "--fp8", "_grouped_mm"):
+                            if want not in msg:
+                                problems.append(f"{label}: message omits {want}")
+        ok = not problems
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} train.main's fp8 refusal fires in the two worlds that "
+              f"need it and stays silent in the two that do not (dense-without-fp8 included), sits "
+              f"before the bf16 cast, and names _grouped_mm and --fp8"
+              f"{'' if ok else ' -- ' + '; '.join(problems)}")
+    except Exception as e:  # noqa: BLE001
+        bad += 1
+        print(f"  BUG  could not exercise train.main's fp8 refusal: {type(e).__name__}: {e}")
 
     print(f"test_moe_module: {n - bad}/{n} pass")
     return 1 if bad else 0
