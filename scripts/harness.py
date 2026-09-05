@@ -11120,9 +11120,24 @@ def check_memory_diag_fresh(root):
                 f"writer was in their own code: {', '.join(sorted(set(empty)))} -- the "
                 f"cadence ({md.DIAG_CADENCE_COMMIT[:8]}) writes at steps 10/20/30, so a run "
                 f"that got past step 10 and left no row had a dead hook, not an early death")
-        return SKIP, (f"no memory arm is running; {len(set(pre))} finished arm(s) predate the "
-                      f"diagnostics writer ({', '.join(sorted(set(pre)))}) so their empty "
-                      f"ledger is expected, not measured")
+        # A GREEN SKIP MUST SAY WHAT IT SAW, and this message said "0 ... ()" for a ledger holding
+        # 25 rows from three arms. It reports only the two problem classes -- empty and pre-cadence
+        # -- so once neither applies it names nothing at all, and a SKIP whose every number is zero
+        # is indistinguishable from a SKIP taken on an absent ledger. That is the state 4c's pull
+        # was in an hour earlier (runs/memory_diag.jsonl untracked and out of the transport set, so
+        # every checkout judged the arms against nothing) and it read as FAIL then, green now, with
+        # the message equally silent about the rows either way.
+        measured = sorted({_arm_id(str(r.get("name"))) for r in closed
+                           if _arm_id(str(r.get("name"))) in have})
+        parts = ["no memory arm is running"]
+        if measured:
+            parts.append(f"{len(measured)} finished arm(s) wrote diagnostics "
+                         f"({', '.join(measured)}, {len(drows)} rows)")
+        if pre:
+            parts.append(f"{len(set(pre))} predate the writer "
+                         f"({', '.join(sorted(set(pre)))}) so their empty ledger is expected, "
+                         f"not measured")
+        return SKIP, "; ".join(parts)
 
     try:
         sys.path.insert(0, os.path.join(ROOT, "scripts"))
@@ -13602,6 +13617,16 @@ def _selftest_diag_closed_arms():
     st, ev = check_memory_diag_fresh(_world(head, train, True))
     assert st == SKIP and "b0_mem_m2" not in ev, \
         f"a closed arm WITH a row is not a defect: {st} {ev}"
+    # ...AND THE GREEN SKIP NAMES WHAT IT SAW. The message reported only its two problem classes,
+    # so with neither applying it printed "0 finished arm(s) predate the diagnostics writer ()"
+    # against a ledger holding rows from three arms -- a SKIP whose every number is zero, which is
+    # what a SKIP taken on an ABSENT ledger also prints. An hour before this, runs/memory_diag.jsonl
+    # was untracked and outside the transport set, so every checkout judged the arms against
+    # nothing; that state read FAIL, this one reads SKIP, and the message was equally silent about
+    # the rows in both. A green check that cannot say what it measured is the shape that let the
+    # absent ledger sit unnoticed.
+    assert "wrote diagnostics" in ev and "m2" in ev, \
+        f"the green SKIP must name the arms and rows it saw, not only the problem classes: {ev}"
 
     # AND THE WORLD IS SELF-CONTAINED, asserted rather than assumed. This is the regression, not a
     # tidiness check: with ROOT's ledger copied in, a live OPEN b0_mem_m1 row put the check on the
