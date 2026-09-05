@@ -41,14 +41,51 @@ EOS_ID = 1
 NUM_ID = 32772
 
 
-def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True):
+def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
     """(model, cfg), the model built from ck["cfg"] — never the live Cfg, which the
     train loop owns and which is not stable across runs. cfg gains `vocab_id` for
-    load_tokenizer to cross-check."""
+    load_tokenizer to cross-check.
+
+    CLAIMS THE CARD when `device` names cuda (de-55 step 2). 19 of the 23 GPU entry points that
+    load a checkpoint and move it to a device reach it through this function, so this is where one
+    acquire covers the most of them; 12 of the 19 pass a cuda device here and are covered for free.
+
+    claim_my_cards' docstring recorded two reasons NOT to do this, both measured at a population
+    that turns out to have been wrong. REFUTED 2026-09-05 by re-measuring with the right predicate
+    (loads a checkpoint AND moves it to a device, rather than "names cuda", which matched 53 files
+    including every one that mentions the word in prose):
+
+        "only 5 of the 10 call load_checkpoint"       -> 19 of 23 do
+        "device defaults cpu, 7 of 10 pass cpu"       -> 12 of 19 pass a cuda device; the other 7
+                                                        load to cpu and move later, and get an
+                                                        explicit call at the move instead
+
+    The gate is what makes it safe, and it is on the RESOLVED device rather than on the argument's
+    presence: a CPU load claims nothing, so CI, test_arch_compat on a machine without fla, and every
+    scoring pass that loads to cpu first behave exactly as before.
+
+    claim=False for a caller that already holds the card under another name -- a launcher's claim
+    covers its own children, and a second acquire under a different name would clash with it.
+    """
     import torch
 
     from train import Cfg, HybridLM  # delayed: this pulls torch; consumers already require it
 
+    if claim and "cuda" in str(device):
+        # sys imported HERE, not assumed. train.py's version of this fix wrapped a cache_guard
+        # import in try/except with no module-level `sys`, and the bare except swallowed the
+        # NameError and returned the old default -- the bug being fixed, inside the fix, reported as
+        # the wrong answer rather than as an error (2026-09-05). loader.py has no module-level sys
+        # either, so this line is the difference between claiming a card and silently not.
+        import sys
+
+        # The name is the FILE stem, so two tools loading on one card are distinguishable in
+        # `card_claim.py status` -- "score_matrix" and "domain_loss", not one shared "load".
+        # argv[0] is "" for `python -c` and an interactive session; that falls back to the function
+        # name rather than claiming under an empty name, which claim_file would turn into ".7.json".
+        stem = os.path.basename(sys.argv[0] or "")
+        claim_my_cards(stem[:-3] if stem.endswith(".py") else (stem or "load_checkpoint"),
+                       note=f"load_checkpoint {os.path.basename(str(path))[:40]}")
     ck = torch.load(path, map_location=device, weights_only=False)
     cfg = SimpleNamespace(**ck["cfg"])
     # Old checkpoints predate newer Cfg keys (e.g. chunk_size, added 2026-08-30):

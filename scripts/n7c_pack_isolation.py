@@ -78,8 +78,13 @@ def main():
     from tokenizers import Tokenizer  # noqa: PLC0415
 
     import model as M  # noqa: PLC0415
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
+
+    # de-55 step 3: loads to CPU, mutates conv_doc_isolated on the blocks, and only then moves to the
+    # card at `mdl.cuda()`. That mutation between load and device is why this one keeps its load on
+    # cpu rather than passing device="cuda" -- the claim is added, the numerics are untouched.
+    claim_my_cards("n7c_pack_isolation", note="conv doc isolation, packed vs varlen")
 
     if not M.HAS_FA:
         raise SystemExit("REFUSING: HAS_FA is False; the varlen path would not run.")
