@@ -12,16 +12,28 @@ R=$W/repo
 bad=0
 say() { if [ "$1" = 0 ]; then echo "  ok   $2"; else echo "  BUG  $2"; bad=$((bad+1)); fi; }
 
-# The integration verb under test, in the new shape: merge in MY worktree, gate there,
-# then advance main by compare-and-swap. Never touches a shared working tree.
-integrate() {   # $1 = worktree, $2 = branch, $3 = gate exit code, $4 = optional stale `old`
-  local wt=$1 br=$2 gate=$3 old new
+# The integration verb under test, in the new shape: merge in MY worktree, gate there, advance
+# main by compare-and-swap, THEN push. Never touches a shared working tree.
+#
+# $5 selects the push-failure policy, and it exists so W6 can discriminate: "keep" is the shipped
+# behaviour (a failed push leaves main advanced), "rollback" is the plausible wrong one. Without
+# a policy that CAN roll back, W6 asserts something no code path could violate -- a world with no
+# power to disagree has none to confirm (this file's own §231, filed 2026-09-05).
+integrate() {   # $1 = worktree, $2 = branch, $3 = gate exit code, $4 = stale `old`, $5 = policy
+  local wt=$1 br=$2 gate=$3 old new policy=${5:-keep} prc=0
   old=${4:-$(git -C "$R" rev-parse main)}
   git -C "$wt" merge --no-edit main -q >/dev/null 2>&1 || { echo "merge-conflict"; return 3; }
   new=$(git -C "$wt" rev-parse HEAD)
   [ "$gate" -eq 0 ] || { echo "gate-refused"; return 1; }          # nothing landed
   git -C "$R" update-ref refs/heads/main "$new" "$old" 2>/dev/null || { echo "cas-lost"; return 2; }
-  echo "landed:$new"
+  # The push is a SEPARATE handoff after the atomic step. The fixture has no `origin`, so this
+  # fails for real rather than being simulated.
+  git -C "$R" push origin main >/dev/null 2>&1 || prc=$?
+  if [ "$prc" != 0 ] && [ "$policy" = rollback ]; then
+    git -C "$R" update-ref refs/heads/main "$old" "$new" 2>/dev/null || true
+    echo "rolled-back:$new"; return 4
+  fi
+  [ "$prc" = 0 ] && echo "landed-pushed:$new" || echo "landed-unpushed:$new"
 }
 
 echo "W1  kill mid-gate leaves nothing dirty in a shared tree"
@@ -93,6 +105,31 @@ empty_after=$([ -s "$PEND" ] && echo 0 || echo 1)
 say $([ "$dirty" = 0 ] && [ "$survived" = 1 ] && [ "$drained" = 1 ] && [ "$empty_after" = 1 ] && echo 0 || echo 1) \
     "tree dirty=$dirty, survived the kill=$survived, next run drained=$drained row(s), truncated=$empty_after"
 
+# W6  A FAILING PUSH LEAVES MAIN ADVANCED. The CAS is the atomic step; the push to origin is a
+# separate handoff that today nobody automates -- measured 2026-09-05, main took 670 commits in
+# 24h against 139 origin/main push events, so it advances ~5x per push and every gap is a window
+# where a peer's fetch and the pod read a stale main. The integration step pushes after the CAS,
+# and a push that fails must NOT roll the ref back: the commit is already durable and reachable,
+# and undoing it to match origin would discard work to fix a delivery problem. It prints what is
+# due and exits nonzero (4c's ruling).
+echo "W6  a failing push leaves main advanced"
+bash "$(dirname "$0")"/merge_rebuild_fixture.sh >/dev/null
+echo p > "$W/wt_s1/p.txt"; git -C "$W/wt_s1" add p.txt; git -C "$W/wt_s1" commit -qm p
+before=$(git -C "$R" rev-parse main)
+res=$(integrate "$W/wt_s1" s1 0 "" keep)
+kept=$(git -C "$R" rev-parse main)
+# THE DISCRIMINATION ARM. The same world under the rollback policy must give the OPPOSITE answer,
+# or this world cannot tell the shipped behaviour from the wrong one and its pass means nothing.
+bash "$(dirname "$0")"/merge_rebuild_fixture.sh >/dev/null
+echo p > "$W/wt_s1/p.txt"; git -C "$W/wt_s1" add p.txt; git -C "$W/wt_s1" commit -qm p
+rb_before=$(git -C "$R" rev-parse main)
+rb_res=$(integrate "$W/wt_s1" s1 0 "" rollback || true)
+rb_after=$(git -C "$R" rev-parse main)
+say $([ "$res" != "${res#landed-unpushed}" ] && [ "$before" != "$kept" ] \
+      && [ "$rb_res" != "${rb_res#rolled-back}" ] && [ "$rb_before" = "$rb_after" ] && echo 0 || echo 1) \
+    "keep -> ${res%%:*}, main advanced=$([ "$before" != "$kept" ] && echo yes || echo NO); \
+rollback -> ${rb_res%%:*}, main back at old=$([ "$rb_before" = "$rb_after" ] && echo yes || echo NO)"
+
 echo
-echo "merge_main fixture: $((5-bad))/5 pass"
+echo "merge_main fixture: $((6-bad))/6 pass"
 exit $([ "$bad" = 0 ] && echo 0 || echo 1)
