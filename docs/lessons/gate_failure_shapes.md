@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (107 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (195 = 107 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (108 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (196 = 108 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (96 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (97 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-96 incidents (34 infra, 62 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+97 incidents (34 infra, 63 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (9 incidents)
+### R2-a No broken world (10 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -70,10 +70,11 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §103: a check that cannot fail — its acceptance condition was tautological.
 - §218: a fixture sampling "a recent commit" drew a merge commit; `git show --name-only` on a merge prints no files, so the world had no subject and read as broken code.
 - §219: the next filter over the same sample rejected the only file the first non-merge commit touched (.jsonl not in the extension list); both were caught only because the world FAILs rather than skips when it cannot find its subject.
+- §228: a world copied from real files was too incomplete for the subject to import (only scripts/ on sys.path; `from train import ...` died at module scope); the subject's ModuleNotFoundError read as the subject being broken. An import error in a fixture's verdict is a fixture bug until proven otherwise.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219).
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228).
 
 ### R2-b Population narrower than the property (26 incidents)
 
@@ -233,3 +234,28 @@ Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-
 - §41: a deletion list was broadcast and deleted within the 24h window; an unclaimed candidate was still in use.
 
 Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live.
+
+## Design cause: integration happens in a shared writable working tree
+
+User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
+
+**The cause.** main advances by `git merge` run INSIDE a shared writable working tree (merge_main.sh:339), so integration is a non-atomic four-step write — checkout, index, merge commit, hook — to a directory every session reads and writes. Every rule in AGENTS.md's coordination section compensates for this design: the mkdir lock, the index-equals-HEAD rule, the stash rule, the behind-main refusal, the merge-drop restore. None of them is the cause; each is a patch on it.
+
+**The surfaces.**
+1. §224 — the .hookstaged sweep sat behind 26 sys.exit(1) calls in pre-commit main(). The sweep exists because a hook killed mid-selftest leaves .hookstaged_* files in the SHARED tree; in a private worktree a leftover is disposable.
+2. §225 — a hook edited on a branch runs main's old copy. `.git/hooks/pre-commit` resolves against the shared integration tree's worktree, so the edited hook is not the installed hook until merged; the hoist appeared to work while shipping an UnboundLocalError only ruff caught.
+3. The cp -r mutant (cf3dbaea "probe 2", reverted 533a4639, refused since 0375ee1c) — a `cp -r` of a linked worktree kept the `.git` gitdir pointer, so a commit in /tmp/reg_moe landed on the real branch and merged to main carrying a SwiGLU mutant. The workaround exists because the integration tree cannot be experimented in. de's scratch-repo fixture for the hook (§228 instance 2) is the same motion one step more benign: copied scripts/, missed datagen/.
+4. The .hookstaged leftovers — the measured instance behind §224: `runs/audit_0904/.hookstaged_dead_worlds.py` sat in the shared tree for hours across a dozen commits.
+5. The stash rule (AGENTS.md:369, `no_shared_stash`) — `.git/refs/stash` is one stack shared by every worktree of the one checkout; two sessions stashing in the same window each pop the other's entry.
+6. index-equals-HEAD (AGENTS.md:370) — a three-way merge writes the index of the shared working tree, so any staged record is clobbered by another session's merge, related path or not.
+7. Stranded merges — de's SIGKILLed merge_main on 2026-09-05 left the shared tree mid-merge; a killed merge in a shared tree leaves a staged tree without MERGE_HEAD for the next session (measured twice the same day).
+
+**The fix landed 2026-09-05 (f6299671, tilerl).** main advances by compare-and-swap `git update-ref`; merges and hooks run in the committer's own worktree; the integration tree is no longer a checkout. The mootness markings below are now operative, not predicted.
+
+**What becomes moot when the fix lands.**
+- §224's sweep and the .hookstaged leftovers (surface 4): no shared tree to pollute; the committer's worktree is disposable. MOOT.
+- §225: the edited hook IS the installed hook in the committer's own worktree. MOOT.
+- The cp -r mutant (surface 3): no shared checkout to copy or experiment around. MOOT.
+- index-equals-HEAD (surface 6) as a COORDINATION rule: another session's merge cannot touch your index. The local form — don't merge with a dirty index — survives as ordinary git hygiene. MOOT as coordination.
+- Stranded merges (surface 7): a killed merge affects only the committer's own worktree; the integration ref advances atomically. MOOT.
+- The stash rule (surface 5): NOT mooted — `.git/refs/stash` is shared across worktrees of the same repo regardless of the integration tree. Survives.

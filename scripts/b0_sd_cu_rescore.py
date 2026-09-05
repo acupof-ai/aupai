@@ -46,8 +46,14 @@ def main():
     from loop_wrapper import patch_body  # noqa: PLC0415
     from tokenizers import Tokenizer  # noqa: PLC0415
 
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
+
+    # de-55 step 3: loads to CPU and moves at `mdl.cuda()`, so load_checkpoint's cuda-gated claim
+    # does not fire. ONE claim for the whole run, before the ARMS loop -- the loop loads a checkpoint
+    # per arm on the same card, and claiming inside it would rely on the same-pid idempotency for
+    # something a single call states directly.
+    claim_my_cards("b0_sd_cu_rescore", note=f"{len(ARMS)} arms, cu rescore")
 
     tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
     eos = tok.token_to_id("<eos>")
