@@ -1017,12 +1017,49 @@
    "source": "/tmp/collide.py and /tmp/glyph.py on the pod, over data/corpus/{math_owm_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,en_c4_stage2}; 2 shards per domain drawn with Random(42), 15,000 docs each, first 4,000 chars per doc",
    "config": {
     "subject": "mathbank/math_programs_l5_ext_novel.py, families S (diamond_chain, diamond_chain4) and P (diamond_single, diamond_single_reverse)",
-    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim",
+    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim AS WORDED BEFORE 0389a5ef. The carry sentence was reworded that day (先加十 -> 先加十一次…只加一次，结果可能仍为负数) to remove an ambiguity; the reworded sentence was NOT re-scanned. The scan's load-bearing probes are the glyph and the rule 3a-2b+1, both unchanged, and a longer more specific sentence can only be rarer than the shorter one it extends -- so the bound still holds, by an argument rather than by a measurement.",
     "population": "corpus on disk, an UPPER bound on what the model read (mix_200m_8b consumes code_py_starcoder at 0.301 epochs and the other domains less)"
    },
-   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count.",
+   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count. The Chinese rule-sentence probes were run against the pre-0389a5ef wording; see config.probes.",
    "status": "measured",
    "boundary": "A ZERO HERE IS A BOUND, NOT AN ABSENCE: by the rule of three, 0 hits in 105,000 docs bounds the rate below 0.0029%, which over the full domains is still hundreds of documents. This fact does NOT establish that the family is absent from pretraining, and it is not what the family's absence rests on -- absence rests on CONSTRUCTION (the operator, its rule and its phrasing were invented for this experiment on 2026-09-05, after every corpus in the mix was built). The scan's job is the narrower one of catching an accidental collision, and the collision it found is '@'-as-at, which shares a glyph and not a meaning."
+  },
+  {
+   "id": "cont.novel_ops_frozen_sets",
+   "value": {
+    "commit": "0389a5efd99956e8ad14929ae54a3185f9048cc7",
+    "sha256": {
+     "data/probes/novel_ops/S_test.jsonl": "e5859a287d653dd3dd2e1ff5dce0b0423e56e8307177458c75cd2c11ed8e77b3",
+     "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
+     "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
+     "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59"
+    },
+    "rows_per_file": {
+     "test": 1000,
+     "pool": 4096
+    },
+    "verified_at_freeze": {
+     "short_operands": 0,
+     "label_not_add_once_fold": 0,
+     "ambiguous_items": 0,
+     "distinct_instances_per_file": "all (1000/1000 and 4096/4096 by (program, operands))",
+     "test_pool_overlap_by_key": 0,
+     "test_pool_overlap_by_text": 0
+    },
+    "supersedes": "the sets emitted earlier on 2026-09-05, whose prompts carried an ambiguous carry rule and whose operands field dropped any operand equal to 1, 2 or 3. Nothing was scored against those files."
+   },
+   "unit": "sha256 of the file as committed",
+   "measured": "2026-09-05",
+   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row",
+   "config": {
+    "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
+    "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
+    "seeds": "TEST_SEED=20260905, POOL_SEED=20260906",
+    "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings"
+   },
+   "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
+   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so.",
+   "status": "measured"
   }
  ]
 }
