@@ -1361,9 +1361,10 @@ def main():
         # (train.py:3322) extrapolates one 10-step interval over all 19,151 remaining steps, so a
         # 54s interval printed 29 lost hours and every checkpoint save printed ~99h -- and train.py
         # is frozen for p500m_20b_0902. Both land together in the stop window: the assertion is a
-        # BOUND (one interval moves the ETA by at most 1/N of what it moved before), never
-        # "smaller", because any smoothing passes "smaller" including one that swallows the spike,
-        # and a swallowed save is worse than a visible one.
+        # BOUND (one interval moves the ETA by at most 1/N of what it moved before), never a bare
+        # smaller-than, because any smoothing passes smaller-than including one that swallows the
+        # spike, and a swallowed save is worse than a visible one. No quoted words in this comment:
+        # a double quote inside either map re-pairs every quote below it (harness.py:1285).
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
