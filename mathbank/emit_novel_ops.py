@@ -232,11 +232,9 @@ def _selftest():
                     break
             # 6. THE ANSWER MUST HAVE ONE READING. The carry rule is applied once by
             #    _step, so an intermediate can stay negative; a solver reading "add 10
-            #    until non-negative" scores differently on 46.8% of S items, and one
-            #    ignoring the carry on 72.1% (measured 2026-09-05, before scoring). The
-            #    rule text now says 只加一次. This asserts the label matches the
-            #    add-once fold and nothing else -- the sets are only a skill test if the
-            #    skill has a determinate answer.
+            #    until non-negative" scores differently on 46.7% of S_test and 49.6% of
+            #    S_pool, and one ignoring the carry on 72.6% / 74.0% (measured on the
+            #    SHIPPED files, 2026-09-05, before scoring). The rule text says 只加一次.
             def _fold(ops, f):
                 v = ops[-1]
                 for x in reversed(ops[:-1]):
@@ -263,6 +261,41 @@ def _selftest():
             if amb and "只加一次" not in test[0]["instruction"]:
                 fails.append(f"{family}: {amb} item(s) where add-once and add-until differ, and the "
                              f"instruction does not say which -- the label is one of two readings")
+            # 6b. AND THE LABEL CHECK MUST BE ABLE TO FAIL WHERE IT RUNS -- PER PROGRAM,
+            #     not per family. e1's finding, 2026-09-05: the carry fires in 0 of P's
+            #     5,096 items, so all three readings give P's label and check 6 cannot
+            #     fail on P for the reason it was written. That is the operand-non-emptiness
+            #     shape again, in the check that replaced it.
+            #
+            #     PER PROGRAM because a family average hides a dead program. Measured while
+            #     building the broken world for this check: widening diamond_chain's ranges
+            #     drops its carry rate to 0.000 while diamond_chain4 stays at 0.802, so the
+            #     family stays above any threshold and half of S silently stops testing the
+            #     rule. The first version of this check was per family and passed that world.
+            #
+            #     P is the FORMAT control: same glyph, same rule sentence, one application,
+            #     no composition. Its answers are recoverable by substitution BY DESIGN and
+            #     its operand ranges keep 3a-2b+1 non-negative, asserted in the generator.
+            #     So zero carries in P is correct, not a defect -- what is wrong is a check
+            #     that reads as verifying P and verifies nothing there. Hence: every S
+            #     program must discriminate, every P program must provably not, and the
+            #     second is an assertion rather than a silence.
+            by_prog = {}
+            for r in test + pool:
+                d = _fold(r["operands"], _once) != _fold(r["operands"], _until)
+                n_tot, n_amb = by_prog.get(r["program"], (0, 0))
+                by_prog[r["program"]] = (n_tot + 1, n_amb + (1 if d else 0))
+            for prog, (n_tot, n_amb) in sorted(by_prog.items()):
+                frac = n_amb / max(n_tot, 1)
+                if family == "S" and frac < 0.2:
+                    fails.append(f"{family}/{prog}: add-once and add-until differ on only "
+                                 f"{frac:.1%} of its {n_tot} items, so the label check has "
+                                 f"almost no power there -- an S program must exercise the carry")
+                if family == "P" and n_amb:
+                    fails.append(f"{family}/{prog}: {n_amb} item(s) where the readings differ. P is "
+                                 f"the control and its no-carry invariant is asserted in the "
+                                 f"generator; if the carry fires here, P is a weaker S rather than "
+                                 f"a different task")
 
         # 6. THE OVERLAP CHECK MUST HAVE POWER: feed it a known collision.
         t = generate("S", 10, TEST_SEED)
@@ -276,7 +309,7 @@ def _selftest():
         shutil.rmtree(d, ignore_errors=True)
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"emit_novel_ops selftest: {'PASS (8 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"emit_novel_ops selftest: {'PASS (10 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 

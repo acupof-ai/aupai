@@ -58,10 +58,20 @@ def _rule_text():
     # scoring: the generator applies the carry exactly once, so an intermediate can
     # stay negative after it (506 of 1000 S_test items did), and the earlier wording
     # "若中间结果为负数，先加十" does not say which. A solver reading it as "add 10
-    # until non-negative" gets a different answer on 46.8% of S_test and 48.3% of
-    # S_pool, and a solver ignoring the carry differs on 72.1%. Three readings, one
-    # label: the curve would have scored the model's choice of reading, and a wrong
+    # until non-negative" gets a different answer on 46.7% of S_test and 49.6% of
+    # S_pool, and a solver ignoring the carry differs on 72.6% / 74.0%. Three readings,
+    # one label: the curve would have scored the model's choice of reading, and a wrong
     # reading held consistently would have read as a plateau.
+    #
+    # Those rates are measured ON THE FILES THIS WORDING PRODUCES. The first version of
+    # this comment quoted 46.8/48.3/72.1, computed on the PRE-reword files and then
+    # carried over unchanged -- e1 caught it by reproducing independently and getting
+    # different numbers. A rate quoted beside the fix that changed it has to be
+    # recomputed after the fix, not before.
+    #
+    # In P the carry never fires (0 of 5,096, its no-carry invariant is asserted below),
+    # so all three readings agree there and a clean P label is not evidence the rule was
+    # applied. Correct for a format control; it would be a defect in a transfer set.
     #
     # "十" not "10" is a separate constraint and still holds: verify requires every
     # prose integer >= 3 to appear among the equation tokens, and the rule is stated
