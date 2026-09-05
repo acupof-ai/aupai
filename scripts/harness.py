@@ -20339,8 +20339,15 @@ def main():
     ap.add_argument("--dry", action="store_true", help="measure: list what would run")
     ap.add_argument("--full", action="store_true", help="measure: the whole matrix, not just math-hard")
     ap.add_argument("--merge-drops", action="store_true",
-                    help="print `path<TAB>parent` for every path HEAD's parents held and HEAD "
+                    help="print `path<TAB>parent` for every path a rev's parents held and the rev "
                          "lacks with no written deletion; exit 1 if any. For merge_main.sh")
+    ap.add_argument("--rev", default="HEAD",
+                    help="--merge-drops: the commit to check. REQUIRED by merge_main since the "
+                         "2026-09-05 flip -- it checks the CANDIDATE merge in the caller's own "
+                         "worktree before main moves, and the integration tree is detached, so "
+                         "the HEAD default would name the wrong commit and print nothing. Empty "
+                         "output reads identically to clean, which is the failure merge_drops's "
+                         "own docstring exists to prevent.")
     ap.add_argument("--selftest", action="store_true", help="every check must FAIL on its broken world")
     ap.add_argument("--selftest-touching", metavar="PATHS",
                     help="comma-separated files: verify only the checks whose run() or broken() "
@@ -20348,9 +20355,9 @@ def main():
                          "full ~4min run; prints what it did NOT cover")
     a = ap.parse_args()
     if a.merge_drops:
-        _lost = merge_drops(ROOT)
+        _lost = merge_drops(ROOT, a.rev)
         if _lost is None:
-            print("cannot read HEAD", file=sys.stderr)
+            print(f"cannot read {a.rev}", file=sys.stderr)
             return 2
         for _p, _path in _lost:
             print(f"{_path}\t{_p}")
