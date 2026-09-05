@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (95 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (183 = 95 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (97 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (185 = 97 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (84 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (86 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-84 incidents (34 infra, 50 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+86 incidents (34 infra, 52 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -71,7 +71,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206).
 
-### R2-b Population narrower than the property (21 incidents)
+### R2-b Population narrower than the property (22 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -79,8 +79,9 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §171: a perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population.
 - §201: a device-fd refusal verified only where it cannot fire (macOS, no /proc) reported nothing about where it does (pod, /proc present); all ten claim sites would have been refused on the pod.
 - §215: a battery of 19 content-free rules passed while the leak family it samples is unbounded; three closures in one day did not converge, and the battery certifies its sample, not the family.
+- §216: a negative control passed on every laptop because the pod mount is absent there — green was a signal about a different world; on the pod it would have tokenized into the live shared cache dir.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216).
 
 ### R2-c Mutation did not take (4 incidents)
 
@@ -91,7 +92,7 @@ The mutation never landed or its verification reads the wrong signal.
 
 Cannot see: whether the mutation reached the code path the check exercises (§81, §207).
 
-### R2-d Parser reads prose as code (9 incidents)
+### R2-d Parser reads prose as code (10 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
@@ -100,8 +101,9 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
 - §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 - §205: a placeholder-survival guard fired on a correct substitution — the template's own documentation line names the placeholder, and a whole-file scan read that comment as an unsubstituted token; fourth instance of the self-satisfying needle.
+- §217: a whole-file substring assertion survived a mutation repointing both executable lines, because the block's own comment named the real path — prose vouching for code that had stopped agreeing with it.
 
-Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212).
+Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212, §217).
 
 ### R2-e Fixture built from the implementation (4 incidents)
 
