@@ -623,6 +623,13 @@ def main():
         # checkout could ever build its first cache. A change that widens the refusal to every
         # absent cache would look correct and brick the repo, and only that control catches it.
         "scripts/test_cache_absent_refusal.py",
+        # Both launch paths must export AUPAI_TOKEN_CACHE_DIR on exactly the same condition, and
+        # they are a shell file and a python function written hours apart. Registered because BOTH
+        # failure directions are silent: unset where the mount exists reads the overlay at 193 MB/s
+        # with nothing in the log naming it (this already happened, for every eval that took
+        # 46-209 s), and set where the mount is absent hands train.py's refusal to a box whose
+        # correct behaviour is to tokenize. Mutation-verified against run_ddp.sh in both directions.
+        "scripts/test_launch_line_cache_dir.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
