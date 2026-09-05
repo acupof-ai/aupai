@@ -10855,7 +10855,109 @@ def check_allocation_reads_the_grant(root):
     if "mix_scale_run_config" not in msg:
         return FAIL, ("the fallback to data/mix_scale_run_config.json is SILENT -- nothing "
                       "tells a reader which of the two files decided the cards")
-    return PASS, f"no grant; fell back to the ladder's {_csv(ladder_cards)} and said so"
+    # 7. NO BLOCK GRANT IS THE STATE THE LANE CASES WERE NEVER CHECKED IN, and it is the state
+    #    the file is normally in when it grants individual cards. Cases 4 and 5 above live under
+    #    `if granted:`, so with block_cards empty this check returned PASS on a tree where
+    #    _allocation_cards(False) handed every non-training job card 7 -- a card this same file's
+    #    cards[] map gives the RL team. Measured 2026-09-05 on the live file: lane_card was
+    #    "5,7", the read of it sat inside `if granted is not None`, and set subtraction ran
+    #    instead. The lane is asserted against the file HERE TOO, so the assertion does not
+    #    depend on which branch the grant's block_cards puts us in.
+    # 8. --cards IS VALIDATED AGAINST cards[], exercised on a fixture rather than by launching.
+    #    Both refusals were unasserted at first: mutants that dropped the RL-team test and the
+    #    unlisted test each launched successfully, and only a human reading the output could tell.
+    #    The fixture is written here because the property is about values this tree does not hold
+    #    (a card the map omits), and it is exercised through _validate_explicit_cards so no ledger
+    #    row or log is produced.
+    import shutil as _sh2
+    import tempfile as _tf2
+
+    _fx = _tf2.mkdtemp(prefix="cards_flag_")
+    try:
+        os.makedirs(os.path.join(_fx, "runs"), exist_ok=True)
+        with open(os.path.join(_fx, "runs", "card_assignment.json"), "w") as fh:
+            json.dump({"launch_block_granted": True, "block_cards": "1,2",
+                       "lane_card": "5",
+                       "cards": {"0": "RL TEAM (tileRL) -- not ours",
+                                 "1-2": "GRANTED -> a training block",
+                                 "5": "GRANTED -> a probe"}}, fh)
+        for _spec, _must_refuse, _label in (
+            ("5", False, "a card cards[] grants us and no block holds"),
+            ("0", True, "a card marked RL TEAM"),
+            ("7", True, "a card no cards[] entry mentions"),
+            ("1", True, "a card inside block_cards"),
+            ("5,0", True, "a set with one RL-team card among ours"),
+            ("", True, "an empty spec"),
+        ):
+            _got, _ref = _validate_explicit_cards(_spec, root=_fx)
+            if _must_refuse and not _ref:
+                return FAIL, (f"--cards {_spec!r} ({_label}) was ACCEPTED as {_got!r}; the flag "
+                              f"would put a job on a card the grant does not give it")
+            if not _must_refuse and _ref:
+                return FAIL, (f"--cards {_spec!r} ({_label}) was refused: {_ref[:120]} -- a flag "
+                              f"that refuses a granted card leaves no way to place a job")
+    finally:
+        _sh2.rmtree(_fx, ignore_errors=True)
+
+    _ours, _theirs, _cmap = _aupai_cards(root)
+    if lane_s:
+        _lane_set = {int(c) for c in lane_s.split(",") if c.strip()}
+        _named = set(_expand_cards(grant.get("lane_card", "")))
+        if grant.get("lane_card") is not None and _lane_set - _named:
+            return FAIL, (f"no block grant, and the lane came back {lane_s!r} while the file "
+                          f"names lane_card {grant.get('lane_card')!r} -- the lane_card read is "
+                          f"being skipped and the cards derived instead")
+        _rl_in_lane = _lane_set & set(_theirs)
+        if _rl_in_lane:
+            return FAIL, (f"the lane {lane_s!r} includes card(s) {_csv(sorted(_rl_in_lane))} that "
+                          f"cards[] marks as the RL team's -- a non-training job would land on a "
+                          f"card this file says is not ours")
+        # A MULTI-CARD LANE UNDER AN INDIVIDUAL-CARD MAP must not resolve to cards at all: the
+        # launcher picks the first card measured idle, which is the other job's card until that
+        # job starts. This is the case that returned '7' before the fix and the reason a PASS here
+        # meant nothing -- cases 4 and 5 sat under `if granted:` and never ran in this state.
+        if len(_lane_set) > 1 and _cmap:
+            return FAIL, (f"the lane came back {lane_s!r} -- {len(_lane_set)} cards while cards[] "
+                          f"grants them to different jobs, so the launcher would take whichever "
+                          f"is idle at that instant rather than the one granted to this job")
+        # THE LANE WAS DERIVED, NOT READ. With no lane_card in the file the only remaining source
+        # is set subtraction, and that is the original defect: the complement of the ladder's 0-6
+        # is card 7, which cards[] gives the RL team's P1 rerun. Asserted against `lane_card`
+        # being absent rather than against the value 7, so it holds for any block. Reverting the
+        # refusal in _allocation_cards survived every other assertion here -- the check passed
+        # while the function handed out card 7.
+        if grant.get("lane_card") is None and "lane_card" not in grant and _cmap:
+            return FAIL, (f"the file has no lane_card but a lane came back anyway ({lane_s!r}) -- "
+                          f"it was derived by subtracting the block from 0-7, and cards[] says "
+                          f"who owns those cards. Subtraction invents a lane out of other "
+                          f"people's cards (ours: {_csv(_ours)}, RL team's: {_csv(_theirs)})")
+    elif _cmap and grant.get("lane_card") is not None:
+        _named = set(_expand_cards(grant.get("lane_card", "")))
+        # An empty lane is CORRECT when the stated lane is ambiguous or not ours -- that is the
+        # refusal above doing its job. It is a defect only when the file names exactly one card
+        # that cards[] gives us and the allocation still produced nothing.
+        if len(_named) == 1 and _named <= set(_ours):
+            return FAIL, (f"the file names lane_card {grant.get('lane_card')!r}, a single card "
+                          f"cards[] grants us, and the lane came back empty -- an unambiguous "
+                          f"stated lane must reach the allocation")
+        # THE FILE ITSELF IS THE FINDING, not the allocation. _allocation_cards now refuses an
+        # ambiguous lane, so the dangerous state shows up as an empty string -- indistinguishable
+        # from "no lane configured" unless the file is read. This is WARN, not FAIL: the refusal
+        # means nothing can land on the wrong card, so no job is at risk; what remains is that a
+        # non-training job has nowhere to go until someone names its card. A FAIL here would be a
+        # permanent red on a file that is behaving safely.
+        if len(_named) > 1:
+            return WARN, (f"lane_card is {grant.get('lane_card')!r} while cards[] grants cards to "
+                          f"different jobs, so the lane is refused rather than derived and a "
+                          f"non-training job has no card until one is named. Before 2026-09-05 "
+                          f"this state silently allocated the first idle card of the two. Use "
+                          f"`harness launch --cards <one>`, or narrow lane_card")
+        if _named - set(_ours):
+            return WARN, (f"lane_card names {_csv(sorted(_named - set(_ours)))}, which cards[] "
+                          f"does not grant us; the lane is refused, so nothing can land there")
+    return PASS, (f"no grant; fell back to the ladder's {_csv(ladder_cards)} and said so; "
+                  f"lane {lane_s or '(none)'}"
+                  + (f"; cards[] gives us {_csv(_ours)}, RL team {_csv(_theirs)}" if _cmap else ""))
 
 
 def _broken_allocation_reads_the_grant():
@@ -16895,6 +16997,55 @@ def _csv(cards):
     return ",".join(str(c) for c in cards)
 
 
+# A cards[] value that marks the card as belonging to the RL team rather than to us. The map's
+# keys are specs ("1-4", "5") and its values are prose, so this is the only machine-readable
+# signal in it. Matched case-insensitively on the phrase, not on an exact string, because the
+# entries are written by hand ("RL TEAM (tileRL) -- not ours").
+_RL_TEAM_RE = re.compile(r"\bRL[ _-]?TEAM\b", re.I)
+
+
+def _card_map(root=None):
+    """{card index: the grant file's prose for it}, expanding the map's range keys.
+
+    cards[] is keyed by SPEC, not by index: today's file has "1-4" and "5" as separate keys, so
+    a reader indexing it by str(card) finds nothing for card 2 and would conclude the card is
+    unassigned. Returns {} when the file is absent or unreadable -- callers must treat an empty
+    map as "no information", never as "no card is claimed by anyone".
+    """
+    root = ROOT if root is None else root
+    try:
+        with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as fh:
+            a = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    out = {}
+    for spec, note in (a.get("cards") or {}).items():
+        for c in _expand_cards(spec):
+            out[c] = note
+    return out
+
+
+def _aupai_cards(root=None):
+    """(ours, theirs, unlisted_is_unknown) from the grant file's cards[] map.
+
+    ours = every listed card whose note does NOT mark it RL TEAM. theirs = the RL-team ones.
+    A card absent from the map is in NEITHER set: the map is the only statement of ownership
+    there is, and "not mentioned" is not a grant (idle is not a grant, and neither is silence).
+    """
+    m = _card_map(root)
+    ours = sorted(c for c, note in m.items() if not _RL_TEAM_RE.search(str(note)))
+    theirs = sorted(c for c, note in m.items() if _RL_TEAM_RE.search(str(note)))
+    return ours, theirs, m
+
+
+def _card_map_lines(root=None):
+    """The card map as printable lines, for a refusal that has to show its work."""
+    m = _card_map(root)
+    if not m:
+        return ["  (runs/card_assignment.json has no cards[] map)"]
+    return [f"  card {c}: {str(m[c])[:96]}" for c in sorted(m)]
+
+
 def _grant_cards(root=None, raise_on_false=True):
     """The controller's card grant from runs/card_assignment.json, or (None, why).
 
@@ -17040,21 +17191,115 @@ def _allocation_cards(training, root=None, raise_on_false=True):
     # a decision ("no lane under a 4-card block; small jobs queue on 5/6 by arrangement"),
     # not a missing value -- so an explicit null returns no lane and the caller refuses,
     # rather than being handed somebody else's card.
-    if granted is not None:
-        try:
-            with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as fh:
-                _a = json.load(fh)
-        except (OSError, ValueError):
-            _a = {}
-        if "lane_card" in _a and _a["lane_card"] is None:
-            print("note   the grant states lane_card: null -- no lane card under this "
-                  "block, so a non-training GPU job has nowhere to land here. Complementing "
-                  "the block would hand it cards outside the grant.", file=sys.stderr)
+    # THE LANE IS READ WHENEVER THE FILE HAS ONE, not only under a granted block (4c's ruling
+    # 2026-09-05, on e1's measurement). This read used to sit inside `if granted is not None`,
+    # and _grant_cards returns None whenever launch_block_granted is true but block_cards is
+    # empty -- which is the normal state of a file that grants individual cards rather than a
+    # training block. Measured on that day's real file (block_cards "", lane_card "5,7"):
+    # _allocation_cards(False) returned '7', so every non-training job was handed card 7 while
+    # that same file's cards[] map assigned 7 to the RL team's P1 rerun and 5 to the job asking.
+    # The lane_card branch existed precisely to stop set subtraction from inventing a lane out
+    # of other people's cards, and it could not fire in the state where it was needed.
+    try:
+        with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as fh:
+            _a = json.load(fh)
+    except (OSError, ValueError):
+        _a = {}
+    if "lane_card" in _a and _a["lane_card"] is None:
+        print("note   the grant states lane_card: null -- no lane card under this "
+              "block, so a non-training GPU job has nowhere to land here. Complementing "
+              "the block would hand it cards outside the grant.", file=sys.stderr)
+        return ""
+    if _a.get("lane_card") is not None:
+        _lane = _expand_cards(_a["lane_card"])
+        _ours, _theirs, _m = _aupai_cards(root)
+        # A LANE CARD THE MAP GIVES THE RL TEAM IS NOT A LANE. lane_card and cards[] are two
+        # fields of one file and can contradict each other; the map is the finer statement.
+        _rl = [c for c in _lane if c in _theirs]
+        if _rl:
+            print(f"REFUSING: lane_card names card(s) {_csv(_rl)} that cards[] marks as the RL "
+                  f"team's.\n" + "\n".join(_card_map_lines(root))
+                  + "\nThe two fields of this file disagree; a person fixes the file.",
+                  file=sys.stderr)
             return ""
-        if _a.get("lane_card") is not None:
-            return _csv(_expand_cards(_a["lane_card"]))
+        # A MULTI-CARD LANE CANNOT SAY WHICH CARD IS THIS JOB'S, and the launcher then takes the
+        # first card measured idle. Measured 2026-09-05 on the live file: lane_card "5,7" with
+        # cards[] granting 5 to e1's probe and 7 to tilerl's P1 rerun -- so whichever of the two
+        # had not started yet read as free, and the probe could take the other team's card. One
+        # value cannot express "several one-card jobs across the cards we hold" (4c), so it is
+        # refused here and `--cards` is the way to say which one. A single-card lane is
+        # unambiguous and passes through.
+        if len(_lane) > 1 and _m:
+            print(f"REFUSING to derive a card from a {len(_lane)}-card lane ({_csv(_lane)}) while "
+                  f"cards[] grants cards individually: the launcher would take whichever is idle "
+                  f"right now, which is the OTHER job's card until that job starts.\n"
+                  + "\n".join(_card_map_lines(root))
+                  + f"\n  ours per cards[]: {_csv(_ours) or '(none)'}   RL team's: "
+                    f"{_csv(_theirs) or '(none)'}\n"
+                    "Pass `harness launch --cards <one card>` for this job.", file=sys.stderr)
+            return ""
+        return _csv(_lane)
+    # NO SUBTRACTION WHEN THE FILE NAMES CARDS. Everything above has failed to produce a lane,
+    # so the only remaining source is "the cards not in the block" -- and that is exactly the
+    # inference that hands out somebody else's card. If cards[] says who owns what, a missing
+    # lane is a gap in the grant for a person to fill, not something to derive.
+    _ours, _theirs, _m = _aupai_cards(root)
+    if _m:
+        print("REFUSING to derive a lane by subtracting the block: runs/card_assignment.json "
+              "names specific cards, so a card it does not hand this job is not free for it.\n"
+              + "\n".join(_card_map_lines(root))
+              + f"\n  block: {_csv(block)}\n"
+              f"  ours per cards[]: {_csv(_ours) or '(none)'}   RL team's: {_csv(_theirs) or '(none)'}\n"
+              "Set lane_card for this job, or pass `harness launch --cards <csv>` with cards the "
+              "map grants us. Subtraction would have returned "
+              f"{_csv(sorted(set(range(8)) - set(block))) or _csv(block)}.", file=sys.stderr)
+        return ""
     lane = sorted(set(range(8)) - set(block))
     return _csv(lane) if lane else _csv(block)
+
+
+def _validate_explicit_cards(spec, root=None):
+    """(cards_csv, refusal) for `harness launch --cards <spec>`. Exactly one is non-empty.
+
+    A FUNCTION, NOT INLINE IN cmd_launch, so the rule can be EXERCISED. The first version lived
+    in the launch path and the only way to test it was to run a launch -- which writes a ledger
+    row and a log for every case, so the refusals went unasserted and two mutants (skip the
+    RL-team set, skip the unlisted set) both launched successfully with nothing going red. The
+    mutant's success was visible only to a human reading the output.
+
+    The rule: every card named must be one runs/card_assignment.json's cards[] map grants US --
+    an entry that exists and is not marked RL TEAM -- and none may be in block_cards. This
+    overrides the DERIVATION of cards, never the grant: a caller may choose among our cards and
+    may not add one. A card absent from the map is refused, because the map is the whole
+    statement of ownership and silence about a card is not a grant of it.
+    """
+    want = _expand_cards(spec)
+    ours, theirs, cmap = _aupai_cards(root)
+    if not want:
+        return "", f"--cards {spec!r} names no card."
+    if not cmap:
+        return "", ("--cards was passed but runs/card_assignment.json has no readable cards[] "
+                    "map, so there is nothing to validate against. An unvalidated --cards is "
+                    "just CUDA_VISIBLE_DEVICES with a ledger row.")
+    rl = [c for c in want if c in theirs]
+    unlisted = [c for c in want if c not in cmap]
+    # block_cards, when the file names one. raise_on_false=False: an explicit false grant is the
+    # launch's problem to refuse further down, not a reason to crash while validating.
+    blocked = [c for c in want if c in (_grant_cards(root, raise_on_false=False)[0] or [])]
+    if rl or unlisted or blocked:
+        why = []
+        if rl:
+            why.append(f"{_csv(rl)} belong(s) to the RL team per cards[]")
+        if unlisted:
+            why.append(f"{_csv(unlisted)} appear(s) in no cards[] entry, so nothing grants it to "
+                       f"us -- silence is not a grant")
+        if blocked:
+            why.append(f"{_csv(blocked)} is in block_cards, which a training block owns")
+        return "", (f"--cards {spec!r}: " + "; ".join(why) + ".\n"
+                    + "\n".join(_card_map_lines(root))
+                    + f"\n  ours per cards[]: {_csv(ours) or '(none)'}   RL team's: "
+                      f"{_csv(theirs) or '(none)'}")
+    return _csv(want), ""
 
 
 def _lane_occupant(card):
@@ -17551,6 +17796,11 @@ def cmd_launch(rest):
                     help="startup gate timeout in seconds (default: 120, 300 for --resume)")
     ap.add_argument("--output", default=None, help="declared output path for non-training jobs (monitored for growth alongside the log)")
     ap.add_argument("--no-gpu", action="store_true", help="corpus/CPU job: no card assigned, no lane check")
+    ap.add_argument("--cards", default=None, metavar="CSV",
+                    help="explicit cards for this job (e.g. 5, or 1,2). Refused unless every card "
+                         "is granted to us in runs/card_assignment.json's cards[] map and none is "
+                         "in block_cards. For the case the file cannot express: several one-card "
+                         "jobs across the cards it grants us")
     ap.add_argument("--auto-resume", type=int, default=0, metavar="N",
                     help="on a non-zero exit, relaunch with --resume <latest step ckpt>, up to N times "
                          "(blocks: detach the whole command with setsid nohup)")
@@ -17603,6 +17853,19 @@ def cmd_launch(rest):
     # Card allocation from the controller's config
     if args.no_gpu:
         cards = ""
+    elif args.cards is not None:
+        # EXPLICIT CARDS, VALIDATED AGAINST THE GRANT (4c's ruling 2026-09-05). The file can grant
+        # six cards to us and run several one-card jobs on them; `lane_card` is one value and
+        # cannot express that, so before this flag the only way to put a job on a specific card
+        # was to edit the grant file -- by the session that wants the card, which is the thing
+        # "idle is not a grant" exists to prevent. The rule itself is in
+        # _validate_explicit_cards, where a test can reach it without launching anything.
+        cards, _refusal = _validate_explicit_cards(args.cards)
+        if _refusal:
+            print(f"REFUSING: {args.name} -- {_refusal}\nNo ledger row written.", file=sys.stderr)
+            return 2
+        print(f"cards {cards} from --cards, validated against runs/card_assignment.json "
+              f"(ours: {_csv(_aupai_cards()[0])})", file=sys.stderr)
     else:
         cards = _allocation_cards(args.training)
 
@@ -17720,6 +17983,12 @@ def cmd_launch(rest):
         launcher += f" --auto-resume {args.auto_resume}"
     if args.training:
         launcher += " --training"
+    # THE CARDS GO IN THE ROW (4c's ruling 2026-09-05). With --cards the allocation no longer
+    # follows from the grant file alone, so a reader of the ledger cannot re-derive which cards a
+    # run held -- and "which card was this on" is the first question asked when two jobs collide.
+    # Recorded for every launch, not only the overridden ones, so the answer does not depend on
+    # remembering which flag was used.
+    launcher += f"; cards {cards or '(none)'}" + (" (--cards)" if args.cards is not None else "")
     subprocess.run(
         [sys.executable, os.path.join(HERE, "exp.py"),
          "start", "--name", args.name,
