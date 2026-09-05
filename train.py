@@ -2803,6 +2803,39 @@ def main():
             print(f"Resumed from {args.resume} (step {resume_step})", flush=True)
     fp8 = args.fp8 and amp
     amp_dtype = torch.bfloat16
+    # A MoE ARM WITHOUT --fp8 IS REFUSED HERE, before the first step (4c's ruling (c) 2026-09-05).
+    #
+    # torch._grouped_mm's eager kernel accepts fp32 and its META registration does not, so under
+    # torch.compile an fp32 grouped GEMM raises "Expected inputs of BF16 type but got
+    # mat_a.dtype=torch.float32 and mat_b.dtype=torch.float32". Measured on card 1: eager fp32/fp32
+    # returns fp32, compiled fp32/fp32 raises, both bf16 paths fine. The model reaches bf16 only in
+    # the `if fp8:` branch below, so without --fp8 the experts stay fp32 and the arm dies at step 0.
+    #
+    # FOUND BY scripts/test_e2e.py, WHICH DOES NOT PASS --fp8 while run_ddp.sh does -- so the walk
+    # ran a configuration the launch never runs and hit this. That is the walk working: it is the
+    # third distinct death of this arm after the module tests were green (expert dtype at 19cc2ddd,
+    # the Muon 3-D stack at 50c9dbbb, this).
+    #
+    # HERE AND NOT IN MoEFFN.forward, and the failed attempt is recorded in model.py's own comment:
+    # an unconditional raise there refuses the 10 CPU checks that legitimately run fp32 in eager,
+    # and scoping it with torch.compiler.is_compiling() does not survive -- dynamo traces the raise,
+    # graph-breaks, re-runs the segment in eager where the condition is False, and the user gets the
+    # op's message instead of one naming the cause. A guard the compiler can elide is not a guard.
+    #
+    # A REFUSAL RATHER THAN A SILENT CAST: casting the experts to bf16 for an fp32 run would change
+    # the arithmetic nobody asked to change, which is the objection amendments 6/7 raise about the
+    # fp8/bf16 confound. A crash naming its cause costs one run; a silent precision change costs the
+    # interpretation of every number the arm produces.
+    if getattr(Cfg, "moe_experts", 0) and not fp8:
+        _why = "--fp8 not passed" if not args.fp8 else "amp is off"
+        raise SystemExit(
+            f"REFUSING: --moe_experts {Cfg.moe_experts} needs the model in bfloat16, and {_why}, "
+            f"so it would stay fp32. torch._grouped_mm compiles only for bf16 (its eager kernel "
+            f"accepts fp32, its meta registration does not), so the arm dies at step 0 with "
+            f"'Expected inputs of BF16 type'. Pass --fp8 -- run_ddp.sh does -- or run without "
+            f"--moe_experts. Measured 2026-09-05 on card 1; found by scripts/test_e2e.py, which "
+            f"invokes train.py directly and passed no --fp8."
+        )
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
         convert_to_fp8_compute(raw_model)
