@@ -70,7 +70,14 @@ else
   # actually drew, in rows, with per-domain integer epoch caps (fb ruling 2026-08-31).
   NAME=pretrain_30b_s2; MIX=data/mix_30b_stage2.json; WARMDOWN=0.10
   [ -n "$RESUME" ] || { echo "refusing: stage 2 needs --resume <stage-1 ckpt>" >&2; exit 2; }
-  EXTRA="--warmdown $WARMDOWN --anneal_frac 0.1 --resume $RESUME"
+  # THE MIX FILE IS THE RECIPE (4c's ruling 2026-09-05). This used to pass
+  # --anneal_frac 0.1 while data/mix_30b_stage2.json declares 0.0, and the two disagreed
+  # from the day the file was written -- build_mix read Cfg and never the file, so the flag
+  # won silently. build_mix now refuses that disagreement by name, which would have stopped
+  # this launch. Composition is unaffected either way (all 7 stage-2 domains have
+  # anneal == weight); what differs is the row flooring, one row per domain, because
+  # int(0.9x) + int(0.1x) <= int(x).
+  EXTRA="--warmdown $WARMDOWN --anneal_frac $(python3 -c "import json;print(json.load(open('$MIX'))['anneal_frac'])") --resume $RESUME"
 fi
 
 # --seed 42, not 0. train.py:1733 applies flags with `if hasattr(Cfg,k) and v` and 0 is
