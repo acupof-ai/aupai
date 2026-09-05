@@ -28,10 +28,11 @@ the ledgers cannot carry is null with the missing field named, never an estimate
                            reader catches known to the controller.
   5 open tasks per owner   tasks.jsonl open rows over roster members (same
                            population as harness check one_deliverable_per_owner).
-  6 message length         NOT COMPUTABLE: peer messages are not persisted; no
-                           message log exists in runs/ (baseline 2026-09-05).
-                           words/msg to fb needs an append log with
-                           who/to/words/ts; none exists.
+  6 message length         words/msg to the controller, from runs/msg_log.jsonl
+                           (from, words, ts; scripts/msg_log.py, c1e146a6),
+                           one row per peer message received. Counting starts
+                           2026-09-05 09:58Z -- the 2026-09-05 baseline is
+                           partial; n_msgs in the row says how partial.
 
 Usage:
   python3 scripts/policy_metrics.py [--date YYYY-MM-DD]   # write the row
@@ -109,6 +110,10 @@ def compute(date):
         if t.get("state") == "open" and t.get("owner") in roster:
             open_by_owner[t["owner"]] += 1
 
+    msg = [r for r in _rows("runs/msg_log.jsonl") if _date(r) == date]
+    n_msg = len(msg)
+    wpm = round(sum(int(r["words"]) for r in msg) / n_msg, 1) if n_msg else None
+
     return {
         "date": date,
         "misroutes": {
@@ -133,9 +138,10 @@ def compute(date):
         },
         "open_tasks_per_owner": dict(sorted(open_by_owner.items())),
         "message_length": {
-            "words_per_msg_to_fb": None,
-            "missing": "peer messages are not persisted; no message log exists in runs/ "
-                       "(baseline 2026-09-05). An append log with who/to/words/ts would close it",
+            "words_per_msg_to_fb": wpm,
+            "n_msgs": n_msg,
+            "basis": "runs/msg_log.jsonl (from, words, ts), one row per peer message to the "
+                     "controller; counting starts 2026-09-05 09:58Z, no earlier rows exist",
         },
     }
 
@@ -176,9 +182,8 @@ def print_latest():
         print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
         m = r.get("message_length")
         if m:
-            ml = (f"{m['words_per_msg_to_fb']} words/msg to fb"
-                  if m["words_per_msg_to_fb"] is not None
-                  else f"not computable: {m['missing']}")
+            ml = (f"{m['words_per_msg_to_fb']} words/msg over {m['n_msgs']} msgs"
+                  if m["words_per_msg_to_fb"] is not None else "no messages logged")
             print(f"    message length: {ml}")
 
 
