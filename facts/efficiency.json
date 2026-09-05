@@ -3440,6 +3440,44 @@
       "uncertainty": "the log rounds to whole thousands, so this figure carries +/-0.8%. No full-precision record exists and none can be recovered: tps reaches only moe_diag.log_diag (train.py:3549, requires moe_layers -- this run is dense) and memory_diag.log_diag (train.py:3466, requires raw_model.memory -- this run built none). A ratio against another rounded figure is undecidable when the two land within ~1.5K of the bar.",
       "boundary": "NOT the denominator of prereg moe_0905's readout 5'. That readout compares a MoE arm to its control at EQUAL precision, and this run has fp32 masters while the arm it was meant to pair with cannot run at all without a bf16 cast (torch._grouped_mm compiles only for bf16; run b0_p5_e1_bf16 was refused at step 0). Amendment 8's premise -- that dropping --fp8 yields bf16 -- was false, because --fp8 performs the cast as well as the fp8 conversion. Comparable only to another run in this same precision at this same shape.",
       "status": "recorded"
+    },
+    {
+      "id": "eff.moe_structure_cost_e1_bf16",
+      "claim": "the throughput cost of E1's MoE structure at equal precision, 24 experts top_k 3 over 12 layers, against its dense control",
+      "value": "ratio 0.838 at step 30 and 0.838 at step 100. Numerator EXACT from moe_diag (57054.034771759914 at step 30, 56858.079626904895 at step 100); denominator from the control's log field, 68K, i.e. [67500, 68500). So the ratio lies in [0.8329, 0.8452] at step 30 and [0.8300, 0.8423] at step 100 -- BELOW the 0.85 bar on the exact-numerator reading, and UNAVAILABLE under the both-sides-rounded rule amendment 9 pre-registered ([0.8248, 0.8519] straddles 0.85). The estimator choice is 4c's; every point estimate is 0.838 and no reading reaches 0.85.",
+      "measured": "2026-09-05",
+      "source": "pod /work/aupai/runs/b0_p5_ctrl_bf16v2.log and runs/b0_p5_e1_bf16v2.log; runs/moe_diag.jsonl name=p5b2 steps 30 and 100; prereg moe_0905 amendment 10",
+      "config": {
+        "arm": "b0_p5_e1_bf16v2: --moe_experts 24 --moe_top_k 3 --moe_expert_ffn 768 --moe_shared 1 --moe_layers 0-11 --moe_arm p5b2, 801.0M params",
+        "control": "b0_p5_ctrl_bf16v2: same line without the six MoE flags, 206.1M params",
+        "precision": "BOTH arms --bf16 (bf16 masters, no fp8 conversion); both logs carry 'bf16 masters, no fp8 conversion (--bf16)' and 'fp8 False'",
+        "shared": "dim 1024, layers 12, heads 8, ffn_hidden 3072, batch 16, accum 2, seq 4096, world 2, cards 1,2, 100 steps, grad_ckpt False, seed 42, mix data/mix_200m_8b.json",
+        "arm_peak_gib": 75.95,
+        "control_peak_gib": 56.03,
+        "arm_val": 5.175,
+        "control_val": 5.151,
+        "arm_seconds": 325,
+        "control_seconds": 392,
+        "code": "main bbfe4878, --bf16 at da5ef8bf"
+      },
+      "uncertainty": "the denominator is rounded because a DENSE run reaches neither full-precision sink (moe_diag needs moe_layers, memory_diag needs raw_model.memory), so its +/-0.8% sets the interval width. The arm's own number is exact. 100 steps is a throughput measurement, not a convergence one.",
+      "boundary": "MoE-STRUCTURE COST, NOT DISPATCH COST. Equal precision removes the fp8/bf16 term but the residual is not one mechanism: the arm runs 24 separate 1024x768 matmuls against the control's single dense FFN GEMM, so routing/gather/scatter and small-matmul kernel efficiency are both in it and this pair cannot separate them. Says nothing about quality: val 5.175 vs 5.151 at 100 steps is not a readout-1 result. The arm's printed MFU 185% is not an MFU -- 6*n_dense*tps against a model whose 801.0M params are mostly inactive per step (train.py:2865).",
+      "status": "recorded"
+    },
+    {
+      "id": "eff.bf16_vs_fp32_master_dense_200m",
+      "claim": "the throughput difference between fp32 masters and bf16 masters on the same dense 200M config",
+      "value": "62K tok/s/gpu with fp32 masters, 68K with bf16 masters: +9.7%, MFU 51% -> 57%. Both from the log field, so each carries +/-0.8%.",
+      "measured": "2026-09-05",
+      "source": "pod runs/b0_p5_ctrl_bf16.log (no precision flag) and runs/b0_p5_ctrl_bf16v2.log (--bf16); same shape, batch, accum, seq, mix, seed, world and cards",
+      "config": {
+        "shared": "dim 1024, layers 12, heads 8, ffn_hidden 3072, batch 16, accum 2, seq 4096, world 2, cards 1,2, 100 steps, grad_ckpt False, seed 42",
+        "fp32_master_run": "b0_p5_ctrl_bf16, peak 60.98GiB, val 5.094, 432s",
+        "bf16_master_run": "b0_p5_ctrl_bf16v2, peak 56.03GiB, val 5.151, 392s"
+      },
+      "uncertainty": "two rounded figures, so the +9.7% is itself only known to about +/-1.6%. One run each, no repeat, so run-to-run variation is unmeasured.",
+      "boundary": "WHY IT IS RECORDED: prereg moe_0905 amendment 8 tried to equalise precision across a MoE/dense pair by DROPPING --fp8, and this is the size of what that actually changed -- dropping the flag removes the bf16 cast too, so the pair became fp32-master and its MoE half could not run at all. A 9.7% effect on the control alone is larger than the margin readout 5' is judged by, which is why the earlier 62K cannot serve as that readout's denominator.",
+      "status": "recorded"
     }
   ]
 }

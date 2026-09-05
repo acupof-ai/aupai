@@ -5,3 +5,7 @@
 {"name": "e1", "step": 200, "usage_frac": 1.0, "entropy_norm": 0.9876574418070252, "load_gini": 0.15923941135406494, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 11:53:45", "n_routed": 24, "top_k": 3}
 {"name": "e1", "step": 300, "usage_frac": 1.0, "entropy_norm": 0.941727458191334, "load_gini": 0.32387983798980713, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 11:57:20", "n_routed": 24, "top_k": 3}
 {"name": "e1", "step": 400, "usage_frac": 1.0, "entropy_norm": 0.887049281369435, "load_gini": 0.41844940185546875, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 12:00:59", "n_routed": 24, "top_k": 3}
+{"name": "p5b2", "step": 10, "usage_frac": 1.0, "entropy_norm": 0.9877572938377724, "load_gini": 0.15301823616027832, "tokens": 7864320, "window_steps": 20, "ts": "2026-09-05 14:35:34", "n_routed": 24, "top_k": 3}
+{"name": "p5b2", "step": 20, "usage_frac": 1.0, "entropy_norm": 0.9787622087959605, "load_gini": 0.20621585845947266, "tokens": 7864320, "window_steps": 20, "ts": "2026-09-05 14:35:58", "n_routed": 24, "top_k": 3}
+{"name": "p5b2", "step": 30, "usage_frac": 1.0, "entropy_norm": 0.9840109296668829, "load_gini": 0.17707622051239014, "tokens": 7864320, "window_steps": 20, "ts": "2026-09-05 14:36:21", "n_routed": 24, "top_k": 3, "tok_s_gpu": 57054.034771759914}
+{"name": "p5b2", "step": 100, "usage_frac": 1.0, "entropy_norm": 0.983547304159732, "load_gini": 0.18224680423736572, "tokens": 55050240, "window_steps": 140, "ts": "2026-09-05 14:39:02", "n_routed": 24, "top_k": 3, "tok_s_gpu": 56858.079626904895}
