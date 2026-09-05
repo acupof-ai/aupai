@@ -10,6 +10,14 @@ runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
 runs/friction.jsonl merge=union
+# The memory-arm diagnostics ledger (readouts 4 and 5 of memory_layers_0905). Append-only by
+# its own schema, row identity (name, step), so union is correct for the same reason as the rest.
+# ADDED 2026-09-05, after the file had existed for a day with no transport in EITHER direction:
+# it is absent from ledger_audit.KEYS, which is what pod_pull_ledgers derives its file list from,
+# and pod_push.sh excludes runs/ -- so the 25 rows behind three stopped arms lived only on the
+# pod. Missing here it also failed the pre-commit behind-main exemption, which reads this file,
+# so rescuing it needed the deliberate-exception flag. The KEYS entry is still missing and needs
+# a row-identity ruling; this covers the merge and the exemption only.
 runs/memory_diag.jsonl merge=union
 
 # EXPERIMENTS.md is DERIVED (exp.py render from runs/experiments.jsonl), so "pick a side" is
@@ -22,7 +30,6 @@ runs/memory_diag.jsonl merge=union
 # and untracked: this line alone gives a merge that cannot find its driver, the same shape as
 # a hook edited in a branch worktree. `harness install-hooks` writes the config;
 # `python3 scripts/merge_drivers.py --check` says whether both halves are present here.
-#
 # data/pod_head_manifest.txt had a driver and it is REMOVED: the file is untracked now, and
 # the driver never fired for it anyway. A merge driver only runs on a CONFLICT, and two
 # branches touching different manifest lines merge cleanly -- git spliced one side's line
