@@ -3134,6 +3134,54 @@
     "CPU-only probe",
     "avoid taking a card by"
    ]
+  },
+  {
+   "id": "eff.token_cache_overlay_vs_nvme_read",
+   "value": "Token cache read, 8 GB direct: overlay (container /data00, vda2 rotational) 193 MB/s; NVMe (nvme2n1 bind-mounted into the container) 1.3 GB/s. 6.5x.",
+   "measured": "2026-09-05",
+   "source": "pod container: dd if=<file> of=/dev/null bs=4M count=2000 iflag=direct, overlay file /data00/tokens_zh_web.pt, NVMe file /mnt/nvme_probe/rate8g.bin (a byte-identical 8 GB prefix of the same source)",
+   "config": {
+    "source_type": "dd iflag=direct, measured in the container",
+    "bytes_per_read": 8388608000,
+    "bs": "4M",
+    "overlay_device": "vda2 (rotational, 2 TB, 87% full), container /data00 is a DIRECTORY on the overlay root, not a mount",
+    "nvme_device": "nvme2n1 (3.5 TB, 8% used), host /data02, moved into the container's mount namespace with open_tree(OPEN_TREE_CLONE)+setns+move_mount",
+    "same_bytes_both_sides": true
+   },
+   "uncertainty": "single run per side; the two differ by 6.5x, far outside any plausible run-to-run variation at this size",
+   "boundary": "sequential direct read of one large file. Says nothing about the random-read or many-small-file pattern a training data loader may actually produce, and nothing about throughput under 8 concurrent ranks.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.small_file_read_is_page_cache",
+   "value": "The same overlay read measures 758 MB/s on a 153 MB file and 193 MB/s on 8 GB, both with iflag=direct. The small number is page cache, not the disk.",
+   "measured": "2026-09-05",
+   "source": "pod container: dd if=/data00/tokens_chat.pt (153 MB) vs /data00/tokens_zh_web.pt (8 GB prefix), both of=/dev/null iflag=direct",
+   "config": {
+    "source_type": "dd iflag=direct, measured in the container",
+    "small_file_bytes": 152752197,
+    "large_read_bytes": 8388608000,
+    "device": "vda2, container /data00"
+   },
+   "uncertainty": "the mechanism is inferred from the size dependence, not from a cache-drop control (dropping caches on a shared pod would disturb a running job)",
+   "boundary": "This is an instrument note, not a hardware property. It is recorded because the first measurement taken for the NVMe decision read 758 MB/s and would have said the overlay was already fast enough -- 3.9x wrong in the direction that cancels the work. iflag=direct did NOT prevent it: O_DIRECT bypasses the cache for the read, but a 153 MB file that was just written or read is served at memory speed by the layers underneath. Size the read past what can be resident, or the number describes RAM.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.nvme_not_mountable_from_container_directly",
+   "value": "All four NVMe drives are already mounted read-write on the host, so a second ext4 mount from inside the container is unsafe, and a host-side bind under the emptyDir path does not propagate in. open_tree(OPEN_TREE_CLONE)+setns+move_mount does work: nvme2n1 read-write inside the container, 3.1 TB free.",
+   "measured": "2026-09-05",
+   "source": "scripts/host_mount_into_container.py; host `mount` and lsblk; container /proc/self/mountinfo",
+   "config": {
+    "source_type": "measured on the pod, host and container views",
+    "kernel": "5.4.250-9-velinux1u2-amd64",
+    "container_work_mount_id": 2783,
+    "container_work_propagation": "private (no shared:/master: tag), which is why the host bind is invisible inside",
+    "refuted_route": "host `mount --bind /data02/... <emptyDir>/work/nvme_probe` -- the DIRECTORY appears in the container and its CONTENTS do not; the marker file was absent and stat -c %d still read vda2"
+   },
+   "uncertainty": "the move_mount route is verified for read and write on a probe directory; it has not yet survived a container restart, which it will not -- the mount lives as long as the container",
+   "boundary": "Does not cover whether a kubelet action (pod restart, volume remount) removes the mount, and does not make the mount durable. Durability needs a bootstrap stage that re-runs it.",
+   "status": "measured"
   }
  ]
 }
