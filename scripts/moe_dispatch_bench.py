@@ -21,6 +21,15 @@ and the step ratio (P3). An arm would answer them in days and confound them with
 THE PREDICTION, recorded before the measurement (prereg, 4c 2026-09-05): _grouped_mm within
 1.3x of dense; sort-and-loop 3-10x worse at 32 experts. Both directions of a miss get reported.
 
+WHAT THIS FILE CANNOT SEE, and it cost a launch. Every timed path builds its activations and its
+expert weights from ONE `dtype` argument, so the two operands always agree BY CONSTRUCTION and a
+mixed pair is never presented. E1's first compiled forward died on exactly that: routed
+activations arrive fp32 under the fp8 recipe while the expert Parameters are bf16, and
+`_grouped_mm` is a raw aten op autocast does not promote -- unlike the nn.Linear shared expert
+beside it, which is why one path accepted the input and the other refused. A benchmark that
+controls a variable cannot measure it; selftest 8 now asserts the promotion rule directly, on
+CPU, where it would have been caught before any card time.
+
     python3 scripts/moe_dispatch_bench.py --selftest      # CPU, no card
     python3 scripts/moe_dispatch_bench.py --phase p0      # on the granted card
     python3 scripts/moe_dispatch_bench.py --phase all --json runs/moe_bench.json
@@ -536,7 +545,42 @@ def _selftest():
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} every token reaches exactly {TOP_K} experts")
 
-    n = 7
+    # 8. THE DTYPE CONTRACT, which this file was structurally blind to until E1 died on it.
+    # p1_dispatch builds x AND the expert weights from one `dtype` argument, so both operands are
+    # the same dtype BY CONSTRUCTION and a mixed pair was never presented. On 2026-09-05 E1's
+    # first compiled forward died at exactly that pair: routed activations arrive fp32 under the
+    # fp8 recipe while the expert Parameters are bf16, and _grouped_mm is a raw aten op that
+    # autocast does not promote -- unlike the nn.Linear shared expert three lines below it, which
+    # is why the same input works through one path and refuses through the other.
+    #
+    # ASSERTED ON CPU AGAINST torch.mm, because _grouped_mm is CUDA-only: the point is the
+    # PROMOTION RULE, and mm follows the same one. If a future torch starts promoting mixed
+    # operands, this check goes red and the cast in MoEFFN can be revisited -- which is the
+    # question it exists to answer, not "does bf16 work".
+    a32 = torch.randn(8, D)
+    b16 = torch.randn(D, 16, dtype=torch.bfloat16)
+    try:
+        torch.mm(a32, b16)
+        mixed_ok = True
+    except RuntimeError:
+        mixed_ok = False
+    ok = not mixed_ok
+    bad += 0 if ok else 1
+    print(f"  {'ok  ' if ok else 'BUG '} a mixed fp32 x bf16 matmul is REFUSED, so the module "
+          f"must cast before dispatch (it is not promoted for us)")
+
+    # AND THE CAST FIXES IT, both directions -- a check that only shows the refusal proves the
+    # error exists, not that the remedy works.
+    try:
+        torch.mm(a32.to(torch.bfloat16), b16)
+        cast_ok = True
+    except RuntimeError:
+        cast_ok = False
+    bad += 0 if cast_ok else 1
+    print(f"  {'ok  ' if cast_ok else 'BUG '} casting the activations to the weight dtype makes "
+          f"the same matmul run")
+
+    n = 9
     print(f"moe_dispatch_bench selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
