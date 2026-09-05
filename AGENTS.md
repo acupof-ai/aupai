@@ -265,7 +265,7 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
-Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 181 survive -- the count `shapes_table_covers_doc` derives from the table below, not a separate tally. It read 164 against a table of 165 before 2026-09-05: a hand-maintained number beside a machine-checked one drifts silently, because the check verifies each row against the doc and never reads this sentence.
+Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 182 survive -- the count `shapes_table_covers_doc` derives from the table below, not a separate tally. It read 164 against a table of 165 before 2026-09-05: a hand-maintained number beside a machine-checked one drifts silently, because the check verifies each row against the doc and never reads this sentence.
 
 | Rule | Shapes | §refs |
 |---|---|---|
@@ -276,7 +276,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 34 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 §109 §111 §115 §117 §118 §124 §127 §133 §143 §152 §155 §156 §157 §159 §161 §164 §172 §185 §192 |
 | Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §58 §68 §102 §119 |
-| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class. A claim says who intends to hold a resource and nothing about whether the job is progressing | 4 | §15 §126 §194 §195 |
+| Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class. A claim says who intends to hold a resource and nothing about whether the job is progressing | 5 | §15 §126 §194 §195 §214 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed | 2 | §39 §41 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
 
