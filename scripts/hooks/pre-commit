@@ -705,6 +705,12 @@ def main():
         # a test checking only one. Six mutations verified, including both flags declared-but-unwired,
         # which is not hypothetical: --cards shipped that way and only reading the row showed it.
         "scripts/test_ledger_field_writers.py",
+        # de-55 step 2: load_checkpoint claims when it loads to cuda and claims NOTHING on cpu.
+        # Registered for the CPU world, which is the one that keeps the placement safe: an ungated
+        # acquire there refuses on every box with no CUDA_VISIBLE_DEVICES -- CI runs
+        # test_arch_compat where DEV == "cpu", and 7 of the 19 covered callers load to cpu and move
+        # later. A test checking only the cuda world would pass for the version that bricks CI.
+        "scripts/test_loader_claim.py",
         # A real cp -r of a real linked worktree must be refused, and the ORIGINAL worktree,
         # a plain checkout, and a `git worktree move`d tree must all still pass. The negative
         # controls are the load-bearing half: a gate that refuses every linked worktree would
