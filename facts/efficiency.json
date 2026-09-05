@@ -3238,6 +3238,157 @@
    "uncertainty": "12 steps at one shape; a recompile triggered by a rarer shape class (e.g. an expert receiving zero rows) would not necessarily appear",
    "boundary": "the compiled region is the two grouped GEMMs and the gating activation, not a full training step; a larger compiled region has more chances to specialize on a dynamic shape",
    "status": "recorded"
+  },
+  {
+   "id": "eff.data00_freed_by_cache_move",
+   "value": "Deleting the 88 /data00 token cache originals after verifying their NVMe copies freed 247,796,625,408 bytes (247.8 GB) and took /data00 from 82.9% to 71.5% used (1794.9 -> 1547.1 GB, 529.3 GB available). /mnt/data02 sits at 13.7% (516.2 GB used, 3071.0 GB available). 88 deleted, 0 failed, 0 groups kept.",
+   "measured": "2026-09-05",
+   "source": "pod: scripts/delete_moved_cache_originals.py --apply; record at runs/token_cache_move.json (sha256 4c9d78ad79eadab5), deleted block stamped 2026-09-05T05:29:00Z with per-path size, df both sides and freed_bytes",
+   "config": {
+    "source_type": "measured, statvfs before and after plus per-file sizes",
+    "rule": "a file was deleted only if it was in runs/token_cache_move.json AND its NVMe copy still hashed to the dst digest recorded at copy time; phase 1 verified all 22 groups before phase 2 unlinked anything",
+    "files": 88,
+    "groups": 22,
+    "kept_groups": 0,
+    "failed": 0,
+    "freed_bytes": 247796625408,
+    "src": "/data00",
+    "dst": "/mnt/data02/tokens",
+    "authorised_by": "user order 2026-09-05, relayed by 4c, naming the 88 files in the record"
+   },
+   "uncertainty": "freed_bytes comes from statvfs and equals the sum of the deleted file sizes to 0.1 GB, which is the check that no live reader was holding a deleted file open. Had one been, the blocks would not have returned until it exited and freed would have read low -- that would not have been a failed delete, and the script says so rather than leaving it to be misread.",
+   "boundary": "Says what the deletion freed on /data00 at one instant. It says nothing about whether the NVMe copies stay reachable: that is a property of the mount, and eval/cache_guard.assert_cache_dir_not_overlay plus train.py's absent-cache refusal are what catch a dropped mount at read time.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.nvme_cache_reverify_before_delete",
+   "value": "Before the deletion, all 22 cache groups (247.8 GB) re-verified on NVMe: every name resolved through train._domain_cache_path to an existing file whose sha256 still equalled the digest recorded at copy time. 22/22, 0 mismatches, 0 absent.",
+   "measured": "2026-09-05",
+   "source": "pod: scripts/verify_cache_accessor_nvme.py; log at runs/verify_nvme_0905.log",
+   "config": {
+    "source_type": "measured, full-file sha256 of the NVMe side, cardless",
+    "properties_checked": "RESOLVE (the accessor lands on the file, so a run can reach it) and MATCH (the bytes are the verified ones)",
+    "groups": 22,
+    "cache_dir": "/mnt/data02/tokens",
+    "reads_data00": "no -- the NVMe side only, so it does not contend for the overlay"
+   },
+   "uncertainty": "A digest match proves the bytes are those recorded at copy time; it does not prove the copy-time digest was itself right. That is covered by the move having hashed BOTH sides and compared them (eff.token_cache_copy_to_nvme).",
+   "boundary": "A point-in-time statement about the copies, taken minutes before the delete. It is the gate for that delete and nothing more.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.token_cache_copy_to_nvme",
+   "value": "All 22 token cache groups (88 files, 247.8 GB) copied from the container overlay to NVMe and verified by sha256 on both sides: 22/22 verified, 0 mismatches. Copy 8.1 min, hashing 7.2 min.",
+   "measured": "2026-09-05",
+   "source": "pod: runs/token_cache_move_0905.sh -> scripts/move_token_caches.py; record at runs/token_cache_move.json (per-file sha256, both sides)",
+   "config": {
+    "source_type": "measured, full-file sha256 both sides",
+    "src": "/data00 (container overlay, vda2)",
+    "dst": "/mnt/data02/tokens (nvme2n1, moved into the container's mount namespace)",
+    "groups": 22,
+    "files": 88,
+    "bytes": 247802959867,
+    "copy_seconds": 486,
+    "hash_seconds": 432,
+    "deleted_from_source": "nothing"
+   },
+   "uncertainty": "the per-group copy rates are NOT a disk measurement and must not be read as one: 1479 MB/s on tokens_zh_web.pt and 188 MB/s on tokens_code_rp1t.pt in the same run differ by which source blocks were already in page cache. The 509 MB/s aggregate is a mixed-cache number.",
+   "boundary": "Says the copy is byte-exact and how long it took once. Says nothing about sustained cold-read throughput -- eff.token_cache_overlay_vs_nvme_read is the controlled measurement for that.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.corpus_secret_scan_0905",
+   "value": "Credential-shape scan over the five code domains that have shards: 16,576,015 rows, 85.77 GB, 11,551 findings (0.07% of rows) in 124.8 min at 11-12 MB/s. db-uri-with-password 9387, private-key-pem 1382, aws-access-key-id 477, slack-token 119, openai-key 77, aws-secret-key-assigned 67, github-token 42.",
+   "measured": "2026-09-05",
+   "source": "pod: runs/corpus_secret_scan_0905.sh -> scripts/corpus_secret_report.py; report at runs/corpus_secret_report_0905.json (pattern name, count and row id per finding; values never recorded)",
+   "config": {
+    "source_type": "measured, report-only scan; no deletion and no filter change",
+    "domains": [
+     "code",
+     "code_dedup08",
+     "code_py_rp1t",
+     "code_py_starcoder",
+     "code_rp1t"
+    ],
+    "domain_with_no_shards": "code_rp1t_rest",
+    "rows": 16576015,
+    "bytes": 85770000000,
+    "minutes": 124.8,
+    "MB_per_s": 11.5,
+    "patterns": "scripts/credential_scan.py, 7 anchored patterns"
+   },
+   "uncertainty": "THE COUNTS ARE PATTERN MATCHES, NOT LIVE CREDENTIALS, and the difference matters most for the largest class: db-uri-with-password is 81% of the total and its shape (scheme://user:password@host with 6+ password chars) is overwhelmingly a placeholder in a README or docker-compose in real code corpora. NONE of the 9387 were sampled, so the live fraction is unmeasured.",
+   "boundary": "Report only. It does not say what should be filtered, and the throughput is IO-bound on the overlay (11-12 MB/s wall-clock against 232 MB scanned in 20.4 s of scan time), so it is not a measure of the regexes' cost.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.code_filter_shard_rewrite_hours",
+   "value": "A filters/*.py change over the six code domains rewrites 86.0 GB in 836 shards. At 11.5 MB/s -- the secret scan's own measured rate over these files on this filesystem -- that is 2.1 h. The sequential-read floor is 0.12 h at 193 MB/s and is unreachable: row-by-row jsonl over 836 files does not read sequentially.",
+   "measured": "2026-09-05",
+   "source": "pod: runs/measure_code_dirs_0905.log (du -sb and shard counts per domain); rate from eff.corpus_secret_scan_0905 (85.77 GB in 124.8 min over the same shards)",
+   "config": {
+    "source_type": "measured bytes, measured rate, one division -- the hours are DERIVED and the derivation is stated",
+    "shard_bytes": 86027209796,
+    "shards": 836,
+    "per_domain_bytes": {
+     "code": 232707019,
+     "code_dedup08": 30161006456,
+     "code_py_rp1t": 1514852051,
+     "code_py_starcoder": 29576274579,
+     "code_rp1t": 24542370091,
+     "code_rp1t_rest": 0
+    },
+    "rate_MB_per_s": 11.5,
+    "rate_basis": "eff.corpus_secret_scan_0905: 20.4 s of CPU against 124.8 min wall-clock, so the scan was IO-bound and a regex filter costs about what a regex scan costs",
+    "hours": 2.1,
+    "sequential_floor_hours": 0.12
+   },
+   "uncertainty": "The 11.5 MB/s rate was measured while nothing else contended for the overlay. A rewrite running beside a training job that reads the same filesystem will be slower, and by how much is unmeasured. The rate also carries the scan's own read pattern: a filter that writes survivors adds a write the scan never did, and at these sizes the write is small next to the read but is not zero.",
+   "boundary": "Says how long reading and filtering the shards takes. Says NOTHING about the token cache rebuild that follows -- see eff.code_filter_retokenize_hours_unmeasured, which is deliberately unmeasured.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.code_filter_disk_both_versions",
+   "value": "With the post-delete /data00 at 71.5% (1547.4 GB used of 2164.5, 529.0 GB avail), keeping both the old and new versions of the six code dirs resident costs +86.0 GB and lands at 1633.4 GB used, 75.5%, 443.0 GB left. The new token caches go to NVMe, not /data00: /mnt/data02 at 15% with 3071.0 GB free takes +67.3 GB to 15.4%.",
+   "measured": "2026-09-05",
+   "source": "pod: runs/measure_code_dirs_0905.log (df -B1 on /data00 and /mnt/data02, plus du -sb per code domain), taken after the delete in eff.data00_freed_by_cache_move",
+   "config": {
+    "source_type": "measured df both filesystems, measured domain bytes, addition",
+    "data00_used_before_copy": 1547371155456,
+    "data00_total": 2164450414592,
+    "data00_pct_before_copy": 71.5,
+    "second_copy_bytes": 86027209796,
+    "data00_pct_after_copy": 75.5,
+    "nvme_used": 516209262592,
+    "nvme_total": 3779302981632,
+    "existing_code_cache_bytes": 67337699250,
+    "domains_with_no_cache": [
+     "code_dedup08",
+     "code_rp1t_rest"
+    ]
+   },
+   "uncertainty": "75.5% assumes the only new resident bytes are one extra copy of the code shards. A concurrent checkpoint save (2.1 GB each) or another session's corpus build lands on the same filesystem and is not in this number.",
+   "boundary": "This is the reason the delete mattered and it says so as data: before the delete /data00 was at 82.9% with 281 GB free, so a second copy of the code dirs plus new caches on the same disk (153 GB) would have crossed 90% and any concurrent save could have filled it. It does not say the filter is safe to run -- that also needs the retokenize cost, which is unmeasured.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.code_filter_retokenize_hours_unmeasured",
+   "value": null,
+   "claim": "How many hours it takes to rebuild the token caches for the six code domains after a filter change. No number is recorded because none has been measured, and an unmeasured hour count on the critical path of a scheduling decision is worse than an admitted gap.",
+   "measured": "2026-09-05",
+   "source": "no run; this entry exists to keep the gap visible next to the two measured legs",
+   "config": {
+    "source_type": "unmeasured, stated as unmeasured",
+    "why_disk_does_not_answer_it": "the cost is CPU in the tokenizer, not IO: the write is 67.3 GB, which at the measured NVMe 1.3 GB/s is 0.9 min of pure IO, so the disk rate bounds nothing useful",
+    "what_the_fact_store_lacks": "no tokens/s for the frozen 32,784-slot vocabulary on code text, at any batch size",
+    "cheapest_measurement": "tokenize code_py_rp1t alone -- 1.5 GB, the smallest of the six that has a cache today -- time it, scale by bytes. Cardless, minutes.",
+    "when": "4c's ruling 2026-09-05: the filter runs after the MoE round, so this changes no decision before then; measure it the day the filter is scheduled"
+   },
+   "audit": "Asked for as part of the rebuild cost and deliberately not answered. Two of the three legs (shard rewrite, disk) are measured and recorded; this one was left unmeasured rather than modelled from a tokens/s number that exists nowhere.",
+   "refuted_by": "nothing yet -- this entry refutes no prior claim, it records that no claim should be made. The run that will settle it: tokenize code_py_rp1t (1.5 GB) and scale by bytes, scheduled for the day the filter lands (after the MoE round, 4c 2026-09-05). When that runs, this entry is replaced by a measured one rather than amended.",
+   "uncertainty": "Unbounded above and below. Nothing here constrains it.",
+   "boundary": "The gap itself is the content: a filter change cannot be scheduled without this number, and the entry names the one run that produces it.",
+   "status": "unmeasured"
   }
  ]
 }
