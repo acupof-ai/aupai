@@ -887,6 +887,7 @@ def main():
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
+        "mathbank/math_programs_l5_ext_novel.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
@@ -916,6 +917,15 @@ def main():
         # file's docstring are what the six real-data cells were designed against, and a task that
         # silently changes character would void them with nothing going red.
         "probes/mem_usage_toy.py",
+        # Pure numpy/torch-on-CPU arithmetic over synthetic arrays plus a source check, ~2s:
+        # no model, no cache, no card. The val-prefix world stubs torch.load, so registering
+        # it costs nothing and covers the estimator a design decision is about to read.
+        "probes/arm_token_corr.py",
+        # The (b, c) admissibility fitter. ~15s: the identifiability worlds grid b x c on
+        # synthetic curves, and the cost buys the assertion that a 7-point/7x design loses b
+        # at realistic noise while a 128x range recovers it -- the property the fact rests on,
+        # and not one a fixture can state.
+        "probes/fit_data_exponent.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
