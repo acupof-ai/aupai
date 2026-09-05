@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (109 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (197 = 109 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (113 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (201 = 113 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (98 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (101 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-98 incidents (34 infra, 64 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+101 incidents (34 infra, 67 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (10 incidents)
+### R2-a No broken world (11 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -71,12 +71,13 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §218: a fixture sampling "a recent commit" drew a merge commit; `git show --name-only` on a merge prints no files, so the world had no subject and read as broken code.
 - §219: the next filter over the same sample rejected the only file the first non-merge commit touched (.jsonl not in the extension list); both were caught only because the world FAILs rather than skips when it cannot find its subject.
 - §228: a world copied from real files was too incomplete for the subject to import (only scripts/ on sys.path; `from train import ...` died at module scope); the subject's ModuleNotFoundError read as the subject being broken. An import error in a fixture's verdict is a fixture bug until proven otherwise.
+- §231: agreement between two things that share an error is not evidence — a fixture with no power to disagree (one directory, so cwd and $MAIN are the same path) reported agreement and it read as confirmation; a differential fixture must be fed an input where the two sides are known to differ.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228).
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231).
 
-### R2-b Population narrower than the property (27 incidents)
+### R2-b Population narrower than the property (28 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -90,10 +91,11 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §224: a cleanup sweep sat behind 26 sys.exit(1) calls in main(), so it only ran on a commit that had already passed every gate — a cleanup placed after the gates cleans up only when nothing needed cleaning.
 - §225: a hook edited on a branch runs main's old copy, so the change appeared to work — a test result attributed to code that did not produce it.
 - §229: a gate on main read its evidence ledger from the working tree (bare `open()` where every git call used `-C "$MAIN"`); a branch-only review row satisfied the second-reader gate that exists to certify somebody else signed — a gate's inputs must come from the same namespace as the thing it gates.
+- §232: a ledger-diff signature over six fields reported set-equal pairs whose rows differed only in the fields it dropped; a comparison that exists to surface disagreements must sign the whole row, since any excluded field is a disagreement it cannot see.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232).
 
-### R2-c Mutation did not take (6 incidents)
+### R2-c Mutation did not take (7 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
@@ -101,8 +103,9 @@ The mutation never landed or its verification reads the wrong signal.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
 - §221: a test recomputed the quantity outside the function and asserted its own arithmetic — the function under test was never called, so no mutant of it can reach the test.
 - §227: a refusal raises SystemExit (BaseException, not Exception); the test's `except Exception` let it through, so the mutation was caught by the process dying, not by the assertion.
+- §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where only the new logic can produce the asserted answer.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233).
 
 ### R2-d Parser reads prose as code (11 incidents)
 
@@ -152,11 +155,12 @@ Cannot see: whether the metric's null hypothesis is the property's null hypothes
 
 ## R6. Every number carries its basis: source type, resolution, algorithm; label extrapolation
 
-34 incidents (12 infra, 22 model), ~2h each, 68h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
+35 incidents (12 infra, 23 model), ~2h each, 68h. `manual:` basis-labeling is a discipline; `doc_numbers_check` partially verifies that docs numbers trace to facts, but does not verify the basis label is correct.
 
 - §1: a number was quoted without its source type; the source type (measured / extrapolated / inferred) determined whether the number could be compared to another.
 - §55: a number's resolution was finer than its basis; the extra digits were noise, not precision.
 - §185: a memory budget was costed at 6 bytes per parameter from a bf16 table nobody had set; the tensors are fp32 and the gradient was omitted, so the real figure is 12 and the 2048^2 arm OOMed after construction succeeded.
+- §230: a review reported five checks as MEASURED that had only been READ; the figure then acquired a second independent-looking source when repeated back, with zero executions. A stated basis is itself a claim — ask "when did this command run" of your own claim. Second instance the same day: a derived ratio carried across a rebuild of its inputs, so the digits in the decision document matched neither the old quantity nor the new one.
 
 Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185, §192).
 
