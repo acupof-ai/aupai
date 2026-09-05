@@ -2112,12 +2112,15 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
 
     build_mix used Cfg.anneal_frac and never read the mix file, so a mix declaring
     "anneal_frac": 0.0 silently got the 0.10 default and a two-phase schedule. MEASURED
-    across data/mix_*.json: 13 of 23 declare the key and all 13 declare a value that
-    differs from Cfg's 0.10; 10 declare nothing. The cost is not only the phase boundary --
-    `want = int(rows * frac * weight)` runs once per phase and int(0.9x) + int(0.1x) <=
-    int(x), so a spurious second phase loses one row per domain: e1's injection arms
-    measured n1 25->24, n8 204->203, n64 1639->1638, n256 6557->6556, which is ~39 document
-    exposures in an interleaved shard on an axis whose row count IS the measurement.
+    across data/mix_*.json: 24 files, 14 declare the key, and 13 of those 14 declare a value
+    that differs from Cfg's 0.10 -- the fourteenth is mix_scale_run_config.json, which
+    declares 0.1 and agrees. 10 declare nothing and rely on the default. (An earlier version
+    of this line said "13 of 23"; the 13 was right and the population was one low, e1's count.)
+    The cost is not only the phase boundary -- `want = int(rows * frac * weight)` runs once
+    per phase and int(0.9x) + int(0.1x) <= int(x), so a spurious second phase loses one row
+    per domain: e1's injection arms measured n1 25->24, n8 204->203, n64 1639->1638, n256
+    6557->6556, which is ~39 document exposures in an interleaved shard on an axis whose row
+    count IS the measurement.
 
     Precedence, and the refusal in the middle:
       mix key absent          -> Cfg.anneal_frac. Absent is not a declaration of 0, and 10
@@ -2128,9 +2131,17 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
                                  so it cannot silently prefer either one. Both readings are
                                  defensible and they schedule different runs, which makes it
                                  the operator's call: change the flag or change the mix.
-    A launch is unaffected in practice because --anneal_frac is in RECIPE_REQUIRED: every
-    real launch line states it, so agreement is the normal case and the refusal fires only
-    when the stated value contradicts the file.
+    A HARNESS LAUNCH always states the flag, because --anneal_frac is in RECIPE_REQUIRED, so
+    agreement is the normal case there and the refusal fires only on a contradiction. THAT IS
+    NOT EVERY LAUNCH, and an earlier version of this line claimed it was ("every real launch
+    line states it"). e1 ran the four launchers that reach build_mix and found four refusals,
+    not one: launch_30b.sh stage 2 (mix declares 0.0, line passed --anneal_frac 0.1, fixed),
+    scripts/lr_probe.sh:46 and scripts/prove_resume.sh:60 (both pass 0.1 against mixes
+    declaring 0.0), and scripts/mem_decomp_run.sh, which passes NO --anneal_frac at all -- it
+    launches torchrun on scripts/profile_step_cost.py, which calls build_mix directly, so
+    RECIPE_REQUIRED never applies. That last one is the shape worth remembering: the refusal
+    fires with no flag anywhere to blame, and its owner reads a message telling them to pass a
+    flag their script never had. Each is a one-word edit in its own owner's file.
 
     THE REFUSAL IS ALSO WHY THE OTHER THREE READERS NEED NO CHANGE. Cfg.anneal_frac is read
     by the lr schedule's log line (:2992, :3165) and the per-step phase label (:3403). After
@@ -2150,9 +2161,17 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
     its own build_mix call and restores it afterwards -- scripts/e1_arm_plan_check.py:379-384
     does precisely that, in a try/finally, because reading the mix file used to tell it
     nothing. Such a tool reading the log lines or the phase label after its finally would see
-    the pre-set value, and this refusal cannot help there because it already ran. After this
-    change that pattern is unnecessary: declare anneal_frac in the mix and build_mix reads
-    it, with Cfg untouched."""
+    the pre-set value, and this refusal cannot help there because it already ran.
+
+    THAT TOOL MUST KEEP SETTING Cfg, and an earlier version of this docstring said the
+    opposite -- "declare anneal_frac in the mix and build_mix reads it, with Cfg untouched".
+    e1 RAN both readings and the advice was false: with the mix declaring 0.0 and Cfg left at
+    the class default 0.10, "untouched" is a DISAGREEMENT, so the plan check refuses instead
+    of building and every green check becomes a refusal. "Cfg untouched" does not mean Cfg is
+    not consulted; it means Cfg is 0.10 and contradicts the mix. What DID change is the
+    try/finally's job: it is no longer the source of the value the plan is built at -- the mix
+    key is -- it is now how the tool agrees with the mix instead of overriding it. Same lines,
+    different reason, and the reason is what a reader acts on."""
     if "anneal_frac" not in mix:
         return Cfg.anneal_frac
     declared = float(mix["anneal_frac"])
@@ -2163,7 +2182,9 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
         f"{declared} and Cfg.anneal_frac is {Cfg.anneal_frac}. These schedule different "
         f"runs -- {declared} gives {1 if declared == 0 else 2} phase(s), and a spurious "
         f"second phase floors one row off every domain (int(0.9x)+int(0.1x) <= int(x)). "
-        f"Pass --anneal_frac {declared} to build what the mix declares, or edit the mix. "
+        f"Either pass --anneal_frac {declared}, or -- if this launcher passes no "
+        f"--anneal_frac at all, which is the case for anything calling build_mix outside "
+        f"`harness launch` -- edit the mix, since there is no flag to change. "
         f"This is not defaulted either way: Cfg carries the same value whether the flag was "
         f"passed or not, so nothing here can tell an explicit flag from the class default."
     )
