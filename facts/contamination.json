@@ -1032,7 +1032,8 @@
      "data/probes/novel_ops/S_test.jsonl": "e5859a287d653dd3dd2e1ff5dce0b0423e56e8307177458c75cd2c11ed8e77b3",
      "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
      "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
-     "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59"
+     "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59",
+     "data/probes/novel_ops/S_test_4way.jsonl": "2dbf23e94eefc0cacc07eca9f85170e2d6d872730204d0b89b6aba3432563ff9"
     },
     "rows_per_file": {
      "test": 1000,
@@ -1117,6 +1118,30 @@
      "options_not_yet_ruled": "(a) accept and report the confound with every curve; (b) drop P_pool -- if P is only ever a test-time control it needs 1,000 instances, not 5,096, and 3..40 supplies 2,024; (c) give P a third inert operand so its space grows without changing what it controls for.",
      "direction": "UNKNOWN, and not merely unmeasured: two live mechanisms push opposite ways. Large-operand arithmetic being the harder axis makes P harder and understates the gap; procedure-following being the harder axis -- the thing the experiment exists to measure -- makes S harder for a reason unrelated to operand size and overstates it. An earlier version of this entry said 'plausibly understated', naming only the first mechanism; e1 caught that a signed guess in a boundary field gets quoted later without its hedge.",
      "option_b_measured": "Dropping P_pool and drawing test-only from 3..40: 1,012 no-carry (a,b) pairs, x2 programs = 2,024 distinct (program, operands) keys against 1,000 drawn, a 2.02x margin under the real without-replacement draw (e1 asked for this before fb rules). But it does NOT remove the confound: 3..40's operand mean is 22.3 against S's 9.9, still 2.3x. Only 3..19 matches S (mean 11.3, 1.1x) and it supplies 428 keys, below the 1,000 needed. So option (b) narrows 4.9x to 2.3x and buys a pure format control at test time; it does not make the families magnitude-matched."
+    },
+    "four_way_readout": {
+     "n": 1000,
+     "options": 4,
+     "floor_pct": 25.0,
+     "shuffle_seed": 20260907,
+     "label_distribution": {
+      "0": 263,
+      "1": 249,
+      "2": 233,
+      "3": 255
+     },
+     "chi2_vs_uniform": "1.86 on df=3 (critical 16.27 at p=0.001), so position carries no signal",
+     "distractor_usage": {
+      "wrong_order": 984,
+      "no_carry": 726,
+      "swap_operands": 500,
+      "add_until": 467,
+      "sign_slip": 298,
+      "coeff_swap": 25
+     },
+     "why": "exact match has no headroom off a 0 floor at 200M (e1's MDE, fb ruling 2026-09-05), so experiment 1's primary readout is 4-way likelihood. Every distractor is the answer under a DIFFERENT misreading of the rule, so which option a model picks says which rule it applied -- the options are diagnostic, not filler.",
+     "why_a_ladder": "only 457 of 1000 items have four distinct values under the obvious three (add_until, no_carry, wrong_order); an eight-rung ladder of further misreadings brings it to 1000 with 0 short. A random-integer filler would have made those items measure something other than rule-following.",
+     "generator": "mathbank/emit_novel_ops_4way.py, selftest 7 worlds"
     }
    },
    "unit": "sha256 of the file as committed",

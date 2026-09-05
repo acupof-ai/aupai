@@ -978,6 +978,7 @@ def main():
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
         "mathbank/emit_novel_ops.py",
+        "mathbank/emit_novel_ops_4way.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
