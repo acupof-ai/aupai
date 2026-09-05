@@ -6692,6 +6692,58 @@ def _broken_owner_queue_depth():
     return d
 
 
+def check_one_deliverable_per_owner(root):
+    """WARN when a roster member holds more than one open task.
+
+    User order 2026-09-05 (via 4c): do only work that produces incremental results.
+    Two open deliverables in one pair of hands is the visible form of the opposite,
+    and nothing in the repo named it. owner_queue_depth polices the lower bound; this
+    is the upper one. It WARNs, never FAILs: a second open row can be a deliberate
+    queue decision, and the job is to make that decision visible, not to forbid it.
+    Parked rows do not count -- a parked experiment is a deferred decision, not
+    parallel work."""
+    roster_p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(roster_p):
+        return SKIP, "no runs/roster.json"
+    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]}
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    open_by_owner = {}
+    for t in rows:
+        if t.get("state") == "open" and t.get("owner") in members:
+            open_by_owner.setdefault(t["owner"], []).append(t.get("id") or "?")
+    bad = {o: ids for o, ids in open_by_owner.items() if len(ids) > 1}
+    if not bad:
+        return PASS, "every roster member holds at most one open task"
+    parts = [f"{o}: {len(ids)} ({', '.join(sorted(ids))})" for o, ids in sorted(bad.items())]
+    return WARN, (f"{len(bad)} member(s) hold >1 open task -- the second is a queue "
+                  f"decision, not a silent parallel thread: {'; '.join(parts)}")
+
+
+def _broken_one_deliverable_per_owner():
+    """The real ledger plus a second open row for a member who holds exactly one."""
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    for rel in ("runs/roster.json", "runs/tasks.jsonl"):
+        _sh.copy(os.path.join(ROOT, rel), os.path.join(d, rel))
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    roster = {m["name"] for m in json.load(open(os.path.join(d, "runs", "roster.json"),
+                                                encoding="utf-8"))["members"]}
+    counts = {}
+    for t in _read_tasks(dst):
+        if t.get("state") == "open" and t.get("owner") in roster:
+            counts[t["owner"]] = counts.get(t["owner"], 0) + 1
+    singles = sorted(o for o, n in counts.items() if n == 1)
+    if not singles:
+        raise SelftestSkip("no roster member with exactly one open task; "
+                           "update _broken_one_deliverable_per_owner")
+    with open(dst, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"id": "broken-odpo-1", "owner": singles[0], "state": "open",
+                             "title": "broken world: second open deliverable",
+                             "opened": "2099-01-01 00:00"}, ensure_ascii=False) + "\n")
+    return d
+
+
 PEER_STALL_MIN = 120
 
 
@@ -6822,6 +6874,23 @@ def _selftest_peer_stalled_names_the_fixture():
     _sh.rmtree(d, ignore_errors=True)
     print("  peer_stalled: fixture named; unnamed once off the roster; a fresh commit clears "
           "it despite an old ledger row")
+
+
+def _selftest_one_deliverable_names_the_fixture():
+    """one_deliverable_per_owner names the member given a second open row.
+
+    The real tree already WARNs (members with 6 and 4 open), so the registered broken
+    world fires regardless of the mutation; this pins the part that matters -- the
+    added row's id and owner are in the evidence."""
+    import shutil as _sh
+    d = _broken_one_deliverable_per_owner()
+    try:
+        state, ev = check_one_deliverable_per_owner(d)
+        assert state == WARN and "broken-odpo-1" in ev, (
+            f"the added open row must be named, got {state}: {ev}")
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    print("  one_deliverable_per_owner: fixture row named on the broken world")
 
 
 def check_review_present(root):
@@ -12262,6 +12331,13 @@ CHECKS = [
         _broken_peer_stalled,
     ),
     (
+        "one_deliverable_per_owner",
+        "no roster member holds more than one open task at once",
+        "two open deliverables in one pair of hands is a silent parallel thread; the second open row must be a visible queue decision (user order via 4c, 2026-09-05)",
+        check_one_deliverable_per_owner,
+        _broken_one_deliverable_per_owner,
+    ),
+    (
         "review_present",
         "every done task carries a review row from the peer it named",
         "the controller review caught four evidenced errors in one day while every other session's deliveries shipped with one reader",
@@ -12663,6 +12739,7 @@ EVIDENCE = {
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "peer_stalled": "repo",
+    "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
@@ -13351,6 +13428,7 @@ BRIEF_KINDS = {
     "review": ["Every delivery has a second reader", "The controller is reviewed too"],
     "write_check": [],
     "controller_ruling": [],
+    "policy": [],
 }
 
 #: Lines that are not AGENTS.md bullets but are the lesson of a measured incident, per kind.
@@ -13397,6 +13475,41 @@ def _brief_trim(note, n=58):
     return (s[:n] + "...") if len(s) > n else s
 
 
+def _brief_policy():
+    """The latest two policy_metrics rows, today beside yesterday (user order via 4c, 2026-09-05).
+
+    The controller confirms its policies are effective, not assumes: five counts a day in
+    runs/policy_metrics.jsonl, written by scripts/policy_metrics.py. This prints; it never
+    refuses -- a red policy count is information, not a gate."""
+    p = os.path.join(ROOT, "runs", "policy_metrics.jsonl")
+    if not os.path.exists(p):
+        print("no runs/policy_metrics.jsonl yet; run scripts/policy_metrics.py")
+        return 0
+    rows = {}
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # torn append from an interrupted run
+        rows[r["date"]] = r  # fold by date, last wins
+    dates = sorted(rows)[-2:]
+    for date in dates:
+        r = rows[date]
+        g, c, d = r["gate_refusals"], r["card_hours"], r["defects"]
+        card = (f"incremental {c['incremental']} / confirmatory {c['confirmatory']} / "
+                f"infra {c['infra_verification']} h" if c["incremental"] is not None
+                else f"not computable: {c['missing']}")
+        print(f"  {date}:")
+        print(f"    misroutes: {r['misroutes']['n']}")
+        print(f"    gate refusals: {g['rows']} rows / {g['causes']} causes")
+        print(f"    card-hours by class: {card}")
+        print(f"    defects author/second-reader: {d['author_caught']}/{d['second_reader_caught']}")
+        print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
+    return 0
+
+
 def cmd_brief(kind):
     """One screen for a kind of work, GENERATED from the rule table and the incident doc.
 
@@ -13417,6 +13530,8 @@ def cmd_brief(kind):
     if kind not in BRIEF_KINDS:
         print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
         return 2
+    if kind == "policy":
+        return _brief_policy()
 
     bullets, err = _agents_rule_bullets(ROOT)
     if err:
@@ -15752,7 +15867,8 @@ def _demo(only=None):
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
-                 "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths"}
+                 "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
+                 "one_deliverable_per_owner"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:
@@ -16336,6 +16452,7 @@ def _demo(only=None):
     _selftest_batched_git_probes()
     _selftest_scoped_index_is_read()
     _selftest_peer_stalled_names_the_fixture()
+    _selftest_one_deliverable_names_the_fixture()
     _selftest_review_present_legacy()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
