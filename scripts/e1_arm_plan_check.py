@@ -182,7 +182,31 @@ def check_arm(name, n, verbose=True):
     return problems, nums
 
 
-def check_plan(name, n, cursor=None):
+def _ckpt_cursor(path):
+    """(cursor dict, seed, srcfp, reason-it-is-absent) from the checkpoint the arms resume.
+
+    THE CURSOR HAS TO COME FROM THE CHECKPOINT, not from CURSOR_ROWS. check_plan's two
+    cursor assertions -- a natural domain drew rows at all, and its FIRST drawn row is its
+    cursor -- both begin `if d not in cur`, so an empty cur skips them silently and
+    build_mix is handed row_cursor=None, which builds a FRESH plan. The check then prints
+    PASS having asserted nothing about the thing it exists to assert: that no arm re-reads
+    rows the control already trained on. Found 2026-09-05 before the pod run, by reading
+    main() rather than the function (main called check_plan(name, n) and never passed a
+    cursor -- the parameter had no caller).
+    """
+    if not os.path.exists(path):
+        return None, None, None, f"checkpoint absent at {path}"
+    import torch
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    cur = ck.get("row_cursor")
+    if not cur:
+        why = ck.get("row_cursor_refused") or "the checkpoint carries no row_cursor key"
+        return None, None, None, str(why)
+    return (dict(cur), ck.get("row_cursor_seed"), dict(ck.get("row_cursor_srcfp") or {}),
+            None)
+
+
+def check_plan(name, n, cursor=None, cursor_seed=None, cursor_srcfp=None):
     """Build the REAL plan through train.build_mix and count the exposures it schedules.
 
     This is the level the file-arithmetic above cannot reach: everything else infers what the
@@ -199,6 +223,14 @@ def check_plan(name, n, cursor=None):
     mix_path = os.path.join(ROOT, "data", f"mix_e1_{name}.json")
     with open(mix_path, encoding="utf-8") as fh:
         mix = json.load(fh)
+    # THE CURSOR IS CHECKED BEFORE THE CACHES, so this refusal is reachable without a pod. Below
+    # the cache check it would be dead code off-pod -- exactly the shape being fixed here, where a
+    # guard sits behind an earlier return and can never fire on the path that needs it.
+    if not cursor:
+        return [f"{name}: check_plan called with NO cursor, so build_mix would build a FRESH plan "
+                f"and both cursor assertions (a natural domain drew rows; its first drawn row is "
+                f"its cursor) would be skipped on `d not in cur`. A PASS would then say nothing "
+                f"about whether the arm re-reads rows the control already trained on."], None
     missing = [d for d in mix["domains"]
                if not os.path.exists(train._domain_cache_path(d))]
     if missing:
@@ -220,6 +252,15 @@ def check_plan(name, n, cursor=None):
             problems.append(f"{name}: the checkpoint's row_cursor sums to {spent} rows but this "
                             f"check's CURSOR_ROWS is {CURSOR_ROWS}. Every want the file-level "
                             f"check computed used the wrong remainder.")
+    else:
+        # NOT A PASS. Everything below that mentions the cursor is keyed on `d in cur`, so an
+        # empty cursor turns the two assertions that matter into no-ops while the count checks
+        # still print PASS. The caller is responsible for supplying it; refuse rather than
+        # measure a fresh plan and report it as the resumed one.
+        problems.append(f"{name}: check_plan ran with NO cursor, so build_mix built a FRESH plan "
+                        f"and both cursor assertions (a natural domain drew rows; its first drawn "
+                        f"row is its cursor) were skipped. A PASS here would mean nothing about "
+                        f"whether the arm re-reads rows the control already trained on.")
     rows_by_dom = collections.Counter()
     # LOWEST ROW INDEX PER DOMAIN, unioned over both ranks. mine[1] is the row index into that
     # domain's pool and mine[0] the domain id (train.py:2316-2317), so this is the pool position
@@ -227,7 +268,8 @@ def check_plan(name, n, cursor=None):
     lowest = {}
     for rank in (0, 1):
         mine, _val = train.build_mix(mix_path, tok, rank == 0, False, rank=rank, world=2,
-                                     row_cursor=cur or None)
+                                     row_cursor=cur or None, cursor_seed=cursor_seed,
+                                     cursor_srcfp=cursor_srcfp)
         for di, dname in enumerate(names):
             sel = mine[0] == di
             k = int(sel.sum())
@@ -277,14 +319,29 @@ def main():
     ap.add_argument("--plan", action="store_true",
                     help="also build the real plan through train.build_mix (needs the token "
                          "caches; SKIPs with a reason when they are absent)")
+    ap.add_argument("--ckpt", default="ckpt_b0_headmix_armA.pt",
+                    help="the checkpoint the arms resume; --plan reads its row_cursor and "
+                         "asserts each natural domain continues from it")
     a = ap.parse_args()
     todo = [(n, k) for n, k in ARMS if a.arm is None or n == a.arm]
     allp, skips = [], []
+    cur = seed = srcfp = None
+    if a.plan:
+        # THE CURSOR IS READ ONCE, HERE, and a missing one SKIPS the plan level rather than
+        # building a fresh plan and calling it a pass. Before 2026-09-05 main called
+        # check_plan(name, n) with no cursor at all: build_mix got row_cursor=None, both cursor
+        # assertions were skipped on `d not in cur`, and the pod run would have printed
+        # "file arithmetic + built plan / PASS" while asserting nothing about the resume.
+        ck = a.ckpt if os.path.isabs(a.ckpt) else os.path.join(ROOT, a.ckpt)
+        cur, seed, srcfp, why = _ckpt_cursor(ck)
+        if cur is None:
+            skips.append(f"all arms: {why} -- the plan level needs the resumed checkpoint's "
+                         f"row_cursor, and without it the two cursor assertions do not run")
     for name, n in todo:
         problems, _ = check_arm(name, n)
         allp += problems
-        if a.plan:
-            pp, skip = check_plan(name, n)
+        if a.plan and cur is not None:
+            pp, skip = check_plan(name, n, cursor=cur, cursor_seed=seed, cursor_srcfp=srcfp)
             if skip:
                 skips.append(f"{name}: {skip}")
             else:
@@ -293,6 +350,9 @@ def main():
         print(f"BUG {p}", file=sys.stderr)
     for s in skips:
         print(f"SKIP plan level -- {s}")
+    if a.plan and not skips:
+        print(f"cursor: {len(cur)} domains, sums to {sum(cur.values())} rows "
+              f"(CURSOR_ROWS {CURSOR_ROWS}), seed {seed}")
     level = "file arithmetic" if (not a.plan or skips) else "file arithmetic + built plan"
     print(f"e1 arm plan check: {'PASS' if not allp else f'{len(allp)} BUG(S)'} "
           f"({len(todo)} arm(s), {level})")
