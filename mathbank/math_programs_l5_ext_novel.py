@@ -54,14 +54,20 @@ RULE = "a @ b = 3a - 2b + 1"
 
 
 def _rule_text():
-    # "十" not "10": verify requires every prose integer >= 3 to appear among the
-    # equation tokens, and the carry constant is stated in EVERY instruction while
-    # the carry line only exists when an intermediate goes negative. Writing it as a
-    # Chinese numeral keeps the rule fully stated without asserting a number the
-    # equations need not contain. Caught by run_math_short.verify, not by my own
-    # selftest, which never ran the prose<->equation check.
-    return (f"定义新运算 {RULE}。若中间结果为负数，先加十再作为下一步的左操作数。"
-            f"按从右到左的顺序计算。")
+    # "加十一次" -- ONCE, not "until non-negative". MEASURED 2026-09-05, before any
+    # scoring: the generator applies the carry exactly once, so an intermediate can
+    # stay negative after it (506 of 1000 S_test items did), and the earlier wording
+    # "若中间结果为负数，先加十" does not say which. A solver reading it as "add 10
+    # until non-negative" gets a different answer on 46.8% of S_test and 48.3% of
+    # S_pool, and a solver ignoring the carry differs on 72.1%. Three readings, one
+    # label: the curve would have scored the model's choice of reading, and a wrong
+    # reading held consistently would have read as a plateau.
+    #
+    # "十" not "10" is a separate constraint and still holds: verify requires every
+    # prose integer >= 3 to appear among the equation tokens, and the rule is stated
+    # in EVERY instruction while the carry line exists only when one fires.
+    return (f"定义新运算 {RULE}。若中间结果为负数，先加十一次，再作为下一步的左操作数"
+            f"（只加一次，结果可能仍为负数）。按从右到左的顺序计算。")
 
 
 def _step(a, b):
