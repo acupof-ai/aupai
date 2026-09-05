@@ -19,6 +19,7 @@ in a merge commit the regen ran after git had built the tree, so it could only
 ever land in the index -- permanently dirty, aborting the next merge.
 """
 import fnmatch
+import glob
 import hashlib
 import json
 import os
@@ -198,6 +199,60 @@ def _shared_repo_state(root):
     return digest, frozenset(idx)
 
 
+def _refuse_copied_worktree(top):
+    """Refuse a commit from a COPY of a linked worktree -- it writes the original's branch.
+
+    cf3dbaea "probe 2": a `cp -r` of a linked worktree carries its `.git` FILE, which is a one-line
+    `gitdir:` pointer into .git/worktrees/<name> in the real repository. The copy therefore shares
+    the original's HEAD, index and branch ref, so a commit made in /tmp/reg_moe landed on the real
+    branch and merged to main carrying a SwiGLU mutant. Nothing in the copy looks wrong: status,
+    log and branch all answer, correctly, about a tree the operator is not in.
+
+    THE CRITERION IS GIT'S OWN BACK-POINTER, not a heuristic about `.git` files or /tmp paths.
+    .git/worktrees/<name>/gitdir holds the absolute path of the `.git` file git expects to find
+    this worktree at; git writes it at creation and rewrites it on `git worktree move`, so it is
+    the repository's record rather than a guess. A copy's cwd cannot match it, and the original's
+    always does. That makes the test exact in both directions and independent of where the copy
+    lives or what it is called.
+
+    Silent when the back-pointer is missing or unreadable rather than refusing: a hook that blocks
+    every commit because it could not read one file is worse than the bug it guards.
+    """
+    gitdir = subprocess.run(["git", "rev-parse", "--git-dir"],
+                            capture_output=True, text=True).stdout.strip()
+    if not gitdir:
+        return
+    gitdir = os.path.realpath(gitdir)
+    ptr = os.path.join(gitdir, "gitdir")
+    if not os.path.isfile(ptr):
+        return  # not a linked worktree (a normal checkout has no back-pointer), or unreadable
+    try:
+        expect_dotgit = open(ptr).read().strip()
+    except OSError:
+        return
+    if not expect_dotgit:
+        return
+    # The back-pointer names the `.git` FILE; its parent is the worktree directory.
+    registered = os.path.realpath(os.path.dirname(expect_dotgit))
+    here = os.path.realpath(top)
+    if registered == here:
+        return
+    print(
+        "REFUSING: this directory is a COPY of a worktree, so a commit here writes another "
+        "tree's branch.\n"
+        f"  you are in:              {here}\n"
+        f"  but git has {os.path.basename(gitdir)} registered at: {registered}\n"
+        "A `cp -r` of a worktree copies its .git FILE, which is only a `gitdir:` pointer -- HEAD, "
+        "the index and the branch ref all still belong to the original. Nothing looks wrong: "
+        "status, log and branch all answer correctly about a tree you are not in. cf3dbaea landed "
+        "a SwiGLU mutant on main this way.\n"
+        "  To work on a separate copy of the code: git worktree add <path> -b <branch>\n"
+        "  To commit to this branch: cd to the registered path above.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def main():
     # Stage timings in the output: a hook people wait minutes for is a hook they
     # bypass (4a7dd56 --no-verify precedent, 2026-08-31).
@@ -245,6 +300,7 @@ def main():
                 file=sys.stderr,
             )
             sys.exit(1)
+        _refuse_copied_worktree(top)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Behind main. A conclusion drawn from a check has two inputs -- the check's code
@@ -630,6 +686,15 @@ def main():
         # 46-209 s), and set where the mount is absent hands train.py's refusal to a box whose
         # correct behaviour is to tokenize. Mutation-verified against run_ddp.sh in both directions.
         "scripts/test_launch_line_cache_dir.py",
+        # A real cp -r of a real linked worktree must be refused, and the ORIGINAL worktree,
+        # a plain checkout, and a `git worktree move`d tree must all still pass. The negative
+        # controls are the load-bearing half: a gate that refuses every linked worktree would
+        # refuse every session's commits, and world 1 alone cannot tell the two apart.
+        "scripts/test_worktree_copy_refused.py",
+        # The .hookstaged_* sweep. Registered because the test's own failure mode is the one
+        # this repo keeps paying for: an earlier version could not find SELFTEST_FILES and
+        # reported that as a pass, so it now FAILS when it cannot reach its subject.
+        "scripts/test_hookstaged_sweep.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
@@ -1340,6 +1405,36 @@ def main():
     # so a refusal that returns early would leave a .hookstaged_* file behind for the
     # next session to find dirty. The parallel tree could be left to rot; this cannot.
     staged_copies = []
+    # SWEEP STALE COPIES FIRST. The try/finally below removes these on every exit PATH, but not on
+    # every exit: a SIGKILL -- an operator's Ctrl-C twice, a timed-out foreground command, an OOM
+    # kill during a 3-minute selftest run -- takes the process without running finally, and the
+    # copies stay in the working tree. selftests_are_gated then reads them as unregistered selftest
+    # files and refuses the NEXT commit, which is a refusal caused by the previous run's death and
+    # naming a file nobody wrote. 98 was blocked twice today by exactly this and had to move them
+    # by hand.
+    #
+    # Swept HERE rather than excluded from the check, because the files are genuine garbage in the
+    # working tree either way: excluding the pattern would leave them for `git status`, for the next
+    # `git add -A`, and for anyone reading the directory. Removal is the fix; exclusion would only
+    # hide it. Safe to remove unconditionally: the name is derived from a registered selftest file,
+    # the content is a copy of a staged blob, and nothing but this loop ever reads one.
+    #
+    # SCOPED TO THE DIRECTORIES A COPY CAN LAND IN, not a recursive walk. The copy is written beside
+    # its source (`d, base = os.path.split(...)` below), so the reachable set is exactly the
+    # directories holding registered selftest files. A `**` glob from the repo root would stat its
+    # way through data/ -- 206 GB and hundreds of thousands of shards -- on every commit, which is
+    # the hook-duration problem this file already has too much of.
+    _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in SELFTEST_FILES}
+    _sweep_dirs.add(repo_root())
+    for _dir in _sweep_dirs:
+        for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
+            try:
+                os.unlink(_stale)
+                print(f"hook: removed stale {os.path.relpath(_stale, repo_root())} (a killed hook "
+                      f"run left it; it would refuse the next commit as an unregistered selftest "
+                      f"file)", file=sys.stderr)
+            except OSError:
+                pass
     # Files whose exemption is partial: run the flag that names the assertions which DO
     # work here, instead of skipping the file entirely.
     PARTIAL = {f: v[1] for f, v in NEEDS_DATA.items() if isinstance(v, tuple)}
