@@ -55,14 +55,18 @@ class FakeCfg:
     d, layers = 512, 12
 
 
-def _plan(origin, step, per_domain=None):
-    """A _plan_domains vector for the rows THIS segment drew, one rank's stripe.
+def _plan_full(origin, step, per_domain=None):
+    """The FULL plan's domain row, all ranks' columns, as build_mix publishes it.
 
-    save_checkpoint counts a prefix of length (step - origin) * batch * accum and
-    multiplies by world, so the vector must hold at least that many entries."""
-    n = (step - origin) * BATCH * ACCUM
+    Length (step - origin) * batch * accum * world: every rank draws
+    (step - origin) * batch * accum rows from its own stripe, and there are `world` stripes.
+    save_checkpoint counts a prefix of rows_done * world of THIS vector.
+    """
+    n = (step - origin) * BATCH * ACCUM * WORLD
     if per_domain is None:
-        # Round-robin: each domain gets n/len(NAMES) of the rank's rows.
+        # Round-robin over the full plan. Note this is a case where the OLD computation was
+        # right: 3 domains into n rows divides evenly across the stripes, so a fixture built
+        # only this way cannot see the striping defect. The discriminating case is below.
         return torch.tensor([i % len(NAMES) for i in range(n)], dtype=torch.int8)
     out = []
     for di, cnt in enumerate(per_domain):
@@ -71,12 +75,23 @@ def _plan(origin, step, per_domain=None):
     return torch.tensor(out, dtype=torch.int8)
 
 
-def _save(tmp, as_of, origin, base, discarded=None, world=WORLD):
+def _stripe(full, rank=0, world=WORLD):
+    """This rank's stripe, sliced off the full plan exactly as build_mix does at :2415.
+
+    Derived, not invented a second time: the two vectors have to describe one plan, or the
+    fixture can be self-consistent while disagreeing with the code it tests."""
+    return full[rank::world].clone()
+
+
+def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag=""):
     """Call the real save_checkpoint and return (path, loaded_ck, error_or_None)."""
     import train
 
     cfg = FakeCfg()
-    cfg._plan_domains = _plan(origin, as_of)
+    if full is None:
+        full = _plan_full(origin, as_of)
+    cfg._plan_domains_full = full
+    cfg._plan_domains = _stripe(full, 0, world)
     cfg._plan_names = list(NAMES)
     cfg._plan_step_origin = origin
     cfg._row_cursor = {n: 0 for n in NAMES}
@@ -85,7 +100,7 @@ def _save(tmp, as_of, origin, base, discarded=None, world=WORLD):
     cfg._cursor_discarded = list(discarded or [])
     cfg._total_steps = 3814
 
-    p = os.path.join(tmp, f"ck_{as_of}_{origin}_{len(discarded or [])}.pt")
+    p = os.path.join(tmp, f"ck_{as_of}_{origin}_{len(discarded or [])}{tag}.pt")
     prev = os.environ.get("WORLD_SIZE")
     os.environ["WORLD_SIZE"] = str(world)
     try:
@@ -180,6 +195,110 @@ def _check_call_sites(bad):
           f"deleting the site reported '{short_del}'")
 
 
+def _check_striping(bad, tmp):
+    """PER-DOMAIN counts, not just the sum: the striping defect 58 found on two checkpoints.
+
+    The plan is striped by column, so rank r holds columns r, r+world, ... For a domain whose
+    row count is not a multiple of world, the stripes do not divide its rows evenly and rank
+    0's count x world is wrong -- over for some domains, under for others, and the SUM stays
+    exact because every rank holds n/world columns. That is why the identity above passed on
+    ckpt_e1_conv_n8 (s_inject_n8 212 written against a 204-row pool) and ckpt_e1_conv_n1
+    (s_inject_n1 20 against 25) while both summed to 276,096 to the row.
+
+    The fixture is a shuffled plan with three domains of DELIBERATELY awkward sizes, so no
+    domain's count divides by world. The round-robin fixture above cannot see this: 3 domains
+    into n rows lands each domain's rows evenly across every stripe, which is what let the
+    defect live in a file whose whole subject is the cursor.
+
+    The assertion is against a bincount over the full plan, computed here independently -- a
+    known answer, not a re-run of the code under test.
+    """
+    as_of, origin = 40, 0
+    n = (as_of - origin) * BATCH * ACCUM * WORLD  # 40 x 16 x 2 x 8 = 10,240 rows
+    # Sizes chosen so none is a multiple of 8 and the stripes must split them unevenly.
+    sizes = [25, 203, n - 228]
+    assert all(s % WORLD for s in sizes[:2]), sizes
+    dom = []
+    for di, s in enumerate(sizes):
+        dom += [di] * s
+    g = torch.Generator().manual_seed(7)
+    full = torch.tensor(dom, dtype=torch.int8)[torch.randperm(n, generator=g)]
+
+    truth = torch.bincount(full.to(torch.int64), minlength=len(NAMES))
+    stripe0 = torch.bincount(_stripe(full).to(torch.int64), minlength=len(NAMES)) * WORLD
+    if torch.equal(truth, stripe0):
+        bad.append(f"the striping fixture is INERT: rank 0's count x world equals the truth "
+                   f"({truth.tolist()}), so it cannot separate the two implementations. "
+                   f"Re-derive the domain sizes")
+        return
+
+    p, ck, err = _save(tmp, as_of, origin, {n: 0 for n in NAMES}, full=full, tag="_stripe")
+    if err:
+        bad.append(f"the striping case RAISED on a correct plan: {err[:180]}")
+        return
+    got = [ck["row_cursor"][nm] for nm in NAMES]
+    want = truth.tolist()
+    print(f"  striping      : got {got} want {want} (rank0 x world would write "
+          f"{stripe0.tolist()})")
+    if got != want:
+        bad.append(f"per-domain cursor is {got}, the plan actually consumed {want}. This is "
+                   f"58's defect: rank 0's stripe x world would write {stripe0.tolist()}")
+    if sum(got) != as_of * ROWS_PER_STEP:
+        bad.append(f"the striping case's sum is {sum(got)}, not {as_of * ROWS_PER_STEP} -- the "
+                   f"fixture is wrong, not the code")
+    # And the over-count direction is the damaging one: a cursor past the pool makes stage 2
+    # skip the tail. Name it explicitly so a future reader knows which side to fear.
+    over = [(NAMES[i], int(stripe0[i]), sizes[i]) for i in range(len(NAMES))
+            if int(stripe0[i]) > sizes[i]]
+    if not over:
+        bad.append("no domain's rank0 x world count exceeds its pool, so this fixture does "
+                   "not reproduce the ckpt_e1_conv_n8 direction (212 against a 204 pool)")
+    else:
+        print(f"  over-count    : {', '.join(f'{nm} {c} against a {s}-row pool' for nm, c, s in over)}"
+              f" under the old computation")
+
+
+def _check_no_full_plan_refuses(bad, tmp):
+    """A checkpoint with no _plan_domains_full must REFUSE, not fall back to the stripe.
+
+    The fallback is what produced 58's two wrong checkpoints, so it may not survive as a
+    compatibility path: a wrong cursor is indistinguishable from a right one to every later
+    reader, while a refusal costs a resume that re-reads rows and says why in the file."""
+    import train
+
+    cfg = FakeCfg()
+    full = _plan_full(0, 40)
+    cfg._plan_domains = _stripe(full)
+    cfg._plan_domains_full = None  # the pre-fix world: only the stripe was published
+    cfg._plan_names = list(NAMES)
+    cfg._plan_step_origin = 0
+    cfg._row_cursor = {n: 0 for n in NAMES}
+    cfg._row_cursor_srcfp = {n: "fp" for n in NAMES}
+    cfg._row_cursor_base = {}
+    cfg._cursor_discarded = []
+    cfg._total_steps = 3814
+    p = os.path.join(tmp, "ck_nofull.pt")
+    prev = os.environ.get("WORLD_SIZE")
+    os.environ["WORLD_SIZE"] = str(WORLD)
+    try:
+        train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=40)
+    finally:
+        if prev is None:
+            os.environ.pop("WORLD_SIZE", None)
+        else:
+            os.environ["WORLD_SIZE"] = prev
+    ck = torch.load(p, map_location="cpu", weights_only=False)
+    if "row_cursor" in ck and ck.get("row_cursor_as_of_step") is not None:
+        bad.append(f"with no _plan_domains_full the cursor was still written "
+                   f"({ck['row_cursor']}): the stripe fallback survived, which is the defect")
+    elif not ck.get("row_cursor_refused"):
+        bad.append("with no _plan_domains_full nothing was written and nothing was recorded: "
+                   "the refusal is silent, so a reader cannot tell it from a run that never "
+                   "reached a save")
+    else:
+        print(f"  no full plan  : refused and recorded -- {ck['row_cursor_refused'][:90]}")
+
+
 def main():
     bad = []
     tmp = tempfile.mkdtemp()
@@ -246,14 +365,18 @@ def main():
     else:
         print(f"  discard path  : skipped and recorded -- {ckd['row_cursor_sum_unchecked'][:80]}")
 
+    _check_striping(bad, tmp)
+    _check_no_full_plan_refuses(bad, tmp)
+
     print()
     if bad:
         for b in bad:
             print("  FAIL:", b)
         print("cursor sum: DEFECT PRESENT")
         return 1
-    print("cursor sum: OK -- the identity holds on all three real numbers, refuses a "
-          "segment-only cursor at origin 832, and skips the discard path")
+    print("cursor sum: OK -- the identity holds on all three real numbers, per-domain counts "
+          "match a full-plan bincount under uneven striping, a missing full plan refuses, and "
+          "a segment-only cursor at origin 832 is rejected")
     return 0
 
 

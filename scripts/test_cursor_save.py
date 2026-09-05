@@ -217,11 +217,17 @@ def main():
         ("absolute cursor after a resume must be accepted", {"code_rp1t": 212_992}, 305_152),
         ("segment-only cursor at the same checkpoint must be refused", {}, None),
     ):
-        idx = torch.zeros(400_000, dtype=torch.int8)
+        # The FULL plan and this rank's stripe, the stripe DERIVED from the full plan the way
+        # build_mix slices it (`plan[:, rank::world]`). save_checkpoint counts a prefix of the
+        # full vector, because rank 0's count x world is wrong for any domain whose row count
+        # is not a multiple of world (58, 2026-09-06). One domain here, so the two agree on
+        # this fixture -- the striping case that separates them lives in test_cursor_sum.py.
+        full = torch.zeros(400_000, dtype=torch.int8)
+        idx = full[0::8].clone()
         cfg = types.SimpleNamespace(
             batch=16, accum=2, seq=4096, vocab=32784,
             _row_cursor={"code_rp1t": 0}, _row_cursor_srcfp={"code_rp1t": "deadbeef"},
-            _plan_domains=idx, _plan_names=["code_rp1t"],
+            _plan_domains=idx, _plan_domains_full=full, _plan_names=["code_rp1t"],
             _plan_step_origin=832, _row_cursor_base=base, _corpus_srcfp="deadbeef",
         )
         with tempfile.TemporaryDirectory() as d:

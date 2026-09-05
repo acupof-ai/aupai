@@ -1466,6 +1466,7 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _cur = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor", None)
     _fps = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor_srcfp", None)
     _dom_idx = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains", None)
+    _dom_full = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains_full", None)
     _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
     _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
@@ -1525,6 +1526,11 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
             # below the plan length, wrong above it, which is the shape that survives
             # testing: stage 1 starts at 0, where absolute and relative are equal.
             rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
+            world = int(os.environ.get("WORLD_SIZE", 1))
+            # At world 1 the stripe IS the full plan -- `plan[:, 0::1]` is the identity -- so
+            # the stripe answers the per-domain question exactly there and refusing would
+            # discard a correct count. Above world 1 it does not, and there is no fallback.
+            _full = _dom_full if _dom_full is not None else (dom_idx if world == 1 else None)
             if rows_done < 0 or rows_done > len(dom_idx):
                 # Refuse rather than clamp, and record WHY in the checkpoint. A wrong
                 # cursor is not recoverable by a later reader -- it looks exactly like a
@@ -1536,21 +1542,52 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                     f"{_batch}x{_accum} = {rows_done} rows against a {len(dom_idx)}-row plan; "
                     f"the origin is wrong or the plan is not this run's. No cursor written."
                 )
+            elif _full is None:
+                # No full plan means no way to answer the per-domain question, and the
+                # stripe cannot substitute for it (see below). Refuse for the same reason
+                # as above: a wrong cursor is indistinguishable from a right one.
+                ck["row_cursor_refused"] = (
+                    f"step {step}: build_mix published no _plan_domains_full, so the "
+                    f"per-domain consumed count cannot be computed -- this rank's stripe "
+                    f"x world is wrong for any domain whose row count is not a multiple "
+                    f"of {world}. No cursor written."
+                )
             else:
-                head = dom_idx[:rows_done]
+                # The count comes from the FULL plan, not this rank's stripe. The plan is
+                # striped by column (`plan[:, rank::world]`), so rank r holds columns
+                # r, r+world, ...; each rank consumes the first rows_done of ITS columns, so
+                # the union of all ranks' consumed rows is exactly columns
+                # 0 .. rows_done*world-1 of the full plan. A bincount over that prefix is the
+                # truth, with no collective.
+                #
+                # The old computation was this rank's bincount x world, and it is wrong for
+                # every domain whose row count is not a multiple of world: the stripes do not
+                # divide those rows evenly, so rank 0 over-represents some domains and
+                # under-represents others. The SUM stayed exact -- every rank holds exactly
+                # n/world columns -- which is why the identity below passed on two checkpoints
+                # that were wrong in OPPOSITE directions (58, 2026-09-06): ckpt_e1_conv_n8
+                # wrote s_inject_n8 212 against a 204-row pool, ckpt_e1_conv_n1 wrote
+                # s_inject_n1 20 against 25, both summing to 276,096 exactly. The over-count
+                # is the damaging one: it puts the cursor past the pool, so stage 2 skips the
+                # tail it was written to read. Both existing cursor tests use a single-domain
+                # fixture, where counts[0] x world is exact by construction.
+                head = _full[:rows_done * world]
                 counts = torch.bincount(head.to(torch.int64), minlength=len(names))
-                world = int(os.environ.get("WORLD_SIZE", 1))
-                # x world: every rank walks its own stripe of the same plan at the same
-                # rate, so the whole-run consumption of a domain is this rank's count x world.
-                # PLUS the cursor this plan started from: dom_idx holds only the current
-                # plan's rows, so counting it alone describes THIS segment and every earlier
-                # one is invisible. MEASURED on p500m_20b_0902: .interrupt.step83 summed to
-                # 13,056 = (83-32)x256 while step 83 had consumed 21,248 = 83x256, and the
-                # 8,192 difference is exactly segment one -- which every later resume then
-                # re-read (de-13).
-                ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))
+                # PLUS the cursor this plan started from: the plan holds only the current
+                # segment's rows, so counting it alone describes THIS segment and every
+                # earlier one is invisible. MEASURED on p500m_20b_0902: .interrupt.step83
+                # summed to 13,056 = (83-32)x256 while step 83 had consumed 21,248 = 83x256,
+                # and the 8,192 difference is exactly segment one -- which every later resume
+                # then re-read (de-13).
+                ck["row_cursor"] = {n: int(counts[i]) + int(_base.get(n, 0))
                                     for i, n in enumerate(names)}
                 ck["row_cursor_as_of_step"] = step
+                # WHICH vector the per-domain counts were taken over. A resume cannot
+                # otherwise tell a correct cursor from one computed off rank 0's stripe:
+                # the wrong values are individually plausible, `cursor > pool` is legitimate
+                # past one epoch, and the sum identity below is EXACT for the wrong
+                # computation. Absent field means the pre-58 write, and the reader says so.
+                ck["row_cursor_basis"] = "full_plan_prefix"
                 # The identity that would have caught the segment-only bug above the day it
                 # landed, and which ds.second_resume_rereads_one_segment's uncertainty named
                 # as the missing check: an ABSOLUTE cursor sums to exactly the rows the run
@@ -2402,6 +2439,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # at stage-1 size (523,158 rows), so keeping it costs nothing next to a 959MB
     # checkpoint (fb ruling: gating for stage 2).
     Cfg._plan_domains = None  # set below, once `mine` exists
+    Cfg._plan_domains_full = None  # ditto: the WHOLE plan's domain row, not this rank's stripe
     Cfg._row_cursor = dict(used)
     # Only domains whose corpus dir is present: a mix can name a domain served from a
     # cache whose source is not on this box, and an unguarded fingerprint raises there.
@@ -2414,6 +2452,17 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
     Cfg._plan_domains = mine[0].to(torch.int8).clone()
+    # The FULL plan's domain row, trimmed the same way. save_checkpoint needs it because a
+    # rank's stripe cannot answer the per-domain question: the plan is striped by column, so
+    # for a domain whose row count is not a multiple of world, rank 0 holds more or fewer than
+    # 1/world of its rows, and counts x world is wrong in BOTH directions across domains while
+    # the SUM stays exact (every rank holds exactly n/world columns). The union of what all
+    # ranks have consumed after rows_done steps is exactly columns 0..rows_done*world-1, so a
+    # bincount over this vector's prefix is the truth with no collective. Same int8 cost as the
+    # stripe times world: 0.52 MB/rank at stage-1 size (523,158 rows) and 3.66 MB/rank at the
+    # 30B plan's 3,662,109, so world 8 adds 3.2 MB/rank of host memory against an 892 MB
+    # checkpoint. It is NOT saved into the .pt -- only the counts are.
+    Cfg._plan_domains_full = plan[0, :n].to(torch.int8).clone()
     Cfg._plan_names = list(names)
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
     vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
@@ -2793,13 +2842,14 @@ def main():
     # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
-    _cursor = _cursor_fp = _cursor_seed = _pre_written = None
+    _cursor = _cursor_fp = _cursor_seed = _pre_written = _cursor_basis = None
     _prev_total_steps = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
             _cursor_seed = _pre.get("row_cursor_seed")
+            _cursor_basis = _pre.get("row_cursor_basis")
             # The schedule the earlier segment ran under, for the comparison at :2231.
             # Read here rather than off the full load below so the check does not depend on
             # `ck` still being bound 180 lines later.
@@ -2831,6 +2881,34 @@ def main():
               "zh_web at stage-1 weights). Reconstruct it with "
               "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
               "launching stage 2 if that tail matters.", flush=True)
+    if args.resume and is_main and _cursor and _cursor_basis != "full_plan_prefix":
+        # A cursor whose per-domain counts came from rank 0's stripe x world. Not refused,
+        # because a wrong count still beats restarting every domain at row 0, and because
+        # at world 1 the two computations agree -- but it is not silent either, and nothing
+        # downstream can detect it: the sum is exact by construction, and `cursor > pool` is
+        # legitimate past one epoch.
+        #
+        # The error is NOT bounded by world. It is world x rank 0's deviation from the
+        # domain's per-stripe mean, so for a domain with fewer rows than a few multiples of
+        # world it can be the whole domain: MEASURED in the fixture at
+        # scripts/test_cursor_sum.py:_check_striping, a 25-row domain reads 0 under the old
+        # computation and 25 under the new one, at world 8. On the pod's two arms it read
+        # s_inject_n8 212 against a 204-row pool and s_inject_n1 20 against 25 (58,
+        # 2026-09-06), both with an exact sum.
+        #
+        # replay_cursor is NOT offered here. It reconstructs from the MIX -- proportional
+        # within a phase (scripts/replay_cursor.py:119) -- so on a small domain its own
+        # approximation can be further from the truth than the striping error it would
+        # replace. The exact reconstruction is to rebuild this plan at the same seed and
+        # bincount its prefix, which is what the fixed writer now does at save time.
+        _worst = min(_cursor.items(), key=lambda kv: int(kv[1]))
+        print(f"resume: this checkpoint's row_cursor carries no basis field, so its "
+              f"per-domain counts came from rank 0's stripe x world -- the sum is exact and "
+              f"the split is not, by up to a whole small domain (58, 2026-09-06). This run "
+              f"seeds {len(_cursor)} domains, {sum(int(v) for v in _cursor.values())} rows in "
+              f"total, smallest {_worst[0]} at {int(_worst[1])}: a domain that small is where "
+              f"the error is largest. The aggregate token count is unaffected; a per-domain "
+              f"claim taken off this resume is not.", flush=True)
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
                        row_cursor=_cursor, cursor_srcfp=_cursor_fp,
                        cursor_seed=_cursor_seed)

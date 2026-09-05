@@ -1098,10 +1098,13 @@ def main():
         # 305,152 = 1192 x 256 absolute after a resume at origin 832, and the
         # segment-only 92,160 at the same checkpoint must be REFUSED. It was in
         # NEEDS_DATA as "RED, and the test is right" for part of 2026-09-04 and that
-        # reading was WRONG: train.py:1134 writes counts x world + _base, an absolute
-        # cursor, so the guard's absolute _want is correct and the resumed FIXTURE was
-        # the defect -- it declared origin 16000 with no _row_cursor_base, a run that
-        # consumed 512,000 rows and remembered none. 28s, no card, no data.
+        # reading was WRONG: save_checkpoint writes an ABSOLUTE cursor (this segment's
+        # consumed rows + _base), so the guard's absolute _want is correct and the resumed
+        # FIXTURE was the defect -- it declared origin 16000 with no _row_cursor_base, a run
+        # that consumed 512,000 rows and remembered none. The count itself came from rank 0's
+        # stripe x world until 58 found it wrong per-domain (2026-09-06); this file's fixture
+        # has one domain, where the two agree, so the striping case lives in test_cursor_sum.
+        # 28s, no card, no data.
         "scripts/test_cursor_save.py",
         # The holdout guard's two machine-dependence guards (6e ruling, 2026-09-04):
         # _fingerprint() skips absent files, so the laptop (5 of 13 registry files) and
@@ -1421,6 +1424,11 @@ def main():
         #                           Also (de-31) every save_checkpoint call site passes opt
         #                           and step, by AST: a call that omits step writes no cursor,
         #                           so the identity above passes VACUOUSLY on that path.
+        #                           And (58, 2026-09-06) the PER-DOMAIN counts under uneven
+        #                           striping: the sum identity is exact for rank 0's stripe x
+        #                           world even when individual domains are wrong in opposite
+        #                           directions, so the sum alone passed on two bad checkpoints.
+        #                           3/3 mutants of the count red, M1 the pre-fix expression.
         # Neither takes a --selftest flag: the file IS the test, and its default path is
         # the gate. They are in the map so a train.py edit cannot land without them.
         "scripts/test_plan_length.py",
