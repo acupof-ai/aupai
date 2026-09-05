@@ -1033,7 +1033,7 @@
      "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
      "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
      "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59",
-     "data/probes/novel_ops/S_test_4way.jsonl": "2dbf23e94eefc0cacc07eca9f85170e2d6d872730204d0b89b6aba3432563ff9"
+     "data/probes/novel_ops/S_test_4way.jsonl": "efb18261738491fde71ec626d686f36039a4b243c6ace0c3c676e20302174493"
     },
     "rows_per_file": {
      "test": 1000,
@@ -1130,18 +1130,41 @@
       "2": 233,
       "3": 255
      },
-     "chi2_vs_uniform": "1.86 on df=3 (critical 16.27 at p=0.001), so position carries no signal",
+     "chi2_vs_uniform": "1.936 on df=3 (critical 16.27 at p=0.001). An earlier header said 1.86; e1 recomputed 1.94 and the recheck gives 1.936, so 1.86 was mine and wrong.",
      "distractor_usage": {
-      "wrong_order": 984,
-      "no_carry": 726,
-      "swap_operands": 500,
-      "add_until": 467,
-      "sign_slip": 298,
-      "coeff_swap": 25
+      "wrong_order": 762,
+      "swap_operands": 589,
+      "sign_slip": 301,
+      "coeff_swap": 300,
+      "add_until": 379,
+      "no_carry": 379,
+      "no_plus_one": 168,
+      "carry_20": 122
      },
      "why": "exact match has no headroom off a 0 floor at 200M (e1's MDE, fb ruling 2026-09-05), so experiment 1's primary readout is 4-way likelihood. Every distractor is the answer under a DIFFERENT misreading of the rule, so which option a model picks says which rule it applied -- the options are diagnostic, not filler.",
-     "why_a_ladder": "only 457 of 1000 items have four distinct values under the obvious three (add_until, no_carry, wrong_order); an eight-rung ladder of further misreadings brings it to 1000 with 0 short. A random-integer filler would have made those items measure something other than rule-following.",
-     "generator": "mathbank/emit_novel_ops_4way.py, selftest 7 worlds"
+     "why_a_ladder": "only 457 of 1000 items have four distinct values under the obvious three (add_until, no_carry, wrong_order); an eight-rung ladder of further misreadings brings it to 1000 with 0 short. A random-integer filler would have made those items measure something other than rule-following. After the rank fix all EIGHT rungs are load-bearing: carry_20 and no_plus_one went from 0 uses to 122 and 168, because choosing WHICH three distractors an item takes is now a rank decision and not first-come.",
+     "generator": "mathbank/emit_novel_ops_4way.py, selftest 7 worlds",
+     "v1_replaced": {
+      "v1_sha256": "2dbf23e94eefc0cacc07eca9f85170e2d6d872730204d0b89b6aba3432563ff9",
+      "defect": "a content-free rule -- pick the 3rd-largest of the four numbers -- scored 0.6430, 39 points above the 25% the readout's power assumes. Gold's value rank was 6/245/643/106 across ranks 0-3. Structural in two rungs: sign_slip (3a+2b+1 on positive operands) is greater than gold on 298/298 and can never sit below it, and wrong_order is greater on 648/984, so the two most-used rungs crowd the top.",
+      "why_it_was_missed": "v1 shuffled the option POSITIONS and reported a chi-square on the label index. That statistic cannot see a heuristic over the option VALUES: the positions were uniform (chi2 1.936) while the values were not.",
+      "found_by": "e1 (lessons-58), 2026-09-05, by running a battery of content-free rules against the set",
+      "headroom_cost": "two-arm MDE at n=1000, alpha .05, power .80: from a 0.25 floor the treated arm needs 0.3048; from 0.6430 it needs 0.7026 -- 0.357 of headroom instead of 0.750 (e1's calculation).",
+      "nothing_scored": "v1 lived only on branch 3b and no arm ran against it"
+     },
+     "content_free_battery_v2": {
+      "3rd_largest": 0.25,
+      "nearest_zero": 0.249,
+      "smallest": 0.249,
+      "largest": 0.25,
+      "note": "every rule reading only the four numbers is at chance; asserted in the selftest"
+     },
+     "value_rank_distribution": {
+      "0": 250,
+      "1": 251,
+      "2": 250,
+      "3": 249
+     }
     }
    },
    "unit": "sha256 of the file as committed",
