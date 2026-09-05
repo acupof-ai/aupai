@@ -60,7 +60,7 @@ if [ "${MERGE_MAIN_ALLOW_TIMEOUT:-0}" != "1" ]; then
         echo "  clears it by hand. Measured 2026-09-05: a 120 s cap did exactly this and stalled" >&2
         echo "  three sessions and one launch." >&2
         echo "  Run it with no timeout, or in the background and poll:" >&2
-        echo "    setsid bash scripts/merge_main.sh $1 > /tmp/merge_$1.log 2>&1 &" >&2
+        echo "    nohup bash scripts/merge_main.sh $1 > /tmp/merge_$1.log 2>&1 </dev/null &" >&2
         echo "  MERGE_MAIN_ALLOW_TIMEOUT=1 overrides, for a deadline you know exceeds a hook run." >&2
         exit 2
       fi
