@@ -53,8 +53,14 @@ def main():
     from tokenizers import Tokenizer  # noqa: PLC0415
 
     import model as M  # noqa: PLC0415
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
+
+    # de-55 step 3: loads to CPU and moves at `mdl.cuda()`, so load_checkpoint's cuda-gated claim
+    # does not fire. Placed AFTER the HAS_FA refusal below would leave the refusal path claiming
+    # nothing, which is correct -- but before it is also correct and simpler, because a claim
+    # released by atexit costs nothing on a run that refuses in the next line.
+    claim_my_cards("b0_sd_pack_ce", note="pack CE, cu vs cu=None")
 
     if not M.HAS_FA:
         raise SystemExit("REFUSING: HAS_FA is False, so the varlen path cu would select is absent "
