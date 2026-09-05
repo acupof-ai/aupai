@@ -103,7 +103,7 @@ The mutation never landed or its verification reads the wrong signal.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
 - §221: a test recomputed the quantity outside the function and asserted its own arithmetic — the function under test was never called, so no mutant of it can reach the test.
 - §227: a refusal raises SystemExit (BaseException, not Exception); the test's `except Exception` let it through, so the mutation was caught by the process dying, not by the assertion.
-- §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where only the new logic can produce the asserted answer.
+- §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where the OLD logic answers differently, enforced by an in-case assertion naming the old answer (a disagreement property, not a coverage property).
 
 Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233).
 
