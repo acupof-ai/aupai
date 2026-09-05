@@ -1836,6 +1836,23 @@ def main():
                      # sitting right there, and stayed red on main until a model.py edit happened
                      # to fire it. A test that reads a file belongs on that file's trigger list.
                      "scripts/test_moe_module.py",
+                     # BOTH CURSOR TESTS CALL save_checkpoint DIRECTLY and were on NO trigger
+                     # list, so SELFTEST_FILES ran them only when someone edited the test itself
+                     # -- the precise gap the two comments above describe, at a third pair of
+                     # files. MEASURED 2026-09-06: db's f5f8600e added a refusal in train.py when
+                     # _plan_world is absent, and test_cursor_save's mid-run fixture constructs a
+                     # cfg with _plan_domains_full and no _plan_world. It landed GREEN and broke
+                     # that file; db found it only when a later merge re-ran everything. Verified
+                     # here by parsing this table with the check's own regex: before this edit
+                     # test_cursor_save.py and test_cursor_sum.py were named by NO subject, while
+                     # test_plan_length.py was already on train.py.
+                     #
+                     # THE CLASS, worth stating because it will recur: a REFUSAL added in one file
+                     # invalidates every fixture in every other file that constructs the same cfg,
+                     # and nothing joins those files except this table. A new required field is a
+                     # breaking change to every hand-built cfg in the repo. ~1.5s and ~2.0s.
+                     "scripts/test_cursor_save.py",
+                     "scripts/test_cursor_sum.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
