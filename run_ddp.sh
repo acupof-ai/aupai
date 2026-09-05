@@ -74,6 +74,39 @@ if [ ! -d .git ] && [ "${ALLOW_UNSYNCED:-}" != "1" ]; then
   fi
 fi
 
+# Token caches live on NVMe, not on the container overlay. MEASURED 2026-09-05 with an 8 GB
+# controlled read: overlay 193 MB/s, NVMe 1.3 GB/s, 6.5x. build_mix spends minutes loading caches
+# before the first step (156 GB / ~2.5 min for mix_200m_4b), so this is the difference between a
+# 2-minute and a 20-minute startup on the 247.8 GB set.
+#
+# Set here rather than left to the operator because the failure is silent in the expensive
+# direction: with the variable unset train.py falls back to the overlay copy and the run simply
+# starts slower, with nothing in the log naming the cause. The refusal that covers the OTHER
+# direction -- variable set, cache absent because the mount was dropped by a container restart --
+# is in train.py's _domain_seqs and raises rather than retokenizing 247.8 GB.
+#
+# /mnt/data02/tokens, not /data02/aupai/tokens: the mount is moved into the container's namespace
+# at /mnt/data02 by scripts/attach_nvme_caches.py, and all 88 files (22 caches x 4 sidecars) are
+# verified there by sha256 in runs/token_cache_move.json.
+#
+# CONDITIONAL ON THE DIRECTORY EXISTING, and the condition is the whole design. Exporting
+# unconditionally would hand train.py's refusal to every box that never had the mount -- a fresh
+# checkout, a different pod, a laptop -- where retokenizing is the CORRECT behaviour and the only
+# way to build a first cache. The three cases the test enumerates:
+#   dir absent      -> unset, train.py tokenizes as it always did (fresh box, nothing to protect)
+#   dir with caches -> set, reads NVMe at 1.3 GB/s
+#   dir empty       -> set, and train.py REFUSES rather than retokenizing 247.8 GB. This is the
+#                      dropped-mount case: a container restart leaves the mountpoint directory
+#                      behind with nothing under it, which is indistinguishable from a real cache
+#                      dir by any test except reading it.
+# An explicit AUPAI_TOKEN_CACHE_DIR from the caller always wins, including pointing somewhere that
+# does not exist -- that is a deliberate choice and gets the refusal it asks for.
+if [ -n "${AUPAI_TOKEN_CACHE_DIR:-}" ]; then
+  export AUPAI_TOKEN_CACHE_DIR
+elif [ -d /mnt/data02/tokens ]; then
+  export AUPAI_TOKEN_CACHE_DIR=/mnt/data02/tokens
+fi
+
 torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py --fp8 "$@"
 rc=$?
 # A training run without a score-matrix record is what the score_matrix_present
