@@ -6,6 +6,7 @@ runs/score_matrix.jsonl merge=union
 runs/tasks.jsonl merge=union
 runs/retro.jsonl merge=union
 runs/review.jsonl merge=union
+runs/msg_log.jsonl merge=union
 runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
@@ -58,3 +59,25 @@ runs/moe_diag.jsonl merge=union
 # with the other side's file content at 81f091af, so main asserted a hash for a file it did
 # not contain, with the driver configured and attributed the whole time.
 EXPERIMENTS.md merge=aupai-experiments
+
+# readout_1 of conversion_rate_0905: the 4-way likelihood accuracy of each arm on
+# data/probes/novel_ops/S_test_4way.jsonl. Union for the same reason as the rest, and landed WITH
+# its writer in one commit per the memory_diag block above -- eval/novel_ops_4way.py:745 has been
+# appending to this file since it first ran, and the file would otherwise have lived only on the pod.
+#
+# ROW IDENTITY IS (ckpt, items_sha256), WITH NO ts, and the difference from moe_diag/memory_diag
+# is deliberate. Those two are per-STEP samples of a running arm, so a relaunch legitimately
+# re-visits a step number and ts is the only field separating two runs. This readout scores a
+# FROZEN checkpoint against a HASHED item set: two runs of the same (ckpt, items_sha256) must
+# produce the same accuracies or the scorer is not deterministic. MEASURED: control_arm was scored
+# twice in two independent processes (2026-09-05 19:54Z and 20:14Z) and both read 0.2440/0.2560
+# summed and 0.1960/0.1840 mean, digit for digit. Adding ts would make every re-score a NEW key
+# and retire that check; keeping it out means subsumption flags a changed value under an existing
+# key, which is exactly the regression worth catching. The 6 rows hold 5 distinct keys with 0
+# None-rows, the collision being that byte-identical second control row.
+#
+# items_sha256 IS LOAD-BEARING in the key, not decoration: an accuracy is only readable against
+# the floor and MDE registered for the items it was taken on, and the S_test_4way file has already
+# been rebuilt through four versions. Two rows for one ckpt under two item hashes are two
+# measurements, not a replacement.
+runs/novel_ops_4way.jsonl merge=union

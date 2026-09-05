@@ -897,6 +897,14 @@ def main():
         # deleting the exemption passed. All five worlds are now mutation-verified.
         "scripts/test_pending_claim.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        # conversion_rate_0905's PRIMARY readout. 1.4s, no card, no model: its ten worlds run on
+        # stub models whose preference is a fact of the fixture. Registered rather than exempted
+        # because the numbers it produces are the experiment's answer, and three of its worlds
+        # exist only because the mutant they catch SURVIVED an earlier version -- an inverted
+        # argmax, a mean row that ignored option length, and a continuation span that included
+        # prompt tokens. It also asserts the pinned items hash, so an item-set change that would
+        # invalidate the registered floor and MDE stops here.
+        "eval/novel_ops_4way.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
         # NEEDS_DATA. It caught two defects in its own file before that file's first commit:
@@ -1386,20 +1394,15 @@ def main():
         # the subject is build_mix, not this file. Two reverts of the fix were run in real
         # worktrees and each fails this test at its own assertion. ~4s, no card.
         "scripts/test_mix_anneal_and_cursor.py",
-        # NOT YET REGISTERED: scripts/test_eta_window.py, the printed ETA's window mean. 8a06c567
-        # (mine) registered it here and on train.py's trigger list before writing it, and the file
-        # has never existed in any commit or any worktree -- so selftests_are_gated FAILed on main
-        # for every session until it was found by a merge 40 minutes later. A map entry is a claim
-        # that the file is there; registering ahead of the file inverts the check, which exists to
-        # catch a registration whose subject was DELETED and cannot tell that from one never
-        # written. The test waits on its subject: `eta = (total_steps - step) * dt / 10`
-        # (train.py:3322) extrapolates one 10-step interval over all 19,151 remaining steps, so a
-        # 54s interval printed 29 lost hours and every checkpoint save printed ~99h -- and train.py
-        # is frozen for p500m_20b_0902. Both land together in the stop window: the assertion is a
-        # BOUND (one interval moves the ETA by at most 1/N of what it moved before), never a bare
-        # smaller-than, because any smoothing passes smaller-than including one that swallows the
-        # spike, and a swallowed save is worse than a visible one. No quoted words in this comment:
-        # a double quote inside either map re-pairs every quote below it (harness.py:1285).
+        # scripts/test_eta_window.py IS NOW REGISTERED, below in this map and on train.py's trigger
+        # list. It is entered here where its NOT-YET note stood, because the note recorded a
+        # failure worth keeping: 8a06c567 (mine) registered the file in both places BEFORE writing
+        # it, the file existed in no commit and no worktree, and selftests_are_gated FAILed on main
+        # for every session until a merge found it 40 minutes later. A map entry is a claim that
+        # the file is there. The order is write, run, mutate, then register -- and the two
+        # registrations land in the same commit as the file, never ahead of it.
+        # No quoted words in this comment: a double quote inside either map re-pairs every quote
+        # below it (harness.py:1285).
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1531,6 +1534,29 @@ def main():
         # privileged bare value) does NOT match -- measured -- so it would have stopped every
         # trackio metric on that line while the log looked richer. Pure regex, milliseconds.
         "scripts/test_step_line_parses.py",
+        # The printed ETA. `(total_steps - step) * dt / 10` extrapolated ONE 10-step interval over
+        # every remaining step, so a checkpoint save -- which lands inside one interval -- printed
+        # ~99h at 19,151 steps and consecutive lines disagreed by tens of hours. Seven worlds over
+        # _eta_fields, which is module-level precisely so this test calls the arithmetic instead of
+        # reimplementing it: it lived inline first and two mutations of the real expression
+        # SURVIVED, because a test that recomputes the quantity under test moves with it.
+        # Mutation-tested 5/5 on the real train.py, each mutant killed by its own named assertion
+        # and the baseline green in between -- including the one that first SURVIVED (deleting the
+        # overrun interpolation from the f-string), because the render worlds bind that name
+        # themselves and cannot see whether the line uses it. That assertion is now on the
+        # extracted source.
+        # NO BRACE AND NO QUOTED WORD IN THIS COMMENT, and that rule has to be stated without
+        # writing the thing it forbids. harness.check_selftests_are_gated reads this map with a
+        # regex whose body is a negated character class on the closing brace, so the parse stops at
+        # the FIRST closing brace anywhere below -- including one inside a comment -- and every
+        # entry after it reads as ungated. Measured twice today: writing the overrun field's name
+        # in braces here cut the parse from 208 entries to 184, and then QUOTING THE REGEX ITSELF
+        # in this very comment cut it to 195, because the class contains that brace too. Both runs
+        # FAILed the check naming 10 innocent files (eval/compare_fewshot_arms.py,
+        # mathbank/dist_check.py and others), none of them mine. Same trap as the odd-double-quote
+        # rule noted above, different character.
+        # Pure arithmetic and one regex, milliseconds, no card and no data.
+        "scripts/test_eta_window.py",
         # A/B (2a)'s arm: an inverted ratio shrinks exactly the matrices the record says to
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
@@ -1763,6 +1789,15 @@ def main():
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
         # verify_artifact and the transcriber, so a change to either file can break it.
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
+        # novel_ops_4way delegates its scoring to run_eval.score_mc_items and asserts on that
+        # function's own contract: the continuation is sliced by token id, and an item whose
+        # options all failed to tokenize must not read as correct. So an edit to run_eval.py is
+        # exactly what can break it, and two of its worlds were built by mutating run_eval
+        # rather than the readout. 1.4s.
+        "eval/run_eval.py": {"eval/novel_ops_4way.py"},
+        # And the item set: the readout pins its sha256, so a rebuild of the items has to run
+        # the readout that scores them or the pinned hash goes stale silently.
+        "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
@@ -1784,6 +1819,15 @@ def main():
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
                      "scripts/test_moe_latent.py",
+                     # test_eta_window READS train.py -- it extracts main's step-line f-string with
+                     # inspect.getsource and asserts on that template, and calls _eta_fields
+                     # directly. So an edit to train.py is exactly what can break it, and
+                     # SELFTEST_FILES alone would run it only when someone edits the test. That is
+                     # the gap this table exists to close, measured today: a65f595e appended
+                     # `s/step {dt / 10}` to that same line, the extracted template then raised
+                     # NameError on an unbound `dt`, and the test was right that the line had
+                     # changed -- but nothing would have asked it. ~0.1s.
+                     "scripts/test_eta_window.py",
                      # test_moe_module READS train.py -- it execs the fp8/bf16 refusal's own block
                      # out of train.main and drives it through six worlds -- and it was on
                      # model.py's trigger list ONLY. So da5ef8bf, which widened that guard's

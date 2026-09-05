@@ -227,7 +227,8 @@ def main():
         cfg = types.SimpleNamespace(
             batch=16, accum=2, seq=4096, vocab=32784,
             _row_cursor={"code_rp1t": 0}, _row_cursor_srcfp={"code_rp1t": "deadbeef"},
-            _plan_domains=idx, _plan_domains_full=full, _plan_names=["code_rp1t"],
+            _plan_domains=idx, _plan_domains_full=full, _plan_world=8,
+            _plan_names=["code_rp1t"],
             _plan_step_origin=832, _row_cursor_base=base, _corpus_srcfp="deadbeef",
         )
         with tempfile.TemporaryDirectory() as d:
