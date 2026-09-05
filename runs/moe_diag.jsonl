@@ -20,3 +20,7 @@
 {"name": "e1p_moe24", "step": 600, "usage_frac": 1.0, "entropy_norm": 0.8530623058220104, "load_gini": 0.4961278438568115, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:30:58", "n_routed": 24, "top_k": 3}
 {"name": "e1p_moe24", "step": 700, "usage_frac": 1.0, "entropy_norm": 0.8695246123006771, "load_gini": 0.48208940029144287, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:34:50", "n_routed": 24, "top_k": 3}
 {"name": "e1p_moe24", "step": 800, "usage_frac": 1.0, "entropy_norm": 0.886438841118353, "load_gini": 0.4498859643936157, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:38:50", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 900, "usage_frac": 1.0, "entropy_norm": 0.9072602026282492, "load_gini": 0.4064687490463257, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:42:42", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 1000, "usage_frac": 1.0, "entropy_norm": 0.9064498332547472, "load_gini": 0.41139304637908936, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:46:49", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 1100, "usage_frac": 1.0, "entropy_norm": 0.9217304948526481, "load_gini": 0.3764256238937378, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:50:40", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 1200, "usage_frac": 1.0, "entropy_norm": 0.9036439236724729, "load_gini": 0.4246324300765991, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:54:42", "n_routed": 24, "top_k": 3}
