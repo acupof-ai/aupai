@@ -8351,16 +8351,38 @@ def _broken_frozen_keys_complete():
 
 
 def _token_cache_dir():
-    """The directory holding token caches, from train.py's TOKEN_CACHE constant.
-    HARNESS_TOKEN_CACHE_DIR overrides (selftest)."""
-    forced = os.environ.get("HARNESS_TOKEN_CACHE_DIR")
+    """The directory holding token caches. ONE definition, train's.
+
+    This used to be a second implementation: it read HARNESS_TOKEN_CACHE_DIR and regex-scraped
+    TOKEN_CACHE out of train.py's SOURCE, so it did not honour AUPAI_TOKEN_CACHE_DIR at all. Two
+    accessors that disagree is the 2026-09-02 incident itself -- test_domain_loss_val.py set the
+    variable train.py never read and wrote a real cache into the pod's shared /data00 beside a live
+    run -- reproduced in the tool that exists to catch it. On 2026-09-05 the caches moved to NVMe
+    and only the train side would have followed, so every harness check reading a cache would have
+    reported the overlay's copy: stale or absent, either way an answer about the wrong file.
+
+    The source-scrape had one virtue worth keeping: it does not import train, which pulls in torch.
+    So train is imported lazily and the scrape stays as the FALLBACK, for a host with no torch --
+    with AUPAI_TOKEN_CACHE_DIR still honoured there, which is the half that was missing.
+
+    HARNESS_TOKEN_CACHE_DIR is kept as an alias because one live caller sets it: this file's own
+    selftest fixture at the call below. Grepped 2026-09-05 -- no other setter exists outside
+    documentation of the incident.
+    """
+    forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
         return forced
-    src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
-    m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
-    if not m:
-        raise KeyError("train.py has no TOKEN_CACHE; the check that reads it cannot run")
-    return os.path.dirname(m.group(1))
+    try:
+        sys.path.insert(0, ROOT)
+        import train
+        return train._token_cache_dir()
+    except Exception:
+        # No torch on this host. Read the constant train's own accessor falls back to.
+        src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+        m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
+        if not m:
+            raise KeyError("train.py has no TOKEN_CACHE; the check that reads it cannot run")
+        return os.path.dirname(m.group(1))
 
 
 def _cache_rows(path, seq):
