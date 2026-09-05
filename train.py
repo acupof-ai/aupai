@@ -3197,6 +3197,11 @@ def main():
         # which the cursor does not relieve it of (tilerl's challenge, fb's ruling).
         i0 = 0 if getattr(Cfg, "_cursor_seeded", False) else step * Cfg.batch * Cfg.accum
         t0 = time.time()
+        # Cumulative validation seconds, printed beside each pass's own. Steady-state seconds
+        # (prereg#moe_0905 amendment_12_steady_state) is stepping time, and validation runs
+        # INSIDE the tps window at :3357 from the same `now - t_log`, so it has to be subtracted
+        # rather than assumed. Reset per epoch alongside t0, which is what it is read against.
+        _val_s_total = 0.0
         last = 0.0
         t_log = time.time()
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
@@ -3356,6 +3361,7 @@ def main():
                             pass
                         os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
+                    _t_val = time.time()
                     v = validate(
                         model,
                         raw_model,
@@ -3370,7 +3376,20 @@ def main():
                         Wva,
                     )
                     if is_main:
-                        runlog(f"step {step}/{total_steps} val {v:.3f}")
+                        # THE VALIDATION PASS'S OWN SECONDS, and the cumulative total, so the
+                        # wall-clock readout does not have to estimate them. prereg#moe_0905
+                        # amendment_12_steady_state: the adopt comparison is steady-state
+                        # seconds, and both terms it needs were previously unmeasurable from a
+                        # DENSE arm's log. tps at :3354 prints `{:.0f}K` (+/-0.8%, so a
+                        # 3815-step extrapolation spans ~110s), and full-precision tok/s reached
+                        # only moe_diag/memory_diag -- neither of which a dense arm writes, so
+                        # the pair had a precise clock on one side and a rounded one on the
+                        # other. `val_s` here plus `s/step` on the step line give both arms the
+                        # same estimator at ~0.1%.
+                        _val_s = time.time() - _t_val
+                        _val_s_total += _val_s
+                        runlog(f"step {step}/{total_steps} val {v:.3f} "
+                               f"val_s {_val_s:.2f} val_s_total {_val_s_total:.1f}")
                 if is_main and step % 10 == 0:
                     now = time.time()
                     dt = now - t_log
@@ -3412,6 +3431,19 @@ def main():
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
                         f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
+                        # FULL PRECISION, AT THE END OF THE LINE. `{tps/1e3:.0f}K` above rounds
+                        # to +/-0.8%, which is +/-110s on a 3815-step extrapolation, and it is
+                        # the ONLY timing a dense arm's log carried -- full-precision tok/s
+                        # reached moe_diag (:3549) and memory_diag (:3466), and a dense arm
+                        # writes neither. This field is the same window's seconds-per-step
+                        # unrounded, so steady-state seconds is computable on any arm at ~0.1%.
+                        #
+                        # APPENDED, NOT INSERTED, and that is load-bearing rather than tidy:
+                        # RunLog._STEP_RE (train.py:46) ends with `([\d.]+)K tok/s/gpu \| MFU
+                        # (\d+)%` and matches on ADJACENCY, so a field placed between those two
+                        # would silently stop every trackio metric on this line while the log
+                        # looked richer. test_step_line_parses covers exactly that.
+                        f" | s/step {dt / 10:.4f}"
                     )
                 # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
                 # that placement is the whole correctness argument: the fraction the stop rule
