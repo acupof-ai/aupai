@@ -115,9 +115,17 @@ def diamond_single(rng):
     stated but the operands are drawn so it never fires -- a control whose answer
     is recoverable by substitution must not sometimes need a second step, or it
     is a weaker version of S rather than a different task.
+
+    RANGE WIDENED 2026-09-05. At a in 6..19 the two P programs span 381 distinct
+    instances against the 5,096 the curve draws (1,000 test + 4,096 pool), so the
+    test set and the training pool necessarily shared items -- measured, 341 of
+    1,000 collided, and emit_novel_ops refused to write. S was never that tight
+    (4,913 and 28,561). Widening is half the fix; the emitter drawing without
+    replacement is the other half, since 5,096 random draws collide long before a
+    space is exhausted.
     """
-    a = rng.randint(6, 19)
-    b = rng.randint(3, (3 * a + 1) // 2)  # 3a - 2b + 1 >= 0, so no carry
+    a = rng.randint(6, 80)
+    b = rng.randint(3, min((3 * a + 1) // 2, 120))  # 3a - 2b + 1 >= 0, so no carry
     v, carried = _step(a, b)
     assert not carried
     lines = [f"3 * {a} - 2 * {b} + 1 = {v}"]
@@ -126,9 +134,15 @@ def diamond_single(rng):
 
 
 def diamond_single_reverse(rng):
-    """One application with the operands named in the other order. Still substitution."""
-    b = rng.randint(3, 12)
-    a = rng.randint((2 * b) // 3 + 1, 19)
+    """One application with the operands named in the other order. Still substitution.
+
+    b is capped so the no-carry constraint stays SATISFIABLE: it needs
+    a >= (2b)/3 + 1, and with a <= 80 that caps b at 118. Drawing b up to 120 asked
+    randint for the empty range (81, 80) and raised -- caught by the emitter, which
+    is why the set builder generates before it writes.
+    """
+    b = rng.randint(3, 118)
+    a = rng.randint(max((2 * b) // 3 + 1, 6), 80)
     v, carried = _step(a, b)
     assert not carried
     lines = [f"3 * {a} - 2 * {b} + 1 = {v}"]
