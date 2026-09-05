@@ -1152,6 +1152,13 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
+        # the gap it closes is a gap that file has by construction: test_moe_module asserts
+        # which optimizer GROUP each parameter lands in and never calls .step(), so group
+        # membership was green through both of E1's deaths while the update itself was broken.
+        # Muon.step() stacks same-shape params, baddbmm is 3-D only, and every dense parameter
+        # is 2-D -- so the MoE experts are the first 3-D params this optimizer has ever seen.
+        "scripts/test_muon_3d.py",
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1549,7 +1556,8 @@ def main():
                      "scripts/test_untie_head.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
-                     "scripts/moe_diag.py"},                                # 52.0s
+                     "scripts/test_muon_3d.py",
+                     "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
