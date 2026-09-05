@@ -16431,6 +16431,15 @@ _FROZEN_KEYS = (
     # (AdamW raises on a sparse grad) -- two segments of one run that disagree on it did not
     # train the same table the same way.
     "mem_values", "mem_top_k", "mem_layers", "mem_sparse",
+    # MoE ARCHITECTURE: what the model IS, so frozen for the same reason mem_values is.
+    # Each one changes the parameter count or the function computed, and every one of them is
+    # asserted by the params gate (prereg#moe_0905: 9,437,184 active / 800,965,704 total /
+    # 92,881,992 non-FFN / ratio 1.000). moe_shared and moe_top_k additionally decide
+    # equal-ACTIVE parity -- (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden or
+    # MoEFFN refuses at construction -- so a silently-omitted value cannot produce a running
+    # arm at the wrong compute, but it CAN produce a refused launch, and frozen is the state
+    # that makes the omission visible in the launch line instead.
+    "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -16490,6 +16499,19 @@ _UNFROZEN_ALLOWLIST = {
     # own log's first screen. MOVE BOTH INTO _FROZEN_KEYS the day a winner is adopted -- a decided
     # setting left here is one a launch can silently omit.
     "mem_sel_lr", "mem_query_norm",
+    # THE MoE ROUTER LR: an optimizer knob, mem_lr's reason exactly. <=0 resolves to the dense
+    # lr (muon_lr) in build_optimizers, which is ruling (f), and the resolved value reaches
+    # ck["cfg"], so an omitted flag trains the registered default rather than an unknown rate.
+    "moe_router_lr",
+    # THE BALANCER'S TWO CONSTANTS. Here rather than frozen because they are not architecture:
+    # gamma is a step size on a control loop and alpha scales a loss term, and neither changes
+    # the parameter count or which parameters a token reaches. Both are PRE-REGISTERED in
+    # runs/prereg.jsonl#moe_0905 and borrowed from facts/moe.json (arXiv:2412.19437 2.1.2/4.2)
+    # at 60x our per-expert token count, and the row says they are FROZEN FOR THE RUN -- so
+    # unfrozen here means "the launch line may state them", not "they may be tuned". If
+    # readout 4's stop rule fires, the finding is that the balancer failed at this scale with
+    # the paper's gamma; a retune is a separate registered row, not an amendment to this one.
+    "moe_bias_gamma", "moe_balance_alpha",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
     # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
     # it would refuse the second arm's launch, which is the opposite of the intent. It is also the

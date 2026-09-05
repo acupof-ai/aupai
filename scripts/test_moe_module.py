@@ -42,7 +42,7 @@ def _cfg(**kw):
 
 def main():
     from model import MoEFFN, SwiGLU
-    bad, n = 0, 8
+    bad, n = 0, 9
 
     # 1. THE TIED-WEIGHTS WITNESS, and it is a precondition rather than a diagnostic. With one
     # routed expert (so the gate is a softmax over one score = 1.0) and one shared expert, both
@@ -263,8 +263,86 @@ def main():
           f"(charter's pre-router figure was 800,670,792; the {12 * 1024 * 24:,} router weights "
           f"are the difference), active FFN/layer {active:,}")
 
+    # 9. WIRING AND OPTIMIZER ROUTING, on a real HybridLM rather than the module alone, because
+    # both properties are decided by train.build_optimizers over named_parameters() of the whole
+    # net and by HybridLM's construction -- neither is visible from MoEFFN.
+    #
+    # CONSTRUCTION ONLY, no forward: chunk_kda and l2norm are Triton with no CPU fallback, so this
+    # model cannot forward here. Routing and refusals are settled at construction, so that costs
+    # nothing.
+    try:
+        import train
+        wiring = _wiring_shape(train)
+        ok = not wiring
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} ruling (f) holds end to end: experts in Muon, router "
+              f"in AdamW at the dense lr, and grad_ckpt + out-of-range moe_layers both refused"
+              f"{'' if ok else ' -- ' + '; '.join(wiring)}")
+    except Exception as e:  # noqa: BLE001 -- an import failure here is a finding, not a skip
+        bad += 1
+        print(f"  BUG  could not read the wiring: {type(e).__name__}: {e}")
+
     print(f"test_moe_module: {n - bad}/{n} pass")
     return 1 if bad else 0
+
+
+def _wiring_shape(train):
+    """Ruling (f)'s two routing rules and the module's two refusals. Returns a list of violations.
+
+    WHY ALL FOUR IN ONE CHECK: they are the four ways a launch line can produce a running arm that
+    is not the registered one. Verified by mutation 2026-09-05 in a tree with its own gitdir --
+    disabling either routing branch or either refusal is caught, each by its own clause. The first
+    version of this harness tested only the routing and BOTH refusal mutants survived it.
+    """
+    def mk(**kw):
+        d = dict(d=64, heads=8, layers=4, ffn_hidden=64, vocab=100, seq=16, attn_every=4,
+                 mem_values=0, head_mixed=0, grad_ckpt=False, attn_res=False,
+                 moe_experts=8, moe_top_k=1, moe_expert_ffn=32, moe_shared=1, moe_layers="0-3")
+        d.update(kw)
+        return type("CfgMoeWiring", (train.Cfg,), d)
+
+    out = []
+    m = train.HybridLM(mk()())
+    opts = train.build_optimizers(m, mk()())
+    names = {id(p): n for n, p in m.named_parameters()}
+    router = experts = None
+    router_lr = None
+    for o in opts:
+        got = {names.get(id(p), "?") for g in o.param_groups for p in g["params"]}
+        if any(n.endswith("router.weight") for n in got):
+            router = type(o).__name__
+            router_lr = {g["lr"] for g in o.param_groups}
+        if any(n.endswith("ffn.w13") for n in got):
+            experts = type(o).__name__
+    # THE ROUTER IN AdamW: it is 2D, so the p.ndim == 2 branch claims it for Muon without an
+    # explicit branch above that one. Measured -- that is where it landed first.
+    if router != "AdamW":
+        out.append(f"router is in {router}, not AdamW (ruling (f))")
+    # THE EXPERTS IN MUON, exactly as the dense FFN they replace. They are 3D (E, N, K), so the
+    # p.ndim == 3 branch sends them to the AttnRes pseudo-query group at attn_res_lr without an
+    # explicit branch. Measured -- 56M parameters of FFN landed in a group meant for 51,200.
+    if experts != "Muon":
+        out.append(f"experts are in {experts}, not Muon (ruling (f))")
+    # THE ROUTER'S LR IS THE DENSE lr, not the expert/table lr. cfg.lr does NOT exist (Cfg carries
+    # muon_lr / embed_lr / scalar_lr), so the resolution reads muon_lr -- the rate the FFN the
+    # router routes trains at.
+    if router_lr != {float(train.Cfg.muon_lr)}:
+        out.append(f"router lr {router_lr} is not the dense lr {float(train.Cfg.muon_lr)}")
+    # grad_ckpt: the counter is written under no_grad inside forward, and recomputation runs the
+    # forward twice, so readout 4 would divide by a doubled denominator and report a healthier
+    # spread than the arm has -- the direction that makes a stop rule fail to fire.
+    try:
+        train.HybridLM(mk(grad_ckpt=True)())
+        out.append("grad_ckpt with moe_experts was NOT refused")
+    except ValueError:
+        pass
+    # An out-of-range layer index would convert fewer layers than the launch line says.
+    try:
+        train.HybridLM(mk(moe_layers="0,9")())
+        out.append("an out-of-range moe_layers index was NOT refused")
+    except ValueError:
+        pass
+    return out
 
 
 if __name__ == "__main__":
