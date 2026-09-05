@@ -9467,7 +9467,20 @@ def cmd_task(argv):
                    help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
-    a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--reading", default=None,
+                   help="how the number is read: thresholds, direction, what a null means. Written "
+                        "BEFORE the result exists. Narrower than it used to be, because --produces "
+                        "now carries the quantity: the triple mirrors exp.py's, where --produces is "
+                        "the hypothesis's quantity, --reading is how the finding is derived from it, "
+                        "and --decides is the decision")
+    a.add_argument("--produces", required=True,
+                   help="the number or answer this task yields THAT NOBODY HAS, e.g. 'kept GB/h at "
+                        "N=32'. Not the artifact path (--evidence carries that at close) and not the "
+                        "activity: a quantity, so that its absence at close is visible")
+    a.add_argument("--decides", required=True,
+                   help="what changes depending on that value, e.g. 'C++ lane goes first if kept "
+                        "GB/h > 8'. A task nobody can name a decision for does not open -- that is "
+                        "the field's whole purpose, and non-empty is the only check")
     a.add_argument("--pair", required=True,
                    help="the second session who agreed this task before it started, and who "
                         "second-reads it after; NOT a co-executor and not the owner -- the pair "
@@ -9532,6 +9545,17 @@ def cmd_task(argv):
                       f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
                       "they are different", file=sys.stderr)
                 return 1
+        # REQUIRED IS NOT NON-EMPTY. argparse's required=True is satisfied by `--produces ""`, so
+        # the one check 4c specified would be bypassed by the shortest possible input -- and a row
+        # carrying "" is worse than a row carrying nothing, because it reads as an answered question.
+        # Whitespace too: "   " passes a truthiness test on the raw string.
+        for flag, val in (("--produces", args.produces), ("--decides", args.decides)):
+            if not str(val).strip():
+                print(f"refusing: {flag} is empty. It is required because a task nobody can name a "
+                      f"number and a decision for does not open; an empty value states that the "
+                      f"question was asked and had no answer, which is a different and false claim.",
+                      file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
@@ -9542,6 +9566,8 @@ def cmd_task(argv):
             "task": args.task,
             "why": args.why,
             "reading": args.reading,
+            "produces": args.produces,
+            "decides": args.decides,
             "blocked_on": args.blocked_on,
             "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
