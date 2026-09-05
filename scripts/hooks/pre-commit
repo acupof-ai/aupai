@@ -56,6 +56,10 @@ ALLOWED = [
     # OUT of data/eval/ -- everything under that prefix has to be in datagen/holdout.py
     # REGISTRY, and registering these would EXCLUDE them from the corpus, inverting the
     # purpose of the probe. Under MAX, one row per line, and read by eval/*.py.
+    # fnmatch's `*` crosses `/`, so this also admits data/probes/novel_ops/*.jsonl, the
+    # constructed-operator curve sets (3.4 MB, tracked so a scored curve is re-derivable
+    # by someone who did not run the emitter). A second pattern for them was added and
+    # removed on 2026-09-05: it matched nothing this one did not.
     "data/probes/*.jsonl",
 ]
 
@@ -888,6 +892,7 @@ def main():
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
+        "mathbank/emit_novel_ops.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
