@@ -220,7 +220,58 @@ def write_shard(out_dir, name, docs, header):
     # THE BUILDER CHECKS ITS OWN OUTPUT. Not the caller's job: this is the write that has to be
     # readable, and the reader lives in another file whose contract nobody states.
     shard_contract(p, meta)
+    write_stats(d, name, docs)
     return p
+
+
+def write_stats(d, name, docs):
+    """<out>/<name>/build_corpus_stats.json, carrying the build-time fingerprint.
+
+    WITHOUT THIS EVERY ARM DIES AT STEP 0. train.py:2034 asserts the domain carries a stamped
+    fingerprint -- "an unstamped domain cannot be distinguished from a swapped-in one" -- and
+    refuses the run otherwise. Measured 2026-09-05: control_arm's launch failed on
+    `AssertionError: mix domain 'p_format' carries no build-time fingerprint`, and all five
+    injection domains were missing it, so all five arms would have failed the same way. The plan
+    check could not see this: it reads the shard and the token cache, and this stamp is neither.
+
+    THE FINGERPRINT COMES FROM corpus_fingerprint.fp_dir, THE FUNCTION THE GUARD ITSELF USES
+    (train.py's _corpus_fp is the same algorithm inline, and corpus_fingerprint.py --self-check
+    asserts parity). Computing it here any other way would stamp a value the guard then rejects.
+    fp_dir skips build_corpus_stats.json itself, so writing the stamp does not invalidate it --
+    which is why the fingerprint can be computed BEFORE the file exists and still match after.
+
+    The canonical key set is build_corpus.py's CANONICAL_STATS_KEYS (aupai-6e 2026-09-04): every
+    writer emits at least those, so a reader sees one shape across domains. This is a synthetic
+    corpus, not a filtered crawl, so the filter fields are empty by construction and say so rather
+    than being omitted -- an absent key and a deliberately-empty one read the same to `.get()`.
+    """
+    sys.path.insert(0, os.path.join(ROOT, "datagen"))
+    from corpus_fingerprint import fp_dir
+
+    kept_chars = sum(len(t) for t, _si, _ei in docs)
+    stats = {
+        "domain": name,
+        "reasons": {},
+        "kept": len(docs),
+        "kept_chars": kept_chars,
+        "kept_tokens": None,
+        "filters": [],
+        "workers": 1,
+        "n_shards": 1,
+        "filters_fp": None,
+        "fingerprint": fp_dir(d),
+        "near_dedup": False,
+        "near_dedup_note": "not run: a synthetic injection shard is an exact seeded permutation "
+                           "of a fixed document set, so duplicate documents are the POINT (n "
+                           "exposures of each) and deduplicating would destroy the measurement",
+        "tokens": None,
+        "tokens_status": "unmeasured: counted by scripts/e1_arm_plan_check.py from the token "
+                         "cache, which is the number the mix weight is derived from",
+        "tokens_config": "built by datagen/build_s_inject.py; not a filtered corpus",
+    }
+    with open(os.path.join(d, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
+        json.dump(stats, fh, ensure_ascii=False, indent=1)
+    return stats
 
 
 def main():
@@ -454,15 +505,68 @@ def _selftest():
     finally:
         shutil.rmtree(d2, ignore_errors=True)
 
+    # (h) THE BUILD-TIME FINGERPRINT STAMP, which is what actually stopped the launch: train.py
+    #     :2034 refuses a mix domain with no build_corpus_stats.json fingerprint, and this builder
+    #     wrote none, so control_arm died at step 0 with "mix domain 'p_format' carries no
+    #     build-time fingerprint" and all five arms would have. Three properties, and the second is
+    #     the one that makes stamping possible at all.
+    d3 = tempfile.mkdtemp()
+    try:
+        docs = [("alpha", 0, 0), ("beta", 1, 0)]
+        write_shard(d3, "wstat", docs, {"_header": True, "seed": 1})
+        sd = os.path.join(d3, "wstat")
+        stats_p = os.path.join(sd, "build_corpus_stats.json")
+        assert os.path.exists(stats_p), "write_shard did not write build_corpus_stats.json"
+        with open(stats_p, encoding="utf-8") as _fh:
+            st = json.load(_fh)
+
+        # 1. THE GUARD'S OWN TWO CONDITIONS, in its order: stamped at all, then stamped == live.
+        #    Read through train._corpus_fp -- the guard's implementation, not the stamper's.
+        import train as _t2
+        assert st.get("fingerprint"), f"no fingerprint key: {sorted(st)}"
+        assert st["fingerprint"] == _t2._corpus_fp(sd), (
+            f"stamped {st['fingerprint']} != live {_t2._corpus_fp(sd)}; the guard at train.py:2039 "
+            f"would refuse this domain")
+
+        # 2. WRITING THE STAMP MUST NOT MOVE THE FINGERPRINT. Only true because both fp
+        #    implementations skip build_corpus_stats.json; if either stopped, every stamp in the
+        #    tree would be self-invalidating and the failure would look like corpus drift.
+        before = _t2._corpus_fp(sd)
+        write_stats(sd, "wstat", docs)
+        assert _t2._corpus_fp(sd) == before, (
+            "writing build_corpus_stats.json changed the directory fingerprint, so the stamp "
+            "invalidates itself and every domain would read as drifted")
+
+        # 3. THE CANONICAL KEY SET, so a reader sees one shape across every writer (aupai-6e
+        #    2026-09-04). Imported from build_corpus.py rather than restated here -- a copied list
+        #    would drift from the schema it claims to satisfy.
+        from build_corpus import CANONICAL_STATS_KEYS
+        missing = [k for k in CANONICAL_STATS_KEYS if k not in st]
+        assert not missing, f"stats missing canonical keys: {missing}"
+
+        # 4. A MUTATION: a stamp carrying the WRONG fingerprint must be refused, or condition 1
+        #    above is satisfied by any string at all.
+        st_bad = dict(st, fingerprint="0000000000000000")
+        with open(stats_p, "w", encoding="utf-8") as _fh:
+            json.dump(st_bad, _fh)
+        assert _t2._corpus_fp(sd) != st_bad["fingerprint"], (
+            "a deliberately wrong fingerprint matched the live one, so the equality assertion "
+            "cannot distinguish a swapped corpus")
+    finally:
+        shutil.rmtree(d3, ignore_errors=True)
+
     print("build_s_inject selftest OK: exposure counts exact and equal per document (1/8/64), "
           "repeats interleaved so first appearances spread past 2x the set size rather than "
           "massing in the first block, the worked solution is inside each document, a pool whose "
           "sha256 is not the frozen one is refused, an existing shard directory is refused rather "
-          "than rebuilt at a new seed, the shard name satisfies train.py's own SHARD_RE, and the "
+          "than rebuilt at a new seed, the shard name satisfies train.py's own SHARD_RE, the "
           "shard contract refuses each half of the launch defect independently -- an in-band "
           "_header line (even one carrying \"content\"), a \"text\"-keyed doc line, a non-shard "
           "filename, an empty shard and a missing sidecar -- while what write_shard now emits "
-          "reads back through train._jsonl_content itself")
+          "reads back through train._jsonl_content itself, and the build_corpus_stats.json stamp "
+          "satisfies train.py:2034's fingerprint guard read through train._corpus_fp, does not "
+          "move the fingerprint by being written, carries build_corpus.py's canonical key set, "
+          "and rejects a wrong fingerprint")
     return 0
 
 
