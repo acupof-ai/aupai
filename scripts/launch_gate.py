@@ -1115,6 +1115,19 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
             return UNKNOWN, (f"no launch command recorded ({src}); this gate answers on argv")
     else:
         src = "the command given to this gate"
+    # A LINE THAT IS NOT A TRAINING LAUNCH HAS NONE OF THIS GATE'S TERMS, and answering it
+    # is a category error in both directions. GO would certify a line the gate never read
+    # (not-red is not green); NO-GO refuses legitimate work -- measured on e1's scoring run
+    # `python3 eval/api_cloze.py --ckpt ... --device cuda:0 --json`, which this gate refused
+    # for lacking --seed, a flag a scoring run has no business carrying. A gate that blocks
+    # a correct command is one that gets switched off, so it must say "not my subject"
+    # instead. The tell is the mix: a training launch names one, on the line or as the
+    # gate's own mix_path argument, and a scorer names a checkpoint and a probe.
+    if not re.search(r"--mix\s+\S+", cmd) and re.search(r"--ckpt\s+\S+", cmd):
+        return UNKNOWN, (f"not a training launch ({src}): no --mix, and --ckpt present -- this "
+                         f"reads as a scoring/eval command, which carries none of this gate's "
+                         f"terms (mix, allocation, seed). The line this gate must see is the "
+                         f"ARM's training launch, not a run that scores its checkpoint")
     m = re.search(r"--mix\s+(\S+)", cmd)
     launch_mix = m.group(1) if m else mix_path
     try:
