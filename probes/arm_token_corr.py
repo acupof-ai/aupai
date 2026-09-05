@@ -184,7 +184,11 @@ def main():
     ap.add_argument("--ckpt_b")
     ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_200m_8b.json"))
     ap.add_argument("--domain", default="code_py_starcoder")
-    ap.add_argument("--cache", default=None, help="override the domain cache path")
+    ap.add_argument("--cache", default=None,
+                    help="token cache to read; default is train._domain_cache_path(--domain), "
+                         "which follows AUPAI_TOKEN_CACHE_DIR and the --fone naming rule. It was "
+                         "a hardcoded /data00 path, which would have kept reading the overlay "
+                         "copy after the caches moved to NVMe")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--rows", type=int, default=64, help="val rows to score (cost is linear)")
     ap.add_argument("--batch", type=int, default=2)
@@ -209,7 +213,20 @@ def main():
             "not an idle nvidia-smi row. This probe is designed to run on CPU."
         )
 
-    cache = a.cache or f"/data00/tokens_{a.domain}.pt"
+    # THE CACHE PATH COMES FROM train._domain_cache_path, not from a literal here. A hardcoded
+    # /data00 path keeps reading the OVERLAY copy after the caches move to NVMe, silently scoring
+    # different tokens than the run being measured (de's step 3, harness
+    # check_no_hardcoded_cache_path, which baselined this very line at 2). The accessor also owns
+    # the --fone half of the name; that half is inert for this probe as invoked (nothing sets
+    # Cfg.fone, and load_checkpoint builds its cfg from the checkpoint without touching the live
+    # Cfg), so calling the accessor is what keeps it correct if that ever changes rather than
+    # something this probe currently depends on.
+    cache = a.cache
+    if cache is None:
+        sys.path.insert(0, ROOT)
+        import train
+
+        cache = train._domain_cache_path(a.domain)
     rows, n_rows_total, n_val = val_rows(a.domain, cache, a.val_frac, a.val_rows_max)
     take = min(a.rows, len(rows))
     rows = rows[:take]
@@ -388,6 +405,10 @@ def _selftest():
     _events = []
 
     def _fake_val_rows(domain, cache, vf, vm, seq=SEQ):
+        # RECORD THE CACHE PATH main() RESOLVED. The stub used to drop this argument, and with it
+        # dropped the only chance to see which file the probe would open: re-hardcoding
+        # /data00/tokens_<domain>.pt kept every other assertion green.
+        _events.append(("cache", cache))
         return torch.zeros(2, SEQ + 1, dtype=torch.long), 1000, 50
 
     def _fake_load_ckpt(path, device="cpu", dtype=None, fone_ok=True):
@@ -408,7 +429,8 @@ def _selftest():
     _orig = {k: getattr(_mod, k) for k in
              ("val_rows", "load_checkpoint", "load_tokenizer", "token_losses")}
     _saved_argv, _saved_env2 = sys.argv[:], os.environ.get("CUDA_VISIBLE_DEVICES")
-    _saved_mod2, _real_cuda2 = sys.modules.get("card_claim"), torch.cuda
+    _saved_mod2 = sys.modules.get("card_claim")
+    _saved_cachedir = os.environ.get("AUPAI_TOKEN_CACHE_DIR")
     try:
         _stub2 = types.ModuleType("card_claim")
 
@@ -420,13 +442,17 @@ def _selftest():
         _stub2.release = lambda name, cards=None: (_events.append(("release", None)), (True, "ok"))[1]
         sys.modules["card_claim"] = _stub2
 
-        class _FC:
-            @staticmethod
-            def current_device():
-                return 0
-
-        torch.cuda = _FC()
+        # PATCH ONE ATTRIBUTE, not the whole torch.cuda module. Replacing the module broke
+        # `import train` inside claim_own_card's path, which reads
+        # torch.cuda._CudaDeviceProperties -- a stub cannot know what else the code under test
+        # will touch, so it must not stand in for a namespace.
+        _real_curdev2 = torch.cuda.current_device
+        torch.cuda.current_device = lambda: 0
         os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+        # RELOCATE THE CACHE DIRECTORY FOR THE RUN. This is what makes the cache assertion below
+        # able to fail: with the variable unset, train's default and the old /data00 literal name
+        # the same file on this box, so a re-hardcoded path would be indistinguishable.
+        os.environ["AUPAI_TOKEN_CACHE_DIR"] = "/tmp/aupai_selftest_cache_dir"
         _mod.val_rows = _fake_val_rows
         _mod.load_checkpoint = _fake_load_ckpt
         _mod.load_tokenizer = lambda p, cfg: None
@@ -442,6 +468,53 @@ def _selftest():
         assert kinds.index("claim") < kinds.index("score"), kinds
         assert kinds[-1] == "release", f"release is not last: {kinds}"
         assert _events[kinds.index("claim")][1] == [7], _events[kinds.index("claim")][1]
+
+        # THE CACHE PATH FOLLOWED AUPAI_TOKEN_CACHE_DIR. Asserted on the path main() actually
+        # passed to val_rows, not on the source: the literal it replaced
+        # (/data00/tokens_<domain>.pt) resolves to a real file on the pod, so a probe that went
+        # back to hardcoding it would read the overlay copy and report a number about the wrong
+        # tokens. Compared against train's own accessor rather than a path spelled out here,
+        # since a second copy of the naming rule (--fone) is the defect being prevented.
+        sys.path.insert(0, ROOT)
+        import train as _train
+        _cache_seen = _events[kinds.index("cache")][1]
+        assert _cache_seen == _train._domain_cache_path("code_py_starcoder"), (
+            f"the probe resolved {_cache_seen!r}, not train._domain_cache_path()'s "
+            f"{_train._domain_cache_path('code_py_starcoder')!r}: it stopped following "
+            f"AUPAI_TOKEN_CACHE_DIR, so after the caches moved to NVMe it reads the overlay copy"
+        )
+        assert _cache_seen.startswith("/tmp/aupai_selftest_cache_dir"), _cache_seen
+
+        # AND IT FOLLOWS THE --fone NAMING RULE. This does not fire in the probe as invoked today
+        # (nothing sets Cfg.fone; load_checkpoint builds its cfg from the checkpoint and leaves the
+        # live Cfg alone), so it is a FORWARD guard, and it earns its place: a version that called
+        # _token_cache_dir() and then spelled f"tokens_{domain}.pt" itself passed every other
+        # assertion here, because the two spellings agree whenever fone is False. A plain cache read
+        # as FoNE gives len(data)==2, i.e. zero rows, and trains/scores on nothing.
+        _events.clear()
+        _saved_fone = _train.Cfg.fone
+        try:
+            _train.Cfg.fone = True
+            main()
+            _fone_seen = dict(_events)["cache"]
+        finally:
+            _train.Cfg.fone = _saved_fone
+        assert _fone_seen.endswith("_fone.pt"), (
+            f"with Cfg.fone the probe resolved {_fone_seen!r}, which is the PLAIN cache: it holds "
+            f"a copy of the naming rule instead of calling train._domain_cache_path(), and a plain "
+            f"cache read as FoNE yields zero rows"
+        )
+        sys.argv = ["arm_token_corr.py", "--ckpt_a", "A", "--ckpt_b", "B",
+                    "--device", "cuda:0", "--allow_cuda", "--rows", "2", "--batch", "1"]
+
+        # AND --cache STILL OVERRIDES, so a one-off cache can be scored without moving the tree's.
+        _events.clear()
+        sys.argv = ["arm_token_corr.py", "--ckpt_a", "A", "--ckpt_b", "B", "--cache", "/x/y.pt",
+                    "--device", "cuda:0", "--allow_cuda", "--rows", "2", "--batch", "1"]
+        main()
+        assert dict(_events)["cache"] == "/x/y.pt", dict(_events)["cache"]
+        sys.argv = ["arm_token_corr.py", "--ckpt_a", "A", "--ckpt_b", "B",
+                    "--device", "cuda:0", "--allow_cuda", "--rows", "2", "--batch", "1"]
 
         # AND THE RELEASE SURVIVES A CRASH. A release placed after the loop instead of in a
         # finally block passes every assertion above and leaks the card on any failure.
@@ -461,7 +534,11 @@ def _selftest():
         for k, v in _orig.items():
             setattr(_mod, k, v)
         sys.argv = _saved_argv
-        torch.cuda = _real_cuda2
+        torch.cuda.current_device = _real_curdev2
+        if _saved_cachedir is None:
+            os.environ.pop("AUPAI_TOKEN_CACHE_DIR", None)
+        else:
+            os.environ["AUPAI_TOKEN_CACHE_DIR"] = _saved_cachedir
         sys.modules.pop("card_claim", None)
         if _saved_mod2 is not None:
             sys.modules["card_claim"] = _saved_mod2
@@ -481,19 +558,14 @@ def _selftest():
 
     _saved_env = os.environ.get("CUDA_VISIBLE_DEVICES")
     _saved_mod = sys.modules.get("card_claim")
-    _real_cuda = torch.cuda
     try:
         _stub = _types.ModuleType("card_claim")
         _stub.acquire = _fake_acquire
         _stub.release = lambda name, cards=None: (True, "stub release")
         sys.modules["card_claim"] = _stub
 
-        class _FakeCuda:
-            @staticmethod
-            def current_device():
-                return 0
-
-        torch.cuda = _FakeCuda()
+        _real_curdev = torch.cuda.current_device
+        torch.cuda.current_device = lambda: 0
         for vis, want in (("7", 7), ("2,5", 2), ("", 0)):
             _seen.clear()
             if vis:
@@ -508,7 +580,7 @@ def _selftest():
         ok, msg = claim_own_card("t", "cpu")
         assert not ok and "nothing to claim" in msg, msg
     finally:
-        torch.cuda = _real_cuda
+        torch.cuda.current_device = _real_curdev
         sys.modules.pop("card_claim", None)
         if _saved_mod is not None:
             sys.modules["card_claim"] = _saved_mod
