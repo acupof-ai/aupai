@@ -52,6 +52,36 @@ def sweep_block(src):
     return "".join(ln[4:] if ln.startswith("    ") else ln for ln in block.splitlines(True))
 
 
+def sweep_is_before_every_refusal(src):
+    """(ok, why): no `sys.exit` or `return` in main() precedes the sweep.
+
+    THE POSITION IS THE PROPERTY, not the glob. Measured 2026-09-05: the sweep sat ~1200 lines into
+    main() with 26 `sys.exit(1)` calls before it -- behind-main, dirty index, credential scan, blob
+    size, shared-file claim -- so it only ran on a commit that had already passed every gate. The
+    copies are left by a run that DIED, and the next attempt is the one most likely to be refused for
+    an unrelated reason and never reach the cleanup: runs/audit_0904/.hookstaged_dead_worlds.py
+    survived a dozen commits with the glob and the scope both correct. A cleanup placed after the
+    gates cleans up only when nothing needed cleaning.
+
+    The worlds below would all have passed in the old position, because exec'ing the lifted block
+    reaches it unconditionally. Only reading the file can see where it sits.
+    """
+    m = re.search(r'^def main\(\):', src, re.M)
+    if not m:
+        return False, "pre-commit has no `def main():`, so the sweep's position cannot be read"
+    body_start = m.end()
+    i_sweep = src.index("    _sweep_dirs = ", body_start)
+    # Line numbers computed against the WHOLE file, not the slice: finditer's offsets are relative
+    # to body_start, and reporting them raw would name lines a reader cannot find.
+    before = [(src[:body_start + x.start()].count("\n") + 1, x.group(0).strip())
+              for x in re.finditer(r'^\s+(?:sys\.exit|return)\b.*$', src[body_start:i_sweep], re.M)]
+    if before:
+        return False, (f"{len(before)} exit/return path(s) in main() run BEFORE the sweep, so a "
+                       f"commit refused by any of them never cleans up the previous run's "
+                       f"leftovers: " + "; ".join(f"line {n}: {t[:60]}" for n, t in before[:5]))
+    return True, f"the sweep is reached before every exit path in main() (line {src[:i_sweep].count(chr(10)) + 1})"
+
+
 def main():
     fails = []
     src = open(HOOK).read()
@@ -86,8 +116,15 @@ def main():
                   f"probe file, so the sweep was never exercised.")
             return 1
 
+        # The namespace the lifted block runs in. `_registered_selftest_paths` is stubbed to the
+        # planted directories rather than left out: the block calls it now (SELFTEST_FILES is a local
+        # defined 400 lines below the sweep, so the hook reads its own literal with ast instead), and
+        # an absent name is a NameError that kills the test instead of running its worlds -- which is
+        # what happened the moment the call was introduced. The stub keeps the SCOPE under the test's
+        # control, which is the point: the worlds are about which directories get swept.
         ns = {"os": os, "glob": __import__("glob"), "sys": sys,
-              "repo_root": lambda: ROOT, "SELFTEST_FILES": [f"{d}/x.py" for d in dirs]}
+              "repo_root": lambda: ROOT,
+              "_registered_selftest_paths": lambda: [f"{d}/x.py" for d in dirs]}
         import io
         from contextlib import redirect_stderr
         buf = io.StringIO()
@@ -106,14 +143,22 @@ def main():
             if os.path.exists(p):
                 os.unlink(p)
 
+    # THE POSITION, read from the file rather than exercised. Every world above exec's the lifted
+    # block and therefore reaches it unconditionally -- they all passed while the sweep sat behind 26
+    # refusals and never ran on the commits that needed it. Only this assertion sees that.
+    ok_pos, why_pos = sweep_is_before_every_refusal(src)
+    if not ok_pos:
+        fails.append(why_pos)
+
     if fails:
         print("test_hookstaged_sweep FAILED:")
         for f in fails:
             print("  -", f)
         return 1
     print(f"test_hookstaged_sweep ok: {len(planted)} planted .hookstaged_* leftover(s) at real "
-          f"selftest directories are removed on hook entry and each removal is announced, so a "
-          f"killed run cannot refuse the next commit")
+          f"selftest directories are removed on hook entry and each removal is announced, and "
+          f"{why_pos} -- so a killed run cannot refuse the next commit, and a commit refused for any "
+          f"other reason still cleans up")
     return 0
 
 
