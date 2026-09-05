@@ -1018,7 +1018,7 @@ def _mem_layers(cfg):
 
 class Block(nn.Module):
 
-    def __init__(self, cfg, is_attn=False, memory=None):
+    def __init__(self, cfg, is_attn=False, memory=None, moe=False):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
         # head_mixed replaces the layer-level alternation entirely: EVERY block gets both mixers,
@@ -1027,7 +1027,14 @@ class Block(nn.Module):
         _hm = getattr(cfg, "head_mixed", 0)
         self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
-        self.ffn = SwiGLU(cfg)
+        # THE FFN IS REPLACED, NOT SUPPLEMENTED, and that is the structural difference from the
+        # memory arm. The memory pool ADDED a branch and left the dense parameter count identical
+        # to the control's; MoE substitutes a sparse FFN for the dense one at equal ACTIVE width,
+        # so the arm's assertion is the four integers of prereg#moe_0905, not equality with the
+        # control. `self.ffn` keeps its name either way: sublayers() below hands it to the AttnRes
+        # path by attribute, and every checkpoint remap, fp8 filter and optimizer rule that names
+        # `.ffn.` keeps working for the arm without a second spelling to maintain.
+        self.ffn = MoEFFN(cfg) if moe else SwiGLU(cfg)
         # THE SHARED POOL IS NOT REGISTERED AS A CHILD, deliberately. Assigning it to an attribute
         # would register it once per block that reads it (layers 3, 6, 9), so state_dict would
         # carry three copies of a table up to 4.3B rows and named_parameters would hand the
@@ -1144,10 +1151,43 @@ class HybridLM(nn.Module):
                 )
         else:
             self.memory, self.mem_layers = None, []
+        # WHICH BLOCKS ARE MoE. Resolved here rather than inside Block so the list is one object
+        # the diagnostics and the optimizer can both read, and so an out-of-range index is caught
+        # at construction instead of silently selecting nothing.
+        self.moe_layers = []
+        if int(getattr(cfg, "moe_experts", 0)) > 0:
+            self.moe_layers = _moe_layers(cfg)
+            _bad = [i for i in self.moe_layers if not 0 <= i < cfg.layers]
+            if _bad:
+                raise ValueError(
+                    f"moe_layers names block(s) {_bad} outside [0, {cfg.layers - 1}]: "
+                    f"moe_layers={getattr(cfg, 'moe_layers', None)!r}. An out-of-range index would "
+                    f"silently convert fewer layers than the launch line says, and the params "
+                    f"assertion would then be the only thing that noticed")
+            # REFUSED WITH grad_ckpt, for the reason the memory branch above documents and one
+            # more that is specific to MoE. Under recomputation the block's forward runs twice, so
+            # tokens_per_expert -- written under no_grad inside forward -- would be counted twice
+            # per step, and readout 4's usage fraction and load Gini are computed from exactly
+            # that counter. A stop rule reading a doubled denominator is worse than no stop rule:
+            # it reports a healthier spread than the arm has. The control's launch line carries
+            # --no-grad_ckpt, so nothing is lost; enabling it later means moving the counter, not
+            # flipping a flag (hooks-dont-fire-in-recompute cost a day here already).
+            if getattr(cfg, "grad_ckpt", False):
+                raise ValueError(
+                    "moe_experts with grad_ckpt is refused. MoEFFN.forward increments "
+                    "tokens_per_expert under no_grad, and grad_ckpt re-runs the forward during "
+                    "recomputation, so every routed token would be counted twice and readout 4's "
+                    "usage fraction, entropy and Gini would all be computed over a doubled "
+                    "denominator -- reporting a healthier load spread than the arm actually has, "
+                    "which is the direction that makes a stop rule fail to fire. The control's "
+                    "line carries --no-grad_ckpt so the arms do not need it. To enable it, move "
+                    "the counter out of forward and measure on a card first."
+                )
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
-                   memory=(self.memory if i in self.mem_layers else None))
+                   memory=(self.memory if i in self.mem_layers else None),
+                   moe=(i in self.moe_layers))
              for i in range(cfg.layers)]
         )
         self.norm = RMSNorm(cfg.d)
