@@ -305,6 +305,16 @@ _RULE_CHECKS = {
     "`cd` inside a backgrounded chain stays in it": "test_pod_wrappers",
     "uv sync after dependency changes": "env_importable",
     "Shared files": "shared_file_claim",
+    # Was manual until 2026-09-05, on the reading that "the invoking directory is a shell fact
+    # no artifact records". Half right: the DIRECTORY is not recorded, but the BRANCH of the
+    # tree the writer is about to append to is, and main is the integration tree by definition
+    # (the controller is the only session that commits there directly). So the rule became a
+    # refusal at the write rather than a consequence at the commit -- which matters because by
+    # the time the hook refuses, the ledger is already dirty in the tree everyone merges
+    # through. Two rows landed there ten minutes apart before this existed (b0's task row, 44's
+    # board row); scope is all three ledgers, tasks/friction/board (4c, de-51).
+    "`harness task` and `harness friction` write the ledger of the tree they are invoked from":
+        "test_integration_tree_guard",
 }
 
 #: Rule bullets in AGENTS.md that no check can enforce, and why. The count is
@@ -400,9 +410,6 @@ _MANUAL_RULES = {
     "A conflicting path needs a commit first, and read which path it is":
         "same -- the sequence happens in a terminal. The consequence IS checked: a wip "
         "commit lands on the branch where dirty_aged and the behind-main hook see it",
-    "`harness task` and `harness friction` write the ledger of the tree they are invoked from":
-        "the invoking directory is a shell fact no artifact records; the integration tree's "
-        "pre-commit hook refuses the resulting non-controller commit, which is the consequence",
 }
 #: Ratchet, a LITERAL. `len(_MANUAL_RULES)` would move with the thing it pins and the
 #: check could never fire -- the ratchet has to be a number a commit has to change.
@@ -2223,6 +2230,62 @@ def _broken_test_pod_wrappers():
         dst = os.path.join(d, "scripts", name)
         open(dst, "w", encoding="utf-8").write(s)
         os.chmod(dst, 0o755)
+    return d
+
+
+def check_test_integration_tree_guard(root):
+    """The ledger writers' integration-tree refusal actually holds.
+
+    Runs the suite rather than reading it, for the same reason test_pod_wrappers does: the
+    three FAIL-OPEN worlds are the load-bearing half. A guard that refused wherever git could
+    not answer would refuse in all 27 of this file's mkdtemp worlds and on every detached CI
+    checkout -- it would pass a refusal-only test while breaking the selftest that runs it."""
+    p = os.path.join(root, "scripts", "test_integration_tree_guard.py")
+    if not os.path.exists(p):
+        return FAIL, ("scripts/test_integration_tree_guard.py is missing; the three ledger "
+                      "writers' integration-tree refusal has no gate")
+    r = subprocess.run([sys.executable, p], capture_output=True, text=True, timeout=180)
+    if r.returncode != 0:
+        out = (r.stdout + r.stderr).strip().split("\n")
+        return FAIL, "; ".join(l.strip() for l in out if "FAIL" in l)[:300] or "the suite failed"
+    return PASS, r.stdout.strip().split("\n")[-1].strip()[:130]
+
+
+def _broken_test_integration_tree_guard():
+    """The REAL suite against a harness.py whose guard never refuses -- the mutation the
+    incident is about, not a deleted file. Deleting the test would also FAIL, but that only
+    proves the check reads a path.
+
+    Placed at <tmp>/scripts/harness.py beside a real .git, because harness.py derives
+    ROOT = dirname(dirname(__file__)): a bare temp dir repoints ROOT at a directory with no
+    .git, where pod_drift.is_pod reads True, and a whole mutation run once passed in that wrong
+    world with every mutant dying at one unrelated assertion (§235, 2026-09-05)."""
+    src = os.path.join(ROOT, "scripts")
+    hp = os.path.join(src, "harness.py")
+    marker = '    if r.returncode != 0 or r.stdout.strip() != "main":\n        return False\n'
+    s = open(hp, encoding="utf-8").read()
+    if s.count(marker) != 1:
+        return None
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    subprocess.run(["git", "-C", d, "init", "-q", "."], capture_output=True, timeout=30)
+    for f in os.listdir(src):
+        t = os.path.join(d, "scripts", f)
+        if f != "harness.py" and not os.path.exists(t):
+            try:
+                os.symlink(os.path.join(src, f), t)
+            except OSError:
+                pass
+    for extra in ("datagen", "data", "facts", "docs"):
+        s_extra = os.path.join(ROOT, extra)
+        if os.path.exists(s_extra) and not os.path.exists(os.path.join(d, extra)):
+            try:
+                os.symlink(s_extra, os.path.join(d, extra))
+            except OSError:
+                pass
+    # Refuses on ANY repository: W3 (a branch) and the fail-open worlds must object.
+    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
+        s.replace(marker, "    if r.returncode != 0:\n        return False\n"))
     return d
 
 
@@ -9222,6 +9285,52 @@ FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect
                   "correctness", "attribution-correction", "coordination")
 
 
+def refuse_in_integration_tree(what, path=None):
+    """A ledger writer refuses in the integration tree unless AUPAI_CONTROLLER=1.
+
+    AGENTS.md's rule -- run `harness task` and `harness friction` in your worktree, never in
+    the integration tree -- was prose, and prose is what people break for cause. Two rows
+    landed in the integration tree ten minutes apart on 2026-09-05: b0's task row, then 44's
+    board row. Nobody was careless; the tree is where you end up when a command refuses to run
+    in a worktree, and the rule's own coverage row says so ("the invoking directory is a shell
+    fact no artifact records").
+
+    THE PREDICATE IS THE CHECKED-OUT BRANCH, NOT A PATH (4c's ruling 2026-09-05). A path test
+    would hardcode /Users/bytedance/code/aupai, which is one laptop's layout and is wrong on
+    the pod and in CI; `git symbolic-ref` answers about the tree the writer is actually about
+    to append to. main is the integration tree by definition here -- the controller is the only
+    session that commits there directly -- so the branch IS the property.
+
+    THE CONSEQUENCE THIS PREVENTS IS NOT THE ROW, IT IS THE DIRTY LEDGER. The row itself is
+    valid content; what breaks is that the integration tree's pre-commit hook refuses a
+    non-controller commit, so the append sits uncommitted in the tree every other session
+    merges through, and the next merge aborts on it. That is why the refusal is at the write
+    and not at the commit: by the time the hook speaks, the file is already dirty.
+
+    Fails OPEN on an unreadable branch, deliberately. If git cannot answer -- no repository, a
+    detached HEAD, git absent -- this cannot be the integration tree in any way that matters
+    (the integration tree is a checkout of main), and refusing there would break every
+    temp-dir fixture and every CI runner that lands detached. A guard whose broken state blocks
+    the write is a guard people disable.
+    """
+    if os.environ.get("AUPAI_CONTROLLER") == "1":
+        return False
+    root = os.path.dirname(os.path.dirname(os.path.abspath(path))) if path else ROOT
+    try:
+        r = subprocess.run(["git", "-C", root, "symbolic-ref", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=10)
+    except (OSError, subprocess.SubprocessError):
+        return False
+    if r.returncode != 0 or r.stdout.strip() != "main":
+        return False
+    print(f"refusing: {what} would write the ledger of the INTEGRATION TREE ({root}, on main).\n"
+          f"  That tree's pre-commit hook refuses a non-controller commit, so the row would sit\n"
+          f"  dirty in the tree every session merges through, and abort the next merge.\n"
+          f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.\n"
+          f"  Controller only: AUPAI_CONTROLLER=1 <cmd>.", file=sys.stderr)
+    return True
+
+
 def _friction_rows(path=None):
     """Every row, newest last. No fold: each row is one blocking event, not a state."""
     p = path or FRICTION_PATH
@@ -9512,8 +9621,16 @@ def _read_tasks(path=None, raw=False):
 
 
 def _append_task(row, path=None):
-    """One event. Append, never rewrite: see _read_tasks."""
+    """One event. Append, never rewrite: see _read_tasks.
+
+    THE INTEGRATION-TREE REFUSAL IS HERE, at the write, not in each CLI op. Both ledgers
+    reach disk through this function and _write_tasks, so one site covers `task add/done/
+    reopen/drop`, `friction add/resolved`, and whatever op is added next -- a guard per op is
+    a guard the next op forgets. See refuse_in_integration_tree for why the branch is the
+    predicate and why it fails open."""
     p = path or TASKS_PATH
+    if refuse_in_integration_tree(f"appending to {os.path.basename(p)}", path=p):
+        raise SystemExit(1)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     # One write() of one complete line, O_APPEND: concurrent appends under a page-sized
     # payload do not interleave, and no reader observes a partial row. Building the
@@ -9527,7 +9644,12 @@ def _append_task(row, path=None):
 
 
 def _write_tasks(rows, path=None):
+    """Rewrite the register in place. Guarded like _append_task, and for a stronger reason:
+    a rewrite in the integration tree dirties the WHOLE file rather than one line, so the
+    merge it aborts cannot be resolved by dropping a row."""
     p = path or TASKS_PATH
+    if refuse_in_integration_tree(f"rewriting {os.path.basename(p)}", path=p):
+        raise SystemExit(1)
     os.makedirs(os.path.dirname(p), exist_ok=True)
     with open(p, "w", encoding="utf-8") as f:
         for r in rows:
@@ -13160,6 +13282,13 @@ CHECKS = [
         _broken_test_pod_wrappers,
     ),
     (
+        "test_integration_tree_guard",
+        "tasks/friction/board writers refuse in the integration tree without AUPAI_CONTROLLER=1",
+        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's BRANCH is recorded, and the refusal has to be at the write because by the time the hook refuses the non-controller commit the ledger is already dirty in the tree everyone merges through",
+        check_test_integration_tree_guard,
+        _broken_test_integration_tree_guard,
+    ),
+    (
         "refusal_precedes_push",
         "pod_push's main-reachability refusal is decided before the first file ships",
         "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
@@ -13382,6 +13511,10 @@ EVIDENCE = {
     "running_sh_override_verified": "repo",
     "refusal_precedes_push": "repo",
     "test_pod_wrappers": "repo",
+    # repo: the suite builds its own temp git repos and reads three source files. Nothing about
+    # it is pod-specific -- which is the point, since the guard's fail-open worlds are exactly
+    # the shapes a runner and a fixture land in.
+    "test_integration_tree_guard": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
 "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
     "shared_file_claim": "repo",
