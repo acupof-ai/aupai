@@ -8413,6 +8413,10 @@ def _token_cache_dir():
     selftest fixture at the call below. Grepped 2026-09-05 -- no other setter exists outside
     documentation of the incident.
 
+    The FALLBACK carries train's three-step order, not just its constant: env, else the NVMe dir if
+    it exists, else dirname(TOKEN_CACHE). A fallback that returned only the constant would put the
+    torch-free host one step behind the accessor it stands in for, which is this function's own
+    incident in a smaller place.
     """
     forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
@@ -8427,6 +8431,14 @@ def _token_cache_dir():
         m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
         if not m:
             raise KeyError("train.py has no TOKEN_CACHE; the check that reads it cannot run")
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+        except ImportError as e:
+            raise KeyError(f"eval/cache_guard.py is unimportable ({e}), so the NVMe default cannot "
+                           f"be read and this host would answer with the pre-move location") from e
+        if os.path.isdir(cache_guard.NVME_CACHE_DIR):
+            return cache_guard.NVME_CACHE_DIR
         return os.path.dirname(m.group(1))
 
 
