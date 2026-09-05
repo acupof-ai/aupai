@@ -62,6 +62,24 @@ def whoami():
 
 
 def append(row):
+    # ONE IMPLEMENTATION OF THE RULE, IMPORTED, NEVER COPIED. The integration-tree refusal
+    # lives in harness.refuse_in_integration_tree because tasks.jsonl and friction.jsonl reach
+    # disk through harness; board.jsonl is the third ledger and 44 wrote a row into the
+    # integration tree ten minutes after b0's task row (4c, 2026-09-05). A ten-line copy here
+    # would be a second writer of one rule, which is how FRICTION_KINDS ended up rejecting a
+    # kind this repo's own merge_main.sh emits.
+    #
+    # Imported INSIDE the function: harness imports board (`from board import liveness`), so a
+    # module-level import here would be a cycle, and `board.py who` should not pay for harness
+    # to answer a question that does not write anything.
+    try:
+        from harness import refuse_in_integration_tree
+    except Exception as e:
+        print(f"board: integration-tree guard unavailable ({type(e).__name__}: {e}); "
+              f"writing anyway -- check the branch by hand", file=sys.stderr)
+    else:
+        if refuse_in_integration_tree("posting to board.jsonl", path=BOARD):
+            raise SystemExit(1)
     os.makedirs(os.path.dirname(BOARD), exist_ok=True)
     with open(BOARD, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
