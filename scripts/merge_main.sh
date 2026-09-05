@@ -5,11 +5,193 @@
 # half-applied index). git's ref lock does not protect the shared working tree; this does.
 set -euo pipefail
 MAIN=/Users/bytedance/code/aupai
-LOCK=$MAIN/.git/merge_main.lock
-[ $# -eq 1 ] || { echo "usage: scripts/merge_main.sh <branch>" >&2; exit 2; }
+# Overridable so --selftest can drive the real predicate against fixture locks instead of a
+# reimplementation of it. Nothing else sets these.
+LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
+HOLDER=$LOCK/holder
+[ $# -eq 1 ] || { echo "usage: scripts/merge_main.sh <branch>|--hold|--release|--selftest" >&2; exit 2; }
+
+# --hold, --release and --selftest are handled AFTER the two functions below, which they call.
+
+# TAKE THE LOCK, then write the holder file. There IS a window, two statements wide, in which the
+# lock exists with no holder -- and a waiter arriving inside it must not read "no holder" as dead,
+# or it removes a lock a live merge is holding, which is worse than the age rule it replaces.
+#
+# I tried to close the window with a staged directory moved into place, and it does not work: `mv a
+# b` where b is an existing directory moves a INTO b on both Linux and macOS, so it silently
+# creates $LOCK/staging instead of failing, and the mutual exclusion is gone. `mv -T` is GNU-only.
+# So the window stays and the WAITER carries the grace: a lock with no holder file is dead only
+# after _NO_HOLDER_GRACE consecutive reads a second apart. The window is two statements; the grace
+# is three seconds; a pre-change lock (there is no holder file in any of them) costs three extra
+# seconds once.
+_NO_HOLDER_GRACE=3
+_take_lock() {  # $1=purpose $2=deliberate $3=pid to record (default $$)
+  mkdir "$LOCK" 2>/dev/null || return 1
+  { echo "pid=${3:-$$}"; echo "purpose=$1"; echo "deliberate=$2";
+    echo "since=$(date -u '+%Y-%m-%d %H:%M:%SZ')"; } > "$HOLDER"
+  return 0
+}
+
+# any lock older than 10 minutes, which is right for the case it was written for -- a merge killed
+# before its EXIT trap ran leaves the directory behind -- and wrong for the case that actually
+# happened: 4c held the lock as a quiet window, and two of e1's merges (e92b9bbd, 7c20e080) landed
+# on main inside it because 10 minutes had passed. The holder was never told; the waiter reported
+# it as clearing a stale lock. Age is a proxy for deadness and it fails in exactly the case where
+# someone is using the lock as intended. Same shape as guarding on [ -d /proc/<pid> ] to mean
+# is-this-running: the criterion does not express the property (AGENTS.md, two incidents).
+#
+# ZOMBIES ARE NOT ALIVE. `kill -0` succeeds on a process that has exited and not been reaped, so
+# it answers "has this pid been reaped", the same defect in a new place. The state is read too, and
+# Z means dead. Both are needed: ps alone cannot distinguish a pid that never existed from one it
+# cannot see.
+#
+# A LOCK WITH NO holder FILE IS DEAD BY CONSTRUCTION. It predates this change, or a crash happened
+# between mkdir and the write; either way nobody can be asked, and refusing forever would need a
+# hand-run rmdir every time. That window is two statements wide and the file is written before the
+# merge starts.
+_lock_is_dead() {
+  if [ ! -f "$HOLDER" ]; then
+    # THE GRACE, not an immediate verdict: see _take_lock. A caller that has not passed
+    # $_NO_HOLDER_GRACE consecutive holderless reads is told "not yet", so the loop keeps waiting.
+    _no_holder_seen=$((${_no_holder_seen:-0} + 1))
+    if [ "$_no_holder_seen" -lt "$_NO_HOLDER_GRACE" ]; then _dead_why=""; return 1; fi
+    _dead_why="no holder file after ${_no_holder_seen}s (a lock predating this change, or a crash between mkdir and the write)"
+    return 0
+  fi
+  _no_holder_seen=0
+  local p st
+  p=$(sed -n 's/^pid=//p' "$HOLDER" 2>/dev/null || true)
+  case "$p" in ''|*[!0-9]*) _dead_why="holder file names no usable pid"; return 0;; esac
+  st=$(ps -o stat= -p "$p" 2>/dev/null | tr -d ' ' || true)
+  if [ -z "$st" ]; then _dead_why="holder pid $p is gone"; return 0; fi
+  case "$st" in Z*) _dead_why="holder pid $p is a zombie ($st) -- exited, not reaped"; return 0;; esac
+  _dead_why=""
+  return 1
+}
+
+# --hold / --release: take the lock as a quiet window and keep it across sessions. This is what the
+# age rule made impossible -- a deliberate hold and a lock left by a killed merge are identical to
+# `find -mmin +10`, so on 2026-09-05 4c's window silently expired and two of e1's merges landed
+# inside it. A hold is now a declared state, not an accident of timing.
+#
+# A HOLD RECORDS THE CALLER'S PARENT, NOT $$. This script exits immediately after taking the hold,
+# so $$ would name a process that is already gone and the very next waiter would read the hold as
+# dead -- an age rule with a zero-second timeout. $PPID is the shell or session that ran the hold
+# and is the thing whose liveness actually means "someone is still coordinating". If the holder does
+# not care about liveness at all (a hold that must outlive its terminal), MERGE_HOLD_PID=0 records
+# an unparseable pid, which reads as dead: the deliberate=yes refusal is then what protects it, and
+# only an explicit --release clears it.
+if [ "$1" = "--hold" ]; then
+  if _take_lock "${MERGE_HOLD_PURPOSE:-a deliberate quiet window}" yes "${MERGE_HOLD_PID:-$PPID}"; then
+    echo "merge_main: holding $LOCK for pid ${MERGE_HOLD_PID:-$PPID} -- release it with" >&2
+    echo "  'scripts/merge_main.sh --release'." >&2
+    echo "  A waiter will NOT time this out. It waits while that pid lives, and even once the pid" >&2
+    echo "  is gone it refuses to remove a deliberate hold, printing this file so it can ask." >&2
+    exit 0
+  fi
+  echo "merge_main: already locked:" >&2; sed 's/^/  /' "$HOLDER" 2>/dev/null || true; exit 1
+fi
+if [ "$1" = "--release" ]; then
+  if [ ! -d "$LOCK" ]; then echo "merge_main: no lock to release" >&2; exit 0; fi
+  _p=$(sed -n 's/^pid=//p' "$HOLDER" 2>/dev/null || true)
+  # A LIVE HOLDER THAT IS NOT YOURS is someone else's lock, and removing it is the age rule's defect
+  # typed by hand instead of fired by a timer. Yours means the pid recorded is this process or its
+  # parent -- the same identity --hold writes.
+  _no_holder_seen=$_NO_HOLDER_GRACE
+  if [ -n "$_p" ] && [ "$_p" != "$$" ] && [ "$_p" != "$PPID" ] && ! _lock_is_dead; then
+    echo "merge_main: the lock is held by a LIVE process that is not you -- refusing to release" >&2
+    sed 's/^/  /' "$HOLDER" >&2
+    echo "  Ask that session. If it is wedged, kill pid $_p and release again." >&2
+    exit 1
+  fi
+  rm -f "$HOLDER"; rmdir "$LOCK"; echo "merge_main: released $LOCK" >&2; exit 0
+fi
+
+# --selftest drives the REAL _lock_is_dead against fixture locks, in BOTH directions -- a
+# predicate that only ever says "dead" passes every positive case: the live-pid and deliberate-hold
+# rows are the ones that would have prevented 2026-09-05.
+if [ "$1" = "--selftest" ]; then
+  _fails=0
+  _t=$(mktemp -d)
+  _case() {  # $1=name $2=want dead|alive
+    if _lock_is_dead; then _got=dead; else _got=alive; fi
+    if [ "$_got" != "$2" ]; then
+      echo "  FAIL $1: want $2, got $_got ($_dead_why)" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   $1 -> $_got${_dead_why:+ ($_dead_why)}"
+    fi
+  }
+  LOCK=$_t/l1; HOLDER=$LOCK/holder; mkdir -p "$LOCK"
+  _no_holder_seen=$_NO_HOLDER_GRACE   # as if the grace had already elapsed
+  _case "holderless lock past its grace" dead
+  _no_holder_seen=0
+  _case "holderless lock inside its grace" alive
+  LOCK=$_t/l2; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  printf 'pid=%s\npurpose=merge x\ndeliberate=no\n' "$$" > "$HOLDER"
+  _case "live holder, this very process" alive
+  # A DELIBERATE HOLD BY A LIVE PID IS ALIVE, which is the case that broke: the old rule removed it
+  # at 10 minutes with the holder never told.
+  LOCK=$_t/l3; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  printf 'pid=%s\npurpose=quiet window\ndeliberate=yes\n' "$$" > "$HOLDER"
+  _case "live deliberate hold (the 2026-09-05 case)" alive
+  # A pid that cannot exist. 2^22 is above every default pid_max on Linux and macOS.
+  LOCK=$_t/l4; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  printf 'pid=4194304\npurpose=killed merge\ndeliberate=no\n' > "$HOLDER"
+  _case "holder pid gone" dead
+  LOCK=$_t/l5; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  printf 'pid=notanumber\ndeliberate=no\n' > "$HOLDER"
+  _case "unparseable pid" dead
+  # A REAL ZOMBIE, because `kill -0` succeeds on one and that is the entire reason the predicate
+  # reads ps stat as well. Made with a python parent that forks, lets the child exit, and does NOT
+  # wait -- a bash `( exit ) &` does not work here: bash reaps its own children asynchronously, so
+  # the first version of this case SKIPped every run with stat=gone, and a case that can silently
+  # skip the assertion it exists for is the one that will be skipped on the day it matters.
+  LOCK=$_t/l6; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  python3 -c '
+import os, sys, time
+pid = os.fork()
+if pid == 0:
+    os._exit(0)
+open(sys.argv[1], "w").write(str(pid))
+time.sleep(20)
+' "$_t/zpid" & _zparent=$!
+  for _i in 1 2 3 4 5 6 7 8 9 10; do [ -s "$_t/zpid" ] && break; sleep 0.2; done
+  _z=$(cat "$_t/zpid" 2>/dev/null || true)
+  _zst=$(ps -o stat= -p "${_z:-0}" 2>/dev/null | tr -d ' ' || true)
+  case "$_zst" in
+    Z*) printf 'pid=%s\ndeliberate=no\n' "$_z" > "$HOLDER"
+        _case "zombie holder (kill -0 would say alive)" dead
+        # THE NEGATIVE CONTROL: if kill -0 rejected this pid too, the case would pass for the wrong
+        # reason and prove nothing about reading stat.
+        if kill -0 "$_z" 2>/dev/null; then
+          echo "  ok   negative control: kill -0 accepts pid $_z, so reading ps stat is load-bearing"
+        else
+          echo "  FAIL negative control: kill -0 rejected the zombie, so this case says nothing about stat" >&2
+          _fails=$((_fails + 1))
+        fi;;
+    *)  echo "  FAIL zombie holder: no zombie was created (stat=${_zst:-gone}, pid=${_z:-unset}) --" >&2
+        echo "       the case that motivates reading ps stat did not run" >&2
+        _fails=$((_fails + 1));;
+  esac
+  kill "$_zparent" 2>/dev/null || true
+  wait "$_zparent" 2>/dev/null || true
+  # AGE IS NOT THE CRITERION: an hour-old lock with a live holder is alive. This is the assertion
+  # that fails if anyone reintroduces `find -mmin +10`.
+  LOCK=$_t/l7; HOLDER=$LOCK/holder; mkdir -p "$LOCK"; _no_holder_seen=0
+  printf 'pid=%s\npurpose=long merge\ndeliberate=no\n' "$$" > "$HOLDER"
+  touch -t 200001010000 "$LOCK" "$HOLDER" 2>/dev/null || true
+  _case "26-year-old lock, live holder (age must not decide)" alive
+  rm -rf "$_t"
+  if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
+  echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
+  echo "  hold both read alive at any age; gone, zombie and unparseable read dead; a holderless"
+  echo "  lock is alive inside its ${_NO_HOLDER_GRACE}s grace and dead after it."
+  exit 0
+fi
+
 for _ in $(seq 1 120); do
-  if mkdir "$LOCK" 2>/dev/null; then
-    trap 'rmdir "$LOCK"' EXIT
+  if _take_lock "merge $1 into main" no; then
+    trap 'rm -f "$HOLDER"; rmdir "$LOCK"' EXIT
     # ALREADY AN ANCESTOR: nothing will ship, and git says only "Already up to date."
     # 2026-09-04: `merge_main.sh b0` merged b0 at ccbc0891, already in main, while b0's real
     # work was on b0-ve-rownorms. The merge printed success, exited 0, and what caught it was
@@ -123,9 +305,24 @@ for _ in $(seq 1 120); do
     fi
     exit 1
   fi
-  if [ -n "$(find "$LOCK" -maxdepth 0 -mmin +10 2>/dev/null)" ]; then
-    echo "merge_main: lock older than 10 min, removing $LOCK" >&2; rmdir "$LOCK" 2>/dev/null || true
+  # THE WAITER'S RULE: liveness, never age. A live holder is waited for however long it takes,
+  # because the alternative is what happened on 2026-09-05 -- landing a merge inside someone's
+  # quiet window and telling neither party. A deliberate hold is never removed even if its pid has
+  # gone, because whoever set it up is coordinating something and the right answer is to ask them,
+  # not to guess; the message names them so asking is possible.
+  if _lock_is_dead; then
+    if grep -q '^deliberate=yes' "$HOLDER" 2>/dev/null; then
+      echo "merge_main: the lock is a DELIBERATE hold whose holder pid is gone -- not removing it." >&2
+      sed 's/^/  /' "$HOLDER" >&2
+      echo "  Ask that session, or clear it with 'scripts/merge_main.sh --release'." >&2
+      exit 1
+    fi
+    echo "merge_main: removing a dead lock -- $_dead_why" >&2
+    [ -f "$HOLDER" ] && sed 's/^/  /' "$HOLDER" >&2 || true
+    rm -f "$HOLDER"; rmdir "$LOCK" 2>/dev/null || true
   fi
   sleep 1
 done
-echo "merge_main: could not take $LOCK in 120 s" >&2; exit 1
+echo "merge_main: could not take $LOCK in 120 s; it is held by a live process:" >&2
+sed 's/^/  /' "$HOLDER" 2>/dev/null || echo "  (no holder file)" >&2
+exit 1
