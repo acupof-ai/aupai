@@ -14791,6 +14791,133 @@ def _selftest_killpg_reaps_children():
     print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
 
 
+def _selftest_kill_verify_ignores_zombies():
+    """A kill whose targets are all zombies reports SUCCESS, and a stranger in the group is
+    not reported as a survivor.
+
+    Two defects in one artifact (b0, 2026-09-05: `harness kill` output at 12:0xZ beside the
+    container's `ps -o stat=`). The kill printed "STILL ALIVE after KILL: 52812 52813 52817"
+    while every one of those pids was state Z, and 52817 had never been in the killed set.
+
+    Local processes, not the pod, for the same reason _selftest_killpg_reaps_children is local:
+    the defect is in how the verification SET is computed, and that logic is namespace-blind.
+    Real zombies, though -- a child whose parent never waits stays Z with its pgid intact, which
+    is why the survivor greps matched it. A stubbed `ps` would not reproduce that.
+
+    ONE PLATFORM DIFFERENCE, MEASURED HERE 2026-09-05 RATHER THAN ASSUMED, because it decides
+    which reader the fixture may use: on macOS `pgrep -g <pgid>` OMITS zombies while
+    `ps -o pid=,stat= -g <pgid>` lists them (pid 20073, ppid 20071, state Z: absent from pgrep,
+    present in ps). On the pod's Linux the zombie is what the greps DO return -- that is the
+    incident itself, three Z pids printed by cmd_kill's pgrep reads, and _drop_zombies' own
+    docstring records the same on 2026-09-01 (1570 of 1577 pgrep -f matches were zombies). So
+    the fixture discovers and reads through `ps -g`, which behaves the same on both, and the
+    property under test is reader-independent: a Z pid appearing in ANY liveness read must be
+    filtered out before it is called a survivor.
+    """
+    import shutil
+    import signal as sig
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="killz_")
+    # A parent that (a) spawns a child, lets it exit, and NEVER waits -> a real zombie, and
+    # (b) spawns a long-lived child AFTER a delay. (b) is 52817's shape: a live member of the
+    # job's process group that appeared after the kill resolved its target set, so it was never
+    # signalled. Both live in the parent's new session, which is the only way to put a second
+    # process in that group -- os.setpgid from here raises EACCES once the child has exec'd
+    # (measured 2026-09-05), so the group has to be built by the group's own leader.
+    #
+    # THE ZOMBIE'S Popen OBJECT MUST STAY REFERENCED. Python's subprocess module reaps
+    # DEREFERENCED Popen objects opportunistically (`subprocess._cleanup()` runs on every new
+    # Popen), so writing the first spawn without binding it made the SECOND spawn wait the
+    # zombie away -- the world built its own subject and then destroyed it, and the assertion
+    # that the world still holds a zombie is what caught it (measured 2026-09-05).
+    parent_py = os.path.join(d, "zparent.py")
+    open(parent_py, "w").write(
+        "import subprocess, sys, time\n"
+        "z = subprocess.Popen([sys.executable, '-c', 'pass'])\n"    # -> zombie, never waited
+        "time.sleep(1.0)\n"
+        "late = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        "time.sleep(600)\n"
+        "print(z.pid, late.pid)\n"                                  # keeps both referenced
+    )
+    proc = sp.Popen([sys.executable, parent_py], start_new_session=True)
+    try:
+        pgid = str(os.getpgid(proc.pid))
+
+        def group_table():
+            """[(pid, stat)] for the whole group. `ps -g`, not `pgrep -g`: see the docstring."""
+            r = sp.run(["ps", "-o", "pid=,stat=", "-g", pgid], capture_output=True, text=True)
+            out = []
+            for ln in r.stdout.splitlines():
+                f = ln.split()
+                if len(f) >= 2:
+                    out.append((f[0], f[1]))
+            return out
+
+        deadline = time.time() + 15
+        zpid, latecomer = None, None
+        while time.time() < deadline and not (zpid and latecomer):
+            time.sleep(0.3)
+            tbl = group_table()
+            zpid = zpid or next((p for p, st in tbl if st.startswith("Z")), None)
+            latecomer = next((p for p, st in tbl
+                              if not st.startswith("Z") and p != str(proc.pid)), None)
+        assert zpid, "the world must actually contain a zombie; no Z pid appeared in 15s"
+        assert latecomer, ("the world must contain a LIVE group member other than the parent; "
+                           "without it the intersection assertion below is untested")
+
+        # THE DEFECT, on the real thing: the zombie is IN the group listing, so a verification
+        # that takes such a listing raw counts it as alive -- which is what printed
+        # "STILL ALIVE after KILL" for three already-dead pids.
+        raw = [p for p, _ in group_table()]
+        assert zpid in raw, ("a zombie must still appear in the group listing -- if it does not, "
+                             "this world no longer reproduces the defect and the next assertion "
+                             "is vacuous")
+
+        # THE FIX: the same read, filtered on state, which is what _drop_zombies does.
+        live = [p for p, st in group_table() if not st.startswith("Z")]
+        assert zpid not in live, f"a Z pid must read as dead; {zpid} did not"
+        assert str(proc.pid) in live, "the live parent must survive the filter"
+
+        # AND THE SURVIVOR SET IS AN INTERSECTION WITH WHAT WAS SIGNALLED, tested by CALLING the
+        # partition on this world's real pids. The first version grepped cmd_kill's source for
+        # the word "signalled" instead, and MEASURED 2026-09-05 that mutation survived: renaming
+        # the assignment left the word elsewhere in the block, so a substring of the
+        # implementation passed for an implementation that no longer intersected anything.
+        survivors, group_extra = _partition_kill_survivors(live, {str(proc.pid)})
+        assert str(proc.pid) in survivors, (
+            f"the signalled parent must be a survivor candidate; got {survivors}")
+        assert latecomer in group_extra and latecomer not in survivors, (
+            f"a live group member never signalled must be reported separately, not as a survivor "
+            f"of this kill -- 52817 was never in the killed set; got survivors={survivors} "
+            f"extra={group_extra}")
+        assert zpid not in survivors and zpid not in group_extra, (
+            "a zombie must reach neither list")
+
+        # And cmd_kill really routes through both. Read the source only for the zombie filter,
+        # which has no return value to test: the partition above is tested by execution.
+        import inspect
+
+        src = inspect.getsource(cmd_kill)
+        verify = src[src.index("Verify three ways"):]
+        assert verify.count("_drop_zombies") >= 3, (
+            f"cmd_kill's verification must filter zombies on all three reads, found "
+            f"{verify.count('_drop_zombies')}")
+        assert verify.count("_partition_kill_survivors") >= 2, (
+            f"both cmd_kill survivor computations must go through the partition, found "
+            f"{verify.count('_partition_kill_survivors')}")
+        os.killpg(int(pgid), sig.SIGTERM)
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+    print("  kill verify: a real zombie is in the group listing and reads as dead; an "
+          "unsignalled group member is not a survivor")
+
+
 def _selftest_milestone_selection():
     """The watcher never labels a below-target checkpoint as the milestone.
 
@@ -17284,6 +17411,7 @@ def _demo(only=None):
     _selftest_provenance_states_the_tree()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
+    _selftest_kill_verify_ignores_zombies()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
@@ -19644,6 +19772,25 @@ def _gpu_descendants(root_host_pid):
     return out
 
 
+def _partition_kill_survivors(group_live, signalled):
+    """(survivors, group_extra) -- which live group members this kill actually signalled.
+
+    A function rather than three lines inline, because it is the part a selftest can execute on
+    known data. The inline version could only be checked by grepping cmd_kill's source for the
+    word "signalled", and MEASURED 2026-09-05: renaming the assignment left that word elsewhere
+    in the block, so the mutation passed. A substring of the implementation is not the property.
+
+    52817's shape is the second return value: a live pid in the job's process group that the
+    kill never targeted -- it joined after resolution, or a sibling shares the pgid. Naming it a
+    survivor sends the operator after a pid that may belong to someone else's job.
+    """
+    sig = set(signalled)
+    survivors, extra = [], []
+    for p in group_live:
+        (survivors if p in sig else extra).append(p)
+    return survivors, extra
+
+
 def cmd_kill(argv):
     """`harness kill <name> [--dry]` — kill a launched job by name, not pid.
 
@@ -19655,14 +19802,45 @@ def cmd_kill(argv):
 
     Children whose cmdline differs from the parent's are found by DESCENT, not by
     pattern: see _gpu_descendants. The pattern alone cannot see them, and using it
-    to verify the kill made the failure silent."""
+    to verify the kill made the failure silent.
+
+    EVERY LIVENESS READ GOES THROUGH _drop_zombies, VERIFICATION INCLUDED. It was applied
+    only to the two RESOLUTION reads; the three verification reads -- `pgrep -g <pgid>`,
+    `pgrep -f <pattern>` and _gpu_descendants -- took their output raw. So a kill that worked
+    perfectly reported failure: MEASURED 2026-09-05 (b0's artifact, harness kill output at
+    12:0xZ beside the container's `ps -o stat=`), "STILL ALIVE after KILL: 52812 52813 52817"
+    while every one of those pids was state Z. A zombie keeps its argv AND its pgid until it
+    is reaped, so both survivor greps match it; AGENTS.md's own rule already says `Z` is dead
+    and the function that implements it was two calls away.
+
+    THE SURVIVOR LIST IS THE KILLED SET, NOT WHATEVER THE GROUP HOLDS. 52817 was never in the
+    killed set -- it appeared only in `pgrep -g`, i.e. it joined the process group after the
+    resolution, or belonged to a sibling sharing the pgid. Reporting it as a survivor of a kill
+    it was not part of sends the operator after the wrong pid, and on a shared box the wrong
+    pid may be someone else's job. So verification now intersects with what was actually
+    signalled, and anything else in the group is reported SEPARATELY as such."""
     ap = argparse.ArgumentParser(prog="harness kill")
     ap.add_argument("name")
     ap.add_argument("--dry", action="store_true", help="print resolved pids, kill nothing")
     a = ap.parse_args(argv)
+    # LAPTOP ONLY, AND IT SAYS SO INSTEAD OF TRACEBACKING. Every read and every kill here goes
+    # through ~/bin/pod or `tn exec`, which are the laptop's two views of the pod; on the pod
+    # itself neither exists and the first subprocess raised FileNotFoundError
+    # /root/bin/pod (b0, 2026-09-05). A traceback from a kill tool is the worst place to learn
+    # you are in the wrong view, because the operator is mid-incident and reads it as "the kill
+    # failed" rather than "this command cannot run here". Checked before anything is resolved,
+    # so nothing is half-killed.
+    pod_bin = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod_bin):
+        print(f"cannot run: harness kill drives the pod through {pod_bin} and `tn exec`, and "
+              f"{pod_bin} does not exist here -- run it from the LAPTOP. Pod-side, kill by exact "
+              f"pid in the container's own namespace (read `ps -o pid=,stat=` there; Z is already "
+              f"dead) and then check `nvidia-smi --query-compute-apps=pid,used_memory`.",
+              file=sys.stderr)
+        return 2
     pid_path = f"/work/aupai/runs/{a.name}.pid"
     r = subprocess.run(
-        [os.path.expanduser("~/bin/pod"), f"cat {pid_path}"],
+        [pod_bin, f"cat {pid_path}"],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -19721,15 +19899,37 @@ def cmd_kill(argv):
     # and GPU occupancy (the resource). The pattern that could not SEE the orphan
     # cannot prove it is gone, and a kill that reports success while 12.7 GB stays
     # held is worse than one that fails loudly.
+    #
+    # ALL THREE READS ARE ZOMBIE-FILTERED, and that is the fix for 2026-09-05: a zombie keeps
+    # its argv and its pgid until reaped, so `pgrep -f` and `pgrep -g` both match it and the
+    # kill reported "STILL ALIVE" for three pids that were state Z.
+    #
+    # SIGNALLED is what the survivor test is about. Anything in the group that we never
+    # signalled is a different fact -- it joined the group after resolution, or a sibling shares
+    # the pgid -- and naming it as a survivor sends the operator after a pid that may belong to
+    # someone else's job.
+    signalled = set(([parent] if parent else []) + children + gpu_kids + monitor_pids)
     left = []
+    group_extra = []
     for pg in pgids:
         r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
-        left += [x for x in r.stdout.split() if x.strip() and x not in left]
+        surv, extra = _partition_kill_survivors(
+            _drop_zombies([x for x in r.stdout.split() if x.strip()]), signalled)
+        left += [x for x in surv if x not in left]
+        group_extra += [x for x in extra if x not in group_extra]
     chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    left += [p for p in chk.stdout.split() if p.strip() and p not in left]
-    still_gpu = [p for p in _gpu_descendants(parent)] if parent else []
+    for p in _drop_zombies([p for p in chk.stdout.split() if p.strip()]):
+        if p not in left:
+            left.append(p)
+    still_gpu = _drop_zombies([p for p in _gpu_descendants(parent)]) if parent else []
     reparented = [p for p in still_gpu if p not in left]
     left += reparented
+    if group_extra:
+        # Not a survivor of this kill, and said so plainly: a card-holding stranger is the
+        # lane's problem, not this job's, and the operator has to know which they are looking at.
+        print(f"  IN THE JOB'S PROCESS GROUP BUT NEVER SIGNALLED BY THIS KILL (joined after "
+              f"resolution, or a sibling sharing the pgid -- NOT verified as ours): "
+              f"{' '.join(group_extra)}", file=sys.stderr)
     if left:
         for hp in left:  # a job that ignores TERM still must not hold a card
             subprocess.run(["tn", "exec", f"kill -9 {hp}"], capture_output=True)
@@ -19737,8 +19937,11 @@ def cmd_kill(argv):
         again = []
         for pg in pgids:
             r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
-            again += [x for x in r.stdout.split() if x.strip()]
-        again += [p for p in (_gpu_descendants(parent) if parent else []) if p not in again]
+            surv, _ = _partition_kill_survivors(
+                _drop_zombies([x for x in r.stdout.split() if x.strip()]), signalled)
+            again += [x for x in surv if x not in again]
+        gpu_again = _drop_zombies(_gpu_descendants(parent)) if parent else []
+        again += [p for p in gpu_again if p not in again]
         if again:
             print(f"STILL ALIVE after KILL: {' '.join(again)}", file=sys.stderr)
             return 1
