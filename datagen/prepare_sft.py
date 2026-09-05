@@ -24,6 +24,10 @@ from tokenizers import Tokenizer
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+# loader.py lives in scripts/; this file moved out of scripts/ on 2026-08-31 (c3a47e8f) and the
+# move left `from loader import ...` unresolvable, so this script has died at import ever since.
+# datagen/build_corpus.py:27 and pack_control_sft_ours.py:42 got this line then; this one did not.
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 from holdout import is_holdout  # noqa: E402
 from loader import format_example  # noqa: E402
 
