@@ -92,16 +92,51 @@ integration tree is, so it is NOT downstream of this design. Checked, not assume
 Also deleted: de's sub-600 s `timeout` guard (4c) — two guards for one failure, and once the 30 s
 gate is out of every commit the duration it protects against no longer occurs.
 
-## Fixture worlds (4/4, `/private/tmp/mm_fixture/worlds.sh`)
+## Override logging moves out of the hook
+
+The pre-commit hook appends a friction row when `AUPAI_BEHIND_MAIN_OK=1` is used, which dirties
+the tree DURING a commit and refused de's next merge (commit -> refused -> commit again). That is
+the shared-tree defect in miniature.
+
+It does not move wholesale: the gate runs later, sees a merge commit, and cannot tell whether any
+commit on the branch used the flag -- the hook is the only party that knows. So the event is
+CAPTURED in the hook and WRITTEN in the gate. The hook appends one JSON line to
+`$(git rev-parse --git-dir)/aupai_pending_friction`; the gate reads it, writes the rows through
+`harness friction add`, and truncates. Measured: a file under the git dir does not appear in
+`git status --porcelain`, and each worktree has its own git dir, so two sessions cannot collide.
+All three properties the hook's comment argues for are kept -- the override writes its own row,
+the row goes through the CLI that owns the accepted-kind list, and a failure never blocks a commit.
+
+## The review gate reads the object database, not the working tree
+
+`merge_main.sh:214` reads `runs/review.jsonl` with a bare CWD-relative `open()` while every git
+call in the same file uses `-C "$MAIN"`. It fails in BOTH directions, and the second is the one
+with no symptom:
+
+- From a branch worktree behind main, a sha reviewed on main is invisible -> the merge is refused
+  until the branch pulls main. (Real in this checkout: worktree 195 rows, main 196.)
+- From a worktree carrying a review row committed but NOT merged, that row satisfies the gate ->
+  a second reader nobody else can see. A refusal gets investigated; an acceptance does not.
+
+Fix: `git -C "$MAIN" show main:runs/review.jsonl`. A gate's inputs must come from the same
+namespace as the thing it gates -- this one gated commits reachable from `main` using evidence
+read from whatever directory the process started in.
+
+## Fixture worlds (5/5, `scripts/test_merge_rebuild_worlds.sh`)
 
 - **W1** a refused gate mid-integration leaves `integ dirty=0, s2 dirty=0`, main unmoved.
 - **W2** two concurrent integrations: first lands, second gets `cas-lost`, retry lands. Both files
   end up on main.
 - **W3** a refused gate lands nothing and main does not move.
 - **W4** `git worktree list` shows 0 worktrees holding main, so CAS is always legal.
+- **W5** a pending override row survives a gate killed between reading and truncating, the next
+  run drains it, and writing it never dirties the tree (4c's assertion).
 
-Two of these were wrong first and are worth recording. W4 failed because the fixture detached a
+Three of these were wrong first and are worth recording. W4 failed because the fixture detached a
 SECONDARY worktree while the primary still held `main` — the real layout has the integration tree
 as the primary, so the fixture was proving the opposite of the deployed shape. And W2 passed by
 construction: each call re-read `main` before its CAS, so the two were sequential, not concurrent,
-and the loser could not lose. Both now read a single pre-read `old`.
+and the loser could not lose. Both now read a single pre-read `old`. W5 used `kill -9 $$` inside
+`( )` to simulate the killed gate, which kills the SCRIPT rather than the subshell -- `$$` is the
+parent's pid in a subshell -- so the world printed nothing and the run ended silently at 4/5,
+which reads like a hang rather than a failing assertion.
