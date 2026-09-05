@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (86 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (173 = 86 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (88 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (175 = 88 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (77 incidents, 308h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (79 incidents, 316h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (20 incidents, 60h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,18 +58,18 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-77 incidents (34 infra, 43 model), ~4h each, 308h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+79 incidents (34 infra, 45 model), ~4h each, 316h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (6 incidents)
+### R2-a No broken world (7 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
 - §89: a selftest "passed" because the world-build step silently failed and the check ran on an empty population.
 - §103: a check that cannot fail — its acceptance condition was tautological.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153).
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206).
 
 ### R2-b Population narrower than the property (18 incidents)
 
@@ -81,14 +81,14 @@ The check's scope, inputs, or environment do not cover the property asked.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203).
 
-### R2-c Mutation did not take (3 incidents)
+### R2-c Mutation did not take (4 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
 - §90: a mutation was applied but never landed in the running process; the check "passed" because the world was never mutated.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207).
 
 ### R2-d Parser reads prose as code (8 incidents)
 
