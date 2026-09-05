@@ -275,8 +275,11 @@ def memory_section():
         '<div class=head style="border-left-color:var(--purple)">'
         '<div class=su><b>MoE 轮</b>——4× 总容量（等激活 FLOP、等 token）买不买得到 '
         'val 增益（≤ −0.010 nat）和更陡的转化曲线？状态：未测。模块合并后开臂，卡 1/2。</div>'
+        '<div class=su><b>实验 1</b>——构造的、训练里没有的技能，曝光 n∈{1, 8, 64, 256} 次 '
+        '（加不注入对照）后 200M 模型学不学会（控制档续训，主读数 S_test 四选一似然）？状态：未测，预注册未落。</div>'
         '<div class=su><b>实验 2</b>——每个生成 token 的转化率，RL vs 预训练，'
-        '技能是构造的、训练里没有。状态：未测。先修 trainer，再两个 SFT。</div>'
+        '技能是构造的、训练里没有。状态：未测。两个 SFT 取消（p04/p16 已删，'
+        'pod 上没有单跑跨 4× 的档），搭 MoE 轮控制档和 E1 每 500 步档：先修 trainer，再 RL。</div>'
         "</div>"
     )
 
