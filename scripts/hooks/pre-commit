@@ -1030,6 +1030,7 @@ def main():
         "scripts/gen_ledger_transport_schema.py",
         "scripts/test_table_master_resync.py",
         "scripts/test_mem_defaults_frozen.py",
+        "scripts/moe_dispatch_bench.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",

@@ -17,6 +17,9 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 ROOT = os.path.dirname(HERE)
 sys.path.insert(0, ROOT)
 sys.path.insert(0, HERE)
+# harness.py lives in scripts/; this file moved out of scripts/ on 2026-08-31 (c3a47e8f) and the
+# move left `import harness` unresolvable, so this script has died at import ever since.
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import harness  # single source of truth for the configured mix
 
