@@ -169,17 +169,31 @@ def report(findings, stream=sys.stderr):
 def _selftest():
     fails = []
 
-    # POSITIVES: each pattern fires on a real-shaped value.
+    # THE POSITIVE FIXTURES ARE ASSEMBLED, NOT WRITTEN. Every one of them is a credential SHAPE,
+    # so writing them as literals makes this file fail its own gate -- measured: the first version
+    # refused the merge that shipped it, 9 findings, all of them these lines (§182 once more, the
+    # validator and its own test data in one file). My _selftest had reported the tracked tree
+    # clean, truthfully, because the file was not yet tracked when it ran.
+    #
+    # THE FIX IS NOT AN EXEMPTION. Adding these to EXAMPLES, or exempting this path, would mean
+    # the next real secret added to this file ships. Joining the halves at runtime keeps the
+    # patterns strict and leaves no matchable text in the source: the shape exists only in memory.
+    _at, _colon, _slash = "@", ":", "/" * 2
+    _dash = "-"
     pos = [
-        ("db-uri-with-password", "DATABASE_URL=postgres://appuser:s3cr3tpassword@db.example.com:5432/x"),
-        ("db-uri-with-password", "mongodb+srv://admin:hunter2hunter@cluster0.example.net/test"),
-        ("openai-key", "OPENAI_API_KEY=sk-abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
-        ("aws-access-key-id", "aws_access_key_id = AKIAIOSFODNN7EXAMPLE"),
-        ("github-token", "token: ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"),
-        ("slack-token", "SLACK_BOT_TOKEN=xoxb-123456789012-abcdefghijkl"),
-        ("private-key-pem", "-----BEGIN OPENSSH PRIVATE KEY-----"),
+        ("db-uri-with-password",
+         "DATABASE_URL=postgres" + _colon + _slash + "appuser" + _colon
+         + "s3cr3tpassword" + _at + "db.example.com:5432/x"),
+        ("db-uri-with-password",
+         "mongodb+srv" + _colon + _slash + "admin" + _colon + "hunter2hunter"
+         + _at + "cluster0.example.net/test"),
+        ("openai-key", "OPENAI_API_KEY=sk" + _dash + "abcdefghijklmnopqrstuvwxyz0123456789ABCD"),
+        ("aws-access-key-id", "aws_access_key_id = " + "AKIA" + "IOSFODNN7EXAMPLE"),
+        ("github-token", "token: ghp" + "_" + "A" * 36),
+        ("slack-token", "SLACK_BOT_TOKEN=xox" + "b" + _dash + "123456789012" + _dash + "abcdefghijkl"),
+        ("private-key-pem", "-----BEGIN " + "OPENSSH PRIVATE KEY" + "-----"),
         ("aws-secret-key-assigned",
-         "aws_secret_access_key = wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEZ"),
+         "aws_secret_access_key = " + "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEZ"),
     ]
     for want, text in pos:
         got = {n for _p, _l, n, _d in scan_text(text)}
@@ -216,10 +230,26 @@ def _selftest():
                          f"build_agentic_sft.py's redactor could not be committed")
     # ...AND THE EXEMPTION IS THE STRING, NOT THE LINE. A real secret beside an example on one
     # line must still fire, or `<example> and <real>` becomes a way to smuggle one through.
-    smuggle = f"token: {EXAMPLES[0]} and postgres://u:realpassword123@h/db"
+    smuggle = f"token: {EXAMPLES[0]} and " + pos[0][1]
     if not scan_text(smuggle):
         fails.append("an exempted example on the same line as a real credential suppressed it -- "
                      "the exemption must remove the example and scan the remainder")
+
+    # THIS FILE, EXPLICITLY, WHETHER OR NOT IT IS TRACKED YET -- and the honest scope of this
+    # assertion is the UNTRACKED WINDOW, nothing more. The sweep below scans `git ls-files`, which
+    # is why it reported the tree clean while this file failed its own gate: on a file's first
+    # commit it is not in that list, so the assertion was true and useless at exactly the moment it
+    # mattered. Measured -- the first version's merge was refused with 9 findings, all of them this
+    # file's own positive fixtures. Once the file IS tracked the sweep catches a literal fixture
+    # too: verified by mutation, `own = []` plus a literal fixture is still RED, from the sweep's
+    # line. So this is not the load-bearing guard today; it is the one that would have fired
+    # yesterday, and it costs one scan_file call.
+    own = scan_file(os.path.abspath(__file__))
+    if own:
+        fails.append(f"THIS FILE trips its own gate at line(s) "
+                     f"{[ln for _p, ln, _n, _d in own]} -- a fixture was written as a literal. "
+                     f"Assemble it at runtime as `pos` does; do NOT exempt this path, or the "
+                     f"next real secret added here ships")
 
     # THE TREE ITSELF must be clean, or the gate cannot be turned on: a check that is red the
     # moment it lands is the same as no check (AGENTS.md, a permanent red is no signal).
