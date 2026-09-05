@@ -937,6 +937,7 @@ def main():
         # 14.5s, test_fewshot_demos 10.8s, test_split_bitwise 10.1s, test_rep_stop_flag 9.9s
         # -- so a commit staging several of these pays real seconds. That is the price of the
         # gate, not a defect; the alternative was 19 tests nobody ran.
+        "algorithms/test_gspo_ratio.py",
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
@@ -984,6 +985,7 @@ def main():
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
         "mathbank/emit_novel_ops.py",
+        "mathbank/emit_novel_ops_4way.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
