@@ -1,0 +1,28 @@
+Traceback (most recent call last):
+  File "/work/aupai/eval/api_cloze.py", line 1072, in <module>
+    sys.exit(_selftest() if "--selftest" in sys.argv else main())
+                                                          ^^^^^^
+  File "/work/aupai/eval/api_cloze.py", line 659, in main
+    model, tok, cfg = load_checkpoint(a.ckpt, a.tokenizer, a.device)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/scripts/loader.py", line 52, in load_checkpoint
+    ck = torch.load(path, map_location=device, weights_only=False)
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 1579, in load
+    return _load(
+           ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2190, in _load
+    result = unpickler.load()
+             ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2154, in persistent_load
+    typed_storage = load_tensor(
+                    ^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 2116, in load_tensor
+    wrap_storage = restore_location(storage, location)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 1915, in restore_location
+    return default_restore_location(storage, map_location)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/serialization.py", line 737, in default_restore_location
+    raise RuntimeError(
+RuntimeError: don't know how to restore data location of torch.storage.UntypedStorage (tagged with /work/aupai/data/tokenizer.json)

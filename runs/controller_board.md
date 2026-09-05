@@ -43,6 +43,7 @@ Percent = share of the deliverable landed on main and verified by a second reade
 | GPUs | all 8 lent to the RL team, open-ended, ask before reclaiming (user); six-cell probe grid on hold with scripts on the pod and grants written INACTIVE |
 | Efficiency-gap discussion | docs/lessons/efficiency_gap_views.md (44, merged f02ad43b): 7 views; gap is in the prior, per-token energy silicon already wins (3542x at 200M), data ratio 10^5; three experiments ranked |
 | Next experiments (no GPU) | e1: power-law exponent b on existing arms (exp. 3); 3b: register a held-out skill for the conversion-rate curve (exp. 1); RLVR-vs-pretraining-tokens curve (exp. 2) waits for cards |
+| Token caches -> NVMe (user order 2026-09-05T02:22Z) | de, reviewer 44: measured first -- container /data00 is a directory on the overlay (vda2, 207 MB/s direct read), the four 3.5 TB NVMe drives are host-only mounts (/data01 carries a 366 GB backup, /data02 and /data03 3.1 TB free each), container is privileged with no /dev/nvme nodes (mknod 259:N works, first mount attempt failed, cause to be read). Steps: mount, copy 22 caches + .srcfp with sha256 both sides (nothing deleted from /data00), AUPAI_TOKEN_CACHE_DIR in run_ddp.sh + launch env, freshness check refuses the overlay, bootstrap stage, root_durable inversion. Shas and numbers per step |
 | Memory layers | all arms stopped on readout 4; b0's --mem_sel_lr / --mem_query_norm flags merged (defaults bit-for-bit, pinned by tilerl's test); relaunch only after the grid |
 
 ## Open user decisions (unchanged)

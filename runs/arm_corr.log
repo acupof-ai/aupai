@@ -1,0 +1,300 @@
+pid 994178 is a shell, not the job: 'bash /work/aupai/runs/arm_corr_run.sh'
+A claim on a shell fails both ways -- the shell exits and the card reads ORPHAN, or it lingers and the card reads held after the job is gone (both happened 2026-09-03).
+Its python/torchrun descendants -- claim one of these:
+    --pid 994180  python3 /work/aupai/probes/arm_token_corr.py --ckpt_a /work/aupai/ckpt_b0_headmix_armA.pt --ckpt
+    --pid 994182  python3 /work/aupai/scripts/card_claim.py acquire --name e1_arm_token_corr --cards 7 --pid 99417
+code_py_starcoder: cache holds 2144719 rows, train's val prefix is 5000, scoring 64 rows = 262144 tokens
+  loading /work/aupai/ckpt_b0_headmix_armA.pt
+pid 994178 is a shell, not the job: 'bash /work/aupai/runs/arm_corr_run.sh'
+A claim on a shell fails both ways -- the shell exits and the card reads ORPHAN, or it lingers and the card reads held after the job is gone (both happened 2026-09-03).
+Its python/torchrun descendants -- claim one of these:
+    --pid 994180  python3 /work/aupai/probes/arm_token_corr.py --ckpt_a /work/aupai/ckpt_b0_headmix_armA.pt --ckpt
+    --pid 994533  python3 /work/aupai/scripts/card_claim.py acquire --name e1_arm_token_corr --cards 7 --pid 99417
+  scoring a
+pid 994178 is a shell, not the job: 'bash /work/aupai/runs/arm_corr_run.sh'
+A claim on a shell fails both ways -- the shell exits and the card reads ORPHAN, or it lingers and the card reads held after the job is gone (both happened 2026-09-03).
+Its python/torchrun descendants -- claim one of these:
+    --pid 994180  python3 /work/aupai/probes/arm_token_corr.py --ckpt_a /work/aupai/ckpt_b0_headmix_armA.pt --ckpt
+    --pid 994553  python3 /work/aupai/scripts/card_claim.py acquire --name e1_arm_token_corr --cards 7 --pid 99417
+pid 994178 is a shell, not the job: 'bash /work/aupai/runs/arm_corr_run.sh'
+A claim on a shell fails both ways -- the shell exits and the card reads ORPHAN, or it lingers and the card reads held after the job is gone (both happened 2026-09-03).
+Its python/torchrun descendants -- claim one of these:
+    --pid 994180  python3 /work/aupai/probes/arm_token_corr.py --ckpt_a /work/aupai/ckpt_b0_headmix_armA.pt --ckpt
+    --pid 994671  python3 /work/aupai/scripts/card_claim.py acquire --name e1_arm_token_corr --cards 7 --pid 99417
+Traceback (most recent call last):
+  File "/work/aupai/probes/arm_token_corr.py", line 296, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/work/aupai/probes/arm_token_corr.py", line 170, in main
+    losses[tag] = token_losses(model, X, Y, a.batch, a.device)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/probes/arm_token_corr.py", line 56, in token_losses
+    logits = model(xb)
+             ^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/model.py", line 1107, in forward
+    hidden = self.norm(self._body(emb, cu))
+                       ^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/model.py", line 1040, in _body
+    out = torch.utils.checkpoint.checkpoint(fn, h, use_reentrant=False) if ckpt else fn(h)
+                                                                                     ^^^^^
+  File "/work/aupai/model.py", line 1039, in <lambda>
+    fn = lambda t, norm=norm, f=f: f(norm(t))  # noqa: E731
+                                   ^^^^^^^^^^
+  File "/work/aupai/model.py", line 789, in <lambda>
+    return ((self.ar1, self.n1, lambda t: self.mixer(t, cu)), (self.ar2, self.n2, self.ffn))
+                                          ^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+    return self._call_impl(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+    return forward_call(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/work/aupai/model.py", line 206, in forward
+    out, _ = chunk_kda(
+             ^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1263, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/backends/__init__.py", line 214, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1263, in _fn
+    return fn(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/kda/chunk.py", line 416, in chunk_kda
+    return ChunkKDAFunction.apply(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/autograd/function.py", line 596, in apply
+    return super().apply(*args, **kwargs)  # type: ignore[misc]
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/utils/_decorators.py", line 152, in wrapper
+    return fn(*processed_args, **processed_kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/amp/autocast_mode.py", line 481, in decorate_fwd
+    return fwd(*args, **kwargs)  # pyrefly: ignore [not-callable]
+           ^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/kda/chunk.py", line 74, in forward
+    (o, final_state, g_cumsum, Aqk, Akk, w, u, qg, kg, v_new, h, initial_state) = chunk_kda_fwd(
+                                                                                  ^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/kda/chunk_fwd.py", line 115, in chunk_kda_fwd
+    o = chunk_gla_fwd_o_gk(
+        ^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/gla/chunk.py", line 984, in chunk_gla_fwd_o_gk
+    chunk_gla_fwd_kernel_o[grid](
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/jit.py", line 370, in <lambda>
+    return lambda *args, **kwargs: self.run(grid=grid, warmup=False, *args, **kwargs)
+                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/autotuner.py", line 459, in run
+    return self.fn.run(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/fla/ops/utils/cache.py", line 378, in run
+    return super().run(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/autotuner.py", line 238, in run
+    used_cached_result = self.check_disk_cache(key, pruned_configs, benchmark)
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/autotuner.py", line 202, in check_disk_cache
+    bench_fn()
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/autotuner.py", line 229, in benchmark
+    timings = {config: self._bench(*args, config=config, **kwargs) for config in pruned_configs}
+                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/triton/runtime/autotuner.py", line 164, in _bench
+    return self.do_bench(kernel_call, quantiles=(0.5, 0.2, 0.8))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/triton/testing.py", line 150, in do_bench
+    di.synchronize()
+  File "/usr/local/lib/python3.12/dist-packages/torch/cuda/__init__.py", line 1162, in synchronize
+    return torch._C._cuda_synchronize()
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+torch.AcceleratorError: CUDA error: misaligned address
+Search for `cudaErrorMisalignedAddress' in https://docs.nvidia.com/cuda/cuda-runtime-api/group__CUDART__TYPES.html for more information.
+CUDA kernel errors might be asynchronously reported at some other API call, so the stacktrace below might be incorrect.
+For debugging consider passing CUDA_LAUNCH_BLOCKING=1
+Compile with `TORCH_USE_CUDA_DSA` to enable device-side assertions.
+
+no claim for e1_arm_token_corr
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+pid 994178 holds no GPU device fd: '[bash] <defunct>'
+A claim on a process that is not on a card protects nothing: the card reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).
+No descendant holds one yet either. Wait for the job to reach torch.cuda.set_device (~1.3s after exec, measured) and claim then.
+CLAIM NEVER ACQUIRED after 60 attempts -- the job is running UNCLAIMED
+
+# COMPLETE COPY of the pod's /work/aupai/runs/arm_corr.log, 26007 bytes / 293 lines,
+# fetched 2026-09-05 after the writer (pid 994178) had exited -- ps STAT=Zs, so the file
+# is final and this is not a tail of a growing log. Byte count verified equal to the pod's.
+# The ~60 repeated card_claim refusals are kept deliberately: the finding is that the
+# refusal printed the correct pid to claim on every attempt and went unread.
+# END OF SNAPSHOT
