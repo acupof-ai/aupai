@@ -923,21 +923,45 @@ class MoEFFN(nn.Module):
                 self.windows += 1
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)
-        rows = flat[tok[order]]
+        # ONE CAST, ONE PLACE, for every expert matmul in this module (tilerl's review,
+        # 2026-09-05). autocast covers nn.Linear and does NOT cover _grouped_mm: under the same
+        # bf16 autocast the dense SwiGLU takes fp32 in and returns bf16, while _grouped_mm raises
+        # "Expected inputs of BF16 type but got mat_a.dtype=torch.float32". So the dense FFN this
+        # arm replaces never showed the defect, and E1 died before step 1 at this line
+        # (runs/b0_moe_e1.log:76, 2026-09-05T06:52Z, dynamo's meta for aten._grouped_mm).
+        #
+        # `xw` FEEDS BOTH PATHS, routed and shared, so the dtype is decided here and not in four
+        # places. sh13/sh2 work today only because they are nn.Linear and autocast covers them --
+        # a dtype the routed path could not use. Casting once removes that asymmetry rather than
+        # relying on two mechanisms to agree.
+        xw = flat.to(self.w13.dtype)
+        rows = xw[tok[order]]
         h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)
         a, b = h.chunk(2, dim=-1)
         y = self._situ(a, b, lambda g: torch._grouped_mm(
             g.contiguous(), self.w2.transpose(-2, -1), offs=offs))
         # Scatter back, weighted by the un-biased gate. index_add_ over the un-sorted token index
         # so a token's top_k contributions land on its own row.
-        gflat = gate.reshape(-1)[order].to(y.dtype)
-        out = torch.zeros(n, d, device=x.device, dtype=y.dtype)
-        out.index_add_(0, tok[order], y * gflat[:, None])
-        # THE SHARED EXPERT, which every token also traverses.
-        hs = self.sh13(flat)
+        #
+        # THE GATE MULTIPLY AND THE ACCUMULATION STAY fp32 (tilerl's review). `gate` is a softmax
+        # probability and up to top_k of them are summed into the same row, so this is the one
+        # place with no dense analogue to match: the control's FFN has no gate and no scatter.
+        # bf16 has 8 mantissa bits, and the same argument that put the optimizer's master copy in
+        # fp32 (train.py's fp32_master, 91% of bf16 updates were bit-identical no-ops) applies to
+        # a sum of three weighted contributions. Cast once at the return instead.
+        gflat = gate.reshape(-1)[order]
+        out = torch.zeros(n, d, device=x.device, dtype=torch.float32)
+        out.index_add_(0, tok[order], y.float() * gflat[:, None])
+        # THE SHARED EXPERT, which every token also traverses. Fed from the SAME cast input.
+        hs = self.sh13(xw)
         sa, sb = hs.chunk(2, dim=-1)
-        out = out + self._situ(sa, sb, self.sh2)
-        return out.view(B, T, d)
+        out = out + self._situ(sa, sb, self.sh2).float()
+        # BACK TO THE INPUT DTYPE. Measured on this model: under bf16 autocast the dense SwiGLU
+        # returns bf16 for a bf16 input, and the real call site is `x + self.ffn(self.n2(x))` at
+        # model.py:1056 where x is bf16 -- so at the launch shape this cast returns bf16 and the
+        # arm's residual has the control's dtype. It is written as x.dtype rather than hardcoded
+        # bf16 so the module stays correct under an fp32 or an autocast-off caller.
+        return out.to(x.dtype).view(B, T, d)
 
     @torch.no_grad()
     def diagnostics(self, reset=True):
