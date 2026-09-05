@@ -482,7 +482,7 @@ class ProductKeyMemory(nn.Module):
     grads -- Adagrad and SparseAdam do, AdamW does not.
     """
 
-    def __init__(self, n_values, d, top_k=32, key_dim=None, sparse=True):
+    def __init__(self, n_values, d, top_k=32, key_dim=None, sparse=True, query_norm="none"):
         super().__init__()
         side = int(round(math.isqrt(n_values)))
         if side * side != n_values:
@@ -505,6 +505,35 @@ class ProductKeyMemory(nn.Module):
         self.n_mem = RMSNorm(d)
         # ONE query head (charter). Projects to both halves at once; the split is a view.
         self.query = nn.Linear(d, 2 * self.key_dim, bias=False)
+        # QUERY NORMALISATION, and "none" reproduces the M1/M2/M3 arms bit-for-bit -- that is what
+        # makes this flag safe to land before it is chosen. Added because those three arms were
+        # stopped 2026-09-05 under readout 4 with key-usage collapse (M1 touched 0.0945 at step
+        # 1000, gini 0.9192), and the query goes straight from this Linear into the two half-key
+        # top-k with nothing bounding its scale.
+        #
+        # "bn": Lample et al. 2019 section 3.3 BatchNorm the query network's output and report it
+        # as what keeps key usage spread. Over the flat (B*T, 2*key_dim) query it is a per-feature
+        # statistic across tokens, so it carries no position information and cannot leak across the
+        # causal boundary. Its cost is that the statistic is batch-dependent: under DDP each rank
+        # normalises by its own tokens, and eval uses running stats, so train and eval are not the
+        # same function.
+        # "l2": per-half L2-normalise query AND keys, then scale by a learned temperature. Bounds
+        # every score to [-temp, temp] so no single key's norm can dominate the top-k, with no
+        # batch statistic -- identical under DDP, at batch 1, and in eval. The temperature is
+        # stored as a log so the optimizer cannot drive it through zero; init 1/sqrt(key_dim) is
+        # the scale a dot product of two unit vectors in key_dim dimensions would otherwise have.
+        if query_norm not in ("none", "l2", "bn"):
+            raise ValueError(
+                f"query_norm must be none/l2/bn, got {query_norm!r}. An unrecognised value must "
+                f"raise rather than fall back to 'none': a typo would silently run the control "
+                f"arm under a name that says otherwise, which is how an arm reports a clean null "
+                f"for a change it never applied.")
+        self.query_norm = query_norm
+        if query_norm == "bn":
+            self.q_bn = nn.BatchNorm1d(2 * self.key_dim)
+        elif query_norm == "l2":
+            self.q_log_temp = nn.Parameter(
+                torch.tensor(math.log(math.sqrt(float(self.key_dim)))))
         # Two key sub-tables, each sqrt(V) x key_dim. These are the searchable half-keys.
         self.keys = nn.Parameter(torch.randn(2, side, self.key_dim) * (self.key_dim ** -0.5))
         # The table itself. padding_idx unset: every row is a real value.
@@ -621,9 +650,24 @@ class ProductKeyMemory(nn.Module):
         B, T, d = x.shape
         h = self.n_mem(x)
         q = self.query(h).view(B * T, 2, self.key_dim)
+        k0, k1 = self.keys[0], self.keys[1]
+        # THE ONE BRANCH THE QUERY-NORM FLAG ADDS. "none" leaves q and the keys exactly as the
+        # M1/M2/M3 arms had them, which is what test_arch_compat asserts bitwise -- a flag whose
+        # default changed the arm would make every earlier measurement incomparable.
+        if self.query_norm == "bn":
+            # BatchNorm1d over the flat (B*T, 2*key_dim) query: the two halves are normalised
+            # together because they are one projection's output, and splitting them would give the
+            # halves different statistics for no reason. In eval it uses running stats.
+            q = self.q_bn(q.reshape(B * T, 2 * self.key_dim)).view(B * T, 2, self.key_dim)
+        elif self.query_norm == "l2":
+            # BOTH SIDES normalised, then one learned temperature. Normalising only the query
+            # would leave a key free to win every top-k by growing its norm, which is the same
+            # concentration by another route.
+            q = F.normalize(q, dim=-1) * self.q_log_temp.exp()
+            k0, k1 = F.normalize(k0, dim=-1), F.normalize(k1, dim=-1)
         # Each half scores its own sqrt(V) keys and keeps top_k.
-        s0 = torch.einsum("nk,ck->nc", q[:, 0], self.keys[0])
-        s1 = torch.einsum("nk,ck->nc", q[:, 1], self.keys[1])
+        s0 = torch.einsum("nk,ck->nc", q[:, 0], k0)
+        s1 = torch.einsum("nk,ck->nc", q[:, 1], k1)
         v0, i0 = s0.topk(self.top_k, dim=-1)
         v1, i1 = s1.topk(self.top_k, dim=-1)
         # The Cartesian combine: top_k x top_k candidate pairs, whose scores add because the full
@@ -803,6 +847,7 @@ class HybridLM(nn.Module):
                 _mv, cfg.d,
                 top_k=int(getattr(cfg, "mem_top_k", 32)),
                 sparse=bool(getattr(cfg, "mem_sparse", True)),
+                query_norm=str(getattr(cfg, "mem_query_norm", "none")),
             )
             self.mem_layers = sorted(set(_layers))
             # MEMORY + attn_res IS HANDLED IN BOTH PATHS, and it took a defect to get here.

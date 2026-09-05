@@ -16083,6 +16083,21 @@ _UNFROZEN_ALLOWLIST = {
     # declare settled a number nobody has measured. The architecture keys that DO decide what the
     # model is -- mem_values, mem_top_k, mem_layers, mem_sparse -- are frozen.
     "mem_lr", "mem_wd",
+    # The two selection-path candidates, added 2026-09-05 after M1/M2/M3 were stopped under
+    # readout 4 (M1 pool_touched_frac 0.0945 at step 1000, key_gini 0.9192). Here for
+    # fp32_master's reason and not mem_lr's: they exist to take several values, because the
+    # six-cell probe on cards 0/1/2/3/4/6 is run precisely to settle which one spreads key usage.
+    # Freezing them would refuse those launches, which is the opposite of the intent.
+    #
+    # AND mem_query_norm IS AN ARCHITECTURE KEY, unlike everything else in this set -- l2 adds a
+    # learned temperature and bn adds a BatchNorm, so an unfrozen value CAN be silently omitted
+    # and an arm would then report a null for a fix it never applied (the §177 shape). Two things
+    # stand against that rather than one: model.ProductKeyMemory raises on an unrecognised value
+    # instead of falling back to "none", and train.py's cfg-diff line prints mem_query_norm in
+    # `cfg non-default` whenever it is not "none", so a cell running the control is visible in its
+    # own log's first screen. MOVE BOTH INTO _FROZEN_KEYS the day a winner is adopted -- a decided
+    # setting left here is one a launch can silently omit.
+    "mem_sel_lr", "mem_query_norm",
     # The arm's LABEL, not part of what it trains: it names the rows in runs/memory_diag.jsonl and
     # changes no computation. Deliberately unfrozen because it MUST differ between arms -- freezing
     # it would refuse the second arm's launch, which is the opposite of the intent. It is also the
