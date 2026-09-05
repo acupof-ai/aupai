@@ -2459,6 +2459,14 @@ def main():
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
     )
     parser.add_argument(
+        "--bf16", action="store_true",
+        help="cast the model to bf16 WITHOUT the fp8 conversion. Exists so a MoE arm and its "
+             "dense control can be compared at EQUAL precision: --fp8 performs the bf16 cast "
+             "AND the fp8 conversion, so dropping it to equalise precision leaves fp32 masters "
+             "(and torch._grouped_mm refuses those), while this flag gives the cast alone. "
+             "Mutually exclusive with --fp8"
+    )
+    parser.add_argument(
         "--fp32_master",
         action="store_true",
         help="optimizer owns fp32 copies of the bf16 weights (see MasterWeights)",
@@ -2802,6 +2810,29 @@ def main():
         if is_main:
             print(f"Resumed from {args.resume} (step {resume_step})", flush=True)
     fp8 = args.fp8 and amp
+    # --bf16 IS THE CAST WITHOUT THE CONVERSION, and it exists because dropping --fp8 to equalise
+    # precision does NOT give bf16. Amendment 8 of prereg moe_0905 specified a MoE-vs-dense pair
+    # "both with fp8 off" to remove the fp8/bf16 confound; run b0_p5_e1_bf16 then died at step 0 on
+    # the guard below, because `--fp8` performs TWO things -- the bf16 cast at the `if fp8:` branch
+    # AND convert_to_fp8_compute -- so without it the masters stay fp32 and only autocast is bf16.
+    # The pair as designed could not exist. This flag separates the two effects: bf16 masters, no
+    # fp8 GEMMs, so a MoE arm and its dense control can be run at genuinely equal precision.
+    #
+    # REFUSED TOGETHER rather than silently ranked. Either order of precedence is a configuration
+    # someone asked for and did not get, and the arm's numbers would carry a precision nobody
+    # chose -- the same objection this program raises about the fp8/bf16 confound itself.
+    bf16_only = args.bf16 and amp
+    if args.bf16 and args.fp8:
+        raise SystemExit(
+            "REFUSING: --bf16 and --fp8 together. --fp8 already casts the model to bf16 and then "
+            "converts the linears to fp8 compute; --bf16 is the cast WITHOUT that conversion. "
+            "Passing both asks for fp8 GEMMs and no fp8 GEMMs at once. Pick one."
+        )
+    if args.bf16 and not amp:
+        raise SystemExit(
+            "REFUSING: --bf16 on a device without amp (device is not cuda), so the cast would "
+            "change the masters with no autocast to match. Drop --bf16."
+        )
     amp_dtype = torch.bfloat16
     # A MoE ARM WITHOUT --fp8 IS REFUSED HERE, before the first step (4c's ruling (c) 2026-09-05).
     #
@@ -2826,15 +2857,17 @@ def main():
     # the arithmetic nobody asked to change, which is the objection amendments 6/7 raise about the
     # fp8/bf16 confound. A crash naming its cause costs one run; a silent precision change costs the
     # interpretation of every number the arm produces.
-    if getattr(Cfg, "moe_experts", 0) and not fp8:
-        _why = "--fp8 not passed" if not args.fp8 else "amp is off"
+    if getattr(Cfg, "moe_experts", 0) and not fp8 and not bf16_only:
+        _why = ("neither --fp8 nor --bf16 passed" if not (args.fp8 or args.bf16)
+                else "amp is off")
         raise SystemExit(
             f"REFUSING: --moe_experts {Cfg.moe_experts} needs the model in bfloat16, and {_why}, "
             f"so it would stay fp32. torch._grouped_mm compiles only for bf16 (its eager kernel "
             f"accepts fp32, its meta registration does not), so the arm dies at step 0 with "
-            f"'Expected inputs of BF16 type'. Pass --fp8 -- run_ddp.sh does -- or run without "
-            f"--moe_experts. Measured 2026-09-05 on card 1; found by scripts/test_e2e.py, which "
-            f"invokes train.py directly and passed no --fp8."
+            f"'Expected inputs of BF16 type'. Pass --fp8 -- run_ddp.sh does -- or --bf16 for the "
+            f"cast without fp8 GEMMs, or run without --moe_experts. Measured 2026-09-05 on card "
+            f"1; found by scripts/test_e2e.py, which invokes train.py directly and passed no "
+            f"--fp8."
         )
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
@@ -2860,6 +2893,14 @@ def main():
                 )
         if is_main:
             print("FP8 compute enabled", flush=True)
+    elif bf16_only:
+        # THE CAST ALONE. Same `.to(torch.bfloat16)` the fp8 branch performs, and deliberately
+        # nothing else: no convert_to_fp8_compute, no FP8_HEAD path. So a MoE arm run this way has
+        # bf16 masters and bf16 GEMMs throughout, which is the equal-precision arm readout 5'
+        # needs, and its dense control run the same way differs from it ONLY in the MoE structure.
+        raw_model = raw_model.to(torch.bfloat16)
+        if is_main:
+            print("bf16 masters, no fp8 conversion (--bf16)", flush=True)
     if is_main:
         n_params = sum(p.numel() for p in raw_model.parameters())
         # MFU'S n_params IS THE DENSE COUNT, which is not the same number. `6 * n_params * tps`
@@ -3556,7 +3597,12 @@ def main():
 
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
-        if fp8:
+        if fp8 or bf16_only:
+            # Widened from `if fp8:` when --bf16 was added. The condition this line is about is
+            # "the model was cast to bf16 and an optimizer may not hold every parameter", which
+            # --bf16 satisfies exactly as --fp8 does; the fp8 conversion is incidental to it. The
+            # sibling site at the non-finite-grad path is unconditional for the same reason and
+            # says so. In a plain run it is a no-op because opt.zero_grad already cleared them.
             raw_model.zero_grad(set_to_none=True)  # clear bf16 model grads too
 
         # All ranks validate to keep DDP in lockstep; only rank 0 prints. Fixed prefix: the full
