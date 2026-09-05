@@ -341,7 +341,7 @@ class SwiGLU(nn.Module):
 
     def forward(self, x):
         a, b = self.w13(x).chunk(2, dim=-1)
-        gate = self.beta1 * torch.tanh(a / self.beta1) * torch.sigmoid(b)
+        gate = self.beta1 * torch.tanh(a / self.beta1) * torch.sigmoid(b) * 1.0
         up = self.beta2 * torch.tanh(self.w2(gate) / self.beta2)
         return up
 
