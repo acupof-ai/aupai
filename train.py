@@ -2325,7 +2325,11 @@ def main():
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
         "attn_every": "one attention layer every N blocks",
-        "head_mixed": "head-level hybrid: both mixers in EVERY block on an N:1 KDA:MLA head split (0 = off, layer-level alternation; needs heads % (N+1) == 0)",
+        # "heads %% (N+1)": argparse formats every help string with `% params`, so a
+        # literal percent must be doubled. It was not, and --help has raised
+        # ValueError: unsupported format character '(' since 2bc3fe6f -- on every box,
+        # for every flag, because format_help() renders the whole parser or none of it.
+        "head_mixed": "head-level hybrid: both mixers in EVERY block on an N:1 KDA:MLA head split (0 = off, layer-level alternation; needs heads %% (N+1) == 0)",
         # --dim, not --d: run_ddp.sh's args pass through torchrun's own parser, where
         # argparse prefix matching makes "--d" ambiguous against --duplicate-*-filters
         # and torchrun exits before train.py is ever reached.
@@ -2348,7 +2352,7 @@ def main():
         "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
         "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
         "mem_sel_lr": "sparse memory: separate lr for the SELECTOR (query + keys); <=0 keeps one group at mem_lr, which is what M1/M2/M3 ran",
-        "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means the dense lr (muon_lr), which is ruling (f) and is never the expert lr -- a selector at its table's lr is the measured cause of the memory collapse",
+        "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means attn_res_lr (0.01), this repo's AdamW rate for a small learned mixing map -- NOT muon_lr, which is the EXPERT group's own rate and is what ruling (f) excludes",
         "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
         "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
     }.items():
