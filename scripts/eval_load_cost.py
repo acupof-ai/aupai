@@ -98,11 +98,12 @@ WALL_SECS = {
 
 # HOST BYTES PER TOKEN CACHE, measured on the pod 2026-09-03:
 #   ~/bin/pod "ls -la /data00/tokens_*.pt | awk '{print \$5, \$9}'"
-# 22 caches, 247.8 GB total. This is the quantity the co-residency rule turns on, and the one
-# AGENTS.md's coverage table records as "nothing in the repo records it per eval run" -- recorded
-# here now, per DOMAIN, which is the level at which it is a property of the corpus rather than of
-# a run. An eval's host read is the sum over the domains its mix names, because _domain_seqs
-# torch.loads one file per domain.
+# 22 natural/chat caches, 247.8 GB total, plus the five experiment-1 injection caches measured
+# 2026-09-05 (below), which add 0.14 GB. This is the quantity the co-residency rule turns on, and
+# the one AGENTS.md's coverage table records as "nothing in the repo records it per eval run" --
+# recorded here now, per DOMAIN, which is the level at which it is a property of the corpus rather
+# than of a run. An eval's host read is the sum over the domains its mix names, because
+# _domain_seqs torch.loads one file per domain.
 #
 # Why bytes and not "reads a cache: yes/no": zh_web alone is 85 GB and tokens_sample is 5 MB, so
 # the boolean column groups a 16,000x range into one bucket. `ppl` over mix_500m reads ~166 GB and
@@ -119,7 +120,7 @@ WALL_SECS = {
 # 10 GB is this file's own existing line: "that is the >10 GB axis, and it is what separates ppl
 # from score_matrix inside one metric class" (docstring, host_io). Reused rather than invented so
 # the number has one home. It also lands between the two populations with room on both sides --
-# 22 caches, and the gap runs from web_hq at 5.7 GB to en_c4 at 19.2 GB.
+# the gap between the two populations runs from web_hq at 5.7 GB to en_c4 at 19.2 GB.
 CO_RESIDENCY_BYTES = 10e9
 
 CACHE_BYTES = {
@@ -130,6 +131,17 @@ CACHE_BYTES = {
     "wiki_chat": 1135614653, "wiki": 982864005, "en": 643070455, "math_seed": 326728936,
     "math": 326728901, "code": 230279173, "chatml": 155984979, "chat_qa": 152752218,
     "chat": 152752197, "sample": 5271699,
+    # Experiment 1's injection domains, measured on the pod 2026-09-05 with os.path.getsize.
+    # RECORDED BECAUSE UNRECORDED MEANS ZERO, not because these are large. domains_cache_bytes
+    # contributes 0 for a domain absent from this table, so a mix of only injection domains summed
+    # to 0 GB and the co-residency refusal compared 0 against the 10 GB threshold -- fail-open.
+    # It does WARN by name, which is the designed behaviour for unknown, so nothing was hidden
+    # today: all five really are far under the threshold and the 0 and the truth agreed. That
+    # agreement is a coincidence of these five sizes, and the next injection domain need not be
+    # small. A guard that is right because the unmeasured quantity happens to be small is right
+    # by coincidence.
+    "s_inject_n256": 107470468, "s_inject_n64": 26868861, "s_inject_n8": 3360054,
+    "s_inject_n1": 421430, "p_format": 343329,
 }
 
 
@@ -289,7 +301,10 @@ def main():
         note = f"  ({len(missing)} domain(s) with no cache)" if missing else ""
         mark = "  <-- reference for the table above" if m == ref else ""
         print(f"  {os.path.basename(m):32s} {b / 1e9:7.1f} GB{note}{mark}")
-    print(f"  {'ALL 22 caches on /data00':32s} {sum(CACHE_BYTES.values()) / 1e9:7.1f} GB")
+    # COUNTED, NOT TYPED: this line read "ALL 22 caches" as a literal while the dict grew to 27
+    # when the injection domains were recorded, so the label disagreed with the sum beside it.
+    print(f"  {f'ALL {len(CACHE_BYTES)} caches on /data00':32s} "
+          f"{sum(CACHE_BYTES.values()) / 1e9:7.1f} GB")
     print("\nzh_web alone is 85 GB and tokens_sample is 5 MB, a 16,000x range. That is why this "
           "column\nis bytes: 'reads a token cache' put both in one bucket, and the rule derived "
           "from it\n(wait for the run) is right for the first and absurd for the second.")

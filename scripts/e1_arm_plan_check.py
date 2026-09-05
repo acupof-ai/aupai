@@ -527,9 +527,28 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
             return f"{name}: {d}'s shard holds no documents"
         return None
 
+    # THE WORLD-2 TRUNCATION, which costs the plan up to (world - 1) rows and is why a per-domain
+    # count cannot simply equal its want. train.py:2315 does
+    # `n = (plan.shape[1] // world) * world` -- "multiple of world, or a rank left a row short gets
+    # a different lr and hangs the all-reduce" -- and only then stripes. So an ODD plan loses its
+    # last column, and after the per-phase shuffle (`ph[:, randperm]`) WHICH DOMAIN loses that row
+    # is decided by the seed.
+    #
+    # Measured 2026-09-05: of the five arms only n1 has an odd plan (31,995 rows; control_arm and
+    # n8 31,994, n64 and n256 31,996), and at seed 42 the row it loses is an en_c4_stage2 row. That
+    # is worth knowing rather than assuming, because the row could have been an s_inject_n1 row --
+    # 25 of 31,995 -- and the arm's whole measurement is its 25 injection rows. `mix: s_inject_n1
+    # 25 rows` in the log does NOT rule that out: train.py:2326 prints used[] BEFORE the truncation
+    # at :2315, so the printed 25 is the pre-truncation allocation, not what the plan delivers.
+    #
+    # So the per-domain assertions below allow a shortfall of at most `deficit` rows, and a
+    # SEPARATE assertion demands the shortfall land on a natural domain: an injection domain short
+    # by even one row is the axis defect amendment 8 exists to prevent, and must be red.
+    _wants = {d: (_want_of(d, cur.get(d, 0))[0] or 0) for d in names}
+    total_want = sum(_wants.values())
+    deficit = total_want - (total_want // 2) * 2
+
     for d in inj:
-        # Injection domains carry NO cursor (measured 2026-09-05: ckpt_b0_headmix_armA.pt's
-        # row_cursor holds exactly the 9 natural domains), so they start at used=0.
         want, pool_len, cap_bound = _want_of(d, 0)
         if want is None:
             problems.append(f"{name}: cannot read {d}'s pool length, so its row-count assertion "
@@ -540,9 +559,19 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
             problems.append(bad)
         got = rows_by_dom[d]
         if got != want:
+            # EXACT for an injection domain, deliberately not relaxed by `deficit`. This domain's
+            # row count IS the measurement: n1 is 25 rows of 31,995, so one row is ~39 document
+            # exposures and at n1 that is ~40 of 1,000 documents at ZERO exposures while the axis
+            # reads 1. If the world-2 truncation ever takes an injection row, that must be red and
+            # the arm must not launch -- which is the whole point of amendment 8.
+            why = ""
+            if 0 < want - got <= max(deficit, 1):
+                why = (f"The world-2 truncation took an INJECTION row: train.py:2315 drops the "
+                       f"odd last column and the shuffle decided it would be this one, so the "
+                       f"arm's axis is short by {want - got} row(s). ")
             problems.append(f"{name}: the built plan holds {got} rows of {d}, the weight asks "
                             f"{want} (summed over {len(_phases)} phase(s) at anneal_frac "
-                            f"{ANNEAL_FRAC}, pool {pool_len}). The stripe dropped rows.")
+                            f"{ANNEAL_FRAC}, pool {pool_len}). {why}The stripe dropped rows.")
     # 4c's assertion, AS MUCH OF IT AS THE PLAN'S PUBLISHED STATE SUPPORTS: a natural domain
     # continues from its cursor rather than restarting. The floored-budget half is fully covered
     # here (it draws nothing at all, so a count sees it). The discarded-cursor half is NOT covered
@@ -567,10 +596,30 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
         if bad:
             problems.append(bad)
         if rows_by_dom[d] != want:
+            # A SHORTFALL OF AT MOST `deficit` IS THE WORLD-2 TRUNCATION, not a defect: train.py:2315
+            # drops the plan's odd last column before striping, and the shuffle decides which
+            # domain owns it. Anything else -- a surplus, or a shortfall larger than the whole
+            # plan's odd remainder -- is a real disagreement about the remainder or the cap.
+            short = want - rows_by_dom[d]
+            if 0 < short <= deficit:
+                continue
             problems.append(f"{name}: natural domain {d} drew {rows_by_dom[d]} rows, the weight "
                             f"asks {want} from a remainder of {rows_rem:.0f} at cursor {cur[d]} "
-                            f"(pool {pool_len}). The remainder was computed against a different "
-                            f"cursor, or the epoch cap bound.")
+                            f"(pool {pool_len}); the world-2 truncation can account for at most "
+                            f"{deficit}. The remainder was computed against a different cursor, "
+                            f"or the epoch cap bound.")
+    # THE TRUNCATION ALLOWANCE MUST BE SPENT EXACTLY ONCE. Per-domain shortfalls up to `deficit`
+    # are pardoned above, and without this a real loss could hide inside that pardon: three domains
+    # each one row short would each pass on a ONE-row allowance, and the plan would be three rows
+    # short with every assertion green. So the plan's total is asserted against the total want minus
+    # exactly the truncation -- a single equality no per-domain pardon can absorb.
+    got_total = sum(rows_by_dom[d] for d in names)
+    if got_total != total_want - deficit:
+        problems.append(f"{name}: the plan holds {got_total} rows in total; the weights ask "
+                        f"{total_want} and the world-2 truncation accounts for exactly {deficit}, "
+                        f"so {total_want - deficit} was expected. "
+                        f"{total_want - deficit - got_total} row(s) are unexplained by any "
+                        f"per-domain pardon.")
     # WHAT THIS CHECK DOES NOT COVER, stated because a silent gap reads as a pass. A cursor that is
     # DISCARDED (train.py:2201 corpus-fingerprint drift, :2190 sample_seed drift) makes a domain
     # restart at row 0, drawing the SAME COUNT from a DIFFERENT SET -- invisible to every assertion
