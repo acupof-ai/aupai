@@ -46,6 +46,10 @@ ALLOWED = [
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
     "data/rl_tasks/*",
+    # The constructed-operator curve's test and train sets (3b, 2026-09-05). Tracked
+    # rather than gitignored: 3.4 MB total, and a curve scored against an untracked
+    # set cannot be re-derived by anyone who did not run the emitter.
+    "data/probes/novel_ops/*.jsonl",
     "data/sft_contamination_baseline.json",
     # The row schemas for runs/*.jsonl ledgers. Text, kilobytes, and read by the writers
     # that validate against it -- the opposite of the 234 MB corpus blob this list exists
@@ -840,6 +844,7 @@ def main():
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
+        "mathbank/emit_novel_ops.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",

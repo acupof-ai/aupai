@@ -76,6 +76,10 @@ SCOPE = [
     # training box -- which is the same defect that crashed the hook's own selftest when the
     # two were split across commits (2026-09-05).
     "data/ledger_schema.json",
+    # The novel-operator sets. In SCOPE because the SCORER reads them on the pod: a
+    # curve run there against a set that never shipped scores nothing, and a set that
+    # ships stale scores the wrong items -- the same shape as ledger_schema.json above.
+    "data/probes/novel_ops/*.jsonl",
     "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",
