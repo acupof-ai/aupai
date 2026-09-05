@@ -125,11 +125,80 @@ def build_docs(items, n_exposures, n_docs=N_DOCS, seed=SEED):
     return [(doc_text(base[i]), i, e) for i, e in seq]
 
 
+#: The keys train._jsonl_content requires of every corpus line, and the one it forbids. Named
+#: here rather than assumed, because it was assumed once and cost the launch: this builder wrote
+#: {"text": ...} doc lines with a {"_header": true} line at the top, and train.py:1361 is
+#: `json.loads(ln)["content"]` with NO header skip -- so all five injection domains raised
+#: KeyError: 'content' when the caches were built on the pod, and the arm could not start.
+#: Both halves were independently fatal (measured 2026-09-05: header+text, header+content, and
+#: content-with-no-header -- only the third reads).
+SHARD_DOC_KEY = "content"
+SHARD_FORBIDDEN_KEY = "_header"
+
+
+def shard_contract(path, meta_path=None):
+    """Assert `path` is a corpus shard train._jsonl_content can read. Returns the doc count.
+
+    RUN BY THE BUILDER ON ITS OWN OUTPUT, so a format drift fails at build time rather than on
+    the pod an hour before a launch. The contract is not written down anywhere else: every
+    natural corpus satisfies it by accident of having been produced by ShardWriter, and the
+    reader states it only as a subscript. A third writer would break it the same way -- 4c's
+    ruling 2026-09-05, and de lifts this same assertion into a harness check over every corpus
+    directory.
+
+    The reader's rule, exactly: EVERY non-blank line must parse as JSON and have "content".
+    There is no header line and no skip, so a header in the file is a defect however well
+    formed it is.
+    """
+    import re as _re
+    problems, n = [], 0
+    if not _re.search(r"_\d{3,}\.jsonl$", os.path.basename(path)):
+        problems.append(f"{os.path.basename(path)} does not match train.py's SHARD_RE "
+                        f"r'_\\d{{3,}}\\.jsonl$' -- _domain_seqs refuses the directory")
+    with open(path, encoding="utf-8") as fh:
+        for i, line in enumerate(fh, 1):
+            if not line.strip():
+                continue
+            try:
+                r = json.loads(line)
+            except json.JSONDecodeError as e:
+                problems.append(f"line {i} is not JSON: {e}")
+                break
+            if SHARD_FORBIDDEN_KEY in r:
+                problems.append(
+                    f"line {i} carries {SHARD_FORBIDDEN_KEY!r}. train._jsonl_content reads "
+                    f"[\"{SHARD_DOC_KEY}\"] on EVERY line with no header skip, so a header line "
+                    f"raises KeyError and the domain's cache cannot be built. Put it in "
+                    f"<shard>.meta.json instead.")
+                break
+            if SHARD_DOC_KEY not in r:
+                problems.append(
+                    f"line {i} has no {SHARD_DOC_KEY!r} key (has {sorted(r)[:6]}). "
+                    f"train._jsonl_content reads exactly that key; 'text' is what every natural "
+                    f"shard does NOT use and what broke this build.")
+                break
+            n += 1
+    if not n and not problems:
+        problems.append("no document lines")
+    if meta_path is not None and not os.path.exists(meta_path):
+        problems.append(f"sidecar {os.path.basename(meta_path)} is absent -- the header has to "
+                        f"live somewhere or the shard's provenance is lost")
+    if problems:
+        raise SystemExit("REFUSING: " + os.path.relpath(path, ROOT) + " violates the shard "
+                         "contract:\n  " + "\n  ".join(problems))
+    return n
+
+
 def write_shard(out_dir, name, docs, header):
-    """<out>/<name>/<name>_000.jsonl, one {"text": ...} per line after a header line.
+    """<out>/<name>/<name>_000.jsonl, one {"content": ...} per line, header in a sidecar.
 
     The shard pattern is `_\\d{3,}\\.jsonl$` (train.py SHARD_RE); a file that does not match is
     REFUSED by _domain_seqs rather than skipped, so the name matters.
+
+    THE HEADER GOES TO <shard>.meta.json, not into the shard. train._jsonl_content reads
+    ["content"] on every line with no skip, so an in-band header is a KeyError at cache-build
+    time. The sidecar is not a shard by SHARD_RE, so _domain_seqs ignores it; _s_index and
+    _exposure stay as extra keys on the doc lines, where the plan check reads them.
     """
     d = os.path.join(out_dir, name)
     if os.path.exists(d):
@@ -141,10 +210,16 @@ def write_shard(out_dir, name, docs, header):
     os.makedirs(d)
     p = os.path.join(d, f"{name}_000.jsonl")
     with open(p, "w", encoding="utf-8") as fh:
-        fh.write(json.dumps(header, ensure_ascii=False) + "\n")
         for text, si, ei in docs:
-            fh.write(json.dumps({"text": text, "_s_index": si, "_exposure": ei},
+            fh.write(json.dumps({SHARD_DOC_KEY: text, "_s_index": si, "_exposure": ei},
                                 ensure_ascii=False) + "\n")
+    meta = os.path.join(d, f"{name}_000.jsonl.meta.json")
+    with open(meta, "w", encoding="utf-8") as fh:
+        json.dump({k: v for k, v in header.items() if k != "_header"}, fh,
+                  ensure_ascii=False, indent=1)
+    # THE BUILDER CHECKS ITS OWN OUTPUT. Not the caller's job: this is the write that has to be
+    # readable, and the reader lives in another file whose contract nobody states.
+    shard_contract(p, meta)
     return p
 
 
@@ -179,7 +254,8 @@ def main():
                              "source": "data/probes/novel_ops/P_pool.jsonl",
                              "source_sha256": P_POOL_SHA}))
     for p in made:
-        print(f"{os.path.relpath(p, ROOT)}  {sum(1 for _ in open(p, encoding='utf-8')) - 1} docs")
+        # No `- 1`: the header is a sidecar now, so every line in the shard is a document.
+        print(f"{os.path.relpath(p, ROOT)}  {sum(1 for _ in open(p, encoding='utf-8'))} docs")
     return 0
 
 
@@ -284,11 +360,109 @@ def _selftest():
         f"_domain_seqs would refuse the directory"
     )
 
+    # 7. THE SHARD CONTRACT REFUSES BOTH HALVES OF THE DEFECT THAT COST THE LAUNCH, and accepts
+    #    what this builder now writes. Each world is a file, checked through shard_contract
+    #    itself -- not through a re-implementation of its conditions, which would assert on a copy
+    #    of the rule. The reader's rule is read from train.py so a change there breaks this rather
+    #    than the pod.
+    with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as _fh:
+        src2 = _fh.read()
+    assert f'["{SHARD_DOC_KEY}"]' in src2, (
+        f'train.py no longer reads ["{SHARD_DOC_KEY}"] -- SHARD_DOC_KEY is stale and this '
+        f'contract is checking the wrong key')
+    d2 = tempfile.mkdtemp()
+    try:
+        def _w(nm, lines):
+            q = os.path.join(d2, nm)
+            with open(q, "w", encoding="utf-8") as fh:
+                for ln in lines:
+                    fh.write(json.dumps(ln, ensure_ascii=False) + "\n")
+            return q
+
+        # (a) the OLD format, both faults: an in-band header and "text" doc lines.
+        old = _w("old_000.jsonl", [{"_header": True, "family": "S"},
+                                   {"text": "hi", "_s_index": 0, "_exposure": 0}])
+        try:
+            shard_contract(old)
+            raise AssertionError("the old shard format was accepted; this is the exact file shape "
+                                 "whose cache build raised KeyError: 'content' on the pod")
+        except SystemExit as e:
+            assert "_header" in str(e), str(e)
+
+        # (b) HEADER ALONE is fatal, even with the key fixed -- so the sidecar move is load
+        #     bearing and not cosmetic. THE HEADER LINE HERE CARRIES "content" TOO, which is the
+        #     only way this world tests the header rule: with a bare {"_header": true} the line
+        #     also lacks "content", so deleting the header check entirely left this green (the
+        #     missing-key branch caught it) and the mutant survived. A world has to fail for the
+        #     rule it names -- see red-for-the-wrong-reason.
+        hdr = _w("hdr_000.jsonl", [{"_header": True, "family": "S", SHARD_DOC_KEY: "meta"},
+                                   {SHARD_DOC_KEY: "hi"}])
+        try:
+            shard_contract(hdr)
+            raise AssertionError(
+                "a header line was accepted alongside correct doc lines. It parses and it has "
+                f"{SHARD_DOC_KEY!r}, so the ONLY thing that can refuse it is the "
+                f"{SHARD_FORBIDDEN_KEY!r} rule -- and a header read as a document injects the "
+                f"provenance blob into the corpus as training text")
+        except SystemExit as e:
+            assert SHARD_FORBIDDEN_KEY in str(e), str(e)
+
+        # (c) "text" ALONE is fatal, with no header -- so the key rename is load bearing too.
+        txt = _w("txt_000.jsonl", [{"text": "hi", "_s_index": 0, "_exposure": 0}])
+        try:
+            shard_contract(txt)
+            raise AssertionError("a 'text'-keyed shard was accepted")
+        except SystemExit as e:
+            assert SHARD_DOC_KEY in str(e), str(e)
+
+        # (d) A NAME THAT IS NOT A SHARD is refused, because _domain_seqs refuses the directory.
+        bad_name = _w("notashard.jsonl", [{SHARD_DOC_KEY: "hi"}])
+        try:
+            shard_contract(bad_name)
+            raise AssertionError("a non-shard filename was accepted")
+        except SystemExit as e:
+            assert "SHARD_RE" in str(e), str(e)
+
+        # (e) AN EMPTY SHARD is refused rather than reported as 0 docs.
+        empty = _w("empty_000.jsonl", [])
+        try:
+            shard_contract(empty)
+            raise AssertionError("an empty shard was accepted")
+        except SystemExit as e:
+            assert "no document lines" in str(e), str(e)
+
+        # (f) WHAT write_shard NOW PRODUCES PASSES, and read back through train's own reader.
+        wp = write_shard(d2, "s_inject_n1", [("t0", 0, 0), ("t1", 1, 0)], {"_header": True, "a": 1})
+        assert shard_contract(wp, wp + ".meta.json") == 2
+        sys.path.insert(0, ROOT)
+        import train as _t
+        assert _t._jsonl_content(wp) == ["t0", "t1"], _t._jsonl_content(wp)
+        with open(wp + ".meta.json", encoding="utf-8") as _fh:
+            assert json.load(_fh) == {"a": 1}, "sidecar content"
+        # The sidecar must not itself look like a shard, or _domain_seqs would read it as data.
+        assert not re.search(m.group(1), os.path.basename(wp + ".meta.json")), (
+            "the sidecar name matches SHARD_RE, so _domain_seqs would glob it as a shard")
+
+        # (g) A MISSING SIDECAR is refused when one is expected: the header is provenance, and
+        #     moving it out of band must not mean losing it.
+        os.unlink(wp + ".meta.json")
+        try:
+            shard_contract(wp, wp + ".meta.json")
+            raise AssertionError("a missing sidecar was accepted")
+        except SystemExit as e:
+            assert "sidecar" in str(e), str(e)
+    finally:
+        shutil.rmtree(d2, ignore_errors=True)
+
     print("build_s_inject selftest OK: exposure counts exact and equal per document (1/8/64), "
           "repeats interleaved so first appearances spread past 2x the set size rather than "
           "massing in the first block, the worked solution is inside each document, a pool whose "
           "sha256 is not the frozen one is refused, an existing shard directory is refused rather "
-          "than rebuilt at a new seed, and the shard name satisfies train.py's own SHARD_RE")
+          "than rebuilt at a new seed, the shard name satisfies train.py's own SHARD_RE, and the "
+          "shard contract refuses each half of the launch defect independently -- an in-band "
+          "_header line (even one carrying \"content\"), a \"text\"-keyed doc line, a non-shard "
+          "filename, an empty shard and a missing sidecar -- while what write_shard now emits "
+          "reads back through train._jsonl_content itself")
     return 0
 
 
