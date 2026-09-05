@@ -3500,34 +3500,57 @@ def main():
                         torch.distributed.all_reduce(
                             _moe.tokens_per_expert, op=torch.distributed.ReduceOp.SUM)
                     _od = _moe.diagnostics(reset=True)
-                    # Guarded for the reason the memory write is: a diagnostics writer is a
-                    # dependency the observed run never asked for, and data/ledger_schema.json
-                    # reaching the pod late has already nearly killed a two-card run. Only the
-                    # write is wrapped -- the all_reduce above must propagate, because ranks out of
-                    # step would hang the next reduction.
-                    try:
-                        import moe_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+                    # THE WRITE IS RANK 0'S, THE REDUCTION IS EVERY RANK'S. This `if is_main` was
+                    # missing while the memory block above has it, and the two consequences were
+                    # asymmetric in a way that hid the worse one:
+                    #
+                    #   1. `tps` is bound in the `if is_main and step % 10 == 0` block, so on every
+                    #      OTHER rank it is unbound. At steps 30 and 100 -- the only steps where
+                    #      `tps if step in (30, 100)` evaluates it -- rank 1 raised UnboundLocalError
+                    #      and the broad `except` below logged it as "moe_diag write FAILED".
+                    #      Measured on b0_moe_e1 2026-09-05: exactly two failures, at 30 and 100,
+                    #      and readout 5's number survived only because rank 0 wrote first.
+                    #   2. At steps 10 and 20 the conditional short-circuits to None BEFORE touching
+                    #      `tps`, so BOTH ranks wrote and runs/moe_diag.jsonl gained a DUPLICATE row.
+                    #      6 rows for 4 due steps in that run's ledger. A reader folding on
+                    #      (name, step) sees one row; a reader counting rows or averaging a field
+                    #      sees two identical samples and a confidence that is not there.
+                    #
+                    # So the log named the two steps whose numbers were fine and said nothing about
+                    # the two where the ledger gained a phantom sample.
+                    #
+                    # The all_reduce and diagnostics(reset=True) above stay OUTSIDE this guard: every
+                    # rank must enter the collective or the next reduction hangs, and reset must
+                    # happen on every rank or their windows diverge. Only the write moves.
+                    if is_main:
+                        # Guarded for the reason the memory write is: a diagnostics writer is a
+                        # dependency the observed run never asked for, and data/ledger_schema.json
+                        # reaching the pod late has already nearly killed a two-card run. Only the
+                        # write is wrapped -- the all_reduce above must propagate, because ranks out
+                        # of step would hang the next reduction.
+                        try:
+                            import moe_diag  # noqa: PLC0415  (scripts/ is on sys.path)
 
-                        moe_diag.log_diag(
-                            name=Cfg.moe_arm,
-                            step=step,
-                            usage_frac=_od["usage_frac"],
-                            entropy_norm=_od["entropy_norm"],
-                            load_gini=_od["load_gini"],
-                            tokens=_od["tokens"],
-                            window_steps=_od["window_steps"],
-                            n_routed=_od["n_routed"],
-                            top_k=_moe.top_k,
-                            # READOUT 5 IS DEFINED AT STEPS 30 AND 100 ONLY: from step 200 on,
-                            # co-resident jobs moved the control's own throughput from 82K to 46K,
-                            # so a later same-step ratio measures co-residency rather than the
-                            # architecture (facts/memory_layers.json#mem.m1_throughput_cost).
-                            # Omitted rather than written as a number outside that window.
-                            tok_s_gpu=(tps if step in (30, 100) else None),
-                        )
-                    except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
-                        runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
-                               f"continues: {type(_e).__name__}: {_e}")
+                            moe_diag.log_diag(
+                                name=Cfg.moe_arm,
+                                step=step,
+                                usage_frac=_od["usage_frac"],
+                                entropy_norm=_od["entropy_norm"],
+                                load_gini=_od["load_gini"],
+                                tokens=_od["tokens"],
+                                window_steps=_od["window_steps"],
+                                n_routed=_od["n_routed"],
+                                top_k=_moe.top_k,
+                                # READOUT 5 IS DEFINED AT STEPS 30 AND 100 ONLY: from step 200 on,
+                                # co-resident jobs moved the control's own throughput from 82K to
+                                # 46K, so a later same-step ratio measures co-residency rather than
+                                # the architecture (facts/memory_layers.json#mem.m1_throughput_cost).
+                                # Omitted rather than written as a number outside that window.
+                                tok_s_gpu=(tps if step in (30, 100) else None),
+                            )
+                        except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
+                            runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
+                                   f"continues: {type(_e).__name__}: {_e}")
                 if step >= total_steps:
                     break
 
