@@ -983,6 +983,15 @@ def status():
         p = c.get("pid")
         if not isinstance(p, int):
             continue
+        # A PENDING ROW IS EXEMPT, and this is the one place de-47's row would have caused a false
+        # report rather than fixed one. Its pid is the launch wrapper -- a shell BY DESIGN -- and
+        # in the window it covers the job has not opened a device, so it often has no
+        # python/torchrun descendant either. Both ORPHAN-SHELL conditions are true of a healthy
+        # pending row, and the line's advice ("the job ended, release it") would be exactly wrong
+        # for a job that has not started. The launch owns this row's fate: it upgrades it to a real
+        # claim or removes it, within DEVICE_WAIT_S.
+        if c.get("state") == "pending":
+            continue
         args = c.get("cmdline") or _cmdline(p)
         if _argv0_is_shell(args) and not _job_descendants(p, table):
             orphan_shells.append((c.get("name"), p))
@@ -991,8 +1000,19 @@ def status():
                      f"descendant -- the job ended and the claim did not. "
                      f"`card_claim.py release --name {name}`")
     for c in live:
-        lines.append(f"CLAIM {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
-                     f"pid {c.get('pid')} since {c.get('acquired')}")
+        # PENDING SAYS SO. de-47: harness launch writes a state="pending" row before the device
+        # poll can name the job's own pid, so a job shorter than the poll leaves a row instead of
+        # nothing. It is a real reservation -- held_cards counts it and acquire clashes with it,
+        # which is the protection -- but it is NOT the same statement as a held claim, and printing
+        # the two alike would leave a reader unable to tell "a job is on this card" from "a job is
+        # starting here". The pid on a pending row is the launch WRAPPER, deliberately.
+        if c.get("state") == "pending":
+            lines.append(f"PEND. {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
+                         f"wrapper pid {c.get('pid')} since {c.get('acquired')} -- reserved, no "
+                         f"device fd observed yet; upgraded or released by the launch")
+        else:
+            lines.append(f"CLAIM {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
+                         f"pid {c.get('pid')} since {c.get('acquired')}")
     for s in stale:
         lines.append(f"STALE {s.get('name') or s.get('file')} -- {s.get('why')} (reclaimable)")
     dup = {c: n for c, n in held.items() if len(n) > 1}
@@ -1022,8 +1042,17 @@ def status():
                 lines.append(f"ORPHAN card {card} holds {m} MiB with no claim -- find it with "
                              f"nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory")
             elif card in held and m <= FREE_MIB:
-                lines.append(f"note   card {card} claimed by {held[card][0]} but idle "
-                             f"({m} MiB) -- starting up, or the job died without releasing")
+                # A PENDING row's card is SUPPOSED to be idle -- that is what pending means, and
+                # saying "starting up, or the job died" of it reads as a possible fault when the
+                # state is normal and self-resolving (de-47).
+                _pending = any(c.get("state") == "pending" and card in c.get("cards", [])
+                               for c in live)
+                if _pending:
+                    lines.append(f"note   card {card} RESERVED by {held[card][0]} and idle "
+                                 f"({m} MiB) -- expected: the job has not opened a device yet")
+                else:
+                    lines.append(f"note   card {card} claimed by {held[card][0]} but idle "
+                                 f"({m} MiB) -- starting up, or the job died without releasing")
     if not lines:
         lines.append("no claims, no orphans")
     # An ORPHAN-SHELL goes in `dup`, not `orphans`: `orphans` is (card, MiB) and one caller
