@@ -25,6 +25,28 @@ import sys
 
 import torch
 
+# TOLERANCES ARE PER-DEVICE, and this block exists because a single number is wrong on one of them.
+# Measured by tilerl on card 7, 2026-09-05: on CUDA at bf16 the GROUPED GEMM's own reduction order
+# differs from an identical plain matmul by 0.001953 for the SAME function -- while fp32-on-CUDA and
+# plain-matmul-at-bf16 are both exactly 0.0, so the noise belongs to the grouped kernel, not to
+# bf16. Measured here on CPU: exactly 0.0 at both fp32 and bf16.
+#
+# So a 1e-3 bound REFUSES A CORRECT MODULE on the card, which is the bug tilerl hit in their own
+# witness and reported so I would not repeat it. CPU keeps the tight bound because there the floor
+# really is 0.0 and loosening it would stop discriminating; CUDA takes 4e-3, twice the measured
+# floor and 4.3x below the SMALLER of the two defect signals this witness exists to catch
+# (0.0172 for swapped betas, 0.023 for plain a*sigmoid(b) instead of SiTU-GLU).
+#
+# THE DEFECT FLOOR IS THE SAME ON BOTH DEVICES: it is a function difference, not a reduction-order
+# difference, so it does not shrink with precision.
+_CUDA = torch.cuda.is_available()
+# 1e-2 on CUDA, ruled by 4c 2026-09-05: ~5x the measured floor, still below the smaller defect
+# signal (0.0172). The margin is deliberate -- the floor was measured at ONE shape on ONE card, and
+# a bound sitting 2x above a single measurement is a bound that fails on the next shape.
+AGREE_TOL = 1e-2 if _CUDA else 1e-6      # "the same function", after kernel noise
+GATE_TOL = 1e-2 if _CUDA else 1e-5       # same, for the gate-source comparison
+DEFECT_MIN = 1e-3                        # "a different function", floor of the signals above
+
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 
@@ -74,7 +96,7 @@ def main():
             d_bad = float((m(x) - want).abs().max())
     finally:
         MoEFFN._situ = _orig
-    ok = d_ok < 1e-6 and d_bad > 1e-3
+    ok = d_ok < AGREE_TOL and d_bad > DEFECT_MIN
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} one expert tied to the dense module reproduces it "
           f"(max|d| {d_ok:.2e}); plain a*sigmoid(b) instead of SiTU-GLU moves it to {d_bad:.2e}, "
@@ -171,7 +193,7 @@ def main():
     # The module must match the UN-BIASED prediction and NOT the biased one. The second clause is
     # what makes the first discriminating: if the two predictions coincided, matching one would say
     # nothing.
-    ok = (d_unbiased < 1e-5 and d_to_unbiased < 1e-5 and d_to_biased > 1e-3)
+    ok = (d_unbiased < GATE_TOL and d_to_unbiased < GATE_TOL and d_to_biased > DEFECT_MIN)
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} the gate is the UN-BIASED affinity: module matches the "
           f"un-biased prediction (max|d| {d_to_unbiased:.2e}) and NOT the biased one "

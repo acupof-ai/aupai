@@ -1124,6 +1124,13 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
+        # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
+        # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
+        # coerced, two arms kept apart, and the two thresholds checked AGAINST THE CHARTER TEXT
+        # -- that last case is the transcription that was already wrong once, when my prereg row
+        # said the entropy rule fires at step 1000 while the charter said 500.
+        "scripts/moe_diag.py",
         "scripts/moe_dispatch_bench.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
@@ -1509,7 +1516,8 @@ def main():
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
                      "scripts/test_untie_head.py",
                      "scripts/test_mem_defaults_frozen.py",
-                     "scripts/test_moe_defaults_frozen.py"},                 # 51.7s
+                     "scripts/test_moe_defaults_frozen.py",
+                     "scripts/moe_diag.py"},                                # 52.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
