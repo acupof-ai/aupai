@@ -46,10 +46,6 @@ ALLOWED = [
     "data/REBUILD_PLAN_*.md",
     "data/rl/*",
     "data/rl_tasks/*",
-    # The constructed-operator curve's test and train sets (3b, 2026-09-05). Tracked
-    # rather than gitignored: 3.4 MB total, and a curve scored against an untracked
-    # set cannot be re-derived by anyone who did not run the emitter.
-    "data/probes/novel_ops/*.jsonl",
     "data/sft_contamination_baseline.json",
     # The row schemas for runs/*.jsonl ledgers. Text, kilobytes, and read by the writers
     # that validate against it -- the opposite of the 234 MB corpus blob this list exists
@@ -60,6 +56,10 @@ ALLOWED = [
     # OUT of data/eval/ -- everything under that prefix has to be in datagen/holdout.py
     # REGISTRY, and registering these would EXCLUDE them from the corpus, inverting the
     # purpose of the probe. Under MAX, one row per line, and read by eval/*.py.
+    # fnmatch's `*` crosses `/`, so this also admits data/probes/novel_ops/*.jsonl, the
+    # constructed-operator curve sets (3.4 MB, tracked so a scored curve is re-derivable
+    # by someone who did not run the emitter). A second pattern for them was added and
+    # removed on 2026-09-05: it matched nothing this one did not.
     "data/probes/*.jsonl",
 ]
 
@@ -379,6 +379,48 @@ def main():
         sys.exit(1)
     print(f"hook: blob+allowlist {time.time() - t0:.2f}s", file=sys.stderr)
 
+    # CREDENTIAL SHAPES IN STAGED CONTENT. 2026-09-05: data/probes/api_cloze.jsonl carried a live
+    # third-party Postgres credential into 32b4ed22 in a public repo, GitHub push protection caught
+    # it at the LAST gate, and main froze under the merge lock while 12 commits were rewritten. The
+    # detection is the same either way; the difference is that here the remedy is deleting a line.
+    #
+    # BEFORE THE SLOW GATES on purpose -- ruff, selftests and harness check cost ~45 s below, and a
+    # commit that is going to be refused for a secret should be refused in 0.2 s. Reads the INDEX,
+    # not the working tree: the staged bytes are what becomes the commit.
+    t0 = time.time()
+    _cred_mod = os.path.join(repo_root() or ".", "scripts", "credential_scan.py")
+    _in_head = subprocess.run(["git", "-C", repo_root() or ".", "cat-file", "-e",
+                               "HEAD:scripts/credential_scan.py"],
+                              capture_output=True).returncode == 0
+    if not os.path.exists(_cred_mod) and not _in_head:
+        # A TREE THAT NEVER HAD THE GATE, not a tree where it was removed. The hook's own selftest
+        # builds ten partial repos holding a handful of files and no scripts/ at all, and a
+        # blanket refusal turned every one of them red -- world 8 reported "refused but not by the
+        # mapped test", naming this scanner. The distinction is HEAD: absent from the working tree
+        # AND from HEAD means the file was never here, which is a fixture; present in HEAD and
+        # missing from the tree means someone removed it, which is the bypass and still refuses
+        # below. Announced rather than silent -- an unrun gate that prints nothing is the state
+        # this whole commit is about.
+        print("hook: credential scan SKIPPED (scripts/credential_scan.py is not in this tree or "
+              "its HEAD -- a partial world, not the repo)", file=sys.stderr)
+    else:
+        try:
+            sys.path.insert(0, os.path.join(repo_root(), "scripts"))
+            import credential_scan
+
+            _cred = credential_scan.scan_staged(repo_root())
+        except Exception as e:
+            # A SCANNER THAT DID NOT RUN IS NOT A CLEAN RESULT (e1-16's shape, where an unrunnable
+            # ruff read as green). Refuse and say why, rather than passing silently.
+            print(f"REFUSING: the credential scan could not run ({type(e).__name__}: {e}). A gate "
+                  f"that did not execute is not a pass -- fix scripts/credential_scan.py, or "
+                  f"--no-verify only after reading the staged diff yourself.", file=sys.stderr)
+            sys.exit(1)
+        if _cred:
+            credential_scan.report(_cred)
+            sys.exit(1)
+        print(f"hook: credential scan {time.time() - t0:.2f}s", file=sys.stderr)
+
     # A staged runs/*.jsonl must not lose a record. de-33.
     #
     # a59ac1f staged a runs/experiments.jsonl one line shorter than its parent and dropped b0's
@@ -562,6 +604,12 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "scripts/corpus_snapshot.py",
+        # The credential gate this hook calls above. Registered because its selftest is the whole
+        # argument for the patterns: 8 positives fire, 14 near-misses and prose lines do not (bare
+        # `sk-` matches 34 tracked files as a substring), and the tracked tree must scan clean or
+        # the gate cannot be on at all. An unregistered selftest is an unguarded one -- the hook
+        # checks what it happens to check, not what the commit changed.
+        "scripts/credential_scan.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
