@@ -695,6 +695,16 @@ def main():
         # it finds first passes every other world. Also gates the one-definition rule: a third
         # hardcoded copy of the path means the next move breaks two of the three.
         "scripts/test_token_cache_dir.py",
+        # The three ledger fields (class, cards, defect_caught) and the absent-vs-empty rule they
+        # all depend on. Registered because every way of breaking it looks like a simplification: a
+        # default of empty string in the parser, or dropping the conditional, turns nobody-stated-this
+        # into stated-and-the-answer-was-nothing -- and policy_metrics metric 3 buckets card-hours BY
+        # class, so 243 pre-field rows reading empty would become one anonymous bucket the metric
+        # trusts. defect_caught carries the OPPOSITE rule (empty is a real answer: the reviewer read
+        # the artifact and found nothing), so a writer that treated all three the same way would pass
+        # a test checking only one. Six mutations verified, including both flags declared-but-unwired,
+        # which is not hypothetical: --cards shipped that way and only reading the row showed it.
+        "scripts/test_ledger_field_writers.py",
         # A real cp -r of a real linked worktree must be refused, and the ORIGINAL worktree,
         # a plain checkout, and a `git worktree move`d tree must all still pass. The negative
         # controls are the load-bearing half: a gate that refuses every linked worktree would
