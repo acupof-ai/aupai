@@ -136,6 +136,20 @@ KEYS = {
     "runs/friction.jsonl":      lambda r: (r.get("when") or r.get("ts"), r.get("who"),
                                            r.get("blocked_what") or r.get("what")
                                            or r.get("supersedes_cause")),
+    # (name, step, ts) -- NOT (name, step), which was the request and does not survive a relaunch.
+    # An arm that is relaunched under the same name restarts at step 10 and re-visits every step
+    # the previous run wrote, and b0_mem_m1 was relaunched tonight (19:41 -> 22:35), so this is the
+    # live case rather than a hypothetical. Measured on the 25 real rows plus that relaunch's first
+    # three diag steps: (name, step) gives 3 collisions -- ('m1', 10) holding pool_touched_frac
+    # 0.6516 and 0.3258, two different measurements under one key -- while (name, step, ts) gives
+    # 28 distinct over 28 rows, 0 None-rows. On the real 25 alone both are 25/25, which is why the
+    # cheaper key looks correct until an arm is relaunched.
+    #
+    # A step is not a re-measurement of an earlier step the way score_matrix's (ckpt, profile) is:
+    # the writer only ever appends, one row per arm per diag step per run, so every row IS its own
+    # key and nothing replaces anything. `ts` is the field that separates two runs of one arm,
+    # since the ledger carries no run id (log_diag's signature takes the arm name, not the run's).
+    "runs/memory_diag.jsonl":   lambda r: (r.get("name"), r.get("step"), r.get("ts")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -152,6 +166,7 @@ WRITE_STYLE = {
     "runs/review.jsonl":       "append",   # no in-repo writer; .gitattributes merge=union
     "runs/friction.jsonl":     "append",   # harness.py:7951 _append_task(FRICTION_PATH), O_APPEND
     "runs/retro.jsonl":        "append",   # no in-repo writer; .gitattributes merge=union
+    "runs/memory_diag.jsonl":  "append",   # scripts/memory_diag.py:148, O_APPEND, one row per write
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
     # A ruling is REPLACED when re-issued (a fingerprint mismatch sends the key back for a
@@ -182,6 +197,9 @@ PREDICATE = {
     "runs/review.jsonl":        subsume,      # no in-repo writer; .gitattributes merge=union
     "runs/friction.jsonl":      subsume,      # harness.py:7951, O_APPEND -- rows accumulate
     "runs/retro.jsonl":         subsume,      # no in-repo writer; .gitattributes merge=union
+    # memory_diag.py:148 O_APPEND, and every row is its own key -- nothing is ever replaced, so a
+    # changed value under an existing key is a real regression, not the writer working.
+    "runs/memory_diag.jsonl":   subsume,
     "runs/tasks.jsonl":         key_present,  # harness.py:5805 _write_tasks, open(..., "w")
     # score_matrix.py:573 write_records is read-modify-write and replaces same-(ckpt, profile) BY
     # DESIGN -- ":574 the matrix is the current state, not a history". So a changed value is the
