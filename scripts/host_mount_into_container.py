@@ -65,8 +65,7 @@ def open_tree(path, recursive=True):
 
 
 def move_mount(from_fd, to_path):
-    r = _libc.syscall(SYS_move_mount, from_fd, b"", AT_FDCWD, to_path.encode(),
-                      MOVE_MOUNT_F_EMPTY_PATH)
+    r = _libc.syscall(SYS_move_mount, from_fd, b"", AT_FDCWD, to_path.encode(), MOVE_MOUNT_F_EMPTY_PATH)
     if r < 0:
         raise _err(f"move_mount(-> {to_path})")
 
@@ -82,8 +81,10 @@ def setns_mnt(pid):
 
 def main():
     if len(sys.argv) != 4:
-        print(f"usage: {sys.argv[0]} <host-source-dir> <container-pid> <target-path-in-container>",
-              file=sys.stderr)
+        print(
+            f"usage: {sys.argv[0]} <host-source-dir> <container-pid> <target-path-in-container>",
+            file=sys.stderr,
+        )
         print("  the target must ALREADY EXIST inside the container", file=sys.stderr)
         return 2
     src, pid, target = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -95,8 +96,7 @@ def main():
         return 1
     st = os.stat(src)
     fd = open_tree(src)
-    print(f"open_tree({src}) -> fd {fd}, dev {st.st_dev} ({os.major(st.st_dev)}:"
-          f"{os.minor(st.st_dev)})")
+    print(f"open_tree({src}) -> fd {fd}, dev {st.st_dev} ({os.major(st.st_dev)}:{os.minor(st.st_dev)})")
 
     setns_mnt(pid)
     print(f"setns: now in the mount namespace of pid {pid}")
@@ -104,16 +104,23 @@ def main():
     # The target is checked AFTER setns, because that is the namespace it must exist in. A missing
     # target is the likeliest failure and it must not read as a mount problem.
     if not os.path.isdir(target):
-        print(f"REFUSING: {target} does not exist in the container namespace -- create it there "
-              f"first (mkdir -p) and re-run", file=sys.stderr)
+        print(
+            f"REFUSING: {target} does not exist in the container namespace -- create it there "
+            f"first (mkdir -p) and re-run",
+            file=sys.stderr,
+        )
         return 1
     move_mount(fd, target)
     after = os.stat(target)
-    print(f"move_mount -> {target}, dev now {after.st_dev} "
-          f"({os.major(after.st_dev)}:{os.minor(after.st_dev)})")
+    print(
+        f"move_mount -> {target}, dev now {after.st_dev} ({os.major(after.st_dev)}:{os.minor(after.st_dev)})"
+    )
     if after.st_dev != st.st_dev:
-        print("WARNING: the target's device does not match the source's. The mount may not have "
-              "taken effect where you think it did.", file=sys.stderr)
+        print(
+            "WARNING: the target's device does not match the source's. The mount may not have "
+            "taken effect where you think it did.",
+            file=sys.stderr,
+        )
         return 1
     print("OK: same device on both sides, so the mount is the source filesystem")
     return 0
