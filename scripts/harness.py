@@ -167,7 +167,18 @@ def pod_reachable():
     global _POD_REACHABLE
     if _POD_REACHABLE is not None:
         return _POD_REACHABLE
-    pod = os.path.expanduser("~/bin/pod")
+    # THE SEAM IS A PATH, NOT A REWRITTEN ~/bin/pod. 6e specified the world as "point
+    # ~/bin/pod at a dead host", which means editing the operator's real wrapper -- the one
+    # every session and five tracked scripts depend on -- so a selftest that crashed midway
+    # would leave the machine unable to reach the pod. HARNESS_POD_BIN names a DIFFERENT
+    # executable instead, and the world builds a real one: a two-line script that sleeps past
+    # the probe deadline, so the TimeoutExpired branch is exercised by an actual timeout rather
+    # than by a stubbed exception (de-25, 2026-09-05).
+    # THE SEAM IS DELIBERATELY ONLY THE PROBE. Twelve other sites in this file resolve
+    # ~/bin/pod directly and stay that way: HARNESS_POD_BIN exists so a selftest can make the
+    # REACHABILITY question answer no, and a fixture that could redirect every pod read would
+    # be able to fake the pod's content, which is the thing those checks exist to read.
+    pod = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
     if not os.path.exists(pod):
         _POD_REACHABLE = (False, "~/bin/pod is not installed on this machine")
         return _POD_REACHABLE
@@ -3055,7 +3066,16 @@ def check_pod_stamp_is_main(root):
     where git is. A first version read data/pod_synced_head from the local tree and SKIPped
     on every real repository, because that file is pod-local and is not tracked -- the check
     would have shipped green and never once run on the value it exists to judge. Same
-    two-filesystem join as pod_ledger_rows_home, and the same reason it cannot be one-sided."""
+    two-filesystem join as pod_ledger_rows_home, and the same reason it cannot be one-sided.
+
+    THE LOCAL-FILE BRANCH IS NOT DEAD CODE, and it is worth saying so because it looks like
+    the version that was wrong. Run ON THE POD, `root` IS the pod's tree and
+    data/pod_synced_head is a real local file there -- run_ddp.sh:22 reads it exactly that way.
+    So the branch order is right: local if present (the pod), else through ~/bin/pod (a
+    laptop), else SKIP. What was wrong in the first version was reading ONLY the local file,
+    which on a checkout is a SKIP that reads as coverage. Authority is `both` for the same
+    reason (de-25, 2026-09-05): the value is the pod's and the sha resolution is the
+    repository's, so neither side alone can answer and a `repo` declaration overpromised CI."""
     fake = os.environ.get("HARNESS_POD_STAMP")
     if not os.path.exists(os.path.join(root, ".git")):
         return SKIP, "not a git checkout -- this clause is the one the pod cannot answer"
@@ -13373,9 +13393,15 @@ EVIDENCE = {
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
     # local side to compare against.
     "pod_ledger_rows_home": "both",
-    # repo: resolving a sha against main needs the object database, which is the whole reason
-    # this clause cannot live in run_ddp.sh.
-    "pod_stamp_is_main": "repo",
+    # "both", for the same reason as pod_ledger_rows_home and MEASURED the same way: the VALUE
+    # lives on the pod (data/pod_synced_head, which is pod-local and untracked -- absent from
+    # every checkout, verified 2026-09-05: `git ls-files data/pod_synced_head` is empty and the
+    # file does not exist here), and resolving that sha against main needs the object database,
+    # which the pod's tree does not have. Declaring it `repo` said green-here-means-green-on-main,
+    # and it cannot: with no ~/bin/pod the check SKIPs, so CI has never once run it on the value
+    # it exists to judge. 6e's suggested fix -- read the local stamp -- is the version that
+    # shipped green and never ran; the join is irreducible, so the authority is both (de-25).
+    "pod_stamp_is_main": "both",
     # repo: resolving a sha needs the object database, which the pod's tree does not have.
     "run_commits_resolve": "repo",
     "keep_claim_reasons_live": "repo",
@@ -15899,6 +15925,17 @@ def _selftest_check_timeout_skips():
             assert row, f"{slow_name} produced no result -- the run died"
             return row[0][1], row[0][2]
 
+        def run_and_read_persisting():
+            # persist_timeouts=TRUE, with the writer captured by the caller. The
+            # unreachable-pod case must observe whether a strike would have been BANKED, and
+            # with persistence off the writer is never reached at all -- the assertion would
+            # hold for a branch that banks strikes. Safe because the caller replaces
+            # _write_timeout_strikes, so nothing touches the real ledger.
+            results = run_checks(ROOT, quiet=True, persist_timeouts=True)
+            row = [r for r in results if r[0] == slow_name]
+            assert row, f"{slow_name} produced no result -- the run died"
+            return row[0][1], row[0][2]
+
         real_read = globals()["_read_timeout_strikes"]
         # Strike 1, from a clean slate: TIMEOUT, non-blocking, names the deadline.
         globals()["_read_timeout_strikes"] = lambda: {}
@@ -15921,13 +15958,86 @@ def _selftest_check_timeout_skips():
             f"a second consecutive timeout must FAIL, got {state2}: {evidence2} -- "
             f"otherwise a check that never runs never says so")
         assert "consecutive" in evidence2, f"the FAIL must say why: {evidence2}"
+
+        # (c) AN UNREACHABLE POD IS A SKIP AND BANKS NO STRIKE (6e's ruling 2026-09-04, world
+        # de-25 2026-09-05). pod_reachable() existed with no world at all: the branch was
+        # committed at ca4945c0 and nothing had ever exercised it, so whether an unreachable
+        # pod produced the SKIP or fell through to the strike path was unmeasured.
+        #
+        # THE WORLD IS A REAL EXECUTABLE THAT TIMES OUT, not a stubbed pod_reachable. 6e
+        # specified "point ~/bin/pod at a dead host", which means editing the operator's real
+        # wrapper -- the transport every session depends on -- so a selftest crashing midway
+        # would leave the machine unable to reach the pod. HARNESS_POD_BIN names a different
+        # binary instead, and it sleeps past the probe deadline: the TimeoutExpired branch runs
+        # for real rather than being asserted about.
+        import shutil as _sh
+        import stat as _stat
+        import tempfile as _tf
+
+        _saved_ev = EVIDENCE.get(slow_name)
+        _saved_reach = globals()["_POD_REACHABLE"]
+        _saved_bin = os.environ.get("HARNESS_POD_BIN")
+        _d = _tf.mkdtemp(prefix="deadpod_")
+        try:
+            _fake = os.path.join(_d, "pod")
+            with open(_fake, "w", encoding="utf-8") as _fh:
+                _fh.write(f"#!/bin/sh\nsleep {_POD_PROBE_TIMEOUT + 5}\n")
+            os.chmod(_fake, os.stat(_fake).st_mode | _stat.S_IEXEC)
+            EVIDENCE[slow_name] = "pod"
+            os.environ["HARNESS_POD_BIN"] = _fake
+            globals()["_POD_REACHABLE"] = None
+            _ok, _why = pod_reachable()
+            assert not _ok and "did not answer" in _why, (
+                f"the world must make the probe TIME OUT, not fail another way: {_ok}, {_why!r}")
+            # THE STRIKE SET IS CAPTURED THROUGH THE WRITER, because run_checks returns only
+            # results and the strike dict is local to it. persist_timeouts=False means the
+            # writer is not called at all on a clean run, so an empty capture is itself the
+            # assertion's subject: a branch that banked a strike would have to call it.
+            _last_strikes = {}
+            _real_write = globals()["_write_timeout_strikes"]
+
+            def _capture(strikes):
+                _last_strikes.update(strikes)
+
+            globals()["_write_timeout_strikes"] = _capture
+            globals()["_read_timeout_strikes"] = lambda: {slow_name: 1}
+            try:
+                state3, evidence3 = run_and_read_persisting()
+            finally:
+                globals()["_read_timeout_strikes"] = real_read
+                globals()["_write_timeout_strikes"] = _real_write
+            # Strike 1 is already banked, so without the branch this is the FAIL asserted above.
+            assert state3 == SKIP, (
+                f"an auth=pod check whose pod is unreachable must SKIP, got {state3}: {evidence3}")
+            assert "unreachable" in evidence3, f"the SKIP must name the reason: {evidence3}"
+            # AND THE STRIKE COUNTER MUST NOT MOVE, which the state assertion cannot see:
+            # run_checks persists only names it timed out on THIS run, so a branch that
+            # SKIPped and also banked a strike reads identical above and FAILs on the next
+            # real run. Read the returned strike set rather than running the suite a fourth
+            # time -- each run_and_read() executes every check, and this case already pays for
+            # three (~30s each on a loaded machine).
+            assert slow_name not in _last_strikes, (
+                f"an unreachable-pod SKIP must bank no strike, got {_last_strikes.get(slow_name)} "
+                f"-- a check that never ran has not struck out")
+        finally:
+            globals()["_POD_REACHABLE"] = _saved_reach
+            if _saved_bin is None:
+                os.environ.pop("HARNESS_POD_BIN", None)
+            else:
+                os.environ["HARNESS_POD_BIN"] = _saved_bin
+            if _saved_ev is None:
+                EVIDENCE.pop(slow_name, None)
+            else:
+                EVIDENCE[slow_name] = _saved_ev
+            _sh.rmtree(_d, ignore_errors=True)
     finally:
         CHECKS[:] = saved_checks
         if saved_to is None:
             _CHECK_TIMEOUTS.pop(slow_name, None)
         else:
             _CHECK_TIMEOUTS[slow_name] = saved_to
-    print("  check timeout: strike 1 TIMEOUTs naming its deadline, strike 2 FAILs; the run survives both")
+    print("  check timeout: strike 1 TIMEOUTs naming its deadline, strike 2 FAILs, and an "
+          "auth=pod check whose pod is unreachable SKIPs banking no strike; the run survives all")
 
 
 def _selftest_exp_fold():
