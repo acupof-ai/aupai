@@ -36,6 +36,20 @@
       "uncertainty": "None reported: one value, no sweep, no ablation isolating this term's contribution from the bias's.",
       "boundary": "PAPER-REPORTED, and its scale argument differs from the bias's. This loss is per SEQUENCE, so what matters is tokens per sequence per expert: at seq 4096 with top-3 over 24 experts we get 512 tokens per expert per sequence against their 4096 x 8 / 256 = 128, i.e. our per-sequence signal is 4x THEIRS even though our per-step signal is 60x worse. So this term's regime is closer to comparable than the bias's, but it is still unmeasured here and it is not registered as part of the moe_0905 arms.",
       "status": "recorded"
+    },
+    {
+      "id": "moe.grouped_mm_bf16_reduction_floor",
+      "value": "On CUDA at bf16, torch._grouped_mm's reduction order differs from an identical plain matmul computing the SAME function by max|d| = 0.001953. fp32-on-CUDA and plain-matmul-at-bf16 both give exactly 0.0, so the difference belongs to the grouped kernel's reduction, not to bf16. On CPU the same comparison is exactly 0.0 at both fp32 and bf16.",
+      "measured": "2026-09-05",
+      "source": "tilerl on card 7, via scripts/moe_dispatch_bench.py's tied-weights witness (the measurement that made the witness's own 1e-3 tolerance refuse a correct module); CPU side reproduced by b0 in scripts/test_moe_module.py's harness. FOUND BY tilerl, credited here because the number is theirs.",
+      "config": {
+        "why_it_matters": "any numerical-agreement assertion at or below 1e-3 REFUSES A CORRECT MODULE when run on the card. Two witnesses were calibrated on CPU where the floor is 0.0 and would have failed on CUDA: tilerl's bench witness (fixed to 4e-3) and b0's scripts/test_moe_module.py (checks 1 and 3, now 1e-2 on CUDA and 1e-6/1e-5 on CPU, ruled by 4c).",
+        "defect_signals_this_must_stay_below": "0.0172 for swapped SiTU-GLU betas and 0.023 for plain a*sigmoid(b) in place of SiTU-GLU, both on outputs of scale ~0.7 -- these are FUNCTION differences and do not shrink with precision, which is what makes a band between the floor and them possible at all",
+        "chosen_bounds": "bench 4e-3 (2x the floor); module tests 1e-2 on CUDA (~5x the floor, still 1.7x below the smaller defect), 1e-6/1e-5 on CPU where the floor is 0.0"
+      },
+      "uncertainty": "ONE shape on ONE card, single measurement, no repeat and no spread. The floor may differ with expert count, group sizes, or a torch version -- which is why the chosen bound sits several multiples above it rather than at 2x.",
+      "boundary": "measured for _grouped_mm at bf16 on the pod's card at the bench's shape. It says nothing about _scaled_grouped_mm (fp8), nothing about other reduction sizes, and nothing about the backward pass -- the witness compares forward outputs only.",
+      "status": "measured"
     }
   ]
 }
