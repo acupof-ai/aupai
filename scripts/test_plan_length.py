@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """build_mix's plan length against the row cursor: does a resume allocate the REMAINDER?
 
-THE DEFECT. train.py:1597 is `want = int(rows * frac * d.get(key, d["weight"]))`, and
-`rows` at :1528 is the mix's FULL budget. The row cursor moves where consumption starts
-(:1607 `arange(used[name], used[name] + want)`); it never reduces how much is allocated.
-So a resume plans the whole budget again, on top of what the earlier segment already
-trained, and :2140 turns that plan into total_steps -- the run ends LONGER than the recipe.
+THE DEFECT. build_mix's per-phase allocation is `want = int(rows * frac * d.get(key,
+d["weight"]))`, and `rows` there is the mix's FULL budget. The row cursor moves where
+consumption starts (`arange(used[name], used[name] + want)`); it never reduces how much is
+allocated. So a resume plans the whole budget again, on top of what the earlier segment
+already trained, and main() turns that plan into total_steps -- the run ends LONGER than the
+recipe. No line numbers: three citations in this file rotted into unrelated code and one sent
+a reader chasing them (e1, 2026-09-06). Roles identify these; numbers did not.
 Measured on p200m_4b_0902: plan 976,556 rows = 4.00B in the fresh run AND in the resume,
 identical, so 832 steps' worth of tokens are trained twice over on the token axis.
 `--max_steps` caps the symptom by truncating consumption; the allocation stays wrong, and
@@ -121,7 +123,7 @@ def _sha(rows):
 
 
 def _warmdown_start(train, total_steps):
-    """The ABSOLUTE step the warmdown begins at, as train.py:2160 prints it."""
+    """The ABSOLUTE step the warmdown begins at, as train.py's own schedule line prints it."""
     return total_steps - max(1, int(train.Cfg.warmdown * total_steps))
 
 

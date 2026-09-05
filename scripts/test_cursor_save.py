@@ -186,9 +186,9 @@ def main():
         cfg._plan_step_origin = 16000  # resumed here; the plan below is stage 2's
         # AND THE ROWS THE EARLIER SEGMENTS CONSUMED. Without this the fixture described an
         # impossible run: resumed at step 16000, so 16000 x 16 x 2 = 512,000 rows are behind
-        # it, while declaring a cursor base of nothing. train.py:1134 writes
-        # counts x world + _base, i.e. an ABSOLUTE cursor, and _base (:1056) is exactly those
-        # earlier rows -- so a fixture with no base produces a segment-only 3,200 and
+        # it, while declaring a cursor base of nothing. save_checkpoint writes this segment's
+        # consumed rows PLUS _row_cursor_base, i.e. an ABSOLUTE cursor, and the base is
+        # exactly those earlier rows -- so a fixture with no base produces a segment-only 3,200 and
         # save_checkpoint's sum guard correctly refuses it. That guard is what
         # ds.second_resume_rereads_one_segment exists to protect: its discriminating
         # checkpoint, p200m_4b_0902.interrupt.step1192, reads 305,152 = 1192 x 256 absolute
