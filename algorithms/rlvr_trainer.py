@@ -472,6 +472,15 @@ def main():
                 with open(tok_ledger, "a", encoding="utf-8") as _fh:
                     _fh.write(json.dumps({
                         "step": step, "tok_generated": int(t[6]), "tok_trained": int(t[7]),
+                        # BOTH COLUMN NAMES, THE OTHER AT ZERO (4c's ruling, 2026-09-05).
+                        # This arm generates and consumes nothing; experiment 1's continued-
+                        # pretraining arm consumes and generates nothing. A single "tokens"
+                        # column would add an exposure the model READS to a rollout the model
+                        # WRITES, and the pretraining-vs-RL comparison these two ledgers exist
+                        # for is precisely a comparison of those two quantities. Written as a
+                        # literal 0 rather than omitted: a reader joining the ledgers cannot
+                        # tell an absent column from an unrecorded one.
+                        "tok_consumed": 0,
                         "truncated": int(t[8]), "groups": int(t[9]), "degenerate": int(t[10]),
                         "opt_steps": tot_opt_steps, "group_size": args.group_size,
                         "max_new": args.max_new, "batch": args.batch, "world": world,
