@@ -30,7 +30,8 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("mix_path", nargs="?", help="mix json (optional if --domains given)")
     ap.add_argument("--domains", nargs="*", help="override domains (mix file may not exist/be stale)")
-    ap.add_argument("--cache_dir", default="/data00")
+    ap.add_argument("--cache_dir", default=None,
+                    help="default: train._token_cache_dir(), which follows AUPAI_TOKEN_CACHE_DIR")
     ap.add_argument("--rows_only", action="store_true", help="time torch.load only, skip corpus_fp walk")
     a = ap.parse_args()
 
@@ -49,6 +50,16 @@ def main():
     from cache_guard import assert_not_co_resident
 
     assert_not_co_resident(domains)
+    if a.cache_dir is None:
+        # train's accessor, so this tool measures the caches a run would actually read. The
+        # default was a hardcoded "/data00" and would have kept timing the overlay copy after
+        # the caches moved to NVMe -- on a tool whose entire output is load SECONDS, i.e. the
+        # one place where reading the wrong filesystem changes every number.
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import train
+
+        a.cache_dir = train._token_cache_dir()
+        print(f"cache_dir {a.cache_dir} (train._token_cache_dir)")
     rows = []
     total_bytes = total_load_s = total_walk_s = 0.0
     for name in domains:
