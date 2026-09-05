@@ -16699,6 +16699,11 @@ _UNFROZEN_ALLOWLIST = {
     # one field here whose value is checked elsewhere: train.py refuses an empty mem_arm whenever
     # mem_values is set, so it cannot be quietly omitted the way an unfrozen key usually can.
     "mem_arm",
+    # The MoE arm's LABEL, mem_arm's reason exactly: it names the rows in runs/moe_diag.jsonl
+    # and changes no computation, and it MUST differ between E1 and E1b -- freezing it would
+    # refuse the second arm's launch. Like mem_arm it cannot be quietly omitted: train.py
+    # refuses an empty moe_arm whenever moe_experts is set, before the model is built.
+    "moe_arm",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
