@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (90 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (177 = 90 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (91 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (178 = 91 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -179,13 +179,13 @@ Cannot see: whether a retraction reached every consumer of the original ruling (
 
 ## R3. Artifacts carry their producer's identity; missing identity refuses, never rebuilds
 
-5 incidents (2 infra, 3 model), ~4h each, 20h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
+6 incidents (2 infra, 4 model), ~4h each, 24h. `check_cache_readers_set_vocab_id` (registered CHECKS entry) enforces vocab identity on cache readers; `train.py:1472` raises if `VOCAB_ID` is unset. Partial: covers vocab, not all producer identity.
 
 - §4: an artifact with no producer identity was silently rebuilt; the rebuild used a different producer, and the artifact's meaning changed. Missing identity must refuse, not rebuild.
 - §24: a checkpoint with no recipe provenance was scored; the score was attributed to a recipe the checkpoint did not run.
 - §189: a close written without --started stamped the row with its own write time and minted a third identity for a run that never existed; the ledger's fold key is (name, started), so the verdict and the numbers now sit on a phantom row.
 
-Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44, §189).
+Cannot see: whether the identity a checkpoint carries is the identity it ran with (§44, §189, §210).
 
 ## R10. What happened only on the pod did not happen; bring it back to the repo the same day
 
