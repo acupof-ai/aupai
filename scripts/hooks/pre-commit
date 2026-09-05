@@ -1365,6 +1365,14 @@ def main():
         # every fp32 arm's arithmetic, which is the objection this program raises about the
         # fp8/bf16 confound in the first place.
         "scripts/test_bf16_flag.py",
+        # The latent MoE. Registered here AND on model.py's trigger list below, because the defect
+        # it guards is in model.py: the routed experts contract over d_latent, so w13's fan_in
+        # changes from d to d_latent, and initialising at d is a 1.63x scale error at the
+        # registered cell that no shape check can see -- the arm's first steps would measure its
+        # initialisation. The other load-bearing half is PLACEMENT: two mutants (shared expert fed
+        # from the up-projection, down-projection per dispatched row instead of per token) have
+        # identical shapes to the correct code and were caught only by counting projection calls.
+        "scripts/test_moe_latent.py",
         # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
         # because the defect it guards lands in build_mix and not in this file: the 5% val split
         # came off the FRONT of every domain including an injection shard whose row count IS the
@@ -1775,11 +1783,21 @@ def main():
                      "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
+                     "scripts/test_moe_latent.py",
+                     # test_moe_module READS train.py -- it execs the fp8/bf16 refusal's own block
+                     # out of train.main and drives it through six worlds -- and it was on
+                     # model.py's trigger list ONLY. So da5ef8bf, which widened that guard's
+                     # condition with `and not bf16_only`, never ran it, and the test's exact-line
+                     # anchor stopped matching: it reported "no guard in train.main" for a guard
+                     # sitting right there, and stayed red on main until a model.py edit happened
+                     # to fire it. A test that reads a file belongs on that file's trigger list.
+                     "scripts/test_moe_module.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
+                     "scripts/test_moe_latent.py",
                      "scripts/test_moe_module.py"},                          # 48.9s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
