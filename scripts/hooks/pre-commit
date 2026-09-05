@@ -878,6 +878,11 @@ def main():
         # no model, no cache, no card. The val-prefix world stubs torch.load, so registering
         # it costs nothing and covers the estimator a design decision is about to read.
         "probes/arm_token_corr.py",
+        # The (b, c) admissibility fitter. ~15s: the identifiability worlds grid b x c on
+        # synthetic curves, and the cost buys the assertion that a 7-point/7x design loses b
+        # at realistic noise while a 128x range recovers it -- the property the fact rests on,
+        # and not one a fixture can state.
+        "probes/fit_data_exponent.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
