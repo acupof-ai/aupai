@@ -148,6 +148,40 @@ from model import (  # noqa: E402,F401
     rms_scale,
 )
 
+ETA_WINDOW = 20  # 10-step intervals averaged for the ETA; see _eta_fields
+
+
+def _eta_fields(win, dt, steps_left):
+    """Append dt to the trailing window and return (eta_seconds, overrun_field).
+
+    A MODULE-LEVEL FUNCTION rather than eight lines inline in main, so that
+    scripts/test_eta_window.py can call the arithmetic it is asserting on. It lived inline first
+    and the test reimplemented it from the source text; two mutations of the real expression then
+    SURVIVED, because a test that recomputes the quantity under test compares my algebra to my
+    algebra and moves with it. `win` is mutated in place -- it is main's own list, reset per
+    segment with the clock it measures.
+
+    WHY A WINDOW (AGENTS.md line 57). `(total_steps - step) * dt / 10` extrapolated the LAST 10
+    steps over every remaining step, so one slow interval was multiplied by the whole run: at
+    19,151 steps a 54 s interval printed 29 lost hours, and every checkpoint save -- which lands
+    inside one interval and costs seconds -- printed ~99 h. Consecutive lines then disagreed by
+    tens of hours and the field could not be used to decide anything.
+
+    WHY THE OVERRUN IS SEPARATE. The mean over a trailing window estimates "how long will the rest
+    take". A single interval answers "how long did the last ten steps take", which is a different
+    question and still worth printing -- so it goes in its own field. Folding it into the ETA is
+    the old defect; dropping it would be worse, because then a save becomes invisible. `+NNs`
+    appears only when this interval exceeded the window mean by more than 20%.
+    """
+    win.append(dt)
+    if len(win) > ETA_WINDOW:
+        win.pop(0)
+    win_mean = sum(win) / len(win)
+    over = dt - win_mean
+    overrun = (f" | +{over:.0f}s this interval"
+               if win_mean > 0 and over > 0.2 * win_mean else "")
+    return steps_left * win_mean / 10, overrun
+
 
 class Cfg:
     d = 1024
@@ -3204,6 +3238,10 @@ def main():
         _val_s_total = 0.0
         last = 0.0
         t_log = time.time()
+        # Trailing window of 10-step interval durations, for the ETA. Beside t_log because it is
+        # the same clock and must be reset with it: an ETA carried across a resume would average
+        # this segment's intervals with the previous one's, at a different shape and world size.
+        _eta_win = []
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
             idx = perm[i : i + Cfg.batch]
             xb_pin, yb_pin, ev, vb_pin, wb_pin = pin[(i // Cfg.batch) % 2]
@@ -3397,7 +3435,17 @@ def main():
                     mfu = 6 * n_dense * tps / (peak_tflops * 1e12)
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
-                    eta = (total_steps - step) * dt / 10
+                    # THE ETA IS A WINDOW MEAN and the overrun is its own field; the arithmetic and
+                    # the reasoning are in _eta_fields, at module level so its test can call it
+                    # rather than reimplement it.
+                    #
+                    # BOTH NEW FIELDS GO PAST `MFU (\d+)%`, never before it: RunLog._STEP_RE
+                    # (train.py:46) ends there and matches on ADJACENCY, so a field inserted ahead
+                    # of MFU silently stops every trackio metric on the line. `_overrun` rides on
+                    # the ETA field and `s/step` is appended after it -- measured by moving each
+                    # to the other side (62's test_step_line_parses asserts the same constraint
+                    # for s/step, and this change keeps its four line shapes intact).
+                    eta, _overrun = _eta_fields(_eta_win, dt, total_steps - step)
                     # Peak memory decides whether a batch fits at a given world, and it
                     # was not readable from a training run at all -- the 500M shape work
                     # had to read nvidia-smi, which reports the caching allocator's
@@ -3430,7 +3478,7 @@ def main():
                         f"| gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
-                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
+                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h{_overrun}"
                         # FULL PRECISION, AT THE END OF THE LINE. `{tps/1e3:.0f}K` above rounds
                         # to +/-0.8%, which is +/-110s on a 3815-step extrapolation, and it is
                         # the ONLY timing a dense arm's log carried -- full-precision tok/s
