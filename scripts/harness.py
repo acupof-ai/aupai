@@ -196,14 +196,19 @@ class SelftestSkip(Exception):
 # check_root_durable verifies the root is not on a Kubernetes emptyDir.
 #
 # /work is a Kubernetes emptyDir on the host's root disk -- a pod deletion erases
-# it. The durable NVMe drives (/data00-/data03, ~11 TB) are on the host but NOT
-# mounted inside the container, so the check detects known-ephemeral mounts
-# rather than comparing against durable ones. When the migration mounts /data00
-# inside the container, add it to a durable list and invert the check.
+# it. The durable NVMe drives are on the host as /data00-/data03; inside the
+# container they are reachable only where one has been attached with move_mount
+# (scripts/host_mount_into_container.py), which is /mnt/data02 as of 2026-09-05.
 EPHEMERAL_MOUNTS = ("/work",)
-#: Host NVMe that survives a pod deletion. Not visible inside the container today -- that
-#: absence is exactly what makes root_durable a WARN rather than a FAIL.
-DURABLE_MOUNTS = ("/data00", "/data01", "/data02", "/data03")
+#: Durable mounts, as seen FROM THE CONTAINER. This is the inversion the comment above
+#: promised, and it needed the paths corrected rather than just the list extended:
+#: MEASURED on the pod 2026-09-05, /data00../data03 all read _is_mount False INSIDE the
+#: container -- they are host mount points, and the container's /data00 is a directory on
+#: the overlay with the same name. /mnt/data02 reads True. So a list naming only the host
+#: paths could never have inverted anything: the check would have stayed WARN forever while
+#: a durable filesystem sat mounted three characters away. The host names are kept because
+#: this module also runs on the host, where they ARE the mounts.
+DURABLE_MOUNTS = ("/mnt/data02", "/mnt/data03", "/data00", "/data01", "/data02", "/data03")
 
 
 def aupai_root():
@@ -2295,10 +2300,17 @@ def _broken_running_sh_override_verified():
 
 
 def check_root_durable(root):
-    """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys
-    everything on /work; the durable NVMe drives are not visible inside the
-    container, so this detects known-ephemeral mounts rather than comparing
-    against durable ones. Reports FAIL on the pod today (root is /work/aupai)."""
+    """AUPAI_ROOT must not be on a Kubernetes emptyDir. A pod deletion destroys everything on /work.
+
+    THE INVERSION HAPPENED, 2026-09-05. This check spent months at WARN with the note "no durable
+    mount is visible in the container, so nothing to move to", and the severity split was correct:
+    a check no run can turn green gets --force'd along with the real reds. Now /mnt/data02 is a real
+    NVMe filesystem inside the container, so moving AUPAI_ROOT is an executable fix and this is a
+    FAIL again -- automatically, because `durable` is computed from what _is_mount actually says
+    rather than from a hardcoded verdict.
+
+    Reports FAIL on the pod today (root is /work/aupai, /mnt/data02 is mounted).
+    """
     env = os.environ.get("AUPAI_ROOT")
     aupai = os.path.abspath(env) if env else root
     # Selftest override: a .ephemeral_mounts file in the root names the ephemeral list.
@@ -2307,11 +2319,14 @@ def check_root_durable(root):
         ephemeral = [l.strip() for l in open(ef) if l.strip()]
     else:
         ephemeral = list(EPHEMERAL_MOUNTS)
-    # Severity tracks whether a fix EXISTS, not whether the risk is real. With no durable
-    # mount inside the container there is nothing any run can do about this, and a check no
-    # run can turn green gets --force'd along with the real reds. It still speaks every time.
-    # REVIVAL: the moment a durable drive is mounted in the container, moving AUPAI_ROOT
-    # becomes an executable fix and this goes back to FAIL. That is what DURABLE_MOUNTS tests.
+    # Severity tracks whether a fix EXISTS, not whether the risk is real: with no durable mount
+    # inside the container there was nothing any run could do, and a check no run can turn green
+    # gets --force'd along with the real reds. It still spoke every time.
+    #
+    # THAT REVIVAL CONDITION IS NOW MET. /mnt/data02 is an NVMe filesystem inside the container as
+    # of 2026-09-05, so moving AUPAI_ROOT is executable and this returns FAIL. Nothing here changed
+    # to make that happen -- the paths in DURABLE_MOUNTS did, because the ones listed before named
+    # only the HOST's mount points, which read False inside the container.
     df = os.path.join(root, ".durable_mounts")
     if os.path.exists(df):
         durable = [l.strip() for l in open(df) if l.strip()]
@@ -11418,7 +11433,11 @@ def _data_paths_named_by_pod_code(root):
     return named, scoped, missing
 
 
-_HARDCODED_CACHE_BASELINE = 2   # probes/arm_token_corr.py:212, runs/arm_corr_run.sh:49 (e1's)
+#: Lowered from 2 to 0 at 8e78664a (58 routed probes/arm_token_corr.py:212 through
+#: train._domain_cache_path and DROPPED runs/arm_corr_run.sh's --cache rather than re-deriving it
+#: from the shell). Zero is the only value that leaves no free slot for the next literal: at 2, two
+#: more could land at WARN and nobody would look.
+_HARDCODED_CACHE_BASELINE = 0
 
 
 def _hardcoded_cache_paths(root):
@@ -13868,6 +13887,19 @@ def _selftest_clean_merge_claim():
         saved = os.environ.get("GIT_REFLOG_ACTION")
         try:
             os.environ["GIT_REFLOG_ACTION"] = "merge theirs"
+            # STATE 0: THROUGH THE SCRUB, and this state is the one the previous four missed.
+            # States 1-4 call the check in-process, which is downstream of main() -- so they
+            # could not see that main()'s blanket GIT_* pop deleted GIT_REFLOG_ACTION and left
+            # the exemption below unreachable in the only way it is ever invoked. It stayed
+            # green for as long as the hole existed. Run the scrub first, then assert the
+            # signal survived it.
+            _scrub_git_env()
+            assert os.environ.get("GIT_REFLOG_ACTION") == "merge theirs", (
+                "state 0: _scrub_git_env() dropped GIT_REFLOG_ACTION, so the clean-merge "
+                "exemption is dead under `harness.py check` no matter what states 1-4 say")
+            for _v in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+                assert _v not in os.environ, f"state 0: the scrub must still drop {_v}"
+
             st, ev = check_shared_file_claim(d)
             assert st == SKIP and "MERGE_HEAD is not written yet" in ev, \
                 f"state 1: a clean merge must not read as a local edit: {st} {ev}"
@@ -13902,7 +13934,7 @@ def _selftest_clean_merge_claim():
                 os.environ.pop("GIT_REFLOG_ACTION", None)
             else:
                 os.environ["GIT_REFLOG_ACTION"] = saved
-        print("  ok   clean-merge shared-file claim: 4 states, gate still bites without a merge")
+        print("  ok   clean-merge shared-file claim: 5 states incl. through the GIT_* scrub")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -17759,6 +17791,28 @@ def cmd_launch(rest):
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
+    # Token caches on NVMe, for EVERY launched job and not just training. run_ddp.sh sets this
+    # too, but a launch that goes straight to eval/ or a probe never passes through it, and those
+    # are the readers that spent 46-209 s per eval on the overlay. Measured 2026-09-05: overlay
+    # 193 MB/s, NVMe 1.3 GB/s over a controlled 8 GB read.
+    #
+    # Same condition as run_ddp.sh and for the same reason: exporting it where the mount does not
+    # exist would hand train.py's absent-cache refusal to a box whose correct behaviour is to
+    # tokenize. An explicit value from the caller always wins, including one that points nowhere.
+    #
+    # The path comes from cache_guard so there is ONE definition of it, imported locally because
+    # cache_guard lives in eval/ and is not on this module's import path -- and because a launcher
+    # must not become unusable if a guard module fails to import. On failure the variable is simply
+    # not set, which is the pre-existing behaviour.
+    if not env.get("AUPAI_TOKEN_CACHE_DIR"):
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard as _cg
+            if os.path.isdir(_cg.NVME_CACHE_DIR):
+                env["AUPAI_TOKEN_CACHE_DIR"] = _cg.NVME_CACHE_DIR
+        except Exception as _e:
+            print(f"  note: token cache dir not set ({type(_e).__name__}: {_e}); "
+                  f"the job will read whatever train.py defaults to", file=sys.stderr)
 
     # A stale .rc from a previous run of this name would be read as this run's verdict.
     if os.path.exists(rc_path):
@@ -18725,23 +18779,44 @@ def cmd_install_hooks(rest):
     return 0
 
 
+_GIT_ENV_KEEP = ("GIT_REFLOG_ACTION",)
+
+
+def _scrub_git_env():
+    """Drop inherited GIT_* so this file's git work is about ROOT, never about whatever invoked us.
+
+    git sets GIT_DIR and GIT_INDEX_FILE for its hooks, and a hook that runs a selftest passes
+    them down: any `git init` in a temp directory then RECONFIGURES the real repository, and
+    `core.bare = true` on a repo with a worktree makes every git command in every session fatal.
+    That happened twice on 2026-09-02, from two different selftests. Done here rather than at the
+    eight `git init` call sites (each future one would have to remember) and rather than in the
+    hook alone (only that entry point would be safe). pod_drift.py keeps its own copy -- it runs
+    standalone.
+
+    _GIT_ENV_KEEP IS LOAD-BEARING and was missing until 2026-09-05. The blanket prefix pop took
+    GIT_REFLOG_ACTION with it, which is the ONLY signal _merging_no_merge_head() has -- so the
+    clean-merge exemption in check_shared_file_claim was dead under `harness.py check` from the
+    moment this scrub landed, while its four-state selftest stayed green because it calls the
+    check in-process, downstream of main(). Measured: `git merge --no-edit main` refused twice,
+    naming AGENTS.md, whose change came entirely from main; the same check called directly with
+    the same environment returned SKIP. A validator on the wrong side of the mutation it must see.
+
+    The allowlist is one entry and the criterion is narrow: a var stays only if git cannot use it
+    to redirect where a command reads or writes. GIT_REFLOG_ACTION only supplies reflog message
+    text, so it cannot reach the hazard this function exists for. Every var that names a path or
+    a repository goes.
+    """
+    keep = {k: os.environ[k] for k in _GIT_ENV_KEEP if k in os.environ}
+    for k in [k for k in os.environ if k.startswith("GIT_")]:
+        os.environ.pop(k)
+    for v in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY",
+              "GIT_COMMON_DIR"):
+        os.environ.pop(v, None)
+    os.environ.update(keep)
+
+
 def main():
-    for _k in [k for k in os.environ if k.startswith("GIT_")]:
-        os.environ.pop(_k)
-    # Drop inherited GIT_* before anything runs. git sets GIT_DIR and GIT_INDEX_FILE for
-    # its hooks, and a hook that runs a selftest passes them down: any `git init` in a
-    # temp directory then RECONFIGURES the real repository, and `core.bare = true` on a
-    # repo with a worktree makes every git command in every session fatal. That happened
-    # twice on 2026-09-02, from two different selftests.
-    #
-    # Here, not at the eight `git init` call sites, and not only in the hook: the
-    # invariant is "this file's git work is about ROOT, never about whatever invoked us",
-    # which holds for `harness check` under a hook, under CI, and typed by hand. Guarding
-    # the call sites means every future one must remember; guarding the hook means only
-    # that entry point is safe. pod_drift.py keeps its own copy -- it runs standalone.
-    for _v in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE", "GIT_OBJECT_DIRECTORY",
-               "GIT_COMMON_DIR"):
-        os.environ.pop(_v, None)
+    _scrub_git_env()
     # argparse with choices, not a hand-rolled scan: a bare-flag filter once resolved
     # cmd="7", matched no branch, printed nothing and exited 0 -- a silent no-op, the
     # failure mode this file exists to prevent.

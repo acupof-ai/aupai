@@ -1784,6 +1784,34 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
               f"{_sample_seed()}: retokenizing (the row ORDER differs, so a resume "
               f"cursor into the old order is meaningless)", flush=True)
     if is_main and not fresh:
+        # A CONFIGURED CACHE DIRECTORY IS A CLAIM THAT THE CACHES ARE THERE. If the operator set
+        # AUPAI_TOKEN_CACHE_DIR and the named cache is ABSENT, the honest reading is not "build it"
+        # -- it is "the thing you pointed me at is not there", and rebuilding is the most expensive
+        # possible response to that.
+        #
+        # THE CONCRETE FAILURE, 2026-09-05: the caches moved to /mnt/data02/tokens, which is an NVMe
+        # filesystem attached into this container with move_mount. That mount lives exactly as long
+        # as the container. A restart drops it and leaves the mount POINT behind as an ordinary EMPTY
+        # DIRECTORY on the overlay, so nothing errors and nothing is missing in any way a launch
+        # notices: this branch would find no cache, retokenize all 247.8 GB onto a rotational disk
+        # that is 87% full, and the first symptom would be the disk filling hours later.
+        #
+        # Same rule as vocab_id: an artifact whose identity is missing REFUSES, it never rebuilds
+        # (AGENTS.md, "missing identity refuses, never rebuilds"). The refusal is scoped to a
+        # CONFIGURED dir -- with the variable unset the default path is this repo's own history and a
+        # first-ever tokenize must still work, which is why this is not a blanket refusal.
+        if os.environ.get("AUPAI_TOKEN_CACHE_DIR") and not os.path.exists(cache):
+            raise RuntimeError(
+                f"refusing to retokenize {domain}: AUPAI_TOKEN_CACHE_DIR is set to "
+                f"{_token_cache_dir()} and {cache} is ABSENT. A configured cache directory is a "
+                f"claim that the caches are in it, so a missing file there means the directory is "
+                f"wrong or its mount is gone -- not that {domain} should be rebuilt. Rebuilding "
+                f"would write the whole mix to whatever filesystem that path now resolves to; on "
+                f"the pod that is the container overlay at 87% full.\n"
+                f"  If the NVMe mount was dropped by a container restart, re-attach it from the "
+                f"HOST: python3 scripts/attach_nvme_caches.py\n"
+                f"  If a rebuild into this directory is what you actually want, unset "
+                f"AUPAI_TOKEN_CACHE_DIR and set TOKEN_CACHE, or create the cache another way.")
         texts = []
         for p in shards:
             texts += _jsonl_content(p)
