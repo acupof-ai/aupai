@@ -17791,6 +17791,28 @@ def cmd_launch(rest):
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
+    # Token caches on NVMe, for EVERY launched job and not just training. run_ddp.sh sets this
+    # too, but a launch that goes straight to eval/ or a probe never passes through it, and those
+    # are the readers that spent 46-209 s per eval on the overlay. Measured 2026-09-05: overlay
+    # 193 MB/s, NVMe 1.3 GB/s over a controlled 8 GB read.
+    #
+    # Same condition as run_ddp.sh and for the same reason: exporting it where the mount does not
+    # exist would hand train.py's absent-cache refusal to a box whose correct behaviour is to
+    # tokenize. An explicit value from the caller always wins, including one that points nowhere.
+    #
+    # The path comes from cache_guard so there is ONE definition of it, imported locally because
+    # cache_guard lives in eval/ and is not on this module's import path -- and because a launcher
+    # must not become unusable if a guard module fails to import. On failure the variable is simply
+    # not set, which is the pre-existing behaviour.
+    if not env.get("AUPAI_TOKEN_CACHE_DIR"):
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard as _cg
+            if os.path.isdir(_cg.NVME_CACHE_DIR):
+                env["AUPAI_TOKEN_CACHE_DIR"] = _cg.NVME_CACHE_DIR
+        except Exception as _e:
+            print(f"  note: token cache dir not set ({type(_e).__name__}: {_e}); "
+                  f"the job will read whatever train.py defaults to", file=sys.stderr)
 
     # A stale .rc from a previous run of this name would be read as this run's verdict.
     if os.path.exists(rc_path):

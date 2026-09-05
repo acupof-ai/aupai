@@ -434,11 +434,14 @@ def _cache_pool(name):
     """
     # train's accessor, not a literal: this function reports measured cache bytes, so reading the
     # overlay copy after the caches moved to NVMe would put a number in a mix file that describes
-    # a file no run reads (de, 2026-09-05).
+    # a file no run reads (de, 2026-09-05). _domain_cache_path rather than joining the name here,
+    # because the '_fone' suffix is part of the cache's identity and a hand-spelled name silently
+    # drops it -- with Cfg.fone set, the two strings differ and this would size the wrong file
+    # (58, 2026-09-05).
     sys.path.insert(0, ROOT)
     import train
 
-    path = os.path.join(train._token_cache_dir(), f"tokens_{name}.pt")
+    path = train._domain_cache_path(name)
     if not os.path.exists(path):
         return None
     # OUTSIDE THE try, deliberately. The `except Exception` below turns any failure into
