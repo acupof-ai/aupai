@@ -1325,8 +1325,30 @@ def check_selftests_are_gated(root):
                    if "/" in g and g.endswith((".py", ".sh"))
                    and not os.path.exists(os.path.join(root, g)))
     if stale:
-        return FAIL, (f"{len(stale)} hook map entry(ies) name a file that does not exist, "
-                      f"so the map claims coverage of something deleted: {', '.join(stale[:4])}")
+        # WHICH DIRECTION, said out loud. "deleted" and "registered before it was written" are
+        # both a map entry with no file, and the message only named the first -- so 8a06c567
+        # (mine) registered scripts/test_eta_window.py in two maps ahead of writing it, main went
+        # red for every session, and the FAIL sent readers looking through `git log` for a
+        # deletion that never happened. `git cat-file` separates them: a path that exists in HEAD
+        # was deleted from the worktree, one that does not never existed. The fix differs too --
+        # a deletion means drop the entry, a premature registration means write the file or drop
+        # the entry until you do.
+        never, deleted = [], []
+        for g in stale:
+            rc = subprocess.run(["git", "-C", root, "cat-file", "-e", f"HEAD:{g}"],
+                                capture_output=True).returncode
+            (deleted if rc == 0 else never).append(g)
+        parts = []
+        if deleted:
+            parts.append(f"{len(deleted)} name a file DELETED from the worktree but present in "
+                         f"HEAD, so the map claims coverage of something gone: "
+                         f"{', '.join(deleted[:4])}")
+        if never:
+            parts.append(f"{len(never)} name a file that has NEVER existed in HEAD -- registered "
+                         f"before it was written, which inverts the map: an entry is a claim the "
+                         f"file is there. Write it, or drop the entry until you do: "
+                         f"{', '.join(never[:4])}")
+        return FAIL, f"{len(stale)} hook map entry(ies) name a missing file. " + "; ".join(parts)
     have = set()
     # walk_tracked, not an os.listdir over four hand-named directories. The list was
     # ("eval", "scripts", "datagen", "probes"), so mathbank/ was outside what the check
@@ -2252,18 +2274,25 @@ def check_test_integration_tree_guard(root):
 
 
 def _broken_test_integration_tree_guard():
-    """The REAL suite against a harness.py whose guard never refuses -- the mutation the
-    incident is about, not a deleted file. Deleting the test would also FAIL, but that only
-    proves the check reads a path.
+    """The REAL suite against an integration_tree.py whose predicate answers True everywhere --
+    the mutation the incident is about, not a deleted file. Deleting the test would also FAIL,
+    but that only proves the check reads a path.
 
-    Placed at <tmp>/scripts/harness.py beside a real .git, because harness.py derives
+    TRUE-EVERYWHERE RATHER THAN FALSE-EVERYWHERE, because the suite has worlds in both
+    directions and this is the one that is dangerous in a way a reader would not notice: the
+    guard keeps refusing, so it looks alive, while CI, every standalone clone and all 27 of this
+    file's mkdtemp fixtures can no longer write. W3-W6 object.
+
+    Placed at <tmp>/scripts/, beside a real .git, because harness.py derives
     ROOT = dirname(dirname(__file__)): a bare temp dir repoints ROOT at a directory with no
     .git, where pod_drift.is_pod reads True, and a whole mutation run once passed in that wrong
     world with every mutant dying at one unrelated assertion (§235, 2026-09-05)."""
     src = os.path.join(ROOT, "scripts")
-    hp = os.path.join(src, "harness.py")
-    marker = '    if r.returncode != 0 or r.stdout.strip() != "main":\n        return False\n'
-    s = open(hp, encoding="utf-8").read()
+    itp = os.path.join(src, "integration_tree.py")
+    if not os.path.exists(itp):
+        return None
+    s = open(itp, encoding="utf-8").read()
+    marker = "    wt = os.path.join(common, \"worktrees\")\n"
     if s.count(marker) != 1:
         return None
     d = _tmp_repo()
@@ -2271,7 +2300,7 @@ def _broken_test_integration_tree_guard():
     subprocess.run(["git", "-C", d, "init", "-q", "."], capture_output=True, timeout=30)
     for f in os.listdir(src):
         t = os.path.join(d, "scripts", f)
-        if f != "harness.py" and not os.path.exists(t):
+        if f != "integration_tree.py" and not os.path.exists(t):
             try:
                 os.symlink(os.path.join(src, f), t)
             except OSError:
@@ -2283,9 +2312,8 @@ def _broken_test_integration_tree_guard():
                 os.symlink(s_extra, os.path.join(d, extra))
             except OSError:
                 pass
-    # Refuses on ANY repository: W3 (a branch) and the fail-open worlds must object.
-    open(os.path.join(d, "scripts", "harness.py"), "w", encoding="utf-8").write(
-        s.replace(marker, "    if r.returncode != 0:\n        return False\n"))
+    open(os.path.join(d, "scripts", "integration_tree.py"), "w", encoding="utf-8").write(
+        s.replace(marker, marker + "    return True\n"))
     return d
 
 
@@ -2680,6 +2708,41 @@ def local_tokenizers():
 
 # -------------------------------------------------------------------------- checks
 #
+def index_scoped_checks():
+    """Check names whose subject is the INVOKING TREE'S GIT INDEX, derived from their source.
+
+    An index is not a property of the repository. It is one session's uncommitted intent,
+    seconds old, private to one working tree -- so a check reading it answers "is this commit
+    allowed" and never "is this tree fit to launch from". launch_gate's gate 9 must exclude
+    these, or one session's staged file becomes everybody's NOGO.
+
+    MEASURED 2026-09-05, and it cost two pending launches. shared_file_claim FAILed inside gate
+    9 naming AGENTS.md, which was staged in the integration tree by a merge in flight. Its
+    EVIDENCE is `repo`, so _partition_fails returned NOGO rather than UNKNOWN, and 98 read it as
+    a repository defect -- three sessions then chased a mechanism that did not exist (a
+    git-less-tree bug in the check, and the pod's manifest, neither of which the check reads).
+
+    DERIVED FROM THE BODIES, NOT A NAME LIST (4c's ruling). A list would have to be extended by
+    whoever adds the next index-reading check, i.e. by the person who does not yet know this
+    incident happened. Reading the source means the next one is excluded the moment it is
+    written. The markers are the three ways this file reaches an index: `git diff --cached`,
+    `git diff-index`, and _staged_index_env, whose whole purpose is handing a subprocess the
+    temporary index a path-scoped commit builds.
+    """
+    import inspect
+
+    markers = ("--cached", "diff-index", "_staged_index_env")
+    out = set()
+    for name, _asserts, _incident, run, _broken in CHECKS:
+        try:
+            src = inspect.getsource(run)
+        except (OSError, TypeError):
+            continue
+        if any(m in src for m in markers):
+            out.add(name)
+    return out
+
+
 # Each check is (name, asserts, incident, run, broken). `run(root)` -> (state, evidence);
 # `broken()` -> a temp root violating the condition, where run() must report FAIL.
 
@@ -3649,6 +3712,134 @@ def _broken_non_shard_jsonl_excluded():
     body = body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', "")
     with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as f:
         f.write(body)
+    return d
+
+
+def _shard_classifiers(root):
+    """train.py's OWN SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, read by AST.
+
+    Not a copy. A check that re-declares the patterns agrees with train.py only until one
+    side moves, and then it reports on a corpus train.py partitions differently -- the shape
+    that cost three of four mutants in de-56 one level up: a test that reimplements its
+    subject tests the copy. Returns None when any of the three is missing or is not a plain
+    literal, and the caller FAILs on that rather than falling back to a copy."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return None
+    try:
+        tree = ast.parse(open(src, encoding="utf-8").read())
+    except SyntaxError:
+        return None
+    out = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not getattr(node.targets[0], "id", None):
+            continue
+        name = node.targets[0].id
+        try:
+            if name in ("SHARD_RE", "NON_SHARD_RE"):
+                out[name] = re.compile(ast.literal_eval(node.value.args[0]))
+            elif name == "NON_SHARD_JSONL":
+                out[name] = set(ast.literal_eval(node.value))
+        except Exception:
+            return None
+    return out if len(out) == 3 else None
+
+
+def check_shard_contract(root):
+    """Every shard train.py would tokenize has a first line that is a JSON object with a
+    string "content" -- the field _jsonl_content reads (train.py:1327).
+
+    train.py already REFUSES a .jsonl it cannot classify (non_shard_jsonl_excluded). That
+    covers the name and says nothing about the contents, so a file named like a shard whose
+    rows use a different key passes the whitelist and dies inside the tokenizer. Twice:
+    2026-09-01 holdout_slice_<domain>.jsonl carried a header row {phase, rule_fp, n} in four
+    domains, and 2026-09-05 e1's five injection shards used "text" plus a header row and all
+    five token caches died on KeyError: 'content'. Both were found by a run, not by a check.
+
+    FIRST LINE ONLY, said out loud rather than implied: a shard whose 900,000th row is
+    malformed still passes here. The whole file is 4 GB per domain and the two incidents were
+    both row 1 -- a header written before the rows, which is what a writer emits when it
+    thinks it is writing a table. e1 adds the write-time assertion in the generator; this is
+    the tree-wide read, and the pair is the coverage.
+
+    A domain directory that does not exist is not a finding: a dev box ships only
+    data/corpus/sample. What IS a finding is zero files anywhere, which would make this
+    check vacuous, so it SKIPs by name instead of passing."""
+    cls = _shard_classifiers(root)
+    if cls is None:
+        return FAIL, ("cannot read train.py's SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, so "
+                      "this check cannot partition the corpus the way training does -- it "
+                      "refuses rather than re-declaring them, which would agree with train.py "
+                      "only until one side moved")
+    files = sorted(glob.glob(os.path.join(root, "data", "corpus", "*", "*.jsonl")))
+    shards = [p for p in files
+              if os.path.basename(p) not in cls["NON_SHARD_JSONL"]
+              and not cls["NON_SHARD_RE"].search(os.path.basename(p))
+              and cls["SHARD_RE"].search(os.path.basename(p))]
+    if not shards:
+        return SKIP, (f"no shard-named .jsonl under data/corpus/*/ ({len(files)} .jsonl total): "
+                      f"nothing to read, not a passing contract")
+    bad = []
+    for p in shards:
+        rel = os.path.relpath(p, root)
+        try:
+            with open(p, "rb") as f:
+                line = f.readline()
+        except OSError as e:
+            bad.append(f"{rel}: unreadable ({e.__class__.__name__})")
+            continue
+        if not line.strip():
+            bad.append(f"{rel}: first line is empty")
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as e:
+            bad.append(f"{rel}: first line is not JSON ({str(e)[:40]})")
+            continue
+        if not isinstance(row, dict):
+            bad.append(f"{rel}: first line is {type(row).__name__}, not an object")
+        elif "content" not in row:
+            # The keys, because they say which writer produced it: {phase, rule_fp, n} is a
+            # header row, {text} is a generator using the other convention.
+            bad.append(f"{rel}: no 'content' key (has {sorted(row)[:4]})")
+        elif not isinstance(row["content"], str):
+            bad.append(f"{rel}: 'content' is {type(row['content']).__name__}, not str")
+    if bad:
+        return FAIL, (f"{len(bad)} of {len(shards)} shard(s) would die in _jsonl_content: "
+                      + "; ".join(bad[:4]))
+    return PASS, f"{len(shards)} shards, first line carries a string 'content'"
+
+
+def _broken_shard_contract():
+    """A REAL committed shard with a header row prepended -- the 2026-09-01 shape.
+
+    data/corpus/sample/ is copied rather than symlinked: _tmp_repo_shaped links data/*, and
+    writing through that link would write into the repository's own corpus."""
+    import shutil
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "data", "corpus", "sample")
+    if not os.path.isdir(src):
+        return None
+    real = sorted(glob.glob(os.path.join(src, "*_[0-9][0-9][0-9].jsonl")))
+    if not real:
+        return None
+    link = os.path.join(d, "data", "corpus")
+    # NOT `if os.path.islink(link)`: _tmp_repo already mkdir's data/corpus, so the symlink loop
+    # in _tmp_repo_shaped skips it and the path is a real EMPTY directory. The first version
+    # guarded on islink, never copied, and died on FileNotFoundError -- a world that fails to
+    # build is not a world that fails the check, and had it merely come out empty the check
+    # would have SKIPped and the selftest read that as coverage.
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    shutil.copytree(os.path.join(ROOT, "data", "corpus"), link,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    victim = os.path.join(link, "sample", os.path.basename(real[0]))
+    rows = open(victim, "rb").read()
+    # The header the holdout-slice writer emitted, ahead of the rows that were already there.
+    with open(victim, "wb") as f:
+        f.write(b'{"phase": "s1", "rule_fp": "deadbeef", "n": 12}\n' + rows)
     return d
 
 
@@ -9286,48 +9477,59 @@ FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect
 
 
 def refuse_in_integration_tree(what, path=None):
-    """A ledger writer refuses in the integration tree unless AUPAI_CONTROLLER=1.
+    """A ledger writer refuses in the integration tree.
 
     AGENTS.md's rule -- run `harness task` and `harness friction` in your worktree, never in
     the integration tree -- was prose, and prose is what people break for cause. Two rows
     landed in the integration tree ten minutes apart on 2026-09-05: b0's task row, then 44's
     board row. Nobody was careless; the tree is where you end up when a command refuses to run
-    in a worktree, and the rule's own coverage row says so ("the invoking directory is a shell
-    fact no artifact records").
+    in a worktree, and the rule's coverage row said so ("the invoking directory is a shell fact
+    no artifact records").
 
-    THE PREDICATE IS THE CHECKED-OUT BRANCH, NOT A PATH (4c's ruling 2026-09-05). A path test
-    would hardcode /Users/bytedance/code/aupai, which is one laptop's layout and is wrong on
-    the pod and in CI; `git symbolic-ref` answers about the tree the writer is actually about
-    to append to. main is the integration tree by definition here -- the controller is the only
-    session that commits there directly -- so the branch IS the property.
+    THE PREDICATE IS "THIS IS THE MAIN WORKTREE OF A COMMON GIT DIR THAT HAS LINKED WORKTREES",
+    in scripts/integration_tree.py, shared with scripts/hooks/pre-commit. It was `branch ==
+    "main"` for the first hours of its life and that was wrong within the day: the integration
+    tree was DETACHED on purpose (tilerl's flip, main 0425accb, 2026-09-05), which makes
+    symbolic-ref answer "HEAD" and turned all three guards OFF in the one tree they exist for.
+    A branch is a label anyone can change; being the tree other worktrees hang off is
+    structural. Read integration_tree.py before touching the predicate -- each of its clauses
+    is there because dropping it was measured to break a real world, and the second clause in
+    particular keeps CI and all 27 of this file's mkdtemp fixtures out.
 
     THE CONSEQUENCE THIS PREVENTS IS NOT THE ROW, IT IS THE DIRTY LEDGER. The row itself is
-    valid content; what breaks is that the integration tree's pre-commit hook refuses a
-    non-controller commit, so the append sits uncommitted in the tree every other session
-    merges through, and the next merge aborts on it. That is why the refusal is at the write
-    and not at the commit: by the time the hook speaks, the file is already dirty.
+    valid content; what breaks is that the integration tree's pre-commit hook refuses the
+    commit, so the append sits uncommitted in the tree every other session merges through, and
+    the next merge aborts on it. That is why the refusal is at the write and not at the commit:
+    by the time the hook speaks, the file is already dirty.
 
-    Fails OPEN on an unreadable branch, deliberately. If git cannot answer -- no repository, a
-    detached HEAD, git absent -- this cannot be the integration tree in any way that matters
-    (the integration tree is a checkout of main), and refusing there would break every
-    temp-dir fixture and every CI runner that lands detached. A guard whose broken state blocks
-    the write is a guard people disable.
+    NO AUPAI_CONTROLLER LIFT. It existed while merge_main.sh:425 appended a friction row from
+    the integration tree; the new merge_main writes its rows from the caller's worktree, so
+    nothing legitimately appends there any more (4c, 2026-09-05, confirmed as intent -- their
+    own rulings come from ../aupai-fb, which is a linked worktree and reads False).
+
+    Fails OPEN where git cannot answer -- no repository, git absent, git erroring. Such a tree
+    is not the integration tree by any definition, and refusing there would break every
+    temp-dir fixture and every CI runner. A guard whose broken state blocks the write is a
+    guard people disable. An UNIMPORTABLE predicate is different and says so loudly rather
+    than silently: with the tree detached there is no branch test left to fall back to, so a
+    swallowed ImportError would leave the integration tree wholly unguarded (tilerl's reasoning
+    in the hook, adopted here).
     """
-    if os.environ.get("AUPAI_CONTROLLER") == "1":
-        return False
     root = os.path.dirname(os.path.dirname(os.path.abspath(path))) if path else ROOT
     try:
-        r = subprocess.run(["git", "-C", root, "symbolic-ref", "--short", "HEAD"],
-                           capture_output=True, text=True, timeout=10)
-    except (OSError, subprocess.SubprocessError):
+        from integration_tree import is_integration_tree
+    except Exception as e:
+        print(f"NOTE: the integration-tree guard could not load "
+              f"({type(e).__name__}: {e}); writing {what} unguarded -- check by hand that this "
+              f"is not the integration tree ({root})", file=sys.stderr)
         return False
-    if r.returncode != 0 or r.stdout.strip() != "main":
+    if not is_integration_tree(root):
         return False
-    print(f"refusing: {what} would write the ledger of the INTEGRATION TREE ({root}, on main).\n"
-          f"  That tree's pre-commit hook refuses a non-controller commit, so the row would sit\n"
-          f"  dirty in the tree every session merges through, and abort the next merge.\n"
-          f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.\n"
-          f"  Controller only: AUPAI_CONTROLLER=1 <cmd>.", file=sys.stderr)
+    print(f"refusing: {what} would write the ledger of the INTEGRATION TREE ({root}).\n"
+          f"  That tree's pre-commit hook refuses the commit, so the row would sit dirty in the\n"
+          f"  tree every session merges through, and abort the next merge.\n"
+          f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.",
+          file=sys.stderr)
     return True
 
 
@@ -12875,6 +13077,17 @@ CHECKS = [
         _broken_non_shard_jsonl_excluded,
     ),
     (
+        "shard_contract",
+        "every shard-named .jsonl under data/corpus/*/ has a first line that is a JSON object "
+        "with a string 'content' -- the field _jsonl_content reads",
+        "twice a shard passed the name whitelist and died inside the tokenizer: 2026-09-01 the "
+        "holdout slice carried a header row {phase, rule_fp, n} in four domains, and 2026-09-05 "
+        "e1's five injection shards used 'text' plus a header row and all five token caches died "
+        "on KeyError: 'content'; the name check cannot see contents",
+        check_shard_contract,
+        _broken_shard_contract,
+    ),
+    (
         "spawned_scripts_exist",
         "every script harness.py shells out to is at the path harness.py uses",
         "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
@@ -13283,8 +13496,8 @@ CHECKS = [
     ),
     (
         "test_integration_tree_guard",
-        "tasks/friction/board writers refuse in the integration tree without AUPAI_CONTROLLER=1",
-        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's BRANCH is recorded, and the refusal has to be at the write because by the time the hook refuses the non-controller commit the ledger is already dirty in the tree everyone merges through",
+        "tasks/friction/board writers refuse in the integration tree -- the main worktree of a common git dir with linked worktrees",
+        "two rows landed in the integration tree ten minutes apart on 2026-09-05 (b0's task row, 44's board row); the rule was prose because 'the invoking directory is a shell fact no artifact records' -- half right, since the tree's IDENTITY is recorded, and the refusal has to be at the write because by the time the hook refuses the commit the ledger is already dirty in the tree everyone merges through. The first predicate read the branch and went inert hours later when the integration tree was detached on purpose (main 0425accb)",
         check_test_integration_tree_guard,
         _broken_test_integration_tree_guard,
     ),
@@ -13455,6 +13668,11 @@ EVIDENCE = {
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
     "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
+    # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
+    # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
+    # are the population the two incidents came from. The classifiers it partitions by are
+    # tracked, so what differs between the two machines is the corpus, not the rule.
+    "shard_contract": "pod",
     # pod: `data/` is gitignored, so a laptop sees almost none of the population -- counting it
     # on the pod found 10 unregistered files where a laptop glob plus a code grep reported 8.
     "eval_registry_complete": "pod",
@@ -14582,6 +14800,56 @@ def _selftest_milestone_reachable():
     print(f"  milestone: a target past step {total} refuses; ckpt_<run>.pt registers at the end")
 
 
+def _selftest_shard_contract_worlds():
+    """The two branches _broken_shard_contract cannot reach: an EMPTY population, and
+    classifiers that cannot be read.
+
+    Registered as its own selftest because a single broken world can only exercise one
+    branch, and mutation MEASURED that on 2026-09-05: mutating `if not shards: return SKIP`
+    to `return PASS`, and the `cls is None` refusal to `return PASS`, both SURVIVED -- the
+    one world always has 143 shards and always reads train.py, so neither branch ran at all.
+    Two survivors are two branches nothing tested, not two bad mutations.
+
+    Both worlds are real trees with real files, and each asserts the STATE and that the
+    reason names the cause -- a SKIP whose text does not say the population was empty is
+    indistinguishable to a reader from a SKIP for any other reason."""
+    import shutil
+
+    # (1) A corpus directory holding only NON-shards: the classifiers are readable, the
+    # population is empty, and the honest answer is SKIP-by-name. A PASS here is the vacuous
+    # shape -- "every one of zero shards is fine".
+    d = _tmp_repo_shaped()
+    link = os.path.join(d, "data", "corpus")
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    os.makedirs(os.path.join(link, "sample"))
+    # A REAL non-shard name from train.py's own list, so the exclusion is what empties the
+    # population rather than an empty directory.
+    shutil.copy(os.path.join(ROOT, "data", "corpus", "sample", "web_labels.jsonl"),
+                os.path.join(link, "sample", "web_labels.jsonl"))
+    st, why = check_shard_contract(d)
+    assert st == SKIP, f"a corpus with no shard-named file must SKIP, not {st}: {why}"
+    assert "no shard-named" in why, f"the SKIP must say the population was empty: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (2) train.py present but its classifiers unreadable. The check must REFUSE rather than
+    # re-declare the patterns: a copy agrees with train.py only until one side moves.
+    d = _tmp_repo_shaped()
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    p = os.path.join(d, "train.py")
+    if os.path.islink(p):
+        os.unlink(p)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', ""))
+    st, why = check_shard_contract(d)
+    assert st == FAIL, f"unreadable classifiers must FAIL, not {st}: {why}"
+    assert "SHARD_RE" in why, f"the refusal must name what it could not read: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  shard_contract: an empty population SKIPs by name; unreadable classifiers refuse")
+
+
 def _selftest_cold_cache_refuses():
     """A training launch with no token caches refuses instead of taking a short gate.
 
@@ -14789,6 +15057,133 @@ def _selftest_killpg_reaps_children():
             pass
         shutil.rmtree(d, ignore_errors=True)
     print("  kill: a differently-named child is invisible to a cmdline match, reaped by the group")
+
+
+def _selftest_kill_verify_ignores_zombies():
+    """A kill whose targets are all zombies reports SUCCESS, and a stranger in the group is
+    not reported as a survivor.
+
+    Two defects in one artifact (b0, 2026-09-05: `harness kill` output at 12:0xZ beside the
+    container's `ps -o stat=`). The kill printed "STILL ALIVE after KILL: 52812 52813 52817"
+    while every one of those pids was state Z, and 52817 had never been in the killed set.
+
+    Local processes, not the pod, for the same reason _selftest_killpg_reaps_children is local:
+    the defect is in how the verification SET is computed, and that logic is namespace-blind.
+    Real zombies, though -- a child whose parent never waits stays Z with its pgid intact, which
+    is why the survivor greps matched it. A stubbed `ps` would not reproduce that.
+
+    ONE PLATFORM DIFFERENCE, MEASURED HERE 2026-09-05 RATHER THAN ASSUMED, because it decides
+    which reader the fixture may use: on macOS `pgrep -g <pgid>` OMITS zombies while
+    `ps -o pid=,stat= -g <pgid>` lists them (pid 20073, ppid 20071, state Z: absent from pgrep,
+    present in ps). On the pod's Linux the zombie is what the greps DO return -- that is the
+    incident itself, three Z pids printed by cmd_kill's pgrep reads, and _drop_zombies' own
+    docstring records the same on 2026-09-01 (1570 of 1577 pgrep -f matches were zombies). So
+    the fixture discovers and reads through `ps -g`, which behaves the same on both, and the
+    property under test is reader-independent: a Z pid appearing in ANY liveness read must be
+    filtered out before it is called a survivor.
+    """
+    import shutil
+    import signal as sig
+    import subprocess as sp
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="killz_")
+    # A parent that (a) spawns a child, lets it exit, and NEVER waits -> a real zombie, and
+    # (b) spawns a long-lived child AFTER a delay. (b) is 52817's shape: a live member of the
+    # job's process group that appeared after the kill resolved its target set, so it was never
+    # signalled. Both live in the parent's new session, which is the only way to put a second
+    # process in that group -- os.setpgid from here raises EACCES once the child has exec'd
+    # (measured 2026-09-05), so the group has to be built by the group's own leader.
+    #
+    # THE ZOMBIE'S Popen OBJECT MUST STAY REFERENCED. Python's subprocess module reaps
+    # DEREFERENCED Popen objects opportunistically (`subprocess._cleanup()` runs on every new
+    # Popen), so writing the first spawn without binding it made the SECOND spawn wait the
+    # zombie away -- the world built its own subject and then destroyed it, and the assertion
+    # that the world still holds a zombie is what caught it (measured 2026-09-05).
+    parent_py = os.path.join(d, "zparent.py")
+    open(parent_py, "w").write(
+        "import subprocess, sys, time\n"
+        "z = subprocess.Popen([sys.executable, '-c', 'pass'])\n"    # -> zombie, never waited
+        "time.sleep(1.0)\n"
+        "late = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(600)'])\n"
+        "time.sleep(600)\n"
+        "print(z.pid, late.pid)\n"                                  # keeps both referenced
+    )
+    proc = sp.Popen([sys.executable, parent_py], start_new_session=True)
+    try:
+        pgid = str(os.getpgid(proc.pid))
+
+        def group_table():
+            """[(pid, stat)] for the whole group. `ps -g`, not `pgrep -g`: see the docstring."""
+            r = sp.run(["ps", "-o", "pid=,stat=", "-g", pgid], capture_output=True, text=True)
+            out = []
+            for ln in r.stdout.splitlines():
+                f = ln.split()
+                if len(f) >= 2:
+                    out.append((f[0], f[1]))
+            return out
+
+        deadline = time.time() + 15
+        zpid, latecomer = None, None
+        while time.time() < deadline and not (zpid and latecomer):
+            time.sleep(0.3)
+            tbl = group_table()
+            zpid = zpid or next((p for p, st in tbl if st.startswith("Z")), None)
+            latecomer = next((p for p, st in tbl
+                              if not st.startswith("Z") and p != str(proc.pid)), None)
+        assert zpid, "the world must actually contain a zombie; no Z pid appeared in 15s"
+        assert latecomer, ("the world must contain a LIVE group member other than the parent; "
+                           "without it the intersection assertion below is untested")
+
+        # THE DEFECT, on the real thing: the zombie is IN the group listing, so a verification
+        # that takes such a listing raw counts it as alive -- which is what printed
+        # "STILL ALIVE after KILL" for three already-dead pids.
+        raw = [p for p, _ in group_table()]
+        assert zpid in raw, ("a zombie must still appear in the group listing -- if it does not, "
+                             "this world no longer reproduces the defect and the next assertion "
+                             "is vacuous")
+
+        # THE FIX: the same read, filtered on state, which is what _drop_zombies does.
+        live = [p for p, st in group_table() if not st.startswith("Z")]
+        assert zpid not in live, f"a Z pid must read as dead; {zpid} did not"
+        assert str(proc.pid) in live, "the live parent must survive the filter"
+
+        # AND THE SURVIVOR SET IS AN INTERSECTION WITH WHAT WAS SIGNALLED, tested by CALLING the
+        # partition on this world's real pids. The first version grepped cmd_kill's source for
+        # the word "signalled" instead, and MEASURED 2026-09-05 that mutation survived: renaming
+        # the assignment left the word elsewhere in the block, so a substring of the
+        # implementation passed for an implementation that no longer intersected anything.
+        survivors, group_extra = _partition_kill_survivors(live, {str(proc.pid)})
+        assert str(proc.pid) in survivors, (
+            f"the signalled parent must be a survivor candidate; got {survivors}")
+        assert latecomer in group_extra and latecomer not in survivors, (
+            f"a live group member never signalled must be reported separately, not as a survivor "
+            f"of this kill -- 52817 was never in the killed set; got survivors={survivors} "
+            f"extra={group_extra}")
+        assert zpid not in survivors and zpid not in group_extra, (
+            "a zombie must reach neither list")
+
+        # And cmd_kill really routes through both. Read the source only for the zombie filter,
+        # which has no return value to test: the partition above is tested by execution.
+        import inspect
+
+        src = inspect.getsource(cmd_kill)
+        verify = src[src.index("Verify three ways"):]
+        assert verify.count("_drop_zombies") >= 3, (
+            f"cmd_kill's verification must filter zombies on all three reads, found "
+            f"{verify.count('_drop_zombies')}")
+        assert verify.count("_partition_kill_survivors") >= 2, (
+            f"both cmd_kill survivor computations must go through the partition, found "
+            f"{verify.count('_partition_kill_survivors')}")
+        os.killpg(int(pgid), sig.SIGTERM)
+    finally:
+        try:
+            os.killpg(os.getpgid(proc.pid), sig.SIGKILL)
+        except (ProcessLookupError, PermissionError, OSError):
+            pass
+        shutil.rmtree(d, ignore_errors=True)
+    print("  kill verify: a real zombie is in the group listing and reads as dead; an "
+          "unsignalled group member is not a survivor")
 
 
 def _selftest_milestone_selection():
@@ -17279,11 +17674,13 @@ def _demo(only=None):
     shutil.rmtree(d30, ignore_errors=True)
 
     _selftest_milestone_reachable()
+    _selftest_shard_contract_worlds()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_provenance_states_the_tree()
     _selftest_pool_not_raw_supply()
     _selftest_killpg_reaps_children()
+    _selftest_kill_verify_ignores_zombies()
     _selftest_milestone_selection()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
@@ -17537,6 +17934,16 @@ _UNFROZEN_ALLOWLIST = {
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "fp8",                # training precision, not architecture
+    # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
+    # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
+    # equalise precision across two arms leaves fp32 masters, which torch._grouped_mm refuses; a
+    # MoE arm and its dense control could not be compared at equal precision at all (run
+    # b0_p5_e1_bf16 died at step 0, 2026-09-05, prereg moe_0905 amendment 8). NOT SILENTLY
+    # OMITTABLE the way an unfrozen architecture key would be: train.py refuses --bf16 with --fp8
+    # rather than ranking them, refuses --bf16 without amp rather than accepting a flag whose
+    # property is false, and refuses a MoE arm carrying neither flag -- so a launch that drops it
+    # stops instead of reporting a number at a precision nobody chose.
+    "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
@@ -19644,6 +20051,25 @@ def _gpu_descendants(root_host_pid):
     return out
 
 
+def _partition_kill_survivors(group_live, signalled):
+    """(survivors, group_extra) -- which live group members this kill actually signalled.
+
+    A function rather than three lines inline, because it is the part a selftest can execute on
+    known data. The inline version could only be checked by grepping cmd_kill's source for the
+    word "signalled", and MEASURED 2026-09-05: renaming the assignment left that word elsewhere
+    in the block, so the mutation passed. A substring of the implementation is not the property.
+
+    52817's shape is the second return value: a live pid in the job's process group that the
+    kill never targeted -- it joined after resolution, or a sibling shares the pgid. Naming it a
+    survivor sends the operator after a pid that may belong to someone else's job.
+    """
+    sig = set(signalled)
+    survivors, extra = [], []
+    for p in group_live:
+        (survivors if p in sig else extra).append(p)
+    return survivors, extra
+
+
 def cmd_kill(argv):
     """`harness kill <name> [--dry]` — kill a launched job by name, not pid.
 
@@ -19655,14 +20081,45 @@ def cmd_kill(argv):
 
     Children whose cmdline differs from the parent's are found by DESCENT, not by
     pattern: see _gpu_descendants. The pattern alone cannot see them, and using it
-    to verify the kill made the failure silent."""
+    to verify the kill made the failure silent.
+
+    EVERY LIVENESS READ GOES THROUGH _drop_zombies, VERIFICATION INCLUDED. It was applied
+    only to the two RESOLUTION reads; the three verification reads -- `pgrep -g <pgid>`,
+    `pgrep -f <pattern>` and _gpu_descendants -- took their output raw. So a kill that worked
+    perfectly reported failure: MEASURED 2026-09-05 (b0's artifact, harness kill output at
+    12:0xZ beside the container's `ps -o stat=`), "STILL ALIVE after KILL: 52812 52813 52817"
+    while every one of those pids was state Z. A zombie keeps its argv AND its pgid until it
+    is reaped, so both survivor greps match it; AGENTS.md's own rule already says `Z` is dead
+    and the function that implements it was two calls away.
+
+    THE SURVIVOR LIST IS THE KILLED SET, NOT WHATEVER THE GROUP HOLDS. 52817 was never in the
+    killed set -- it appeared only in `pgrep -g`, i.e. it joined the process group after the
+    resolution, or belonged to a sibling sharing the pgid. Reporting it as a survivor of a kill
+    it was not part of sends the operator after the wrong pid, and on a shared box the wrong
+    pid may be someone else's job. So verification now intersects with what was actually
+    signalled, and anything else in the group is reported SEPARATELY as such."""
     ap = argparse.ArgumentParser(prog="harness kill")
     ap.add_argument("name")
     ap.add_argument("--dry", action="store_true", help="print resolved pids, kill nothing")
     a = ap.parse_args(argv)
+    # LAPTOP ONLY, AND IT SAYS SO INSTEAD OF TRACEBACKING. Every read and every kill here goes
+    # through ~/bin/pod or `tn exec`, which are the laptop's two views of the pod; on the pod
+    # itself neither exists and the first subprocess raised FileNotFoundError
+    # /root/bin/pod (b0, 2026-09-05). A traceback from a kill tool is the worst place to learn
+    # you are in the wrong view, because the operator is mid-incident and reads it as "the kill
+    # failed" rather than "this command cannot run here". Checked before anything is resolved,
+    # so nothing is half-killed.
+    pod_bin = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
+    if not os.path.exists(pod_bin):
+        print(f"cannot run: harness kill drives the pod through {pod_bin} and `tn exec`, and "
+              f"{pod_bin} does not exist here -- run it from the LAPTOP. Pod-side, kill by exact "
+              f"pid in the container's own namespace (read `ps -o pid=,stat=` there; Z is already "
+              f"dead) and then check `nvidia-smi --query-compute-apps=pid,used_memory`.",
+              file=sys.stderr)
+        return 2
     pid_path = f"/work/aupai/runs/{a.name}.pid"
     r = subprocess.run(
-        [os.path.expanduser("~/bin/pod"), f"cat {pid_path}"],
+        [pod_bin, f"cat {pid_path}"],
         capture_output=True, text=True,
     )
     if r.returncode != 0:
@@ -19721,15 +20178,37 @@ def cmd_kill(argv):
     # and GPU occupancy (the resource). The pattern that could not SEE the orphan
     # cannot prove it is gone, and a kill that reports success while 12.7 GB stays
     # held is worse than one that fails loudly.
+    #
+    # ALL THREE READS ARE ZOMBIE-FILTERED, and that is the fix for 2026-09-05: a zombie keeps
+    # its argv and its pgid until reaped, so `pgrep -f` and `pgrep -g` both match it and the
+    # kill reported "STILL ALIVE" for three pids that were state Z.
+    #
+    # SIGNALLED is what the survivor test is about. Anything in the group that we never
+    # signalled is a different fact -- it joined the group after resolution, or a sibling shares
+    # the pgid -- and naming it as a survivor sends the operator after a pid that may belong to
+    # someone else's job.
+    signalled = set(([parent] if parent else []) + children + gpu_kids + monitor_pids)
     left = []
+    group_extra = []
     for pg in pgids:
         r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
-        left += [x for x in r.stdout.split() if x.strip() and x not in left]
+        surv, extra = _partition_kill_survivors(
+            _drop_zombies([x for x in r.stdout.split() if x.strip()]), signalled)
+        left += [x for x in surv if x not in left]
+        group_extra += [x for x in extra if x not in group_extra]
     chk = subprocess.run(["tn", "exec", f"pgrep -f '{pattern}'"], capture_output=True, text=True)
-    left += [p for p in chk.stdout.split() if p.strip() and p not in left]
-    still_gpu = [p for p in _gpu_descendants(parent)] if parent else []
+    for p in _drop_zombies([p for p in chk.stdout.split() if p.strip()]):
+        if p not in left:
+            left.append(p)
+    still_gpu = _drop_zombies([p for p in _gpu_descendants(parent)]) if parent else []
     reparented = [p for p in still_gpu if p not in left]
     left += reparented
+    if group_extra:
+        # Not a survivor of this kill, and said so plainly: a card-holding stranger is the
+        # lane's problem, not this job's, and the operator has to know which they are looking at.
+        print(f"  IN THE JOB'S PROCESS GROUP BUT NEVER SIGNALLED BY THIS KILL (joined after "
+              f"resolution, or a sibling sharing the pgid -- NOT verified as ours): "
+              f"{' '.join(group_extra)}", file=sys.stderr)
     if left:
         for hp in left:  # a job that ignores TERM still must not hold a card
             subprocess.run(["tn", "exec", f"kill -9 {hp}"], capture_output=True)
@@ -19737,8 +20216,11 @@ def cmd_kill(argv):
         again = []
         for pg in pgids:
             r = subprocess.run(["tn", "exec", f"pgrep -g {pg}"], capture_output=True, text=True)
-            again += [x for x in r.stdout.split() if x.strip()]
-        again += [p for p in (_gpu_descendants(parent) if parent else []) if p not in again]
+            surv, _ = _partition_kill_survivors(
+                _drop_zombies([x for x in r.stdout.split() if x.strip()]), signalled)
+            again += [x for x in surv if x not in again]
+        gpu_again = _drop_zombies(_gpu_descendants(parent)) if parent else []
+        again += [p for p in gpu_again if p not in again]
         if again:
             print(f"STILL ALIVE after KILL: {' '.join(again)}", file=sys.stderr)
             return 1
