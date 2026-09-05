@@ -175,7 +175,7 @@ def check_arm(name, n, verbose=True):
         from tokenizers import Tokenizer
         tk = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
         p = os.path.join(ROOT, "data", "corpus", d, f"{d}_000.jsonl")
-        toks = 0
+        toks, ndocs = 0, 0
         with open(p, encoding="utf-8") as fh:
             for line in fh:
                 r = json.loads(line)
@@ -189,6 +189,15 @@ def check_arm(name, n, verbose=True):
                         f"train._jsonl_content cannot build this domain's cache. Rebuild with "
                         f"datagen/build_s_inject.py.")
                 toks += len(tk.encode(r["content"]).ids)
+                ndocs += 1
+        # PLUS ONE <eos> PER DOCUMENT. train.encode emits a single <eos>-separated stream --
+        # np.append(p, eos) per document (train.py:1707) -- so the stream is sum(len(ids)) + ndocs,
+        # not sum(len(ids)). Measured against the caches the pod actually built: without the eos
+        # this read 202/1623/6495 rows where the caches hold 204/1639/6557, and the error was
+        # INVISIBLE because `want` and `pool_rows` were both derived from the same undercount, so
+        # want == pool passed on a shared error. p_format and n1 agree either way (25.4 rows, the
+        # floor absorbs 1000 tokens), which is why the two smallest arms could not reveal it.
+        toks += ndocs
         pool_rows = toks // (mix["seq"] + 1)
         want = int(budget_rows * mix["domains"][d]["weight"])
         nums[f"{d}_pool_rows"] = pool_rows
@@ -200,6 +209,42 @@ def check_arm(name, n, verbose=True):
                 f"the realised exposure count is not the arm's n. Derive the weight from the row "
                 f"count ({pool_rows}/{budget_rows:.0f}), not from the token count: build_mix's "
                 f"budget divides by seq ({mix['seq']}) while a pool packs at seq+1.")
+        # AND AGAINST THE CACHE THE TRAINER WILL ACTUALLY READ, which is the only reading neither
+        # side of the comparison above produced. `want` and `pool_rows` are both derived from this
+        # script's token count, so a miscount cancels: dropping the per-document <eos> made both
+        # 202 where the cache holds 204, and want == pool passed on the shared error through five
+        # arms and two reviews. The cache is train.py's own output -- reshaped at
+        # `n = len(data) // (seq+1)` -- so it cannot share this script's arithmetic.
+        #
+        # Imported inside the branch: check_arm is the level that runs anywhere, and importing
+        # train costs seconds and pulls Triton. Absent cache = no assertion, reported as such
+        # below rather than passing quietly.
+        import train
+        cp = train._domain_cache_path(d)
+        if os.path.exists(cp):
+            # THE CO-RESIDENCY REFUSAL BEFORE THE READ, not because this read is large -- an
+            # injection cache is 204-6557 rows, a few MB -- but because the rule keys on the READ
+            # PATH and not on the reader's estimate of its own size. torch.load by path skips
+            # train._domain_seqs, which is where the other half of the check looks, so a
+            # by-path read is exactly the hole coresident_cache_refusal exists to close. It
+            # returns 0 silently when no claim holds cards, which is the case for this script's
+            # normal off-pod run.
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+            cache_guard.assert_not_co_resident([d])
+            import torch
+            _len = int(torch.load(cp, map_location="cpu", weights_only=False).shape[0])
+            _n = _len // (mix["seq"] + 1)
+            nums[f"{d}_cache_rows"] = _n
+            if _n != pool_rows:
+                problems.append(
+                    f"{name}: domain {d} packs to {pool_rows} rows by this script's count, but the "
+                    f"token cache at {cp} holds {_n} ({_len} tokens). The cache is what the run "
+                    f"reads, so the weight is a share of the wrong number. A per-document <eos> "
+                    f"(train.py:1707) is the difference this has been before: the stream is "
+                    f"sum(len(ids)) + n_docs, not sum(len(ids)).")
+        else:
+            nums[f"{d}_cache_rows"] = "absent"
     if verbose:
         print(f"  {name}: " + ", ".join(f"{k}={v}" for k, v in nums.items()))
     return problems, nums
@@ -260,7 +305,12 @@ def check_plan(name, n, cursor=None, cursor_seed=None, cursor_srcfp=None):
         return None, (f"{len(missing)} of {len(mix['domains'])} token cache(s) absent "
                       f"({', '.join(missing[:3])}{'...' if len(missing) > 3 else ''}) -- "
                       f"run on the pod, where the caches live beside the run")
-    tok = train.build_tokenizer() if hasattr(train, "build_tokenizer") else None
+    # build_tokenizer(texts) takes a `texts` argument its body never reads -- it only loads
+    # TOK_PATH -- so [] is passed. It is called rather than Tokenizer.from_file because it is what
+    # sets train.VOCAB_ID, and _domain_seqs REFUSES to stamp a cache without it. `hasattr` was
+    # here instead and hid this: the attribute exists, so the guard passed and the CALL raised
+    # TypeError on the pod. A capability check that does not check the signature is not one.
+    tok = train.build_tokenizer([])
     problems = []
     inj = [d for d in mix["domains"] if d.startswith(("s_inject_", "p_format"))]
     nat = [d for d in mix["domains"] if d not in inj]
