@@ -325,13 +325,19 @@ def p1_dispatch(device, dtype=None):
     res["tied_weights_witness_max_abs_diff"] = wit
     res["tied_weights_witness_grouped"] = wit_g
     res["tied_weights_witness_loop"] = wit_l
-    # THRESHOLD FROM THE MEASURED NOISE FLOOR, not a round number. Measured 2026-09-05 on CPU at
-    # both fp32 and bf16: the same function through both expressions differs by EXACTLY 0.0,
-    # while the activation defect this witness exists to catch (plain a*sigmoid(b) instead of
-    # SiTU) shows 0.023-0.025 on outputs of scale 0.75. A 0.05 tolerance -- which is what I first
-    # wrote -- sits ABOVE the defect and would have passed the broken world it was written for.
-    # 1e-3 is 23x below the defect signal and still far above a bf16 reduction's noise on CUDA.
-    res["tied_weights_witness_ok"] = wit < 1e-3
+    # THRESHOLD FROM THE MEASURED NOISE FLOOR ON THE DEVICE THAT RUNS IT. Measured 2026-09-05,
+    # and the first version got this wrong in the informative direction: on CPU the same
+    # function through both expressions differs by EXACTLY 0.0 at fp32 and bf16, so 1e-3 looked
+    # generous -- but on CUDA at bf16 the grouped GEMM's own reduction order gives 0.001953
+    # against an identical plain matmul (fp32 on CUDA is still exactly 0.0, and a plain matmul
+    # at bf16 is also 0.0, so the noise is the GROUPED KERNEL's, not bf16's). 1e-3 sits BELOW
+    # that and refused a correct witness on the card.
+    #
+    # The two defects this exists to catch are 0.023 (plain a*sigmoid(b) for SiTU) and 0.0172
+    # (swapped betas), i.e. 11.8x and 8.8x the noise. 4e-3 is 2x above the floor and 4.3x below
+    # the smaller defect -- the widest separation available, and both defects were re-checked
+    # against it rather than assumed.
+    res["tied_weights_witness_ok"] = wit < 4e-3
     if not res["tied_weights_witness_ok"]:
         which = "grouped" if wit_g >= 1e-3 else "loop"
         res["verdict"] = (f"REFUSED: the {which} path, holding the dense module's own weights "
@@ -428,12 +434,21 @@ def main():
     if a.phase in ("p1", "all"):
         rec["p1"] = p1_dispatch(dev)
         r = rec["p1"]
-        print(f"P1: dense {r.get('dense_ms', float('nan')):.3f} ms  "
-              f"grouped {r.get('grouped_mm_ms', float('nan')):.3f} ms "
-              f"({r.get('grouped_mm_ratio_to_dense', float('nan')):.2f}x)  "
-              f"loop {r.get('loop_ms', float('nan')):.3f} ms "
-              f"({r.get('loop_ratio_to_dense', float('nan')):.2f}x)")
-        print(f"    prediction: {r['prediction']}")
+        # A REFUSED WITNESS PRINTS ITS VERDICT, not nan timings and a KeyError. The refusal
+        # path returns before any timing, so "prediction" is absent by design -- the first
+        # version indexed it unconditionally and crashed the process AFTER the phase had
+        # correctly decided not to report a ratio, losing the reason and the JSON row with it.
+        if not r.get("tied_weights_witness_ok", False):
+            print("P1: " + r.get("verdict", "witness did not run"))
+            print(f"    witness grouped {r.get('tied_weights_witness_grouped')} "
+                  f"loop {r.get('tied_weights_witness_loop')}")
+        else:
+            print(f"P1: dense {r['dense_ms']:.3f} ms  "
+                  f"grouped {r.get('grouped_mm_ms', float('nan')):.3f} ms "
+                  f"({r.get('grouped_mm_ratio_to_dense', float('nan')):.2f}x)  "
+                  f"loop {r.get('loop_ms', float('nan')):.3f} ms "
+                  f"({r.get('loop_ratio_to_dense', float('nan')):.2f}x)")
+            print(f"    prediction: {r.get('prediction')}")
     if a.phase in ("p2", "all"):
         rec["p2"] = p2_recompile(dev)
         print("P2:", rec["p2"])
