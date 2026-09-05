@@ -158,3 +158,5 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 | ~/bin/podput (mtime 2026-09-04 06:45) refuses any path tracked on main a… | 1 | ~12 | fix carried (1/1 rows) |
 | ~/bin/podput tracked-path guard (fb, 06:45Z) refused pod_push.sh's own p… | 1 | ~20 | fix carried (1/1 rows) |
 
+
+open tasks per owner (check one_deliverable_per_owner, WARN threshold >1): de 6, e1 4, 3b 1, 44 1, b0 1, tilerl 1 (14 total)
