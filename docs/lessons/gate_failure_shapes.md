@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (94 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (181 = 94 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (94 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (182 = 94 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -198,14 +198,15 @@ Cannot see: whether a pod-only measurement was brought back before the pod was r
 
 ## R8. Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class
 
-4 incidents (4 infra, 0 model), ~2h each, 8h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources.
+5 incidents (5 infra, 0 model), ~2h each, 10h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources, and WARNs after the launch rather than refusing it.
 
 - §15: a shared resource was used without an explicit claim; the co-residency cost was measured against a metric class, not the run's own spend.
 - §126: a resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a grant.
 - §194: a claim held by a live pid was read as evidence the job was progressing; 0% util against 76 GiB held was the signal, the claim status was not.
 - §195: a rank-0-only phase (save, 33.6 s) inside a world-2 job desynchronised the ranks; rank 1 entered the next collective with nothing to meet.
+- §214: a live job ran unclaimed on card 0 and every reader read it as an orphan; the claim-write is the only thing separating "orphan" from "unclaimed live job", so the unclaimed launch was the defect, not the reading.
 
-Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-resident with a run it degrades.
+Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-resident with a run it degrades; whether a launch that never wrote a claim is refused before it starts (§214).
 
 ## R9. Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed
 
