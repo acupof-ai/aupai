@@ -1,0 +1,41 @@
+{
+  "_comment": [
+    "MoE routing and load-balancing constants. Charter docs/standards/moe_0905.md;",
+    "pre-registration runs/prereg.jsonl#moe_0905.",
+    "",
+    "THE TWO ENTRIES HERE ARE PAPER-REPORTED, NOT MEASURED BY US. They are DeepSeek-V3's",
+    "published hyper-parameters, read out of arXiv:2412.19437 on 2026-09-05, at a scale 60x",
+    "ours in tokens per expert per step. status is `recorded` for exactly that reason: nothing",
+    "in this repo has measured either constant, and each entry's boundary field states the gap",
+    "in its own words rather than relying on this note."
+  ],
+  "facts": [
+    {
+      "id": "moe.dsv3_bias_update_speed",
+      "value": "DeepSeek-V3's aux-loss-free load balancer updates a per-expert bias by a fixed step size gamma = 0.001 for the first 14.3T tokens, then 0.0 for the remaining 500B (i.e. the bias is FROZEN for the last 3.4% of the 14.8T-token run). The bias is added to the affinity score for top-k SELECTION ONLY -- 'Note that the bias term is only used for routing', and 'The gating value, which will be multiplied with the FFN output, is still derived from the original affinity score'. Update rule: at the end of each step, 'decrease the bias term by gamma if its corresponding expert is overloaded' and 'increase it by gamma if its corresponding expert is underloaded'. Overload is judged over the whole training-step batch, not per sequence.",
+      "measured": "2026-09-05",
+      "source": "arXiv:2412.19437 (DeepSeek-V3 technical report), section 2.1.2 for the rule and the routing-only scope (eq. 16), section 4.2 Training Hyper-Parameters for the value; read from https://arxiv.org/html/2412.19437 on 2026-09-05, quotes above verbatim from that text. Relayed by 4c and re-read independently before this entry was written.",
+      "config": {
+        "their_scale": "671B total / 37B activated, 61 layers, 256 routed + 1 shared experts per MoE layer, 8 routed activated per token, expert intermediate dim 2048, model dim 7168, FFN replaced by MoE in all but the first three layers, 14.8T tokens, seq 4K, batch 3072 -> 15360 sequences over the first 469B tokens then constant",
+        "their_tokens_per_expert_per_step": "1,966,080 at the steady-state batch (15360 x 4096 x 8 / 256) and 393,216 at the warmup batch (3072 sequences) -- computed here from the reported batch schedule, NOT stated in the paper",
+        "gamma_is_not_a_gradient": "the bias is updated from measured load, not by backprop, so gamma is a step size on a control loop and does not scale with the optimizer's lr"
+      },
+      "uncertainty": "None reported. The paper gives one value for one run and no sweep, no ablation over gamma, and no sensitivity curve, so nothing here bounds how wrong a different gamma would be.",
+      "boundary": "PAPER-REPORTED AT 60x OUR PER-EXPERT TOKEN COUNT. Our E1 arm sees 32,768 tokens per routed expert per step (262,144 tokens/step, top-3, 24 routed experts) against their 1,966,080 -- a factor of 60.0, and still 12.0x below even their warmup batch. gamma controls how fast the balancer corrects a load imbalance, and the imbalance signal it reads is a per-expert token count whose relative noise grows as that count shrinks, so their value carries no guarantee at our scale. It is also 24 routed experts against 256, 12 layers against 61, and 1B tokens against 14.8T. Adopting 0.001 is borrowing a starting point, not inheriting a result.",
+      "status": "recorded"
+    },
+    {
+      "id": "moe.dsv3_seq_balance_alpha",
+      "value": "DeepSeek-V3 also carries a complementary SEQUENCE-WISE balance loss with coefficient alpha = 0.0001, alongside the aux-loss-free bias: 'For the balance loss, we set alpha to 0.0001, just to avoid extreme imbalance within any single sequence.' It is L_Bal = alpha * sum_i f_i * P_i (eq. 17), with f_i the fraction of the sequence's tokens routed to expert i and P_i the mean normalised affinity over that sequence's T tokens. Its stated purpose is per-sequence extremes only, not global balance -- global balance is the bias's job.",
+      "measured": "2026-09-05",
+      "source": "arXiv:2412.19437 section 2.1.2 (eq. 17 and the motivation, 'which will be assigned an extremely small value for DeepSeek-V3') and section 4.2 for alpha = 0.0001; read from https://arxiv.org/html/2412.19437 on 2026-09-05.",
+      "config": {
+        "relationship_to_the_bias": "COMPLEMENTARY, not an alternative: the aux-loss-free bias handles balance across the step's batch, this loss handles imbalance within one sequence. Reporting the design as purely aux-loss-free omits this term.",
+        "their_scale": "same run as moe.dsv3_bias_update_speed -- 256 routed experts, 8 active, seq 4K"
+      },
+      "uncertainty": "None reported: one value, no sweep, no ablation isolating this term's contribution from the bias's.",
+      "boundary": "PAPER-REPORTED, and its scale argument differs from the bias's. This loss is per SEQUENCE, so what matters is tokens per sequence per expert: at seq 4096 with top-3 over 24 experts we get 512 tokens per expert per sequence against their 4096 x 8 / 256 = 128, i.e. our per-sequence signal is 4x THEIRS even though our per-step signal is 60x worse. So this term's regime is closer to comparable than the bias's, but it is still unmeasured here and it is not registered as part of the moe_0905 arms.",
+      "status": "recorded"
+    }
+  ]
+}
