@@ -116,6 +116,17 @@ if os.environ.get("E2E_MOE", "").strip() not in ("", "0"):
         "--moe_experts", "24", "--moe_top_k", str(_k), "--moe_expert_ffn", str(_w),
         "--moe_shared", str(_shared), "--moe_layers", f"0-{_SHAPE['layers'] - 1}",
         "--moe_arm", "e2e",
+        # --fp8, WHICH THIS FILE OTHERWISE NEVER PASSES. run_ddp.sh passes it (:110) and this test
+        # invokes train.py directly, so the walk was running the launch's flags in a precision the
+        # launch never uses -- and train.py casts the model to bf16 only under `if fp8:`. The MoE
+        # dispatch needs bf16 (torch._grouped_mm compiles only for it), so without this the walk
+        # dies at step 0 on a defect that cannot reach the launch. Measured 2026-09-05: that is
+        # exactly what happened, runs/e2e_moe.log stage [3].
+        #
+        # ADDED ONLY ON THE MoE PATH, deliberately: the dense walk has always run without --fp8 and
+        # its passes are the baseline this test is trusted on. Turning fp8 on for every walk would
+        # change what a green dense run means, to fix a problem the dense run does not have.
+        "--fp8",
     ]
 if not os.path.exists(os.path.join(ROOT, MIX)):
     raise SystemExit(f"E2E_MIX={MIX!r} does not exist. A missing mix is a refusal, not a "
