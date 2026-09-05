@@ -860,6 +860,14 @@ def main():
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
         "probes/a2a_bandwidth.py",
+        # The key-usage probe for the readout-4 collapse. 40s, the slowest entry in this map, and
+        # the cost is the point: the three task-validity cases each train a real ProductKeyMemory
+        # for 240 steps against a one-row-selector control, because the property they assert is
+        # whether a task makes the collapse both reachable and costly -- and that cannot be read
+        # from a fixture, only from training. Registered rather than exempted: the numbers in this
+        # file's docstring are what the six real-data cells were designed against, and a task that
+        # silently changes character would void them with nothing going red.
+        "probes/mem_usage_toy.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
