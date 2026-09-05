@@ -30,6 +30,7 @@ independence either.
 import argparse
 import json
 import os
+import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -63,20 +64,31 @@ def _key(rec):
     return (rec["program"], tuple(rec["operands"]))
 
 
-def _operands(instruction):
-    """The instance's operands: prose integers minus the rule's own constants.
+EXPR = re.compile(r"\d+(?:\s*@\s*\d+)+")
 
-    The rule sentence states 3, 2 and 1, so they appear in every instruction and are
-    not part of any instance's identity. Returned in order of appearance.
+
+def _operands(instruction):
+    """The instance's operands, read off the `X @ Y @ Z` expression itself.
+
+    NOT "prose integers minus the rule's constants", which is what this did until
+    2026-09-05 and which is lossy: an operand that happens to equal 1, 2 or 3 is
+    indistinguishable from the rule's own constants by value, so it was dropped.
+    954 of 10,192 emitted rows (9.4%) carried a short operands list -- 492 of one
+    program's 2,548. The damage is to _key, which is (program, operands): two
+    instances differing only in a dropped operand collide, so the disjointness
+    check and the without-replacement draw were both weaker than they read, in the
+    direction of calling distinct items identical.
+
+    The expression is unambiguous where the prose is not, so match on it. Every
+    program writes its operands there; a program that does not would raise here
+    rather than silently return [], which is the failure the selftest checks.
     """
-    import re
-    RULE_CONSTS = {1, 2, 3}
-    out = []
-    for tok in re.findall(r"\d+", instruction.split("求")[-1] if "求" in instruction else instruction):
-        v = int(tok)
-        if v not in RULE_CONSTS:
-            out.append(v)
-    return out
+    m = EXPR.search(instruction)
+    if not m:
+        raise SystemExit(
+            f"REFUSING: no `X @ Y` expression in an instruction, so its operands cannot be "
+            f"read and _key would collapse to the program name: {instruction!r}")
+    return [int(x) for x in m.group(0).split("@")]
 
 
 def generate(family, n, seed, exclude=()):
@@ -202,11 +214,56 @@ def _selftest():
                 if not ok:
                     fails.append(f"{family}: emitted item fails the bank verifier: {r['program']}")
                     break
-            # 5. operand extraction must actually find operands, or _key collapses to
-            #    the program name and the semantic overlap check silently passes.
-            empty = [r for r in test if not r["operands"]]
-            if empty:
-                fails.append(f"{family}: {len(empty)} item(s) with no extracted operands")
+            # 5. operand extraction must be LOSSLESS, not merely non-empty. The old
+            #    check asserted `operands` was truthy, which every one of the 954
+            #    truncated rows also satisfied -- a check with no power against the
+            #    defect it sat next to. Assert the count the program actually drew.
+            want = {"diamond_chain": 3, "diamond_chain4": 4,
+                    "diamond_single": 2, "diamond_single_reverse": 2}
+            short = [r for r in test + pool if len(r["operands"]) != want[r["program"]]]
+            if short:
+                fails.append(f"{family}: {len(short)} item(s) with a truncated operands list, "
+                             f"e.g. {short[0]['program']} {short[0]['operands']}")
+            # 5b. and the operands must be the ones in the expression, not any integers
+            #     that happen to appear: re-read them independently and compare.
+            for r in (test + pool)[:200]:
+                if r["operands"] != [int(x) for x in EXPR.search(r["instruction"]).group(0).split("@")]:
+                    fails.append(f"{family}: operands disagree with the expression: {r['instruction']!r}")
+                    break
+            # 6. THE ANSWER MUST HAVE ONE READING. The carry rule is applied once by
+            #    _step, so an intermediate can stay negative; a solver reading "add 10
+            #    until non-negative" scores differently on 46.8% of S items, and one
+            #    ignoring the carry on 72.1% (measured 2026-09-05, before scoring). The
+            #    rule text now says 只加一次. This asserts the label matches the
+            #    add-once fold and nothing else -- the sets are only a skill test if the
+            #    skill has a determinate answer.
+            def _fold(ops, f):
+                v = ops[-1]
+                for x in reversed(ops[:-1]):
+                    v = f(x, v)
+                return v
+
+            def _once(a, b):
+                v = 3 * a - 2 * b + 1
+                return v + 10 if v < 0 else v
+
+            def _until(a, b):
+                v = 3 * a - 2 * b + 1
+                while v < 0:
+                    v += 10
+                return v
+
+            for r in test + pool:
+                o = r["operands"]
+                if _fold(o, _once) != r["answer"]:
+                    fails.append(f"{family}: label is not the add-once fold: {r['instruction']!r}")
+                    break
+            amb = sum(1 for r in test + pool
+                      if _fold(r["operands"], _once) != _fold(r["operands"], _until))
+            if amb and "只加一次" not in test[0]["instruction"]:
+                fails.append(f"{family}: {amb} item(s) where add-once and add-until differ, and the "
+                             f"instruction does not say which -- the label is one of two readings")
+
         # 6. THE OVERLAP CHECK MUST HAVE POWER: feed it a known collision.
         t = generate("S", 10, TEST_SEED)
         try:
@@ -219,7 +276,7 @@ def _selftest():
         shutil.rmtree(d, ignore_errors=True)
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"emit_novel_ops selftest: {'PASS (6 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"emit_novel_ops selftest: {'PASS (8 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
