@@ -1306,6 +1306,16 @@ def main():
         # Muon.step() stacks same-shape params, baddbmm is 3-D only, and every dense parameter
         # is 2-D -- so the MoE experts are the first 3-D params this optimizer has ever seen.
         "scripts/test_muon_3d.py",
+        # The MoE diagnostics WRITE, one rank at a time. Registered separately from moe_diag.py for
+        # the same reason test_muon_3d is separate from test_moe_module: moe_diag.py's selftest
+        # exercises the writer's own thresholds and field validation and never asks WHICH RANK
+        # called it. The write had no `if is_main` guard, so on b0_moe_e1 rank 1 raised
+        # UnboundLocalError on `tps` at steps 30 and 100 (logged as "write FAILED" by the broad
+        # except) and wrote DUPLICATE rows at 10 and 20, where the conditional short-circuits
+        # before touching `tps` -- 6 rows for 4 due steps. A single-rank test cannot see either
+        # half: the defect is a non-main rank reaching code only rank 0 should run, so the
+        # population has to contain a rank that is not rank 0.
+        "scripts/test_moe_diag_rank.py",
         # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
         # because the defect it guards lands in build_mix and not in this file: the 5% val split
         # came off the FRONT of every domain including an injection shard whose row count IS the
@@ -1689,6 +1699,7 @@ def main():
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
+                     "scripts/test_moe_diag_rank.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
