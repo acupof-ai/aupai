@@ -300,6 +300,13 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "To hold the tree quiet, `scripts/merge_main.sh --hold`":
+        "which command took the lock is not recoverable from the lock. A hand-rolled mkdir and "
+        "a crash between --hold's mkdir and its holder write leave the same holderless directory, "
+        "which is why the 3-second grace exists; a check refusing every holderless lock would "
+        "refuse the crash case forever, and one reading the holder file cannot see a lock taken "
+        "without one. merge_main.sh --selftest asserts the grace in both directions, which is the "
+        "mechanism and not the discipline",
     "Card claims live where the job runs":
         "the claim files sit in runs/claims/ of the tree the job runs from and no check "
         "here reads the pod's; scripts/test_launch_claims.py asserts the launch path acquires "
@@ -465,7 +472,11 @@ _MANUAL_RULES = {
 #: Set to the count measured on this tree, not to an arithmetic guess -- three of the four
 #: steps landed in other sessions while this one was verifying, and each re-merge moved it.
 #: The ETA rule beside #1 stays manual until train.py unfreezes.
-_MANUAL_BASELINE = 31
+#: 31 -> 32 (de, 2026-09-05): the merge-lock hold rule. --hold already wrote the holder file
+#: and AGENTS.md named only `merge_main.sh <name>`, so a hand-rolled mkdir was the reachable
+#: path and de's waiter cleared the controller's lock mid-commit. Manual by nature: the lock
+#: does not record which command created it.
+_MANUAL_BASELINE = 32
 
 
 def _norm_rule(text):
@@ -7641,17 +7652,23 @@ def check_fact_refs(root):
 PREREG_ANCHORED_RE = re.compile(r"runs/prereg\.jsonl#([A-Za-z0-9_]+)(?:@amended_(\d+))?")
 PREREG_UNANCHORED_RE = re.compile(r"runs/prereg\.jsonl`?[ ,]+([A-Za-z0-9_]+)")
 PREREG_FLIP = "2026-09-07"
+# The minute may be REDACTED: b0_head_hybrid_3to1's amendment 1 reads 2026-09-04T13:5xZ,
+# and a strict \d{2}:\d{2} calls the one deliberately-imprecise timestamp in the file
+# undated. Measured 2026-09-05: 1 of 28 amendments takes this form.
+PREREG_STAMP_RE = re.compile(r"\d{4}-\d{2}-\d{2}T[\dx]{2}:[\dx]{2}", re.I)
+PREREG_KEY_RE = re.compile(r"amend(?:ed|ment)(?:_(\d+))?(?:_|$)")
 
 
 def prereg_amendment_n(row):
     """N for a prereg row, from the amendment keys it actually carries.
 
     Both spellings exist and neither is redundant: `amended*` holds the timestamp,
-    `amendment*` holds the amendment text, and three rows carry a suffix on one family
-    that the other lacks (b0_head_hybrid_3to1 has amendment_2/_3 and no amended_N;
-    conversion_rate_0905 has amended_1..5 against amendment_1.., _2.. only). Reading one
-    family alone would have reported N=1 for b0 and N=2 for conversion_rate, both wrong
-    by the file's own content, so N is the max suffix over BOTH.
+    `amendment*` holds the amendment text, and two rows carry a suffix on one family that
+    the other lacks -- conversion_rate_0905 has amended_1..5 against amendment_1.., _2..
+    only, and b0_head_hybrid_3to1 had amendment_2/_3 with no amended_N until the dates
+    were backfilled from commit times on 2026-09-05. Reading one family alone reported
+    N=1 for b0 and N=2 for conversion_rate, both wrong by the file's own content, so N is
+    the max suffix over BOTH.
 
     A bare `amended`/`amendment` with no suffixed sibling is amendment 1: that is the
     convention val_flat_at_8500 uses and it is not ambiguous. Zero amendment keys of any
@@ -7667,6 +7684,126 @@ def prereg_amendment_n(row):
     if ns:
         return max(ns)
     return 1 if any(k in row for k in ("amended", "amendment")) else 0
+
+
+def prereg_amendment_keys(row):
+    """{amendment number: [(key, value), ...]} over both key families.
+
+    THE UNIT IS THE NUMBER, NOT THE KEY, and that is the whole reason this helper exists.
+    Judging keys reports memory_layers_0905 amendment 4 as undated because its date is in
+    amended_4 while amendment_4 holds only text -- 21 of 48 keys read undated against 2 of
+    28 numbers. A key-level criterion would have demanded dates for 19 amendments that
+    have one.
+
+    conversion_rate_0905 needs the trailing `(?:_|$)`: its text keys are
+    amendment_1_P_readout_is_NLL_not_4way, so a `fullmatch` on amendment_(\\d+) misses them
+    and a bare prefix match would read amendment_12 as amendment 1.
+    """
+    per_n = {}
+    for k, v in row.items():
+        m = PREREG_KEY_RE.match(k)
+        if m and (m.group(1) or k in ("amended", "amendment")):
+            per_n.setdefault(int(m.group(1) or 1), []).append((k, str(v)))
+    return per_n
+
+
+def check_prereg_amendments_dated(root):
+    """Every amendment of every prereg row carries a recoverable timestamp.
+
+    An amendment with no date cannot be ordered against the run it constrains, and the
+    row is the pre-registration -- "this was decided before the number came in" is the
+    only claim it makes, and it rests entirely on when.
+
+    THREE CONVENTIONS ARE IN USE and all three are accepted, because they are how the
+    real rows were written rather than a standard someone chose (measured 2026-09-05, 28
+    amendments across 5 rows): the date in `amended_N` beside the text in `amendment_N`
+    (16); the date as a PREFIX inside `amendment_N` itself, with no amended_N at all
+    (6, memory_layers_0905 7..12); and both in one `amended_N` string (2,
+    conversion_rate_0905 1-2). 4c's first specification was that the two families agree
+    per row, which would FAIL the 8 amendments of the second and third kind -- rows whose
+    data is complete. The property asked for is that a date is recoverable, so that is
+    what is checked; the writer below emits the first convention only, so the spread
+    stops growing.
+
+    A DECLARED GAP IS DATED BY DECLARATION: `amended_N` == "none" beside an `amendment_N`
+    naming the gap is moe_0905's amendment 2, where no amendment 2 was ever recorded and
+    inventing a timestamp would be worse than the hole. It passes; a bare "none" with no
+    text does not.
+    """
+    p = os.path.join(root, "runs", "prereg.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/prereg.jsonl absent"
+    undated, declared, dated = [], 0, 0
+    for ln, line in enumerate(open(p, encoding="utf-8"), 1):
+        if not line.strip():
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as e:
+            return FAIL, f"runs/prereg.jsonl:{ln} is not JSON: {e}"
+        rid = row.get("id") or f"line {ln}"
+        for n, kv in sorted(prereg_amendment_keys(row).items()):
+            gap = any(k.startswith("amended") and v.strip().lower() == "none" for k, v in kv)
+            text = any(k.startswith("amendment") and v.strip() for k, v in kv)
+            if gap and text:
+                declared += 1
+            elif any(PREREG_STAMP_RE.search(v[:240]) for _k, v in kv):
+                dated += 1
+            else:
+                undated.append(f"{rid} amendment {n} ({', '.join(k for k, _v in kv)})")
+    if undated:
+        return FAIL, (
+            f"{len(undated)} amendment(s) with no timestamp in any convention: "
+            + "; ".join(undated[:5])
+            + " -- amend via `harness prereg amend`, which writes amended_N with the text"
+        )
+    if not dated and not declared:
+        return FAIL, "no amendment found in runs/prereg.jsonl -- the reader matched nothing"
+    return PASS, f"{dated} amendment(s) dated, {declared} declared gap(s)"
+
+
+def _broken_prereg_amendment_date():
+    """The REAL ledger with one real amendment's date removed.
+
+    It strips the date from BOTH places it could live for that amendment -- the amended_N
+    field and any prefix inside amendment_N -- because removing only the field would leave
+    a row of the second convention still passing, and the mutation would then prove
+    nothing about rows written that way.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    src = os.path.join(ROOT, "runs", "prereg.jsonl")
+    shutil.copy(src, os.path.join(d, "runs", "prereg.jsonl"))
+    p = os.path.join(d, "runs", "prereg.jsonl")
+    out, stripped = [], False
+    for line in open(p, encoding="utf-8").read().split("\n"):
+        if not line.strip() or stripped:
+            out.append(line)
+            continue
+        row = json.loads(line)
+        per_n = prereg_amendment_keys(row)
+        target = next(
+            (n for n, kv in sorted(per_n.items())
+             if any(PREREG_STAMP_RE.search(v[:240]) for _k, v in kv)
+             and not any(k.startswith("amended") and v.strip().lower() == "none" for k, v in kv)),
+            None,
+        )
+        if target is None:
+            out.append(line)
+            continue
+        for k, v in per_n[target]:
+            if k.startswith("amended"):
+                row[k] = "(date removed by the broken world)"
+            else:
+                row[k] = PREREG_STAMP_RE.sub("(date removed)", v)
+        out.append(json.dumps(row, ensure_ascii=False))
+        stripped = True
+    if not stripped:
+        raise SelftestSkip("no dated amendment in the real ledger to strip")
+    open(p, "w", encoding="utf-8").write("\n".join(out))
+    return d
 
 
 def check_prereg_citations_current(root):
@@ -12840,6 +12977,15 @@ CHECKS = [
         _broken_prereg_citation,
     ),
     (
+        "prereg_amendments_dated",
+        "every amendment of every runs/prereg.jsonl row carries a recoverable timestamp",
+        "two amendments (b0_head_hybrid_3to1 2 and 3) carried no date in any form, so the "
+        "row's only claim -- that a decision predates the number -- rested on nothing; "
+        "found by writing prereg_citations_current, not by anything watching the ledger",
+        check_prereg_amendments_dated,
+        _broken_prereg_amendment_date,
+    ),
+    (
         "corpus_fp_matches",
         "every domain the default mix names carries a build-time fingerprint matching its live directory; a missing stamp is FAIL, not SKIP",
         "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
@@ -13200,6 +13346,7 @@ EVIDENCE = {
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
     "prereg_citations_current": "repo",
+    "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
@@ -18009,6 +18156,69 @@ def cmd_claim_file(argv):
     return 0
 
 
+def cmd_prereg(argv):
+    """`harness prereg amend --id <row> --text "..." [--by <session>]` -- the only writer.
+
+    Amendments were hand-edited into runs/prereg.jsonl and three conventions grew for where
+    the timestamp lives (see check_prereg_amendments_dated). Two amendments ended up with no
+    date at all, and one row's amended_N sequence fell six behind its amendment_N sequence,
+    so a doc citing @amended_6 was current by one family and stale by the other. A single
+    writer that assigns BOTH suffixes in one step is what stops that, so this is the only
+    supported way to amend a row.
+
+    N is prereg_amendment_n(row) + 1, read from the row itself rather than passed in: a
+    caller-supplied N is how the numbering gap at moe_0905 amendment 2 happened. Max over
+    BOTH key families, so the next number is unused under every convention -- an earlier
+    version refused when the two families disagreed, which read memory_layers_0905
+    (amended_6 / amendment_12) and conversion_rate_0905 (amended_5 / amendment_2) as
+    ambiguous when both are simply written in another convention, their dates recoverable
+    and their next number obvious.
+    """
+    ap = argparse.ArgumentParser(prog="harness prereg amend")
+    ap.add_argument("action", choices=["amend"])
+    ap.add_argument("--id", required=True, help="the row's id")
+    ap.add_argument("--text", required=True, help="what the amendment changes, and why")
+    ap.add_argument("--by", default=os.environ.get("AUPAI_SESSION", ""), help="who is amending")
+    a = ap.parse_args(argv)
+    if not a.text.strip():
+        print("prereg amend: --text is empty; an amendment with no content is not one",
+              file=sys.stderr)
+        return 2
+
+    p = os.path.join(ROOT, "runs", "prereg.jsonl")
+    if not os.path.exists(p):
+        print(f"{p} does not exist", file=sys.stderr)
+        return 1
+    lines = open(p, encoding="utf-8").read().split("\n")
+    out, hits, n = [], 0, None
+    for line in lines:
+        if not line.strip():
+            out.append(line)
+            continue
+        row = json.loads(line)
+        if row.get("id") != a.id:
+            out.append(line)
+            continue
+        hits += 1
+        n = prereg_amendment_n(row) + 1
+        stamp = time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime())
+        row[f"amended_{n}"] = f"{stamp}{f' by {a.by}' if a.by else ''}"
+        row[f"amendment_{n}"] = a.text.strip()
+        out.append(json.dumps(row, ensure_ascii=False))
+    if hits == 0:
+        ids = [json.loads(x).get("id") for x in lines if x.strip()]
+        print(f"prereg amend: no row with id {a.id!r}. ids: {', '.join(i for i in ids if i)}",
+              file=sys.stderr)
+        return 1
+    if hits > 1:
+        print(f"prereg amend: {hits} rows carry id {a.id!r}; one row per id is the invariant "
+              f"(prereg_one_row_per_id). Not writing.", file=sys.stderr)
+        return 1
+    open(p, "w", encoding="utf-8").write("\n".join(out))
+    print(f"{a.id}: amendment {n} written (amended_{n} + amendment_{n})")
+    return 0
+
+
 def _wait_for_startup(log_path, timeout):
     """Poll the log for the training startup gate lines.
 
@@ -19868,6 +20078,8 @@ def main():
         return cmd_free_card(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "claim-file":
         return cmd_claim_file(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "prereg":
+        return cmd_prereg(sys.argv[2:])
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument(
         "cmd", nargs="?", default="all", choices=["all", "check", "ledger", "gaps", "measure", "stages", "board", "brief"]

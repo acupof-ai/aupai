@@ -790,7 +790,12 @@ def main():
         # correct stale-lock cleanup, and it silently expired 4c's quiet window on 2026-09-05 while
         # two merges landed inside it. The selftest's "26-year-old lock, live holder -> alive" case
         # is what goes red if age becomes the criterion again. It also carries a real zombie with a
-        # negative control, because `kill -0` accepts a zombie and would call it alive.
+        # negative control, because `kill -0` accepts a zombie and would call it alive. From
+        # 2026-09-05 it also drives the deadline guard by RUNNING this script under a real
+        # `timeout` in both directions: the guard refused `timeout 120 merge_main.sh --selftest`
+        # minutes after landing, so its only observed failure was against its own verification, and
+        # a case that only read the `case` pattern would pass for a version whose exemption never
+        # reached the branch.
         "scripts/merge_main.sh",
         # The refusal that stops train.py retokenizing 247.8 GB when a CONFIGURED cache dir is
         # missing a cache. Registered because its NEGATIVE CONTROL is the load-bearing half: with
@@ -824,6 +829,15 @@ def main():
         # a test checking only one. Six mutations verified, including both flags declared-but-unwired,
         # which is not hypothetical: --cards shipped that way and only reading the row showed it.
         "scripts/test_ledger_field_writers.py",
+        # `harness prereg amend` is the only writer of a prereg amendment. Registered because
+        # the failure it prevents is silent and already happened three times in two days of
+        # hand-editing: a number typed by hand (moe_0905 has no amendment 2), a date left off
+        # entirely (b0_head_hybrid_3to1 2 and 3), and one row's amended_N sequence falling six
+        # behind its amendment_N sequence, which made a doc citing @amended_6 simultaneously
+        # current and stale. W5 is the load-bearing world -- a duplicated id must refuse, because
+        # amending one of two rows for the same id leaves the other stale, which is how nine
+        # superseded versions survived a union merge unnoticed.
+        "scripts/test_prereg_amend.py",
         # de-55 step 2: load_checkpoint claims when it loads to cuda and claims NOTHING on cpu.
         # Registered for the CPU world, which is the one that keeps the placement safe: an ungated
         # acquire there refuses on every box with no CUDA_VISIBLE_DEVICES -- CI runs
