@@ -8473,9 +8473,32 @@ def check_score_matrix(root):
     if os.path.exists(matrix):
         for line in open(matrix, encoding="utf-8"):
             try:
-                scored.add(json.loads(line).get("ckpt"))
+                _row = json.loads(line)
             except Exception:
-                pass
+                continue
+            # A ROW COUNTS ONLY IF IT HOLDS AT LEAST ONE REAL NUMBER. This read `scored.add(
+            # json.loads(line).get("ckpt"))` and never looked at `metrics`, so a row whose every
+            # metric is an {"error": ...} dict satisfied the gate exactly as well as a scored one.
+            # MEASURED on the live ledger 2026-09-06: 3 of 74 rows are all-errored --
+            # ckpt_e1_conv_n1.pt (10/10 errored), ckpt_e1_conv_control_arm.pt (10/10), and
+            # ckpt_e1_conv_control_arm.pt#cu (1/1). All three came from score_matrix refusing its
+            # own card read (#46), which exits 0, so the failure wrote rows and looked like success.
+            # Two arms of a live experiment read as scored while carrying no number at all.
+            #
+            # THE PREDICATE IS ABSENCE OF `error`, NOT PRESENCE OF A NUMBER, and that distinction is
+            # load-bearing: score_matrix writes SKIPPED metrics by leaving them OUT of `metrics`
+            # entirely, so "every metric is numeric" would fail a legitimately partial row. What
+            # makes a row worthless is that nothing in it succeeded.
+            #
+            # A row with NO `metrics` key is not counted either -- it asserts nothing. Rows are
+            # RETIRED by this predicate rather than deleted from the ledger (4c's ruling): the
+            # ledger is append-only and a failed attempt is a fact about what was tried.
+            _m = _row.get("metrics")
+            if not isinstance(_m, dict) or not _m:
+                continue
+            if not any(not (isinstance(v, dict) and "error" in v) for v in _m.values()):
+                continue
+            scored.add(_row.get("ckpt"))
     missing = []
     unverifiable = []
     for r in rows:
@@ -8608,10 +8631,85 @@ def _broken_score_matrix_cu_only():
         )
     # The suffix spelled by the producer, not by hand: score_matrix.py interpolates cu_path, so a
     # literal here would be a second copy of that convention to keep in step.
+    #
+    # AND A REAL METRIC, not `"metrics": {}`. This fixture used to carry an empty dict, which was
+    # fine while the check only read `ckpt` -- but an empty `metrics` is INDISTINGUISHABLE from the
+    # all-errored rows the check now retires, so the world would have asserted that a worthless row
+    # counts as a score, which is the opposite of what it exists to pin. Shaped like the live ones:
+    # every #cu row in the matrix on 2026-09-06 carries exactly one numeric `domain_loss` (10 of 74
+    # rows checked). Changing this fixture was forced by the fix, and it is recorded rather than
+    # quietly adjusted -- the empty dict was the fixture reproducing a property it should not have.
     with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"ckpt": "ckpt_cuonly.pt#cu", "cu_path": "doc_cu", "profile": "full",
-                             "measured": "2026-09-05", "metrics": {}}) + "\n")
+                             "measured": "2026-09-05",
+                             "metrics": {"domain_loss": 2.4137}}) + "\n")
     return d
+
+
+def _score_matrix_metrics_world(kind):
+    """An ok training row plus ONE score-matrix row whose `metrics` shape is `kind`.
+
+    Three kinds, and the third is the one that decides whether the predicate is right rather than
+    merely strict:
+
+      all_error   every metric is {"error": ...}  -> must FAIL. This is the live defect: the check
+                  read only `ckpt`, so such a row satisfied the gate exactly as well as a real
+                  score. Measured on the matrix 2026-09-06, 3 of 74 rows are in this state --
+                  ckpt_e1_conv_n1.pt (10/10 errored), ckpt_e1_conv_control_arm.pt (10/10) and
+                  ckpt_e1_conv_control_arm.pt#cu (1/1) -- all three written by score_matrix
+                  refusing its own card read (#46) and exiting 0, so the failure looked like
+                  success and two arms of a live experiment read as scored with no number in them.
+
+      all_number  every metric is numeric -> must PASS. The negative control. Without it a
+                  predicate that rejected everything would look like a working fix.
+
+      mixed       some errored, some numeric -> must PASS, AND MUST PASS BEFORE THE FIX TOO. A
+                  partial score is a real score: score_matrix omits a SKIPPED metric from `metrics`
+                  entirely rather than writing an error for it, so "every metric numeric" would
+                  reject legitimately partial rows. This world is what separates "a row with no
+                  successes" from "a row with some failures", and it is the assertion I would most
+                  expect a later edit to break, because tightening the predicate to `all()` passes
+                  the other two worlds.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "m", "--cmd", "./run_ddp.sh --name m"],
+        ["done", "--name", "m", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    err = {"error": "AssertionError: refusing to read 15.6 GB while cards 1 are live"}
+    metrics = {
+        "all_error": {"domain_loss": err, "humaneval_bpb": err},
+        "all_number": {"domain_loss": 2.4137, "humaneval_bpb": 0.8812},
+        "mixed": {"domain_loss": 2.4137, "humaneval_bpb": err},
+    }[kind]
+    with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_m.pt", "profile": "full",
+                             "measured": "2026-09-06", "metrics": metrics}) + "\n")
+    return d
+
+
+def _score_matrix_all_errored():
+    """Every metric errored -- must FAIL. See _score_matrix_metrics_world."""
+    return _score_matrix_metrics_world("all_error")
+
+
+def _score_matrix_all_numeric():
+    """Every metric numeric -- must PASS. The negative control for the FAIL world above."""
+    return _score_matrix_metrics_world("all_number")
+
+
+def _score_matrix_mixed_metrics():
+    """Some errored, some numeric -- must PASS, and passed BEFORE the fix as well.
+
+    The row that keeps the predicate honest: it is keyed on the ABSENCE of a success, not on the
+    presence of a failure. Tightening to "every metric numeric" turns this red while leaving both
+    siblings green.
+    """
+    return _score_matrix_metrics_world("mixed")
 
 
 def _broken_score_matrix_dangling_artifact():
@@ -17244,6 +17342,19 @@ def _demo(only=None):
          "names no checkpoint"),
         (_broken_score_matrix_cu_only, PASS, "a run scored only under the #cu suffix",
          "score-matrix record"),
+        # THE metrics TIER, added 2026-09-06 with the fix. The check read only `ckpt` and never
+        # `metrics`, so an all-errored row counted as a score -- 3 of 74 live rows, two of them
+        # arms of a running experiment. All three worlds are needed and the third is the one that
+        # matters: a predicate tightened to "every metric numeric" passes all_error and all_number
+        # while turning mixed red, and a partial score is a real score (score_matrix omits a
+        # SKIPPED metric rather than writing an error for it). MEASURED: mixed passes both before
+        # and after the fix, which is what makes it a control rather than a fourth assertion.
+        (_score_matrix_all_errored, FAIL, "a score-matrix row whose every metric errored",
+         "score-matrix record"),
+        (_score_matrix_all_numeric, PASS, "a score-matrix row whose metrics are all numeric",
+         "score-matrix record"),
+        (_score_matrix_mixed_metrics, PASS, "a score-matrix row with some errored and some "
+                                            "numeric metrics", "score-matrix record"),
     ):
         _d = _w()
         if _d:
