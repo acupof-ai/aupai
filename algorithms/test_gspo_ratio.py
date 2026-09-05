@@ -133,9 +133,95 @@ def main():
     if abs(no_kl - with_kl) < 1e-9:
         FAILS.append(f"kl_beta does not change the loss: {no_kl:.6f} vs {with_kl:.6f}")
 
+    # 6. THE CLIP IS PESSIMISTIC. min() makes the surrogate a LOWER bound on the unclipped
+    #    one, so the LOSS is an upper bound: loss_clipped >= loss_unclipped at every eps.
+    #    Assertions 1-5 do not test this and three real defects survive them, because each
+    #    keeps the loss eps-DEPENDENT, which is all assertion 1 demands. Measured with the
+    #    mutant applied to rlvr_trainer.py: `torch.max` for `torch.min` (the classic PPO sign
+    #    error) and `exp(old_lp - seq_lp)` for the ratio (inverted correction) both PASS 1-5.
+    unclipped = _loss(float("inf"), old_scale=1.5).item()
+    for eps in (0.01, 0.1, 0.2, 1.0, 5.0):
+        got = _loss(eps, old_scale=1.5).item()
+        if got < unclipped - 1e-6:
+            FAILS.append(
+                f"the clipped loss {got:.6f} at clip_eps={eps} is BELOW the unclipped "
+                f"{unclipped:.6f}. min(ratio*adv, clamp*adv) is a lower bound on the "
+                f"surrogate, so the loss can only be raised by clipping. A max() where the "
+                f"min() belongs, or an inverted ratio, gives exactly this.")
+
+    # 7. MONOTONE IN THE BAND WIDTH. A wider band clips less, so the loss moves toward the
+    #    unclipped value and never away from it. Kills the max()-for-min() mutant on its own,
+    #    independently of 6, because that mutant's loss RISES with eps.
+    seq = [_loss(e, old_scale=1.5).item() for e in (0.01, 0.1, 0.2, 1.0, 5.0)]
+    for i in range(len(seq) - 1):
+        if seq[i + 1] > seq[i] + 1e-6:
+            FAILS.append(
+                f"widening clip_eps raised the loss: {seq}. A wider band clips fewer rows, so "
+                f"the loss must approach the unclipped value monotonically.")
+            break
+
+    # 8. THE LOWER EDGE OF THE BAND IS LIVE. With every ratio BELOW 1-eps the upper edge never
+    #    binds, so a clamp written `clamp(ratio, max=1+eps)` -- lower bound dropped -- becomes
+    #    a no-op and clip_eps stops mattering. Assertion 1 cannot see it: its old_scale=1.5
+    #    puts all four ratios ABOVE the band, where the upper edge alone reproduces the
+    #    correct loss to every digit. Measured: that mutant PASSES 1-7 and fails only here.
+    #    old_scale=-0.6 puts all four ratios in [0.32, 0.48].
+    lo_t = _loss(0.01, old_scale=-0.6).item()
+    lo_l = _loss(5.0, old_scale=-0.6).item()
+    if abs(lo_t - lo_l) < 1e-6:
+        FAILS.append(
+            f"with every ratio below the band, clip_eps does not change the loss: "
+            f"{lo_t:.6f} vs {lo_l:.6f}. The clamp's LOWER bound is missing, so a ratio that "
+            f"undershoots is never clipped.")
+
+    # 9. THE RATIO POINTS THE RIGHT WAY. Assertions 6 and 7 cannot see an inverted ratio --
+    #    `exp(old_lp - seq_lp)` -- because their unclipped baseline comes from gspo_loss itself
+    #    at clip_eps=inf, so the mutant inverts both sides and they still agree. Measured: that
+    #    mutant PASSES 1-8. A test cannot catch a defect by comparing code against itself.
+    #
+    #    The anchor has to be a fact about the STUBS, established here, that constrains what
+    #    gspo_loss's own loss may be. Take a group whose advantages are known and a policy pair
+    #    with a known direction: with old_scale=1.5 every seq_lp - old_lp > 0, so the correct
+    #    ratio exceeds 1 on every row. Then a ONE-SIDED clip at the UPPER edge must reproduce
+    #    the two-sided clip exactly, because the lower edge is idle -- and gspo_loss's loss at
+    #    a given eps must equal the value computed from an upper-only clamp on exp(seq-old).
+    #    Under an inverted ratio every row is below 1 instead, the upper edge goes idle, and
+    #    the two disagree.
+    from rlvr_trainer import seq_logprob as _seq_logprob
+
+    torch.manual_seed(0)
+    _m, _old = Stub(seed=0), Stub(scale=1.5, seed=0)
+    _gen = [[3 + i, 4, 5] for i in range(4)]
+    with torch.no_grad():
+        _old_lp, _, _ = _seq_logprob(_old, [1, 2], _gen, 4, 3, False, "cpu", False)
+        _seq_lp, _, _ = _seq_logprob(_m, [1, 2], _gen, 4, 3, False, "cpu", False)
+    if not all(x > 0 for x in (_seq_lp - _old_lp).tolist()):
+        FAILS.append("fixture broken: old_scale=1.5 no longer puts every seq_lp above old_lp, "
+                     "so 9 tests nothing")
+    else:
+        _r = torch.tensor([1.0, 1.0, 0.0, 0.0])
+        _adv = (_r - _r.mean()) / (_r.std() + 1e-8)
+        _ratio = torch.exp(_seq_lp - _old_lp)
+        for eps in (0.2, 1.0):
+            # Upper edge only: correct iff the ratio really is above 1 everywhere.
+            want = -torch.min(_ratio * _adv,
+                              torch.clamp(_ratio, max=1 + eps) * _adv).mean().item()
+            got = _loss(eps, old_scale=1.5).item()
+            if abs(got - want) > 1e-5:
+                FAILS.append(
+                    f"at clip_eps={eps} the loss is {got:.6f} but an upper-edge-only clip on "
+                    f"exp(seq_lp - old_lp) gives {want:.6f}. Every row here has seq_lp above "
+                    f"old_lp, so every ratio must exceed 1 and only the upper edge may bind. "
+                    f"An inverted ratio exp(old_lp - seq_lp) puts every row below 1 instead.")
+
     for f in FAILS:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"gspo ratio test: {'PASS (5 worlds)' if not FAILS else f'{len(FAILS)} BUG(S)'}")
+    print(f"gspo ratio test: {'PASS (9 worlds)' if not FAILS else f'{len(FAILS)} BUG(S)'}")
+    return 1 if FAILS else 0
+
+    for f in FAILS:
+        print(f"BUG {f}", file=sys.stderr)
+    print(f"gspo ratio test: {'PASS (9 worlds)' if not FAILS else f'{len(FAILS)} BUG(S)'}")
     return 1 if FAILS else 0
 
 
