@@ -158,9 +158,15 @@ def main():
             FAILS.append(f"two domains, one with val_frac 0 and one without, held back {held} "
                          f"row(s); want exactly 10 = 5% of nat's 200 + 0% of inj's 200. 20 means "
                          f"the override was ignored, 0 that it leaked into the default")
-        if False:
-            FAILS.append(f"a zero-row val split reached the val list {held}; val_frac 0 must "
-                         f"append nothing, not an empty tensor the val loop then divides by")
+        # NO WORLD HERE FOR "val_frac 0 must not append an EMPTY TENSOR to the val list", and the
+        # absence is deliberate rather than an omission. An `if False:` block asserting exactly
+        # that survived here from an earlier draft, left behind when the per-domain val read was
+        # replaced by _nval(): it guarded nothing and its message described list semantics the test
+        # no longer uses (44, 2026-09-05). The property is NOT OBSERVABLE from here -- build_mix
+        # concatenates the per-domain val lists before returning, and torch.cat and len are no-ops
+        # on a 0-row tensor, so appending one and appending nothing produce the same return value.
+        # Testing it would need build_mix to expose the per-domain list, which is a change to the
+        # subject to suit the test. Deleted rather than repaired.
 
         # 5. AN EXPLICIT NON-ZERO OVERRIDE IS HONOURED, so the key is a value and not a flag.
         m = _mix(tmp, {"inj": {"weight": 1.0, "epochs": 1, "val_frac": 0.25}}, 200 * SEQ)
