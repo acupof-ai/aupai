@@ -1,4 +1,4 @@
-# Controller board (fb) — updated 2026-09-04T23:10Z, rewritten every tick
+# Controller board (fb) — updated 2026-09-05T00:59Z, rewritten every tick
 
 Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in their own work.
 
@@ -33,6 +33,17 @@ Percent = share of the deliverable landed on main and verified by a second reade
 | Pod disk (user order 2026-09-05 morning: clean the pod) | fb | 60 | tier 1 deleted, 73 GiB freed (191 -> 264 GiB free, 87%): /tmp/torchinductor_root 50 GiB compile cache (cards idle), /tmp/absmoke 3.4 (the 09-03 accidental cp), /tmp/bench_tok 1.4, ckpt_e2e_tmp_resume.* 3.3, p500m interrupt.step83/3006 3.9 (step32 kept: named in facts/data_scaling.json), b0_mem_m1 interrupt.step83/1065 11.8 (step1000 kept; M3/M2 interrupts kept for the collapse diagnosis) | every target checked against facts/, runs/*.jsonl, docs/, AGENTS.md before rm; nothing referenced was touched | tier 2: runs/pod_ckpt_candidates_0905.txt, 85.7 GiB / 85 files, broadcast to peers, delete after 24h unless KEEP-claimed; data/raw 263 GiB not touched (user decision) |
 | Laptop disk | user | 100 | 5 GB → 112 GB free | /private/tmp/e1_v11_snapshot (2.8 GB, 8 projects' transcripts) left in place per user |
 | Head-hybrid A/B | b0 | 100 | B loses 0.087 nat; closes + prereg outcome 15de1e0e; checkpoints pinned | user: keep or prune both arm checkpoints |
+
+## Morning of 2026-09-05 (user awake): decisions and state
+
+| item | state |
+|---|---|
+| Credential in the readout 2 item file | two scraped rows (1538, 4161) held live third-party DB URLs; repo is public; 12 unpushed commits rewritten (filter-repo, merges kept) to never contain the file; fixed file 4,998 items sha 8524d9cb in 9b5b0c9c; origin/main a01cd2e5 clean; pod copy replaced by hand (data/ is outside pod_drift scope -- de adds it); tilerl/e1/3b reset to main; credential gate on de merging |
+| Corpus secrets (user order: do it) | both credentials remain in the code_py_starcoder token cache and row 15708 was read by the control; de runs the anchored scan over the code domains first (report, no deletion), filter decision after |
+| GPUs | all 8 lent to the RL team, open-ended, ask before reclaiming (user); six-cell probe grid on hold with scripts on the pod and grants written INACTIVE |
+| Efficiency-gap discussion | docs/lessons/efficiency_gap_views.md (44, merged f02ad43b): 7 views; gap is in the prior, per-token energy silicon already wins (3542x at 200M), data ratio 10^5; three experiments ranked |
+| Next experiments (no GPU) | e1: power-law exponent b on existing arms (exp. 3); 3b: register a held-out skill for the conversion-rate curve (exp. 1); RLVR-vs-pretraining-tokens curve (exp. 2) waits for cards |
+| Memory layers | all arms stopped on readout 4; b0's --mem_sel_lr / --mem_query_norm flags merged (defaults bit-for-bit, pinned by tilerl's test); relaunch only after the grid |
 
 ## Open user decisions (unchanged)
 /data01 backup refresh schedule; code_tests fetch placement on /data02; head-hybrid and Stage E checkpoints keep/prune; e1_v11_snapshot; rotate ANTHROPIC_AUTH_TOKEN in ~/.zshrc (11 lines still hold it); web_cci3_p*/batch_*.jsonl and M1 interrupt checkpoints left in place (no deletion without a named order).
