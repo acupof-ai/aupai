@@ -46,6 +46,12 @@ sys.path.insert(0, ROOT)
 
 ARMS = (("control_arm", 0), ("n1", 1), ("n8", 8), ("n64", 64), ("n256", 256))
 SEQ = 4096
+#: Rows ckpt_b0_headmix_armA.pt's row_cursor already consumed, summed from the checkpoint on the
+#: pod (as_of_step 3815, cursor_seed 42): math_owm_stage2 64450, en_c4_stage2 40082, cot 19776,
+#: textbook_30b 24700, chatml 1796, chat_qa 1714, zh_web 7496, code_py_starcoder 80380,
+#: code_py_rp1t 3766. Hard-coded rather than read, because this check must run where the
+#: checkpoint is not; --plan reads the real cursor and cross-checks it against this number.
+CURSOR_ROWS = 244160
 
 
 def _shard_docs(domain):
@@ -139,7 +145,14 @@ def check_arm(name, n, verbose=True):
     #    row-derived weights: `want` is int(budget_rows * weight) and the pool is
     #    tokens//(seq+1). Computed here from the mix and the shard, so it does not depend on
     #    build_mix -- and then the plan is built below and compared against it.
-    budget_rows = mix["total_tokens"] / mix["seq"]
+    # THE REMAINDER, NOT total_tokens. build_mix subtracts the resume cursor before computing
+    # want: `rows = total_tokens/seq`, then `rows = max(0, rows - spent)`, then
+    # `want = int(rows * frac * weight)`. An arm resumes ckpt_b0_headmix_armA.pt, whose row_cursor
+    # sums to CURSOR_ROWS, so its total_tokens carries the RESUMED run's budget and the rows the
+    # weights are shares of is the difference. Reading total_tokens here instead would compute
+    # want against 276,160 rows and report every arm as over-drawing by 8.6x -- the check would
+    # be wrong in exactly the direction that hides the defect it exists for.
+    budget_rows = mix["total_tokens"] / mix["seq"] - CURSOR_ROWS
     for d in inj:
         _h, dd = _shard_docs(d)
         # Token count is measured once by the caller and cached in the role string; recount it
@@ -169,7 +182,7 @@ def check_arm(name, n, verbose=True):
     return problems, nums
 
 
-def check_plan(name, n):
+def check_plan(name, n, cursor=None):
     """Build the REAL plan through train.build_mix and count the exposures it schedules.
 
     This is the level the file-arithmetic above cannot reach: everything else infers what the
@@ -195,19 +208,66 @@ def check_plan(name, n):
     tok = train.build_tokenizer() if hasattr(train, "build_tokenizer") else None
     problems = []
     inj = [d for d in mix["domains"] if d.startswith(("s_inject_", "p_format"))]
+    nat = [d for d in mix["domains"] if d not in inj]
     names = list(mix["domains"])
+    # THE REAL CURSOR, and cross-checked against the constant the file-level check uses. If the
+    # checkpoint's cursor ever differs from CURSOR_ROWS, every want above was computed against the
+    # wrong remainder and its PASS meant nothing -- so this compares them rather than trusting one.
+    cur = dict(cursor or {})
+    if cur:
+        spent = sum(cur.values())
+        if spent != CURSOR_ROWS:
+            problems.append(f"{name}: the checkpoint's row_cursor sums to {spent} rows but this "
+                            f"check's CURSOR_ROWS is {CURSOR_ROWS}. Every want the file-level "
+                            f"check computed used the wrong remainder.")
     rows_by_dom = collections.Counter()
+    # LOWEST ROW INDEX PER DOMAIN, unioned over both ranks. mine[1] is the row index into that
+    # domain's pool and mine[0] the domain id (train.py:2316-2317), so this is the pool position
+    # the arm actually starts reading from -- the quantity 4c's assertion is about.
+    lowest = {}
     for rank in (0, 1):
-        mine, _val = train.build_mix(mix_path, tok, rank == 0, False, rank=rank, world=2)
-        doms = train.Cfg._plan_domains
+        mine, _val = train.build_mix(mix_path, tok, rank == 0, False, rank=rank, world=2,
+                                     row_cursor=cur or None)
         for di, dname in enumerate(names):
-            rows_by_dom[dname] += int((doms == di).sum()) if doms is not None else 0
+            sel = mine[0] == di
+            k = int(sel.sum())
+            rows_by_dom[dname] += k
+            if k:
+                lo = int(mine[1][sel].min())
+                lowest[dname] = min(lowest.get(dname, lo), lo)
     for d in inj:
-        want = int((mix["total_tokens"] / mix["seq"]) * mix["domains"][d]["weight"])
+        # The REMAINDER, as above: build_mix subtracts the cursor before computing want.
+        want = int((mix["total_tokens"] / mix["seq"] - sum(cur.values() or [0]))
+                   * mix["domains"][d]["weight"])
         got = rows_by_dom[d]
         if got != want:
             problems.append(f"{name}: the built plan holds {got} rows of {d}, the weight asks "
                             f"{want}. The cap bound, or the stripe dropped rows.")
+    # 4c's assertion: A NATURAL DOMAIN CONTINUES FROM ITS CURSOR RATHER THAN RESTARTING. This is
+    # the one that catches a floored budget and a discarded cursor, both of which are silent: a
+    # floored budget draws nothing at all, and a discarded cursor draws the SAME row count from
+    # row 0 -- re-reading rows the control already saw while every count still matches.
+    for d in nat:
+        if d not in cur:
+            continue
+        if rows_by_dom[d] == 0:
+            problems.append(f"{name}: natural domain {d} drew 0 rows. Its cursor is at "
+                            f"{cur[d]}; a budget that floors to zero after the cursor "
+                            f"subtraction looks exactly like this.")
+            continue
+        # THE FIRST DRAWN ROW IS THE CURSOR, modulo the pool length -- build_mix reads
+        # `torch.arange(used[name], used[name] + want) % len(pool)`, so a cursor past one epoch
+        # wraps. A DISCARDED cursor restarts the domain at row 0 and draws the SAME COUNT, so
+        # every count assertion above still passes while the arm re-reads rows the control has
+        # already seen. This is the only assertion that separates those two.
+        want_lo = cur[d]
+        if lowest.get(d) is not None and lowest[d] != want_lo:
+            problems.append(
+                f"{name}: natural domain {d} starts at pool row {lowest[d]}, its checkpoint "
+                f"cursor is {want_lo}. 0 means the cursor was discarded and the domain restarted, "
+                f"which re-reads rows the control arm already trained on while the row COUNT still "
+                f"matches -- the failure no count check can see. (If the pool is shorter than the "
+                f"cursor the read wraps, and this assertion needs the modulo.)")
     return problems, None
 
 
