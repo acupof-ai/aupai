@@ -199,6 +199,35 @@ if [ $ALL -eq 1 ]; then
   # and be reachable from main; the pod's last manifest defines the delete set, so
   # throwaway probes (never in any manifest) are untouched.
   [ $# -eq 0 ] || { echo "pod_push --all takes no file arguments" >&2; exit 2; }
+  # REFUSE FROM THE INTEGRATION TREE. pod_push cds to `dirname $0/..`, so it runs in whichever
+  # COPY you invoked -- and a copy lives in /Users/bytedance/code/aupai. Since the 2026-09-05
+  # flip that tree is DETACHED, so every `git show HEAD:` underneath answered about a commit
+  # behind main: measured HEAD 0425accb vs main 1595220e, one rewritten file silently skipped
+  # (not refused -- a path the manifest omits is never offered to the per-file gate below) and
+  # the stamp still claimed main. Same script, two behaviours, decided by which path you typed.
+  #
+  # The predicate is db's is_integration_tree (main worktree AND has linked worktrees), the same
+  # one the pre-commit hook uses -- not a sixth spelling of the idea. It is stronger than testing
+  # HEAD != main because it also fires if someone re-attaches that tree at main, where the HEAD
+  # test would pass and the next detach would break it again.
+  if python3 -c "
+import sys, os
+sys.path.insert(0, os.path.join('$(pwd)', 'scripts'))
+try:
+    from integration_tree import is_integration_tree
+except Exception:
+    sys.exit(1)
+sys.exit(0 if is_integration_tree('$(pwd)') else 1)
+" 2>/dev/null; then
+    echo "REFUSING: this is the integration tree's copy of pod_push." >&2
+    echo "  It cds to its own directory, so every git read below would use that tree -- which is" >&2
+    echo "  detached and behind main, and the manifest built there SKIPS files rather than" >&2
+    echo "  refusing them. Run your own worktree's copy instead:" >&2
+    echo "    cd <your worktree> && bash scripts/pod_push.sh --all" >&2
+    echo "  That worktree's HEAD must be REACHABLE FROM main -- behind is fine and stamps main's" >&2
+    echo "  sha, an unmerged commit is refused. Merge before pushing if you have local work." >&2
+    exit 1
+  fi
   # BEFORE the first push, not at stamp time: an unmergeable HEAD must refuse while
   # refusing still means nothing shipped.
   STAMP_SHA=$(resolve_stamp_sha)
