@@ -122,7 +122,24 @@ Fix: `git -C "$MAIN" show main:runs/review.jsonl`. A gate's inputs must come fro
 namespace as the thing it gates -- this one gated commits reachable from `main` using evidence
 read from whatever directory the process started in.
 
-## Fixture worlds (5/5, `scripts/test_merge_rebuild_worlds.sh`)
+## The push is part of the integration step
+
+Measured 2026-09-05: main took **670 commits in 24 h against 139 `origin/main` push events**, so
+it advances about 5x per push, and every gap is a window where a peer's `git fetch` and the pod
+read a stale main. That handoff is nobody's step today, which is the same root as the rest of this
+file. So the integration step pushes after a successful CAS.
+
+A FAILING PUSH DOES NOT ROLL THE REF BACK. The CAS is the atomic step and the commit is already
+durable and reachable; undoing it to match origin would discard work to fix a delivery problem.
+It prints what is due and exits nonzero, main stays advanced (4c's ruling).
+
+The POD push only PRINTS what is due and does not run. `pod_push.sh` is safe to invoke in
+principle -- it refuses any file differing from main and stamps main's sha -- but it also carries a
+running-`.sh` refusal and an emptyDir path for large files, and a training run mid-flight is
+exactly when an automatic pod push is most dangerous and least expected. Turning it on is a
+separate change with its own second reader, after the print has been watched for a while.
+
+## Fixture worlds (6/6, `scripts/test_merge_rebuild_worlds.sh`)
 
 - **W1** a refused gate mid-integration leaves `integ dirty=0, s2 dirty=0`, main unmoved.
 - **W2** two concurrent integrations: first lands, second gets `cas-lost`, retry lands. Both files
@@ -131,12 +148,17 @@ read from whatever directory the process started in.
 - **W4** `git worktree list` shows 0 worktrees holding main, so CAS is always legal.
 - **W5** a pending override row survives a gate killed between reading and truncating, the next
   run drains it, and writing it never dirties the tree (4c's assertion).
+- **W6** a failing push leaves main advanced -- asserted against a `rollback` policy arm that gives
+  the opposite answer, so the world can tell the shipped behaviour from the wrong one.
 
-Three of these were wrong first and are worth recording. W4 failed because the fixture detached a
+Four of these were wrong first and are worth recording. W4 failed because the fixture detached a
 SECONDARY worktree while the primary still held `main` — the real layout has the integration tree
 as the primary, so the fixture was proving the opposite of the deployed shape. And W2 passed by
 construction: each call re-read `main` before its CAS, so the two were sequential, not concurrent,
 and the loser could not lose. Both now read a single pre-read `old`. W5 used `kill -9 $$` inside
 `( )` to simulate the killed gate, which kills the SCRIPT rather than the subshell -- `$$` is the
 parent's pid in a subshell -- so the world printed nothing and the run ended silently at 4/5,
-which reads like a hang rather than a failing assertion.
+which reads like a hang rather than a failing assertion. And W6 passed on its first version while
+being unable to fail: `integrate()` did not push at all, so no code path could have rolled the ref
+back and the assertion held vacuously. It now runs both policies and requires them to disagree --
+the discrimination arm this file's own #231 asks for.
