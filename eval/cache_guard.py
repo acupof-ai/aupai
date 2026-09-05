@@ -769,6 +769,41 @@ def _selftest_co_resident():
                 f"refuses itself, and the refusal used to exit 0 and write a row that looked "
                 f"like a score") == 0
             n += 1
+
+        # 10. THE MIXED DIR, which is what production actually looks like (e1's finding 2 on
+        #     91531b49): score_matrix claims its own cards WHILE the lane job holds its own.
+        #     Every world above points AUPAI_CLAIM_DIR at a directory holding exactly one
+        #     claim, so none of them distinguishes "filter the self claim out of the set" from
+        #     "if any claim is mine, disable the guard entirely" -- and that second mutant
+        #     SURVIVED the whole selftest. The shipped code was correct; the world was missing.
+        mixed = os.path.join(d, "mixed")
+        os.makedirs(mixed)
+        with open(os.path.join(mixed, "score_matrix.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "score_matrix_mine", "cards": ["0"], "pid": os.getpid(),
+                       "cmdline": "python eval/score_matrix.py --ckpt x.pt",
+                       "acquired": "2026-09-06 00:00:00"}, fh)
+        with open(os.path.join(mixed, "lane_job.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "b0_moe48", "cards": ["1"], "pid": foreign.pid,
+                       "cmdline": "python train.py --name b0_moe48",
+                       "acquired": "2026-09-06 00:00:00"}, fh)
+        os.environ["AUPAI_CLAIM_DIR"] = mixed
+        try:
+            assert_not_co_resident(big)
+            raise AssertionError(
+                "a big read was allowed with MY claim on card 0 and a foreign live claim on "
+                "card 1: the exclusion dropped the whole set rather than my own claim, so any "
+                "job that claims its own cards disables the guard for everyone")
+        except CoResidentCacheRead as e:
+            assert "b0_moe48" in str(e), (
+                f"the refusal does not name the foreign claimant: {str(e)[:200]}")
+            assert "score_matrix_mine" not in str(e), (
+                f"the refusal names MY OWN claim as a reason to refuse me: {str(e)[:200]}")
+            # Card 1 is the foreign one; card 0 is mine and must not appear as held.
+            _cards = str(e).split("while cards ", 1)[1].split(" ", 1)[0] if "while cards " in str(e) else ""
+            assert _cards == "1", (
+                f"the refusal reports cards {_cards!r}, expected just the foreign card 1 -- "
+                f"reporting card 0 means my own claim survived the filter")
+        n += 1
     finally:
         # The foreign process first: a leaked `sleep 300` from a failed selftest would sit in
         # the table for five minutes, and this file's own worlds are the ones that read it.
