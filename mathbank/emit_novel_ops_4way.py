@@ -214,7 +214,8 @@ def build(src=SRC):
     UNDER-FILLED FIRST, and items are processed in order of how few ranks they can reach,
     so the constrained items claim their only option before the flexible ones use it up.
     """
-    rows = [json.loads(line) for line in list(open(src, encoding="utf-8"))[1:]]
+    with open(src, encoding="utf-8") as fh:
+        rows = [json.loads(line) for line in list(fh)[1:]]
     rng = random.Random(SHUFFLE_SEED)
     reach = []
     for i, r in enumerate(rows):
@@ -288,7 +289,7 @@ def _selftest():
     #    This is the assertion fb asked for: without it "option_kinds" is a label nobody verified.
     by_name = dict(LADDER)
     for it in items:
-        for kind, val in zip(it["option_kinds"], it["options"]):
+        for kind, val in zip(it["option_kinds"], it["options"], strict=True):
             if kind == "gold":
                 if val != it["answer"]:
                     fails.append(f"gold option {val} != answer {it['answer']}")
