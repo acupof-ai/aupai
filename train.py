@@ -730,6 +730,23 @@ class Muon(torch.optim.Optimizer):
                 momentums.lerp_(grads, 1 - momentum)
                 g = grads.lerp(momentums, momentum)
                 X = g.bfloat16()
+                # FLATTEN TO ONE BATCH DIMENSION. baddbmm is strictly 3-D, and step() stacks
+                # same-shape params, so a 2-D weight arrives here as (n, out, in) and a 3-D one
+                # as (n, E, out, in) -- which raised "expand: the requested shape has too few
+                # dimensions" at the first optimizer step of E1 (runs/b0_moe_e1.log:231, dynamo's
+                # fake run of torch.baddbmm on three (12, 24, 1024, 1024) tensors, 2026-09-05).
+                # Every dense parameter is 2-D, so before the MoE experts the stack was always
+                # 3-D and this never came up.
+                #
+                # THE VIEW IS NOT A RESHAPE OF THE MATH: Newton-Schulz is per-matrix, and every
+                # operation below already addresses the trailing two dims (X.mT, norm(dim=(-2,-1)),
+                # baddbmm's batch). Collapsing the leading dims makes one batch of 12*24 = 288
+                # expert matrices where there were 12 batches of 24, and each matrix is
+                # orthogonalised exactly as it would have been alone. Ruling (f) is untouched:
+                # the experts stay in Muon, getting the same iteration as the dense FFN they
+                # replace.
+                _lead = X.shape[:-2]
+                X = X.reshape(-1, X.shape[-2], X.shape[-1])
                 X = X / (X.norm(dim=(-2, -1), keepdim=True) * 1.01 + 1e-6)
                 for i in range(len(a_c)):
                     if is_tall:
@@ -740,6 +757,7 @@ class Muon(torch.optim.Optimizer):
                         A = X @ X.mT
                         B = torch.baddbmm(b_c[i] * A, A, A, beta=1.0, alpha=c_c[i])
                         X = torch.baddbmm(a_c[i] * X, B, X, beta=1.0, alpha=1.0)
+                X = X.reshape(*_lead, X.shape[-2], X.shape[-1])
                 mask = (grads * weights) >= 0
                 weights.sub_(lr * X.to(weights.dtype) + lr * wd * weights * mask)
                 return weights, momentums
