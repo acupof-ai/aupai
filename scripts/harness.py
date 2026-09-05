@@ -17934,6 +17934,16 @@ _UNFROZEN_ALLOWLIST = {
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "fp8",                # training precision, not architecture
+    # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
+    # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
+    # equalise precision across two arms leaves fp32 masters, which torch._grouped_mm refuses; a
+    # MoE arm and its dense control could not be compared at equal precision at all (run
+    # b0_p5_e1_bf16 died at step 0, 2026-09-05, prereg moe_0905 amendment 8). NOT SILENTLY
+    # OMITTABLE the way an unfrozen architecture key would be: train.py refuses --bf16 with --fp8
+    # rather than ranking them, refuses --bf16 without amp rather than accepting a flag whose
+    # property is false, and refuses a MoE arm carrying neither flag -- so a launch that drops it
+    # stops instead of reporting a number at a precision nobody chose.
+    "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
