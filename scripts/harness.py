@@ -1948,6 +1948,22 @@ def judge_pod_ps(allrows):
     live = [x for x in allrows if "Z" not in x[4]]
     leader = {x[0]: x[5] for x in live if x[0] == x[1]}
     rows = [x for x in live if re.search(r"train\.py|run_ddp", x[5])]
+    # --help AND --version ARE NOT TRAINING RUNS. The rule this check enforces is "long jobs
+    # detach", and its harm is an orphan holding a card at 100% after the tunnel dies. `python3
+    # train.py --help` prints a parser and exits in under a second: it takes no card, cannot be
+    # orphaned in any meaningful sense, and running it in the foreground is the only sensible way
+    # to read the flags. It matched anyway, because the row regex reads the SCRIPT NAME and argparse
+    # runs before anything touches a device.
+    #
+    # Measured cost of not exempting it: b0 read train.py's flags from a pod call while a real
+    # 8-card run was going, and the check refused a commit naming that --help process as a
+    # foreground trainer. Two of the four false positives this function's docstring already records
+    # were the same class -- something that matches the name without being the job.
+    #
+    # A WORD-BOUNDARY MATCH, not a substring: `--helper`, `--version-check` and a --name whose value
+    # happens to contain "--help" must not exempt a real run. The flag has to appear as its own argv
+    # token, which is what \b...\b gives on a space-separated args column.
+    rows = [x for x in rows if not re.search(r"(?:^|\s)--(?:help|version)(?:\s|$)", x[5])]
     # A leader that IS a training row is a detached launcher, never the exec shell.
     fg = [x for x in rows
           if x[0] != x[1]
@@ -1999,11 +2015,24 @@ def _broken_no_foreground_pod_training():
     a foreground trainer on a shared box, i.e. committing the incident the check prevents.
     """
     FOREGROUND = [
-        "1389335 1389335 1389335       0 Ss   bash -lc cd /work/aupai && ./run_ddp.sh --name fixture_fg_probe --help >/dev/null 2>&1; sleep 40",
-        "1389346 1389335 1389335 1389335 S    /bin/bash ./run_ddp.sh --name fixture_fg_probe --help",
+        "1389335 1389335 1389335       0 Ss   bash -lc cd /work/aupai && ./run_ddp.sh --name fixture_fg_probe >/dev/null 2>&1; sleep 40",
+        "1389346 1389335 1389335 1389335 S    /bin/bash ./run_ddp.sh --name fixture_fg_probe",
         "1389348 1389335 1389335 1389346 Sl   /usr/bin/python3 /usr/local/bin/torchrun --nproc_per_node=8 train.py --fp8 --name fixture_fg_probe",
-        "1389417 1389417 1389417 1389348 Rsl  /usr/bin/python3 -u train.py --fp8 --name fixture_fg_probe --help",
+        "1389417 1389417 1389417 1389348 Rsl  /usr/bin/python3 -u train.py --fp8 --name fixture_fg_probe",
     ]
+    # `--help` STRIPPED FROM THE CAPTURE, one token, nothing else. The capture was taken with it on
+    # the launch line as a safety device -- staging a real foreground trainer on a shared box means
+    # committing the incident the check prevents -- so the fixture was a harmless capture standing
+    # in for a harmful shape, and that worked only while judge_pod_ps could not tell them apart.
+    # It now exempts --help and --version (they print a parser and exit before touching a device;
+    # b0's flag-reading call was refused as a foreground trainer, 4c 2026-09-05), which retires the
+    # safety device.
+    #
+    # This world SURVIVED the exemption by accident before the strip: only three of its four rows
+    # carried --help, and the surviving torchrun row kept it FAILing. A world that passes for a
+    # reason the author did not choose is the shape §182 names, so the flag is gone from all four
+    # rather than left to luck. The session structure -- a `bash -lc` leader without setsid, the
+    # job inside its session -- is the live capture and is what the world must exhibit.
     d = _tmp_repo()
     ps = os.path.join(d, "data", "pod_ps.txt")
     os.makedirs(os.path.dirname(ps), exist_ok=True)
@@ -8452,6 +8481,11 @@ def _token_cache_dir():
     HARNESS_TOKEN_CACHE_DIR is kept as an alias because one live caller sets it: this file's own
     selftest fixture at the call below. Grepped 2026-09-05 -- no other setter exists outside
     documentation of the incident.
+
+    The FALLBACK carries train's three-step order, not just its constant: env, else the NVMe dir if
+    it exists, else dirname(TOKEN_CACHE). A fallback that returned only the constant would put the
+    torch-free host one step behind the accessor it stands in for, which is this function's own
+    incident in a smaller place.
     """
     forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
@@ -8466,6 +8500,14 @@ def _token_cache_dir():
         m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
         if not m:
             raise KeyError("train.py has no TOKEN_CACHE; the check that reads it cannot run")
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+        except ImportError as e:
+            raise KeyError(f"eval/cache_guard.py is unimportable ({e}), so the NVMe default cannot "
+                           f"be read and this host would answer with the pre-move location") from e
+        if os.path.isdir(cache_guard.NVME_CACHE_DIR):
+            return cache_guard.NVME_CACHE_DIR
         return os.path.dirname(m.group(1))
 
 
@@ -8857,7 +8899,22 @@ def _broken_env():
 
 TASKS_PATH = os.path.join(ROOT, "runs", "tasks.jsonl")
 FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
-FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch")
+# The five original kinds name WHAT BLOCKED someone -- a merge, a hook, a check, the pod, a
+# launch -- and every one of them is a mechanism in our own tooling. 44's policy_metrics.py
+# (1ad28540) needs two more, and they are a different axis rather than two more mechanisms:
+#
+#   misroute  a message or a task reached the wrong session. Nothing in the tooling blocked it;
+#             the cost was paid in a session doing work that was not theirs, or in work nobody
+#             picked up. It has no file and no mechanism to name, which is why it cannot be
+#             filed under any of the five.
+#   defect    our own code was wrong and someone paid for it before it was found. Distinct from
+#             `check`: a check that refuses correctly is friction with a purpose, while this is
+#             friction with none.
+#
+# Named values rather than free text, so the metric can count them; the two axes coexisting in
+# one field is a deliberate flattening -- a row has exactly one cause and forcing a second field
+# would produce rows with one of them empty.
+FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect")
 
 
 def _friction_rows(path=None):
@@ -9410,7 +9467,20 @@ def cmd_task(argv):
                    help="the owner's socket address; names collide, sockets do not")
     a.add_argument("--task", required=True)
     a.add_argument("--why", required=True, help="why this is worth a session's time")
-    a.add_argument("--reading", default=None, help="how to read the result, written BEFORE it exists")
+    a.add_argument("--reading", default=None,
+                   help="how the number is read: thresholds, direction, what a null means. Written "
+                        "BEFORE the result exists. Narrower than it used to be, because --produces "
+                        "now carries the quantity: the triple mirrors exp.py's, where --produces is "
+                        "the hypothesis's quantity, --reading is how the finding is derived from it, "
+                        "and --decides is the decision")
+    a.add_argument("--produces", required=True,
+                   help="the number or answer this task yields THAT NOBODY HAS, e.g. 'kept GB/h at "
+                        "N=32'. Not the artifact path (--evidence carries that at close) and not the "
+                        "activity: a quantity, so that its absence at close is visible")
+    a.add_argument("--decides", required=True,
+                   help="what changes depending on that value, e.g. 'C++ lane goes first if kept "
+                        "GB/h > 8'. A task nobody can name a decision for does not open -- that is "
+                        "the field's whole purpose, and non-empty is the only check")
     a.add_argument("--pair", required=True,
                    help="the second session who agreed this task before it started, and who "
                         "second-reads it after; NOT a co-executor and not the owner -- the pair "
@@ -9428,6 +9498,15 @@ def cmd_task(argv):
     d.add_argument("--evidence", required=True, help="artifact path, command, or fact id -- not a claim")
     d.add_argument("--commit", required=True,
                    help="the commit that delivers it: must reach main and must touch --evidence")
+    # OPTIONAL AND EMPTY IS A REAL ANSWER. 44's policy_metrics.py needs to count reviews that
+    # caught something against reviews that found nothing wrong, and those are different facts --
+    # a review that reads the artifact and agrees is a review. Required would force every closer
+    # to write something, and the something would be "nothing" or "looks good", which is a field
+    # full of noise the metric would then have to filter. Optional keeps the null distinguishable
+    # from the empty string: absent means nobody was asked, "" means asked and nothing found.
+    d.add_argument("--defect-caught", dest="defect_caught", default=None,
+                   help="what the review found that the owner had missed; free text, empty is a "
+                        "real answer (the review agreed), omit if no review has happened yet")
     r = sub.add_parser("reopen")
     r.add_argument("id")
     r.add_argument("--why", required=True, help="why this task is being reopened")
@@ -9466,6 +9545,17 @@ def cmd_task(argv):
                       f"{sorted(new & old)[:6]}. Fold into it, or pass --dup-ok saying why "
                       "they are different", file=sys.stderr)
                 return 1
+        # REQUIRED IS NOT NON-EMPTY. argparse's required=True is satisfied by `--produces ""`, so
+        # the one check 4c specified would be bypassed by the shortest possible input -- and a row
+        # carrying "" is worse than a row carrying nothing, because it reads as an answered question.
+        # Whitespace too: "   " passes a truthiness test on the raw string.
+        for flag, val in (("--produces", args.produces), ("--decides", args.decides)):
+            if not str(val).strip():
+                print(f"refusing: {flag} is empty. It is required because a task nobody can name a "
+                      f"number and a decision for does not open; an empty value states that the "
+                      f"question was asked and had no answer, which is a different and false claim.",
+                      file=sys.stderr)
+                return 1
         row = {
             "id": f"{args.owner}-{n}",
             "owner": args.owner,
@@ -9476,6 +9566,8 @@ def cmd_task(argv):
             "task": args.task,
             "why": args.why,
             "reading": args.reading,
+            "produces": args.produces,
+            "decides": args.decides,
             "blocked_on": args.blocked_on,
             "opened": time.strftime("%Y-%m-%d %H:%M", time.gmtime()),
             "evidence": None,
@@ -9503,6 +9595,12 @@ def cmd_task(argv):
         # Append the new state as an event; never rewrite the row (see _read_tasks).
         ev = dict(hit[0], state="done", evidence=args.evidence, reviewer=args.reviewer,
                   commit=args.commit, closed=time.strftime("%Y-%m-%d %H:%M", time.gmtime()))
+        # ONLY WHEN GIVEN, so absent and empty stay different facts: no key means no review has
+        # reported yet, "" means the reviewer read it and found nothing the owner had missed.
+        # Writing "" unconditionally would collapse the two and make the metric read every
+        # unreviewed close as a clean review (44's policy_metrics.py counts on the distinction).
+        if args.defect_caught is not None:
+            ev["defect_caught"] = args.defect_caught
         _append_task(ev)
         print(f"{args.id} done: {args.evidence[:80]}")
         return 0
@@ -17980,6 +18078,24 @@ def _release_cards(name):
         pass
 
 
+# What a run is FOR, on the exp row, required at launch. The user's standard of 2026-09-05 --
+# 只做能带来增量结果的事情，不做复现 -- is a claim about the MIX of runs, and nothing could count
+# that mix because no row said which kind a run was. Three values and no more:
+#
+#   incremental          produces a number nobody has. The default expectation.
+#   confirmatory         reproduces a number we or someone else already has. Legitimate and
+#                        sometimes necessary (a control, a regression check), and the point of
+#                        naming it is that a week of these is visible rather than inferred.
+#   infra-verification   proves a tool works. Not a measurement of the model at all, and the
+#                        class exists because these were previously indistinguishable from
+#                        measurements in the ledger -- two of my own rows today were /bin/echo
+#                        under a mutated launcher and only their finding text said so.
+#
+# Required rather than defaulted: a default would be chosen by the tooling, and the whole value
+# is that a person said which one this is before the cards were taken.
+RUN_CLASSES = ("incremental", "confirmatory", "infra-verification")
+
+
 def cmd_launch(rest):
     """`harness launch <name> [--training] [--hypothesis "..."] -- <cmd>`
 
@@ -17994,6 +18110,21 @@ def cmd_launch(rest):
     """
     ap = argparse.ArgumentParser(prog="harness launch")
     ap.add_argument("name", help="run name (also the log and exp row name)")
+    # NOT required=True, and that is a correction of my own defect rather than a weakening.
+    # Landed required at 315755cc; E1's relaunch died in argparse at 08:02Z 2026-09-05 because the
+    # pre-registered launch line was written before the flag existed. A required flag on the SHARED
+    # launcher breaks every launch line already written, in the one place a session types blind and
+    # a failure costs a card-hour rather than a retry. 4c's rule from it: a new required launcher
+    # flag ships with a one-day default plus a WARN naming the flag, then flips to required.
+    #
+    # So: default None, WARN when absent, and exp.py still writes NO key in that case -- absent
+    # stays absent, per the same absent-vs-empty rule the field exists for. Flip to required on
+    # 2026-09-06 once every live launch line carries it.
+    ap.add_argument("--class", dest="run_class", default=None, choices=RUN_CLASSES,
+                    help="what this run is FOR: incremental (produces a number nobody has), "
+                         "confirmatory (reproduces a number we or someone else already has), or "
+                         "infra-verification (proves a tool works; not a measurement of the model). "
+                         "WARNs when omitted; required from 2026-09-06")
     ap.add_argument("--training", action="store_true", help="training job (block cards, startup gate)")
     ap.add_argument("--hypothesis", default="", help="what this run is meant to test")
     ap.add_argument("--gate-timeout", type=int, default=None,
@@ -18193,11 +18324,20 @@ def cmd_launch(rest):
     # Recorded for every launch, not only the overridden ones, so the answer does not depend on
     # remembering which flag was used.
     launcher += f"; cards {cards or '(none)'}" + (" (--cards)" if args.cards is not None else "")
+    # THE WARN, in place of the refusal that killed E1's relaunch. Loud enough to be acted on, and
+    # it does not stop a card-hour. `--class` is omitted from the argv entirely when absent -- a
+    # `"--class", None` would pass the literal string "None" and land it in the row as a class.
+    if not args.run_class:
+        print(f"WARN: {args.name} carries no --class. State what this run is FOR: "
+              f"{'/'.join(RUN_CLASSES)}. Required from 2026-09-06; the row is written with no "
+              f"class key, which reads as unstated rather than as a class.", file=sys.stderr)
     subprocess.run(
         [sys.executable, os.path.join(HERE, "exp.py"),
          "start", "--name", args.name,
          "--cmd", " ".join(cmd),
          "--notes", f"launcher: harness launch {launcher}" + (f"; gate {gate_note}" if gate_note else ""),
+         *(("--class", args.run_class) if args.run_class else ()),
+         "--cards", (cards or "none"),
          "--hypothesis", args.hypothesis],
         check=True,
     )
