@@ -3715,6 +3715,134 @@ def _broken_non_shard_jsonl_excluded():
     return d
 
 
+def _shard_classifiers(root):
+    """train.py's OWN SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, read by AST.
+
+    Not a copy. A check that re-declares the patterns agrees with train.py only until one
+    side moves, and then it reports on a corpus train.py partitions differently -- the shape
+    that cost three of four mutants in de-56 one level up: a test that reimplements its
+    subject tests the copy. Returns None when any of the three is missing or is not a plain
+    literal, and the caller FAILs on that rather than falling back to a copy."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return None
+    try:
+        tree = ast.parse(open(src, encoding="utf-8").read())
+    except SyntaxError:
+        return None
+    out = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not getattr(node.targets[0], "id", None):
+            continue
+        name = node.targets[0].id
+        try:
+            if name in ("SHARD_RE", "NON_SHARD_RE"):
+                out[name] = re.compile(ast.literal_eval(node.value.args[0]))
+            elif name == "NON_SHARD_JSONL":
+                out[name] = set(ast.literal_eval(node.value))
+        except Exception:
+            return None
+    return out if len(out) == 3 else None
+
+
+def check_shard_contract(root):
+    """Every shard train.py would tokenize has a first line that is a JSON object with a
+    string "content" -- the field _jsonl_content reads (train.py:1327).
+
+    train.py already REFUSES a .jsonl it cannot classify (non_shard_jsonl_excluded). That
+    covers the name and says nothing about the contents, so a file named like a shard whose
+    rows use a different key passes the whitelist and dies inside the tokenizer. Twice:
+    2026-09-01 holdout_slice_<domain>.jsonl carried a header row {phase, rule_fp, n} in four
+    domains, and 2026-09-05 e1's five injection shards used "text" plus a header row and all
+    five token caches died on KeyError: 'content'. Both were found by a run, not by a check.
+
+    FIRST LINE ONLY, said out loud rather than implied: a shard whose 900,000th row is
+    malformed still passes here. The whole file is 4 GB per domain and the two incidents were
+    both row 1 -- a header written before the rows, which is what a writer emits when it
+    thinks it is writing a table. e1 adds the write-time assertion in the generator; this is
+    the tree-wide read, and the pair is the coverage.
+
+    A domain directory that does not exist is not a finding: a dev box ships only
+    data/corpus/sample. What IS a finding is zero files anywhere, which would make this
+    check vacuous, so it SKIPs by name instead of passing."""
+    cls = _shard_classifiers(root)
+    if cls is None:
+        return FAIL, ("cannot read train.py's SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, so "
+                      "this check cannot partition the corpus the way training does -- it "
+                      "refuses rather than re-declaring them, which would agree with train.py "
+                      "only until one side moved")
+    files = sorted(glob.glob(os.path.join(root, "data", "corpus", "*", "*.jsonl")))
+    shards = [p for p in files
+              if os.path.basename(p) not in cls["NON_SHARD_JSONL"]
+              and not cls["NON_SHARD_RE"].search(os.path.basename(p))
+              and cls["SHARD_RE"].search(os.path.basename(p))]
+    if not shards:
+        return SKIP, (f"no shard-named .jsonl under data/corpus/*/ ({len(files)} .jsonl total): "
+                      f"nothing to read, not a passing contract")
+    bad = []
+    for p in shards:
+        rel = os.path.relpath(p, root)
+        try:
+            with open(p, "rb") as f:
+                line = f.readline()
+        except OSError as e:
+            bad.append(f"{rel}: unreadable ({e.__class__.__name__})")
+            continue
+        if not line.strip():
+            bad.append(f"{rel}: first line is empty")
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as e:
+            bad.append(f"{rel}: first line is not JSON ({str(e)[:40]})")
+            continue
+        if not isinstance(row, dict):
+            bad.append(f"{rel}: first line is {type(row).__name__}, not an object")
+        elif "content" not in row:
+            # The keys, because they say which writer produced it: {phase, rule_fp, n} is a
+            # header row, {text} is a generator using the other convention.
+            bad.append(f"{rel}: no 'content' key (has {sorted(row)[:4]})")
+        elif not isinstance(row["content"], str):
+            bad.append(f"{rel}: 'content' is {type(row['content']).__name__}, not str")
+    if bad:
+        return FAIL, (f"{len(bad)} of {len(shards)} shard(s) would die in _jsonl_content: "
+                      + "; ".join(bad[:4]))
+    return PASS, f"{len(shards)} shards, first line carries a string 'content'"
+
+
+def _broken_shard_contract():
+    """A REAL committed shard with a header row prepended -- the 2026-09-01 shape.
+
+    data/corpus/sample/ is copied rather than symlinked: _tmp_repo_shaped links data/*, and
+    writing through that link would write into the repository's own corpus."""
+    import shutil
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "data", "corpus", "sample")
+    if not os.path.isdir(src):
+        return None
+    real = sorted(glob.glob(os.path.join(src, "*_[0-9][0-9][0-9].jsonl")))
+    if not real:
+        return None
+    link = os.path.join(d, "data", "corpus")
+    # NOT `if os.path.islink(link)`: _tmp_repo already mkdir's data/corpus, so the symlink loop
+    # in _tmp_repo_shaped skips it and the path is a real EMPTY directory. The first version
+    # guarded on islink, never copied, and died on FileNotFoundError -- a world that fails to
+    # build is not a world that fails the check, and had it merely come out empty the check
+    # would have SKIPped and the selftest read that as coverage.
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    shutil.copytree(os.path.join(ROOT, "data", "corpus"), link,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    victim = os.path.join(link, "sample", os.path.basename(real[0]))
+    rows = open(victim, "rb").read()
+    # The header the holdout-slice writer emitted, ahead of the rows that were already there.
+    with open(victim, "wb") as f:
+        f.write(b'{"phase": "s1", "rule_fp": "deadbeef", "n": 12}\n' + rows)
+    return d
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -12949,6 +13077,17 @@ CHECKS = [
         _broken_non_shard_jsonl_excluded,
     ),
     (
+        "shard_contract",
+        "every shard-named .jsonl under data/corpus/*/ has a first line that is a JSON object "
+        "with a string 'content' -- the field _jsonl_content reads",
+        "twice a shard passed the name whitelist and died inside the tokenizer: 2026-09-01 the "
+        "holdout slice carried a header row {phase, rule_fp, n} in four domains, and 2026-09-05 "
+        "e1's five injection shards used 'text' plus a header row and all five token caches died "
+        "on KeyError: 'content'; the name check cannot see contents",
+        check_shard_contract,
+        _broken_shard_contract,
+    ),
+    (
         "spawned_scripts_exist",
         "every script harness.py shells out to is at the path harness.py uses",
         "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
@@ -13529,6 +13668,11 @@ EVIDENCE = {
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
     "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
+    # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
+    # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
+    # are the population the two incidents came from. The classifiers it partitions by are
+    # tracked, so what differs between the two machines is the corpus, not the rule.
+    "shard_contract": "pod",
     # pod: `data/` is gitignored, so a laptop sees almost none of the population -- counting it
     # on the pod found 10 unregistered files where a laptop glob plus a code grep reported 8.
     "eval_registry_complete": "pod",
@@ -14654,6 +14798,56 @@ def _selftest_milestone_reachable():
     assert 16500 > total, "the armed target really was past the end"
     assert (total // save_every) * save_every == 16000, "last save_every multiple"
     print(f"  milestone: a target past step {total} refuses; ckpt_<run>.pt registers at the end")
+
+
+def _selftest_shard_contract_worlds():
+    """The two branches _broken_shard_contract cannot reach: an EMPTY population, and
+    classifiers that cannot be read.
+
+    Registered as its own selftest because a single broken world can only exercise one
+    branch, and mutation MEASURED that on 2026-09-05: mutating `if not shards: return SKIP`
+    to `return PASS`, and the `cls is None` refusal to `return PASS`, both SURVIVED -- the
+    one world always has 143 shards and always reads train.py, so neither branch ran at all.
+    Two survivors are two branches nothing tested, not two bad mutations.
+
+    Both worlds are real trees with real files, and each asserts the STATE and that the
+    reason names the cause -- a SKIP whose text does not say the population was empty is
+    indistinguishable to a reader from a SKIP for any other reason."""
+    import shutil
+
+    # (1) A corpus directory holding only NON-shards: the classifiers are readable, the
+    # population is empty, and the honest answer is SKIP-by-name. A PASS here is the vacuous
+    # shape -- "every one of zero shards is fine".
+    d = _tmp_repo_shaped()
+    link = os.path.join(d, "data", "corpus")
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    os.makedirs(os.path.join(link, "sample"))
+    # A REAL non-shard name from train.py's own list, so the exclusion is what empties the
+    # population rather than an empty directory.
+    shutil.copy(os.path.join(ROOT, "data", "corpus", "sample", "web_labels.jsonl"),
+                os.path.join(link, "sample", "web_labels.jsonl"))
+    st, why = check_shard_contract(d)
+    assert st == SKIP, f"a corpus with no shard-named file must SKIP, not {st}: {why}"
+    assert "no shard-named" in why, f"the SKIP must say the population was empty: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (2) train.py present but its classifiers unreadable. The check must REFUSE rather than
+    # re-declare the patterns: a copy agrees with train.py only until one side moves.
+    d = _tmp_repo_shaped()
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    p = os.path.join(d, "train.py")
+    if os.path.islink(p):
+        os.unlink(p)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', ""))
+    st, why = check_shard_contract(d)
+    assert st == FAIL, f"unreadable classifiers must FAIL, not {st}: {why}"
+    assert "SHARD_RE" in why, f"the refusal must name what it could not read: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  shard_contract: an empty population SKIPs by name; unreadable classifiers refuse")
 
 
 def _selftest_cold_cache_refuses():
@@ -17480,6 +17674,7 @@ def _demo(only=None):
     shutil.rmtree(d30, ignore_errors=True)
 
     _selftest_milestone_reachable()
+    _selftest_shard_contract_worlds()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_provenance_states_the_tree()
