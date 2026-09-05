@@ -16953,11 +16953,40 @@ def _selftest_auto_resume():
             f.write("x")
         ck, step = _latest_step_ckpt("arts")
         assert step == 900 and "interrupt" in ck, f"an interrupt save at a later step wins: {ck!r}"
+
+        # A COMMAND THAT ALREADY CARRIES --resume <path>. Every case above builds a command
+        # with no --resume in it, so the rebuild's filter was never exercised and this selftest
+        # was GREEN on the defect (e1 via 98, 2026-09-05): the old
+        # `[c for c in cmd if not c.startswith("--resume")]` dropped the flag and left the path,
+        # which reaches train.py as a positional and exits argparse 2. e1_conv_n1 and its
+        # control arm both took that path; the cost was zero only because both had finished.
+        #
+        # Asserted on _strip_resume directly rather than through another child run: the property
+        # is about argv, and a child that exits 0 on `--resume` in sys.argv cannot tell a clean
+        # rebuild from a broken one -- which is exactly how the four cases above missed it.
+        _prev = os.path.join(d, "ckpt_previous_arm.pt")
+        _cmd = [sys.executable, child, "1", d, "--mix", "data/m.json",
+                "--resume", _prev, "--name", "arts"]
+        _re = _strip_resume(_cmd) + ["--resume", "ckpt_arts.pt.step500"]
+        assert _re.count("--resume") == 1, f"exactly one --resume survives the rebuild: {_re!r}"
+        assert _prev not in _re, f"the OLD checkpoint path is gone, not left as a positional: {_re!r}"
+        # No checkpoint-shaped element other than the one just appended. Stated as "contains
+        # .pt" rather than endswith, because the step checkpoints are named `...pt.step500`.
+        _cks = [c for c in _re if ".pt" in c]
+        assert _cks == ["ckpt_arts.pt.step500"], f"one checkpoint in the argv, the new one: {_cks!r}"
+        # The `=` spelling, which the old filter DID handle -- so a fix must not regress it.
+        _eq = _strip_resume([sys.executable, child, f"--resume={_prev}", "--name", "arts"])
+        assert not any("resume" in c for c in _eq), f"--resume=<path> is removed whole: {_eq!r}"
+        # And a VALUE that merely contains the word is untouched: the filter matches the flag,
+        # not any argument mentioning resume.
+        _kept = _strip_resume([sys.executable, "--name", "resume_probe"])
+        assert _kept == [sys.executable, "--name", "resume_probe"], f"value eaten: {_kept!r}"
     finally:
         ROOT, time.sleep = real_root, real_sleep
         shutil.rmtree(d, ignore_errors=True)
     print("  auto-resume: crash resumes once, clean exit and kill criterion do not; "
-          "the scene is archived and a newer interrupt save wins")
+          "the scene is archived, a newer interrupt save wins, and a command that already "
+          "carries --resume <path> is rebuilt with exactly one")
 
 
 def _staged_index_env():
@@ -19896,6 +19925,37 @@ def _latest_step_ckpt(name):
     return best, best_step
 
 
+def _strip_resume(cmd):
+    """`cmd` with any --resume and ITS VALUE removed, so auto-resume can append its own.
+
+    `[c for c in cmd if not c.startswith("--resume")]` dropped the flag and LEFT THE PATH.
+    `--resume <path>` is two argv elements; only the `--resume=<path>` spelling was filtered
+    correctly, and every command harness generates or a human types uses the space form. The
+    orphaned checkpoint then reaches train.py as a positional argument and argparse exits 2.
+
+    MEASURED (e1, relayed by 98, 2026-09-05): e1_conv_n1's scoring returned rc=1, auto-resume
+    rebuilt the command with ckpt_b0_headmix_armA.pt still in it, and the relaunch died
+    immediately; the control arm took the same path (e1_conv_control_arm.log:101). The cost was
+    zero only because both arms had already finished their 4314 steps. A crash mid-training
+    would have written `=== auto-resume 1 ... ===` to the log -- which reads as a successful
+    retry -- and produced nothing.
+
+    Never `startswith("--resume")`: that also matches a hypothetical --resume_from, and the
+    value form is what the bug was. An exact match plus the `=` form is the whole rule."""
+    out, skip = [], False
+    for c in cmd:
+        if skip:
+            skip = False
+            continue
+        if c == "--resume":
+            skip = True
+            continue
+        if c.startswith("--resume="):
+            continue
+        out.append(c)
+    return out
+
+
 def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""):
     """Wait on a launched job; on a crash relaunch it with --resume, up to N times.
 
@@ -19955,7 +20015,7 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
                   file=sys.stderr, flush=True)
         time.sleep(60)
         resumes.append(step)
-        rcmd = [c for c in cmd if not c.startswith("--resume")] + ["--resume", ckpt]
+        rcmd = _strip_resume(cmd) + ["--resume", ckpt]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = cards
         env["PYTHONUNBUFFERED"] = "1"
