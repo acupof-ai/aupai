@@ -257,8 +257,12 @@ def p1_dispatch(device, dtype=None):
         hs = x @ sh13
         sa, sb = hs.chunk(2, dim=-1)
         ys = situ(sa, sb, lambda g: g @ sh2)
-        y.backward(gy_moe)
-        ys.backward(gy_sh)
+        # ONE backward call for both outputs, not two. b0's review: two .backward() calls cost
+        # an extra launch round and an extra accumulation into x.grad that f_dense does not pay,
+        # so the MoE side carried overhead the dense side did not -- against the MoE, but still
+        # an asymmetry the ratio would report as dispatch cost. The list form keeps the explicit
+        # grads, so it does not reintroduce the stride-[0,0] refusal a summed .backward() would.
+        torch.autograd.backward([y, ys], [gy_moe, gy_sh])
         x.grad = None
 
     def f_loop():
@@ -274,8 +278,7 @@ def p1_dispatch(device, dtype=None):
         hs = x @ sh13
         sa, sb = hs.chunk(2, dim=-1)
         ys = situ(sa, sb, lambda g: g @ sh2)
-        torch.cat(acc).backward(gy_moe)
-        ys.backward(gy_sh)
+        torch.autograd.backward([torch.cat(acc), ys], [gy_moe, gy_sh])
         x.grad = None
 
     order0, offs0, counts = route(x.detach())
