@@ -18,3 +18,5 @@
 {"name": "e1p_moe24", "step": 400, "usage_frac": 1.0, "entropy_norm": 0.8795463502656862, "load_gini": 0.4576594829559326, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:23:05", "n_routed": 24, "top_k": 3}
 {"name": "e1p_moe24", "step": 500, "usage_frac": 1.0, "entropy_norm": 0.855084028118484, "load_gini": 0.4934079647064209, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:26:56", "n_routed": 24, "top_k": 3}
 {"name": "e1p_moe24", "step": 600, "usage_frac": 1.0, "entropy_norm": 0.8530623058220104, "load_gini": 0.4961278438568115, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:30:58", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 700, "usage_frac": 1.0, "entropy_norm": 0.8695246123006771, "load_gini": 0.48208940029144287, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:34:50", "n_routed": 24, "top_k": 3}
+{"name": "e1p_moe24", "step": 800, "usage_frac": 1.0, "entropy_norm": 0.886438841118353, "load_gini": 0.4498859643936157, "tokens": 78643200, "window_steps": 200, "ts": "2026-09-05 15:38:50", "n_routed": 24, "top_k": 3}
