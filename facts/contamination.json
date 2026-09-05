@@ -988,6 +988,41 @@
    "uncertainty": "3 of 206 shards and 40,000 docs is a sample; rates carry binomial error and the domain-wide extrapolations assume shard homogeneity, which is not measured. The direction that matters is safe: these are presence findings, and a sample that FINDS a family cannot be wrong about presence.",
    "status": "measured",
    "boundary": "THIS METHOD CANNOT CERTIFY ABSENCE. By the rule of three, a family with 0 hits in 40,000 docs is bounded above at 0.0075%, i.e. still up to ~200 docs domain-wide -- so a zero here means 'not found', never 'not present'. Separately, a 13-gram containment scan is the WRONG instrument for a family-level question in either direction: it answers 'did this exact text appear', so a generator emitting fresh instances scores 0 on it while the procedure is thoroughly present -- the 7.33% age_ratio rate is invisible to 13-gram containment. Consequence, and the reason this fact exists: a skill that is absent from pretraining must be CONSTRUCTED, not selected; absence is then a property of how it was built rather than a claim a scan is asked to support."
+  },
+  {
+   "id": "cont.novel_operator_collision",
+   "value": {
+    "docs_scanned": 105000,
+    "domains": 7,
+    "shards_per_domain": 2,
+    "hits": {
+     "glyph_a_at_b": 41,
+     "rule_3a_2b_1": 0,
+     "define_new_op_zh": 0,
+     "carry_rule_zh": 0,
+     "right_to_left_zh": 0
+    },
+    "rates_pct": {
+     "glyph_a_at_b": 0.039,
+     "rule_3a_2b_1": 0.0,
+     "define_new_op_zh": 0.0,
+     "carry_rule_zh": 0.0,
+     "right_to_left_zh": 0.0
+    },
+    "glyph_hits_are_not_operators": "all 41 read as '@' meaning 'at' -- 'Rs.8000 @ 10% p.a.', 'T12@200mm c/c', 'June 26, 2018 @ 1:00p.m.', '4096x2160@60Hz', plus one Mathematica application 'f@ k'. None is a binary operator defined by a stated rule.",
+    "finding": "the constructed family's RULE and PHRASING have zero hits; the bare glyph collides only with '@'-as-at"
+   },
+   "unit": "fraction of sampled docs containing the notation",
+   "measured": "2026-09-05",
+   "source": "/tmp/collide.py and /tmp/glyph.py on the pod, over data/corpus/{math_owm_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,en_c4_stage2}; 2 shards per domain drawn with Random(42), 15,000 docs each, first 4,000 chars per doc",
+   "config": {
+    "subject": "mathbank/math_programs_l5_ext_novel.py, families S (diamond_chain, diamond_chain4) and P (diamond_single, diamond_single_reverse)",
+    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim",
+    "population": "corpus on disk, an UPPER bound on what the model read (mix_200m_8b consumes code_py_starcoder at 0.301 epochs and the other domains less)"
+   },
+   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count.",
+   "status": "measured",
+   "boundary": "A ZERO HERE IS A BOUND, NOT AN ABSENCE: by the rule of three, 0 hits in 105,000 docs bounds the rate below 0.0029%, which over the full domains is still hundreds of documents. This fact does NOT establish that the family is absent from pretraining, and it is not what the family's absence rests on -- absence rests on CONSTRUCTION (the operator, its rule and its phrasing were invented for this experiment on 2026-09-05, after every corpus in the mix was built). The scan's job is the narrower one of catching an accidental collision, and the collision it found is '@'-as-at, which shares a glyph and not a meaning."
   }
  ]
 }
