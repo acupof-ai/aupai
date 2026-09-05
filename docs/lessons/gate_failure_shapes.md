@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (118 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (206 = 118 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (122 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (210 = 122 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (106 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (110 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-106 incidents (34 infra, 72 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+110 incidents (34 infra, 76 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (13 incidents)
+### R2-a No broken world (16 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -74,10 +74,13 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §231: agreement between two things that share an error is not evidence — a fixture with no power to disagree (one directory, so cwd and $MAIN are the same path) reported agreement and it read as confirmation; a differential fixture must be fed an input where the two sides are known to differ.
 - §235: a fixture that copies a module to a temp dir relocates every path it derives from `__file__`; ROOT pointed at a .git-less temp dir, `is_pod(ROOT)` read True, and the branch under test was dead in every mutant while every assertion still ran — a passing mutation run in the wrong world; the discipline is one world-validity assertion before the mutants run (the relocated root must satisfy the property the code keys on).
 - §238: `want == pool_rows` passed on five arms and two reviews because both sides were derived from one token count that missed the per-document `<eos>`; the undercount cancelled and the comparison had no way to be unequal. A comparison whose two sides share a producer cannot fail — one side must be replaced by a reading from a different path (the system under test's own output). The cheap arms (20/25 rows) were structurally incapable of showing the defect, and the typed constants had been wrong in all three prior versions.
+- §239: a guard was disarmed by the change it protected — the integration-tree refusal tested `branch == "main"` from `rev-parse --abbrev-ref HEAD`, which returns "HEAD" when detached; the flip detached the tree deliberately and the guard went inert at that moment (orphan 8a9dc8a0, a merge that exited 0 and never moved main). The selftest never built a detached integration tree, so test and guard shared the branch-name assumption and their agreement was not evidence (§231). Fixed by a structural predicate (main worktree AND has linked worktrees).
+- §240: a fixture that cannot be the thing it tests — the hook's own selftest worlds 1-4 were a bare `git init` standalone repo (no linked worktrees, no scripts/), and world 1 asserted "commit on main is REFUSED" against a repo that was not an integration tree by any structural definition; it passed for five days under the branch-name predicate because that predicate did not care what the tree was. Fixed by building the property (`git worktree add` a sibling, copy the real module in). The mirror image: de's W5 asserted "detached does NOT refuse", correct under the old predicate and exactly backwards under the new one.
+- §242: a mutation run can be vacuous end to end — the runner built worlds with `git init` in an empty temp dir, where `git ls-files data runs scripts` is empty, so the selftest SKIPped and exited 0 for every mutant; four "survivors" measuring nothing, reported as a clean run. A SKIP exit 0 and a PASS exit 0 are indistinguishable from outside. Fixed by building worlds as a real worktree of the real repo; the discipline is one world-validity assertion before the mutants run (same as §235).
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231, §235, §238).
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231, §235, §238, §239, §240, §242).
 
 ### R2-b Population narrower than the property (30 incidents)
 
@@ -99,7 +102,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232, §236, §237).
 
-### R2-c Mutation did not take (8 incidents)
+### R2-c Mutation did not take (9 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
@@ -109,8 +112,9 @@ The mutation never landed or its verification reads the wrong signal.
 - §227: a refusal raises SystemExit (BaseException, not Exception); the test's `except Exception` let it through, so the mutation was caught by the process dying, not by the assertion.
 - §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where the OLD logic answers differently, enforced by an in-case assertion naming the old answer (a disagreement property, not a coverage property).
 - §234: three mutants were all caught at the SAME assertion with the same message, so the run proved one assertion and exercised none of the others; a mutation run proves N assertions only if the N mutants fail at N DIFFERENT, target-naming assertions — the vacuous-PASS shape moved into the thing that validates the test.
+- §241: a test that reimplements its subject tests the copy — the launch_gate selftest re-derived gate 9's partition inline, so mutating the gate's own exclusion changed nothing the test could see; 3 of 4 mutants survived, including "exclude nothing", which is the original bug. Fixed by extracting one function both sides call. Two invalid-mutant lessons from the same run: a mutant that dies of NameError is caught by the interpreter, not the test; and `x = "" or (f"...")` is a mutant identical to the original, whose survival measures nothing.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234, §241).
 
 ### R2-d Parser reads prose as code (11 incidents)
 
