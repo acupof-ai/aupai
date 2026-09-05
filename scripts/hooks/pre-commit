@@ -797,6 +797,16 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # The pod drift checker's own refusals. Registered because its failure mode was a
+        # FAIL-OPEN: run pod-side, --list-scoped died in `git ls-files` (rc 128), FILES came back
+        # empty, the comparison loop ran zero times, and it printed "pod in sync (0 files)" and
+        # exited 0 with the traceback on stderr where an exit-code reader never sees it (b0 found
+        # it, 4c relayed, 2026-09-05). The NEGATIVE CONTROL is the load-bearing world: three
+        # refusals are easy to satisfy by refusing everything, so it asserts that guards 1-2 pass
+        # THIS checkout through. It deliberately stops short of a full run -- that would sha256
+        # ~460 files and call the pod, 20s, and would go red whenever the tunnel is down, making
+        # every commit touching this file a liveness test for the pod. 0.5s.
+        "scripts/pod_sync_check.sh",
         # The refusal that stops train.py retokenizing 247.8 GB when a CONFIGURED cache dir is
         # missing a cache. Registered because its NEGATIVE CONTROL is the load-bearing half: with
         # AUPAI_TOKEN_CACHE_DIR unset the same absent cache must still tokenize, or no fresh
