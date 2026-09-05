@@ -4113,7 +4113,7 @@ def _broken_coresident_path_read():
             '"""A new eval that opens the token cache by path."""\n'
             "import torch\n\n\n"
             "def main(domain):\n"
-            "    cache = f'/data00/tokens_{domain}.pt'\n"
+            "    cache = f'/data00/tokens_{domain}.pt'\n"  # cache-path-ok: broken-world fixture
             "    stream = torch.load(cache, map_location='cpu', mmap=True)\n"
             "    return stream.numel()\n"
         )
@@ -11418,6 +11418,155 @@ def _data_paths_named_by_pod_code(root):
     return named, scoped, missing
 
 
+_HARDCODED_CACHE_BASELINE = 2   # probes/arm_token_corr.py:212, runs/arm_corr_run.sh:49 (e1's)
+
+
+def _hardcoded_cache_paths(root):
+    """[(file, line, text)] for source that builds a token cache path from a literal.
+
+    THE ONE CONSTANT IS train.py:93. Every other copy stops following AUPAI_TOKEN_CACHE_DIR the
+    moment the caches move -- which happened on 2026-09-05, when they went to /mnt/data02/tokens
+    because the overlay reads at 193 MB/s against NVMe's 1.3 GB/s. A tool holding its own copy then
+    reads a file that still exists, still has matching stamps, and is not the one the run is using.
+
+    PROSE IS EXEMPT, AND IT IS FOUND BY AST, not by counting quotes. My first version tracked
+    docstrings with a running count of triple quotes, and it was unsound in a way worth recording:
+    ONE line anywhere upstream containing an odd number of `\"\"\"` inside an ordinary string
+    literal flips the parity for the entire rest of the file. On harness.py it desynced and reported
+    a docstring line as code. Counting a delimiter is not parsing, and a 17k-line file is where that
+    difference shows up. .sh files have no AST, so there the comment rule stands alone -- which is
+    sound for shell, since shell has no docstrings.
+
+    A DELIBERATE LITERAL CARRIES A MARKER. Three lines in this tree legitimately contain the string
+    in code: this function's own pattern, and two broken-world builders that write the bad shape
+    into a fixture file. An exemption regex that recognised them by their content would grow with
+    every new case and would eventually match a real defect. `# cache-path-ok: <why>` is visible,
+    greppable, and requires a reason -- and the marker is on the line, so it cannot silently cover
+    a neighbour.
+    """
+    import ast
+    import subprocess as sp
+
+    # THE FILE LIST COMES FROM ROOT, THE CONTENTS FROM `root`. A broken world is a temp dir holding
+    # one mutated copy and no git index, so asking IT for ls-files returns nothing and every check
+    # PASSes vacuously -- exactly how _broken_pod_reads_are_scoped failed to fire this morning. The
+    # tracked-file set is a property of the repository; what those files SAY is the property under
+    # test, and only the second comes from the world.
+    r = sp.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return None
+    lit = re.compile(r"/data00/tokens_|/data00/pretrain|pretrain_1b_tokens")  # cache-path-ok: this IS the pattern
+    marker = re.compile(r"#\s*cache-path-ok")
+    out = []
+    for f in sorted(r.stdout.split()):
+        if not f.endswith((".py", ".sh")):
+            continue
+        if f == "train.py":
+            continue  # the one constant lives here; ladder_config_frozen guards its value
+        try:
+            # `root`, so a world's mutated copy is what gets read; a file the world does not hold
+            # falls back to ROOT's, since the world only ever contains the files it mutated.
+            src = os.path.join(root, f)
+            if not os.path.exists(src):
+                src = os.path.join(ROOT, f)
+            with open(src, encoding="utf-8", errors="replace") as fh:
+                text = fh.read()
+        except OSError:
+            continue
+        doc_lines = set()
+        if f.endswith(".py"):
+            try:
+                tree = ast.parse(text)
+            except SyntaxError:
+                tree = None
+            if tree is not None:
+                for node in ast.walk(tree):
+                    if not isinstance(node, (ast.Module, ast.FunctionDef, ast.AsyncFunctionDef,
+                                             ast.ClassDef)):
+                        continue
+                    body = getattr(node, "body", None)
+                    if not body:
+                        continue
+                    first = body[0]
+                    if (isinstance(first, ast.Expr) and isinstance(first.value, ast.Constant)
+                            and isinstance(first.value.value, str)):
+                        end = getattr(first, "end_lineno", first.lineno)
+                        doc_lines.update(range(first.lineno, end + 1))
+        for i, line in enumerate(text.splitlines(), 1):
+            if i in doc_lines or line.lstrip().startswith("#"):
+                continue
+            if marker.search(line):
+                continue
+            if lit.search(line):
+                out.append((f, i, line.strip()[:100]))
+    return out
+
+
+def check_no_hardcoded_cache_path(root):
+    """Only train.py may name a token cache path as a literal; everyone else calls the accessor.
+
+    On 2026-09-05 the caches moved from the container overlay to NVMe (193 MB/s -> 1.3 GB/s on the
+    same 8 GB) and AUPAI_TOKEN_CACHE_DIR became the thing that decides which copy a tool reads. Both
+    directories hold tokens_<domain>.pt with matching stamps, so a tool with its own copy of the
+    literal reads a plausible wrong file and reports a number about it -- no error, no symptom.
+
+    Two accessors already disagreed once for this exact reason: harness.py had its own
+    implementation reading a different env var, which is the 2026-09-02 incident (a test wrote a
+    real cache into the pod's shared /data00 beside a live run) reproduced inside the tool meant to
+    catch it. This check exists so the third copy is refused instead of found later.
+    """
+    hits = _hardcoded_cache_paths(root)
+    if hits is None:
+        return SKIP, "git ls-files unavailable"
+    if not hits:
+        return PASS, "no source outside train.py builds a token cache path from a literal"
+    msg = (
+        f"{len(hits)} line(s) build a token cache path from a literal instead of calling "
+        f"train._token_cache_dir()/_domain_cache_path(), so they stop following "
+        f"AUPAI_TOKEN_CACHE_DIR and read the overlay copy after the caches moved: "
+        + "; ".join(f"{f}:{i}" for f, i, _t in hits[:5])
+        + (f" and {len(hits) - 5} more" if len(hits) > 5 else "")
+        + " -- call the accessor, or mark a deliberate literal `# cache-path-ok: <why>`")
+    # RATCHETED WARN, NOT FAIL, WHILE THE BASELINE IS NONZERO. Two lines were left when this
+    # landed -- probes/arm_token_corr.py:212 and runs/arm_corr_run.sh:49, e1's arm_corr probe,
+    # committed an hour earlier and being actively edited. Editing another session's live file to
+    # make my own check green is how a checkout erases someone's uncommitted work (2026-08-31), so
+    # they are named and left. A red nobody can act on without that collision is no signal, so the
+    # baseline is a literal: a NEW hardcoded path pushes the count above it and FAILs, and lowering
+    # it takes a commit. Raising it takes a commit too, which is the point.
+    if len(hits) <= _HARDCODED_CACHE_BASELINE:
+        return WARN, (msg + f" [baseline {_HARDCODED_CACHE_BASELINE}, not raised; these belong to "
+                            f"another session's live file]")
+    return FAIL, msg
+
+
+def _broken_no_hardcoded_cache_path():
+    """The REAL tree plus one line, in the shape people actually write it.
+
+    Mutated from a real file rather than hand-written: the pattern last appeared in a probe as
+    `cache = a.cache or f"..."` with the literal inline, so the world adds that same shape to a copy
+    of a file that currently has none.
+    """
+    d = _tmp_repo()
+    src = os.path.join(ROOT, "scripts", "stamp_cache_seeds.py")
+    if not os.path.exists(src):
+        return None
+    text = open(src, encoding="utf-8").read()
+    anchor = 'STAMP = "42"\n'
+    if anchor not in text:
+        return None
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    # THE INJECTED LINE CARRIES NO MARKER, obviously -- my first version put the marker inside it,
+    # so the world produced the same count as the real tree and the check "passed" its own broken
+    # world at WARN. It is assembled from pieces so that THIS line does not trip the check while the
+    # line it writes into the world does.
+    bad = anchor + 'CACHE = f"' + "/data00/tokens_" + '{name}.pt"\n'  # cache-path-ok: builds the world
+    assert "/data00/tokens_" in bad, "the world's line lacks the literal"  # cache-path-ok: asserts it
+    open(os.path.join(d, "scripts", "stamp_cache_seeds.py"), "w", encoding="utf-8").write(
+        text.replace(anchor, bad, 1))
+    return d
+
+
 def check_pod_reads_are_scoped(root):
     """Every tracked data/ path that pod-side code names must be in pod_drift's SCOPE.
 
@@ -11675,6 +11824,20 @@ CHECKS = [
         _broken_fixture_not_live_state,
     ),
     (
+        "no_hardcoded_cache_path",
+        "only train.py names a token cache path as a literal; everyone else calls the accessor",
+        "the caches moved from the container overlay to NVMe on 2026-09-05 (193 MB/s -> 1.3 GB/s "
+        "on the same 8 GB) and AUPAI_TOKEN_CACHE_DIR became what decides which copy a tool reads. "
+        "Both directories hold tokens_<domain>.pt with matching stamps, so a tool holding its own "
+        "copy of the literal reads a plausible wrong file and reports a number about it, with no "
+        "error and no symptom. Two accessors already disagreed for this reason: harness.py had its "
+        "own implementation on a different env var, which is the 2026-09-02 incident -- a test "
+        "wrote a real cache into the pod's shared /data00 beside a live run -- reproduced inside "
+        "the tool meant to catch it",
+        check_no_hardcoded_cache_path,
+        _broken_no_hardcoded_cache_path,
+    ),
+    (
         "pod_reads_are_scoped",
         "every tracked data/ path that pod-side code names is in pod_drift's SCOPE",
         "data/probes/api_cloze.jsonl sat on the pod at its pre-rewrite content -- the live "
@@ -11682,7 +11845,7 @@ CHECKS = [
         "data/ enters SCOPE through three named patterns only, and a manifest that does not list a "
         "path cannot assert anything about it, so the count read as total coverage. Writing this "
         "check found a SECOND live case with every gate green: data/PROVENANCE.md was 507 lines on "
-        "the pod against HEAD's 555, missing the note that /data00/tokens_code_rp1t.pt is the full "
+        "the pod against HEAD's 555, missing the note that /data00/tokens_code_rp1t.pt is the full "  # cache-path-ok: incident prose in a CHECKS row
         "7.57B corpus and not the subset. Staleness, not absence, is the failure -- an absent file "
         "crashes its reader and someone notices; a stale one answers with last week's content",
         check_pod_reads_are_scoped,
@@ -12363,6 +12526,8 @@ EVIDENCE = {
     # repo: the subject is git ls-files joined against pod_drift.SCOPE, both of which are the
     # checkout's. On the pod git ls-files is empty, so the check degrades to its own SKIP before
     # the auth rule is ever consulted.
+    # repo: the subject is tracked source text, which is the checkout's.
+    "no_hardcoded_cache_path": "repo",
     "pod_reads_are_scoped": "repo",
     # pod: the diagnostics ledger and the run log are both WRITTEN on the training box, so a
     # laptop sees neither for a live arm. SKIP here is the honest answer, not a pass -- and
@@ -17216,7 +17381,11 @@ def _derive_gate_timeout(cmd, cache_dir=None):
     doms, err = read_mix(mix if os.path.isabs(mix) else os.path.join(ROOT, mix))
     if err:
         return None, f"mix unreadable ({err})"
-    cache_dir = cache_dir or os.path.dirname("/data00/pretrain_1b_tokens.pt")
+    # _token_cache_dir(), not dirname of a copy of train.py's literal. The old line was a hardcoded
+    # default wearing a derivation's clothes: it read as "derived from TOKEN_CACHE" while being a
+    # second copy of the string, so the caches moving to NVMe would have left this check reporting
+    # the overlay's copy as the truth about the mix.
+    cache_dir = cache_dir or _token_cache_dir()
     total = 0
     missing = []
     for d in doms:

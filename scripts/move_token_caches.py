@@ -59,7 +59,10 @@ def free_bytes(path):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--src", default="/data00")
+    ap.add_argument("--src", default=None,
+                    help="default: train._token_cache_dir(), i.e. wherever the caches are read "
+                         "from today. Naming it explicitly is how you copy FROM the overlay after "
+                         "AUPAI_TOKEN_CACHE_DIR already points at NVMe")
     ap.add_argument("--dst", default="/mnt/data02/tokens")
     ap.add_argument("--one", action="store_true", help="copy one cache group and stop")
     ap.add_argument("--out", default="runs/token_cache_move.json")
@@ -70,6 +73,13 @@ def main():
         "record and does NOT re-hash: use it to resume a killed run, never to audit one.",
     )
     a = ap.parse_args()
+
+    if a.src is None:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import train
+
+        a.src = train._token_cache_dir()
+        print(f"src {a.src} (train._token_cache_dir)")
 
     # THE DESTINATION MUST NOT BE THE SOURCE'S FILESYSTEM. That is the whole point, and it is
     # exactly the mistake the container's /data00 naming invites: a move_mount that silently did

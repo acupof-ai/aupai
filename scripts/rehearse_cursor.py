@@ -84,7 +84,13 @@ def main():
 
     # The seed the pool was shuffled at must also match, or the order differs with an
     # identical corpus fingerprint -- the case the .seed sidecar exists for.
-    cache_dir = os.path.dirname("/data00/pretrain_1b_tokens.pt")
+    # train's accessor, not dirname of a copy of its literal. The old line read as a derivation and
+    # was a second copy of the string, so it would have kept reading the overlay after the caches
+    # moved to NVMe -- and this function's whole job is to verify a cursor against the caches a
+    # resume will actually read.
+    from train import _token_cache_dir  # noqa: E402
+
+    cache_dir = _token_cache_dir()
     seed_now = cfg.get("sample_seed") if isinstance(cfg, dict) else None
     seed_now = cfg.get("seed") if seed_now is None and isinstance(cfg, dict) else seed_now
     mismatched = []
