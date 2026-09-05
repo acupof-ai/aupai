@@ -804,6 +804,63 @@ def _selftest_co_resident():
                 f"the refusal reports cards {_cards!r}, expected just the foreign card 1 -- "
                 f"reporting card 0 means my own claim survived the filter")
         n += 1
+
+        # 11-13. _own_pids WITH ps UNAVAILABLE, WITH A DEEP CHAIN, AND WITH A CYCLIC TABLE.
+        #     None of those is reachable from a claim-dir world: 8-10 run where `ps` works, so
+        #     the `if not table` fallback and the MAX_DEPTH cap could be deleted or inverted
+        #     unnoticed. e1 reported the fallback as mutation-RED on 2026-09-06 and then
+        #     RETRACTED it (review row 073f725b): both shapes SURVIVE, because the ancestor
+        #     world's claim names getppid() and the fallback supplies exactly that. A coverage
+        #     gap that a measurement was briefly claimed for is a reason to write the world.
+        #
+        #     UNIT-LEVEL, and stated as such: _own_pids is called with a stub rather than
+        #     through _live_run_cards, which loads the real card_claim by path and cannot be
+        #     stubbed from here. What this cannot see is whether _live_run_cards still calls
+        #     _own_pids at all -- worlds 8-10 are what say that.
+        class _NoPs:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                return []
+
+        got = _own_pids(_NoPs)
+        assert got == {os.getpid(), os.getppid()}, (
+            f"with ps unavailable _own_pids returned {sorted(got)}, expected this pid and its "
+            f"parent. Dropping the parent deadlocks every job launched through `harness "
+            f"launch`, which claims for the job's ancestor; returning more would exclude a "
+            f"foreign claim and disable the guard")
+        n += 1
+
+        class _Chain:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                # me <- 10 <- 11 <- init. Real pid, fabricated ancestry.
+                return [(os.getpid(), 10, "python"), (10, 11, "bash"), (11, 0, "init")]
+
+        got = _own_pids(_Chain)
+        assert got == {os.getpid(), 10, 11}, (
+            f"_own_pids walked to {sorted(got)}, expected the whole chain. A walk that stops "
+            f"at the parent treats a grandparent's claim as foreign, and the pod's tree is "
+            f"wrapper bash -> torchrun -> rank, so the claiming ancestor is two levels up")
+        n += 1
+
+        class _Cycle:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                # A ppid cycle: a real table should never hold one, a corrupt read can.
+                return [(os.getpid(), 20, "python"), (20, 21, "bash"), (21, 20, "bash")]
+
+        got = _own_pids(_Cycle)
+        assert got == {os.getpid(), 20, 21}, (
+            f"_own_pids returned {sorted(got)} on a CYCLIC ppid table. It must terminate and "
+            f"return what it reached -- without the depth cap and the `nxt in out` test this "
+            f"call never returns and the guard hangs instead of refusing")
+        n += 1
     finally:
         # The foreign process first: a leaked `sleep 300` from a failed selftest would sit in
         # the table for five minutes, and this file's own worlds are the ones that read it.
