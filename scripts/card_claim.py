@@ -811,6 +811,22 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 existing = _read(mine)
                 old = int(existing.get("pid", -1)) if existing else -1
                 if existing and _alive(old):
+                    # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
+                    # for, so the ask is already satisfied and refusing it is refusing a fact that is
+                    # true. de-55, 2026-09-05: the fix for the claim-coverage gap puts one acquire on
+                    # the shared load path, and eval/domain_loss.py, probes/arm_token_corr.py and
+                    # scripts/e1_n8_row_edge_probe.py call load_checkpoint 2, 2 and 3 times -- so
+                    # without this those three refuse THEMSELVES on their second load, with a message
+                    # naming their own pid as the occupant. Idempotent, not counted: release() is
+                    # keyed on (name, cards) and a refcount nobody decrements on a raised exception
+                    # would leak the card, which is the failure the atexit release exists to avoid.
+                    #
+                    # The cards are equal by construction, not by comparison: `mine` is
+                    # claim_file(name, cards), so reaching this line at all means the file for THESE
+                    # cards under THIS name exists. That is why the test is on the pid alone.
+                    if holder == old:
+                        return True, (f"{name} already holds {','.join(cards)} for pid {old} "
+                                      f"(same pid, same cards -- claim reused, not re-taken)")
                     # REBIND, not refuse, when the new pid is a DESCENDANT of the recorded one.
                     # The VE arm hit this: the claim held the wrapper bash and the rebind wanted
                     # torchrun, its own child, so "already holds a live claim" refused the
@@ -1388,6 +1404,35 @@ def _selftest():
             _case(not ok and "already holds a live claim" in msg,
                   f"an unrelated live pid is still refused, not rebound: {msg[:60]}")
             release("de34_unrel")
+
+        # de-55: SAME PID, SAME CARDS is idempotent. The shared acquire on load_checkpoint means
+        # three live scripts call it 2, 2 and 3 times in one process, and before this they would
+        # have refused THEMSELVES on the second load, naming their own pid as the occupant.
+        ok, msg = acquire("de55_idem", ["7"], pid=os.getpid())
+        _case(ok, f"de-55: first acquire succeeds ({msg[:44]})")
+        ok2, msg2 = acquire("de55_idem", ["7"], pid=os.getpid())
+        _case(ok2 and "same pid, same cards" in msg2,
+              f"de-55: the SAME pid re-acquiring the SAME cards is granted, not refused: {msg2[:70]}")
+        ok3, _ = acquire("de55_idem", ["7"], pid=os.getpid())
+        held_now = [c for c in claims()[0] if c.get("name") == "de55_idem"]
+        # COUNT THE FILES, not just what claims() reports. claims() globs *.json, so a duplicate
+        # written to any other extension is invisible to it -- a mutation that wrote the claim a
+        # second time as `<file>.dup` passed a claims()-only assertion while leaving a second copy
+        # on disk. The property is "the acquire wrote nothing", and only the directory can say so.
+        files_now = sorted(f for f in os.listdir(CLAIM_DIR) if "de55_idem" in f)
+        _case(ok3 and len(held_now) == 1 and len(files_now) == 1,
+              f"de-55: three acquires leave ONE live claim and ONE file, not three "
+              f"(claims={len(held_now)}, files={files_now}) -- a refcount nobody decrements on a "
+              f"raised exception would leak the card, and a rewritten file is a second claim")
+        # THE TWO NEGATIVE CONTROLS, without which the case above would pass for an acquire that
+        # stopped excluding anything at all.
+        okx, msgx = acquire("de55_idem", ["7"], pid=os.getpid() + 90000)
+        _case(not okx and "already holds a live claim" in msgx,
+              f"de-55 control: a DIFFERENT pid on the same name+cards is still refused: {msgx[:60]}")
+        oky, msgy = acquire("de55_other", ["7"], pid=os.getpid())
+        _case(not oky and "claimed by" in msgy,
+              f"de-55 control: a different NAME on the held card still clashes: {msgy[:60]}")
+        release("de55_idem")
 
         # status reports ORPHAN-SHELL once the job is gone but the shell lives.
         with open(os.path.join(CLAIM_DIR, claim_file("de34_orphan", ["7"])), "w", encoding="utf-8") as fh:

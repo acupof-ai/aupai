@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (95 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (183 = 95 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (103 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (191 = 103 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (84 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (92 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,20 +58,24 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-84 incidents (34 infra, 50 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+92 incidents (34 infra, 58 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (7 incidents)
+### R2-a No broken world (9 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
 - §89: a selftest "passed" because the world-build step silently failed and the check ran on an empty population.
 - §103: a check that cannot fail — its acceptance condition was tautological.
+- §218: a fixture sampling "a recent commit" drew a merge commit; `git show --name-only` on a merge prints no files, so the world had no subject and read as broken code.
+- §219: the next filter over the same sample rejected the only file the first non-merge commit touched (.jsonl not in the extension list); both were caught only because the world FAILs rather than skips when it cannot find its subject.
 
-Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206).
+Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
-### R2-b Population narrower than the property (21 incidents)
+Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219).
+
+### R2-b Population narrower than the property (24 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -79,19 +83,23 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §171: a perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population.
 - §201: a device-fd refusal verified only where it cannot fire (macOS, no /proc) reported nothing about where it does (pod, /proc present); all ten claim sites would have been refused on the pod.
 - §215: a battery of 19 content-free rules passed while the leak family it samples is unbounded; three closures in one day did not converge, and the battery certifies its sample, not the family.
+- §216: a negative control passed on every laptop because the pod mount is absent there — green was a signal about a different world; on the pod it would have tokenized into the live shared cache dir.
+- §222: an assertion read claims()'s *.json glob as the claims directory; a duplicate written as <file>.dup survived — a reader-based assertion inherits the reader's blind spot.
+- §223: a module test asserted optimizer-group membership and never called .step(); green at 10/10 while the Muon 4-D stack died at the first optimizer step on the card — a new parameter class is a new citizen for every subsystem that dispatches on shape or type.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223).
 
-### R2-c Mutation did not take (4 incidents)
+### R2-c Mutation did not take (5 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
 - §90: a mutation was applied but never landed in the running process; the check "passed" because the world was never mutated.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
+- §221: a test recomputed the quantity outside the function and asserted its own arithmetic — the function under test was never called, so no mutant of it can reach the test.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221).
 
-### R2-d Parser reads prose as code (9 incidents)
+### R2-d Parser reads prose as code (10 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
@@ -100,17 +108,21 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §196: a scanner located its subject by a delimiter and matched a line carrying that delimiter as a regex STRING, capturing five characters of the pattern itself.
 - §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 - §205: a placeholder-survival guard fired on a correct substitution — the template's own documentation line names the placeholder, and a whole-file scan read that comment as an unsubstituted token; fourth instance of the self-satisfying needle.
+- §217: a whole-file substring assertion survived a mutation repointing both executable lines, because the block's own comment named the real path — prose vouching for code that had stopped agreeing with it.
 
-Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212).
+Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212, §217).
 
-### R2-e Fixture built from the implementation (4 incidents)
+### R2-e Fixture built from the implementation (5 incidents)
 
 A fixture derived from the implementation's handled branches or the live file cannot fail.
 
 - §76: a fixture was built from the implementation's handled branches; unhandled branches — the ones that fail in production — were absent.
 - §98: a fixture had the same form as the formula under test; it could not detect a form error, only a value error.
+- §220: the unclipped baseline was computed by the function under test, so an inverted-ratio mutant inverted both sides and the inequality still held — a test comparing code against itself.
 
-Cannot see: whether the fixture's construction is independent of the code it tests (§80, §97).
+Generalization (e1, 2026-09-05): a differential assertion has power only if its two sides can fail differently. A same-function baseline (§220) and a self-recomputed baseline (§221) are the two ways to lose that, in opposite directions, and both were hit within twenty minutes on one assertion. The operational check is to name where the expected value comes from before writing the comparison: "the function I am testing" and "logic I reimplemented" are both wrong answers; the right one is a property of the fixture with the call under test appearing in the comparison.
+
+Cannot see: whether the fixture's construction is independent of the code it tests (§80, §97, §220).
 
 ### R2-f Guard reads the wrong field (6 incidents)
 
