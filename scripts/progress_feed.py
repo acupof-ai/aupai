@@ -267,33 +267,30 @@ def friction_section():
             "</div>")
 
 
-# 98-7: memory layers section (user order via 4c, 2026-09-05).
-# Design from docs/standards/memory_layers_0905.md; status updated as steps complete.
-# Plot appears when runs/*.log have val lines for M1/M2.
+# 98-7: MoE round section (user order via 4c, 2026-09-05).
+# Charter docs/standards/moe_0905.md; status updated as arms launch.
 MEM_STATUS = {
-    "model": "实现完",
-    "smoke": "PASS（77K tok/s，93.9%）",
-    "m1": "停跑（step 1065，信号 15）：单层形状 74K 稳态过线，和 M2/M3 一起被停，中断 ckpt 已存",
-    "m2": "未跑",
+    "model": "等 b0 的 MoE 模块",
+    "smoke": "未跑",
+    "m1": "E1：12 层全 MoE × 24 路由 + 共享 = 0.801B 总参，等模块",
+    "m2": "E1b 备选：6 个奇数层 × 48 路由 = 0.843B",
     "scored": "未打分",
 }
 
 def memory_section():
     s = MEM_STATUS
     return (
-        "<h2>记忆层实验</h2>"
+        "<h2>MoE 轮</h2>"
         '<div class=head style="border-left-color:var(--purple)">'
-        '<div class=su>记忆层是一个大查找表，模型每 token 读几行。'
-        '有参数、几乎无计算。</div>'
-        '<div class=su>对照：ckpt_b0_headmix_armA（d1024 L12，10 亿 token）。'
-        'M1：100 万值（+10.7 亿参数）。M2：26 万值（+2.7 亿参数）。</div>'
-        '<div class=su>五把尺子：① doc_cu 配对差值 ≤ −0.010 nat 才采用，|Δ| &lt; 0.003 算无差异；'
-        '② 见过 vs 没见过的 API 名填空差值（code_py_starcoder），差值为正才算「记忆买知识」；'
-        '③ M2 vs M1 给斜率，两点加对照是线不是定律；'
-        '④ 诊断：step 1000 触及率 &lt; 20% 就停；'
-        '⑤ 吞吐：step 30 低于 70K tok/s 就停。</div>'
-        f'<div class=su>状态：模型 {s["model"]} · smoke {s["smoke"]} · '
-        f'M1 {s["m1"]} · M2 {s["m2"]} · 打分 {s["scored"]}</div>'
+        '<div class=su>问题：0.8B 总参的细粒度 MoE，等 FLOP 下比 200M 稠密对照'
+        '（ckpt_b0_headmix_armA）损失和样本效率更好吗？路由会不会像记忆表一样塌缩？</div>'
+        '<div class=su>每个 MoE 层的激活参数 = 稠密 FFN（FLOP 对齐），多出来的只是总容量。'
+        'E1 每步每专家 32,768 token，E1b 16,384。</div>'
+        '<div class=su>尺子：doc_cu 配对差值 ≤ −0.010 nat 才采用；路由分布要铺开'
+        '（记忆表 step 1000 只碰 9.4% 是前车之鉴）；吞吐沿用 70K 停跑线。'
+        'tilerl readout-0 出来前不开臂。</div>'
+        f'<div class=su>状态：模块 {s["model"]} · smoke {s["smoke"]} · '
+        f'{s["m1"]} · {s["m2"]} · 打分 {s["scored"]}</div>'
         "</div>"
     )
 
