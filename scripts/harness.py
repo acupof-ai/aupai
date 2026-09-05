@@ -13428,6 +13428,7 @@ BRIEF_KINDS = {
     "review": ["Every delivery has a second reader", "The controller is reviewed too"],
     "write_check": [],
     "controller_ruling": [],
+    "policy": [],
 }
 
 #: Lines that are not AGENTS.md bullets but are the lesson of a measured incident, per kind.
@@ -13474,6 +13475,41 @@ def _brief_trim(note, n=58):
     return (s[:n] + "...") if len(s) > n else s
 
 
+def _brief_policy():
+    """The latest two policy_metrics rows, today beside yesterday (user order via 4c, 2026-09-05).
+
+    The controller confirms its policies are effective, not assumes: five counts a day in
+    runs/policy_metrics.jsonl, written by scripts/policy_metrics.py. This prints; it never
+    refuses -- a red policy count is information, not a gate."""
+    p = os.path.join(ROOT, "runs", "policy_metrics.jsonl")
+    if not os.path.exists(p):
+        print("no runs/policy_metrics.jsonl yet; run scripts/policy_metrics.py")
+        return 0
+    rows = {}
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # torn append from an interrupted run
+        rows[r["date"]] = r  # fold by date, last wins
+    dates = sorted(rows)[-2:]
+    for date in dates:
+        r = rows[date]
+        g, c, d = r["gate_refusals"], r["card_hours"], r["defects"]
+        card = (f"incremental {c['incremental']} / confirmatory {c['confirmatory']} / "
+                f"infra {c['infra_verification']} h" if c["incremental"] is not None
+                else f"not computable: {c['missing']}")
+        print(f"  {date}:")
+        print(f"    misroutes: {r['misroutes']['n']}")
+        print(f"    gate refusals: {g['rows']} rows / {g['causes']} causes")
+        print(f"    card-hours by class: {card}")
+        print(f"    defects author/second-reader: {d['author_caught']}/{d['second_reader_caught']}")
+        print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
+    return 0
+
+
 def cmd_brief(kind):
     """One screen for a kind of work, GENERATED from the rule table and the incident doc.
 
@@ -13494,6 +13530,8 @@ def cmd_brief(kind):
     if kind not in BRIEF_KINDS:
         print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
         return 2
+    if kind == "policy":
+        return _brief_policy()
 
     bullets, err = _agents_rule_bullets(ROOT)
     if err:
