@@ -7638,6 +7638,146 @@ def check_fact_refs(root):
     return PASS, f"{n} fact citation(s) all resolve"
 
 
+PREREG_ANCHORED_RE = re.compile(r"runs/prereg\.jsonl#([A-Za-z0-9_]+)(?:@amended_(\d+))?")
+PREREG_UNANCHORED_RE = re.compile(r"runs/prereg\.jsonl`?[ ,]+([A-Za-z0-9_]+)")
+PREREG_FLIP = "2026-09-07"
+
+
+def prereg_amendment_n(row):
+    """N for a prereg row, from the amendment keys it actually carries.
+
+    Both spellings exist and neither is redundant: `amended*` holds the timestamp,
+    `amendment*` holds the amendment text, and three rows carry a suffix on one family
+    that the other lacks (b0_head_hybrid_3to1 has amendment_2/_3 and no amended_N;
+    conversion_rate_0905 has amended_1..5 against amendment_1.., _2.. only). Reading one
+    family alone would have reported N=1 for b0 and N=2 for conversion_rate, both wrong
+    by the file's own content, so N is the max suffix over BOTH.
+
+    A bare `amended`/`amendment` with no suffixed sibling is amendment 1: that is the
+    convention val_flat_at_8500 uses and it is not ambiguous. Zero amendment keys of any
+    kind means the row was registered and never amended -- N=0, which a citation may
+    state as @amended_0 or omit.
+    """
+    ns = [
+        int(m.group(1))
+        for k in row
+        for m in [re.fullmatch(r"amend(?:ed|ment)_(\d+)", k)]
+        if m
+    ]
+    if ns:
+        return max(ns)
+    return 1 if any(k in row for k in ("amended", "amendment")) else 0
+
+
+def check_prereg_citations_current(root):
+    """A doc citing a prereg row states which version of it the doc read.
+
+    The failure this catches: a recipe cites runs/prereg.jsonl#moe_0905, the row is
+    amended four times afterwards, and the doc still describes the thresholds of the
+    version its author read. Nothing in either file says they disagree. The check does
+    NOT compare content -- it compares the version the citation names against the row's
+    current N, which is the cheap half and the half that is machine-checkable.
+
+    Two shapes WARN. An anchored citation whose @amended_N is older than the row's N is
+    a stale read. A citation with no version marker at all -- and today that is all 11 of
+    them -- cannot be checked at any later date, so it WARNs until its owner adds one.
+    An UNANCHORED mention (`runs/prereg.jsonl b0_head_hybrid_3to1`, the path and the id
+    with no `#`) WARNs until 2026-09-07 and FAILs after: it is the shape a citation rots
+    into, because no scan looking for `#<id>` can see it.
+    """
+    ledger = os.path.join(root, "runs", "prereg.jsonl")
+    if not os.path.exists(ledger):
+        return SKIP, "runs/prereg.jsonl absent"
+    rows = {}
+    for ln, line in enumerate(open(ledger, encoding="utf-8"), 1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception as e:
+            return FAIL, f"runs/prereg.jsonl:{ln} is not JSON: {e}"
+        if obj.get("id"):
+            rows[obj["id"]] = prereg_amendment_n(obj)
+    if not rows:
+        return FAIL, "runs/prereg.jsonl holds no row with an id"
+    docs = os.path.join(root, "docs")
+    if not os.path.isdir(docs):
+        return SKIP, "docs/ absent"
+    stale, unversioned, unresolved, unanchored, n = [], [], [], [], 0
+    for dp, _dirs, fs in os.walk(docs):
+        for f in sorted(fs):
+            if not f.endswith(".md"):
+                continue
+            p = os.path.join(dp, f)
+            rel = os.path.relpath(p, root)
+            text = open(p, encoding="utf-8", errors="replace").read()
+            spans = []
+            for m in PREREG_ANCHORED_RE.finditer(text):
+                n += 1
+                spans.append((m.start(), m.end()))
+                cid, cited = m.group(1), m.group(2)
+                line = text[: m.start()].count("\n") + 1
+                if cid not in rows:
+                    unresolved.append(f"{rel}:{line} cites {cid}, no such row")
+                elif cited is None:
+                    unversioned.append(f"{rel}:{line} #{cid} (row is at amended_{rows[cid]})")
+                elif int(cited) < rows[cid]:
+                    stale.append(f"{rel}:{line} #{cid}@amended_{cited} vs row amended_{rows[cid]}")
+            for m in PREREG_UNANCHORED_RE.finditer(text):
+                if m.group(1) not in rows:
+                    continue
+                if any(a <= m.start() < b for a, b in spans):
+                    continue
+                line = text[: m.start()].count("\n") + 1
+                unanchored.append(f"{rel}:{line} names {m.group(1)} with no #")
+    if unresolved:
+        return FAIL, "; ".join(unresolved[:4])
+    if unanchored and time.strftime("%Y-%m-%d", time.gmtime()) >= PREREG_FLIP:
+        return FAIL, f"{len(unanchored)} unanchored: " + "; ".join(unanchored[:4])
+    parts = []
+    if stale:
+        parts.append(f"{len(stale)} stale: " + "; ".join(stale[:3]))
+    if unversioned:
+        parts.append(f"{len(unversioned)} with no @amended_N: " + "; ".join(unversioned[:3]))
+    if unanchored:
+        parts.append(
+            f"{len(unanchored)} unanchored (FAIL from {PREREG_FLIP}): " + "; ".join(unanchored[:3])
+        )
+    if parts:
+        return WARN, f"{n} anchored citation(s); " + "; ".join(parts)
+    return PASS, f"{n} citation(s), each naming the row's current amended_N"
+
+
+def _broken_prereg_citation():
+    """The REAL docs and the REAL ledger, with one real recipe's real citation rewritten
+    to @amended_1 -- the row it names is at a higher N, so the stale tier must fire.
+
+    It edits an EXISTING citation rather than appending a new one, because appending
+    would also test the file-walk and could pass on a doc the check reaches for an
+    unrelated reason. Rewriting in place changes exactly one variable: the version the
+    citation claims.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "runs", "prereg.jsonl"), os.path.join(d, "runs", "prereg.jsonl"))
+    for dp, _dirs, fs in os.walk(os.path.join(d, "docs")):
+        for f in sorted(fs):
+            if not f.endswith(".md"):
+                continue
+            p = os.path.join(dp, f)
+            text = open(p, encoding="utf-8", errors="replace").read()
+            m = PREREG_ANCHORED_RE.search(text)
+            if not m or m.group(2) is not None:
+                continue
+            out = text[: m.end()] + "@amended_1" + text[m.end() :]
+            open(p, "w", encoding="utf-8").write(out)
+            return d
+    raise SelftestSkip("no docs/ citation of runs/prereg.jsonl#<id> to make stale")
+
+
 def _broken_docs_root():
     """The REAL docs tree plus one stray .md at the root -- the rule is zero .md files
     directly under docs/, so any new root file FAILs until classified."""
@@ -8914,7 +9054,15 @@ FRICTION_PATH = os.path.join(ROOT, "runs", "friction.jsonl")
 # Named values rather than free text, so the metric can count them; the two axes coexisting in
 # one field is a deliberate flattening -- a row has exactly one cause and forcing a second field
 # would produce rows with one of them empty.
-FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect")
+# The kinds `harness friction` accepts. MEASURED 2026-09-05: the ledger carried 14 distinct kinds and
+# only 5 were in this tuple, because 9 arrived from writers that do not go through the CLI -- hand-
+# appended rows and merge_main.sh:334, which emits kind="override" when AUPAI_CONTROLLER=1 bypasses the
+# second-reader gate. "override" is here now because a writer already emits it; the rest is what
+# `friction_kinds_cover_ledger` exists to catch, since a tuple that rejects a kind its own repo writes
+# is a vocabulary nobody consults.
+FRICTION_KINDS = ("merge", "hook", "check", "pod", "launch", "misroute", "defect", "override",
+                  "resolution", "gate", "near_miss", "dependency", "blocked", "process_failure",
+                  "correctness", "attribution-correction", "coordination")
 
 
 def _friction_rows(path=None):
@@ -9932,6 +10080,188 @@ def _busy_training_cards(train_cards):
 
 
 CARD_HELD_MIB = 1000
+
+
+def check_friction_kinds_cover_ledger(root):
+    """Every kind PRESENT in runs/friction.jsonl is one `harness friction` would accept.
+
+    MEASURED 2026-09-05: 14 distinct kinds in the ledger, 5 in FRICTION_KINDS. The other 9 --
+    resolution, gate, near_miss, dependency, blocked, process_failure, correctness,
+    attribution-correction, coordination -- could not have come through the CLI, whose parser has
+    `choices=FRICTION_KINDS`, so they were hand-appended or written by another writer. One of those
+    writers is in this repo: merge_main.sh appends kind="override" when AUPAI_CONTROLLER=1 bypasses the
+    second-reader gate, a kind its own tuple rejected.
+
+    WHY THIS DIRECTION. The reverse check -- every tuple entry appears in the ledger -- would FAIL on a
+    kind that is simply rare, and `misroute` and `defect` both sit at 0 legitimately. What is actually
+    broken is a vocabulary that rejects what the repo writes: a metric grouping by kind then reads 9
+    categories it has no definition for, and a session that reaches for the CLI with an honest kind is
+    refused and hand-appends instead, which is how the drift compounds.
+    """
+    p = os.path.join(root, "runs", "friction.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/friction.jsonl in this tree"
+    seen = {}
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            k = json.loads(line).get("kind")
+        except json.JSONDecodeError:
+            continue
+        if k:
+            seen[k] = seen.get(k, 0) + 1
+    unknown = {k: n for k, n in seen.items() if k not in FRICTION_KINDS}
+    if unknown:
+        return FAIL, ("kind(s) in the ledger that `harness friction --kind` would refuse: "
+                      + ", ".join(f"{k} ({n} row{'s' if n > 1 else ''})"
+                                  for k, n in sorted(unknown.items(), key=lambda x: -x[1]))
+                      + ". Add them to FRICTION_KINDS or fix the writer; a vocabulary that rejects "
+                        "what this repo writes sends the next session to a hand-append.")
+    if not seen:
+        return FAIL, ("the ledger holds no row with a `kind` at all, so this check has nothing to "
+                      "verify -- either every row lost the field or the reader is looking at the "
+                      "wrong file")
+    return PASS, f"{len(seen)} kind(s) over {sum(seen.values())} row(s), all accepted by the CLI"
+
+
+def _broken_friction_kinds_cover_ledger():
+    """The REAL ledger with one row's kind renamed to something the tuple does not carry.
+
+    Mutation of a real artifact: the first row that has a kind gets `<kind>_unregistered`, which is
+    exactly the shape of the 9 kinds found in the wild -- a plausible word nobody added to the tuple.
+    """
+    src = os.path.join(ROOT, "runs", "friction.jsonl")
+    if not os.path.exists(src):
+        raise SelftestSkip("no runs/friction.jsonl to mutate")
+    lines = [ln for ln in open(src, encoding="utf-8") if ln.strip()]
+    hit = None
+    for i, ln in enumerate(lines):
+        try:
+            obj = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        if obj.get("kind"):
+            obj["kind"] = f"{obj['kind']}_unregistered"
+            lines[i] = json.dumps(obj, ensure_ascii=False) + "\n"
+            hit = i
+            break
+    if hit is None:
+        raise SelftestSkip("no friction row carries a kind; the world needs one to rename")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    with open(os.path.join(d, "runs", "friction.jsonl"), "w", encoding="utf-8") as fh:
+        fh.writelines(lines)
+    return d
+
+
+def check_gpu_entry_points_claim(root):
+    """Every file that loads a checkpoint AND moves it to a device reaches a claim.
+
+    de-55. MEASURED 2026-09-05: 31 files do that and 23 of them called card_claim nowhere, so
+    runs/claims/ sat empty on the pod while lane jobs held cards all day. The consequence is already
+    detected by card_held_without_claim -- but that check is pod-only and reports SKIP off-pod, so
+    the gap was invisible in CI and in every laptop run. This one is static and runs anywhere.
+
+    THE PREDICATE IS THE POINT. de-55's row said 10 files, from "loads a checkpoint and NAMES cuda",
+    which matches 53 files including every one that mentions the word in prose. Reading a device MOVE
+    -- .to(dev), device="cuda", .cuda() -- gives 31, and that is the population the rule is about.
+
+    Reaching a claim means one of three, all equivalent for the property "the card is named":
+      * calls claim_my_cards or card_claim.acquire itself
+      * passes a cuda device to loader.load_checkpoint, which claims (step 2)
+      * is a launcher-claimed trainer: run_ddp.sh / harness launch acquires for train/sft, and a
+        second acquire under a different name would clash with the launcher's own
+    """
+    import re as _re
+    exempt = {
+        # The 7-card block. run_ddp.sh -> harness launch acquires, and the trainer inherits the
+        # card from it; claiming again under another name clashes with the launcher's claim.
+        "train.py": "launcher-claimed (run_ddp.sh / harness launch)",
+        "sft.py": "launcher-claimed (scripts/run_sft.sh)",
+        "sft_math.py": "launcher-claimed (scripts/run_sft.sh)",
+        # A laptop path, deliberately: it is how a person talks to a checkpoint with no pod involved.
+        "infer_local.py": "laptop inference path, not a pod lane job",
+    }
+    move = _re.compile(r'\.to\(\s*(?:dev|device|DEV|"cuda|\'cuda)|device\s*=\s*["\']cuda|\.cuda\(\)')
+    # `import card_claim` and `from card_claim import ...` both count, because a file may wrap
+    # acquire in its own helper: probes/arm_token_corr.py has claim_own_card(), which claims
+    # correctly, does `from card_claim import acquire`, and calls it as a bare `acquire(...)`. My
+    # first two versions of this pattern called that file uncovered -- once for the helper name and
+    # once for the import form. The property is "this file reaches a claim", not "this file spells it
+    # one of the ways I thought of", so the criterion is the MODULE reference, which every route to
+    # a claim must contain and no other route does.
+    claims = _re.compile(r'claim_my_cards|card_claim\.acquire|import card_claim|from card_claim import')
+    # device= ANYWHERE in the call, not within N characters of the open paren. My first version
+    # bounded the match at 200 chars and missed
+    #   load_checkpoint(os.path.join(ROOT, a.fixed), device=dev, dtype=torch.bfloat16)
+    # because the path expression pushed `device=` past the window on the following line. A window is
+    # a guess about formatting; matching to the closing paren is the call.
+    cuda_load = _re.compile(
+        r'load_checkpoint\((?:[^()]|\([^()]*\))*device\s*=\s*(?:["\']cuda|dev\b|device\b|DEV\b)',
+        _re.S)
+    missing, seen = [], 0
+    for d in ("", "eval", "scripts", "probes", "algorithms"):
+        p = os.path.join(root, d) if d else root
+        if not os.path.isdir(p):
+            continue
+        for f in sorted(os.listdir(p)):
+            if not f.endswith(".py"):
+                continue
+            rel = os.path.join(d, f) if d else f
+            try:
+                s = open(os.path.join(p, f), encoding="utf-8", errors="replace").read()
+            except OSError:
+                continue
+            if not ("load_checkpoint" in s or "torch.load(" in s) or not move.search(s):
+                continue
+            seen += 1
+            if rel in exempt or claims.search(s) or cuda_load.search(s):
+                continue
+            missing.append(rel)
+    if missing:
+        return FAIL, (f"{len(missing)} of {seen} file(s) load a checkpoint onto a device without "
+                      f"reaching a claim, so the card reads ORPHAN and a second job may take it: "
+                      f"{', '.join(missing[:8])}"
+                      + (f" (+{len(missing) - 8} more)" if len(missing) > 8 else "")
+                      + ". Add loader.claim_my_cards(<name>) at the device move, or pass "
+                        "device='cuda' to load_checkpoint, which claims.")
+    # A PASS OVER AN EMPTY POPULATION IS NOT A PASS. 33 files match today; zero means the predicate
+    # stopped matching -- a refactor renamed the device move, or this is a tree with no entry points
+    # -- and either way the check verified nothing while printing green. Caught by my own broken
+    # world, which reported "0 file(s) all reach a claim" because it mutated a file the predicate
+    # never selected, and read as a pass.
+    if seen == 0:
+        return FAIL, ("no file in this tree loads a checkpoint onto a device, which cannot be true "
+                      "of the repo: the device-move predicate has stopped matching (a rename, or a "
+                      "partial tree) and this check is verifying an empty set")
+    return PASS, (f"{seen} checkpoint-to-device file(s) all reach a claim "
+                  f"({len(exempt)} exempt: launcher-claimed trainers and the laptop path)")
+
+
+def _broken_gpu_entry_points_claim():
+    """A REAL covered file with its claim stripped -- mutation, not a hand-written world.
+
+    scripts/b0_n8_reuse_gate.py is IN the population by the check's own predicate: it does
+    `load_checkpoint(CKPT, dtype=bf16)` then `mdl = mdl.cuda()`, and it calls claim_my_cards. Strip
+    that call and it is exactly the state 23 files were in on 2026-09-05.
+
+    My first world used eval/score_matrix.py and reported PASS on 0 FILES: score_matrix claims but
+    never matches the device-MOVE pattern, so it was never in the population and the world mutated a
+    file the check ignores. A broken world must be built from a file the check actually reads, and
+    the tell was the count in the evidence line -- "0 file(s) all reach a claim" is a pass over an
+    empty set, which is what a vacuous world looks like when it does not raise.
+    """
+    src = os.path.join(ROOT, "scripts", "b0_n8_reuse_gate.py")
+    s = open(src, encoding="utf-8", errors="replace").read()
+    if "claim_my_cards" not in s or ".cuda()" not in s:
+        raise SelftestSkip("scripts/b0_n8_reuse_gate.py no longer claims or no longer moves to a "
+                           "device; the world needs a covered in-population file to uncover")
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    open(os.path.join(d, "scripts", "b0_n8_reuse_gate.py"), "w", encoding="utf-8").write(
+        s.replace("claim_my_cards", "_claim_removed_by_selftest"))
+    return d
 
 
 def check_card_held_without_claim(root):
@@ -12500,6 +12830,16 @@ CHECKS = [
         _broken_fact_ref,
     ),
     (
+        "prereg_citations_current",
+        "every docs/ citation of runs/prereg.jsonl#<id> names the row's current amended_N; "
+        "an unversioned or unanchored citation WARNs",
+        "docs/standards/moe_0905.md numbered its own amendments to 7 while the ledger row "
+        "read 3, and nothing joined the two -- a doc can describe a superseded version of "
+        "the row it cites and both files stay internally consistent",
+        check_prereg_citations_current,
+        _broken_prereg_citation,
+    ),
+    (
         "corpus_fp_matches",
         "every domain the default mix names carries a build-time fingerprint matching its live directory; a missing stamp is FAIL, not SKIP",
         "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
@@ -12710,6 +13050,24 @@ CHECKS = [
         _broken_tasks_stale,
     ),
     (
+        "friction_kinds_cover_ledger",
+        "every kind in runs/friction.jsonl is one `harness friction` would accept",
+        "14 kinds in the ledger against 5 in FRICTION_KINDS on 2026-09-05; merge_main.sh writes "
+        "kind=override, which its own tuple rejected, so 9 kinds arrived by hand-append and a "
+        "metric grouping by kind had no definition for two thirds of them",
+        check_friction_kinds_cover_ledger,
+        _broken_friction_kinds_cover_ledger,
+    ),
+    (
+        "gpu_entry_points_claim",
+        "every file that loads a checkpoint onto a device reaches a card claim",
+        "23 of 31 such files claimed nothing on 2026-09-05, so runs/claims/ sat empty on the pod "
+        "while lane jobs held cards all day; card_held_without_claim detects the consequence but is "
+        "pod-only and SKIPs off-pod, so nothing saw the gap in CI",
+        check_gpu_entry_points_claim,
+        _broken_gpu_entry_points_claim,
+    ),
+    (
         "card_held_without_claim",
         "every card holding real memory is named by a live claim in this tree",
         "e1's Stage A held card 5 for 15 minutes with the claim written in its laptop tree, so nothing on the pod said the card was held (2026-09-03)",
@@ -12841,6 +13199,7 @@ EVIDENCE = {
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
+    "prereg_citations_current": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
@@ -12873,6 +13232,11 @@ EVIDENCE = {
     # repo: resolving a sha needs the object database, which the pod's tree does not have.
     "run_commits_resolve": "repo",
     "keep_claim_reasons_live": "repo",
+    # repo: it reads SOURCE, not cards. That is the point of it existing beside the pod-only
+    # card_held_without_claim, which SKIPs off-pod and so could not see the 23-file gap in CI.
+    "gpu_entry_points_claim": "repo",
+    # repo: it reads the committed ledger, not machine state.
+    "friction_kinds_cover_ledger": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
 }
 
@@ -13629,6 +13993,7 @@ def cmd_brief(kind):
         print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
         return 2
     if kind == "policy":
+        print(f"BRIEF: {kind}")
         return _brief_policy()
 
     bullets, err = _agents_rule_bullets(ROOT)
@@ -15966,7 +16331,7 @@ def _demo(only=None):
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
-                 "one_deliverable_per_owner"}
+                 "one_deliverable_per_owner", "prereg_citations_current"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:

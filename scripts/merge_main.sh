@@ -11,6 +11,63 @@ LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
 HOLDER=$LOCK/holder
 [ $# -eq 1 ] || { echo "usage: scripts/merge_main.sh <branch>|--hold|--release|--selftest" >&2; exit 2; }
 
+# REFUSE A DEADLINE SHORTER THAN A HOOK RUN. A merge commit runs the full pre-commit hook -- ~50-60 s
+# on a normal commit and longer when the selftest set is large -- and a parent that kills the process
+# group before it finishes leaves the WORST state of any failure mode here: main unmoved, the shared
+# index staged with the merge's content, and .hookstaged_* copies in the working tree, because SIGKILL
+# does not run the hook's `finally`. The next session's merge then aborts on "local changes would be
+# overwritten" and every merge into main is blocked until someone cleans up by hand.
+#
+# MEASURED 2026-09-05: `timeout 900 bash scripts/merge_main.sh de` run through a wrapper that caps at
+# 120 s. The log ends at `hook: ruff 0.05s`, the stage before selftests, with no traceback -- the hook
+# was killed, not broken. b0's next merge aborted, 4c's pod_push was blocked, and E1's launch waited.
+# Two sessions then diagnosed it as a defect in the hook itself, which cost more than the merge.
+#
+# READ FROM THE PARENT'S CMDLINE, because that is where the deadline actually is. A `timeout N` parent
+# shows as `timeout N <cmd>` in ps, verified on this machine in both directions (under a timeout the
+# direct parent is `timeout 30 /tmp/de_detect.sh`; bare, it is the invoking shell). The signal
+# disposition is NOT readable -- timeout sends SIGTERM when the deadline arrives and inherits nothing
+# beforehand -- so a trap cannot see this coming and only the process tree can.
+if [ "${MERGE_MAIN_ALLOW_TIMEOUT:-0}" != "1" ]; then
+  _parent_cmd=$(ps -o command= -p "$PPID" 2>/dev/null || true)
+  case "$_parent_cmd" in
+    *timeout\ *)
+      # The first bare number after `timeout`, skipping its flags (-k, -s TERM, --preserve-status).
+      #
+      # THE SUFFIX IS SCALED, NOT STRIPPED. My first version did `gsub(/[smhd]/,"")`, which reads
+      # `20m` as 20 and `1h` as 1 -- so it would have REFUSED a 20-minute deadline that is generous
+      # and a 1-hour one that is ample, while `2m` refused for the right reason by coincidence (120).
+      # Measured on all six forms before this line was trusted: 120, 2m, 20m, 900, `-k 5 -s TERM 90`,
+      # 1h. A guard that refuses a correct invocation is worse than none: people pass the override and
+      # stop reading the reason.
+      _deadline=$(printf '%s\n' "$_parent_cmd" | tr ' ' '\n' | awk '
+        /^timeout$/ {seen=1; next}
+        seen && /^-/ {skip=1; next}
+        seen && skip {skip=0; next}
+        seen && /^[0-9]+(\.[0-9]+)?[smhd]?$/ {
+          n = $0 + 0
+          if ($0 ~ /m$/) n *= 60
+          else if ($0 ~ /h$/) n *= 3600
+          else if ($0 ~ /d$/) n *= 86400
+          print int(n); exit
+        }')
+      if [ -n "${_deadline:-}" ] && [ "$_deadline" -lt 600 ]; then
+        echo "REFUSING: this merge is running under \`timeout ${_deadline}\`, and a merge commit needs" >&2
+        echo "  longer than that -- the pre-commit hook alone takes 50-60 s and more when the" >&2
+        echo "  selftest set is large. A kill mid-hook leaves main unmoved, the SHARED index staged" >&2
+        echo "  with this merge's content, and .hookstaged_* files in the working tree (SIGKILL does" >&2
+        echo "  not run the hook's cleanup), which blocks every other session's merge until someone" >&2
+        echo "  clears it by hand. Measured 2026-09-05: a 120 s cap did exactly this and stalled" >&2
+        echo "  three sessions and one launch." >&2
+        echo "  Run it with no timeout, or in the background and poll:" >&2
+        echo "    nohup bash scripts/merge_main.sh $1 > /tmp/merge_$1.log 2>&1 </dev/null &" >&2
+        echo "  MERGE_MAIN_ALLOW_TIMEOUT=1 overrides, for a deadline you know exceeds a hook run." >&2
+        exit 2
+      fi
+      ;;
+  esac
+fi
+
 # --hold, --release and --selftest are handled AFTER the two functions below, which they call.
 
 # TAKE THE LOCK, then write the holder file. There IS a window, two statements wide, in which the
@@ -330,7 +387,19 @@ for _ in $(seq 1 120); do
     fi
     if [ "${AUPAI_CONTROLLER:-0}" = "1" ]; then
       if ! _review_gate "$1" 2>/dev/null; then
-        printf '%s\n' "{\"when\": \"$(date -u +%Y-%m-%dT%H:%MZ)\", \"who\": \"tilerl\", \"kind\": \"override\", \"blocked_what\": \"merge $1 with unreviewed train.py/model.py commits\", \"cause\": \"AUPAI_CONTROLLER=1 used to bypass the second-reader refusal\", \"cost_min\": 0}" >> "$MAIN/runs/friction.jsonl"
+        # THROUGH THE CLI, not a hand-appended JSON line. This append used to build the row itself,
+        # which is how kind="override" existed in a writer while FRICTION_KINDS rejected it -- and it
+        # was never caught because the writer had never fired (0 override rows in 62). A second
+        # writer means the vocabulary is advisory: the CLI's `choices=FRICTION_KINDS` refuses an
+        # unknown kind, a hand-append cannot. 4c/user ruling 2026-09-05: the CLI is the only writer.
+        #
+        # `|| true` because a failed ledger write must not abort a merge the controller has already
+        # authorised; the CLI prints its own refusal, so a rejected kind is loud rather than silent.
+        python3 "$MAIN/scripts/harness.py" friction add \
+          --kind override --who tilerl \
+          --blocked "merge $1 with unreviewed train.py/model.py commits" \
+          --cause "AUPAI_CONTROLLER=1 used to bypass the second-reader refusal" \
+          --commit || true
         echo "merge_main: second-reader gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
       fi
     else

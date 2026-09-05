@@ -1,7 +1,7 @@
 ---
 question: Do sparse memory layers buy loss at a 200M backbone for near-zero FLOPs, and is what they buy knowledge or reasoning?
 status: open
-source: this charter; runs/prereg.jsonl#memory_layers_0905; control ckpt_b0_headmix_armA.pt
+source: this charter; runs/prereg.jsonl#memory_layers_0905@amended_12; control ckpt_b0_headmix_armA.pt
 ---
 
 # Memory layers at 200M (program opened 2026-09-04T16:44Z, user order)
@@ -72,7 +72,7 @@ throughput stays at 93.9% of the control. Readout 5 (tok/s/gpu at step 30, stop 
 the only cost constraint. Sparse-vs-dense gradient exchange is chosen per arm by measured
 bytes per step, not by rule: at M1 a uniform draw touches ~86% of the table per step.
 
-## Pre-registered readouts (runs/prereg.jsonl#memory_layers_0905)
+## Pre-registered readouts (runs/prereg.jsonl#memory_layers_0905@amended_12)
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if <= -0.010 nat (the size of
    the N2 params effect), null if |delta| < 0.003, in between is "measured, not adopted".
