@@ -6692,6 +6692,58 @@ def _broken_owner_queue_depth():
     return d
 
 
+def check_one_deliverable_per_owner(root):
+    """WARN when a roster member holds more than one open task.
+
+    User order 2026-09-05 (via 4c): do only work that produces incremental results.
+    Two open deliverables in one pair of hands is the visible form of the opposite,
+    and nothing in the repo named it. owner_queue_depth polices the lower bound; this
+    is the upper one. It WARNs, never FAILs: a second open row can be a deliberate
+    queue decision, and the job is to make that decision visible, not to forbid it.
+    Parked rows do not count -- a parked experiment is a deferred decision, not
+    parallel work."""
+    roster_p = os.path.join(root, "runs", "roster.json")
+    if not os.path.exists(roster_p):
+        return SKIP, "no runs/roster.json"
+    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]}
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    open_by_owner = {}
+    for t in rows:
+        if t.get("state") == "open" and t.get("owner") in members:
+            open_by_owner.setdefault(t["owner"], []).append(t.get("id") or "?")
+    bad = {o: ids for o, ids in open_by_owner.items() if len(ids) > 1}
+    if not bad:
+        return PASS, "every roster member holds at most one open task"
+    parts = [f"{o}: {len(ids)} ({', '.join(sorted(ids))})" for o, ids in sorted(bad.items())]
+    return WARN, (f"{len(bad)} member(s) hold >1 open task -- the second is a queue "
+                  f"decision, not a silent parallel thread: {'; '.join(parts)}")
+
+
+def _broken_one_deliverable_per_owner():
+    """The real ledger plus a second open row for a member who holds exactly one."""
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    for rel in ("runs/roster.json", "runs/tasks.jsonl"):
+        _sh.copy(os.path.join(ROOT, rel), os.path.join(d, rel))
+    dst = os.path.join(d, "runs", "tasks.jsonl")
+    roster = {m["name"] for m in json.load(open(os.path.join(d, "runs", "roster.json"),
+                                                encoding="utf-8"))["members"]}
+    counts = {}
+    for t in _read_tasks(dst):
+        if t.get("state") == "open" and t.get("owner") in roster:
+            counts[t["owner"]] = counts.get(t["owner"], 0) + 1
+    singles = sorted(o for o, n in counts.items() if n == 1)
+    if not singles:
+        raise SelftestSkip("no roster member with exactly one open task; "
+                           "update _broken_one_deliverable_per_owner")
+    with open(dst, "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"id": "broken-odpo-1", "owner": singles[0], "state": "open",
+                             "title": "broken world: second open deliverable",
+                             "opened": "2099-01-01 00:00"}, ensure_ascii=False) + "\n")
+    return d
+
+
 PEER_STALL_MIN = 120
 
 
@@ -6822,6 +6874,23 @@ def _selftest_peer_stalled_names_the_fixture():
     _sh.rmtree(d, ignore_errors=True)
     print("  peer_stalled: fixture named; unnamed once off the roster; a fresh commit clears "
           "it despite an old ledger row")
+
+
+def _selftest_one_deliverable_names_the_fixture():
+    """one_deliverable_per_owner names the member given a second open row.
+
+    The real tree already WARNs (members with 6 and 4 open), so the registered broken
+    world fires regardless of the mutation; this pins the part that matters -- the
+    added row's id and owner are in the evidence."""
+    import shutil as _sh
+    d = _broken_one_deliverable_per_owner()
+    try:
+        state, ev = check_one_deliverable_per_owner(d)
+        assert state == WARN and "broken-odpo-1" in ev, (
+            f"the added open row must be named, got {state}: {ev}")
+    finally:
+        _sh.rmtree(d, ignore_errors=True)
+    print("  one_deliverable_per_owner: fixture row named on the broken world")
 
 
 def check_review_present(root):
@@ -12262,6 +12331,13 @@ CHECKS = [
         _broken_peer_stalled,
     ),
     (
+        "one_deliverable_per_owner",
+        "no roster member holds more than one open task at once",
+        "two open deliverables in one pair of hands is a silent parallel thread; the second open row must be a visible queue decision (user order via 4c, 2026-09-05)",
+        check_one_deliverable_per_owner,
+        _broken_one_deliverable_per_owner,
+    ),
+    (
         "review_present",
         "every done task carries a review row from the peer it named",
         "the controller review caught four evidenced errors in one day while every other session's deliveries shipped with one reader",
@@ -12663,6 +12739,7 @@ EVIDENCE = {
     "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "peer_stalled": "repo",
+    "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
@@ -13351,6 +13428,7 @@ BRIEF_KINDS = {
     "review": ["Every delivery has a second reader", "The controller is reviewed too"],
     "write_check": [],
     "controller_ruling": [],
+    "policy": [],
 }
 
 #: Lines that are not AGENTS.md bullets but are the lesson of a measured incident, per kind.
@@ -13397,6 +13475,41 @@ def _brief_trim(note, n=58):
     return (s[:n] + "...") if len(s) > n else s
 
 
+def _brief_policy():
+    """The latest two policy_metrics rows, today beside yesterday (user order via 4c, 2026-09-05).
+
+    The controller confirms its policies are effective, not assumes: five counts a day in
+    runs/policy_metrics.jsonl, written by scripts/policy_metrics.py. This prints; it never
+    refuses -- a red policy count is information, not a gate."""
+    p = os.path.join(ROOT, "runs", "policy_metrics.jsonl")
+    if not os.path.exists(p):
+        print("no runs/policy_metrics.jsonl yet; run scripts/policy_metrics.py")
+        return 0
+    rows = {}
+    for line in open(p, encoding="utf-8"):
+        if not line.strip():
+            continue
+        try:
+            r = json.loads(line)
+        except json.JSONDecodeError:
+            continue  # torn append from an interrupted run
+        rows[r["date"]] = r  # fold by date, last wins
+    dates = sorted(rows)[-2:]
+    for date in dates:
+        r = rows[date]
+        g, c, d = r["gate_refusals"], r["card_hours"], r["defects"]
+        card = (f"incremental {c['incremental']} / confirmatory {c['confirmatory']} / "
+                f"infra {c['infra_verification']} h" if c["incremental"] is not None
+                else f"not computable: {c['missing']}")
+        print(f"  {date}:")
+        print(f"    misroutes: {r['misroutes']['n']}")
+        print(f"    gate refusals: {g['rows']} rows / {g['causes']} causes")
+        print(f"    card-hours by class: {card}")
+        print(f"    defects author/second-reader: {d['author_caught']}/{d['second_reader_caught']}")
+        print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
+    return 0
+
+
 def cmd_brief(kind):
     """One screen for a kind of work, GENERATED from the rule table and the incident doc.
 
@@ -13417,6 +13530,8 @@ def cmd_brief(kind):
     if kind not in BRIEF_KINDS:
         print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
         return 2
+    if kind == "policy":
+        return _brief_policy()
 
     bullets, err = _agents_rule_bullets(ROOT)
     if err:
@@ -15752,7 +15867,8 @@ def _demo(only=None):
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
-                 "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths"}
+                 "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
+                 "one_deliverable_per_owner"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:
@@ -16336,6 +16452,7 @@ def _demo(only=None):
     _selftest_batched_git_probes()
     _selftest_scoped_index_is_read()
     _selftest_peer_stalled_names_the_fixture()
+    _selftest_one_deliverable_names_the_fixture()
     _selftest_review_present_legacy()
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
@@ -16620,6 +16737,11 @@ _UNFROZEN_ALLOWLIST = {
     # one field here whose value is checked elsewhere: train.py refuses an empty mem_arm whenever
     # mem_values is set, so it cannot be quietly omitted the way an unfrozen key usually can.
     "mem_arm",
+    # The MoE arm's LABEL, mem_arm's reason exactly: it names the rows in runs/moe_diag.jsonl
+    # and changes no computation, and it MUST differ between E1 and E1b -- freezing it would
+    # refuse the second arm's launch. Like mem_arm it cannot be quietly omitted: train.py
+    # refuses an empty moe_arm whenever moe_experts is set, before the model is built.
+    "moe_arm",
     "frozen_probe",       # measurement switch; does not change what is measured
     # Not a recipe key: it changes how attention is computed, not what is computed. It
     # exists so the ~20x-slower fallback cannot be entered by accident, which is the
@@ -17759,6 +17881,66 @@ def _dev_wait():
     return card_claim.DEVICE_WAIT_S
 
 
+def _write_pending_claim(name, cards, wrapper_pid, note):
+    """Record the INTENT to hold cards, before the device poll can confirm it. Path, or None.
+
+    de-47. A job shorter than the device poll leaves NOTHING today: _device_pid_for blocks up to
+    DEVICE_WAIT_S waiting for a descendant to open a card, and if the job finishes first the poll
+    returns None, the launch prints a note to stderr, and no row is written anywhere. Three readers
+    then disagree with reality in the same direction: `card_claim.py status` shows the card
+    unclaimed, the sweep sees a card with memory and no claim and calls it ORPHAN, and a second
+    launch is free to take a card the first is still using at that instant.
+
+    A claim says who INTENDS to hold a resource and says nothing about whether the job is
+    progressing (AGENTS.md, the shared-resources rule). So the intent is recordable before the fact
+    is, and that is what this writes: state="pending", the WRAPPER pid, and the reason it is not yet
+    a real claim. `claims()` reads it like any other row -- its pid is the wrapper, which lives
+    exactly as long as the job, so a dead wrapper makes the row stale and reclaimable by the normal
+    path rather than by a special case.
+
+    NOT A SUBSTITUTE FOR THE REAL CLAIM. It is upgraded in place when the poll finds the device
+    holder (the file is rewritten with state="held" and the job's pid), and released when the poll
+    does not. Either way the window is covered and nothing is silent.
+
+    Written directly rather than through `card_claim.py acquire` because acquire REFUSES a shell by
+    design (de-34: a claim bound to a shell fails both ways) and the wrapper is a shell by
+    construction. Bypassing that refusal is only safe because this row is explicitly not a claim on
+    the shell: it is a pending marker whose whole content is "a job is starting here", and the
+    state field is what every reader must branch on.
+    """
+    try:
+        sys.path.insert(0, HERE)
+        import card_claim
+    except ImportError:
+        return None
+    try:
+        card_list = [c for c in str(cards).split(",") if c]
+        os.makedirs(card_claim.CLAIM_DIR, exist_ok=True)
+        p = os.path.join(card_claim.CLAIM_DIR, card_claim.claim_file(name, card_list))
+        row = {
+            "name": name,
+            "cards": card_list,
+            "pid": wrapper_pid,
+            "cmdline": card_claim._cmdline(wrapper_pid),
+            "acquired": card_claim._now(),
+            "note": note,
+            "state": "pending",
+            "why_pending": (
+                "harness launch wrote this BEFORE the device poll could name the job's own pid. "
+                "The pid here is the launch WRAPPER, which lives as long as the job, so this row "
+                "goes stale on its own when the job ends. It is upgraded to state=held with the "
+                "job's pid the moment a descendant opens a card, and released if none does. A job "
+                "shorter than the poll used to leave no row at all (de-47)."),
+        }
+        tmp = p + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as fh:
+            json.dump(row, fh, ensure_ascii=False)
+        os.replace(tmp, p)
+        return p
+    except Exception:  # noqa: BLE001 -- a claim helper must never take the launch down
+        return None
+
+
 def _proc_readable():
     """Whether the device predicate can answer at all here. False on macOS: no /proc."""
     try:
@@ -18154,6 +18336,16 @@ def cmd_launch(rest):
     # first non-shell descendant rather than blocking 90s for an answer that cannot arrive.
     claim_name = None
     if cards and not args.no_gpu:
+        # PENDING FIRST, then the poll. de-47: a job shorter than DEVICE_WAIT_S finishes before any
+        # descendant is observed holding a card, and the launch then wrote nothing at all -- status
+        # showed the card unclaimed, the sweep called it ORPHAN, and a second launch could take it
+        # while the first was still on it. The pending row covers exactly that window and is
+        # upgraded or removed below, so the outcome is a row or a loud line, never silence.
+        pending_path = _write_pending_claim(args.name, cards, proc.pid,
+                                            f"harness launch {args.name} (pending)")
+        if pending_path:
+            print(f"claim  cards {cards} PENDING on wrapper pid {proc.pid} "
+                  f"(upgraded when the job opens a device)")
         claim_pid, claim_dev = None, None
         if _proc_readable():
             got = _device_pid_for(proc.pid)
@@ -18164,6 +18356,14 @@ def cmd_launch(rest):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
+            # The pending row is this name's claim file, so acquire would clash with itself.
+            # Remove it and let acquire write the real one -- the window it covered is over,
+            # because claim_pid is a process observed holding the card.
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
             # require_device only when the poll established it: on macOS the fallback picked
             # the first non-shell descendant without proving anything, so asserting it there
             # would refuse every laptop launch.
@@ -18177,13 +18377,43 @@ def cmd_launch(rest):
                 print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
         elif _proc_readable():
             _w = _dev_wait()
-            _why = (f"within {int(_w)}s" if _w else
-                    "before the job itself ended -- the poll waits while the wrapper lives, so "
-                    "this means the job exited")
-            print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
-                  f"device {_why}. A claim on a process that is not on a card protects nothing "
-                  f"(b0_mem_m1). Read the log.", file=sys.stderr)
+            # THE JOB MAY SIMPLY HAVE BEEN FAST, and that is not the same as never holding a card.
+            # wait_for_device stops polling when the wrapper dies, so a 3-second eval returns None
+            # here for the same reason an interactive shell does. Read the wrapper's exit code: the
+            # .rc file is written by the wrapper itself, so its presence means the job ran to
+            # completion. Distinguishing them is the whole point of de-47 -- one is a job that came
+            # and went, the other is a pid that was never going to hold a card.
+            _finished = os.path.exists(rc_path)
+            _rc = None
+            if _finished:
+                try:
+                    with open(rc_path) as _f:
+                        _rc = _f.read().strip()
+                except OSError:
+                    pass
+            if _finished:
+                print(f"claim  cards {cards}: the job finished (exit {_rc}) before a device fd was "
+                      f"observed, so the claim stayed PENDING and is now released. The cards were "
+                      f"declared for its whole life; nothing was silent. Short jobs take this path "
+                      f"by construction -- the poll ends when the wrapper does (de-47).")
+            else:
+                print(f"note   cards {cards} NOT CLAIMED: no descendant of {proc.pid} opened a GPU "
+                      f"device within {int(_w)}s and the job has NOT exited. A claim on a process "
+                      f"that is not on a card protects nothing (b0_mem_m1). Read the log.",
+                      file=sys.stderr)
+            # Either way the pending row goes: a finished job needs no claim, and a live job that
+            # never opened a device is not one this row can honestly describe.
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
         else:
+            if pending_path and os.path.exists(pending_path):
+                try:
+                    os.unlink(pending_path)
+                except OSError:
+                    pass
             print(f"note   cards {cards} not claimed: no job process under {proc.pid} yet "
                   f"(a claim on the wrapper shell is worse than none -- de-34)", file=sys.stderr)
 
