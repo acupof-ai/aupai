@@ -6,6 +6,7 @@ runs/score_matrix.jsonl merge=union
 runs/tasks.jsonl merge=union
 runs/retro.jsonl merge=union
 runs/review.jsonl merge=union
+runs/msg_log.jsonl merge=union
 runs/milestones.jsonl merge=union
 runs/board.jsonl merge=union
 runs/ledger_resolutions.jsonl merge=union
