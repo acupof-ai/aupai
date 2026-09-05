@@ -42,10 +42,13 @@ trap release EXIT
   echo "CLAIM NEVER ACQUIRED after 60 attempts -- the job is running UNCLAIMED" >&2
 ) &
 
+# NO --cache HERE. The probe derives it from train._domain_cache_path(--domain), which follows
+# AUPAI_TOKEN_CACHE_DIR and the --fone naming rule; passing a path from this script would be a
+# second copy of that logic and would stop following the variable the moment the caches move
+# (de's step 3, harness check_no_hardcoded_cache_path). Export AUPAI_TOKEN_CACHE_DIR to relocate.
 CUDA_VISIBLE_DEVICES=${_DEVS[0]} python3 /work/aupai/probes/arm_token_corr.py \
   --ckpt_a /work/aupai/ckpt_b0_headmix_armA.pt \
   --ckpt_b /work/aupai/ckpt_b0_headmix_armB.pt \
   --domain code_py_starcoder \
-  --cache /data00/tokens_code_py_starcoder.pt \
   --rows 64 --batch 4 --device cuda:0 --allow_cuda \
   --out /work/aupai/runs/arm_corr_64rows.json
