@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (99 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (187 = 99 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (101 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (189 = 101 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (88 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (90 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,7 +58,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-88 incidents (34 infra, 54 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+90 incidents (34 infra, 56 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -87,14 +87,15 @@ The check's scope, inputs, or environment do not cover the property asked.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216).
 
-### R2-c Mutation did not take (4 incidents)
+### R2-c Mutation did not take (5 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
 - §90: a mutation was applied but never landed in the running process; the check "passed" because the world was never mutated.
 - §132: the mutation test itself was broken — it mutated a copy, not the live object.
+- §221: a test recomputed the quantity outside the function and asserted its own arithmetic — the function under test was never called, so no mutant of it can reach the test.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221).
 
 ### R2-d Parser reads prose as code (10 incidents)
 
@@ -109,14 +110,15 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 
 Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212, §217).
 
-### R2-e Fixture built from the implementation (4 incidents)
+### R2-e Fixture built from the implementation (5 incidents)
 
 A fixture derived from the implementation's handled branches or the live file cannot fail.
 
 - §76: a fixture was built from the implementation's handled branches; unhandled branches — the ones that fail in production — were absent.
 - §98: a fixture had the same form as the formula under test; it could not detect a form error, only a value error.
+- §220: the unclipped baseline was computed by the function under test, so an inverted-ratio mutant inverted both sides and the inequality still held — a test comparing code against itself.
 
-Cannot see: whether the fixture's construction is independent of the code it tests (§80, §97).
+Cannot see: whether the fixture's construction is independent of the code it tests (§80, §97, §220).
 
 ### R2-f Guard reads the wrong field (6 incidents)
 
