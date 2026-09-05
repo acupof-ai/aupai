@@ -28,6 +28,10 @@ the ledgers cannot carry is null with the missing field named, never an estimate
                            reader catches known to the controller.
   5 open tasks per owner   tasks.jsonl open rows over roster members (same
                            population as harness check one_deliverable_per_owner).
+  6 message length         NOT COMPUTABLE: peer messages are not persisted; no
+                           message log exists in runs/ (baseline 2026-09-05).
+                           words/msg to fb needs an append log with
+                           who/to/words/ts; none exists.
 
 Usage:
   python3 scripts/policy_metrics.py [--date YYYY-MM-DD]   # write the row
@@ -128,6 +132,11 @@ def compute(date):
                      "5 second-reader catches known to the controller",
         },
         "open_tasks_per_owner": dict(sorted(open_by_owner.items())),
+        "message_length": {
+            "words_per_msg_to_fb": None,
+            "missing": "peer messages are not persisted; no message log exists in runs/ "
+                       "(baseline 2026-09-05). An append log with who/to/words/ts would close it",
+        },
     }
 
 
@@ -165,6 +174,12 @@ def print_latest():
         d = r["defects"]
         print(f"    defects author/second-reader: {d['author_caught']}/{d['second_reader_caught']}")
         print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
+        m = r.get("message_length")
+        if m:
+            ml = (f"{m['words_per_msg_to_fb']} words/msg to fb"
+                  if m["words_per_msg_to_fb"] is not None
+                  else f"not computable: {m['missing']}")
+            print(f"    message length: {ml}")
 
 
 def _selftest():
