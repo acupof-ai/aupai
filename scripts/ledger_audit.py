@@ -150,6 +150,10 @@ KEYS = {
     # key and nothing replaces anything. `ts` is the field that separates two runs of one arm,
     # since the ledger carries no run id (log_diag's signature takes the arm name, not the run's).
     "runs/memory_diag.jsonl":   lambda r: (r.get("name"), r.get("step"), r.get("ts")),
+    # Same key and the same reason: an arm relaunched under one name re-visits its own step
+    # numbers, and for a MoE arm a relaunch after a stop rule fires is the expected case. The
+    # ledger carries no run id, so ts is the only field separating two runs of one arm.
+    "runs/moe_diag.jsonl":      lambda r: (r.get("name"), r.get("step"), r.get("ts")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -167,6 +171,7 @@ WRITE_STYLE = {
     "runs/friction.jsonl":     "append",   # harness.py:7951 _append_task(FRICTION_PATH), O_APPEND
     "runs/retro.jsonl":        "append",   # no in-repo writer; .gitattributes merge=union
     "runs/memory_diag.jsonl":  "append",   # scripts/memory_diag.py:148, O_APPEND, one row per write
+    "runs/moe_diag.jsonl":     "append",   # scripts/moe_diag.py log_diag, O_APPEND, one row per write
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
     # A ruling is REPLACED when re-issued (a fingerprint mismatch sends the key back for a
@@ -200,6 +205,7 @@ PREDICATE = {
     # memory_diag.py:148 O_APPEND, and every row is its own key -- nothing is ever replaced, so a
     # changed value under an existing key is a real regression, not the writer working.
     "runs/memory_diag.jsonl":   subsume,
+    "runs/moe_diag.jsonl":      subsume,
     "runs/tasks.jsonl":         key_present,  # harness.py:5805 _write_tasks, open(..., "w")
     # score_matrix.py:573 write_records is read-modify-write and replaces same-(ckpt, profile) BY
     # DESIGN -- ":574 the matrix is the current state, not a history". So a changed value is the
