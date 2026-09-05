@@ -999,6 +999,13 @@ def main():
         # its own fixture shard and a shuffled-gold control, and the gold extractor is loose by
         # design (a hit needs an exact 13-gram, so a short answer cannot false-positive).
         "datagen/scan_eval_golds.py",
+        # Experiment 1's injection builder. No card, no model, no corpus read: its selftest
+        # constructs 1,000 synthetic items in memory and checks the exposure arithmetic, so it
+        # costs under a second. Registered rather than exempted because the numbers it produces
+        # ARE the experiment's x-axis -- an off-by-one in the exposure count or a contiguous
+        # (rather than interleaved) repeat schedule would change what the curve measures while
+        # every artifact still looked well-formed.
+        "datagen/build_s_inject.py",
         "algorithms/isolate.py",
         "algorithms/code_reward.py",
         "algorithms/rollout.py",
