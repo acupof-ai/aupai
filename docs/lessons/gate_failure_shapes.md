@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (91 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (178 = 91 + 87); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (94 model-project incidents) and docs/lessons/infra_incidents.md (87 pod/infra incidents); 33 closed incidents removed 2026-09-04 (181 = 94 + 87); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,15 +50,15 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (81 incidents, 324h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (83 incidents, 332h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
-- **R1** (20 incidents, 60h): verify premises before acting, sources before citing. Owner: blank.
+- **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
 - **R4** (12 incidents, 36h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-81 incidents (34 infra, 47 model), ~4h each, 324h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+83 incidents (34 infra, 49 model), ~4h each, 332h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
@@ -71,7 +71,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206).
 
-### R2-b Population narrower than the property (19 incidents)
+### R2-b Population narrower than the property (20 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -79,7 +79,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §171: a perturbation was injected at a scale below the instrument's resolution; the property asked (sensitivity) was outside the test's population.
 - §201: a device-fd refusal verified only where it cannot fire (macOS, no /proc) reported nothing about where it does (pod, /proc present); all ten claim sites would have been refused on the pod.
 
-Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209).
+Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213).
 
 ### R2-c Mutation did not take (4 incidents)
 
@@ -90,7 +90,7 @@ The mutation never landed or its verification reads the wrong signal.
 
 Cannot see: whether the mutation reached the code path the check exercises (§81, §207).
 
-### R2-d Parser reads prose as code (8 incidents)
+### R2-d Parser reads prose as code (9 incidents)
 
 A grep/regex/text match reads comments, strings, or names as behavior.
 
@@ -100,7 +100,7 @@ A grep/regex/text match reads comments, strings, or names as behavior.
 - §200: a guard against an omission, written by substring, omitted itself — the names it searched for appear in its own comment and data table, so it read 3/3 present under a mutant that deleted all three call sites.
 - §205: a placeholder-survival guard fired on a correct substitution — the template's own documentation line names the placeholder, and a whole-file scan read that comment as an unsubstituted token; fourth instance of the self-satisfying needle.
 
-Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205).
+Cannot see: whether a text match is reading behavior or prose (§56, §77, §141, §205, §212).
 
 ### R2-e Fixture built from the implementation (4 incidents)
 
@@ -143,12 +143,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-20 incidents (11 infra, 9 model), ~3h each, 60h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+21 incidents (11 infra, 10 model), ~3h each, 63h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 
