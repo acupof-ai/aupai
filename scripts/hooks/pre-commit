@@ -686,6 +686,15 @@ def main():
         # 46-209 s), and set where the mount is absent hands train.py's refusal to a box whose
         # correct behaviour is to tokenize. Mutation-verified against run_ddp.sh in both directions.
         "scripts/test_launch_line_cache_dir.py",
+        # The accessor itself, which the two above only see through their own callers. Registered
+        # because the ordering defect it fixes was INVISIBLE to both: run_ddp.sh's export and
+        # harness launch's env block were correct and agreed with each other, and E1 was still
+        # refused with "no token caches on disk for 9 domain(s)" -- the gate calls the accessor in a
+        # process where neither export has run. The world that catches it is "env unset, NVMe dir
+        # present, old dir also present and non-empty -> NVMe", and a fallback preferring whichever
+        # it finds first passes every other world. Also gates the one-definition rule: a third
+        # hardcoded copy of the path means the next move breaks two of the three.
+        "scripts/test_token_cache_dir.py",
         # A real cp -r of a real linked worktree must be refused, and the ORIGINAL worktree,
         # a plain checkout, and a `git worktree move`d tree must all still pass. The negative
         # controls are the load-bearing half: a gate that refuses every linked worktree would
