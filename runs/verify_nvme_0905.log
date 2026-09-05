@@ -1,0 +1,30 @@
+record src=/data00 dst=/mnt/data02/tokens  groups=22
+accessor cache dir: /mnt/data02/tokens   AUPAI_TOKEN_CACHE_DIR=/mnt/data02/tokens
+Cfg.fone=False   mode=FULL
+
+  verified tokens_chat.pt                 4/4 file(s) hashed, 0.15 GB
+  verified tokens_chat_qa.pt              4/4 file(s) hashed, 0.15 GB
+  verified tokens_chatml.pt               4/4 file(s) hashed, 0.16 GB
+  verified tokens_code.pt                 4/4 file(s) hashed, 0.23 GB
+  verified tokens_code_py_rp1t.pt         4/4 file(s) hashed, 1.68 GB
+  verified tokens_code_py_starcoder.pt    4/4 file(s) hashed, 35.15 GB
+  verified tokens_code_rp1t.pt            4/4 file(s) hashed, 30.28 GB
+  verified tokens_cot.pt                  4/4 file(s) hashed, 1.70 GB
+  verified tokens_en.pt                   4/4 file(s) hashed, 0.64 GB
+  verified tokens_en_c4.pt                4/4 file(s) hashed, 19.24 GB
+  verified tokens_en_c4_stage2.pt         4/4 file(s) hashed, 9.60 GB
+  verified tokens_math.pt                 4/4 file(s) hashed, 0.33 GB
+  verified tokens_math_owm.pt             4/4 file(s) hashed, 16.14 GB
+  verified tokens_math_owm_stage2.pt      4/4 file(s) hashed, 26.11 GB
+  verified tokens_math_seed.pt            4/4 file(s) hashed, 0.33 GB
+  verified tokens_sample.pt               4/4 file(s) hashed, 0.01 GB
+  verified tokens_textbook.pt             4/4 file(s) hashed, 6.44 GB
+  verified tokens_textbook_30b.pt         4/4 file(s) hashed, 6.44 GB
+  verified tokens_web_hq.pt               4/4 file(s) hashed, 5.74 GB
+  verified tokens_wiki.pt                 4/4 file(s) hashed, 0.98 GB
+  verified tokens_wiki_chat.pt            4/4 file(s) hashed, 1.14 GB
+  verified tokens_zh_web.pt               4/4 file(s) hashed, 85.17 GB
+
+22/22 groups verified, 247.8 GB
+Every cache name resolves through the accessor to a file on NVMe whose sha256 still equals the digest recorded at copy time.
+exit=0
