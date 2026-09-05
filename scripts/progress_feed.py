@@ -267,30 +267,19 @@ def friction_section():
             "</div>")
 
 
-# 98-7: MoE round section (user order via 4c, 2026-09-05).
-# Charter docs/standards/moe_0905.md; status updated as arms launch.
-MEM_STATUS = {
-    "model": "等 b0 的 MoE 模块",
-    "smoke": "未跑",
-    "m1": "E1：12 层全 MoE × 24 路由 + 共享 = 0.801B 总参，等模块",
-    "m2": "E1b 备选：6 个奇数层 × 48 路由 = 0.843B",
-    "scored": "未打分",
-}
-
+# 98-7: programs section (user order via 4c, 2026-09-05): each program shows the one
+# number it exists to produce and its state (not yet / measured), nothing else.
 def memory_section():
-    s = MEM_STATUS
     return (
-        "<h2>MoE 轮</h2>"
+        "<h2>在跑的项目</h2>"
         '<div class=head style="border-left-color:var(--purple)">'
-        '<div class=su>问题：0.8B 总参的细粒度 MoE，等 FLOP 下比 200M 稠密对照'
-        '（ckpt_b0_headmix_armA）损失和样本效率更好吗？路由会不会像记忆表一样塌缩？</div>'
-        '<div class=su>每个 MoE 层的激活参数 = 稠密 FFN（FLOP 对齐），多出来的只是总容量。'
-        'E1 每步每专家 32,768 token，E1b 16,384。</div>'
-        '<div class=su>尺子：doc_cu 配对差值 ≤ −0.010 nat 才采用；路由分布要铺开'
-        '（记忆表 step 1000 只碰 9.4% 是前车之鉴）；吞吐沿用 70K 停跑线。'
-        'tilerl readout-0 出来前不开臂。</div>'
-        f'<div class=su>状态：模块 {s["model"]} · smoke {s["smoke"]} · '
-        f'{s["m1"]} · {s["m2"]} · 打分 {s["scored"]}</div>'
+        '<div class=su><b>MoE 轮</b>——4× 总容量（等激活 FLOP、等 token）买不买得到 '
+        'val 增益（≤ −0.010 nat）和更陡的转化曲线？状态：未测。模块合并后开臂，卡 1/2。</div>'
+        '<div class=su><b>实验 1</b>——构造的、训练里没有的技能，曝光 n∈{1…4096} 次后 '
+        '200M 模型学不学会（控制档续训）？状态：未测，预注册未落。</div>'
+        '<div class=su><b>实验 2</b>——每个生成 token 的转化率，RL vs 预训练，'
+        '技能是构造的、训练里没有。状态：未测。两个 SFT 取消（p04/p16 已删，'
+        'pod 上没有单跑跨 4× 的档），搭 MoE 轮控制档和 E1 每 500 步档：先修 trainer，再 RL。</div>'
         "</div>"
     )
 

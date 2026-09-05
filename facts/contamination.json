@@ -1156,6 +1156,64 @@
    "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
    "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on.",
    "status": "measured"
+  },
+  {
+   "id": "cont.api_cloze_items_consistent",
+   "value": {
+    "sha256": "8524d9cb58eba72004cede353b458c0c65c3365187bb9021f4355f0c3522b8cd",
+    "items": 4998,
+    "per_region": {
+     "seen": 2499,
+     "unseen": 2499
+    },
+    "distinct_pool_rows": {
+     "seen": 929,
+     "unseen": 924
+    },
+    "region_row_overlap": 0,
+    "was_read_boundary": "seen: 2499/2499 True; unseen: 2499/2499 False",
+    "pool_row_ranges": {
+     "seen": [
+      172,
+      643672
+     ],
+     "unseen": [
+      644289,
+      2138146
+     ]
+    },
+    "pinned_unseen_region": [
+     643969,
+     2139719
+    ],
+    "seen_rows_at_or_above_unseen_lo": 0,
+    "unseen_rows_outside_pinned_region": 0,
+    "options_per_item": {
+     "4": 4998
+    },
+    "items_with_duplicate_options": 0,
+    "label_indexes_gold": "4998/4998",
+    "label_distribution": {
+     "0": 1269,
+     "1": 1295,
+     "2": 1223,
+     "3": 1211
+    },
+    "max_label_share": 0.2591,
+    "chance": 0.25
+   },
+   "unit": "counts over the frozen item file; no model is run",
+   "measured": "2026-09-05",
+   "source": "data/probes/api_cloze.jsonl at sha256 8524d9cb (commit 9b5b0c9c); recomputed from the file by e1, not copied from the header or from prereg amendment_12",
+   "config": {
+    "why_this_exists": "The control floor this file was built for was DROPPED the same day: readout_2_split's estimator is delta_seen - delta_unseen with each arm minus control, and readout_4_result_m1_one_layer STOPS M1 by the pool_touched_frac rule (0.0945 < 0.20) with M2/M3 stopped by controller ruling, so no live readout consumes a control number. The file's INTERNAL consistency is checkable with no GPU, so it is recorded here rather than re-derived by the next reader (4c's instruction).",
+    "what_the_label_distribution_rules_out": "A 4-way probe whose gold sits disproportionately in one option slot can be beaten above chance by position alone. Max share is 0.2591 against 0.25, so position carries almost no signal; label_indexes_gold confirms options[label] == gold on every item, which is what makes the label usable at all.",
+    "what_the_boundary_check_rules_out": "SEEN items must come from rows the control read and UNSEEN from rows the allocation never reached, or the difference-in-differences is diluted -- amendment_4 records an earlier boundary that would have diluted it ~8x into a false null. Zero seen rows reach the pinned unseen_lo, zero unseen rows fall outside the pinned region, and the two regions share no pool row.",
+    "agreement_with_the_header": "The file's own header claims seen/unseen distinct_rows 929/924 and stats.items 2499/2499; both recomputed and identical. prereg amendment_12's claim that only unseen distinct_rows changed (925 -> 924) is therefore confirmed against the file."
+   },
+   "uncertainty": "Exact counts, not estimates. They say nothing about whether the items are GOOD -- distractor plausibility, prompt truncation quality and whether an API name is guessable from the prefix are unmeasured, and no model has scored this file.",
+   "boundary": "Consistency of the artifact only. It is not evidence the readout would have been well-powered: the control's own accuracy against the 0.25 chance floor was never measured, so whether this probe can separate an arm from chance at this scale remains unknown.",
+   "status": "measured"
   }
  ]
 }
