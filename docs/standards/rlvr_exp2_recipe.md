@@ -2,6 +2,7 @@
 question: What exactly is run for experiment 2 — RLVR sample efficiency against pretraining tokens — and what must be true before a card is spent on it?
 status: recorded
 source: algorithms/rlvr_trainer.py at 09041709; docs/lessons/efficiency_gap_views.md:369,376-381,441; runs/controller_board.md:45; facts/data_scaling.json#ds.b_unidentified_from_val_traces; facts/contamination.json#cont.novel_ops_frozen_sets
+prereg_row: runs/prereg.jsonl#conversion_rate_0905 at amended_4
 ---
 
 # RLVR recipe, experiment 2
@@ -205,16 +206,40 @@ sets' own contract. P is not a baseline to subtract for noise; it is the format 
 and P rising together is format acquisition, S lagging and closing is the skill.
 
 **S_test's readout and its floor are pinned to a sha, and the floor is not 25%.** The 4-way
-set is `data/probes/novel_ops/S_test_4way.jsonl`, and it must be scored **per program** —
-`diamond_chain` and `diamond_chain4` separately, never pooled. Content-free floor 0.364 and
-0.294 respectively (`facts/contamination.json#cont.novel_ops_frozen_sets`,
-`four_way_content_free_floor`); a pooled number cancelled a z=+12.81 cell against a z=−12.19
-one in an earlier build and read as chance. That floor is a maximum over the battery's rules
-and is a lower bound, not a certificate — it rose twice on a byte-identical artifact as rules
-were added. The operational floor is the no-injection control arm's own score. P_test's
-readout is **mean per-token NLL**, not 4-way: a 2-operand chain has no intermediate, so the
-carry never fires and all three readings agree on 1000/1000 items, which makes a 4-way P
-score a different quantity from a 4-way S score (e1's amendment 1).
+set is `data/probes/novel_ops/S_test_4way.jsonl`. **Pin the ITEMS, not the file**: the item
+hash is sha256 over every line after the header,
+`78132162cea92202d745ad263bf174086c5c24a20dad9bdcb94f12d12639ddd9`, and the file sha moves
+whenever the header's recorded battery maximum is recomputed while the 1000 items do not.
+
+Score it **per program** — `diamond_chain` and `diamond_chain4` separately. Content-free
+prior lower bound 0.364 and 0.294 (`facts/contamination.json#cont.novel_ops_frozen_sets`,
+`four_way_content_free_floor`); an earlier build's pooled number cancelled a z=+12.81 cell
+against a z=−12.19 one and read as chance. That bound is a maximum over the battery's 29
+rules, not a certificate — it rose twice on a byte-identical artifact as rules were added.
+
+**Readout 1 is arm minus control arm, per program, never an absolute threshold on an
+injected arm's score.** The no-injection control arm's score is the operational floor: it
+exploits every heuristic the model can actually find, including leak-family members nobody
+enumerated, and it is the only quantity here that does not move when someone thinks of a new
+rule. Adopt "the skill converted" at the smallest n whose lift clears the MDE in **both**
+programs; a lift in one program only is reported as such.
+
+MDE, two-proportion two-sided, α=0.05, power=0.80, n=500 per arm per program, pooled
+variance: `diamond_chain` must reach **0.4510** (8.70pt lift), `diamond_chain4` **0.3776**
+(8.36pt). Recomputed here rather than copied — the prereg row's amendment 3 and amendment 4
+give 0.4498/0.3752 and 0.4497/0.3755, and neither is reproduced by the pooled, unpooled or
+arcsine form. Largest gap 0.24pt, which changes no decision at this resolution; the
+discrepancy is recorded in the fact because an unexplained third decimal is a number nobody
+can re-derive.
+
+**Whether a pooled number is also reported is open in the row itself**: amendment 2 says
+"per program AND pooled", amendment 4's consolidated `readout_1_instrument` says "POOLED IS
+NOT REPORTED". This recipe follows amendment 4, the later one. Flagged rather than silently
+resolved — both keys are live in the row.
+
+P_test's readout is **mean per-token NLL**, not 4-way: a 2-operand chain has no intermediate,
+so the carry never fires and all three carry readings give the gold value on 1000/1000 items,
+which makes a 4-way P score a different quantity from a 4-way S score (e1's amendment 1).
 
 Curve points: pretraining-arm n in **{1, 8, 64, 256}**. 512 and 4096 are NOT run — at 104.0
 tokens/doc, 4096 exposures is 425,984,000 injected tokens against a 500-step arm's
