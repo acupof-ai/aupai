@@ -1827,6 +1827,25 @@ def main():
                       flush=True)
             continue
         records.append(rec)
+        # A RECORD WHOSE EVERY METRIC ERRORED IS NOT A SCORE, and until 2026-09-06 it exited 0.
+        # The whole-checkpoint handler above catches a raise out of score(); this catches the
+        # other shape, where score() returns normally and every metric inside it is an
+        # {"error": ...} dict. That is what the cache_guard self-deadlock produced: three rows
+        # in runs/score_matrix.jsonl that looked like scores, found by e1 reading the ledger
+        # rather than by any exit code. The row is still WRITTEN -- an errored metric carries
+        # its traceback and is the evidence -- but the run says it failed.
+        #
+        # Absence of `error`, not presence of a number: a SKIPPED metric is omitted from
+        # metrics entirely (rec["skipped"]), so "every value is numeric" would call a
+        # legitimately partial row a failure. Same predicate as harness's
+        # score_matrix_present (main 5c0319dc), for the same reason.
+        _scored = [m for m, v in rec["metrics"].items()
+                   if not (isinstance(v, dict) and "error" in v)]
+        if rec["metrics"] and not _scored:
+            _why = "; ".join(f"{m}: {v.get('error')}" for m, v in
+                             list(rec["metrics"].items())[:3])
+            failed.append((os.path.basename(ck),
+                           f"all {len(rec['metrics'])} metric(s) errored -- {_why}"))
         print(f"\n{rec['ckpt']}  type={rec['type']}", flush=True)
         for m, v in rec["metrics"].items():
             if "error" in v:
@@ -1850,7 +1869,7 @@ def main():
     if failed:
         for name, why in failed:
             print(f"FAILED {name}: {why}", flush=True)
-        print(f"{len(failed)}/{len(a.ckpt)} checkpoint(s) produced NO metrics", flush=True)
+        print(f"{len(failed)}/{len(a.ckpt)} checkpoint(s) produced no usable metrics", flush=True)
         sys.exit(1)
 
 
