@@ -797,6 +797,16 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # The pod drift checker's own refusals. Registered because its failure mode was a
+        # FAIL-OPEN: run pod-side, --list-scoped died in `git ls-files` (rc 128), FILES came back
+        # empty, the comparison loop ran zero times, and it printed "pod in sync (0 files)" and
+        # exited 0 with the traceback on stderr where an exit-code reader never sees it (b0 found
+        # it, 4c relayed, 2026-09-05). The NEGATIVE CONTROL is the load-bearing world: three
+        # refusals are easy to satisfy by refusing everything, so it asserts that guards 1-2 pass
+        # THIS checkout through. It deliberately stops short of a full run -- that would sha256
+        # ~460 files and call the pod, 20s, and would go red whenever the tunnel is down, making
+        # every commit touching this file a liveness test for the pod. 0.5s.
+        "scripts/pod_sync_check.sh",
         # The refusal that stops train.py retokenizing 247.8 GB when a CONFIGURED cache dir is
         # missing a cache. Registered because its NEGATIVE CONTROL is the load-bearing half: with
         # AUPAI_TOKEN_CACHE_DIR unset the same absent cache must still tokenize, or no fresh
@@ -838,6 +848,21 @@ def main():
         # amending one of two rows for the same id leaves the other stale, which is how nine
         # superseded versions survived a union merge unnoticed.
         "scripts/test_prereg_amend.py",
+        # The three ledger writers' integration-tree refusal. Registered because the failure it
+        # prevents already happened twice in ten minutes (b0's task row, 44's board row) and the
+        # rule was prose until 2026-09-05. The load-bearing worlds are the three FAIL-OPEN ones:
+        # a guard that refused wherever git cannot answer would refuse in all 27 of harness.py's
+        # mkdtemp worlds and on every detached CI checkout, so it would pass a refusal-only test
+        # while breaking the selftest that runs it. Mutation-verified: guard removed fails W1,
+        # refuses-on-any-repo fails W3, ignores-the-override fails W2 -- three distinct worlds.
+        "scripts/test_integration_tree_guard.py",
+        # The shared is_integration_tree() predicate, imported by harness.py's ledger writers and
+        # (from the flip commit) by this hook. Registered because its FAIL-OPEN worlds are the
+        # dangerous half in both directions: a predicate that answers True in a standalone clone
+        # refuses in CI and in all 27 of harness.py's git-init fixtures, and one that reads the
+        # BRANCH goes inert the moment the integration tree is detached -- which is exactly what
+        # 2026-09-05's flip does, and was the first version of this predicate.
+        "scripts/integration_tree.py",
         # de-55 step 2: load_checkpoint claims when it loads to cuda and claims NOTHING on cpu.
         # Registered for the CPU world, which is the one that keeps the placement safe: an ungated
         # acquire there refuses on every box with no CUDA_VISIBLE_DEVICES -- CI runs
@@ -1726,6 +1751,11 @@ def main():
         "algorithms/rlvr_reward.py": {"algorithms/test_rlvr_reward_suite.py"},
         "scripts/e1_28_leak_scan.py": {"scripts/test_e1_28_leak_scan.py"},
         "scripts/e1_28_matched.py": {"scripts/test_e1_28_matched.py"},
+        # board.py holds one of the three integration-tree-guarded writers, and it is the one
+        # that IMPORTS the guard rather than defining it -- so an edit here can break the rule
+        # without touching harness.py. 0.5s. (harness.py itself is deliberately absent from this
+        # map: it is excluded from the hook's selftests for cost, recorded at check_selftests_are_gated.)
+        "scripts/board.py": {"scripts/test_integration_tree_guard.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
