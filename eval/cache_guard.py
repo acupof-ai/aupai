@@ -36,9 +36,11 @@ _corpus_fp, _sample_seed -- rather than restated, so a change there cannot leave
 agreeing with a rule that no longer exists.
 
 The permanent fix belongs in build_mix, which must refuse when VOCAB_ID is None instead
-of rebuilding, and must treat an empty stamp as stale. train.py is frozen for
-p500m_20b_0902; this is what the eval side can do today, and it is strictly narrower --
-it protects the caches from evals, not from a mis-launched training run.
+of rebuilding, and must treat an empty stamp as stale. This is what the eval side can do
+today, and it is strictly narrower -- it protects the caches from evals, not from a
+mis-launched training run. (The line here that said train.py was frozen for
+p500m_20b_0902 was removed 2026-09-05: that run ended 09-03 and train.py has taken many
+commits since, so the sentence was an expired excuse for not doing the wider fix.)
 
     python3 eval/cache_guard.py --selftest
 """
@@ -190,6 +192,58 @@ def set_vocab_id(cfg):
     return vid
 
 
+NVME_CACHE_DIR = "/mnt/data02/tokens"
+
+
+def assert_cache_dir_not_overlay(root=ROOT):
+    """Raise if the cache dir is on the overlay while the NVMe copy exists.
+
+    MEASURED 2026-09-05: the container's /data00 is a DIRECTORY on the overlay (vda2, rotational,
+    87% full) reading at 193 MB/s, while the same 8 GB off nvme2n1 reads at 1.3 GB/s -- 6.5x. The
+    caches were copied to /mnt/data02/tokens for that reason.
+
+    The failure this prevents is not slowness, it is SILENT slowness. Both directories hold a file
+    called tokens_<domain>.pt with matching stamps, so a run that forgot AUPAI_TOKEN_CACHE_DIR is
+    correct in every observable way and merely takes 6.5x longer to read its data -- which reads as
+    "training is slow today", the least actionable symptom there is.
+
+    IT REFUSES ONLY WHEN THE NVME COPY IS PRESENT. On a laptop, on CI, and on any host without that
+    mount there is nothing to prefer, so this must not fire: a check that refuses where its remedy
+    does not exist is a permanent red. That also makes it self-disarming if the mount is ever
+    dropped -- the run proceeds off the overlay rather than refusing to start, which is the right
+    failure direction for a data path.
+    """
+    import train
+
+    if not os.path.isdir(NVME_CACHE_DIR):
+        return None
+    # AN EXPLICIT CHOICE IS NOT A FORGOTTEN VARIABLE. If the caller set the variable, they named
+    # this directory on purpose and the refusal has nothing to add. Without this branch the message
+    # below would tell them to set a variable they have already set, which is the shape of advice
+    # that gets a check disabled.
+    if os.environ.get("AUPAI_TOKEN_CACHE_DIR"):
+        return train._token_cache_dir()
+    cur = train._token_cache_dir()
+    if os.path.realpath(cur) == os.path.realpath(NVME_CACHE_DIR):
+        return cur
+    try:
+        same = os.stat(cur).st_dev == os.stat("/").st_dev
+    except OSError:
+        return None
+    if not same:
+        return cur  # somewhere else, but not the overlay: not this check's business
+    raise CacheWouldRebuild(
+        f"the token cache dir is {cur}, which is on the ROOT FILESYSTEM (the container overlay, "
+        f"rotational, measured 193 MB/s), while the NVMe copy exists at {NVME_CACHE_DIR} "
+        f"(1.3 GB/s, 6.5x). Reading the overlay copy is not wrong, it is 6.5x slower with no "
+        f"symptom other than 'slow today' -- both dirs hold the same filenames with the same "
+        f"stamps.\n"
+        f"  export AUPAI_TOKEN_CACHE_DIR={NVME_CACHE_DIR}\n"
+        f"If the overlay copy is deliberate (comparing them, or the NVMe copy is suspect), set "
+        f"AUPAI_TOKEN_CACHE_DIR to it explicitly -- naming it is the difference between a choice "
+        f"and a forgotten variable, and this refusal only fires on the default.")
+
+
 def assert_caches_fresh(domains, root=ROOT):
     """Raise unless every domain's cache exists and _domain_seqs would reuse it as-is.
 
@@ -201,10 +255,15 @@ def assert_caches_fresh(domains, root=ROOT):
     process read these caches now", and putting them in one function is what makes the
     second one reach every caller (the freshness guard's own docstring reason -- a guard
     each caller has to remember is a guard one of them eventually will not).
+
+    And the overlay refusal, for the same reason and in the same place: every cache reader
+    already passes through here, so the question "am I about to read the slow copy" is asked
+    once rather than in each tool.
     """
     import train
 
     assert_not_co_resident(domains, root=root)
+    assert_cache_dir_not_overlay(root=root)
     bad = []
     for name in domains:
         cache = train._domain_cache_path(name)
@@ -348,10 +407,100 @@ def _selftest():
         train.DATA, train.TOKEN_CACHE, train.VOCAB_ID = old_data, old_cache, old_vid
         shutil.rmtree(d, ignore_errors=True)
     n_co = _selftest_co_resident()
+    n_ov = _selftest_overlay()
     print("selftest OK: refuses a missing vocab_id, a missing cache, a one-byte stamp "
           f"difference and a 0-byte stamp; accepts a fully-stamped fresh cache; "
-          f"co-residency refusal correct on {n_co} worlds")
+          f"co-residency refusal correct on {n_co} worlds; overlay refusal correct on "
+          f"{n_ov} worlds")
     return 0
+
+
+def _selftest_overlay():
+    """The overlay refusal, on a fake NVMe dir and a fake cache dir.
+
+    NVME_CACHE_DIR is rebound to a temp path, so the worlds do not depend on the pod's real mount --
+    a test that only runs where the mount exists cannot gate a commit, which is the point of having
+    it. `same device as /` is the predicate, and a temp dir on a laptop IS on the root filesystem, so
+    the overlay world is real rather than stubbed.
+    """
+    import shutil
+    import tempfile
+
+    global NVME_CACHE_DIR
+    real_nvme = NVME_CACHE_DIR
+    import train
+
+    old_cache = train.TOKEN_CACHE
+    old_env = os.environ.pop("AUPAI_TOKEN_CACHE_DIR", None)
+    d = tempfile.mkdtemp(prefix="overlay_guard_")
+    n = 0
+    try:
+        fake_nvme = os.path.join(d, "nvme", "tokens")
+        overlay = os.path.join(d, "overlay")
+        os.makedirs(fake_nvme)
+        os.makedirs(overlay)
+
+        # 1. NO NVMe DIR: nothing to prefer, so it must not fire. This is CI and every laptop, and
+        #    a refusal here would be a permanent red -- the check would be turned off by week's end.
+        NVME_CACHE_DIR = os.path.join(d, "does_not_exist")
+        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")
+        assert assert_cache_dir_not_overlay() is None, (
+            "it fired with no NVMe copy present: a refusal whose remedy does not exist on this host")
+        n += 1
+
+        # 2. NVMe DIR EXISTS and the cache dir is on the root filesystem: refuse, naming the
+        #    variable. A temp dir is genuinely on / here, so `st_dev == stat('/').st_dev` is the
+        #    real predicate and not a stub.
+        NVME_CACHE_DIR = fake_nvme
+        try:
+            assert_cache_dir_not_overlay()
+            raise AssertionError(
+                "the overlay cache dir was accepted while the NVMe copy existed -- a run would "
+                "read the 6.5x slower copy with no symptom but 'slow today'")
+        except CacheWouldRebuild as e:
+            for want in ("AUPAI_TOKEN_CACHE_DIR", fake_nvme, "6.5x"):
+                assert want in str(e), (
+                    f"the refusal does not name {want!r}, so a reader cannot act on it: {e}")
+        n += 1
+
+        # 3. THE CACHE DIR IS THE NVMe DIR: accept. Without this the case above would pass for a
+        #    predicate that refuses everything.
+        train.TOKEN_CACHE = os.path.join(fake_nvme, "pretrain_1b_tokens.pt")
+        assert assert_cache_dir_not_overlay() == fake_nvme, "it refused the NVMe dir itself"
+        n += 1
+
+        # 4. AN EXPLICIT AUPAI_TOKEN_CACHE_DIR IS A CHOICE, not a forgotten variable, even when it
+        #    names the overlay. Telling someone to set a variable they have already set is how a
+        #    check gets disabled.
+        os.environ["AUPAI_TOKEN_CACHE_DIR"] = overlay
+        assert assert_cache_dir_not_overlay() == overlay, (
+            "an explicitly chosen overlay dir was refused, and the message would have told the "
+            "caller to set the variable they just set")
+        n += 1
+        del os.environ["AUPAI_TOKEN_CACHE_DIR"]
+
+        # 5. THE CHOKEPOINT ACTUALLY ASKS. Worlds 1-4 call the predicate directly, so all four stay
+        #    green if the call is deleted from assert_caches_fresh -- a working guard nothing
+        #    invokes. Reached with a domain that has no cache: the freshness loop would refuse it
+        #    too, so the assertion is that THIS refusal comes first, identified by its own text.
+        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")
+        try:
+            assert_caches_fresh(["a_domain_with_no_cache"])
+            raise AssertionError("assert_caches_fresh accepted an overlay cache dir")
+        except CacheWouldRebuild as e:
+            assert "ROOT FILESYSTEM" in str(e), (
+                f"assert_caches_fresh refused for a DIFFERENT reason, so the overlay call is not "
+                f"on its path: {str(e)[:160]}")
+        n += 1
+    finally:
+        NVME_CACHE_DIR = real_nvme
+        train.TOKEN_CACHE = old_cache
+        if old_env is not None:
+            os.environ["AUPAI_TOKEN_CACHE_DIR"] = old_env
+        else:
+            os.environ.pop("AUPAI_TOKEN_CACHE_DIR", None)
+        shutil.rmtree(d, ignore_errors=True)
+    return n
 
 
 def _selftest_co_resident():
