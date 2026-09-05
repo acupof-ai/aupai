@@ -13,6 +13,7 @@
 #   build   — datagen/build_domains.sh -> data/corpus/<domain>/
 #   vocab   — scripts/build_tokenizer.py --force (needs the default mix + the corpus)
 #   check   — datagen/check_mix.py: dry-run the schedule before burning GPUs.
+#   caches  — re-attach the NVMe token-cache mount (HOST ONLY; needs crictl).
 #
 # NOT included: launching the pretrain. That is a human decision.
 set -uo pipefail
@@ -74,6 +75,30 @@ if want check; then
   say "stage check"
   python3 datagen/check_mix.py || die "check_mix"
   say "stage check: done — review the schedule before launching"
+fi
+
+# --- caches: re-attach the NVMe token-cache mount ---------------------------
+# LAST, because it is the only stage that must run on the HOST rather than in the container, and
+# because what it attaches is consumed by the launch, which is deliberately not a stage.
+# Idempotent: the script verifies first and exits 0 when the mount is already live.
+#
+# The failure it prevents: the mount is attached with move_mount and lives exactly as long as the
+# container, so a restart drops it and leaves the mount POINT as an ordinary empty directory on the
+# overlay. Nothing errors. train.py now REFUSES rather than retokenizing 247.8 GB onto a disk at 87%
+# (its AUPAI_TOKEN_CACHE_DIR branch), and this stage is how the mount comes back.
+if want caches; then
+  say "stage caches"
+  if command -v crictl >/dev/null 2>&1; then
+    python3 scripts/attach_nvme_caches.py ${ATTACH_ARGS:-} || die "attach_nvme_caches"
+    say "stage caches: done (mounted and verified by reading)"
+  else
+    # NOT a failure, and not a silent skip either. crictl does not exist inside the container, so
+    # this stage cannot run there -- and saying so is the point: nobody reading a green bootstrap
+    # log should conclude the mount was checked.
+    say "stage caches: SKIPPED -- crictl is absent, so this is the container view, not the host."
+    say "  Run it on the HOST: tn exec 'cd /work/aupai && bash scripts/bootstrap_pod.sh caches'"
+    say "  The mount was NOT verified by this run."
+  fi
 fi
 
 say "BOOTSTRAP: $STAGE complete. Train launch is a separate human decision."
