@@ -1370,6 +1370,11 @@ def main():
         # than a smaller number, because the old expression's max(1, ...) floors an explicit zero
         # back up to one row -- so a test asserting "fewer rows held back" passes on the defect.
         "scripts/test_mix_val_frac.py",
+        # build_mix reads the mix's own anneal_frac and refuses a disagreement with Cfg, and
+        # publishes no cursor base across calls. Registered here AND on train.py's trigger list:
+        # the subject is build_mix, not this file. Two reverts of the fix were run in real
+        # worktrees and each fails this test at its own assertion. ~4s, no card.
+        "scripts/test_mix_anneal_and_cursor.py",
         # NOT YET REGISTERED: scripts/test_eta_window.py, the printed ETA's window mean. 8a06c567
         # (mine) registered it here and on train.py's trigger list before writing it, and the file
         # has never existed in any commit or any worktree -- so selftests_are_gated FAILed on main
@@ -1759,6 +1764,7 @@ def main():
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
+                     "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
                      "scripts/moe_diag.py"},                                # 54.0s

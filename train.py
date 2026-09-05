@@ -2107,6 +2107,53 @@ def _selftest_mix_guard():
 _selftest_mix_guard()
 
 
+def _mix_anneal_frac(mix, cfg_path, is_main):
+    """The anneal fraction this mix is built at: the mix's own key, or Cfg when it has none.
+
+    build_mix used Cfg.anneal_frac and never read the mix file, so a mix declaring
+    "anneal_frac": 0.0 silently got the 0.10 default and a two-phase schedule. MEASURED
+    across data/mix_*.json: 13 of 23 declare the key and all 13 declare a value that
+    differs from Cfg's 0.10; 10 declare nothing. The cost is not only the phase boundary --
+    `want = int(rows * frac * weight)` runs once per phase and int(0.9x) + int(0.1x) <=
+    int(x), so a spurious second phase loses one row per domain: e1's injection arms
+    measured n1 25->24, n8 204->203, n64 1639->1638, n256 6557->6556, which is ~39 document
+    exposures in an interleaved shard on an axis whose row count IS the measurement.
+
+    Precedence, and the refusal in the middle:
+      mix key absent          -> Cfg.anneal_frac. Absent is not a declaration of 0, and 10
+                                 mixes rely on the default.
+      mix key == Cfg          -> that value, silently. Nothing to reconcile.
+      mix key != Cfg          -> REFUSE. Cfg holds either the class default or an explicit
+                                 --anneal_frac, and this function cannot tell those apart --
+                                 so it cannot silently prefer either one. Both readings are
+                                 defensible and they schedule different runs, which makes it
+                                 the operator's call: change the flag or change the mix.
+    A launch is unaffected in practice because --anneal_frac is in RECIPE_REQUIRED: every
+    real launch line states it, so agreement is the normal case and the refusal fires only
+    when the stated value contradicts the file.
+
+    THE REFUSAL IS ALSO WHY THE OTHER THREE READERS NEED NO CHANGE. Cfg.anneal_frac is read
+    by the lr schedule's log line (:2992, :3165) and the per-step phase label (:3403). After
+    this function either they equal the value the plan was built at or the run never started,
+    so returning a value instead of threading it through those three sites leaves nothing
+    that can disagree. Making it a parameter would create a second source of truth for the
+    same quantity, which is the shape the refusal exists to remove."""
+    if "anneal_frac" not in mix:
+        return Cfg.anneal_frac
+    declared = float(mix["anneal_frac"])
+    if declared == float(Cfg.anneal_frac):
+        return declared
+    raise RuntimeError(
+        f"refusing to build the mix: {os.path.basename(cfg_path)} declares anneal_frac "
+        f"{declared} and Cfg.anneal_frac is {Cfg.anneal_frac}. These schedule different "
+        f"runs -- {declared} gives {1 if declared == 0 else 2} phase(s), and a spurious "
+        f"second phase floors one row off every domain (int(0.9x)+int(0.1x) <= int(x)). "
+        f"Pass --anneal_frac {declared} to build what the mix declares, or edit the mix. "
+        f"This is not defaulted either way: Cfg carries the same value whether the flag was "
+        f"passed or not, so nothing here can tell an explicit flag from the class default."
+    )
+
+
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
               cursor_srcfp=None, cursor_seed=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
@@ -2137,7 +2184,8 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         )
     mix = json.load(open(cfg_path, encoding="utf-8"))
     rows = mix["total_tokens"] / Cfg.seq
-    phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
+    anneal_frac = _mix_anneal_frac(mix, cfg_path, is_main)
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
     pools, val, used = {}, [], {}
@@ -2147,6 +2195,10 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # so the sum falls legitimately short of as_of_step x rows_per_step. Without this the
     # assert would have to be dropped or made inexact, and an inexact identity is not one.
     discarded = []
+    # Every field build_mix publishes on Cfg is created HERE, per call, and assigned at the
+    # end -- so a second call in one process cannot see the first's. _row_cursor_base was the
+    # one exception: it was merged into whatever dict Cfg already held.
+    cursor_base = {}
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
@@ -2214,10 +2266,17 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                 # row 0, so adding its old value back would claim rows this run never read.
                 # Cfg, not a return value, because build_mix runs BEFORE the resume block
                 # (train.py:2278 vs :2307) and already publishes _plan_* the same way.
-                base = getattr(Cfg, "_row_cursor_base", None)
-                if base is None:
-                    base = Cfg._row_cursor_base = {}
-                base[name] = used[name]
+                #
+                # PER-CALL, written into the dict this call created above. It used to be
+                # accumulated into whatever dict was already on Cfg, so a second build_mix in
+                # one process inherited the first call's domains: every other published field
+                # (_row_cursor, _cursor_seeded, _plan_domains) is a wholesale assignment and
+                # only this one merged, which is why the leak was invisible. Two calls in one
+                # process is the normal case for a tool, not a corner: scripts/test_plan_length
+                # already resets `Cfg._row_cursor_base = None` by hand before each _build for
+                # exactly this reason, and a fixture working around a defect is evidence of the
+                # defect, not a fix for it.
+                cursor_base[name] = used[name]
                 if is_main:
                     print(f"mix: {name} resuming at row {used[name]} "
                           f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
@@ -2229,6 +2288,10 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # counts, which are non-zero on every run and would make the flag meaningless.
     Cfg._cursor_seeded = any(v > 0 for v in used.values())
     Cfg._cursor_discarded = list(discarded)
+    # Assigned unconditionally, so a call that applied no cursor publishes {} rather than
+    # leaving the previous call's dict standing. An empty base and a stale base read the same
+    # to save_checkpoint (`getattr(...) or {}`), which is how the leak stayed silent.
+    Cfg._row_cursor_base = cursor_base
     if discarded and not Cfg.allow_partial_cursor:
         # 44-12: the print above is the only signal a 66h log gives. Refuse, named, so the
         # operator chooses --allow_partial_cursor knowingly instead of discovering the
