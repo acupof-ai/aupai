@@ -610,6 +610,13 @@ def main():
         # the gate cannot be on at all. An unregistered selftest is an unguarded one -- the hook
         # checks what it happens to check, not what the commit changed.
         "scripts/credential_scan.py",
+        # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
+        # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
+        # correct stale-lock cleanup, and it silently expired 4c's quiet window on 2026-09-05 while
+        # two merges landed inside it. The selftest's "26-year-old lock, live holder -> alive" case
+        # is what goes red if age becomes the criterion again. It also carries a real zombie with a
+        # negative control, because `kill -0` accepts a zombie and would call it alive.
+        "scripts/merge_main.sh",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
@@ -1448,7 +1455,13 @@ def main():
             flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             _env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
             _env["TMPDIR"] = _env["TEMP"] = _env["TMP"] = st_tmp
-            r = subprocess.run([sys.executable, dst, flag], capture_output=True,
+            # INTERPRETER BY EXTENSION. This was sys.executable unconditionally, which is correct
+            # for every .py in the map and silently wrong for the first .sh added to it: python3
+            # would run the shell script, exit 1 on the first line, and the hook would report the
+            # selftest as FAILING rather than as un-runnable. Nothing in the map was .sh until
+            # scripts/merge_main.sh, so the assumption held by accident.
+            _interp = ["bash"] if f.endswith(".sh") else [sys.executable]
+            r = subprocess.run(_interp + [dst, flag], capture_output=True,
                                text=True, cwd=repo_root(), env=_env)
             if r.returncode != 0:
                 tail = (r.stdout + r.stderr).strip().splitlines()[-6:]
