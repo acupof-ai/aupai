@@ -1094,6 +1094,27 @@
       "0": 4096
      },
      "source": "e1's independent count, 2026-09-05, reproduced here"
+    },
+    "operand_magnitude_confound": {
+     "S": {
+      "n_operands": 17836,
+      "min": 3,
+      "max": 19,
+      "mean": 9.9,
+      "median": 10
+     },
+     "P": {
+      "n_operands": 10192,
+      "min": 3,
+      "max": 120,
+      "mean": 48.6,
+      "median": 50
+     },
+     "ratio_of_means": 4.9,
+     "why": "P's range was widened from 6..19 to 6..80 on 2026-09-05 to supply 5,096 distinct instances; at S's own 3..19 only 428 no-carry (a,b) pairs exist across P's two programs, against the 5,096 the curve draws, so P CANNOT match S's operand distribution and supply a full pool. The constraint is structural: P has two operands where S has three or four.",
+     "consequence": "P is meant to differ from S in COMPOSITION only. It also differs in operand magnitude, so an S-minus-P gap carries an arithmetic-difficulty term as well as the composition term. Direction unmeasured: larger operands are more BPE tokens and more digits, which plausibly makes P harder and understates the gap, but that is an argument and not a measurement.",
+     "found_by": "e1 (lessons-58) asked whether anything asserts P's ranges; nothing does, and the drift they hypothesised is the actual shipped state",
+     "options_not_yet_ruled": "(a) accept and report the confound with every curve; (b) drop P_pool -- if P is only ever a test-time control it needs 1,000 instances, not 5,096, and 3..40 supplies 2,024; (c) give P a third inert operand so its space grows without changing what it controls for."
     }
    },
    "unit": "sha256 of the file as committed",
@@ -1106,7 +1127,7 @@
     "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings"
    },
    "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
-   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set.",
+   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on.",
    "status": "measured"
   }
  ]
