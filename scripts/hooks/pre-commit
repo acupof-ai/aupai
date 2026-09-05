@@ -931,6 +931,7 @@ def main():
         # 14.5s, test_fewshot_demos 10.8s, test_split_bitwise 10.1s, test_rep_stop_flag 9.9s
         # -- so a commit staging several of these pays real seconds. That is the price of the
         # gate, not a defect; the alternative was 19 tests nobody ran.
+        "algorithms/test_gspo_ratio.py",
         "algorithms/test_rlvr_reward_suite.py",
         "datagen/test_near_dedup_known.py",
         "datagen/test_parallel_exact_identity.py",
