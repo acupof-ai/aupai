@@ -236,8 +236,14 @@ def main():
         # assertions and both are PLACEMENT rather than shape: feeding the shared expert from
         # up(xr) instead of the full-width token, and down-projecting each DISPATCHED ROW instead
         # of each token -- identical shapes, top_k times the projection cost, which breaks the
-        # parity the constructor asserts. top_k MUST be > 1 here or "per token" and "per row" are
-        # the same number and neither mutant is distinguishable.
+        # parity the constructor asserts.
+        #   top_k > 1 IS LOAD-BEARING FOR EXACTLY ONE OF THEM, and the first version of this
+        # comment claimed both (e1's review of 0a738e75). The DOWN-PER-ROW mutant needs it: at
+        # top_k=1 "per token" and "per row" are the same number and the count cannot separate
+        # them. The SHARED-FROM-up(xr) mutant does NOT: it adds a second up() call per forward and
+        # is distinguishable at any top_k including 1, because up() and down() are counted
+        # separately below. Stated precisely so nobody preserves top_k=2 for the wrong reason --
+        # or, worse, drops it believing it was never needed.
         # d 64 / ffn 192 / d_latent 24 / expert_ffn 64 / top_k 2 / shared 128:
         # 3072 + 9216 + 24576 = 36864 = 3*64*192. SOLVED BY ENUMERATION, not by hand -- my first
         # two attempts at a small cell were arithmetic slips (28672 and 37120 against 36864), and
@@ -252,7 +258,21 @@ def main():
         ntok = 3 * 4
         m2(torch.randn(3, 4, 64))
         _check("down projects each TOKEN once, not each dispatched row", seen["down"][0][0], ntok)
-        _check("  a per-row projection would have read this many rows", ntok * 2, 24)
+        # A REAL NEGATIVE CONTROL, replacing a vacuous line (e1's review of 0a738e75). It read
+        #   _check("... would have read this many rows", ntok * 2, 24)
+        # and both sides were constants OF THE TEST: ntok*2 = 24 and moe_latent = 24 coincided by
+        # accident, so it compared the test's own arithmetic to a literal and could not fail on any
+        # behaviour of the model -- while READING like a check on the projection width, because the
+        # literal happened to equal d_latent. Change ntok to 5*4 and it fails at 40 != 24 for a
+        # reason unrelated to the code. This form asserts the count is NOT the per-row count, so it
+        # goes red exactly when the per-row mutant is live and depends on no coincidence.
+        #   IT REQUIRES top_k > 1 AND IS NOT MERELY WEAKER WITHOUT IT: measured on this cell and on
+        # the top_k=1 cell above, at top_k=1 ntok*top_k == ntok, so this assertion fails on CORRECT
+        # code. That is the same degeneracy the per-row mutant exploits, seen from the other side,
+        # and it is why the cell below fixes moe_top_k=2 -- lowering it turns this line red without
+        # any defect.
+        _check("the count is NOT top_k * tokens, which is what a per-row projection would read",
+               seen["down"][0][0] != ntok * c2.moe_top_k, True)
         _check("down is called once per forward", len(seen["down"]), 1)
         _check("up is called once per forward", len(seen["up"]), 1)
         _check("up reads the d_latent-wide accumulator", seen["up"][0][-1], 24)
