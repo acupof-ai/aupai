@@ -1033,6 +1033,7 @@ def build_optimizers(model, cfg, master=None):
     only -- lr_scale is applied in set_schedule, so a resume cannot keep a stale scale."""
     muon, embed, scalar, arq, head = [], [], [], [], []
     mem, mem_sel = [], []
+    moe_router = []
     for n, p in model.named_parameters():
         # Grouping is by the MODEL's name and shape; the tensor handed to the optimizer is the
         # fp32 master when there is one, so every group keeps its own lr and weight decay.
@@ -1087,6 +1088,27 @@ def build_optimizers(model, cfg, master=None):
             head.append(q)
         elif "tok" in n or "head" in n:
             embed.append(q)
+        elif n.endswith("ffn.router.weight"):
+            # THE ROUTER, ruling (f) 2026-09-05: AdamW at the DENSE lr, never Muon and never the
+            # expert lr. It is 2D, so the `p.ndim == 2` branch below would have claimed it for
+            # Muon by default -- measured, not assumed: the first version of this wiring put every
+            # router in Muon. This branch must stay ABOVE that one.
+            #
+            # The lr is the one design decision the memory collapse dictates:
+            # facts/memory_layers.json#mem.m1_key_usage_collapse measured a selector trained at
+            # the same lr as the thing it selects concentrating to 9.45% of its pool, and the toy
+            # sweep moved usage 0.078 -> 1.000 across two orders of magnitude of selector lr
+            # alone. A router is the same shape of object.
+            moe_router.append(q)
+        elif n.startswith("blocks.") and (n.endswith("ffn.w13") or n.endswith("ffn.w2")):
+            # THE EXPERTS STAY IN MUON, exactly as the dense FFN they replace (ruling (f)), so the
+            # arm differs from the control in sparsity ONLY and a loss delta is attributable.
+            # THEY NEED THIS BRANCH: the stacked expert tensors are 3D (E, N, K), so the
+            # `p.ndim == 3` test below would have sent them to the AttnRes pseudo-query group at
+            # attn_res_lr 0.01. Measured 2026-09-05 -- that is where they landed before this
+            # branch existed, which would have trained the arm's 56M-parameter FFN under a group
+            # meant for 51,200 parameters of depth-attention queries.
+            muon.append(q)
         elif p.ndim == 2:
             muon.append(q)
         elif (
@@ -1132,6 +1154,30 @@ def build_optimizers(model, cfg, master=None):
             torch.optim.AdamW(
                 arq,
                 lr=getattr(cfg, "attn_res_lr", 0.01),
+                betas=cfg.scalar_betas,
+                weight_decay=0.0,
+                fused=True,
+            )
+        )
+    # THE ROUTER'S GROUP, appended for the same reason arq and head are: eval and analysis code
+    # indexes opts[0] (Muon) and opts[1] (embed), so inserting a group earlier would repoint every
+    # one of those readings, including scripts/embed_norm_sdr.py's ck["opt"][1].
+    #
+    # DEFAULT = muon_lr, WHICH IS THE DENSE FFN'S OWN LR, resolved here rather than copied into
+    # Cfg so the two cannot drift. Ruling (f) says "the dense lr", and THERE IS NO cfg.lr -- I
+    # wrote `cfg.lr` first and it would have raised AttributeError at launch (Cfg carries muon_lr
+    # 0.01, embed_lr 0.1, scalar_lr 0.15 and no `lr`). muon_lr is the right reading of the ruling:
+    # the router should train at the rate the FFN it routes trains at, and the FFN is the Muon
+    # group. moe_router_lr > 0 overrides, and the value reaches ck["cfg"] either way so a reader
+    # never has to trust the launch line.
+    if moe_router:
+        _r_lr = float(getattr(cfg, "moe_router_lr", -1.0))
+        if _r_lr <= 0:
+            _r_lr = float(cfg.muon_lr)
+        opts.append(
+            torch.optim.AdamW(
+                moe_router,
+                lr=_r_lr,
                 betas=cfg.scalar_betas,
                 weight_decay=0.0,
                 fused=True,
@@ -1185,8 +1231,13 @@ def build_optimizers(model, cfg, master=None):
     # not assume four. `mem_sel` is present only when the selector split is on -- and it must be
     # LAST, matching the append order above, or every name after it would label the wrong
     # optimizer and the step line's lr report would attribute the selector's lr to the table.
+    # `moe_router` sits between arq and mem, matching the append order at :1173 -- the assert
+    # below is what caught this list being one short when the router group was added (b0,
+    # 2026-09-05), and a wrong POSITION would not have raised: it would have labelled the router's
+    # AdamW "mem" and reported the router's lr as the memory table's in the step line.
     _names = (["muon", "embed", "scalar"] + (["head"] if head else [])
-              + (["arq"] if arq else []) + (["mem"] if mem else [])
+              + (["arq"] if arq else []) + (["moe_router"] if moe_router else [])
+              + (["mem"] if mem else [])
               + (["mem_sel"] if mem_sel else []))
     assert len(_names) == len(opts), (
         f"{len(opts)} optimizers against {len(_names)} names: the step line reports lrs by "
@@ -2271,6 +2322,10 @@ def main():
         "ffn_hidden": "FFN inner width",
         "mem_values": "sparse memory: values in the product-key table, a perfect square (0 = off, the control)",
         "mem_top_k": "sparse memory: values read per token (must be <= sqrt(mem_values))",
+        "moe_experts": "MoE: routed experts per MoE layer (0 = off, the dense control)",
+        "moe_top_k": "MoE: routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden exactly or MoEFFN refuses",
+        "moe_shared": "MoE: always-on shared experts (1 = the charter's cell)",
+        "moe_expert_ffn": "MoE: inner width of ONE expert (768 at ffn_hidden 3072 with top-3 + shared)",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -2280,6 +2335,9 @@ def main():
         "mem_lr": "sparse memory: lr for the Adagrad group holding the keys and value table",
         "mem_wd": "sparse memory: weight decay on that group (0: decay falls hardest on the rows read least)",
         "mem_sel_lr": "sparse memory: separate lr for the SELECTOR (query + keys); <=0 keeps one group at mem_lr, which is what M1/M2/M3 ran",
+        "moe_router_lr": "MoE: lr for the router's AdamW group; <=0 means the dense lr (muon_lr), which is ruling (f) and is never the expert lr -- a selector at its table's lr is the measured cause of the memory collapse",
+        "moe_bias_gamma": "MoE: aux-loss-free bias step size, applied to the SIGN of the load error (0.001, pre-registered from facts/moe.json, NOT tuned after seeing a curve)",
+        "moe_balance_alpha": "MoE: sequence-wise balance loss coefficient (1e-4, complementary to the bias, not an alternative)",
     }.items():
         parser.add_argument(f"--{name}", type=float, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -2294,6 +2352,10 @@ def main():
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
     # NOT in the int loop above: this one is a comma string, and model._mem_layers parses the
     # string and the list form in one place so both spellings build the same architecture.
+    parser.add_argument("--moe_layers", type=str, default=None,
+                        help="MoE: block indices that replace their dense FFN, \"0-11\", \"0,3,6\" or a list "
+                             "(default: Cfg.moe_layers). Parsed by model._moe_layers in ONE place so a "
+                             "checkpoint written from a string and one from a list are the SAME arm")
     parser.add_argument("--mem_layers", type=str, default=None,
                         help="sparse memory: block indices sharing the one pool, e.g. 3,6,9 "
                              "(default: Cfg.mem_layers)")
