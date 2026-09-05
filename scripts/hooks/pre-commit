@@ -458,6 +458,39 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
+    # THE OVERRIDE LOGS ITSELF. Measured 2026-09-05: 0 of 62 friction rows named
+    # AUPAI_BEHIND_MAIN_OK or AUPAI_CONTROLLER, and not because overrides are rare -- one session used
+    # the flag four times in two hours. Nobody logs one, so a metric counting them measures the
+    # logging habit and reads 0 as "no overrides happened", which is the absent-vs-empty error this
+    # repo keeps paying for. The hook is the one party that KNOWS an override just fired, so it writes
+    # the row (4c/user ruling: the override writes its own row, the metric measures the event).
+    #
+    # Through the CLI, never a hand-appended line: `harness friction add` holds the only accepted-kind
+    # list, and a second writer makes that list advisory -- which is exactly how merge_main.sh's
+    # kind="override" existed in a writer the tuple rejected.
+    #
+    # NOT --commit. This runs INSIDE a commit: the index is git's right now, and a nested
+    # path-scoped commit would write to it mid-operation. The row lands dirty and the next
+    # ledger-only commit carries it, which the behind-main exemption above allows without a flag.
+    #
+    # Failure here never blocks the commit -- best-effort, 20 s cap, and a one-line note if the
+    # write did not land, because a silent failure would rebuild the same blind spot.
+    if behind and not merging and not _ledger_only:
+        try:
+            _fr = subprocess.run(
+                [sys.executable, os.path.join(repo_root(), "scripts", "harness.py"),
+                 "friction", "add", "--kind", "override",
+                 "--blocked", f"commit in a tree {behind} commit(s) behind main",
+                 "--cause", "AUPAI_BEHIND_MAIN_OK=1 used to commit from behind main "
+                            f"({', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:3])})"],
+                capture_output=True, text=True, timeout=20)
+            if _fr.returncode != 0:
+                print(f"hook: NOTE -- could not log the AUPAI_BEHIND_MAIN_OK override to friction "
+                      f"({(_fr.stderr or _fr.stdout).strip()[:120]}); the override stands, the "
+                      f"count will be short by one", file=sys.stderr)
+        except Exception as _e:  # noqa: BLE001 - a ledger write must never block a commit
+            print(f"hook: NOTE -- friction logging raised {type(_e).__name__}; the override stands, "
+                  f"the count will be short by one", file=sys.stderr)
     print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
 
     # Shared-files rule (T0, 2026-09-04): a staged edit to a listed shared file needs a live
