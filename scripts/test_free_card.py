@@ -84,7 +84,11 @@ def free_card(busy, wait=0, settle=1, grant=None):
     with open(os.path.join(tree, "runs", "card_assignment.json"), "w") as f:
         json.dump(grant, f)
     with open(os.path.join(tree, "data", "mix_scale_run_config.json"), "w") as f:
-        json.dump({"cards": "0,1,2,3", "world": 4}, f)
+        # NO `cards` KEY (de-54): allocation has one source, runs/card_assignment.json. This
+        # fixture wrote "0,1,2,3" to agree with the grant, which was harmless while the field
+        # was a fallback and is now the state harness refuses -- a world carrying it would test
+        # the refusal instead of free-card. `world` stays; it is the recipe.
+        json.dump({"world": 4}, f)
     env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"], BUSY=" ".join(busy),
                AUPAI_ALLOC_ROOT=tree)
     r = subprocess.run(
