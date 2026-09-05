@@ -63,7 +63,8 @@
    "ts": "2026-09-04T23:45Z",
    "by": "fb",
    "what": "probe grid on 0,1,2,3,4,6 (one card each, b0 0-2, tilerl 3/4/6); lane 5 to e1; block_cards empty -- no arm launches until amendment 12; arms relaunch as 1,2 / 0,3 / 4,6 after the grid"
-  }
+  },
+  "fb 2026-09-05 09:4xZ (card 3 -> e1 experiment 3 part 2)"
  ],
  "granted": "2026-09-03",
  "launch_block_granted": true,
@@ -79,9 +80,10 @@
  "cards": {
   "0": "RL TEAM (tileRL) -- not ours",
   "6": "RL TEAM (tileRL) -- not ours",
-  "1-4": "2026-09-05T05:54Z: 1,2 -> MoE arm E1 (world 2, b0+tilerl) when (c)+(d) merge. 3,4 -> FREE (aupai pool): SFT p04/p16 cancelled, ladder checkpoints unrecoverable; experiment 2 rides on the MoE round's step checkpoints.",
+  "1-4": "2026-09-05T05:54Z: 1,2 -> MoE arm E1 (world 2, b0+tilerl) when (c)+(d) merge. 4 -> FREE (aupai pool); 3 -> see key \"3\": SFT p04/p16 cancelled, ladder checkpoints unrecoverable; experiment 2 rides on the MoE round's step checkpoints.",
   "5": "GRANTED 2026-09-05T08:11Z -> e1: experiment 1 (runs/prereg.jsonl#conversion_rate_0905 @amended_4, 44 review 11:05Z): five world-2 arms SEQUENTIAL on cards 5+7 (n1, n8, n64, n256, control_arm), 500 steps each, via harness launch --training --cards 5,7 --class incremental; one arm at a time",
-  "7": "GRANTED 2026-09-05T08:11Z -> e1: paired with card 5 for experiment 1's world-2 arms (see 5)"
+  "7": "GRANTED 2026-09-05T08:11Z -> e1: paired with card 5 for experiment 1's world-2 arms (see 5)",
+  "3": "GRANTED 2026-09-05T09:4xZ -> e1: experiment 3 part 2 (per-token arm correlation) -- needs a card because chunk_kda is Triton-only, no CPU forward exists; one job at a time, world 1, starts only after experiment 1's first arm is up on 5+7; via harness launch --cards 3 --class incremental"
  },
  "lane_note": "2026-09-05T08:11Z fb: 5+7 -> e1 experiment-1 arms, sequential; 1,2 -> E1 (block_cards); 3,4 free; 0,6 tileRL. || 2026-09-05T05:54Z fb: pool = 3,4,5,7 free; 1,2 reserved for E1; 0,6 tileRL. Next grants: e1 experiment-1 arms (5,7 and 3,4 as world size requires) after its row is reviewed. || 2026-09-05T05:47Z fb: user standard -- only incremental results, no reproductions. Struck: memory grid, P1 rerun, cache discriminator, readout 0. Live grants: 1,2 E1 at module merge; 3,4 SFT p04/p16; 5 e1 control floor only if a readout consumes it; 7 free. || 2026-09-05T05:44Z fb: lane_card null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[]. Memory grid CANCELLED (user: do not verify what the prior already says); cards 1,2 -> MoE E1 at module merge, 3,4 -> SFT p04/p16 (3b), 5 -> e1 control floor, 7 -> tilerl P1 rerun. || 2026-09-05T05:42Z fb: lane_card set to null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[] below; a lane derived by the launcher no longer exists. || 2026-09-05T04:34Z fb: lane 7 -> tilerl P1 rerun; lane 5 -> e1 shape-fault probe then control floor. || 2026-09-05T04:26Z fb: lane 7 -> tilerl P1 rerun (RL-team grant, 30 min, one job). || 2026-09-05T03:21Z fb: lane 7 -> tilerl MoE microbench (RL-team grant, 2 h, one job); lane 5 idle. || 2026-09-05T01:42Z fb: lane 7 -> e1 arm_token_corr (RL-team grant, one job); lane 5 idle (control floor waits for a card grant)",
  "superseded_2026_09_02": {
