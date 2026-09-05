@@ -233,3 +233,28 @@ Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-
 - §41: a deletion list was broadcast and deleted within the 24h window; an unclaimed candidate was still in use.
 
 Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live.
+
+## Design cause: integration happens in a shared writable working tree
+
+User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
+
+**The cause.** main advances by `git merge` run INSIDE a shared writable working tree (merge_main.sh:339), so integration is a non-atomic four-step write — checkout, index, merge commit, hook — to a directory every session reads and writes. Every rule in AGENTS.md's coordination section compensates for this design: the mkdir lock, the index-equals-HEAD rule, the stash rule, the behind-main refusal, the merge-drop restore. None of them is the cause; each is a patch on it.
+
+**The surfaces.**
+1. §224 — the .hookstaged sweep sat behind 26 sys.exit(1) calls in pre-commit main(). The sweep exists because a hook killed mid-selftest leaves .hookstaged_* files in the SHARED tree; in a private worktree a leftover is disposable.
+2. §225 — a hook edited on a branch runs main's old copy. `.git/hooks/pre-commit` resolves against the shared integration tree's worktree, so the edited hook is not the installed hook until merged; the hoist appeared to work while shipping an UnboundLocalError only ruff caught.
+3. The cp -r mutant (cf3dbaea "probe 2", reverted 533a4639, refused since 0375ee1c) — a `cp -r` of a linked worktree kept the `.git` gitdir pointer, so a commit in /tmp/reg_moe landed on the real branch and merged to main carrying a SwiGLU mutant. The workaround exists because the integration tree cannot be experimented in.
+4. The .hookstaged leftovers — the measured instance behind §224: `runs/audit_0904/.hookstaged_dead_worlds.py` sat in the shared tree for hours across a dozen commits.
+5. The stash rule (AGENTS.md:369, `no_shared_stash`) — `.git/refs/stash` is one stack shared by every worktree of the one checkout; two sessions stashing in the same window each pop the other's entry.
+6. index-equals-HEAD (AGENTS.md:370) — a three-way merge writes the index of the shared working tree, so any staged record is clobbered by another session's merge, related path or not.
+7. Stranded merges — de's SIGKILLed merge_main on 2026-09-05 left the shared tree mid-merge; a killed merge in a shared tree leaves a staged tree without MERGE_HEAD for the next session (measured twice the same day).
+
+**The fix (tilerl, pending).** main advances only by compare-and-swap `git update-ref`; merges and hooks run in the committer's own worktree; the integration tree is no longer a checkout.
+
+**What becomes moot when the fix lands.**
+- §224's sweep and the .hookstaged leftovers (surface 4): no shared tree to pollute; the committer's worktree is disposable. MOOT.
+- §225: the edited hook IS the installed hook in the committer's own worktree. MOOT.
+- The cp -r mutant (surface 3): no shared checkout to copy or experiment around. MOOT.
+- index-equals-HEAD (surface 6) as a COORDINATION rule: another session's merge cannot touch your index. The local form — don't merge with a dirty index — survives as ordinary git hygiene. MOOT as coordination.
+- Stranded merges (surface 7): a killed merge affects only the committer's own worktree; the integration ref advances atomically. MOOT.
+- The stash rule (surface 5): NOT mooted — `.git/refs/stash` is shared across worktrees of the same repo regardless of the integration tree. Survives.
