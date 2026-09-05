@@ -3412,6 +3412,34 @@
       "uncertainty": "60 steps at batch 2 is a short run at a small micro-batch. An overflow that needs a larger activation magnitude, more steps, Muon, torch.compile, or a different model shape would not appear here.",
       "boundary": "Says nothing about whether the NaN happened when the comment was written. The inputs that comment was formed against no longer exist on the pod (data/sft/sft_v3.pt, ckpt_k3-mla_2b_step2000.pt), so the original condition cannot be re-run and this is a different shape by necessity, not by choice. Also says nothing about MoE: no MoE checkpoint exists yet, and model.py:1199 refuses MoE with grad_ckpt for an unrelated reason (tokens_per_expert double-counts under recompute, task b0-26).",
       "status": "measured"
+    },
+    {
+      "id": "eff.bf16_master_dense_200m_tps",
+      "claim": "throughput of the dense 200M control at world 2 with fp32 masters and bf16 autocast",
+      "value": "62K tok/s/gpu at step 30 and at step 100 (the run log's own field, printed as `{tps/1e3:.0f}K`, so the underlying tps is only known to lie in [61500, 62500))",
+      "measured": "2026-09-05",
+      "source": "pod /work/aupai/runs/b0_p5_ctrl_bf16.log (run b0_p5_ctrl_bf16, 100/100 steps, val 5.094, 432s); experiments.jsonl row started 2026-09-05 12:35, cards 1,2, commit 2007250b0b618bbab06f755df7ba505533aaaf66",
+      "config": {
+        "dim": 1024,
+        "layers": 12,
+        "heads": 8,
+        "ffn_hidden": 3072,
+        "batch": 16,
+        "accum": 2,
+        "seq": 4096,
+        "world": 2,
+        "cards": "1,2",
+        "steps": 100,
+        "grad_ckpt": false,
+        "seed": 42,
+        "mix": "data/mix_200m_8b.json",
+        "precision": "fp32 masters with bf16 autocast -- NEITHER --fp8 NOR --bf16 was passed, so the model was never cast; this is NOT a bf16-master measurement",
+        "peak_gib": 60.98,
+        "code_identity": "sha256(train.py+model.py) = 4efb96236e76f6d5f673c04c1700dc3b5ec920838b644878ebee5ac54a0ce6e8 at pod head b6dcf7bad6e8ef25fda3079db9c8647b15c527bd"
+      },
+      "uncertainty": "the log rounds to whole thousands, so this figure carries +/-0.8%. No full-precision record exists and none can be recovered: tps reaches only moe_diag.log_diag (train.py:3549, requires moe_layers -- this run is dense) and memory_diag.log_diag (train.py:3466, requires raw_model.memory -- this run built none). A ratio against another rounded figure is undecidable when the two land within ~1.5K of the bar.",
+      "boundary": "NOT the denominator of prereg moe_0905's readout 5'. That readout compares a MoE arm to its control at EQUAL precision, and this run has fp32 masters while the arm it was meant to pair with cannot run at all without a bf16 cast (torch._grouped_mm compiles only for bf16; run b0_p5_e1_bf16 was refused at step 0). Amendment 8's premise -- that dropping --fp8 yields bf16 -- was false, because --fp8 performs the cast as well as the fp8 conversion. Comparable only to another run in this same precision at this same shape.",
+      "status": "recorded"
     }
   ]
 }
