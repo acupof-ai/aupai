@@ -215,6 +215,10 @@ class Cfg:
     # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
     # expert lr (facts/memory_layers.json#mem.m1_key_usage_collapse).
     moe_router_lr = -1.0
+    # The ARM ID written into runs/moe_diag.jsonl ("e1", "e1b"). Empty is refused whenever
+    # moe_experts is set, for the reason mem_arm is: it is the only field recording which arm
+    # wrote a row, the ledger is append-only, and readout 3 compares E1b against E1.
+    moe_arm = ""
     vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
     # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
     # 2026-08-30), 16 so _fp8_ok passes and the fp8-head option stays open (same cost: the
@@ -1163,17 +1167,26 @@ def build_optimizers(model, cfg, master=None):
     # indexes opts[0] (Muon) and opts[1] (embed), so inserting a group earlier would repoint every
     # one of those readings, including scripts/embed_norm_sdr.py's ck["opt"][1].
     #
-    # DEFAULT = muon_lr, WHICH IS THE DENSE FFN'S OWN LR, resolved here rather than copied into
-    # Cfg so the two cannot drift. Ruling (f) says "the dense lr", and THERE IS NO cfg.lr -- I
-    # wrote `cfg.lr` first and it would have raised AttributeError at launch (Cfg carries muon_lr
-    # 0.01, embed_lr 0.1, scalar_lr 0.15 and no `lr`). muon_lr is the right reading of the ruling:
-    # the router should train at the rate the FFN it routes trains at, and the FFN is the Muon
-    # group. moe_router_lr > 0 overrides, and the value reaches ck["cfg"] either way so a reader
-    # never has to trust the launch line.
+    # DEFAULT = attn_res_lr (0.01), RULED BY 4c 2026-09-05 AFTER TWO WRONG ANSWERS. It is the
+    # repo's existing AdamW rate for a small learned MIXING MAP -- AttnRes's dynamic pseudo-query
+    # weights -- which is the closest analogue in this codebase to a router, so no new lr enters
+    # the arm.
+    #
+    # THE TWO THINGS IT IS NOT, recorded because each was written into this file first:
+    #   - NOT cfg.lr. There is no such field; it would have raised AttributeError at launch.
+    #   - NOT muon_lr. Under (c) the experts ARE the Muon group, so muon_lr is the expert rate --
+    #     and 4c's ruling (f) excludes deriving the router's rate from the expert group. The two
+    #     are also different optimizers, so "equal to the expert lr" was never a well-formed
+    #     comparison: a Muon lr and an AdamW lr are not the same unit.
+    # Both values are numerically 0.01 today. That coincidence is exactly why the REASON is
+    # written here: if muon_lr ever moves, the router must not follow it.
+    #
+    # moe_router_lr > 0 overrides, and the resolved value reaches ck["cfg"] either way, so a
+    # reader never has to trust the launch line.
     if moe_router:
         _r_lr = float(getattr(cfg, "moe_router_lr", -1.0))
         if _r_lr <= 0:
-            _r_lr = float(cfg.muon_lr)
+            _r_lr = float(getattr(cfg, "attn_res_lr", 0.01))
         opts.append(
             torch.optim.AdamW(
                 moe_router,
@@ -2352,6 +2365,10 @@ def main():
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
     # NOT in the int loop above: this one is a comma string, and model._mem_layers parses the
     # string and the list form in one place so both spellings build the same architecture.
+    parser.add_argument("--moe_arm", type=str, default=None,
+                        help="MoE: the ARM ID for runs/moe_diag.jsonl (e1/e1b). Required with "
+                             "--moe_experts; not derived from --name, which carries a prefix "
+                             "and a date")
     parser.add_argument("--moe_layers", type=str, default=None,
                         help="MoE: block indices that replace their dense FFN, \"0-11\", \"0,3,6\" or a list "
                              "(default: Cfg.moe_layers). Parsed by model._moe_layers in ONE place so a "
@@ -2512,6 +2529,17 @@ def main():
             "the only field in runs/memory_diag.jsonl that records which arm a row came from, "
             "the ledger is append-only, and readout 3 compares the arms' curves. Not the run "
             "name -- that carries a prefix and a date."
+        )
+    # Same shape for the MoE arm, and the same reason: runs/moe_diag.jsonl is append-only and
+    # `name` is the only field that says which arm wrote a row. Readout 3 is E1b vs E1, so two arms
+    # writing under one name folds two curves together unrecoverably. Checked before the model is
+    # built so the run dies in a second rather than at the first diag write 100 steps in.
+    if Cfg.moe_experts and not str(getattr(Cfg, "moe_arm", "")).strip():
+        raise SystemExit(
+            "--moe_experts is set but --moe_arm is empty. Pass the ARM ID (e1 or e1b): it is the "
+            "only field in runs/moe_diag.jsonl that records which arm a row came from, the ledger "
+            "is append-only, and readout 3 compares the arms' curves. Not the run name -- that "
+            "carries a prefix and a date."
         )
     # --d/--heads off the default pair is a shape experiment; head_dim is not free.
     # The FlashKDA CUTLASS kernel is compiled for head_dim 128 and a mismatch is an
@@ -3351,6 +3379,54 @@ def main():
                         except Exception as _e:  # noqa: BLE001 -- see the comment above
                             runlog(f"step {step}/{total_steps} memory_diag write FAILED, run "
                                    f"continues: {type(_e).__name__}: {_e}")
+                # READOUT 4 OF moe_0905, the same cadence and the same guarantees as the
+                # memory block above, and deliberately a SEPARATE block rather than a branch inside
+                # it: the two ledgers have different schemas and stop rules, and an arm can never
+                # be both (MoEFFN replaces the FFN, the memory pool runs parallel to it).
+                if _diag_due and getattr(raw_model, "moe_layers", None):
+                    # THE FIRST MoE LAYER IS THE ONE THAT REPORTS. Every MoE layer keeps its own
+                    # counters, and averaging them would hide the case readout 4 exists to catch --
+                    # one layer's router collapsing while the others stay spread reads as a healthy
+                    # mean. Reporting layer 0 makes the row about a specific router; a per-layer
+                    # ledger is the better instrument and is not what the row registers.
+                    _moe = raw_model.blocks[raw_model.moe_layers[0]].ffn
+                    if ddp:
+                        # SUMMED ACROSS RANKS, not MAX. tokens_per_expert is a COUNT, so the
+                        # window's true load is the sum over ranks -- MAX (which memory_diag uses
+                        # for `touched`, a bool union) would understate the load and inflate the
+                        # entropy. windows is identical on every rank because _diag_due is computed
+                        # from `step` alone, so it is not reduced.
+                        torch.distributed.all_reduce(
+                            _moe.tokens_per_expert, op=torch.distributed.ReduceOp.SUM)
+                    _od = _moe.diagnostics(reset=True)
+                    # Guarded for the reason the memory write is: a diagnostics writer is a
+                    # dependency the observed run never asked for, and data/ledger_schema.json
+                    # reaching the pod late has already nearly killed a two-card run. Only the
+                    # write is wrapped -- the all_reduce above must propagate, because ranks out of
+                    # step would hang the next reduction.
+                    try:
+                        import moe_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+
+                        moe_diag.log_diag(
+                            name=Cfg.moe_arm,
+                            step=step,
+                            usage_frac=_od["usage_frac"],
+                            entropy_norm=_od["entropy_norm"],
+                            load_gini=_od["load_gini"],
+                            tokens=_od["tokens"],
+                            window_steps=_od["window_steps"],
+                            n_routed=_od["n_routed"],
+                            top_k=_moe.top_k,
+                            # READOUT 5 IS DEFINED AT STEPS 30 AND 100 ONLY: from step 200 on,
+                            # co-resident jobs moved the control's own throughput from 82K to 46K,
+                            # so a later same-step ratio measures co-residency rather than the
+                            # architecture (facts/memory_layers.json#mem.m1_throughput_cost).
+                            # Omitted rather than written as a number outside that window.
+                            tok_s_gpu=(tps if step in (30, 100) else None),
+                        )
+                    except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
+                        runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
+                               f"continues: {type(_e).__name__}: {_e}")
                 if step >= total_steps:
                     break
 

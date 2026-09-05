@@ -1,0 +1,19 @@
+=== code domain shard bytes and counts
+code                 shards=3     bytes=232707019
+code_dedup08         shards=298   bytes=30161006456
+code_py_rp1t         shards=16    bytes=1514852051
+code_py_starcoder    shards=284   bytes=29576274579
+code_rp1t            shards=235   bytes=24542370091
+code_rp1t_rest       shards=0     bytes=0
+=== token caches for those domains, on NVMe
+code                 230279173
+code_dedup08         no cache
+code_py_rp1t         1683425021
+code_py_starcoder    35147667156
+code_rp1t            30276327900
+code_rp1t_rest       no cache
+=== df
+Filesystem         1B-blocks          Used         Avail Use% Mounted on
+overlay        2164450414592 1547371155456  529033183232  75% /
+/dev/nvme2n1   3779302981632  516209262592 3071039143936  15% /mnt/data02
+exit=0
