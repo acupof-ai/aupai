@@ -1321,6 +1321,96 @@
       "uncertainty": "Exact counts, not estimates. They say nothing about whether the items are GOOD -- distractor plausibility, prompt truncation quality and whether an API name is guessable from the prefix are unmeasured, and no model has scored this file.",
       "boundary": "Consistency of the artifact only. It is not evidence the readout would have been well-powered: the control's own accuracy against the 0.25 chance floor was never measured, so whether this probe can separate an arm from chance at this scale remains unknown.",
       "status": "measured"
+    },
+    {
+      "id": "cont.s_inject_shards_0905",
+      "status": "measured",
+      "measured": "2026-09-05",
+      "unit": "sha256 of the shard file as built",
+      "value": {
+        "shards": {
+          "s_inject_n1": {
+            "sha256": "4d1f9af1db46232c35a14b9ad93e8ab6aecf1e72184173c1e0042e9a52844ebd",
+            "lines": 1001,
+            "documents": 1000,
+            "exposures": 1
+          },
+          "s_inject_n8": {
+            "sha256": "79fea9ef3079d4293e1775a8552df110019930985509cfd5ede7f06aa06031e7",
+            "lines": 8001,
+            "documents": 8000,
+            "exposures": 8
+          },
+          "s_inject_n64": {
+            "sha256": "9c107863590aa454c4db98849cd3d2da6d76433eb4c11049ec9b43c8f5dd4cd4",
+            "lines": 64001,
+            "documents": 64000,
+            "exposures": 64
+          },
+          "s_inject_n256": {
+            "sha256": "f9dbf542fbbdd36347194603d3d9c7e14932c971e3d401284019d0ced7c16fc5",
+            "lines": 256001,
+            "documents": 256000,
+            "exposures": 256
+          },
+          "p_format": {
+            "sha256": "3d9bdcd4a23dc612f01854b0bdd644c16e7293bd1bd477227b4059f914eed881",
+            "lines": 1001,
+            "documents": 1000,
+            "exposures": 1
+          }
+        },
+        "path_form": "data/corpus/<name>/<name>_000.jsonl -- one directory per shard, one file, first line a header object, then one {text, _s_index, _exposure} per line. The _000 suffix is required: train.py's SHARD_RE is `_\\d{3,}\\.jsonl$` and _domain_seqs REFUSES a non-matching name rather than skipping it.",
+        "lines_is_documents_plus_one": "every count above is documents + 1 header line; the header is not a training document",
+        "built_twice_and_compared": {
+          "why": "the shards are gitignored (.gitignore:28, `data/corpus/*/`), so they cannot travel by commit and cannot be pushed with scripts/pod_push.sh. Each side builds them from committed code, and the shas are the only evidence the two sides hold the same corpus. 114.6 MB locally; podput of a 256k-document shard was not attempted.",
+          "local": "/Users/bytedance/code/aupai-e1, shasum -a 256",
+          "pod": "/work/aupai, sha256sum, driven by runs/s_inject_pod_build.sh",
+          "result": "all five identical on both sides, and the line counts identical",
+          "pod_shas_recomputed_not_read": "the five pod digests above came from running sha256sum on the pod's files, NOT from reading the SHA lines the build script wrote into its log on the pod. The log's lines agree. It is not cited as a source and does not exist in this tree -- facts_well_formed FAILED on the first version of this entry for citing it, correctly: a source path absent from the tree is a citation nobody can follow."
+        },
+        "provenance": {
+          "builder": "datagen/build_s_inject.py at c97dbeea, file sha256 6391daea660bdecf405d2eccc439148578e42881e8ccc41c792dd7cc5c998d72",
+          "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88 -- a committed script, not an inline command, because ~/bin/pod re-parses argv in a shell: parentheses raise a syntax error and quotes are word-split. It calls /usr/bin/python3 by absolute path.",
+          "source_pools": {
+            "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
+            "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59"
+          },
+          "seeds": {
+            "s_inject_n1": 20260906,
+            "s_inject_n8": 20260913,
+            "s_inject_n64": 20260969,
+            "s_inject_n256": 20261161,
+            "p_format": 20260906,
+            "rule": "seed + n_exposures, so each shard's interleaving is its own permutation and no two shards share a document order"
+          },
+          "each_shard_carries_its_own_header": "family, exposures, n_docs, documents, seed, source, source_sha256 -- read back from all five and checked against these values rather than against the build command"
+        },
+        "verified_by_reading_every_row": {
+          "distinct_documents": "1000 in every shard, all five",
+          "copies_per_document": "exactly n_exposures, uniform -- 1/8/64/256, no document over- or under-represented",
+          "documents_per_exposure": "exactly 1000 in every exposure of every shard",
+          "interleaving": "a seeded permutation over all (document, exposure) pairs, not contiguous blocks -- so n256's 256th copy of a document is not adjacent to its 255th"
+        },
+        "test_set_disjointness": {
+          "S_pool x S_test_4way overlap by (program, operands)": 0,
+          "docs_containing_a_verbatim_test_instruction": "0 of 1000 in s_inject_n1",
+          "S_test_4way": "1000 rows, 1000 distinct (program, operands) keys, 1000 distinct instruction strings",
+          "what_this_does_not_say": "disjointness of KEYS and of the instruction string, not of the skill. The injected documents teach the operator with worked steps on other operands, which is the intervention -- the experiment measures transfer to unseen operands, so key-level disjointness is the requirement and semantic novelty is not claimed here."
+        },
+        "document_form": "instruction, then the worked chain one step per line, then the bare answer. Measured on s_inject_n1's first document: the same instruction string the test uses, then `3 * 7 - 2 * 5 + 1 = 12` style lines including the carry line `-11 + 10 = -1`, then `18`."
+      },
+      "source": "shasum -a 256 data/corpus/*/[ps]*_000.jsonl locally and sha256sum on the pod at /work/aupai, both recomputed live at 2026-09-05T09:1xZ. The pod build also wrote its own SHA lines to a log under runs/ on the pod; that log is NOT cited as a source and NOT in this tree, because a log line records the build moment and would still read correct if the file changed afterwards. Structure, header and disjointness counts from a direct read of every row of all five shards plus data/probes/novel_ops/S_test_4way.jsonl and data/probes/novel_ops/S_pool.jsonl; builder datagen/build_s_inject.py@c97dbeea --selftest passes",
+      "config": {
+        "builder": "datagen/build_s_inject.py at c97dbeea",
+        "pod_driver": "runs/s_inject_pod_build.sh at 5d21ac88",
+        "n": "[1, 8, 64, 256] exposures, plus p_format as the composition control at 1",
+        "n_docs": 1000,
+        "base_seed": 20260906,
+        "for": "runs/prereg.jsonl#conversion_rate_0905 -- the five world-2 arms of experiment 1 (n1, n8, n64, n256, control_arm), 500 steps each"
+      },
+      "uncertainty": "The digests are exact and they agree across two independent builds. What they cannot say is that either build is the one a future run will read: the shards are gitignored, so a checkout does not carry them and `harness check` cannot verify them from the tree. A differing digest after a rebuild means the CODE or the SOURCE POOL changed, because build_s_inject.py is deterministic at these seeds -- and build_s_inject.py REFUSES to overwrite an existing shard directory for exactly that reason (a rebuild at a different seed changes the exposure schedule while the vocab and source stamps still match, so a stale cache would look fresh).",
+      "boundary": "This entry freezes the CORPUS ARTIFACTS, not the readout and not the claim. It says nothing about what the arms measure; that is runs/prereg.jsonl#conversion_rate_0905 and the instrument it pins (cont.novel_ops_frozen_sets, whose four-way floor is 0.364 diamond_chain / 0.294 diamond_chain4 and must be read per program). The disjointness numbers are key-level and instruction-string-level only. p_format shares S's document FORM and differs in composition, and per cont.novel_ops_frozen_sets it also differs in operand magnitude (means 9.9 vs 48.6), so any S-minus-P number from these shards carries that confound. No arm has yet been scored against these shards: at the time of writing experiment 1 has not launched."
     }
   ]
 }
