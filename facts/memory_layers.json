@@ -1,0 +1,78 @@
+{
+  "_comment": [
+    "Sparse product-key memory layers: what a reachable-capacity table bought and what it cost.",
+    "Charter docs/standards/memory_layers_0905.md; pre-registration runs/prereg.jsonl#memory_layers_0905.",
+    "",
+    "EVERY FACT HERE IS FROM A STOPPED ARM. M1, M2 and M3 were stopped 2026-09-05 by the",
+    "controller under pre-registered readout 4 (key-usage collapse), so none of them ran to the",
+    "3815 steps their primary readout was registered for. The numbers are real measurements of a",
+    "partial run, and each one says so in its own boundary field rather than relying on this note.",
+    "",
+    "THE VAL NUMBERS ARE NOT READOUT 1. Readout 1 is block-paired doc_cu val from",
+    "runs/score_matrix.jsonl, scored after a run ends; these are the in-training validate() calls",
+    "at train.py:3053, 20 batches of the val split. They are comparable between the two runs",
+    "(same split, same batch, same seed, same corpus fingerprint -- all verified, see the config",
+    "field) and they are NOT the estimator the adopt/null bars were written for. A reader who",
+    "compares -0.013 against the -0.010 adopt bar is comparing two different quantities."
+  ],
+  "facts": [
+    {
+      "id": "mem.m1_train_val_delta_500_1000",
+      "value": "M1 (1,048,576-value product-key table, 1.07B memory params, one pooled layer) minus the memory-off control on in-training val: -0.013 nat at step 500 (2.904 vs 2.917), +0.003 nat at step 1000 (2.592 vs 2.589). The advantage present at 500 is gone by 1000.",
+      "measured": "2026-09-05",
+      "source": "runs/b0_mem_m1.log:85,136 and runs/b0_headmix_armA.log:76,127 (pod, /work/aupai); train.py:3067 writes the line",
+      "config": {
+        "estimator": "in-training validate() at train.py:3053, Cfg.val_every 500, Cfg.val_batches 20 = 20 x batch 16 x seq 4096 = 1,310,720 val tokens. NOT readout 1's block-paired doc_cu val.",
+        "arm": "b0_mem_m1, --mem_values 1048576 --mem_top_k 32 --mem_layers 6 --no-mem_sparse, fp32 table master, world 2",
+        "control": "b0_headmix_armA, identical launch line without the memory flags",
+        "comparability_verified": "same mix data/mix_200m_8b.json, same corpus_fp (sha256 of the corpus_fp line identical in both logs, b8cac4ca42f1), seed 42 / sample_seed 42 both, same batch 16 accum 2 seq 4096 doc_mask True attn_res True, same val split and val_batches -- so the two val numbers are on the same data",
+        "dense_params": "206,128,200 in BOTH arms, difference exactly 0 (the memory is parallel to the FFN, never replacing it); memory adds 1,077,937,152, so M1 is 6.23x the control's parameter count",
+        "tokens_seen": "0.131B at step 500, 0.262B at step 1000 (step x batch 16 x accum 2 x seq 4096 x world 2)"
+      },
+      "uncertainty": "NO ERROR BAR AND NO SEED REPLICATE. One run per side, one seed, and the val estimator is 20 batches. Two points 0.016 nat apart on a single seed cannot separate a real effect from run-to-run noise, and nothing here measures that noise -- the control's own seed-to-seed spread at these steps is unmeasured. Treat the sign change between 500 and 1000 as un-resolved rather than as a trend.",
+      "boundary": "M1 was STOPPED at step 1065 of 3815 under readout 4, so this is a partial-run reading and says nothing about the 1B-token endpoint the charter registered. Also: the arm was collapsing across exactly this interval (pool_touched_frac 0.214 at step 200 -> 0.137 -> 0.113 -> 0.099 -> 0.0945 at step 1000, runs/memory_diag.jsonl), so a table using ~6% of its rows produced these numbers, not a healthy one. It is evidence about a collapsed table, not about the design.",
+      "status": "recorded"
+    },
+    {
+      "id": "mem.m1_key_usage_collapse",
+      "value": "M1's selection distribution concentrated monotonically over 1000 steps: pool_touched_frac per 100-step window 0.306 (step 100) -> 0.214 -> 0.137 -> 0.113 -> 0.099 -> 0.095 -> 0.094 -> 0.094 -> 0.092 -> 0.0945 (step 1000), key_gini 0.781 -> 0.9192, topk_entropy 2.371 -> 0.927 against a ln(32) = 3.466 maximum. M3 (1,428,025 values) was steeper: 0.070 by step 600. Readout 4's stop rule (below 0.20 at step 1000) fired.",
+      "measured": "2026-09-05",
+      "source": "runs/memory_diag.jsonl (25 rows, rescued from the pod at 8edeb1a0); memory_diag.stop_rules re-derives the firing from the repo",
+      "config": {
+        "windows": "the 100-step rows are uniform from step 100 onward; the step-100 row covers steps 31-100 (70 steps) and the 10/20/30 rows cover 10 each, because diagnostics(reset=True) clears the counters -- so the early rows are NOT comparable to the later ones and are excluded from the trend above except as the step-100 anchor",
+        "arms": "m1 13 rows (steps 10-1000), m2 3 rows (10-30), m3 9 rows (10-600)",
+        "readout_6": "rows_changed_since_prev stayed at 1.09-1.25 of touched rows at every window in all three arms, so the value-table WRITES landed; the defect is entirely in which rows were selected"
+      },
+      "uncertainty": "pool_touched_frac at world 2 is MAX-reduced across ranks before the row is written, so it is the union of both ranks' touched sets in the window. A world-1 measurement of the same arm is not comparable to these numbers.",
+      "boundary": "three arms, one seed each, one backbone (d1024 L12 h8 ffn3072), one pool position (layer 6), one top_k (32), Adagrad at mem_lr 0.02 for all six memory tensors in ONE group. Whether the collapse is a property of product-key memory or of this optimizer configuration is NOT settled by these rows -- the six-cell probe (runs/mem_probe_*.sh) is what would settle it and is on hold.",
+      "status": "recorded"
+    },
+    {
+      "id": "mem.m1_throughput_cost",
+      "value": "One pooled memory layer at 1,048,576 values costs ~10% of throughput: M1 73,712 tok/s/gpu at step 30 and 73,883 at step 100 against the control's 82,300 -- ratios 0.896 and 0.898. M3 (1,428,025) read 0.886 and 0.889; M2 (262,144) read 0.919 at step 30. All above the charter's 0.85 stop bar, so readout 5 never fired on the collapse.",
+      "measured": "2026-09-05",
+      "source": "runs/memory_diag.jsonl tok_s_gpu field; control 82,300 from runs/mem_decomp_0905.jsonl (tilerl's five-cell decomposition, charter amendment 10)",
+      "config": {
+        "shape": "d1024 L12 h8 ffn3072 batch 16 accum 2 seq 4096, no grad_ckpt, fp8, expandable_segments, world 2, one pooled layer at index 6",
+        "read_at": "steps 30 and 100 only. Later steps are NOT usable for this ratio: from step 200 on, several arms shared the machine and the control's own log reads 56K at step 200 and 46K at step 400, so a same-step comparison after 100 measures co-residency, not the memory."
+      },
+      "uncertainty": "single run per arm; tok/s/gpu is a 10-step window, and the step-30 window sits inside warmup. The control figure comes from a different run than the arms, matched on shape rather than measured side-by-side in the same hour.",
+      "boundary": "one pooled layer. tilerl measured three layers at 0.79 (amendment 10), so this number does not extrapolate across layer count; 382 of the 424 ms excess at three layers was per-layer.",
+      "status": "recorded"
+    },
+    {
+      "id": "mem.table_bytes_per_param",
+      "value": "A bf16 value table with the fp32 table master costs 12 B/param in steady state (weight 2 + model grad 2 + Adagrad sum 4 + master 4) and 16 B/param inside the step, when pull_grads holds the master's fp32 gradient. Without the master it is 6 B/param, not the 12 the charter originally assumed: train.py's `raw_model.to(torch.bfloat16)` under --fp8 casts nn.Embedding too, so the table, its dense grad and Adagrad's accumulator are all bf16.",
+      "measured": "2026-09-05",
+      "source": "runs/b0_mem_m3_peak_1195_pair.json (world-1 --peak-only pair at side 1195, with and without the master); the 6 B/param figure measured twice, at side 1448 and 1195",
+      "config": {
+        "measured_how": "scripts/profile_step_cost.py --peak-only, reporting the tensors' actual dtypes rather than their declared ones; the with-master run constructs TableMaster exactly as train.py does",
+        "at_side_1195": "peak 77.52 GiB reserved with the master against 63.48 without; the master's own cost 14.04 GiB of which 13.62 is its tensors and 0.42 allocator behaviour",
+        "throughput_cost_of_the_master": "opt_step 66.65 -> 83.58 ms (+25%), step_total 1929.98 -> 1938.14 (+0.42%), throughput ratio 0.9941"
+      },
+      "uncertainty": "world 1, so the world-2 residual (NCCL buffers, DDP bucket) is absent and the absolute peak at the arm's world is not this number. The 12/16 split is arithmetic over measured dtypes, not a measured allocator high-water mark for the steady state specifically.",
+      "boundary": "measured at sides 1448 and 1195 with d1024. The dtype finding is a property of the --fp8 cast path, so it holds for any nn.Embedding in this codebase under that flag, but the GiB figures are shape-specific.",
+      "status": "recorded"
+    }
+  ]
+}

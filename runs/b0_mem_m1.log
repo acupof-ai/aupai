@@ -1,0 +1,303 @@
+pod code: 90c3a2790e0115b2753dfaac519834f17dc0692f (clean, synced 2026-09-04T22:32:20Z, manifest verified)
+W0904 22:35:00.847000 915706 torch/distributed/run.py:851] 
+W0904 22:35:00.847000 915706 torch/distributed/run.py:851] *****************************************
+W0904 22:35:00.847000 915706 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0904 22:35:00.847000 915706 torch/distributed/run.py:851] *****************************************
+corpus_fp: {'math_owm_stage2': '1e687e4b5ce37598', 'en_c4_stage2': '05e0fc6f14704056', 'cot': '388496b76ed9bf88', 'textbook_30b': '3f237c5191cb8571', 'chatml': '52a6b427818c90ff', 'chat_qa': '42a4bedde020ae66', 'zh_web': 'a0d44fc44a289d60', 'code_py_starcoder': 'e1a14839e11f3e6f', 'code_py_rp1t': '63c2b3ce0e7dd989'}
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W904 22:35:16.010562277 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: math_owm_stage2 516168 rows = 0.32 epochs
+mix: en_c4_stage2 317642 rows = 0.55 epochs
+mix: cot 157606 rows = 1.60 epochs
+mix: textbook_30b 198526 rows = 0.51 epochs
+mix: chatml 14468 rows = 1.60 epochs
+mix: chat_qa 14166 rows = 1.60 epochs
+mix: zh_web 59558 rows = 0.01 epochs
+mix: code_py_starcoder 643969 rows = 0.30 epochs
+mix: code_py_rp1t 31020 rows = 0.32 epochs
+mix: 1953123 rows = 8.00B tokens scheduled
+FP8 compute enabled
+params 1284.1M | tokens 976561 | seqs 976561 | device cuda:0 | world 2 | fa True | fp8 True
+cfg batch 16 accum 2 seq 4096 grad_ckpt False doc_mask True attn_res True/0 softcap 15.0 warmup 300 epochs 1 lr_scale 1.0 mix data/mix_200m_8b.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.1 anneal_frac 0.0 val_every 500 attn_every 4
+cfg non-default: accum=2, anneal_frac=0.0, batch=16, mem_arm='m1', mem_layers='6', mem_sparse=False, mem_values=1048576, mix='data/mix_200m_8b.json', warmdown=0.1, warmup=300
+fp32 table master: 1.07B params, 4.00 GiB master + 4.00 GiB its gradient (readout 6 measures whether it was needed)
+dynamo cache_size_limit=64 (need 25)
+[rank0]:W0904 22:38:42.891000 915851 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0904 22:38:42.976000 915852 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+step 10/3815 0% [main] | loss 7.362 | lr 3.33e-04 (muon 3.33e-04 embed 3.33e-03 scalar 5.00e-03 arq 3.33e-04 mem 6.67e-04) | gnorm 2.66 | 0.00B tok | 32K tok/s/gpu | MFU 13% | peak 66.51GiB | ETA 4.4h
+step 20/3815 1% [main] | loss 5.675 | lr 6.67e-04 (muon 6.67e-04 embed 6.67e-03 scalar 1.00e-02 arq 6.67e-04 mem 1.33e-03) | gnorm 0.80 | 0.01B tok | 73K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.9h
+step 30/3815 1% [main] | loss 5.921 | lr 1.00e-03 (muon 1.00e-03 embed 1.00e-02 scalar 1.50e-02 arq 1.00e-03 mem 2.00e-03) | gnorm 1.58 | 0.01B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.9h
+step 40/3815 1% [main] | loss 5.637 | lr 1.33e-03 (muon 1.33e-03 embed 1.33e-02 scalar 2.00e-02 arq 1.33e-03 mem 2.67e-03) | gnorm 2.11 | 0.01B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.9h
+step 50/3815 1% [main] | loss 5.509 | lr 1.67e-03 (muon 1.67e-03 embed 1.67e-02 scalar 2.50e-02 arq 1.67e-03 mem 3.33e-03) | gnorm 1.73 | 0.01B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.9h
+step 60/3815 2% [main] | loss 5.436 | lr 2.00e-03 (muon 2.00e-03 embed 2.00e-02 scalar 3.00e-02 arq 2.00e-03 mem 4.00e-03) | gnorm 1.47 | 0.02B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 70/3815 2% [main] | loss 4.875 | lr 2.33e-03 (muon 2.33e-03 embed 2.33e-02 scalar 3.50e-02 arq 2.33e-03 mem 4.67e-03) | gnorm 1.40 | 0.02B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.8h
+step 80/3815 2% [main] | loss 4.783 | lr 2.67e-03 (muon 2.67e-03 embed 2.67e-02 scalar 4.00e-02 arq 2.67e-03 mem 5.33e-03) | gnorm 1.51 | 0.02B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.8h
+step 90/3815 2% [main] | loss 5.203 | lr 3.00e-03 (muon 3.00e-03 embed 3.00e-02 scalar 4.50e-02 arq 3.00e-03 mem 6.00e-03) | gnorm 2.14 | 0.02B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.8h
+step 100/3815 3% [main] | loss 4.993 | lr 3.33e-03 (muon 3.33e-03 embed 3.33e-02 scalar 5.00e-02 arq 3.33e-03 mem 6.67e-03) | gnorm 2.38 | 0.03B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.8h
+step 110/3815 3% [main] | loss 4.770 | lr 3.67e-03 (muon 3.67e-03 embed 3.67e-02 scalar 5.50e-02 arq 3.67e-03 mem 7.33e-03) | gnorm 1.81 | 0.03B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.8h
+step 120/3815 3% [main] | loss 4.632 | lr 4.00e-03 (muon 4.00e-03 embed 4.00e-02 scalar 6.00e-02 arq 4.00e-03 mem 8.00e-03) | gnorm 1.90 | 0.03B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 130/3815 3% [main] | loss 4.231 | lr 4.33e-03 (muon 4.33e-03 embed 4.33e-02 scalar 6.50e-02 arq 4.33e-03 mem 8.67e-03) | gnorm 2.28 | 0.03B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 140/3815 4% [main] | loss 4.236 | lr 4.67e-03 (muon 4.67e-03 embed 4.67e-02 scalar 7.00e-02 arq 4.67e-03 mem 9.33e-03) | gnorm 2.53 | 0.04B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.8h
+step 150/3815 4% [main] | loss 4.373 | lr 5.00e-03 (muon 5.00e-03 embed 5.00e-02 scalar 7.50e-02 arq 5.00e-03 mem 1.00e-02) | gnorm 4.72 | 0.04B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 160/3815 4% [main] | loss 4.241 | lr 5.33e-03 (muon 5.33e-03 embed 5.33e-02 scalar 8.00e-02 arq 5.33e-03 mem 1.07e-02) | gnorm 3.66 | 0.04B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 170/3815 4% [main] | loss 3.524 | lr 5.67e-03 (muon 5.67e-03 embed 5.67e-02 scalar 8.50e-02 arq 5.67e-03 mem 1.13e-02) | gnorm 3.92 | 0.04B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.8h
+step 180/3815 5% [main] | loss 3.454 | lr 6.00e-03 (muon 6.00e-03 embed 6.00e-02 scalar 9.00e-02 arq 6.00e-03 mem 1.20e-02) | gnorm 4.03 | 0.05B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 190/3815 5% [main] | loss 3.917 | lr 6.33e-03 (muon 6.33e-03 embed 6.33e-02 scalar 9.50e-02 arq 6.33e-03 mem 1.27e-02) | gnorm 1.64 | 0.05B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.8h
+step 200/3815 5% [main] | loss 3.246 | lr 6.67e-03 (muon 6.67e-03 embed 6.67e-02 scalar 1.00e-01 arq 6.67e-03 mem 1.33e-02) | gnorm 3.25 | 0.05B tok | 53K tok/s/gpu | MFU 22% | peak 66.51GiB | ETA 2.5h
+step 210/3815 6% [main] | loss 3.322 | lr 7.00e-03 (muon 7.00e-03 embed 7.00e-02 scalar 1.05e-01 arq 7.00e-03 mem 1.40e-02) | gnorm 2.12 | 0.06B tok | 72K tok/s/gpu | MFU 30% | peak 66.53GiB | ETA 1.8h
+step 220/3815 6% [main] | loss 2.925 | lr 7.33e-03 (muon 7.33e-03 embed 7.33e-02 scalar 1.10e-01 arq 7.33e-03 mem 1.47e-02) | gnorm 2.27 | 0.06B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.8h
+step 230/3815 6% [main] | loss 3.340 | lr 7.67e-03 (muon 7.67e-03 embed 7.67e-02 scalar 1.15e-01 arq 7.67e-03 mem 1.53e-02) | gnorm 1.45 | 0.06B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.8h
+step 240/3815 6% [main] | loss 2.794 | lr 8.00e-03 (muon 8.00e-03 embed 8.00e-02 scalar 1.20e-01 arq 8.00e-03 mem 1.60e-02) | gnorm 3.09 | 0.06B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.8h
+step 250/3815 7% [main] | loss 3.513 | lr 8.33e-03 (muon 8.33e-03 embed 8.33e-02 scalar 1.25e-01 arq 8.33e-03 mem 1.67e-02) | gnorm 2.95 | 0.07B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.8h
+step 260/3815 7% [main] | loss 2.900 | lr 8.67e-03 (muon 8.67e-03 embed 8.67e-02 scalar 1.30e-01 arq 8.67e-03 mem 1.73e-02) | gnorm 1.17 | 0.07B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.7h
+step 270/3815 7% [main] | loss 3.547 | lr 9.00e-03 (muon 9.00e-03 embed 9.00e-02 scalar 1.35e-01 arq 9.00e-03 mem 1.80e-02) | gnorm 1.62 | 0.07B tok | 74K tok/s/gpu | MFU 31% | peak 66.54GiB | ETA 1.7h
+step 280/3815 7% [main] | loss 3.000 | lr 9.33e-03 (muon 9.33e-03 embed 9.33e-02 scalar 1.40e-01 arq 9.33e-03 mem 1.87e-02) | gnorm 1.16 | 0.07B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 290/3815 8% [main] | loss 2.958 | lr 9.67e-03 (muon 9.67e-03 embed 9.67e-02 scalar 1.45e-01 arq 9.67e-03 mem 1.93e-02) | gnorm 2.39 | 0.08B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 300/3815 8% [main] | loss 2.374 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.55 | 0.08B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.7h
+step 310/3815 8% [main] | loss 3.479 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.01 | 0.08B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 320/3815 8% [main] | loss 2.837 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.69 | 0.08B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 330/3815 9% [main] | loss 2.969 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.91 | 0.09B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.7h
+step 340/3815 9% [main] | loss 3.419 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.14 | 0.09B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 350/3815 9% [main] | loss 2.847 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.21 | 0.09B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.7h
+step 360/3815 9% [main] | loss 2.917 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.05 | 0.09B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.7h
+step 370/3815 10% [main] | loss 2.205 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.01 | 0.10B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.7h
+step 380/3815 10% [main] | loss 2.472 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.68 | 0.10B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.7h
+step 390/3815 10% [main] | loss 2.584 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.63 | 0.10B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.7h
+step 400/3815 10% [main] | loss 2.938 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.52 | 0.10B tok | 51K tok/s/gpu | MFU 21% | peak 66.53GiB | ETA 2.5h
+step 410/3815 11% [main] | loss 2.992 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.10 | 0.11B tok | 72K tok/s/gpu | MFU 30% | peak 66.51GiB | ETA 1.7h
+step 420/3815 11% [main] | loss 2.629 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.13 | 0.11B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 430/3815 11% [main] | loss 2.902 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.93 | 0.11B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.7h
+step 440/3815 12% [main] | loss 2.926 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.52 | 0.12B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.7h
+step 450/3815 12% [main] | loss 2.594 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.75 | 0.12B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.7h
+step 460/3815 12% [main] | loss 2.498 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.55 | 0.12B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.7h
+step 470/3815 12% [main] | loss 2.959 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.56 | 0.12B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.6h
+step 480/3815 13% [main] | loss 2.466 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.49 | 0.13B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.6h
+step 490/3815 13% [main] | loss 2.247 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.15 | 0.13B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.6h
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+step 500/3815 val 2.904
+step 500/3815 13% [main] | loss 2.446 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.44 | 0.13B tok | 38K tok/s/gpu | MFU 16% | peak 66.51GiB | ETA 3.1h
+step 510/3815 13% [main] | loss 2.354 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.83 | 0.13B tok | 70K tok/s/gpu | MFU 29% | peak 66.51GiB | ETA 1.7h
+step 520/3815 14% [main] | loss 2.712 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.44 | 0.14B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.6h
+step 530/3815 14% [main] | loss 2.818 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.73 | 0.14B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.6h
+step 540/3815 14% [main] | loss 2.582 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.88 | 0.14B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.6h
+step 550/3815 14% [main] | loss 2.341 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.89 | 0.14B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.6h
+step 560/3815 15% [main] | loss 2.716 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.79 | 0.15B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.6h
+step 570/3815 15% [main] | loss 2.796 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.53 | 0.15B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.6h
+step 580/3815 15% [main] | loss 2.404 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.70 | 0.15B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.6h
+step 590/3815 15% [main] | loss 2.464 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.99 | 0.15B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.6h
+step 600/3815 16% [main] | loss 2.282 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.81 | 0.16B tok | 53K tok/s/gpu | MFU 22% | peak 66.52GiB | ETA 2.2h
+step 610/3815 16% [main] | loss 2.805 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.52 | 0.16B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.6h
+step 620/3815 16% [main] | loss 2.812 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.70 | 0.16B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.6h
+step 630/3815 17% [main] | loss 2.122 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.59 | 0.17B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.6h
+step 640/3815 17% [main] | loss 1.933 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.77 | 0.17B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.6h
+step 650/3815 17% [main] | loss 2.526 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.90 | 0.17B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.6h
+step 660/3815 17% [main] | loss 2.922 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.89 | 0.17B tok | 74K tok/s/gpu | MFU 31% | peak 66.54GiB | ETA 1.6h
+step 670/3815 18% [main] | loss 2.192 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.71 | 0.18B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 680/3815 18% [main] | loss 2.652 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.93 | 0.18B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 690/3815 18% [main] | loss 2.302 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.52 | 0.18B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 700/3815 18% [main] | loss 2.396 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.05 | 0.18B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 710/3815 19% [main] | loss 2.605 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.85 | 0.19B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.5h
+step 720/3815 19% [main] | loss 2.581 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.46 | 0.19B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 730/3815 19% [main] | loss 2.435 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.79 | 0.19B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.5h
+step 740/3815 19% [main] | loss 2.558 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.36 | 0.19B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 750/3815 20% [main] | loss 2.222 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.53 | 0.20B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 760/3815 20% [main] | loss 2.105 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.73 | 0.20B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 770/3815 20% [main] | loss 2.206 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.52 | 0.20B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 780/3815 20% [main] | loss 2.098 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.41 | 0.20B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.5h
+step 790/3815 21% [main] | loss 1.895 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.75 | 0.21B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 800/3815 21% [main] | loss 2.276 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.58 | 0.21B tok | 53K tok/s/gpu | MFU 22% | peak 66.52GiB | ETA 2.1h
+step 810/3815 21% [main] | loss 2.508 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.75 | 0.21B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 820/3815 21% [main] | loss 2.222 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.87 | 0.21B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 830/3815 22% [main] | loss 2.100 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.62 | 0.22B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 840/3815 22% [main] | loss 2.179 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.92 | 0.22B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.5h
+step 850/3815 22% [main] | loss 2.324 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.48 | 0.22B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.5h
+step 860/3815 23% [main] | loss 2.460 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.73 | 0.23B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.5h
+step 870/3815 23% [main] | loss 2.407 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.73 | 0.23B tok | 74K tok/s/gpu | MFU 31% | peak 66.49GiB | ETA 1.4h
+step 880/3815 23% [main] | loss 2.142 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.04 | 0.23B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.4h
+step 890/3815 23% [main] | loss 2.062 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.43 | 0.23B tok | 74K tok/s/gpu | MFU 31% | peak 66.53GiB | ETA 1.4h
+step 900/3815 24% [main] | loss 2.131 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.75 | 0.24B tok | 72K tok/s/gpu | MFU 30% | peak 66.52GiB | ETA 1.5h
+step 910/3815 24% [main] | loss 2.135 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.49 | 0.24B tok | 72K tok/s/gpu | MFU 30% | peak 66.49GiB | ETA 1.5h
+step 920/3815 24% [main] | loss 2.340 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.74 | 0.24B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 930/3815 24% [main] | loss 2.343 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.44 | 0.24B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 940/3815 25% [main] | loss 2.694 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.63 | 0.25B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 950/3815 25% [main] | loss 2.594 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.81 | 0.25B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 960/3815 25% [main] | loss 2.358 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.98 | 0.25B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 970/3815 25% [main] | loss 2.421 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.53 | 0.25B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 980/3815 26% [main] | loss 2.229 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.89 | 0.26B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.4h
+step 990/3815 26% [main] | loss 2.624 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.99 | 0.26B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.4h
+step 1000/3815 val 2.592
+step 1000/3815 26% [main] | loss 1.948 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.84 | 0.26B tok | 34K tok/s/gpu | MFU 14% | peak 66.52GiB | ETA 3.0h
+step 1010/3815 26% [main] | loss 2.287 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 1.29 | 0.26B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.4h
+step 1020/3815 27% [main] | loss 2.402 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.94 | 0.27B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.4h
+step 1030/3815 27% [main] | loss 2.234 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.54 | 0.27B tok | 74K tok/s/gpu | MFU 31% | peak 66.51GiB | ETA 1.4h
+step 1040/3815 27% [main] | loss 2.373 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.75 | 0.27B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.4h
+step 1050/3815 28% [main] | loss 2.273 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.79 | 0.28B tok | 74K tok/s/gpu | MFU 31% | peak 66.52GiB | ETA 1.4h
+step 1060/3815 28% [main] | loss 2.438 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 mem 2.00e-02) | gnorm 0.64 | 0.28B tok | 74K tok/s/gpu | MFU 31% | peak 66.50GiB | ETA 1.4h
+[rank1]: Traceback (most recent call last):
+[rank1]:   File "/work/aupai/train.py", line 3214, in <module>
+[rank1]:     main()
+[rank1]:   File "/work/aupai/train.py", line 2843, in main
+[rank1]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank1]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank1]:     return super().__call__(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1024, in compile_wrapper
+[rank1]:     return fn(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/external_utils.py", line 69, in inner
+[rank1]:     return fn(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/parallel/distributed.py", line 1699, in forward
+[rank1]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank1]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/parallel/distributed.py", line 1524, in _run_ddp_forward
+[rank1]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/work/aupai/model.py", line 1062, in forward
+[rank1]:     hidden = self.norm(self._body(emb, cu))
+[rank1]:                        ^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/work/aupai/model.py", line 1017, in _body
+[rank1]:     upd = cur + self.memory(cur)
+[rank1]:                 ^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank1]:     return self._call_impl(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank1]:     return forward_call(*args, **kwargs)
+[rank1]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank1]:   File "/work/aupai/model.py", line 653, in forward
+[rank1]:     self.key_hits[0] += torch.bincount(
+[rank1]:                         ^^^^^^^^^^^^^^^
+[rank1]:   File "/work/aupai/train.py", line 2795, in _save_on_interrupt
+[rank1]:     raise KeyboardInterrupt(f"signal {signum}")
+[rank1]: KeyboardInterrupt: signal 15
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `posix.stat.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+interrupt (signal 15): saved /work/aupai/ckpt_b0_mem_m1.pt.interrupt.step1065
+[rank0]: Traceback (most recent call last):
+[rank0]:   File "/work/aupai/train.py", line 3214, in <module>
+[rank0]:     main()
+[rank0]:   File "/work/aupai/train.py", line 2843, in main
+[rank0]:     hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
+[rank0]:                 ^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 472, in __call__
+[rank0]:     return super().__call__(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/eval_frame.py", line 1024, in compile_wrapper
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/_dynamo/external_utils.py", line 69, in inner
+[rank0]:     return fn(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/parallel/distributed.py", line 1699, in forward
+[rank0]:     else self._run_ddp_forward(*inputs, **kwargs)
+[rank0]:          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/parallel/distributed.py", line 1524, in _run_ddp_forward
+[rank0]:     return self.module(*inputs, **kwargs)  # type: ignore[index]
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/model.py", line 1062, in forward
+[rank0]:     hidden = self.norm(self._body(emb, cu))
+[rank0]:                        ^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/model.py", line 1017, in _body
+[rank0]:     upd = cur + self.memory(cur)
+[rank0]:                 ^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1779, in _wrapped_call_impl
+[rank0]:     return self._call_impl(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/usr/local/lib/python3.12/dist-packages/torch/nn/modules/module.py", line 1790, in _call_impl
+[rank0]:     return forward_call(*args, **kwargs)
+[rank0]:            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/model.py", line 653, in forward
+[rank0]:     self.key_hits[0] += torch.bincount(
+[rank0]:                         ^^^^^^^^^^^^^^^
+[rank0]:   File "/work/aupai/train.py", line 2795, in _save_on_interrupt
+[rank0]:     raise KeyboardInterrupt(f"signal {signum}")
+[rank0]: KeyboardInterrupt: signal 15
+[rank0]:[W904 23:12:08.787627402 ProcessGroupNCCL.cpp:1575] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+W0904 23:12:24.157000 915706 torch/distributed/elastic/multiprocessing/api.py:1012] Sending process 915851 closing signal SIGTERM
+E0904 23:12:42.553000 915706 torch/distributed/elastic/multiprocessing/api.py:986] failed (exitcode: -2) local_rank: 1 (pid: 915852) of binary: /usr/bin/python3
+Traceback (most recent call last):
+  File "/usr/local/bin/torchrun", line 6, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/elastic/multiprocessing/errors/__init__.py", line 362, in wrapper
+    return f(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 990, in main
+    run(args)
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/run.py", line 981, in run
+    elastic_launch(
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 170, in __call__
+    return launch_agent(self._config, self._entrypoint, list(args))
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.12/dist-packages/torch/distributed/launcher/api.py", line 317, in launch_agent
+    raise ChildFailedError(
+torch.distributed.elastic.multiprocessing.errors.ChildFailedError: 
+========================================================
+train.py FAILED
+--------------------------------------------------------
+Failures:
+[1]:
+  time      : 2026-09-04_23:12:42
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 0 (local_rank: 0)
+  exitcode  : -15 (pid: 915851)
+  error_file: <N/A>
+  traceback : Signal 15 (SIGTERM) received by PID 915851
+--------------------------------------------------------
+Root Cause (first observed failure):
+[0]:
+  time      : 2026-09-04_23:12:24
+  host      : iv-yeozpb5g5cbw80bls64e
+  rank      : 1 (local_rank: 1)
+  exitcode  : -2 (pid: 915852)
+  error_file: <N/A>
+  traceback : Signal 2 (SIGINT) received by PID 915852
+========================================================
