@@ -147,35 +147,44 @@ def _rank_of(gold, trio):
     return sorted([gold] + [v for _n, v in trio], reverse=True).index(gold)
 
 
-def _key_of(gold, trio):
-    """The two content-free properties a subset fixes: gold's value rank, and whether gold
-    is the option nearest zero.
+def _key_of(gold, trio, anchor=None):
+    """The three content-free properties a subset fixes, as a tuple of MARGINALS.
 
-    Rank alone was not enough. Balancing it left "pick the option nearest zero" at 0.3500,
-    above the 0.30 the readout's power assumes -- the same class of leak one level down,
-    found by running the heuristic battery against the rank-balanced build rather than
-    assuming one fix covered the family.
+    Each was found by running the heuristic battery against the previous build rather than
+    assuming one fix covered the family:
+
+      value rank      -- v1 left "pick the 3rd-largest" at 0.6430.
+      nearest zero    -- balancing rank alone left "pick the nearest zero" at 0.3500.
+      proximity rank  -- balancing both left "pick the option closest to 3*operands[0]" at
+                         0.4190 (e1, 2026-09-05). Mechanism, not coincidence: gold is
+                         3*a1 - 2*(the rest) + 1, so a1 enters with coefficient 3 while every
+                         rung perturbs the LATER operands' contribution, leaving gold nearer
+                         3*a1 than its distractors. Worse with chain length -- 0.5360 on
+                         diamond_chain4 against 0.3020 on diamond_chain.
     """
     four = [gold] + [v for _n, v in trio]
-    return _rank_of(gold, trio), min(four, key=abs) == gold
+    prox = 0 if anchor is None else sorted(
+        range(len(four)), key=lambda i: abs(four[i] - anchor)).index(0)
+    return _rank_of(gold, trio), min(four, key=abs) == gold, prox
 
 
-def _choose(gold, cands, want_key):
-    """The first 3-subset with the wanted (rank, nearest-zero) key, else priority order.
+def _choose(gold, cands, want_key, anchor):
+    """The first 3-subset with the wanted key, else priority order.
 
     Priority order is the ladder's, so an item that cannot reach the wanted key keeps the
     old behaviour rather than being dropped.
     """
     for trio in itertools.combinations(cands, N_OPTIONS - 1):
-        if _key_of(gold, trio) == want_key:
+        if _key_of(gold, trio, anchor) == want_key:
             return list(trio)
     return list(cands[:N_OPTIONS - 1])
 
 
-def build_item(row, rng, want_key=None):
-    """One 4-way item, optionally with gold placed at a given (rank, nearest-zero) key."""
+def build_item(row, rng, want_key=None, anchor=None):
+    """One 4-way item, optionally with gold placed at a given content-free key."""
     gold, cands = _candidates(row)
-    picked = _choose(gold, cands, want_key) if want_key is not None else list(cands[:N_OPTIONS - 1])
+    picked = (_choose(gold, cands, want_key, anchor) if want_key is not None
+              else list(cands[:N_OPTIONS - 1]))
     opts = [("gold", gold)] + picked
     rng.shuffle(opts)
     return {
@@ -186,6 +195,7 @@ def build_item(row, rng, want_key=None):
         "options": [v for _n, v in opts],
         "label": [n for n, _v in opts].index("gold"),
         "value_rank": _rank_of(gold, picked),
+        "proximity_rank": _key_of(gold, picked, anchor)[2] if anchor is not None else None,
         "gold_is_nearest_zero": min([gold] + [v for _n, v in picked], key=abs) == gold,
         "option_kinds": [n for n, _v in opts],
         "answer": gold,
@@ -220,25 +230,39 @@ def build(src=SRC):
     reach = []
     for i, r in enumerate(rows):
         gold, cands = _candidates(r)
-        keys = {_key_of(gold, t) for t in itertools.combinations(cands, N_OPTIONS - 1)}
-        reach.append((len(keys), i, keys))
-    # TARGET SHARES, not equal buckets. Balancing the eight (rank, nearest-zero) cells
-    # evenly gives nearest-zero=True on 500 of 1000 -- worse than the 0.3500 it was meant to
-    # fix, because "gold is nearest zero" is ONE of four options and its chance share is
-    # 1/4, not 1/2. Each cell's target is therefore P(rank) x P(nearest-zero) = 0.25 x 0.25
-    # for True and 0.25 x 0.75 for False. Measured against the fix: rank 0.25 flat and
-    # nearest-zero at chance. The first version of this loop had the right mechanism and the
-    # wrong target, which is the same defect class as the thing it was fixing.
-    target = {(rk, nz): (0.25 * (0.25 if nz else 0.75)) for rk in range(N_OPTIONS)
-              for nz in (True, False)}
-    counts = collections.Counter()
+        anchor = 3 * _ops(r["instruction"])[0]
+        keys = {_key_of(gold, t, anchor) for t in itertools.combinations(cands, N_OPTIONS - 1)}
+        reach.append((len(keys), i, keys, anchor))
+    # MARGINALS, NOT CELLS. Targeting the 16 (value_rank, proximity_rank) cells evenly gives
+    # value_rank [196,208,256,340] and proximity_rank [340,295,243,122] -- worse on BOTH axes
+    # than balancing either alone (e1, 2026-09-05), because two cells are structurally
+    # unreachable: gold cannot be the 2nd-largest value AND the farthest from 3*a1, since
+    # being far from 3*a1 in either direction pushes it toward an extreme of the value order.
+    # An even-cell target is infeasible and chasing it distorts every marginal. Targeting the
+    # marginals directly and letting the joint fall out reaches flat on all three.
+    #
+    # This is the SECOND time an even-cell target was the wrong shape here -- the first left
+    # nearest-zero at 0.4950 by asking for 1/2 where chance is 1/4. Both are the same error:
+    # a target stronger than the constraint needs, imposed on a space that cannot supply it.
+    marg = [collections.Counter() for _ in range(3)]
     want = {}
     n_rows = len(rows)
-    for _n, i, keys in sorted(reach, key=lambda x: (x[0], x[1])):
-        # most under its target first, so a scarce cell is filled before a plentiful one
-        want[i] = min(keys, key=lambda k: (counts[k] - target[k] * n_rows, k))
-        counts[want[i]] += 1
-    return [build_item(r, rng, want_key=want[i]) for i, r in enumerate(rows)]
+    tgt = [{k: n_rows / N_OPTIONS for k in range(N_OPTIONS)},
+           {True: n_rows / N_OPTIONS, False: n_rows * (N_OPTIONS - 1) / N_OPTIONS},
+           {k: n_rows / N_OPTIONS for k in range(N_OPTIONS)}]
+
+    def _cost(key):
+        # how far over target each marginal would be if this key were taken
+        return sum((marg[j][key[j]] + 1 - tgt[j][key[j]]) for j in range(3))
+
+    # Most-constrained items first: they claim their only option before the flexible ones
+    # use it up.
+    for _n, i, keys, _a in sorted(reach, key=lambda x: (x[0], x[1])):
+        want[i] = min(keys, key=lambda k: (_cost(k), k))
+        for j in range(3):
+            marg[j][want[i][j]] += 1
+    return [build_item(r, rng, want_key=want[i], anchor=3 * _ops(r["instruction"])[0])
+            for i, r in enumerate(rows)]
 
 
 def _label_hist(items):
@@ -263,12 +287,16 @@ def write(out=OUT, src=SRC):
         "label_distribution": _label_hist(items),
         "value_rank_distribution": dict(sorted(collections.Counter(
             i["value_rank"] for i in items).items())),
-        "content_free_floor": ("every rule that reads only the four numbers scores at chance: "
-                               "3rd-largest 0.2500, nearest-zero 0.2490, smallest 0.2490, "
-                               "largest 0.2500. v1 let 3rd-largest score 0.6430 because gold "
-                               "landed at value rank 2 on 643 of 1000 items (e1, 2026-09-05); "
-                               "the option positions were shuffled but the option VALUES were "
-                               "not chosen, and the header's chi-square could not see it."),
+        "proximity_rank_distribution": dict(sorted(collections.Counter(
+            i["proximity_rank"] for i in items).items())),
+        "content_free_floor": ("19 rules that read the options and the operands but never apply "
+                               "the rule all score at chance; the selftest fails any above 0.30. "
+                               "Three leaks were closed in turn, each found by running the battery "
+                               "against the previous build: v1's 3rd-largest 0.6430 (gold at value "
+                               "rank 2 on 643/1000), v2's nearest-zero 0.3500, and v2's closest-to-"
+                               "3*operands[0] 0.4190 (gold is 3*a1 - 2*(the rest) + 1, so a1 enters "
+                               "with coefficient 3 while every rung perturbs the later operands). "
+                               "e1 (lessons-58) found the first and third."),
         "absence_basis": ("inherited from the source set: the operator, its rule and its phrasing "
                           "were invented 2026-09-05, after every corpus in the mix was built. "
                           "facts/contamination.json#cont.novel_ops_frozen_sets"),
@@ -329,27 +357,44 @@ def _selftest():
     #     four numbers, never the problem, so any of them above 0.30 is headroom the readout
     #     does not have. Run the battery, not one rule -- balancing rank alone left
     #     nearest-zero at 0.3500.
+    #     PROXIMITY RULES ARE IN THE BATTERY because balancing rank and nearest-zero left
+    #     "closest to 3*operands[0]" at 0.4190 -- gold is 3*a1 - 2*(the rest) + 1, so a1
+    #     enters with coefficient 3 while every rung perturbs the later operands (e1).
+    #     A rule may read the OPTIONS and the OPERANDS; what it may not do is apply the rule.
     battery = {
-        "largest": max,
-        "smallest": min,
-        "2nd_largest": lambda o: sorted(o, reverse=True)[1],
-        "3rd_largest": lambda o: sorted(o, reverse=True)[2],
-        "nearest_zero": lambda o: min(o, key=abs),
-        "farthest_zero": lambda o: max(o, key=abs),
-        "only_negative": lambda o: ([v for v in o if v < 0] or [o[0]])[0],
-        "median_high": lambda o: sorted(o)[2],
+        "largest": lambda o, p: max(o),
+        "smallest": lambda o, p: min(o),
+        "2nd_largest": lambda o, p: sorted(o, reverse=True)[1],
+        "3rd_largest": lambda o, p: sorted(o, reverse=True)[2],
+        "nearest_zero": lambda o, p: min(o, key=abs),
+        "farthest_zero": lambda o, p: max(o, key=abs),
+        "only_negative": lambda o, p: ([v for v in o if v < 0] or [o[0]])[0],
+        "median_high": lambda o, p: sorted(o)[2],
+        "fewest_digits": lambda o, p: min(o, key=lambda v: (len(str(abs(v))), v)),
+        "most_digits": lambda o, p: max(o, key=lambda v: (len(str(abs(v))), v)),
+        "nonneg_then_smallest": lambda o, p: min([v for v in o if v >= 0] or list(o)),
+        "closest_3a1": lambda o, p: min(o, key=lambda v: abs(v - 3 * p[0])),
+        "closest_a1": lambda o, p: min(o, key=lambda v: abs(v - p[0])),
+        "closest_a2": lambda o, p: min(o, key=lambda v: abs(v - p[1])),
+        "closest_alast": lambda o, p: min(o, key=lambda v: abs(v - p[-1])),
+        "closest_sum": lambda o, p: min(o, key=lambda v: abs(v - sum(p))),
+        "closest_mean": lambda o, p: min(o, key=lambda v: abs(v - sum(p) / len(p))),
+        "closest_3a1_m2a2": lambda o, p: min(o, key=lambda v: abs(v - (3 * p[0] - 2 * p[1]))),
+        "even_else_first": lambda o, p: ([v for v in o if v % 2 == 0] or list(o))[0],
     }
     for name, fn in battery.items():
-        hit = sum(1 for it in items if it["options"][it["label"]] == fn(it["options"])) / len(items)
+        hit = sum(1 for it in items
+                  if it["options"][it["label"]] == fn(it["options"], it["operands"])) / len(items)
         if hit > 0.30:
             fails.append(f"content-free rule {name!r} scores {hit:.4f} on the set, above the "
                          f"0.30 the readout's power assumes -- gold is distinguishable from "
                          f"the distractors by value alone")
     # 5c. GOLD'S VALUE RANK IS FLAT. The property 5b's 3rd_largest case depends on, asserted
     #     directly so a regression names the cause rather than only the symptom.
-    rk = collections.Counter(it["value_rank"] for it in items)
-    if max(rk.values()) / len(items) > 0.30:
-        fails.append(f"gold's value rank is not flat: {dict(sorted(rk.items()))}")
+    for field in ("value_rank", "proximity_rank"):
+        c = collections.Counter(it[field] for it in items)
+        if max(c.values()) / len(items) > 0.30:
+            fails.append(f"gold's {field} is not flat: {dict(sorted(c.items()))}")
     # 6. DETERMINISM: the same seed twice is the same set, or a rebuild silently rescores.
     if [i["options"] for i in build()] != [i["options"] for i in items]:
         fails.append("build() is not reproducible at its own seed")
@@ -368,7 +413,7 @@ def _selftest():
         LADDER[:] = saved
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"emit_novel_ops_4way selftest: {'PASS (9 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"emit_novel_ops_4way selftest: {'PASS (10 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
