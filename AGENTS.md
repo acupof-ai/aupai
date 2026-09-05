@@ -141,6 +141,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `docs_root_clean` | zero `.md` directly under `docs/` | classify the file into `lessons/`/`audits/`/`standards/` |
 | `lessons_have_frontmatter` | every lessons/audits doc has `question`/`status`/`source` | add the frontmatter |
 | `fact_refs_resolve` | every `facts/<file>.json#<id>` citation resolves; retracted citations WARN | fix the citation or the fact |
+| `prereg_citations_current` | every `runs/prereg.jsonl#<id>` citation in `docs/` names the row's current `@amended_N`; no marker, or a marker older than the row, WARNs; an unanchored mention (the path and the id with no `#`) FAILs from 2026-09-07 | re-read the row and update the doc, then bump its `@amended_N` |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
 | `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
 
