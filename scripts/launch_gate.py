@@ -777,7 +777,21 @@ def gate_vocab_id(root, mix_path, world):
 
 
 def gate_checks_and_drift(root, mix_path, world):
-    """9. harness check has 0 FAIL and the pod does not diverge from main."""
+    """9. harness check has 0 FAIL and the pod does not diverge from main.
+
+    RUNS LOCALLY, in `root`. Worth saying because the line above used to be the whole docstring
+    and its "and the pod" was read as "on the pod" by two sessions on 2026-09-05, sending them
+    after a pod-side mechanism for a FAIL that came from this laptop's own tree.
+
+    INDEX-SCOPED CHECKS ARE EXCLUDED. A launch is gated on the repository's content, and the
+    invoking tree's git index is not that: it is one session's uncommitted intent, seconds old
+    and private to one worktree. MEASURED 2026-09-05, cost two pending launches: shared_file_claim
+    FAILed here naming AGENTS.md, staged in the integration tree by a merge in flight, and since
+    its EVIDENCE is `repo` the partition returned NOGO. Excluding by DERIVATION rather than by
+    name (harness.index_scoped_checks reads the check bodies for `--cached`, `diff-index` and
+    _staged_index_env), so the next index-reading check is excluded when it is written rather
+    than after it blocks a launch. The commit-time gate is unaffected: the pre-commit hook is
+    where a staged shared-file edit is refused, and that has not moved."""
     try:
         out = subprocess.run([sys.executable, os.path.join(root, "scripts", "harness.py"),
                               "check"], capture_output=True, text=True, timeout=600, cwd=root)
@@ -793,12 +807,49 @@ def gate_checks_and_drift(root, mix_path, world):
         return NOGO, (f"harness check produced no check lines at all (rc={out.returncode}) -- "
                       f"nothing ran, which is not the same as nothing failed"
                       + (f": {out.stderr.strip().splitlines()[-1][:70]}" if out.stderr.strip() else ""))
+    where = _tree_identity(root)
     fails = [ln.strip() for ln in ran if "[FAIL]" in ln]
+    index_scoped = _index_scoped_names(root)
+    excluded = [f for f in fails if _fail_name(f) in index_scoped]
+    fails = [f for f in fails if _fail_name(f) not in index_scoped]
+    note = ""
+    if excluded:
+        # NAMED, never silently dropped: the FAIL is real and the committer still has to deal
+        # with it -- it is just not a fact about the tree's fitness to launch from.
+        note = (f"; {len(excluded)} index-scoped FAIL not gated here (a staged edit is one "
+                f"session's intent, not the repo's content): "
+                f"{', '.join(_fail_name(f) for f in excluded)}")
     if fails:
         state, why = _partition_fails(fails, _here(), len(ran))
         if state is not None:
-            return state, why
-    return GO, f"harness check: {len(ran)} checks ran, 0 FAIL"
+            return state, f"{why} [{where}]{note}"
+    return GO, f"harness check: {len(ran)} checks ran, 0 FAIL [{where}]{note}"
+
+
+def _tree_identity(root):
+    """`<abbrev path>@<short HEAD>` for the tree gate 9 actually evaluated.
+
+    Printed because gate 9's verdict is about one specific working tree and its output never
+    said which. On 2026-09-05 a FAIL from the integration tree was reported to the controller
+    with no tree named, and the reading that followed placed it on the pod."""
+    sha = subprocess.run(["git", "-C", root, "rev-parse", "--short", "HEAD"],
+                         capture_output=True, text=True).stdout.strip() or "?"
+    return f"{os.path.basename(os.path.abspath(root))}@{sha}"
+
+
+def _index_scoped_names(root):
+    """harness.index_scoped_checks(), or an empty set if it cannot be reached.
+
+    Empty means "exclude nothing", i.e. the old behaviour: a launch can still be blocked by a
+    staged file, which is annoying, where the opposite default would silently stop gating checks
+    the gate is for. A gate that cannot answer must not become more permissive."""
+    try:
+        sys.path.insert(0, os.path.join(root, "scripts"))
+        from harness import index_scoped_checks
+
+        return index_scoped_checks()
+    except Exception:
+        return set()
 
 
 # The nine, in the order they are reported. A gate added here is automatically
@@ -1853,6 +1904,52 @@ def selftest():
             ):
                 if bool(dead_citations(_tmp, text, _tmp_tracked)) != want_dead:
                     bad.append(f"citation {text!r}: {what}")
+
+    # INDEX-SCOPED FAILS MUST NOT GATE, AND EVERYTHING ELSE STILL MUST (de-56, 4c's ruling
+    # 2026-09-05). Two directions, because the fix is an exclusion and an exclusion widened too
+    # far turns gate 9 off: on 2026-09-05 shared_file_claim FAILed inside gate 9 naming AGENTS.md
+    # staged by a merge in flight, and its EVIDENCE=repo made the partition return NOGO, blocking
+    # two launches on one session's index.
+    #
+    # Called on the PARTITION rather than through a world, because the property is about which
+    # FAIL lines gate: building a world that stages a shared file would test git's index, not the
+    # partition, and the world's own `harness check` would then have to be trusted to produce the
+    # line. Constructed lines are the subject here.
+    _idx = _index_scoped_names(ROOT)
+    if "shared_file_claim" not in _idx:
+        bad.append("index_scoped_checks does not name shared_file_claim -- either the derivation "
+                   "broke or the check stopped reading the index; gate 9 would gate a launch on "
+                   "one session's staged file again (measured 2026-09-05, two launches blocked)")
+    _idx_line = "  [FAIL] shared_file_claim shared-file edit(s) without a live claim: AGENTS.md"
+    _repo_line = "  [FAIL] pinned_ids <eos> moved to 2"
+    _ran = ["  [PASS] x ok"] * 40
+
+    def _verdict(lines):
+        """gate 9's own partition step, on constructed [FAIL] lines."""
+        fails = [ln.strip() for ln in lines if "[FAIL]" in ln]
+        excluded = [f for f in fails if _fail_name(f) in _idx]
+        kept = [f for f in fails if _fail_name(f) not in _idx]
+        if kept:
+            st, _why = _partition_fails(kept, _here(), len(_ran))
+            if st is not None:
+                return st, len(excluded)
+        return GO, len(excluded)
+
+    _st, _nex = _verdict(_ran + [_idx_line])
+    if _st != GO:
+        bad.append(f"an index-scoped FAIL alone gated the launch ({_st}) -- a staged file is one "
+                   f"session's uncommitted intent, not the repository's content")
+    if _nex != 1:
+        bad.append(f"the index-scoped FAIL was not counted as excluded ({_nex}) -- it must be "
+                   f"NAMED in the verdict, never silently dropped: the committer still owes it")
+    _st2, _ = _verdict(_ran + [_repo_line])
+    if _st2 == GO:
+        bad.append("a repo-scoped FAIL (pinned_ids) did NOT gate the launch -- the exclusion "
+                   "widened past the index and gate 9 stopped gating")
+    _st3, _nex3 = _verdict(_ran + [_idx_line, _repo_line])
+    if _st3 == GO:
+        bad.append("an index-scoped FAIL beside a repo-scoped one made the launch GO -- the "
+                   "exclusion must remove only its own line, not the whole verdict")
 
     for name, (d, mixp, restore) in reversible.items():
         fn = dict(GATES)[name]
