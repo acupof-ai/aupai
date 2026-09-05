@@ -76,6 +76,17 @@ SCOPE = [
     # training box -- which is the same defect that crashed the hook's own selftest when the
     # two were split across commits (2026-09-05).
     "data/ledger_schema.json",
+    # PROBE ITEM FILES, and this one cost a hand-push. `data/` is admitted only by the named
+    # patterns above, because data/corpus/* is 81 GB of gitignored bytes that must never enter a
+    # manifest -- correct for the directory, wrong for a new tracked subdirectory inside it. On
+    # 2026-09-05 the pod held data/probes/api_cloze.jsonl at its pre-rewrite content, credential
+    # row included, while pod_sync_check reported "in sync (463 files)": a manifest that does not
+    # list a path cannot assert anything about it, and the count made the coverage look total.
+    # eval/api_cloze.py reads these on the pod at runtime, so they must ship.
+    # The class, not just this instance: a tracked path admitted under data/ by the pre-commit
+    # ALLOWED list and absent from SCOPE is a defect until someone writes down why the pod does
+    # not need it. docs/lessons/drift_scope_blind_spot.md; no check joins the two lists yet.
+    "data/probes/*.jsonl",
     "facts/*.json",
     "scripts/*.json",
     "runs/*.jsonl",

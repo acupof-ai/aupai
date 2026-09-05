@@ -402,11 +402,11 @@ def metric_api_cloze(ckpt_path):
     build command, so a missing artifact cannot turn into 35 GB of host IO during a
     milestone score.
     """
-    data = os.path.join(ROOT, "data", "eval", "api_cloze.jsonl")
+    data = os.path.join(ROOT, "data", "probes", "api_cloze.jsonl")
     if not os.path.exists(data):
-        return None, ("data/eval/api_cloze.jsonl not built (pod-only, gitignored). Build it "
-                      "deliberately: eval/api_cloze.py --build --cache_tokens <N> -- it reads "
-                      "the 35.1 GB cache and its co-residency guard refuses beside a live run")
+        return None, ("data/probes/api_cloze.jsonl not built. Build it deliberately: "
+                      "eval/api_cloze.py --build --cache_tokens <N> -- it reads the 35.1 GB "
+                      "cache and its co-residency guard refuses beside a live run")
     return _run_eval_json("api_cloze.py", ckpt_path, ["--data", data], timeout=5400)
 
 

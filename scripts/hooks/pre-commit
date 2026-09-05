@@ -52,6 +52,11 @@ ALLOWED = [
     # to keep out.
     "data/ledger_schema.json",
     "data/ledger_transport_schema.json",
+    # Probe item files. Items are drawn FROM the training corpus, so they must stay
+    # OUT of data/eval/ -- everything under that prefix has to be in datagen/holdout.py
+    # REGISTRY, and registering these would EXCLUDE them from the corpus, inverting the
+    # purpose of the probe. Under MAX, one row per line, and read by eval/*.py.
+    "data/probes/*.jsonl",
 ]
 
 
@@ -903,6 +908,14 @@ def main():
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
         "probes/a2a_bandwidth.py",
+        # The key-usage probe for the readout-4 collapse. 40s, the slowest entry in this map, and
+        # the cost is the point: the three task-validity cases each train a real ProductKeyMemory
+        # for 240 steps against a one-row-selector control, because the property they assert is
+        # whether a task makes the collapse both reachable and costly -- and that cannot be read
+        # from a fixture, only from training. Registered rather than exempted: the numbers in this
+        # file's docstring are what the six real-data cells were designed against, and a task that
+        # silently changes character would void them with nothing going red.
+        "probes/mem_usage_toy.py",
         "scripts/stale_claims.py",
         "scripts/merge_score_row.py",
         "scripts/trace_classes.py",
@@ -984,6 +997,7 @@ def main():
         "scripts/mem_master_cell.py",
         "scripts/gen_ledger_transport_schema.py",
         "scripts/test_table_master_resync.py",
+        "scripts/test_mem_defaults_frozen.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
         "scripts/read_resume_proof.py",
@@ -1326,10 +1340,16 @@ def main():
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
+        # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
+        # behaviour is split across them: the selection lives in model.ProductKeyMemory.forward
+        # and the optimizer grouping in train.build_optimizers, and b0's two flags
+        # (--mem_sel_lr, --mem_query_norm) each move one of the two.
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
-                     "scripts/test_untie_head.py"},                          # 42.6s
+                     "scripts/test_untie_head.py",
+                     "scripts/test_mem_defaults_frozen.py"},                 # 42.6s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
-                     "scripts/test_value_embed.py"},                         # 36.3s
+                     "scripts/test_value_embed.py",
+                     "scripts/test_mem_defaults_frozen.py"},                 # 36.3s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s
