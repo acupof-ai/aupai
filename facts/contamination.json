@@ -1,1271 +1,1325 @@
 {
- "facts": [
-  {
-   "id": "cont.union",
-   "value": {
-    "hit_0.7": 507,
-    "hit_0.8": 223,
-    "hit_0.9": 84,
-    "long_holdouts": 1498,
-    "exact_matches": 0
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py union run over data/corpus/math/*.jsonl (9 shards, 530,234 rows)",
-   "config": {
-    "host": "local macOS checkout -- a corpus copy that never trained anything (see cont.union_pod for the training corpus)",
-    "paths": "data/corpus/math/{ape210k,gsm8k_zh,math23k,math_short_sol_v1,math_short_v6,v7,v8,mxode_000,mxode_001}.jsonl",
-    "metric": "containment = |holdout bigrams ∩ row bigrams| / |holdout bigrams|, zh char-bigrams / en word tokens",
-    "verdict_threshold": 0.8,
-    "holdout_files": [
-     "data/eval/math_test_500.jsonl",
-     "data/synthetic/math_hard_eval_1k.jsonl"
-    ],
-    "min_bigrams": 20,
-    "short_holdouts_excluded": 34
-   },
-   "uncertainty": "union dedups holdouts across shards; per-shard counts in cont.shards overlap",
-   "boundary": "containment counts number-swapped template variants as hits — the same-numbers subset is cont.same_numbers, unmeasured",
-   "status": "measured"
-  },
-  {
-   "id": "cont.split",
-   "value": {
-    "math_500": "150/500 (30.0%) at 0.8",
-    "math_hard_1k": "73/1032 (7.1%) at 0.8"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py union run, split by holdout file of origin",
-   "config": {
-    "host": "local macOS checkout (never trained)",
-    "note": "150+73=223=cont.union hit_0.8; no holdout text appears in both files"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.union_pod",
-   "value": {
-    "hit_0.7": 150,
-    "hit_0.8": 36,
-    "hit_0.9": 5,
-    "long_holdouts": 1498,
-    "exact_matches": 0,
-    "math_500": "0/500 (0.0%) at 0.8",
-    "math_hard_1k": "36/1032 (3.5%) at 0.8",
-    "fpr": "0/1498 on 269 pod web-prose docs"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py union run on the training pod (iv-yeozpb5g5cbw80bls64e), /work/aupai/data/corpus/math/ (5 shards, 181,684 rows)",
-   "config": {
-    "host": "training pod iv-yeozpb5g5cbw80bls64e",
-    "paths": "/work/aupai/data/corpus/math/{en_math_text_000,en_math_text_001,en_math_text_002,math_short_v10_000,math_short_v8_000}.jsonl",
-    "corpus": "the 0830v1 training corpus -- the one the 0830v1 checkpoints actually read"
-   },
-   "boundary": "This is the contamination rate of the corpus 0830v1 trained on. Cite THIS -- not cont.union -- when explaining 0830v1 eval scores. cont.union describes a local copy that never trained anything. The two corpora share the path data/corpus/math but not the bytes: local ape210k has 21 hits, the pod has no ape210k at all.",
-   "uncertainty": "en_math_text is English; zh holdouts cannot surface-match it, so its 0 hits say nothing about cross-language leakage (the number-multiset screen exists for that and was not run in union mode)",
-   "status": "measured"
-  },
-  {
-   "id": "cont.shards_pod",
-   "value": {
-    "en_math_text_000": {
-     "rows": 36443,
-     "hit_0.8": 0,
-     "verdict": "zh-surface clean -- see cont.cross_language_pod"
+  "facts": [
+    {
+      "id": "cont.union",
+      "value": {
+        "hit_0.7": 507,
+        "hit_0.8": 223,
+        "hit_0.9": 84,
+        "long_holdouts": 1498,
+        "exact_matches": 0
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py union run over data/corpus/math/*.jsonl (9 shards, 530,234 rows)",
+      "config": {
+        "host": "local macOS checkout -- a corpus copy that never trained anything (see cont.union_pod for the training corpus)",
+        "paths": "data/corpus/math/{ape210k,gsm8k_zh,math23k,math_short_sol_v1,math_short_v6,v7,v8,mxode_000,mxode_001}.jsonl",
+        "metric": "containment = |holdout bigrams ∩ row bigrams| / |holdout bigrams|, zh char-bigrams / en word tokens",
+        "verdict_threshold": 0.8,
+        "holdout_files": [
+          "data/eval/math_test_500.jsonl",
+          "data/synthetic/math_hard_eval_1k.jsonl"
+        ],
+        "min_bigrams": 20,
+        "short_holdouts_excluded": 34
+      },
+      "uncertainty": "union dedups holdouts across shards; per-shard counts in cont.shards overlap",
+      "boundary": "containment counts number-swapped template variants as hits — the same-numbers subset is cont.same_numbers, unmeasured",
+      "status": "measured"
     },
-    "en_math_text_001": {
-     "rows": 36535,
-     "hit_0.8": 0,
-     "verdict": "zh-surface clean -- see cont.cross_language_pod"
+    {
+      "id": "cont.split",
+      "value": {
+        "math_500": "150/500 (30.0%) at 0.8",
+        "math_hard_1k": "73/1032 (7.1%) at 0.8"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py union run, split by holdout file of origin",
+      "config": {
+        "host": "local macOS checkout (never trained)",
+        "note": "150+73=223=cont.union hit_0.8; no holdout text appears in both files"
+      },
+      "uncertainty": null,
+      "status": "measured"
     },
-    "en_math_text_002": {
-     "rows": 34548,
-     "hit_0.8": 0,
-     "verdict": "zh-surface clean -- see cont.cross_language_pod"
+    {
+      "id": "cont.union_pod",
+      "value": {
+        "hit_0.7": 150,
+        "hit_0.8": 36,
+        "hit_0.9": 5,
+        "long_holdouts": 1498,
+        "exact_matches": 0,
+        "math_500": "0/500 (0.0%) at 0.8",
+        "math_hard_1k": "36/1032 (3.5%) at 0.8",
+        "fpr": "0/1498 on 269 pod web-prose docs"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py union run on the training pod (iv-yeozpb5g5cbw80bls64e), /work/aupai/data/corpus/math/ (5 shards, 181,684 rows)",
+      "config": {
+        "host": "training pod iv-yeozpb5g5cbw80bls64e",
+        "paths": "/work/aupai/data/corpus/math/{en_math_text_000,en_math_text_001,en_math_text_002,math_short_v10_000,math_short_v8_000}.jsonl",
+        "corpus": "the 0830v1 training corpus -- the one the 0830v1 checkpoints actually read"
+      },
+      "boundary": "This is the contamination rate of the corpus 0830v1 trained on. Cite THIS -- not cont.union -- when explaining 0830v1 eval scores. cont.union describes a local copy that never trained anything. The two corpora share the path data/corpus/math but not the bytes: local ape210k has 21 hits, the pod has no ape210k at all.",
+      "uncertainty": "en_math_text is English; zh holdouts cannot surface-match it, so its 0 hits say nothing about cross-language leakage (the number-multiset screen exists for that and was not run in union mode)",
+      "status": "measured"
     },
-    "math_short_v10_000": {
-     "rows": 6676,
-     "hit_0.8": 12,
-     "verdict": "REJECT"
+    {
+      "id": "cont.shards_pod",
+      "value": {
+        "en_math_text_000": {
+          "rows": 36443,
+          "hit_0.8": 0,
+          "verdict": "zh-surface clean -- see cont.cross_language_pod"
+        },
+        "en_math_text_001": {
+          "rows": 36535,
+          "hit_0.8": 0,
+          "verdict": "zh-surface clean -- see cont.cross_language_pod"
+        },
+        "en_math_text_002": {
+          "rows": 34548,
+          "hit_0.8": 0,
+          "verdict": "zh-surface clean -- see cont.cross_language_pod"
+        },
+        "math_short_v10_000": {
+          "rows": 6676,
+          "hit_0.8": 12,
+          "verdict": "REJECT"
+        },
+        "math_short_v8_000": {
+          "rows": 67482,
+          "hit_0.8": 35,
+          "verdict": "REJECT"
+        }
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py on the training pod, one run per shard",
+      "config": {
+        "host": "training pod iv-yeozpb5g5cbw80bls64e",
+        "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
+        "cross_language_caveat": "en_math_text verdicts are zh-surface-only; the cross-language number-multiset flags are cont.cross_language_pod"
+      },
+      "uncertainty": "per-shard hits are holdout-max counts; the same holdout can be hit in multiple shards (union in cont.union_pod)",
+      "status": "measured"
     },
-    "math_short_v8_000": {
-     "rows": 67482,
-     "hit_0.8": 35,
-     "verdict": "REJECT"
+    {
+      "id": "cont.cross_language_pod",
+      "value": {
+        "en_math_text_000": 2407,
+        "en_math_text_001": 2529,
+        "en_math_text_002": 1818,
+        "total": 6754,
+        "rows": 107526,
+        "flag_rate": "6.3%",
+        "meaning": "identical number multiset with a zh holdout -- review queue, not confirmed contamination"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py number-multiset screen on the training pod",
+      "config": {
+        "host": "training pod iv-yeozpb5g5cbw80bls64e",
+        "screen": "number multiset, >= 2 numbers, cross-language only",
+        "precision_note": "same-language precision ~1% (2M flags on the math corpus) -- flags are a human-review queue, not a verdict"
+      },
+      "uncertainty": "unreviewed: some flags are true translation pairs / same problem family, many are coincidence on common number combinations. The three shards are NOT clean until this queue is worked",
+      "status": "measured"
+    },
+    {
+      "id": "cont.math_short_leak",
+      "value": {
+        "finding": "math_short_v8/v10 contamination is self-produced: the mathbank generator and math_hard_eval_1k's older generator implement the same canon of Chinese hard-math types, so hand-written templates converge in surface wording",
+        "evidence": "every batch measured REJECTs: v3 28, v5 39, v6 43, v7 37, v8 30, v10 12, v11 33 holdouts at 0.8",
+        "known_before": "split_bank.py docstring records 0.3% identical-template sharing -- understated 10x: textual near-duplication (containment >= 0.8) does not require template identity",
+        "aggravator": "mathbank/make_v11_band.py deliberately matches v11 batches to math_hard_eval_1k's surface statistics by LP design",
+        "impact": "math-hard is the recorded metric; 3.5% pod contamination means a ~3%-level score has up to half its movement from seen problems",
+        "resolution": "CLOSED 2026-08-30 by v2's construction, not by a bank fix: math_short batches never contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are mxode's) -- they only ever contaminated math-hard v1, which is retired (cont.math_hard_v1_void). v2 is generated from type-disjoint families and all 7 batches pass the gate (cont.math_hard_v2). 'Fix the bank' is no longer a todo."
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py over data/synthetic/math_short_v{3,5,6,7,8,11}.jsonl (local) + pod v8/v10; mathbank/split_bank.py, mathbank/make_v11_band.py docstrings",
+      "config": {
+        "generator": "mathbank/run_math_short.py instantiating math_programs_l*.py (943 L3/L4 programs)",
+        "leak_path": "shared template DNA across two generator generations of the same curriculum -- not seed leakage, not a shared pool"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.corpus_fp",
+      "value": {
+        "what": "per-domain sha1 of (shard name, size, mtime); stamped into build_corpus_stats.json at build time and into checkpoints next to vocab_id",
+        "tools": [
+          "datagen/corpus_fingerprint.py",
+          "harness check corpus_fp_matches",
+          "train.py save_checkpoint corpus_fp"
+        ],
+        "broken_world": "real shard copied to a temp corpus, one line appended -> fingerprint changes (self-check OK 2026-08-30)",
+        "stamped": "local math c108de08e0fa4a86; pod chat f4b03c9f, code 4317ab46, en 64888926, math 45a430e0, textbook 632a09b4, wiki 466e012d"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/corpus_fingerprint.py --self-check; scripts/harness.py corpus_fp_matches (15 checks, selftest OK)",
+      "config": {
+        "ceiling": "stat-only (name+size+mtime): misses same-size same-mtime edits; row counts excluded because wc -l on 108GB costs minutes",
+        "incident": "two corpora both called data/corpus/math, 0.0% vs 30.0% contaminated, indistinguishable before this"
+      },
+      "uncertainty": "sample/ and web_hq/ on the pod carry no stats file (raw downloads) -- their fingerprints are not yet stamped",
+      "status": "measured"
+    },
+    {
+      "id": "cont.fpr",
+      "value": {
+        "false_positive_holdouts": 0,
+        "holdouts": 1498,
+        "clean_docs_scanned": 2000,
+        "threshold": 0.8
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py over data/corpus/sample/batch_*.jsonl",
+      "config": {
+        "host": "local macOS checkout",
+        "clean_corpus": "web prose sample batches, assumed clean",
+        "scan_mode": "--full-doc"
+      },
+      "uncertainty": "assumed-clean is not proven-clean, and 2,000 docs is a small sample — a 0.1% FPR would need ~3,000 docs to surface once",
+      "boundary": "SCALE-LIMITED (fb 2026-08-30): a 0/2000 local — or 0/269 pod — hit count on a few hundred web-prose docs CANNOT bound the FPR of 'any doc in a ~500K-doc shard contains >=80% of a holdout's bigrams' (~6e8 holdout-doc pairs per 1.1GB shard). A small clean sample says nothing about large-shard FPR; measured on CCI3-HQ + web_hq (cont.cci3_vs_webhq_rates), the full-doc criterion rejects the in-training web_hq 58% at 0.8 with 0 exact. Absent a scale-free baseline corpus of comparable size this number is a 269/2000-doc FPR on tiny shards, not a general FPR.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.cci3_vs_webhq_rates",
+      "value": {
+        "metric": "containment >= 0.8 hits, --full-doc, normalized to per-GB and per-million-doc (the only output comparable across unequal corpus sizes; absolute counts are meaningless between a 4.4G and a 101G corpus)",
+        "cci3_hq": {
+          "hits_08": 4377,
+          "docs": 14458147,
+          "gb": 101.0,
+          "per_gb": 43.3,
+          "per_mil_doc": 302.7,
+          "exact": 0,
+          "verdict_per_shard": "84/96 REJECT (12 clean)"
+        },
+        "web_hq": {
+          "hits_08": 592,
+          "docs": 1126846,
+          "gb": 4.4,
+          "per_gb": 134.5,
+          "per_mil_doc": 525.4,
+          "exact": 0,
+          "verdict_per_shard": "72/124 REJECT (52 clean)"
+        },
+        "ratio_cci3_over_webhq": {
+          "per_gb": 0.32,
+          "per_mil_doc": 0.58
+        },
+        "conclusion": "CCI3-HQ per-unit contamination is LOWER than the in-training web_hq (0.32x per GB, 0.58x per mil-doc), both exact=0. Per fb's pre-registered decision rule (accept if CCI3 <= 2x the in-training baseline): ACCEPT CCI3-HQ for ingestion. The in-training web_hq itself is 58% REJECTED by the same criterion with 0 exact -- the 'reject the whole source on any shard hit' policy fails at 1GB-shard scale (cont.cci3_scale_failure).",
+        "decision_by": "aupai-fb 2026-08-30"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py --full-doc vs holdout (math-500 + math-hard v1), run on the training pod (iv-yeozpb5g5cbw80bls64e); CCI3-HQ = data/raw/cci3_hq 96 shards, web_hq = data/corpus/web_hq 124 shards",
+      "config": {
+        "host": "training pod, holdout hash 654cfbd7c5efdb84",
+        "field": "cci3 jsonl field 'text' (--q-field text); web_hq field 'content'",
+        "scale_control": "web_hq (the corpus 0830v1 trains on) is the same-scale comparator, NOT an abstract clean population"
+      },
+      "boundary": "rates sum holdout-shard hit incidents per corpus / size; the same holdout can be counted in multiple shards (not a distinct-holdout union). short-holdout bucket (<20 bigrams) excluded from the main count -- known FPR dead-zone ('1+1等于几' class), reported separately, p100=1.0 in both corpora.",
+      "status": "measured",
+      "uncertainty": "rates sum holdout-shard hit incidents (same holdout counted in multiple shards); baseline web_hq is the in-training corpus, not a proven-clean population -- the comparison is 'no dirtier than what we train on', not an absolute FPR"
+    },
+    {
+      "id": "cont.cci3_scale_failure",
+      "value": {
+        "claim": "'reject the whole source if any shard hits' is a scale-dependent policy that rejects everything once shards are large",
+        "evidence": "web_hq (in-training corpus) 72/124 shards REJECTED at 0.8 with 0 exact; CCI3-HQ 84/96 REJECTED with 0 exact. Both corpora ~1GB/shards. At ~500K docs/shard x 1254 holdouts = ~6e8 pairs, even a 1e-5 per-pair FP gives thousands of hits.",
+        "correct_output": "scale-free rates (per GB / per million docs) plus a same-scale in-training baseline corpus. Absolute per-shard hit counts are meaningless across unequal corpus sizes.",
+        "action": "scanner default should emit rates and REQUIRE a baseline corpus; --fpr-baseline should not be optional (assigned to lessons-b0). Known-issues: docs/lessons/token_supply.md.",
+        "data_held": "CCI3-HQ 101G kept untouched pending the accept ruling; awaiting pretokenize + mix weight from fb"
+      },
+      "measured": "2026-08-30",
+      "source": "contrasted scans, same script/parans: CCI3-HQ vs web_hq on the training pod",
+      "boundary": "the OLD cont.fpr 0/1498-on-269/2000-docs would have 'cleared' everything: small-sample FPR has no binding power on 500K-doc-shard FPR -- a second instance of a metric that reads scale-bound as absolute (per project harness rule).",
+      "status": "measured",
+      "config": {
+        "host": "training pod",
+        "threshold": 0.8,
+        "mode": "--full-doc"
+      },
+      "uncertainty": null
+    },
+    {
+      "id": "cont.cci3_cross_group_dup",
+      "value": {
+        "metric": "cross-group near-duplication in the shard-parallel build, char-bigram jaccard >= 0.7",
+        "pairs": 4000000,
+        "docs_per_group": 2000,
+        "groups": "web_cci3 build grp0 x grp1",
+        "near_dup_pairs": 0,
+        "near_dup_pairs_pct": "0.00%",
+        "B_docs_near_dup_in_A": 0,
+        "A_docs_near_dup_in_B": 0,
+        "conclusion": "cross-group near-dup is negligible (CCI3 is upstream-deduped). The 24-way parallel build's intra-group-only dedup boundary is harmless; no global dedup pass needed",
+        "build_boundary_recorded": "build_corpus.py is single-process; parallel 24-way build degrades near-dedup to intra-group. FB 2026-08-30 leans accept + record boundary. This number is the justification."
+      },
+      "measured": "2026-08-30",
+      "source": "sampled 2000 docs from each of two parallel-build groups, bigram-jaccard all pairs (numpy/sparse)",
+      "config": {
+        "sample_docs_per_group": 2000,
+        "groups": "web_cci3 build grp0 x grp1",
+        "metric": "char-bigram jaccard >= 0.7",
+        "pairs_scored": 4000000,
+        "tool": "numpy/sparse all-pairs"
+      },
+      "uncertainty": "0/4.0M pairs; rule-of-three 95% upper bound 7.5e-7 per pair; per-group B/A fractions have ~1pp resolution at n=2000",
+      "boundary": "bigram-jaccard is a coarse near-dup signal; renamed/reordered copies score >0.7. 0 hits means no doc was even 70% bigram-shared -- a clean signal at this sample. A 2000-vs-2000 sample leaves ~1% resolution in the B/A fractions.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.hand_read_scale_sensitivity",
+      "value": {
+        "claim": "a single hand-read draws of the SAME corpus with the SAME criteria can reach opposite verdicts; category counts from a small sample cannot set a mix weight",
+        "evidence": "first stratified sample of 30 CCI3-HQ docs: 57% content-farm/SEO/template/洗稿 (37% usable). Next sample of 120: ~62% usable, ~38% not. Same corpus, same reader, same bins.",
+        "why_n30_too_wide": "n=30 at 37% -> 95% CI ~[21%,56%]; distinguishing 18% vs 30% needs ~340 (AGENTS.md); n=150 narrows the half-width to ~+/-8pp",
+        "correct_use": "sample reads are a verification SET for the quality head's cut point, never the weight-setting estimate; the score DISTRIBUTION (deciles), not a hand-count mean, is what sets CCI3's weight",
+        "decision_chain": "fb 2026-08-30: could not set CCI3 weight from 97.1% filter pass (spuriously high, filters blind to CCI3's failure modes); routed to the 27B-trained quality head on its valid domain (web pages)"
+      },
+      "measured": "2026-08-30",
+      "source": "two stratified hand-reads of data/raw/cci3_hq (n=30 seed42 + n=120 seed7), reader: cklxx session",
+      "config": {
+        "samples": [
+          {
+            "n": 30,
+            "seed": 42,
+            "usable_pct": 37
+          },
+          {
+            "n": 120,
+            "seed": 7,
+            "usable_pct": 62
+          }
+        ],
+        "reader": "cklxx",
+        "bins": "content-farm/SEO/template/洗稿 vs usable",
+        "population": "data/raw/cci3_hq"
+      },
+      "uncertainty": "n=30 binomial half-width +-17pp at 95%, n=120 +-8.5pp; the 25pp gap between reads is ~1.2x the combined half-width -- opposite verdicts within sampling noise, which is the finding",
+      "boundary": "this is a methodology statement surfaced by CCI3, not a statement about CCI3 itself; it is why this project scores every corpus with a distribution and verifies cuts against labeled reads",
+      "status": "measured"
+    },
+    {
+      "id": "cont.shards",
+      "value": {
+        "ape210k_000": {
+          "rows": 53772,
+          "hit_0.8": 21,
+          "verdict": "REJECT"
+        },
+        "gsm8k_zh_000": {
+          "rows": 7398,
+          "hit_0.8": 0,
+          "verdict": "clean"
+        },
+        "math23k_000": {
+          "rows": 19916,
+          "hit_0.8": 0,
+          "verdict": "clean"
+        },
+        "math_short_sol_v1_000": {
+          "rows": 2262,
+          "hit_0.8": 11,
+          "verdict": "REJECT"
+        },
+        "math_short_v6_000": {
+          "rows": 95311,
+          "hit_0.8": 43,
+          "verdict": "REJECT"
+        },
+        "math_short_v7_000": {
+          "rows": 73682,
+          "hit_0.8": 37,
+          "verdict": "REJECT"
+        },
+        "math_short_v8_000": {
+          "rows": 66803,
+          "hit_0.8": 30,
+          "verdict": "REJECT"
+        },
+        "mxode_000": {
+          "rows": 174860,
+          "hit_0.8": 141,
+          "verdict": "REJECT"
+        },
+        "mxode_001": {
+          "rows": 36230,
+          "hit_0.8": 107,
+          "verdict": "REJECT"
+        }
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py, one run per shard at thresholds 0.7/0.8/0.9",
+      "config": {
+        "host": "local macOS checkout (never trained)",
+        "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
+        "short_holdout_bucket": "reported separately, excluded from these counts"
+      },
+      "uncertainty": "per-shard hits are holdout-max counts; the same holdout can be hit in multiple shards (union in cont.union)",
+      "status": "measured"
+    },
+    {
+      "id": "cont.jaccard_era",
+      "value": {
+        "math_500": "12.2%",
+        "math_hard_1k": "0.3%",
+        "mxode_rows": 949,
+        "metric": "Jaccard >= 0.8 on extracted questions, same-number-multiset pairs"
+      },
+      "measured": "2026-08-29",
+      "source": "pre-containment Jaccard driver over data/corpus/math/*.jsonl",
+      "config": {
+        "pair_classification": "contam (same numbers) vs template (number-swapped); only contam counted"
+      },
+      "uncertainty": null,
+      "status": "recorded",
+      "audit": "method superseded 2026-08-30 by containment: Jaccard 0.8 misses verbatim embeds with extra text (a verbatim holdout in an 841-char doc scores Jaccard 0.339), which is why math-hard moved 0.3% -> 7.1% under containment. Numbers retained for provenance only."
+    },
+    {
+      "id": "cont.same_numbers",
+      "claim": "of the 223 containment hits, the subset sharing the holdout's exact number multiset (true contamination) versus number-swapped template variants",
+      "value": "unmeasured",
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py union run recorded hit holdout indices only, not corpus rows",
+      "config": {
+        "required_for": "deciding whether REJECTED shards are salvageable by row-level filtering vs wholly template-derived"
+      },
+      "uncertainty": "zh char-bigrams make number-swapped templates score high containment, so the template share could be large; the Jaccard-era same-numbers rate (12.2% vs 30.0% containment on math-500) suggests a majority of hits may be template variants",
+      "status": "unmeasured",
+      "audit": "union run did not persist (corpus row, holdout) pairs, so number-multiset equality cannot be checked from saved output",
+      "refuted_by": "a pair-level re-scan recording each hit's corpus row and classifying by number-multiset equality"
+    },
+    {
+      "id": "cont.throughput",
+      "value": {
+        "postings_python": "0.74M tok/s (95.7s, 1 proc)",
+        "matmul_1proc": "6.8M tok/s (9.4s)",
+        "matmul_9proc": "22M tok/s (3.3s, 3.84s wall incl. index build)",
+        "extrapolate_100B_tok": "1.26h at 9 workers",
+        "lsh": "rejected -- approximate, needs a recall proof against the 223 known hits; exact scan clears the 2h budget"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py sparse-matmul rewrite, timed on data/corpus/math/ (245 MB, 530,234 rows, ~73M tok)",
+      "config": {
+        "machine": "14-core macOS, 9 fork workers",
+        "method": "R (rows x vocab) sparse @ H (vocab x 1532) dense, float64 containment, chunk 20k rows",
+        "deps": [
+          "numpy",
+          "scipy"
+        ],
+        "rejected_alternatives": {
+          "df_pruning": "0 bigrams dropped -- no zh bigram is in >50% of holdouts",
+          "length_buckets": "1.4x upper bound -- rows and holdouts share one size distribution",
+          "lsh_minhash": "approximate; per-row cost not lower at 1,532 holdouts"
+        }
+      },
+      "uncertainty": "pod core count and memory bandwidth differ; the 2.9x parallel speedup is memory-bound, not compute-bound, so a fatter pod may not scale linearly",
+      "status": "measured"
+    },
+    {
+      "id": "cont.ledger",
+      "value": {
+        "path": "data/scan_ledger.jsonl",
+        "key": [
+          "path",
+          "bytes",
+          "mtime",
+          "holdout_hash",
+          "threshold"
+        ],
+        "verified": "9/9 shards served from cache on re-run, verdicts and exit codes preserved",
+        "holdout_change": "invalidates every entry -> full rescan"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py --jobs 9, second run over data/corpus/math/*.jsonl",
+      "config": {
+        "fingerprint": "bytes+mtime, make-style; --force bypasses; FPR baseline runs are not ledgered"
+      },
+      "uncertainty": "bytes+mtime misses an in-place rewrite that preserves both -- content-hash if shards can be replaced adversarially",
+      "status": "measured"
+    },
+    {
+      "id": "cont.template_share_0_3pct",
+      "claim": "math_hard_eval_1k shares only 0.3% of templates with training data (mathbank/split_bank.py docstring)",
+      "value": "0.3% identical-template sharing",
+      "measured": "2026-08-29",
+      "source": "mathbank/split_bank.py docstring",
+      "config": {
+        "metric": "identical template share, not textual overlap"
+      },
+      "uncertainty": null,
+      "status": "retracted",
+      "audit": "the metric answered template identity, not contamination; it read as 'this was checked' while the contamination rate was 10x higher",
+      "refuted_by": "cont.math_short_leak -- containment >= 0.8 does not require template identity; measured textual near-duplication is 3.5% on the pod (36/1032), 30.0% locally",
+      "retracted_value": [
+        "0.3%"
+      ]
+    },
+    {
+      "id": "cont.eval_surface_matching",
+      "claim": "matching training batches to the eval's surface statistics (operator/fraction/decimal shares) is a legitimate optimization",
+      "value": "mathbank/make_v11_band.py LP-matches v11 batches to math_hard_eval_1k's surface statistics by design",
+      "measured": "2026-08-30",
+      "source": "mathbank/make_v11_band.py docstring",
+      "config": {
+        "mechanism": "linear-program constraints on operator share, fraction share, decimal share vs eval targets"
+      },
+      "uncertainty": null,
+      "status": "retracted",
+      "audit": "optimizing training data toward the eval's surface statistics and contaminating it are the same act described twice -- it pushes the batch distribution onto the eval distribution and was an aggravator of cont.math_short_leak",
+      "refuted_by": "cont.math_short_leak -- v11 REJECTs with 33 holdout hits at 0.8",
+      "retracted_value": []
+    },
+    {
+      "id": "cont.gate",
+      "value": {
+        "script": "eval/gate_math_short.sh",
+        "rule": "every math_short_* batch passes datagen/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
+        "wired_into": "datagen/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
+        "verified": "gate passes all 6 local math_short batches vs math-500+v2 (2026-08-30, rate-based scanner with gsm8k_zh baseline); still REJECTs mxode (141 math-500 holdouts, 7278 hit rows)"
+      },
+      "measured": "2026-08-30",
+      "source": "eval/gate_math_short.sh, wired into datagen/build_math_expand.sh",
+      "config": {
+        "consequence": "build_math_expand.sh is UNBLOCKED for math_short batches as of 2026-08-30 (they are clean vs the active evals math-500+v2). mxode stays REJECT. The earlier 'refuses until the bank is fixed' state is obsolete -- see cont.math_short_leak.resolution.",
+        "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.holdout_v2",
+      "value": {
+        "rule": "carve the holdout out of each NEW source BEFORE ingest: qhash[:8] % 100 < 2 -> holdout_v2, else corpus; gate the remainder against the full holdout (any hit -> REFUSED, nothing written)",
+        "tool": "datagen/holdout_split.py",
+        "eligibility": "only never-ingested sources (no ledger entry, not in PROVENANCE.md)",
+        "status_of_v2_set": "empty -- no eligible new source has arrived; math-500 stays the active eval until the first v2 slice exists"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/holdout_split.py, broken-world tested (verbatim-holdout source REFUSED with slice discarded; clean source split 100 -> 5+95)",
+      "config": {
+        "split_pct": 2,
+        "determinism": "qhash-based, no RNG state -- same source splits identically on any machine",
+        "activation": "automatic: data/eval/holdout_v2/*.jsonl is loaded by holdout_split.py and joins HOLDOUT_FILES once slices exist"
+      },
+      "uncertainty": "math-500 (30% contaminated) and math-hard-1k (7.1%) stay the active evals until v2 has enough slices for eval resolution -- switching the eval pipeline mid-stream is fb's call, not the scanner's",
+      "status": "recorded"
+    },
+    {
+      "id": "cont.math_hard_v2",
+      "value": {
+        "file": "data/synthetic/math_hard_eval_v2_1k.jsonl",
+        "problems": 1080,
+        "families": 18,
+        "family_types": "quadratic / abs-value / fractional / 2-var system / linear / inverse-prop / quadratic-func / factorize / variance / floor[x] / perfect-square-pattern / pythagoras / 30-60-90 / similar-triangle / number-line-moving / cryptarithm / number-array / hound-hare",
+        "generator": "mathbank/eval_hard_v2_gen.py (every problem constructed FROM its answer; --self-check: 3600 problems + independent recompute)",
+        "acceptance_gate": "scanner exit 0 vs ALL 7 math_short batches (local v3/v5/v6/v7/v8/v11 + pod v10) with v2 as holdout: 0 exact, 0 containment>=0.8 (v10 measured on the training pod 2026-08-30, short-bucket p100=0.429)",
+        "reverse_gate": "v2 scanned as corpus vs math-500+math-hard-1k: 0 exact, 0 at 0.7/0.8/0.9 -- the new eval contains no old-holdout problem either",
+        "disjointness_argument": "the 943-program L3/L4 bank is 100% arithmetic (grep: zero 方程/设未知数/函数); v2's symbolic-algebra/geometry types are structurally outside the bank's generator paradigm. Type inventory: docs/audits/audit_math_corpus.md#math-hard-v2",
+        "resolution_probe": {
+          "status": "unmeasured 2026-08-30 (aupai-fb ruling)",
+          "claim": "v2 在 0.8b 尺度的分辨率",
+          "0830v1_result": "v2 0.0% (18/18 families zero, both stock and family-aware scoring) BUT uninformative: math-500 control also 0/500 — 0830v1 is a pretraining checkpoint, degenerates on instructed evals (boxed rate 23.8%, step-eq 100% wrong). A probe that reads zero under both facts is not a probe.",
+          "proc_replay_result": "0/1080 (18/18 families 0/60, both scorers; math-500 control 2.8% same ckpt) BUT degenerate: 165-colon repetition loops, token salad, boxed rate 9/1080=0.8%, coherent-attempt 8/1080=0.7%. The zero carries no difficulty information.",
+          "fmt_cue_result": "format-cue rerun (same ckpt, same 1080, explicit '请写出解答过程...\\boxed{}' suffix, max_new 512): coherent-attempt 23/1080=2.1%, boxed 8/1080=0.7%, pass@1 0.0% -- still degenerate (number-repetition loops: '19, 15, 19, 15...', '1 + 1 + 1 + 1...'). The explicit format cue does NOT recover coherent attempts -> fb branch 2: the degeneration is triggered by v2's problem CONTENT (symbolic types the model never saw), not by prompt format. Note: there is no separate 'math-500 template' -- both evals use format_prompt(bare instruction); the suffix was the only format lever. Conclusion: at this checkpoint's scale v2 is unmeasurable, and the reason is content distribution, now established with a valid probe.",
+          "audit": "探针生成退化,零分不携带难度信息;math-500 同 checkpoint 2.8% 证明非全局失能 —— 是对 v2 题面失能。按 fb 探针标准(在两种相反事实下给同一读数的探针不是探针),标 inconclusive(退化),不按字面判据落盘'无分辨率'。",
+          "criterion_lesson": "预注册判据的缺陷(aupai-fb):一个基于分数阈值的判据,必须同时带一个生成有效性的前置条件,否则它会把格式失败读成能力失败。预注册保护我们不做事后选判据,不保护我们不做一个坏测量。",
+          "tiered_reporting": "WITHDRAWN 2026-08-30 (aupai-fb): arithmetic-gap families were 0/240 and equally degenerate —— 不要用一个坏读数去填一个看起来完整的报告结构。",
+          "informative_target": "ckpt_k8_proc_replay (best remaining instructed ckpt: math-500 2.8%, old math-hard 0.1%); the 51.2% math-500 SFT checkpoints were deleted from the pod",
+          "next": "v2 stays a post-SFT instrument. For base-checkpoint math signal at 200M, use the likelihood twin (p(correct solution) vs p(matched wrong)) -- facts/base_eval.json#be.math_v2_likelihood_twin. Full-resolution v2 measurement deferred until a strong SFT checkpoint exists.",
+          "fmt_cue_ran": "2026-08-30, GPU0. Log is POD-ONLY and untracked: /work/aupai/retired_pre0830v2/runs/eval_v2_fmt.log (verified present 2026-09-02). The bare relative path this field used to carry resolves nowhere on main, so the reading cannot be recomputed from a checkout -- stated rather than left to look local."
+        }
+      },
+      "measured": "2026-08-30",
+      "source": "mathbank/eval_hard_v2_gen.py; datagen/scan_math_contamination.py --holdout",
+      "config": {
+        "host": "local macOS checkout",
+        "scanner_default_holdout": "math-500 + v2 (math-hard-1k retired from the default set 2026-08-30)"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.math_hard_v1_void",
+      "value": {
+        "retired": "data/synthetic/math_hard_eval_1k.jsonl",
+        "reason": "every math_short batch contaminated it (cont.math_short_leak); it was the same ruler as the training data's generator canon",
+        "consequence": "all math-hard scores measured against math_hard_eval_1k are VOID -- v2 is a different ruler (symbolic vs arithmetic), numbers are not comparable",
+        "file_kept": "yes, for provenance; removed from the scanner's default HOLDOUT_FILES"
+      },
+      "measured": "2026-08-30",
+      "source": "aupai-fb decision 2026-08-30 (option b: regenerate from type-disjoint families; option a bank-split ruled invalid)",
+      "config": {
+        "host": "local"
+      },
+      "uncertainty": null,
+      "status": "recorded"
+    },
+    {
+      "id": "cont.minhash_known_answer",
+      "value": {
+        "recall": "296/296 (100%)",
+        "false_positive": "0/72",
+        "variant_taxonomy": [
+          "whitespace folding",
+          "boilerplate line strip",
+          "3% truncation",
+          "encoding/space variants"
+        ],
+        "instrument": "build_corpus.MinHashLSH (128-perm, 16-band, ~0.8 Jaccard)",
+        "exact_content_hash": "catches ~0 of these variants (by construction)",
+        "construction": "74 base docs x 4 realistic near-dup transforms = 296 variants; clean instrument validation that EXACT-only cannot do realistic cross-source dedup"
+      },
+      "measured": "2026-08-30",
+      "source": "constructed known-answer pair (74 local docs -> 296 variants), run off the 36B dedup design",
+      "config": {
+        "n_docs": 74,
+        "n_variants": 296,
+        "namespace": "cross-source corpus dedup (36B)",
+        "decision": "near-dup -> v1, not v2 (exact alone cannot)",
+        "teammate": "aupai-fb 2026-08-30"
+      },
+      "boundary": "a construction, not a comparison: the variant classes are author-chosen realistic transforms, not a measured source-pair value. A source pair's true overlap needs MinHash run ON that pair.",
+      "uncertainty": "recall is on constructed variants, not real cross-source text; real pipelines may introduce other transform classes (HTML unescape, tokenization changes) not in this taxonomy.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.scanner_idf_weighting",
+      "value": {
+        "instrument": "scan_math_contamination.py with IDF-weighted containment (two-pass: DF over scanned corpus, then weighted scoring); sparse csc H for large holdout sets",
+        "validation_fp": "12/12 known math-500 FP pairs (unweighted 0.800-0.857) drop below 0.8 weighted, max 0.789; 0 weighted hits across the 11 FP shards",
+        "validation_recall": "verbatim injections of holdout text into clean docs score 1.000 (6/6)",
+        "limitation": "no-punct/whitespace-stripped injections score 0.490-0.886 (4/6 below 0.8) - char-bigram format sensitivity, pre-existing (unweighted fails identically), separate instrument upgrade queued",
+        "residual_fp_class": "mojibake docs share rare bigrams by coincidence and IDF UPweights them (cont.gsm8k_zh_webhq_scan hit #1)"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py self-check + /tmp/harden_scan.py validation on math-500 vs web_hq",
+      "config": {
+        "threshold": 0.8,
+        "idf": "log((N+1)/(df+1))+1 over scanned corpus",
+        "min_bigrams": 20
+      },
+      "uncertainty": null,
+      "status": "measured",
+      "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
+    },
+    {
+      "id": "cont.gsm8k_zh_webhq_scan",
+      "value": {
+        "hit_rows": 1,
+        "docs": 1366324,
+        "per_gb": 0.2,
+        "exact_hits": 0,
+        "verdict": "clean (ratio 0.00x vs self-baseline, no exact)",
+        "the_hit": "web_000044 doc 698 (mojibake stock-analysis doc, Big5-as-GBK) vs holdout 1870 (triangle angle problem): weighted 0.826, unweighted 0.854 - FALSE POSITIVE, rare-bigram IDF blowup on garbled text; doc is a format-chain miss, not leakage",
+        "holdout_split": "train (7,473 rows); test split would need fetching for the actual eval - train serves as the canary"
+      },
+      "measured": "2026-08-30",
+      "source": "datagen/scan_math_contamination.py (IDF-weighted) + /tmp/gsm_hit_detail.py",
+      "config": {
+        "threshold": 0.8,
+        "baseline": "web_hq self-baseline",
+        "holdout": "data/eval/gsm8k_zh_holdout.jsonl"
+      },
+      "uncertainty": null,
+      "status": "measured",
+      "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
+    },
+    {
+      "id": "cont.math500_webhq_fp_explained",
+      "value": {
+        "unweighted_hits": 11,
+        "exact": 0,
+        "explanation": "all 11 are common-vocabulary false positives: short template word problems (24-28 bigrams, e.g. 某班有20个学生12个男生几个女生) whose bigrams are generic education vocabulary; hits cluster on 6 of the shortest most generic holdouts (439x2, 227x3, 299x4, 208, 192, 50) - real contamination spreads across holdouts, artefacts cluster where the instrument is weakest",
+        "weighted_hits": 0,
+        "verdict": "math-500 is NOT inflated by web_hq; L1 numbers stand"
+      },
+      "measured": "2026-08-30",
+      "source": "/tmp/contam_details.py + /tmp/harden_scan.py",
+      "config": {
+        "threshold": 0.8,
+        "instrument": "unweighted + IDF-weighted containment"
+      },
+      "uncertainty": null,
+      "status": "measured",
+      "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
+    },
+    {
+      "id": "cont.code_holdout_carved",
+      "value": {
+        "n": 500,
+        "source": "synthetic/code_python_zh.jsonl (3,000 rows -> 2,844 unique by instruction)",
+        "hardcode_excluded": 394,
+        "hardcode_pct": 13.9,
+        "seed": 42,
+        "composition": {
+          "int": 143,
+          "list": 189,
+          "str": 151,
+          "float": 6,
+          "other": 11
+        },
+        "sha1_manifest": "data/eval/code_holdout_500.sha1",
+        "note": "hardcode class (expected output derivable by copying a span of the instruction) excluded from the main slice per fb constraint; carve before anything touched the data"
+      },
+      "measured": "2026-08-30",
+      "source": "/tmp/carve_code_eval.py",
+      "config": {
+        "instrument": "random.sample over eligible (non-hardcode) unique rows"
+      },
+      "uncertainty": null,
+      "status": "measured",
+      "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
+    },
+    {
+      "id": "cont.code_crawl_scan",
+      "value": {
+        "candidates": "code_raw.jsonl (200,000 rows, 0.225 GB) + corpus/code/code_filtered_000..002.jsonl (200,000 rows, training form)",
+        "hit_rows": 0,
+        "exact": 0,
+        "baseline_per_gb": 0.0,
+        "verdict": "clean - crawled code corpus does not contain the code eval; code-500 numbers are not inflated by crawl leakage",
+        "number_multiset_flags_review_only": 614,
+        "note": "490/490 holdout bigrams present in IDF background; number-multiset flags are review-only cross-language screen, 0 containment among them"
+      },
+      "measured": "2026-08-30",
+      "source": "runs/scan_code_holdout.log",
+      "config": {
+        "threshold": 0.8,
+        "instrument": "IDF-weighted containment",
+        "baseline": "web_hq 62 shards, 1,366,324 rows"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.code_sft_scan",
+      "value": {
+        "sft_math_code": {
+          "rows": 15471,
+          "hit_rows": 0,
+          "exact": 0,
+          "verdict": "clean"
+        },
+        "evol_code": {
+          "rows": 8000,
+          "hit_rows": 0,
+          "exact": 0,
+          "verdict": "clean"
+        },
+        "synthetic_code": {
+          "rows": 3000,
+          "hit_rows": 1652,
+          "exact_normalized": 587,
+          "verdict": "REJECT",
+          "note": "by construction: this IS the carve source (3,000 rows -> 500 held out). Positive control: the scanner sees the held-out rows. Excluded from training by data/eval/code_holdout_500.sha1 manifest; no current build script references the file (verified 2026-08-30)"
+        },
+        "headline": "every code-bearing TRAINING file is clean (sft_math_code 0, evol_code 0, code_raw 0, corpus/code 0); the only REJECT is the carve source itself"
+      },
+      "measured": "2026-08-30",
+      "source": "runs/scan_code_holdout_sft.log",
+      "config": {
+        "threshold": 0.8,
+        "instrument": "IDF-weighted containment",
+        "baseline": "web_hq 62 shards, 1,366,324 rows",
+        "q_field": "instruction"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "cont.sft_all_code_holdout_leak",
+      "value": "data/sft/sft_all.pt contains the code eval's own questions: 19 of the first 20 code_holdout_500 questions appear VERBATIM as exact token subsequences in the pack. The math holdouts do not: 0/15 for math_test_500 and 0/15 for math_hard_eval_1k. Mechanism is a timestamp, not a logic error -- code_holdout_500.jsonl was carved 11:41:25, sft_all.pt was packed 11:46:57, and holdout_hashes.txt was not regenerated until 13:18:44. prepare_sft.py:75 does call is_holdout(q), and holdout.py:16 does list code_holdout_500.jsonl in EVAL_FILES; the filter passed everything through because the hash file it reads is a DERIVED artifact that was stale at pack time. The math holdouts were already in the set, which is why they are clean. Consequence: the SFT zero-shot code-500 reading of 83/500 = 16.6% is VOID -- the model had seen most of the questions with their solutions, since the holdout was carved from data/synthetic/code_python_zh.jsonl, itself SOURCES[7] in prepare_sft.py.",
+      "measured": "2026-08-30",
+      "source": "exact token-subsequence match of the first 24 tokens of each holdout question against the flattened input_ids of data/sft/sft_all.pt (217,567,088 tokens), same tokenizer; mtimes from ls on the pod",
+      "config": {
+        "pack": "data/sft/sft_all.pt, 53,104 rows x 4097",
+        "probe": "first 20 code / 15 math questions, first 24 tokens each, exact torch.equal on the window",
+        "tokenizer": "data/tokenizer.json, vocab_id 0bce3584bc24f255",
+        "note": "presence is measured on the PACK, not on the source files; the source-file scans that read 0 hit were correct about the sources"
+      },
+      "uncertainty": "20 of 500 code questions sampled; 19/20 present. The rate on the full 500 is not measured, but the reading is disqualifying at any rate above zero.",
+      "status": "retracted",
+      "boundary": "Says nothing about the base checkpoint's numbers, which were never trained on SFT data, and nothing about the math SFT numbers, which this same probe found clean.",
+      "refuted_by": "be.sft_v3_code500",
+      "claim": "data/sft/sft_all.pt contained 19/20 sampled code-500 questions verbatim, so the SFT zero-shot code-500 reading of 16.6% was declared VOID.",
+      "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild.",
+      "retracted_value": []
+    },
+    {
+      "id": "cont.heldout_in_pretrain_corpus",
+      "value": {
+        "answer_hits": 2114,
+        "measurable_denominator": 7523,
+        "answer_hit_rate": 0.281,
+        "population": 10421,
+        "answers_under_13_words": 2898,
+        "question_hits": 2364,
+        "chatml_verbatim_substring": 1199,
+        "chatml_hits": 1515,
+        "per_domain_alone": {
+          "math_owm_stage2": 542,
+          "en_c4_stage2": 22,
+          "cot": 334,
+          "textbook_30b": 185,
+          "chatml": 1515,
+          "chat_qa": 1515,
+          "zh_web": 81,
+          "code_py_starcoder": 239,
+          "code_py_rp1t": 57
+        },
+        "union": 2114,
+        "sum_of_alone": 4490
+      },
+      "measured": "2026-09-04",
+      "source": "scripts/e1_28_heldout_contamination.py, one scanner three modes: default (whole-corpus 48-worker shard-parallel) -> runs/e1_28/e1_28_heldout_contamination.json and runs/e1_28/e1_28_scan.log; --per-domain-alone (each domain independently, plus the item->domain map) -> runs/e1_28/e1_28_per_domain_alone.json and runs/e1_28/e1_28_alone.log; --classify chatml (per-item longest common run and verbatim test) -> runs/e1_28/e1_28_prov_chatml.json ; held-out set data/sft/control_sft_text_heldout.jsonl restricted to runs/heldout_v2/ids_shared.txt (10,421 rows). The artifacts were produced on the pod and copied back verbatim; the two analysis modes were folded into the scanner afterwards from the pod-side drivers that produced them, so the committed code and the artifacts share one index-building path.",
+      "config": {
+        "host": "pod, CPU only, no card",
+        "counting_rule": "word 13-grams, lowercased, unicode word class; an item HITS if any 13-gram of its ANSWER appears in any corpus line. The answer, not the question: the floor scores nll over supervised tokens = the answer. Question hits reported separately.",
+        "denominator": "7,523 = the 10,421 scored ids minus 2,898 whose answers are under 13 words and therefore CANNOT hit at this n. Those 2,898 are UNMEASURABLE at n=13, not clean; counting them as clean would give 20.3% and understate the measured items.",
+        "corpus": "160.97 GB on disk over 9 domains, 29,984,286 lines, 100.0% of every domain's shards read",
+        "per_domain_is_ALONE": "each domain measured independently against the full index. The scan's own running column is INCREMENTAL over a growing union in mix order and cannot be read per domain: it printed chat_qa +0, zh_web +0, rp1t +0, whose alone values are 1,515 / 81 / 57. sum_of_alone 4,490 vs union 2,114 means 2,376 item-hits are shared across domains.",
+        "chatml_and_chat_qa_are_ONE_source": "both hit exactly 1,515 items because they are two renders of data/corpus/chat -- datagen/build_chatml.py (ChatML) and datagen/build_chat_qa.py (original 问:/答: form), fb KEEP ruling 2026-09-01. One contamination source, 71.7% of all hits, from 0.33 GB of the 160.97.",
+        "mechanism": "the corpus document IS the held-out row: <|im_start|>user\\n{question}<|im_end|>\\n<|im_start|>assistant\\n{answer}<|im_end|>. 1,199 of 1,515 answers are a verbatim substring of one corpus document; 1,247 have >=99% of their words in one contiguous run, 1,310 >=90%, 109 share only a 13-gram. ZERO equal the whole document, because the document also carries the question.",
+        "cause": "datagen/holdout.py's EVAL_FILES lists four math/code eval files and NOT control_sft_text_heldout.jsonl. Both corpus builders call is_holdout per row and both emitted a holdout slice (chatml's is 59 bytes, one line), so the guard RAN -- its population lacked the file. Same source on both sides: prepare_sft.SOURCES[0] is data/alpaca_gpt4_zh.jsonl, Chinese instruction QA, and data/corpus/chat is the same material.",
+        "fingerprint": "ids c3895c21973bf49b over this script's serialisation; the audit's cae4daf7ad59388c is over its own. The ROW COUNT 10,421 is the check that carries weight, and it is asserted before any scanning -- an int-vs-str id mismatch matched 0 of 10,421 and that assertion is what caught it."
+      },
+      "uncertainty": "THE CONSUMED-ROWS RATE IS UNMEASURED. This is containment in the corpus ON DISK, not in the rows the 200M run actually read. row_cursor (1,189,548) counts TOKEN-BLOCK rows (cache.numel()//(seq+1)), the corpus is documents, and the pre-tokenize shuffle at train.py:1456 means the first N documents are not the first N of the token cache -- so no instrument here maps cursor to documents. 6e's ruling 2026-09-04: do not build the doc-level cursor now. Direction of the bound: the run consumed a fraction of each domain, so the consumed-rows rate is AT MOST 28.10% and its true value is unknown.",
+      "boundary": "The Pile side is UNMEASURED and unmeasurable here -- the control arm's pretraining corpus is not on this machine, so this halves the confound rather than closing it. The floor re-score on the clean subset is NOT in this fact: it is a card decision. SUPERSEDES the 316-item exclusion in runs/e1_28_matched.json, which docs/audits/control_pythia160m_vs_ours.md 5.3d used for its clean-subset re-score: scripts/e1_28_leak_scan.py read 5.0-13.2% of each domain's documents because it treated cursor rows as documents, and its coverage guard was in the same wrong unit so it never fired. That scan also saw chatml and chat_qa report 808 char-hits EACH and filtered the identical count away as markdown formatting; it was the shared source. BUILT BEFORE THE REGISTRY, so the new hash set cannot retroactively protect this corpus (6e's ruling, e1 2026-09-04): the shards scanned above were written 2026-09-01 -- /data00/tokens_chatml.pt and tokens_chat_qa.pt at 13:43Z, tokens_cot.pt at 18:10Z (stat on the pod) -- while the registry-driven regeneration of data/eval/holdout_hashes.txt landed 2026-09-04 01:15Z, taking the set from 2,532 hashes to 29,923 (fp 26984613941ab5a2 on the pod). The 28.10% therefore measures a corpus built against the FOUR-FILE EVAL_FILES list, and the regeneration changes what the NEXT build would exclude, not what this one contains. Re-running the scan against the 29,923-hash set would answer a different question (how much of the wider eval set is in there), not re-answer this one. The two sets were briefly out of sync -- this repository held the 2,532-hash set at fp d8a0378d6d445c3a while the pod held 29,923 at fp 26984613941ab5a2, so the same guard read a different population in each place -- and de closed that: the committed copy is now the pod's regenerated set, 29,923 hashes at fp 26984613941ab5a2, verified equal on both sides 2026-09-04 by e1 after merging main.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.math_owm_ws13",
+      "value": {
+        "unit": "whitespace 13-gram containment (e1-28's method; the char-13 window is reserved for dense-char domains, on code/math/English it shreds indentation and identifiers into meaningless matches)",
+        "math_owm": {
+          "shards": 127,
+          "docs": 2554754,
+          "wall_s": 2942,
+          "humaneval_164": {
+            "question": {
+              "docs_hit": 440,
+              "rate": 0.000172
+            },
+            "answer": {
+              "docs_hit": 22,
+              "rate": 9e-06
+            },
+            "other": {
+              "docs_hit": 1176,
+              "rate": 0.00046
+            }
+          },
+          "code_holdout_v2_500": {
+            "question": {
+              "docs_hit": 12,
+              "rate": 5e-06
+            },
+            "other": {
+              "docs_hit": 12,
+              "rate": 5e-06
+            }
+          },
+          "math_test_500": 0,
+          "math_hard_eval_v2_1k": 0,
+          "lambada_test_en": 0
+        },
+        "math_owm_stage2": {
+          "shards": 206,
+          "docs": 4135793,
+          "wall_s": 4715,
+          "humaneval_164": {
+            "question": {
+              "docs_hit": 777,
+              "rate": 0.000188
+            },
+            "answer": {
+              "docs_hit": 50,
+              "rate": 1.2e-05
+            },
+            "other": {
+              "docs_hit": 1958,
+              "rate": 0.000473
+            }
+          },
+          "code_holdout_v2_500": {
+            "question": {
+              "docs_hit": 22,
+              "rate": 5e-06
+            },
+            "other": {
+              "docs_hit": 22,
+              "rate": 5e-06
+            }
+          },
+          "math_test_500": 0,
+          "math_hard_eval_v2_1k": 0,
+          "lambada_test_en": 0
+        },
+        "verdict": "both math OWM super-sets carry no gold contamination: math-500 / math-hard v2 / lambada all 0; humaneval-question 13-gram hits at 0.017-0.019% of documents (digit-sequence / identifier collisions, not problem text), answer-level hits 22 and 50.",
+        "retracted_value": "scan_math_ws.json's 1,986,682 humaneval hits (rate 15643.17 = HITS DIVIDED BY SHARDS, not per-doc) was the char-13 shredding unit produced by a pre-fix pod scanner copy; void. The authoritative numbers are from runs/scan_math_ws2.json under whitespace-13."
+      },
+      "measured": "2026-09-04",
+      "source": "runs/scan_math_ws2.json (datagen/scan_eval_golds.py whitespace-13, shard-parallel pool 8) over data/corpus/math_owm and math_owm_stage2",
+      "config": {
+        "scanner": "datagen/scan_eval_golds.py --golds data/eval/humaneval/humaneval_164.jsonl data/eval/math_test_500.jsonl data/synthetic/math_hard_eval_v2_1k.jsonl data/eval/lambada_en/lambada_test_en.jsonl data/eval/code_holdout_v2_500.jsonl",
+        "method": "whitespace 13-gram containment; a hit requires an exact 13-token gram of the gold in a corpus doc",
+        "needle_type": "question/answer/other by gold value's source key",
+        "pool": "8 CPU cores (no GPU)",
+        "unit": "docs hit (a doc hits an eval once); rate = docs_hit / docs",
+        "selftest": "verbatim gold found, shuffled gold 0 hits",
+        "unattested_leg": "humaneval_164.jsonl, lambada_test_en.jsonl, code_holdout_v2_500.jsonl"
+      },
+      "uncertainty": "humaneval-question hits are per-doc; the same gold sentence can hit multiple docs (not a distinct-holdout union). A 13-word digit/identifier gram collision is a low-signal hit, not problem-text leakage.",
+      "status": "measured",
+      "artifact_sha256": {
+        "math_test_500.jsonl": "609a5a5af31d666a01e2a82c692d1d54f5e13a081a2a98c929e02670941b34e5"
+      }
+    },
+    {
+      "id": "cont.en_c4_ws13",
+      "value": {
+        "unit": "whitespace 13-gram containment (same method as cont.math_owm_ws13)",
+        "en_c4": {
+          "shards": 166,
+          "docs": 7767463,
+          "wall_s": 3728,
+          "humaneval_164": {
+            "question": {
+              "docs_hit": 11,
+              "rate": 1e-06
+            },
+            "other": {
+              "docs_hit": 1,
+              "rate": 0.0
+            }
+          },
+          "math_test_500": 0,
+          "math_hard_eval_v2_1k": 0,
+          "lambada_test_en": {
+            "answer": {
+              "docs_hit": 2,
+              "rate": 0.0
+            }
+          },
+          "code_holdout_v2_500": 0
+        },
+        "en_c4_stage2": {
+          "shards": 83,
+          "docs": 3887759,
+          "wall_s": 1940,
+          "humaneval_164": {
+            "question": {
+              "docs_hit": 7,
+              "rate": 2e-06
+            }
+          },
+          "math_test_500": 0,
+          "math_hard_eval_v2_1k": 0,
+          "lambada_test_en": {
+            "answer": {
+              "docs_hit": 1,
+              "rate": 0.0
+            }
+          },
+          "code_holdout_v2_500": 0
+        },
+        "verdict": "both en_c4 dirs carry no gold contamination: math-500 / math-hard v2 / code_holdout all 0; humaneval-question 13-gram hits 11+7 docs (gram collisions at ~1e-6 rate), lambada answer 2+1. Markedly cleaner than math_owm -- web text, few digit-grams.",
+        "wall_s_total": 5668
+      },
+      "measured": "2026-09-04",
+      "source": "runs/scan_en_c4_ws.json (datagen/scan_eval_golds.py whitespace-13, pool 8 CPU) over data/corpus/en_c4 and en_c4_stage2",
+      "config": {
+        "golds": "the 5 default eval golds: humaneval_164 / math_test_500 / math_hard_eval_v2_1k / lambada_test_en / code_holdout_v2_500",
+        "method": "whitespace 13-gram containment; exact 13-token gram of the gold in a corpus doc",
+        "unit": "docs hit; rate=docs_hit/docs",
+        "selftest": "verbatim gold found, shuffled gold 0 hits"
+      },
+      "uncertainty": "humaneval/lambada hits are per-doc gram collisions, not problem-text leakage; the same gold sentence can hit multiple docs (not a distinct-holdout union) at these ~1e-6 rates.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.generator_families_in_owm",
+      "value": {
+        "sampled_docs": 40000,
+        "shards_sampled": 3,
+        "shards_total": 206,
+        "rates_pct": {
+          "age_ratio": 7.33,
+          "alloy_mixture": 0.425,
+          "work_rate": 0.228,
+          "clock_angle": 0.118,
+          "cryptarithm": 0.057,
+          "chicken_rabbit": 0.037,
+          "ant_crawl_solid": 0.003
+        },
+        "hits": {
+          "age_ratio": 2932,
+          "alloy_mixture": 170,
+          "work_rate": 91,
+          "clock_angle": 47,
+          "cryptarithm": 23,
+          "chicken_rabbit": 15,
+          "ant_crawl_solid": 1
+        },
+        "est_docs_domain_wide": {
+          "age_ratio": 201331,
+          "alloy_mixture": 11673,
+          "work_rate": 6249,
+          "clock_angle": 3227,
+          "cryptarithm": 1579,
+          "chicken_rabbit": 1030,
+          "ant_crawl_solid": 69
+        },
+        "finding": "every probed generator family is PRESENT in math_owm_stage2, including the most obscure in the bank"
+      },
+      "unit": "fraction of sampled docs containing family-characteristic phrasing",
+      "measured": "2026-09-05",
+      "source": "/tmp/famscan.py on the pod against /work/aupai/data/corpus/math_owm_stage2/*.jsonl; 3 shards drawn with Random(42), first 40,000 parseable docs, first 4,000 chars per doc",
+      "config": {
+        "probe": "family-characteristic regex, case-insensitive, NOT surface n-grams (e.g. age_ratio = 'how old' | 'years older' | 'age..ratio' | 'ages of')",
+        "population": "corpus on disk, NOT the row_cursor rows the model read -- an upper bound on what training saw for a domain read at 0.301 epochs",
+        "why": "asked to select a generator procedure family ABSENT from pretraining, for the conversion-rate curve's skill (4c, synthesis experiment 1)"
+      },
+      "uncertainty": "3 of 206 shards and 40,000 docs is a sample; rates carry binomial error and the domain-wide extrapolations assume shard homogeneity, which is not measured. The direction that matters is safe: these are presence findings, and a sample that FINDS a family cannot be wrong about presence.",
+      "status": "measured",
+      "boundary": "THIS METHOD CANNOT CERTIFY ABSENCE. By the rule of three, a family with 0 hits in 40,000 docs is bounded above at 0.0075%, i.e. still up to ~200 docs domain-wide -- so a zero here means 'not found', never 'not present'. Separately, a 13-gram containment scan is the WRONG instrument for a family-level question in either direction: it answers 'did this exact text appear', so a generator emitting fresh instances scores 0 on it while the procedure is thoroughly present -- the 7.33% age_ratio rate is invisible to 13-gram containment. Consequence, and the reason this fact exists: a skill that is absent from pretraining must be CONSTRUCTED, not selected; absence is then a property of how it was built rather than a claim a scan is asked to support."
+    },
+    {
+      "id": "cont.novel_operator_collision",
+      "value": {
+        "docs_scanned": 105000,
+        "domains": 7,
+        "shards_per_domain": 2,
+        "hits": {
+          "glyph_a_at_b": 41,
+          "rule_3a_2b_1": 0,
+          "define_new_op_zh": 0,
+          "carry_rule_zh": 0,
+          "right_to_left_zh": 0
+        },
+        "rates_pct": {
+          "glyph_a_at_b": 0.039,
+          "rule_3a_2b_1": 0.0,
+          "define_new_op_zh": 0.0,
+          "carry_rule_zh": 0.0,
+          "right_to_left_zh": 0.0
+        },
+        "glyph_hits_are_not_operators": "all 41 read as '@' meaning 'at' -- 'Rs.8000 @ 10% p.a.', 'T12@200mm c/c', 'June 26, 2018 @ 1:00p.m.', '4096x2160@60Hz', plus one Mathematica application 'f@ k'. None is a binary operator defined by a stated rule.",
+        "finding": "the constructed family's RULE and PHRASING have zero hits; the bare glyph collides only with '@'-as-at"
+      },
+      "unit": "fraction of sampled docs containing the notation",
+      "measured": "2026-09-05",
+      "source": "/tmp/collide.py and /tmp/glyph.py on the pod, over data/corpus/{math_owm_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,en_c4_stage2}; 2 shards per domain drawn with Random(42), 15,000 docs each, first 4,000 chars per doc",
+      "config": {
+        "subject": "mathbank/math_programs_l5_ext_novel.py, families S (diamond_chain, diamond_chain4) and P (diamond_single, diamond_single_reverse)",
+        "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim AS WORDED BEFORE 0389a5ef. The carry sentence was reworded that day (先加十 -> 先加十一次…只加一次，结果可能仍为负数) to remove an ambiguity; the reworded sentence was NOT re-scanned. The scan's load-bearing probes are the glyph and the rule 3a-2b+1, both unchanged, and a longer more specific sentence can only be rarer than the shorter one it extends -- so the bound still holds, by an argument rather than by a measurement.",
+        "population": "corpus on disk, an UPPER bound on what the model read (mix_200m_8b consumes code_py_starcoder at 0.301 epochs and the other domains less)"
+      },
+      "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count. The Chinese rule-sentence probes were run against the pre-0389a5ef wording; see config.probes.",
+      "status": "measured",
+      "boundary": "A ZERO HERE IS A BOUND, NOT AN ABSENCE: by the rule of three, 0 hits in 105,000 docs bounds the rate below 0.0029%, which over the full domains is still hundreds of documents. This fact does NOT establish that the family is absent from pretraining, and it is not what the family's absence rests on -- absence rests on CONSTRUCTION (the operator, its rule and its phrasing were invented for this experiment on 2026-09-05, after every corpus in the mix was built). The scan's job is the narrower one of catching an accidental collision, and the collision it found is '@'-as-at, which shares a glyph and not a meaning."
+    },
+    {
+      "id": "cont.novel_ops_frozen_sets",
+      "value": {
+        "commit": "0389a5efd99956e8ad14929ae54a3185f9048cc7",
+        "sha256": {
+          "data/probes/novel_ops/S_test.jsonl": "e5859a287d653dd3dd2e1ff5dce0b0423e56e8307177458c75cd2c11ed8e77b3",
+          "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
+          "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
+          "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59",
+          "data/probes/novel_ops/S_test_4way.jsonl": "75286df83530ea219aaffdb6b78aedd4025c9c1963edcd9c20c39431637d0f84"
+        },
+        "rows_per_file": {
+          "test": 1000,
+          "pool": 4096
+        },
+        "verified_at_freeze": {
+          "short_operands": 0,
+          "label_not_add_once_fold": 0,
+          "ambiguous_items": 0,
+          "distinct_instances_per_file": "all (1000/1000 and 4096/4096 by (program, operands))",
+          "test_pool_overlap_by_key": 0,
+          "test_pool_overlap_by_text": 0
+        },
+        "supersedes": "the sets emitted earlier on 2026-09-05, whose prompts carried an ambiguous carry rule and whose operands field dropped any operand equal to 1, 2 or 3. Nothing was scored against those files.",
+        "reading_divergence_on_S": {
+          "S_test": {
+            "add_until_differs": 467,
+            "n": 1000,
+            "pct": 46.7,
+            "ignore_carry_differs": 726,
+            "pct_ignore": 72.6
+          },
+          "S_pool": {
+            "add_until_differs": 2030,
+            "n": 4096,
+            "pct": 49.6,
+            "ignore_carry_differs": 3032,
+            "pct_ignore": 74.0
+          },
+          "P_test": {
+            "add_until_differs": 0,
+            "n": 1000,
+            "ignore_carry_differs": 0
+          },
+          "P_pool": {
+            "add_until_differs": 0,
+            "n": 4096,
+            "ignore_carry_differs": 0
+          },
+          "note": "Measured ON THESE FILES. Earlier-quoted 46.8/72.1/48.3 were computed on the PRE-regeneration files and are wrong for these; e1 caught the discrepancy by reproducing independently. P is 0 by design -- its no-carry invariant is asserted in the generator -- so all three readings agree on every P item."
+        },
+        "carry_fire_distribution": {
+          "S_test": {
+            "0": 274,
+            "1": 625,
+            "2": 100,
+            "3": 1
+          },
+          "S_pool": {
+            "0": 1064,
+            "1": 2634,
+            "2": 395,
+            "3": 3
+          },
+          "P_test": {
+            "0": 1000
+          },
+          "P_pool": {
+            "0": 4096
+          },
+          "source": "e1's independent count, 2026-09-05, reproduced here"
+        },
+        "operand_magnitude_confound": {
+          "S": {
+            "n_operands": 17836,
+            "min": 3,
+            "max": 19,
+            "mean": 9.9,
+            "median": 10
+          },
+          "P": {
+            "n_operands": 10192,
+            "min": 3,
+            "max": 120,
+            "mean": 48.6,
+            "median": 50
+          },
+          "ratio_of_means": 4.9,
+          "why": "P's range was widened from 6..19 to 6..80 on 2026-09-05 to supply 5,096 distinct instances; at S's own 3..19 only 428 no-carry (a,b) pairs exist across P's two programs, against the 5,096 the curve draws, so P CANNOT match S's operand distribution and supply a full pool. The constraint is structural: P has two operands where S has three or four.",
+          "consequence": "P is meant to differ from S in COMPOSITION only. It also differs in operand magnitude, and e1 sharpened what that costs: S at 3..19 over three or four operands keeps every intermediate inside two digits, while P at 6..80 reaches three, so the two families are different TOKENISATIONS of the operator and not only different difficulties.",
+          "found_by": "e1 (lessons-58) asked whether anything asserts P's ranges; nothing does, and the drift they hypothesised is the actual shipped state",
+          "options_not_yet_ruled": "(a) accept and report the confound with every curve; (b) drop P_pool -- if P is only ever a test-time control it needs 1,000 instances, not 5,096, and 3..40 supplies 2,024; (c) give P a third inert operand so its space grows without changing what it controls for.",
+          "direction": "UNKNOWN, and not merely unmeasured: two live mechanisms push opposite ways. Large-operand arithmetic being the harder axis makes P harder and understates the gap; procedure-following being the harder axis -- the thing the experiment exists to measure -- makes S harder for a reason unrelated to operand size and overstates it. An earlier version of this entry said 'plausibly understated', naming only the first mechanism; e1 caught that a signed guess in a boundary field gets quoted later without its hedge.",
+          "option_b_measured": "Dropping P_pool and drawing test-only from 3..40: 1,012 no-carry (a,b) pairs, x2 programs = 2,024 distinct (program, operands) keys against 1,000 drawn, a 2.02x margin under the real without-replacement draw (e1 asked for this before fb rules). But it does NOT remove the confound: 3..40's operand mean is 22.3 against S's 9.9, still 2.3x. Only 3..19 matches S (mean 11.3, 1.1x) and it supplies 428 keys, below the 1,000 needed. So option (b) narrows 4.9x to 2.3x and buys a pure format control at test time; it does not make the families magnitude-matched."
+        },
+        "four_way_readout": {
+          "n": 1000,
+          "options": 4,
+          "floor_pct": 25.0,
+          "shuffle_seed": 20260907,
+          "label_distribution": {
+            "0": 263,
+            "1": 249,
+            "2": 233,
+            "3": 255
+          },
+          "chi2_vs_uniform": "1.936 on df=3 (critical 16.27 at p=0.001). An earlier header said 1.86; e1 recomputed 1.94 and the recheck gives 1.936, so 1.86 was mine and wrong.",
+          "distractor_usage": {
+            "wrong_order": 642,
+            "swap_operands": 425,
+            "coeff_swap": 418,
+            "add_until": 386,
+            "no_carry": 386,
+            "no_plus_one": 378,
+            "carry_20": 284,
+            "sign_slip": 81
+          },
+          "why": "exact match has no headroom off a 0 floor at 200M (e1's MDE, fb ruling 2026-09-05), so experiment 1's primary readout is 4-way likelihood. Every distractor is the answer under a DIFFERENT misreading of the rule, so which option a model picks says which rule it applied -- the options are diagnostic, not filler.",
+          "why_a_ladder": "only 457 of 1000 items have four distinct values under the obvious three (add_until, no_carry, wrong_order); an eight-rung ladder of further misreadings brings it to 1000 with 0 short. A random-integer filler would have made those items measure something other than rule-following. After the rank fix all EIGHT rungs are load-bearing: carry_20 and no_plus_one went from 0 uses to 122 and 168, because choosing WHICH three distractors an item takes is now a rank decision and not first-come.",
+          "generator": "mathbank/emit_novel_ops_4way.py, selftest 7 worlds",
+          "v1_replaced": {
+            "v1_sha256": "2dbf23e94eefc0cacc07eca9f85170e2d6d872730204d0b89b6aba3432563ff9",
+            "defect": "a content-free rule -- pick the 3rd-largest of the four numbers -- scored 0.6430, 39 points above the 25% the readout's power assumes. Gold's value rank was 6/245/643/106 across ranks 0-3. Structural in two rungs: sign_slip (3a+2b+1 on positive operands) is greater than gold on 298/298 and can never sit below it, and wrong_order is greater on 648/984, so the two most-used rungs crowd the top.",
+            "why_it_was_missed": "v1 shuffled the option POSITIONS and reported a chi-square on the label index. That statistic cannot see a heuristic over the option VALUES: the positions were uniform (chi2 1.936) while the values were not.",
+            "found_by": "e1 (lessons-58), 2026-09-05, by running a battery of content-free rules against the set",
+            "headroom_cost": "two-arm MDE at n=1000, alpha .05, power .80: from a 0.25 floor the treated arm needs 0.3048; from 0.6430 it needs 0.7026 -- 0.357 of headroom instead of 0.750 (e1's calculation).",
+            "nothing_scored": "v1 lived only on branch 3b and no arm ran against it"
+          },
+          "content_free_battery_v2": {
+            "3rd_largest": 0.25,
+            "nearest_zero": 0.249,
+            "smallest": 0.249,
+            "largest": 0.25,
+            "note": "every rule reading only the four numbers is at chance; asserted in the selftest"
+          },
+          "value_rank_distribution": {
+            "0": 250,
+            "1": 251,
+            "2": 250,
+            "3": 249
+          },
+          "v2_replaced": {
+            "v2_sha256": "efb18261738491fde71ec626d686f36039a4b243c6ace0c3c676e20302174493",
+            "defect": "balancing value rank and nearest-zero left a THIRD content-free rule live: closest-to-3*operands[0] scored 0.4190, closest-to-operands[k] 0.3450/0.3400/0.3580/0.3940, closest-to-sum 0.3910. Mechanism, not coincidence: gold is 3*a1 - 2*(the rest) + 1, so a1 enters with coefficient 3 while every rung of the ladder perturbs the LATER operands' contribution, leaving gold systematically nearer 3*a1 than its distractors. Worse with chain length -- 0.5360 on diamond_chain4 against 0.3020 on diamond_chain.",
+            "found_by": "e1 (lessons-58), 2026-09-05, 19-rule battery against the v2 build",
+            "nothing_scored": "v2 lived only on branch 3b for under an hour and no arm ran against it"
+          },
+          "v3_marginal_targets": {
+            "why": "Targeting the 16 (value_rank, proximity_rank) CELLS evenly gives value_rank [196,208,256,340] and proximity_rank [340,295,243,122] -- worse on both axes than balancing either alone, because two cells are structurally unreachable on all 1000 items: gold cannot be the 2nd-largest value AND farthest from 3*a1, since being far from 3*a1 in either direction pushes it toward an extreme of the value order (e1). Targeting the three MARGINALS directly and letting the joint fall out reaches flat on all of them. This was the second even-cell error here; the first asked for 1/2 where chance is 1/4. Same shape: a target stronger than the constraint needs.",
+            "value_rank": {
+              "0": 249,
+              "1": 250,
+              "2": 250,
+              "3": 251
+            },
+            "proximity_rank": {
+              "0": 252,
+              "1": 250,
+              "2": 250,
+              "3": 248
+            },
+            "battery_v3": {
+              "3rd_largest": 0.25,
+              "closest_3a1": 0.252,
+              "closest_a1": 0.25,
+              "nearest_zero": 0.249,
+              "note": "19 rules, all at chance; the selftest fails any above 0.30"
+            }
+          },
+          "reachability_reconciliation": "my enumeration gives gold reachable at value rank 0 on 442 items, 1 on 714, 2 on 950, 3 on 839; e1 measured 220/614/913/761 and traced their lower numbers to deduplicating the candidate subsets twice. Mine is the correct enumeration, confirmed by e1 -- and neither of us would have checked without the other's number."
+        },
+        "four_way_content_free_floor": {
+          "floor_by_program": {
+            "diamond_chain": 0.364,
+            "diamond_chain4": 0.294
+          },
+          "worst_rule_by_program": {
+            "diamond_chain": "nearest_mean_of_options",
+            "diamond_chain4": "closest_2a1"
+          },
+          "chance": 0.25,
+          "battery": "29 rules that read the four options and the operands and never apply the operator; mathbank/emit_novel_ops_4way.py:_battery()",
+          "scored_per_program": "REQUIRED. The floor differs by program and a pooled mean cancels opposite-leaning halves: in v3 closest_3sum was 0.4980 on diamond_chain4 (z=+12.81) and 0.0140 on diamond_chain (z=-12.19), pooling to 0.2560, which the pooled battery read as chance.",
+          "why_not_0.25": "Structural on 3-operand chains. Gold is the largest of four on only 23 of diamond_chain's 500 items, because sign_slip (3a+2b+1 on positive operands) and wrong_order both exceed gold, so the best reachable value-rank marginal is [23,159,159,159] -> 0.318 (e1, 2026-09-05). The displaced rank-0 mass lands in the middle ranks, where a SPREAD statistic reads it: nearest_mean_of_options picks value rank 1 on 354 of chain's 500 items and rank 2 on 146, never rank 0 or 3, and chain's gold sits at [23,150,162,165] so ranks 1-2 hold 312/500 against a flat 250 -- 0.3640. On diamond_chain4, where the rank marginal IS flat, the same rule scores 0.1840. That is the same infeasibility read by a different statistic, not a new leak family, and it is why balancing one more key does not converge: the mass moves to whatever reads it next. fb ruled 2026-09-05 that no further rungs are added and there is no v5.",
+          "operational_floor": "the no-injection control arm's own score, not this number. This is the prior.",
+          "superseded_versions": {
+            "v1": {
+              "leak": "3rd_largest 0.6430",
+              "cause": "gold at value rank 2 on 643/1000; the position chi-square cannot see a rule over the option VALUES",
+              "found_by": "e1"
+            },
+            "v2": {
+              "leak": "nearest_zero 0.3500 and closest_3a1 0.4190",
+              "cause": "gold is 3*a1 - 2*(the rest) + 1, so a1 enters with coefficient 3 while every rung perturbs the later operands",
+              "found_by": "e1 (closest_3a1)"
+            },
+            "v3": {
+              "sha256": "c2758aa85b0ef70df7ccc6fcb5f48470c57f3e794a7375065d90b193c2d85dfd",
+              "leak": "per-program maxima 0.3840 diamond_chain (smallest) and 0.4980 diamond_chain4 (closest_3sum), against a pooled battery maximum of 0.2920",
+              "cause": "the three marginals were balanced over the pooled 1000 rows. The two programs reach different key sets, so a pooled target is met by over-filling one program's reachable keys against the other's.",
+              "found_by": "e1"
+            },
+            "v4_header_only": {
+              "sha256": "90c56990149bca4ebd3134ea503747084e3381876a6ca1afdb05ecc6cbe81b85",
+              "note": "the same 1000 items (tail sha 78132162cea92202d745ad263bf174086c5c24a20dad9bdcb94f12d12639ddd9 on both) with a header recording 0.330/0.288, the maximum over a 23-rule battery. Superseded by adding six rules, not by rebuilding."
+            }
+          },
+          "certifies": "the battery DETECTS a leak and cannot certify the absence of the next one. The rules are all 'gold is an affine functional of the operands and each distractor perturbs one term', an unbounded family: rank, then proximity to 3*a1, then proximity to 3*sum were closed in that order and each fix exposed the next.",
+          "is_a_lower_bound_not_a_certificate": "The recorded floor is the maximum over the rules that are IN the battery, so it can only rise as rules are added. It rose twice on this frozen artifact without the items changing: 0.330 -> 0.364 on diamond_chain when e1 contributed nearest_mean_of_options (0.3640, z=+5.89) and 0.288 -> 0.294 on diamond_chain4 with closest_2a1. All 1000 items are byte-identical across those two readings; only the measured maximum moved. Treat it as a lower bound on the achievable floor. The operational floor is the no-injection control arm's own score, which absorbs every member of the family including the unenumerated ones.",
+          "mde_two_arm": {
+            "diamond_chain": {
+              "from": 0.364,
+              "must_reach": 0.4498,
+              "points": 8.58
+            },
+            "diamond_chain4": {
+              "from": 0.294,
+              "must_reach": 0.3752,
+              "points": 8.12
+            },
+            "config": "two-arm, alpha=.05, power=.80, n=500 per program; e1 (lessons-58)",
+            "pooled": "NOT REPORTED. Pooling is the statistic that hid a z=+12.81 cell against a z=-12.19 one in v3."
+          }
+        }
+      },
+      "unit": "sha256 of the file as committed",
+      "measured": "2026-09-05",
+      "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58); the 4-way set's per-program floor from python3 mathbank/emit_novel_ops_4way.py --selftest (11 worlds, world 8 rebuilds v3's pooled shape and requires it to fail the per-program threshold), reproduced independently by e1 (lessons-58); nearest_mean_of_options and closest_2a1 contributed by e1 (lessons-58) and reproduced here, raising the recorded maximum without changing an item",
+      "config": {
+        "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
+        "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
+        "seeds": "TEST_SEED=20260905, POOL_SEED=20260906",
+        "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings",
+        "emitter_4way": "mathbank/emit_novel_ops_4way.py at v4, SHUFFLE_SEED=20260907"
+      },
+      "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
+      "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on. The 4-way set's content-free floor is 0.364 (diamond_chain) / 0.294 (diamond_chain4), NOT 0.25, and it must be scored per program: see value.four_way_content_free_floor. A pooled 4-way number is not interpretable. That floor is a maximum over the battery's rules and rose twice on an unchanged artifact as rules were added; it is a lower bound, not a certificate that no rule scores higher.",
+      "status": "measured"
+    },
+    {
+      "id": "cont.api_cloze_items_consistent",
+      "value": {
+        "sha256": "8524d9cb58eba72004cede353b458c0c65c3365187bb9021f4355f0c3522b8cd",
+        "items": 4998,
+        "per_region": {
+          "seen": 2499,
+          "unseen": 2499
+        },
+        "distinct_pool_rows": {
+          "seen": 929,
+          "unseen": 924
+        },
+        "region_row_overlap": 0,
+        "was_read_boundary": "seen: 2499/2499 True; unseen: 2499/2499 False",
+        "pool_row_ranges": {
+          "seen": [
+            172,
+            643672
+          ],
+          "unseen": [
+            644289,
+            2138146
+          ]
+        },
+        "pinned_unseen_region": [
+          643969,
+          2139719
+        ],
+        "seen_rows_at_or_above_unseen_lo": 0,
+        "unseen_rows_outside_pinned_region": 0,
+        "options_per_item": {
+          "4": 4998
+        },
+        "items_with_duplicate_options": 0,
+        "label_indexes_gold": "4998/4998",
+        "label_distribution": {
+          "0": 1269,
+          "1": 1295,
+          "2": 1223,
+          "3": 1211
+        },
+        "max_label_share": 0.2591,
+        "chance": 0.25
+      },
+      "unit": "counts over the frozen item file; no model is run",
+      "measured": "2026-09-05",
+      "source": "data/probes/api_cloze.jsonl at sha256 8524d9cb (commit 9b5b0c9c); recomputed from the file by e1, not copied from the header or from prereg amendment_12",
+      "config": {
+        "why_this_exists": "The control floor this file was built for was DROPPED the same day: readout_2_split's estimator is delta_seen - delta_unseen with each arm minus control, and readout_4_result_m1_one_layer STOPS M1 by the pool_touched_frac rule (0.0945 < 0.20) with M2/M3 stopped by controller ruling, so no live readout consumes a control number. The file's INTERNAL consistency is checkable with no GPU, so it is recorded here rather than re-derived by the next reader (4c's instruction).",
+        "what_the_label_distribution_rules_out": "A 4-way probe whose gold sits disproportionately in one option slot can be beaten above chance by position alone. Max share is 0.2591 against 0.25, so position carries almost no signal; label_indexes_gold confirms options[label] == gold on every item, which is what makes the label usable at all.",
+        "what_the_boundary_check_rules_out": "SEEN items must come from rows the control read and UNSEEN from rows the allocation never reached, or the difference-in-differences is diluted -- amendment_4 records an earlier boundary that would have diluted it ~8x into a false null. Zero seen rows reach the pinned unseen_lo, zero unseen rows fall outside the pinned region, and the two regions share no pool row.",
+        "agreement_with_the_header": "The file's own header claims seen/unseen distinct_rows 929/924 and stats.items 2499/2499; both recomputed and identical. prereg amendment_12's claim that only unseen distinct_rows changed (925 -> 924) is therefore confirmed against the file."
+      },
+      "uncertainty": "Exact counts, not estimates. They say nothing about whether the items are GOOD -- distractor plausibility, prompt truncation quality and whether an API name is guessable from the prefix are unmeasured, and no model has scored this file.",
+      "boundary": "Consistency of the artifact only. It is not evidence the readout would have been well-powered: the control's own accuracy against the 0.25 chance floor was never measured, so whether this probe can separate an arm from chance at this scale remains unknown.",
+      "status": "measured"
     }
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py on the training pod, one run per shard",
-   "config": {
-    "host": "training pod iv-yeozpb5g5cbw80bls64e",
-    "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
-    "cross_language_caveat": "en_math_text verdicts are zh-surface-only; the cross-language number-multiset flags are cont.cross_language_pod"
-   },
-   "uncertainty": "per-shard hits are holdout-max counts; the same holdout can be hit in multiple shards (union in cont.union_pod)",
-   "status": "measured"
-  },
-  {
-   "id": "cont.cross_language_pod",
-   "value": {
-    "en_math_text_000": 2407,
-    "en_math_text_001": 2529,
-    "en_math_text_002": 1818,
-    "total": 6754,
-    "rows": 107526,
-    "flag_rate": "6.3%",
-    "meaning": "identical number multiset with a zh holdout -- review queue, not confirmed contamination"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py number-multiset screen on the training pod",
-   "config": {
-    "host": "training pod iv-yeozpb5g5cbw80bls64e",
-    "screen": "number multiset, >= 2 numbers, cross-language only",
-    "precision_note": "same-language precision ~1% (2M flags on the math corpus) -- flags are a human-review queue, not a verdict"
-   },
-   "uncertainty": "unreviewed: some flags are true translation pairs / same problem family, many are coincidence on common number combinations. The three shards are NOT clean until this queue is worked",
-   "status": "measured"
-  },
-  {
-   "id": "cont.math_short_leak",
-   "value": {
-    "finding": "math_short_v8/v10 contamination is self-produced: the mathbank generator and math_hard_eval_1k's older generator implement the same canon of Chinese hard-math types, so hand-written templates converge in surface wording",
-    "evidence": "every batch measured REJECTs: v3 28, v5 39, v6 43, v7 37, v8 30, v10 12, v11 33 holdouts at 0.8",
-    "known_before": "split_bank.py docstring records 0.3% identical-template sharing -- understated 10x: textual near-duplication (containment >= 0.8) does not require template identity",
-    "aggravator": "mathbank/make_v11_band.py deliberately matches v11 batches to math_hard_eval_1k's surface statistics by LP design",
-    "impact": "math-hard is the recorded metric; 3.5% pod contamination means a ~3%-level score has up to half its movement from seen problems",
-    "resolution": "CLOSED 2026-08-30 by v2's construction, not by a bank fix: math_short batches never contaminated math-500 (0 hits; 141/150 of math-500's contaminated holdouts are mxode's) -- they only ever contaminated math-hard v1, which is retired (cont.math_hard_v1_void). v2 is generated from type-disjoint families and all 7 batches pass the gate (cont.math_hard_v2). 'Fix the bank' is no longer a todo."
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py over data/synthetic/math_short_v{3,5,6,7,8,11}.jsonl (local) + pod v8/v10; mathbank/split_bank.py, mathbank/make_v11_band.py docstrings",
-   "config": {
-    "generator": "mathbank/run_math_short.py instantiating math_programs_l*.py (943 L3/L4 programs)",
-    "leak_path": "shared template DNA across two generator generations of the same curriculum -- not seed leakage, not a shared pool"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.corpus_fp",
-   "value": {
-    "what": "per-domain sha1 of (shard name, size, mtime); stamped into build_corpus_stats.json at build time and into checkpoints next to vocab_id",
-    "tools": [
-     "datagen/corpus_fingerprint.py",
-     "harness check corpus_fp_matches",
-     "train.py save_checkpoint corpus_fp"
-    ],
-    "broken_world": "real shard copied to a temp corpus, one line appended -> fingerprint changes (self-check OK 2026-08-30)",
-    "stamped": "local math c108de08e0fa4a86; pod chat f4b03c9f, code 4317ab46, en 64888926, math 45a430e0, textbook 632a09b4, wiki 466e012d"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/corpus_fingerprint.py --self-check; scripts/harness.py corpus_fp_matches (15 checks, selftest OK)",
-   "config": {
-    "ceiling": "stat-only (name+size+mtime): misses same-size same-mtime edits; row counts excluded because wc -l on 108GB costs minutes",
-    "incident": "two corpora both called data/corpus/math, 0.0% vs 30.0% contaminated, indistinguishable before this"
-   },
-   "uncertainty": "sample/ and web_hq/ on the pod carry no stats file (raw downloads) -- their fingerprints are not yet stamped",
-   "status": "measured"
-  },
-  {
-   "id": "cont.fpr",
-   "value": {
-    "false_positive_holdouts": 0,
-    "holdouts": 1498,
-    "clean_docs_scanned": 2000,
-    "threshold": 0.8
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py over data/corpus/sample/batch_*.jsonl",
-   "config": {
-    "host": "local macOS checkout",
-    "clean_corpus": "web prose sample batches, assumed clean",
-    "scan_mode": "--full-doc"
-   },
-   "uncertainty": "assumed-clean is not proven-clean, and 2,000 docs is a small sample — a 0.1% FPR would need ~3,000 docs to surface once",
-   "boundary": "SCALE-LIMITED (fb 2026-08-30): a 0/2000 local — or 0/269 pod — hit count on a few hundred web-prose docs CANNOT bound the FPR of 'any doc in a ~500K-doc shard contains >=80% of a holdout's bigrams' (~6e8 holdout-doc pairs per 1.1GB shard). A small clean sample says nothing about large-shard FPR; measured on CCI3-HQ + web_hq (cont.cci3_vs_webhq_rates), the full-doc criterion rejects the in-training web_hq 58% at 0.8 with 0 exact. Absent a scale-free baseline corpus of comparable size this number is a 269/2000-doc FPR on tiny shards, not a general FPR.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.cci3_vs_webhq_rates",
-   "value": {
-    "metric": "containment >= 0.8 hits, --full-doc, normalized to per-GB and per-million-doc (the only output comparable across unequal corpus sizes; absolute counts are meaningless between a 4.4G and a 101G corpus)",
-    "cci3_hq": {
-     "hits_08": 4377,
-     "docs": 14458147,
-     "gb": 101.0,
-     "per_gb": 43.3,
-     "per_mil_doc": 302.7,
-     "exact": 0,
-     "verdict_per_shard": "84/96 REJECT (12 clean)"
-    },
-    "web_hq": {
-     "hits_08": 592,
-     "docs": 1126846,
-     "gb": 4.4,
-     "per_gb": 134.5,
-     "per_mil_doc": 525.4,
-     "exact": 0,
-     "verdict_per_shard": "72/124 REJECT (52 clean)"
-    },
-    "ratio_cci3_over_webhq": {
-     "per_gb": 0.32,
-     "per_mil_doc": 0.58
-    },
-    "conclusion": "CCI3-HQ per-unit contamination is LOWER than the in-training web_hq (0.32x per GB, 0.58x per mil-doc), both exact=0. Per fb's pre-registered decision rule (accept if CCI3 <= 2x the in-training baseline): ACCEPT CCI3-HQ for ingestion. The in-training web_hq itself is 58% REJECTED by the same criterion with 0 exact -- the 'reject the whole source on any shard hit' policy fails at 1GB-shard scale (cont.cci3_scale_failure).",
-    "decision_by": "aupai-fb 2026-08-30"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py --full-doc vs holdout (math-500 + math-hard v1), run on the training pod (iv-yeozpb5g5cbw80bls64e); CCI3-HQ = data/raw/cci3_hq 96 shards, web_hq = data/corpus/web_hq 124 shards",
-   "config": {
-    "host": "training pod, holdout hash 654cfbd7c5efdb84",
-    "field": "cci3 jsonl field 'text' (--q-field text); web_hq field 'content'",
-    "scale_control": "web_hq (the corpus 0830v1 trains on) is the same-scale comparator, NOT an abstract clean population"
-   },
-   "boundary": "rates sum holdout-shard hit incidents per corpus / size; the same holdout can be counted in multiple shards (not a distinct-holdout union). short-holdout bucket (<20 bigrams) excluded from the main count -- known FPR dead-zone ('1+1等于几' class), reported separately, p100=1.0 in both corpora.",
-   "status": "measured",
-   "uncertainty": "rates sum holdout-shard hit incidents (same holdout counted in multiple shards); baseline web_hq is the in-training corpus, not a proven-clean population -- the comparison is 'no dirtier than what we train on', not an absolute FPR"
-  },
-  {
-   "id": "cont.cci3_scale_failure",
-   "value": {
-    "claim": "'reject the whole source if any shard hits' is a scale-dependent policy that rejects everything once shards are large",
-    "evidence": "web_hq (in-training corpus) 72/124 shards REJECTED at 0.8 with 0 exact; CCI3-HQ 84/96 REJECTED with 0 exact. Both corpora ~1GB/shards. At ~500K docs/shard x 1254 holdouts = ~6e8 pairs, even a 1e-5 per-pair FP gives thousands of hits.",
-    "correct_output": "scale-free rates (per GB / per million docs) plus a same-scale in-training baseline corpus. Absolute per-shard hit counts are meaningless across unequal corpus sizes.",
-    "action": "scanner default should emit rates and REQUIRE a baseline corpus; --fpr-baseline should not be optional (assigned to lessons-b0). Known-issues: docs/lessons/token_supply.md.",
-    "data_held": "CCI3-HQ 101G kept untouched pending the accept ruling; awaiting pretokenize + mix weight from fb"
-   },
-   "measured": "2026-08-30",
-   "source": "contrasted scans, same script/parans: CCI3-HQ vs web_hq on the training pod",
-   "boundary": "the OLD cont.fpr 0/1498-on-269/2000-docs would have 'cleared' everything: small-sample FPR has no binding power on 500K-doc-shard FPR -- a second instance of a metric that reads scale-bound as absolute (per project harness rule).",
-   "status": "measured",
-   "config": {
-    "host": "training pod",
-    "threshold": 0.8,
-    "mode": "--full-doc"
-   },
-   "uncertainty": null
-  },
-  {
-   "id": "cont.cci3_cross_group_dup",
-   "value": {
-    "metric": "cross-group near-duplication in the shard-parallel build, char-bigram jaccard >= 0.7",
-    "pairs": 4000000,
-    "docs_per_group": 2000,
-    "groups": "web_cci3 build grp0 x grp1",
-    "near_dup_pairs": 0,
-    "near_dup_pairs_pct": "0.00%",
-    "B_docs_near_dup_in_A": 0,
-    "A_docs_near_dup_in_B": 0,
-    "conclusion": "cross-group near-dup is negligible (CCI3 is upstream-deduped). The 24-way parallel build's intra-group-only dedup boundary is harmless; no global dedup pass needed",
-    "build_boundary_recorded": "build_corpus.py is single-process; parallel 24-way build degrades near-dedup to intra-group. FB 2026-08-30 leans accept + record boundary. This number is the justification."
-   },
-   "measured": "2026-08-30",
-   "source": "sampled 2000 docs from each of two parallel-build groups, bigram-jaccard all pairs (numpy/sparse)",
-   "config": {
-    "sample_docs_per_group": 2000,
-    "groups": "web_cci3 build grp0 x grp1",
-    "metric": "char-bigram jaccard >= 0.7",
-    "pairs_scored": 4000000,
-    "tool": "numpy/sparse all-pairs"
-   },
-   "uncertainty": "0/4.0M pairs; rule-of-three 95% upper bound 7.5e-7 per pair; per-group B/A fractions have ~1pp resolution at n=2000",
-   "boundary": "bigram-jaccard is a coarse near-dup signal; renamed/reordered copies score >0.7. 0 hits means no doc was even 70% bigram-shared -- a clean signal at this sample. A 2000-vs-2000 sample leaves ~1% resolution in the B/A fractions.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.hand_read_scale_sensitivity",
-   "value": {
-    "claim": "a single hand-read draws of the SAME corpus with the SAME criteria can reach opposite verdicts; category counts from a small sample cannot set a mix weight",
-    "evidence": "first stratified sample of 30 CCI3-HQ docs: 57% content-farm/SEO/template/洗稿 (37% usable). Next sample of 120: ~62% usable, ~38% not. Same corpus, same reader, same bins.",
-    "why_n30_too_wide": "n=30 at 37% -> 95% CI ~[21%,56%]; distinguishing 18% vs 30% needs ~340 (AGENTS.md); n=150 narrows the half-width to ~+/-8pp",
-    "correct_use": "sample reads are a verification SET for the quality head's cut point, never the weight-setting estimate; the score DISTRIBUTION (deciles), not a hand-count mean, is what sets CCI3's weight",
-    "decision_chain": "fb 2026-08-30: could not set CCI3 weight from 97.1% filter pass (spuriously high, filters blind to CCI3's failure modes); routed to the 27B-trained quality head on its valid domain (web pages)"
-   },
-   "measured": "2026-08-30",
-   "source": "two stratified hand-reads of data/raw/cci3_hq (n=30 seed42 + n=120 seed7), reader: cklxx session",
-   "config": {
-    "samples": [
-     {
-      "n": 30,
-      "seed": 42,
-      "usable_pct": 37
-     },
-     {
-      "n": 120,
-      "seed": 7,
-      "usable_pct": 62
-     }
-    ],
-    "reader": "cklxx",
-    "bins": "content-farm/SEO/template/洗稿 vs usable",
-    "population": "data/raw/cci3_hq"
-   },
-   "uncertainty": "n=30 binomial half-width +-17pp at 95%, n=120 +-8.5pp; the 25pp gap between reads is ~1.2x the combined half-width -- opposite verdicts within sampling noise, which is the finding",
-   "boundary": "this is a methodology statement surfaced by CCI3, not a statement about CCI3 itself; it is why this project scores every corpus with a distribution and verifies cuts against labeled reads",
-   "status": "measured"
-  },
-  {
-   "id": "cont.shards",
-   "value": {
-    "ape210k_000": {
-     "rows": 53772,
-     "hit_0.8": 21,
-     "verdict": "REJECT"
-    },
-    "gsm8k_zh_000": {
-     "rows": 7398,
-     "hit_0.8": 0,
-     "verdict": "clean"
-    },
-    "math23k_000": {
-     "rows": 19916,
-     "hit_0.8": 0,
-     "verdict": "clean"
-    },
-    "math_short_sol_v1_000": {
-     "rows": 2262,
-     "hit_0.8": 11,
-     "verdict": "REJECT"
-    },
-    "math_short_v6_000": {
-     "rows": 95311,
-     "hit_0.8": 43,
-     "verdict": "REJECT"
-    },
-    "math_short_v7_000": {
-     "rows": 73682,
-     "hit_0.8": 37,
-     "verdict": "REJECT"
-    },
-    "math_short_v8_000": {
-     "rows": 66803,
-     "hit_0.8": 30,
-     "verdict": "REJECT"
-    },
-    "mxode_000": {
-     "rows": 174860,
-     "hit_0.8": 141,
-     "verdict": "REJECT"
-    },
-    "mxode_001": {
-     "rows": 36230,
-     "hit_0.8": 107,
-     "verdict": "REJECT"
-    }
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py, one run per shard at thresholds 0.7/0.8/0.9",
-   "config": {
-    "host": "local macOS checkout (never trained)",
-    "policy": "REJECT THE WHOLE SOURCE — do not filter rows",
-    "short_holdout_bucket": "reported separately, excluded from these counts"
-   },
-   "uncertainty": "per-shard hits are holdout-max counts; the same holdout can be hit in multiple shards (union in cont.union)",
-   "status": "measured"
-  },
-  {
-   "id": "cont.jaccard_era",
-   "value": {
-    "math_500": "12.2%",
-    "math_hard_1k": "0.3%",
-    "mxode_rows": 949,
-    "metric": "Jaccard >= 0.8 on extracted questions, same-number-multiset pairs"
-   },
-   "measured": "2026-08-29",
-   "source": "pre-containment Jaccard driver over data/corpus/math/*.jsonl",
-   "config": {
-    "pair_classification": "contam (same numbers) vs template (number-swapped); only contam counted"
-   },
-   "uncertainty": null,
-   "status": "recorded",
-   "audit": "method superseded 2026-08-30 by containment: Jaccard 0.8 misses verbatim embeds with extra text (a verbatim holdout in an 841-char doc scores Jaccard 0.339), which is why math-hard moved 0.3% -> 7.1% under containment. Numbers retained for provenance only."
-  },
-  {
-   "id": "cont.same_numbers",
-   "claim": "of the 223 containment hits, the subset sharing the holdout's exact number multiset (true contamination) versus number-swapped template variants",
-   "value": "unmeasured",
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py union run recorded hit holdout indices only, not corpus rows",
-   "config": {
-    "required_for": "deciding whether REJECTED shards are salvageable by row-level filtering vs wholly template-derived"
-   },
-   "uncertainty": "zh char-bigrams make number-swapped templates score high containment, so the template share could be large; the Jaccard-era same-numbers rate (12.2% vs 30.0% containment on math-500) suggests a majority of hits may be template variants",
-   "status": "unmeasured",
-   "audit": "union run did not persist (corpus row, holdout) pairs, so number-multiset equality cannot be checked from saved output",
-   "refuted_by": "a pair-level re-scan recording each hit's corpus row and classifying by number-multiset equality"
-  },
-  {
-   "id": "cont.throughput",
-   "value": {
-    "postings_python": "0.74M tok/s (95.7s, 1 proc)",
-    "matmul_1proc": "6.8M tok/s (9.4s)",
-    "matmul_9proc": "22M tok/s (3.3s, 3.84s wall incl. index build)",
-    "extrapolate_100B_tok": "1.26h at 9 workers",
-    "lsh": "rejected -- approximate, needs a recall proof against the 223 known hits; exact scan clears the 2h budget"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py sparse-matmul rewrite, timed on data/corpus/math/ (245 MB, 530,234 rows, ~73M tok)",
-   "config": {
-    "machine": "14-core macOS, 9 fork workers",
-    "method": "R (rows x vocab) sparse @ H (vocab x 1532) dense, float64 containment, chunk 20k rows",
-    "deps": [
-     "numpy",
-     "scipy"
-    ],
-    "rejected_alternatives": {
-     "df_pruning": "0 bigrams dropped -- no zh bigram is in >50% of holdouts",
-     "length_buckets": "1.4x upper bound -- rows and holdouts share one size distribution",
-     "lsh_minhash": "approximate; per-row cost not lower at 1,532 holdouts"
-    }
-   },
-   "uncertainty": "pod core count and memory bandwidth differ; the 2.9x parallel speedup is memory-bound, not compute-bound, so a fatter pod may not scale linearly",
-   "status": "measured"
-  },
-  {
-   "id": "cont.ledger",
-   "value": {
-    "path": "data/scan_ledger.jsonl",
-    "key": [
-     "path",
-     "bytes",
-     "mtime",
-     "holdout_hash",
-     "threshold"
-    ],
-    "verified": "9/9 shards served from cache on re-run, verdicts and exit codes preserved",
-    "holdout_change": "invalidates every entry -> full rescan"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py --jobs 9, second run over data/corpus/math/*.jsonl",
-   "config": {
-    "fingerprint": "bytes+mtime, make-style; --force bypasses; FPR baseline runs are not ledgered"
-   },
-   "uncertainty": "bytes+mtime misses an in-place rewrite that preserves both -- content-hash if shards can be replaced adversarially",
-   "status": "measured"
-  },
-  {
-   "id": "cont.template_share_0_3pct",
-   "claim": "math_hard_eval_1k shares only 0.3% of templates with training data (mathbank/split_bank.py docstring)",
-   "value": "0.3% identical-template sharing",
-   "measured": "2026-08-29",
-   "source": "mathbank/split_bank.py docstring",
-   "config": {
-    "metric": "identical template share, not textual overlap"
-   },
-   "uncertainty": null,
-   "status": "retracted",
-   "audit": "the metric answered template identity, not contamination; it read as 'this was checked' while the contamination rate was 10x higher",
-   "refuted_by": "cont.math_short_leak -- containment >= 0.8 does not require template identity; measured textual near-duplication is 3.5% on the pod (36/1032), 30.0% locally",
-   "retracted_value": [
-    "0.3%"
-   ]
-  },
-  {
-   "id": "cont.eval_surface_matching",
-   "claim": "matching training batches to the eval's surface statistics (operator/fraction/decimal shares) is a legitimate optimization",
-   "value": "mathbank/make_v11_band.py LP-matches v11 batches to math_hard_eval_1k's surface statistics by design",
-   "measured": "2026-08-30",
-   "source": "mathbank/make_v11_band.py docstring",
-   "config": {
-    "mechanism": "linear-program constraints on operator share, fraction share, decimal share vs eval targets"
-   },
-   "uncertainty": null,
-   "status": "retracted",
-   "audit": "optimizing training data toward the eval's surface statistics and contaminating it are the same act described twice -- it pushes the batch distribution onto the eval distribution and was an aggravator of cont.math_short_leak",
-   "refuted_by": "cont.math_short_leak -- v11 REJECTs with 33 holdout hits at 0.8",
-   "retracted_value": []
-  },
-  {
-   "id": "cont.gate",
-   "value": {
-    "script": "eval/gate_math_short.sh",
-    "rule": "every math_short_* batch passes datagen/scan_math_contamination.py vs the ACTIVE eval holdouts (math-500 + v2) before ingest; exit 1 = do not ingest",
-    "wired_into": "datagen/build_math_expand.sh (refuses to rebuild the math domain while any source batch is contaminated)",
-    "verified": "gate passes all 6 local math_short batches vs math-500+v2 (2026-08-30, rate-based scanner with gsm8k_zh baseline); still REJECTs mxode (141 math-500 holdouts, 7278 hit rows)"
-   },
-   "measured": "2026-08-30",
-   "source": "eval/gate_math_short.sh, wired into datagen/build_math_expand.sh",
-   "config": {
-    "consequence": "build_math_expand.sh is UNBLOCKED for math_short batches as of 2026-08-30 (they are clean vs the active evals math-500+v2). mxode stays REJECT. The earlier 'refuses until the bank is fixed' state is obsolete -- see cont.math_short_leak.resolution.",
-    "bypass": "none by design; the scanner's --force only bypasses the ledger, not the verdict"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.holdout_v2",
-   "value": {
-    "rule": "carve the holdout out of each NEW source BEFORE ingest: qhash[:8] % 100 < 2 -> holdout_v2, else corpus; gate the remainder against the full holdout (any hit -> REFUSED, nothing written)",
-    "tool": "datagen/holdout_split.py",
-    "eligibility": "only never-ingested sources (no ledger entry, not in PROVENANCE.md)",
-    "status_of_v2_set": "empty -- no eligible new source has arrived; math-500 stays the active eval until the first v2 slice exists"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/holdout_split.py, broken-world tested (verbatim-holdout source REFUSED with slice discarded; clean source split 100 -> 5+95)",
-   "config": {
-    "split_pct": 2,
-    "determinism": "qhash-based, no RNG state -- same source splits identically on any machine",
-    "activation": "automatic: data/eval/holdout_v2/*.jsonl is loaded by holdout_split.py and joins HOLDOUT_FILES once slices exist"
-   },
-   "uncertainty": "math-500 (30% contaminated) and math-hard-1k (7.1%) stay the active evals until v2 has enough slices for eval resolution -- switching the eval pipeline mid-stream is fb's call, not the scanner's",
-   "status": "recorded"
-  },
-  {
-   "id": "cont.math_hard_v2",
-   "value": {
-    "file": "data/synthetic/math_hard_eval_v2_1k.jsonl",
-    "problems": 1080,
-    "families": 18,
-    "family_types": "quadratic / abs-value / fractional / 2-var system / linear / inverse-prop / quadratic-func / factorize / variance / floor[x] / perfect-square-pattern / pythagoras / 30-60-90 / similar-triangle / number-line-moving / cryptarithm / number-array / hound-hare",
-    "generator": "mathbank/eval_hard_v2_gen.py (every problem constructed FROM its answer; --self-check: 3600 problems + independent recompute)",
-    "acceptance_gate": "scanner exit 0 vs ALL 7 math_short batches (local v3/v5/v6/v7/v8/v11 + pod v10) with v2 as holdout: 0 exact, 0 containment>=0.8 (v10 measured on the training pod 2026-08-30, short-bucket p100=0.429)",
-    "reverse_gate": "v2 scanned as corpus vs math-500+math-hard-1k: 0 exact, 0 at 0.7/0.8/0.9 -- the new eval contains no old-holdout problem either",
-    "disjointness_argument": "the 943-program L3/L4 bank is 100% arithmetic (grep: zero 方程/设未知数/函数); v2's symbolic-algebra/geometry types are structurally outside the bank's generator paradigm. Type inventory: docs/audits/audit_math_corpus.md#math-hard-v2",
-    "resolution_probe": {
-     "status": "unmeasured 2026-08-30 (aupai-fb ruling)",
-     "claim": "v2 在 0.8b 尺度的分辨率",
-     "0830v1_result": "v2 0.0% (18/18 families zero, both stock and family-aware scoring) BUT uninformative: math-500 control also 0/500 — 0830v1 is a pretraining checkpoint, degenerates on instructed evals (boxed rate 23.8%, step-eq 100% wrong). A probe that reads zero under both facts is not a probe.",
-     "proc_replay_result": "0/1080 (18/18 families 0/60, both scorers; math-500 control 2.8% same ckpt) BUT degenerate: 165-colon repetition loops, token salad, boxed rate 9/1080=0.8%, coherent-attempt 8/1080=0.7%. The zero carries no difficulty information.",
-     "fmt_cue_result": "format-cue rerun (same ckpt, same 1080, explicit '请写出解答过程...\\boxed{}' suffix, max_new 512): coherent-attempt 23/1080=2.1%, boxed 8/1080=0.7%, pass@1 0.0% -- still degenerate (number-repetition loops: '19, 15, 19, 15...', '1 + 1 + 1 + 1...'). The explicit format cue does NOT recover coherent attempts -> fb branch 2: the degeneration is triggered by v2's problem CONTENT (symbolic types the model never saw), not by prompt format. Note: there is no separate 'math-500 template' -- both evals use format_prompt(bare instruction); the suffix was the only format lever. Conclusion: at this checkpoint's scale v2 is unmeasurable, and the reason is content distribution, now established with a valid probe.",
-     "audit": "探针生成退化,零分不携带难度信息;math-500 同 checkpoint 2.8% 证明非全局失能 —— 是对 v2 题面失能。按 fb 探针标准(在两种相反事实下给同一读数的探针不是探针),标 inconclusive(退化),不按字面判据落盘'无分辨率'。",
-     "criterion_lesson": "预注册判据的缺陷(aupai-fb):一个基于分数阈值的判据,必须同时带一个生成有效性的前置条件,否则它会把格式失败读成能力失败。预注册保护我们不做事后选判据,不保护我们不做一个坏测量。",
-     "tiered_reporting": "WITHDRAWN 2026-08-30 (aupai-fb): arithmetic-gap families were 0/240 and equally degenerate —— 不要用一个坏读数去填一个看起来完整的报告结构。",
-     "informative_target": "ckpt_k8_proc_replay (best remaining instructed ckpt: math-500 2.8%, old math-hard 0.1%); the 51.2% math-500 SFT checkpoints were deleted from the pod",
-     "next": "v2 stays a post-SFT instrument. For base-checkpoint math signal at 200M, use the likelihood twin (p(correct solution) vs p(matched wrong)) -- facts/base_eval.json#be.math_v2_likelihood_twin. Full-resolution v2 measurement deferred until a strong SFT checkpoint exists.",
-     "fmt_cue_ran": "2026-08-30, GPU0. Log is POD-ONLY and untracked: /work/aupai/retired_pre0830v2/runs/eval_v2_fmt.log (verified present 2026-09-02). The bare relative path this field used to carry resolves nowhere on main, so the reading cannot be recomputed from a checkout -- stated rather than left to look local."
-    }
-   },
-   "measured": "2026-08-30",
-   "source": "mathbank/eval_hard_v2_gen.py; datagen/scan_math_contamination.py --holdout",
-   "config": {
-    "host": "local macOS checkout",
-    "scanner_default_holdout": "math-500 + v2 (math-hard-1k retired from the default set 2026-08-30)"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.math_hard_v1_void",
-   "value": {
-    "retired": "data/synthetic/math_hard_eval_1k.jsonl",
-    "reason": "every math_short batch contaminated it (cont.math_short_leak); it was the same ruler as the training data's generator canon",
-    "consequence": "all math-hard scores measured against math_hard_eval_1k are VOID -- v2 is a different ruler (symbolic vs arithmetic), numbers are not comparable",
-    "file_kept": "yes, for provenance; removed from the scanner's default HOLDOUT_FILES"
-   },
-   "measured": "2026-08-30",
-   "source": "aupai-fb decision 2026-08-30 (option b: regenerate from type-disjoint families; option a bank-split ruled invalid)",
-   "config": {
-    "host": "local"
-   },
-   "uncertainty": null,
-   "status": "recorded"
-  },
-  {
-   "id": "cont.minhash_known_answer",
-   "value": {
-    "recall": "296/296 (100%)",
-    "false_positive": "0/72",
-    "variant_taxonomy": [
-     "whitespace folding",
-     "boilerplate line strip",
-     "3% truncation",
-     "encoding/space variants"
-    ],
-    "instrument": "build_corpus.MinHashLSH (128-perm, 16-band, ~0.8 Jaccard)",
-    "exact_content_hash": "catches ~0 of these variants (by construction)",
-    "construction": "74 base docs x 4 realistic near-dup transforms = 296 variants; clean instrument validation that EXACT-only cannot do realistic cross-source dedup"
-   },
-   "measured": "2026-08-30",
-   "source": "constructed known-answer pair (74 local docs -> 296 variants), run off the 36B dedup design",
-   "config": {
-    "n_docs": 74,
-    "n_variants": 296,
-    "namespace": "cross-source corpus dedup (36B)",
-    "decision": "near-dup -> v1, not v2 (exact alone cannot)",
-    "teammate": "aupai-fb 2026-08-30"
-   },
-   "boundary": "a construction, not a comparison: the variant classes are author-chosen realistic transforms, not a measured source-pair value. A source pair's true overlap needs MinHash run ON that pair.",
-   "uncertainty": "recall is on constructed variants, not real cross-source text; real pipelines may introduce other transform classes (HTML unescape, tokenization changes) not in this taxonomy.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.scanner_idf_weighting",
-   "value": {
-    "instrument": "scan_math_contamination.py with IDF-weighted containment (two-pass: DF over scanned corpus, then weighted scoring); sparse csc H for large holdout sets",
-    "validation_fp": "12/12 known math-500 FP pairs (unweighted 0.800-0.857) drop below 0.8 weighted, max 0.789; 0 weighted hits across the 11 FP shards",
-    "validation_recall": "verbatim injections of holdout text into clean docs score 1.000 (6/6)",
-    "limitation": "no-punct/whitespace-stripped injections score 0.490-0.886 (4/6 below 0.8) - char-bigram format sensitivity, pre-existing (unweighted fails identically), separate instrument upgrade queued",
-    "residual_fp_class": "mojibake docs share rare bigrams by coincidence and IDF UPweights them (cont.gsm8k_zh_webhq_scan hit #1)"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py self-check + /tmp/harden_scan.py validation on math-500 vs web_hq",
-   "config": {
-    "threshold": 0.8,
-    "idf": "log((N+1)/(df+1))+1 over scanned corpus",
-    "min_bigrams": 20
-   },
-   "uncertainty": null,
-   "status": "measured",
-   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
-  },
-  {
-   "id": "cont.gsm8k_zh_webhq_scan",
-   "value": {
-    "hit_rows": 1,
-    "docs": 1366324,
-    "per_gb": 0.2,
-    "exact_hits": 0,
-    "verdict": "clean (ratio 0.00x vs self-baseline, no exact)",
-    "the_hit": "web_000044 doc 698 (mojibake stock-analysis doc, Big5-as-GBK) vs holdout 1870 (triangle angle problem): weighted 0.826, unweighted 0.854 - FALSE POSITIVE, rare-bigram IDF blowup on garbled text; doc is a format-chain miss, not leakage",
-    "holdout_split": "train (7,473 rows); test split would need fetching for the actual eval - train serves as the canary"
-   },
-   "measured": "2026-08-30",
-   "source": "datagen/scan_math_contamination.py (IDF-weighted) + /tmp/gsm_hit_detail.py",
-   "config": {
-    "threshold": 0.8,
-    "baseline": "web_hq self-baseline",
-    "holdout": "data/eval/gsm8k_zh_holdout.jsonl"
-   },
-   "uncertainty": null,
-   "status": "measured",
-   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
-  },
-  {
-   "id": "cont.math500_webhq_fp_explained",
-   "value": {
-    "unweighted_hits": 11,
-    "exact": 0,
-    "explanation": "all 11 are common-vocabulary false positives: short template word problems (24-28 bigrams, e.g. 某班有20个学生12个男生几个女生) whose bigrams are generic education vocabulary; hits cluster on 6 of the shortest most generic holdouts (439x2, 227x3, 299x4, 208, 192, 50) - real contamination spreads across holdouts, artefacts cluster where the instrument is weakest",
-    "weighted_hits": 0,
-    "verdict": "math-500 is NOT inflated by web_hq; L1 numbers stand"
-   },
-   "measured": "2026-08-30",
-   "source": "/tmp/contam_details.py + /tmp/harden_scan.py",
-   "config": {
-    "threshold": 0.8,
-    "instrument": "unweighted + IDF-weighted containment"
-   },
-   "uncertainty": null,
-   "status": "measured",
-   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
-  },
-  {
-   "id": "cont.code_holdout_carved",
-   "value": {
-    "n": 500,
-    "source": "synthetic/code_python_zh.jsonl (3,000 rows -> 2,844 unique by instruction)",
-    "hardcode_excluded": 394,
-    "hardcode_pct": 13.9,
-    "seed": 42,
-    "composition": {
-     "int": 143,
-     "list": 189,
-     "str": 151,
-     "float": 6,
-     "other": 11
-    },
-    "sha1_manifest": "data/eval/code_holdout_500.sha1",
-    "note": "hardcode class (expected output derivable by copying a span of the instruction) excluded from the main slice per fb constraint; carve before anything touched the data"
-   },
-   "measured": "2026-08-30",
-   "source": "/tmp/carve_code_eval.py",
-   "config": {
-    "instrument": "random.sample over eligible (non-hardcode) unique rows"
-   },
-   "uncertainty": null,
-   "status": "measured",
-   "boundary": "Instrument lost (E14, audit 2026-09-04): the /tmp script this measurement ran under exists on neither the laptop nor the pod; /tmp is cleared on reboot, so the citation could not survive by construction. The value stands as recorded and cannot be re-derived."
-  },
-  {
-   "id": "cont.code_crawl_scan",
-   "value": {
-    "candidates": "code_raw.jsonl (200,000 rows, 0.225 GB) + corpus/code/code_filtered_000..002.jsonl (200,000 rows, training form)",
-    "hit_rows": 0,
-    "exact": 0,
-    "baseline_per_gb": 0.0,
-    "verdict": "clean - crawled code corpus does not contain the code eval; code-500 numbers are not inflated by crawl leakage",
-    "number_multiset_flags_review_only": 614,
-    "note": "490/490 holdout bigrams present in IDF background; number-multiset flags are review-only cross-language screen, 0 containment among them"
-   },
-   "measured": "2026-08-30",
-   "source": "runs/scan_code_holdout.log",
-   "config": {
-    "threshold": 0.8,
-    "instrument": "IDF-weighted containment",
-    "baseline": "web_hq 62 shards, 1,366,324 rows"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.code_sft_scan",
-   "value": {
-    "sft_math_code": {
-     "rows": 15471,
-     "hit_rows": 0,
-     "exact": 0,
-     "verdict": "clean"
-    },
-    "evol_code": {
-     "rows": 8000,
-     "hit_rows": 0,
-     "exact": 0,
-     "verdict": "clean"
-    },
-    "synthetic_code": {
-     "rows": 3000,
-     "hit_rows": 1652,
-     "exact_normalized": 587,
-     "verdict": "REJECT",
-     "note": "by construction: this IS the carve source (3,000 rows -> 500 held out). Positive control: the scanner sees the held-out rows. Excluded from training by data/eval/code_holdout_500.sha1 manifest; no current build script references the file (verified 2026-08-30)"
-    },
-    "headline": "every code-bearing TRAINING file is clean (sft_math_code 0, evol_code 0, code_raw 0, corpus/code 0); the only REJECT is the carve source itself"
-   },
-   "measured": "2026-08-30",
-   "source": "runs/scan_code_holdout_sft.log",
-   "config": {
-    "threshold": 0.8,
-    "instrument": "IDF-weighted containment",
-    "baseline": "web_hq 62 shards, 1,366,324 rows",
-    "q_field": "instruction"
-   },
-   "uncertainty": null,
-   "status": "measured"
-  },
-  {
-   "id": "cont.sft_all_code_holdout_leak",
-   "value": "data/sft/sft_all.pt contains the code eval's own questions: 19 of the first 20 code_holdout_500 questions appear VERBATIM as exact token subsequences in the pack. The math holdouts do not: 0/15 for math_test_500 and 0/15 for math_hard_eval_1k. Mechanism is a timestamp, not a logic error -- code_holdout_500.jsonl was carved 11:41:25, sft_all.pt was packed 11:46:57, and holdout_hashes.txt was not regenerated until 13:18:44. prepare_sft.py:75 does call is_holdout(q), and holdout.py:16 does list code_holdout_500.jsonl in EVAL_FILES; the filter passed everything through because the hash file it reads is a DERIVED artifact that was stale at pack time. The math holdouts were already in the set, which is why they are clean. Consequence: the SFT zero-shot code-500 reading of 83/500 = 16.6% is VOID -- the model had seen most of the questions with their solutions, since the holdout was carved from data/synthetic/code_python_zh.jsonl, itself SOURCES[7] in prepare_sft.py.",
-   "measured": "2026-08-30",
-   "source": "exact token-subsequence match of the first 24 tokens of each holdout question against the flattened input_ids of data/sft/sft_all.pt (217,567,088 tokens), same tokenizer; mtimes from ls on the pod",
-   "config": {
-    "pack": "data/sft/sft_all.pt, 53,104 rows x 4097",
-    "probe": "first 20 code / 15 math questions, first 24 tokens each, exact torch.equal on the window",
-    "tokenizer": "data/tokenizer.json, vocab_id 0bce3584bc24f255",
-    "note": "presence is measured on the PACK, not on the source files; the source-file scans that read 0 hit were correct about the sources"
-   },
-   "uncertainty": "20 of 500 code questions sampled; 19/20 present. The rate on the full 500 is not measured, but the reading is disqualifying at any rate above zero.",
-   "status": "retracted",
-   "boundary": "Says nothing about the base checkpoint's numbers, which were never trained on SFT data, and nothing about the math SFT numbers, which this same probe found clean.",
-   "refuted_by": "be.sft_v3_code500",
-   "claim": "data/sft/sft_all.pt contained 19/20 sampled code-500 questions verbatim, so the SFT zero-shot code-500 reading of 16.6% was declared VOID.",
-   "audit": "The claim was measured on the OLD pack (53,104 rows, packed 11:46 with a stale derived holdout_hashes.txt). The pack was rebuilt at 13:30 after holdout_hashes.txt regeneration (13:18:44); the current pack (46,938 rows, the one v2/v3 actually trained on) was re-probed 2026-08-31 on ALL 500 questions with the same first-24-token exact-subsequence method: 0/500 verbatim. The old pack's 16.6% run stays void; the retraction covers applying this fact to v2 (2.2%) and v3 (40.0%), which trained on the clean rebuild.",
-   "retracted_value": []
-  },
-  {
-   "id": "cont.heldout_in_pretrain_corpus",
-   "value": {
-    "answer_hits": 2114,
-    "measurable_denominator": 7523,
-    "answer_hit_rate": 0.281,
-    "population": 10421,
-    "answers_under_13_words": 2898,
-    "question_hits": 2364,
-    "chatml_verbatim_substring": 1199,
-    "chatml_hits": 1515,
-    "per_domain_alone": {
-     "math_owm_stage2": 542,
-     "en_c4_stage2": 22,
-     "cot": 334,
-     "textbook_30b": 185,
-     "chatml": 1515,
-     "chat_qa": 1515,
-     "zh_web": 81,
-     "code_py_starcoder": 239,
-     "code_py_rp1t": 57
-    },
-    "union": 2114,
-    "sum_of_alone": 4490
-   },
-   "measured": "2026-09-04",
-   "source": "scripts/e1_28_heldout_contamination.py, one scanner three modes: default (whole-corpus 48-worker shard-parallel) -> runs/e1_28/e1_28_heldout_contamination.json and runs/e1_28/e1_28_scan.log; --per-domain-alone (each domain independently, plus the item->domain map) -> runs/e1_28/e1_28_per_domain_alone.json and runs/e1_28/e1_28_alone.log; --classify chatml (per-item longest common run and verbatim test) -> runs/e1_28/e1_28_prov_chatml.json ; held-out set data/sft/control_sft_text_heldout.jsonl restricted to runs/heldout_v2/ids_shared.txt (10,421 rows). The artifacts were produced on the pod and copied back verbatim; the two analysis modes were folded into the scanner afterwards from the pod-side drivers that produced them, so the committed code and the artifacts share one index-building path.",
-   "config": {
-    "host": "pod, CPU only, no card",
-    "counting_rule": "word 13-grams, lowercased, unicode word class; an item HITS if any 13-gram of its ANSWER appears in any corpus line. The answer, not the question: the floor scores nll over supervised tokens = the answer. Question hits reported separately.",
-    "denominator": "7,523 = the 10,421 scored ids minus 2,898 whose answers are under 13 words and therefore CANNOT hit at this n. Those 2,898 are UNMEASURABLE at n=13, not clean; counting them as clean would give 20.3% and understate the measured items.",
-    "corpus": "160.97 GB on disk over 9 domains, 29,984,286 lines, 100.0% of every domain's shards read",
-    "per_domain_is_ALONE": "each domain measured independently against the full index. The scan's own running column is INCREMENTAL over a growing union in mix order and cannot be read per domain: it printed chat_qa +0, zh_web +0, rp1t +0, whose alone values are 1,515 / 81 / 57. sum_of_alone 4,490 vs union 2,114 means 2,376 item-hits are shared across domains.",
-    "chatml_and_chat_qa_are_ONE_source": "both hit exactly 1,515 items because they are two renders of data/corpus/chat -- datagen/build_chatml.py (ChatML) and datagen/build_chat_qa.py (original 问:/答: form), fb KEEP ruling 2026-09-01. One contamination source, 71.7% of all hits, from 0.33 GB of the 160.97.",
-    "mechanism": "the corpus document IS the held-out row: <|im_start|>user\\n{question}<|im_end|>\\n<|im_start|>assistant\\n{answer}<|im_end|>. 1,199 of 1,515 answers are a verbatim substring of one corpus document; 1,247 have >=99% of their words in one contiguous run, 1,310 >=90%, 109 share only a 13-gram. ZERO equal the whole document, because the document also carries the question.",
-    "cause": "datagen/holdout.py's EVAL_FILES lists four math/code eval files and NOT control_sft_text_heldout.jsonl. Both corpus builders call is_holdout per row and both emitted a holdout slice (chatml's is 59 bytes, one line), so the guard RAN -- its population lacked the file. Same source on both sides: prepare_sft.SOURCES[0] is data/alpaca_gpt4_zh.jsonl, Chinese instruction QA, and data/corpus/chat is the same material.",
-    "fingerprint": "ids c3895c21973bf49b over this script's serialisation; the audit's cae4daf7ad59388c is over its own. The ROW COUNT 10,421 is the check that carries weight, and it is asserted before any scanning -- an int-vs-str id mismatch matched 0 of 10,421 and that assertion is what caught it."
-   },
-   "uncertainty": "THE CONSUMED-ROWS RATE IS UNMEASURED. This is containment in the corpus ON DISK, not in the rows the 200M run actually read. row_cursor (1,189,548) counts TOKEN-BLOCK rows (cache.numel()//(seq+1)), the corpus is documents, and the pre-tokenize shuffle at train.py:1456 means the first N documents are not the first N of the token cache -- so no instrument here maps cursor to documents. 6e's ruling 2026-09-04: do not build the doc-level cursor now. Direction of the bound: the run consumed a fraction of each domain, so the consumed-rows rate is AT MOST 28.10% and its true value is unknown.",
-   "boundary": "The Pile side is UNMEASURED and unmeasurable here -- the control arm's pretraining corpus is not on this machine, so this halves the confound rather than closing it. The floor re-score on the clean subset is NOT in this fact: it is a card decision. SUPERSEDES the 316-item exclusion in runs/e1_28_matched.json, which docs/audits/control_pythia160m_vs_ours.md 5.3d used for its clean-subset re-score: scripts/e1_28_leak_scan.py read 5.0-13.2% of each domain's documents because it treated cursor rows as documents, and its coverage guard was in the same wrong unit so it never fired. That scan also saw chatml and chat_qa report 808 char-hits EACH and filtered the identical count away as markdown formatting; it was the shared source. BUILT BEFORE THE REGISTRY, so the new hash set cannot retroactively protect this corpus (6e's ruling, e1 2026-09-04): the shards scanned above were written 2026-09-01 -- /data00/tokens_chatml.pt and tokens_chat_qa.pt at 13:43Z, tokens_cot.pt at 18:10Z (stat on the pod) -- while the registry-driven regeneration of data/eval/holdout_hashes.txt landed 2026-09-04 01:15Z, taking the set from 2,532 hashes to 29,923 (fp 26984613941ab5a2 on the pod). The 28.10% therefore measures a corpus built against the FOUR-FILE EVAL_FILES list, and the regeneration changes what the NEXT build would exclude, not what this one contains. Re-running the scan against the 29,923-hash set would answer a different question (how much of the wider eval set is in there), not re-answer this one. The two sets were briefly out of sync -- this repository held the 2,532-hash set at fp d8a0378d6d445c3a while the pod held 29,923 at fp 26984613941ab5a2, so the same guard read a different population in each place -- and de closed that: the committed copy is now the pod's regenerated set, 29,923 hashes at fp 26984613941ab5a2, verified equal on both sides 2026-09-04 by e1 after merging main.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.math_owm_ws13",
-   "value": {
-    "unit": "whitespace 13-gram containment (e1-28's method; the char-13 window is reserved for dense-char domains, on code/math/English it shreds indentation and identifiers into meaningless matches)",
-    "math_owm": {
-     "shards": 127,
-     "docs": 2554754,
-     "wall_s": 2942,
-     "humaneval_164": {
-      "question": {
-       "docs_hit": 440,
-       "rate": 0.000172
-      },
-      "answer": {
-       "docs_hit": 22,
-       "rate": 9e-06
-      },
-      "other": {
-       "docs_hit": 1176,
-       "rate": 0.00046
-      }
-     },
-     "code_holdout_v2_500": {
-      "question": {
-       "docs_hit": 12,
-       "rate": 5e-06
-      },
-      "other": {
-       "docs_hit": 12,
-       "rate": 5e-06
-      }
-     },
-     "math_test_500": 0,
-     "math_hard_eval_v2_1k": 0,
-     "lambada_test_en": 0
-    },
-    "math_owm_stage2": {
-     "shards": 206,
-     "docs": 4135793,
-     "wall_s": 4715,
-     "humaneval_164": {
-      "question": {
-       "docs_hit": 777,
-       "rate": 0.000188
-      },
-      "answer": {
-       "docs_hit": 50,
-       "rate": 1.2e-05
-      },
-      "other": {
-       "docs_hit": 1958,
-       "rate": 0.000473
-      }
-     },
-     "code_holdout_v2_500": {
-      "question": {
-       "docs_hit": 22,
-       "rate": 5e-06
-      },
-      "other": {
-       "docs_hit": 22,
-       "rate": 5e-06
-      }
-     },
-     "math_test_500": 0,
-     "math_hard_eval_v2_1k": 0,
-     "lambada_test_en": 0
-    },
-    "verdict": "both math OWM super-sets carry no gold contamination: math-500 / math-hard v2 / lambada all 0; humaneval-question 13-gram hits at 0.017-0.019% of documents (digit-sequence / identifier collisions, not problem text), answer-level hits 22 and 50.",
-    "retracted_value": "scan_math_ws.json's 1,986,682 humaneval hits (rate 15643.17 = HITS DIVIDED BY SHARDS, not per-doc) was the char-13 shredding unit produced by a pre-fix pod scanner copy; void. The authoritative numbers are from runs/scan_math_ws2.json under whitespace-13."
-   },
-   "measured": "2026-09-04",
-   "source": "runs/scan_math_ws2.json (datagen/scan_eval_golds.py whitespace-13, shard-parallel pool 8) over data/corpus/math_owm and math_owm_stage2",
-   "config": {
-    "scanner": "datagen/scan_eval_golds.py --golds data/eval/humaneval/humaneval_164.jsonl data/eval/math_test_500.jsonl data/synthetic/math_hard_eval_v2_1k.jsonl data/eval/lambada_en/lambada_test_en.jsonl data/eval/code_holdout_v2_500.jsonl",
-    "method": "whitespace 13-gram containment; a hit requires an exact 13-token gram of the gold in a corpus doc",
-    "needle_type": "question/answer/other by gold value's source key",
-    "pool": "8 CPU cores (no GPU)",
-    "unit": "docs hit (a doc hits an eval once); rate = docs_hit / docs",
-    "selftest": "verbatim gold found, shuffled gold 0 hits",
-    "unattested_leg": "humaneval_164.jsonl, lambada_test_en.jsonl, code_holdout_v2_500.jsonl"
-   },
-   "uncertainty": "humaneval-question hits are per-doc; the same gold sentence can hit multiple docs (not a distinct-holdout union). A 13-word digit/identifier gram collision is a low-signal hit, not problem-text leakage.",
-   "status": "measured",
-   "artifact_sha256": {
-    "math_test_500.jsonl": "609a5a5af31d666a01e2a82c692d1d54f5e13a081a2a98c929e02670941b34e5"
-   }
-  },
-  {
-   "id": "cont.en_c4_ws13",
-   "value": {
-    "unit": "whitespace 13-gram containment (same method as cont.math_owm_ws13)",
-    "en_c4": {
-     "shards": 166,
-     "docs": 7767463,
-     "wall_s": 3728,
-     "humaneval_164": {
-      "question": {
-       "docs_hit": 11,
-       "rate": 1e-06
-      },
-      "other": {
-       "docs_hit": 1,
-       "rate": 0.0
-      }
-     },
-     "math_test_500": 0,
-     "math_hard_eval_v2_1k": 0,
-     "lambada_test_en": {
-      "answer": {
-       "docs_hit": 2,
-       "rate": 0.0
-      }
-     },
-     "code_holdout_v2_500": 0
-    },
-    "en_c4_stage2": {
-     "shards": 83,
-     "docs": 3887759,
-     "wall_s": 1940,
-     "humaneval_164": {
-      "question": {
-       "docs_hit": 7,
-       "rate": 2e-06
-      }
-     },
-     "math_test_500": 0,
-     "math_hard_eval_v2_1k": 0,
-     "lambada_test_en": {
-      "answer": {
-       "docs_hit": 1,
-       "rate": 0.0
-      }
-     },
-     "code_holdout_v2_500": 0
-    },
-    "verdict": "both en_c4 dirs carry no gold contamination: math-500 / math-hard v2 / code_holdout all 0; humaneval-question 13-gram hits 11+7 docs (gram collisions at ~1e-6 rate), lambada answer 2+1. Markedly cleaner than math_owm -- web text, few digit-grams.",
-    "wall_s_total": 5668
-   },
-   "measured": "2026-09-04",
-   "source": "runs/scan_en_c4_ws.json (datagen/scan_eval_golds.py whitespace-13, pool 8 CPU) over data/corpus/en_c4 and en_c4_stage2",
-   "config": {
-    "golds": "the 5 default eval golds: humaneval_164 / math_test_500 / math_hard_eval_v2_1k / lambada_test_en / code_holdout_v2_500",
-    "method": "whitespace 13-gram containment; exact 13-token gram of the gold in a corpus doc",
-    "unit": "docs hit; rate=docs_hit/docs",
-    "selftest": "verbatim gold found, shuffled gold 0 hits"
-   },
-   "uncertainty": "humaneval/lambada hits are per-doc gram collisions, not problem-text leakage; the same gold sentence can hit multiple docs (not a distinct-holdout union) at these ~1e-6 rates.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.generator_families_in_owm",
-   "value": {
-    "sampled_docs": 40000,
-    "shards_sampled": 3,
-    "shards_total": 206,
-    "rates_pct": {
-     "age_ratio": 7.33,
-     "alloy_mixture": 0.425,
-     "work_rate": 0.228,
-     "clock_angle": 0.118,
-     "cryptarithm": 0.057,
-     "chicken_rabbit": 0.037,
-     "ant_crawl_solid": 0.003
-    },
-    "hits": {
-     "age_ratio": 2932,
-     "alloy_mixture": 170,
-     "work_rate": 91,
-     "clock_angle": 47,
-     "cryptarithm": 23,
-     "chicken_rabbit": 15,
-     "ant_crawl_solid": 1
-    },
-    "est_docs_domain_wide": {
-     "age_ratio": 201331,
-     "alloy_mixture": 11673,
-     "work_rate": 6249,
-     "clock_angle": 3227,
-     "cryptarithm": 1579,
-     "chicken_rabbit": 1030,
-     "ant_crawl_solid": 69
-    },
-    "finding": "every probed generator family is PRESENT in math_owm_stage2, including the most obscure in the bank"
-   },
-   "unit": "fraction of sampled docs containing family-characteristic phrasing",
-   "measured": "2026-09-05",
-   "source": "/tmp/famscan.py on the pod against /work/aupai/data/corpus/math_owm_stage2/*.jsonl; 3 shards drawn with Random(42), first 40,000 parseable docs, first 4,000 chars per doc",
-   "config": {
-    "probe": "family-characteristic regex, case-insensitive, NOT surface n-grams (e.g. age_ratio = 'how old' | 'years older' | 'age..ratio' | 'ages of')",
-    "population": "corpus on disk, NOT the row_cursor rows the model read -- an upper bound on what training saw for a domain read at 0.301 epochs",
-    "why": "asked to select a generator procedure family ABSENT from pretraining, for the conversion-rate curve's skill (4c, synthesis experiment 1)"
-   },
-   "uncertainty": "3 of 206 shards and 40,000 docs is a sample; rates carry binomial error and the domain-wide extrapolations assume shard homogeneity, which is not measured. The direction that matters is safe: these are presence findings, and a sample that FINDS a family cannot be wrong about presence.",
-   "status": "measured",
-   "boundary": "THIS METHOD CANNOT CERTIFY ABSENCE. By the rule of three, a family with 0 hits in 40,000 docs is bounded above at 0.0075%, i.e. still up to ~200 docs domain-wide -- so a zero here means 'not found', never 'not present'. Separately, a 13-gram containment scan is the WRONG instrument for a family-level question in either direction: it answers 'did this exact text appear', so a generator emitting fresh instances scores 0 on it while the procedure is thoroughly present -- the 7.33% age_ratio rate is invisible to 13-gram containment. Consequence, and the reason this fact exists: a skill that is absent from pretraining must be CONSTRUCTED, not selected; absence is then a property of how it was built rather than a claim a scan is asked to support."
-  },
-  {
-   "id": "cont.novel_operator_collision",
-   "value": {
-    "docs_scanned": 105000,
-    "domains": 7,
-    "shards_per_domain": 2,
-    "hits": {
-     "glyph_a_at_b": 41,
-     "rule_3a_2b_1": 0,
-     "define_new_op_zh": 0,
-     "carry_rule_zh": 0,
-     "right_to_left_zh": 0
-    },
-    "rates_pct": {
-     "glyph_a_at_b": 0.039,
-     "rule_3a_2b_1": 0.0,
-     "define_new_op_zh": 0.0,
-     "carry_rule_zh": 0.0,
-     "right_to_left_zh": 0.0
-    },
-    "glyph_hits_are_not_operators": "all 41 read as '@' meaning 'at' -- 'Rs.8000 @ 10% p.a.', 'T12@200mm c/c', 'June 26, 2018 @ 1:00p.m.', '4096x2160@60Hz', plus one Mathematica application 'f@ k'. None is a binary operator defined by a stated rule.",
-    "finding": "the constructed family's RULE and PHRASING have zero hits; the bare glyph collides only with '@'-as-at"
-   },
-   "unit": "fraction of sampled docs containing the notation",
-   "measured": "2026-09-05",
-   "source": "/tmp/collide.py and /tmp/glyph.py on the pod, over data/corpus/{math_owm_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,en_c4_stage2}; 2 shards per domain drawn with Random(42), 15,000 docs each, first 4,000 chars per doc",
-   "config": {
-    "subject": "mathbank/math_programs_l5_ext_novel.py, families S (diamond_chain, diamond_chain4) and P (diamond_single, diamond_single_reverse)",
-    "probes": "operator in mathematical context (a @ b, digit @ digit), the rule 3a-2b+1, and the three Chinese rule sentences verbatim AS WORDED BEFORE 0389a5ef. The carry sentence was reworded that day (先加十 -> 先加十一次…只加一次，结果可能仍为负数) to remove an ambiguity; the reworded sentence was NOT re-scanned. The scan's load-bearing probes are the glyph and the rule 3a-2b+1, both unchanged, and a longer more specific sentence can only be rarer than the shorter one it extends -- so the bound still holds, by an argument rather than by a measurement.",
-    "population": "corpus on disk, an UPPER bound on what the model read (mix_200m_8b consumes code_py_starcoder at 0.301 epochs and the other domains less)"
-   },
-   "uncertainty": "105,000 docs is a sample; 2 shards per domain assumes shard homogeneity, unmeasured. The 41 glyph hits were read individually, so their characterisation is not an inference from a count. The Chinese rule-sentence probes were run against the pre-0389a5ef wording; see config.probes.",
-   "status": "measured",
-   "boundary": "A ZERO HERE IS A BOUND, NOT AN ABSENCE: by the rule of three, 0 hits in 105,000 docs bounds the rate below 0.0029%, which over the full domains is still hundreds of documents. This fact does NOT establish that the family is absent from pretraining, and it is not what the family's absence rests on -- absence rests on CONSTRUCTION (the operator, its rule and its phrasing were invented for this experiment on 2026-09-05, after every corpus in the mix was built). The scan's job is the narrower one of catching an accidental collision, and the collision it found is '@'-as-at, which shares a glyph and not a meaning."
-  },
-  {
-   "id": "cont.novel_ops_frozen_sets",
-   "value": {
-    "commit": "0389a5efd99956e8ad14929ae54a3185f9048cc7",
-    "sha256": {
-     "data/probes/novel_ops/S_test.jsonl": "e5859a287d653dd3dd2e1ff5dce0b0423e56e8307177458c75cd2c11ed8e77b3",
-     "data/probes/novel_ops/S_pool.jsonl": "bf7e609f0672e07d0800ccaf7d431b0a11ef188fd0c36ab9e538b08b98d04c85",
-     "data/probes/novel_ops/P_test.jsonl": "29f6d0fcfa02137285b91b01c13bff40a7914b55b2bff9fc3b2d7be87f75ba66",
-     "data/probes/novel_ops/P_pool.jsonl": "d5a85a05ecb03e28da3cd60cfc5c8219e0292587f9dff0dfcb1f4f1e62dd4f59",
-     "data/probes/novel_ops/S_test_4way.jsonl": "c2758aa85b0ef70df7ccc6fcb5f48470c57f3e794a7375065d90b193c2d85dfd"
-    },
-    "rows_per_file": {
-     "test": 1000,
-     "pool": 4096
-    },
-    "verified_at_freeze": {
-     "short_operands": 0,
-     "label_not_add_once_fold": 0,
-     "ambiguous_items": 0,
-     "distinct_instances_per_file": "all (1000/1000 and 4096/4096 by (program, operands))",
-     "test_pool_overlap_by_key": 0,
-     "test_pool_overlap_by_text": 0
-    },
-    "supersedes": "the sets emitted earlier on 2026-09-05, whose prompts carried an ambiguous carry rule and whose operands field dropped any operand equal to 1, 2 or 3. Nothing was scored against those files.",
-    "reading_divergence_on_S": {
-     "S_test": {
-      "add_until_differs": 467,
-      "n": 1000,
-      "pct": 46.7,
-      "ignore_carry_differs": 726,
-      "pct_ignore": 72.6
-     },
-     "S_pool": {
-      "add_until_differs": 2030,
-      "n": 4096,
-      "pct": 49.6,
-      "ignore_carry_differs": 3032,
-      "pct_ignore": 74.0
-     },
-     "P_test": {
-      "add_until_differs": 0,
-      "n": 1000,
-      "ignore_carry_differs": 0
-     },
-     "P_pool": {
-      "add_until_differs": 0,
-      "n": 4096,
-      "ignore_carry_differs": 0
-     },
-     "note": "Measured ON THESE FILES. Earlier-quoted 46.8/72.1/48.3 were computed on the PRE-regeneration files and are wrong for these; e1 caught the discrepancy by reproducing independently. P is 0 by design -- its no-carry invariant is asserted in the generator -- so all three readings agree on every P item."
-    },
-    "carry_fire_distribution": {
-     "S_test": {
-      "0": 274,
-      "1": 625,
-      "2": 100,
-      "3": 1
-     },
-     "S_pool": {
-      "0": 1064,
-      "1": 2634,
-      "2": 395,
-      "3": 3
-     },
-     "P_test": {
-      "0": 1000
-     },
-     "P_pool": {
-      "0": 4096
-     },
-     "source": "e1's independent count, 2026-09-05, reproduced here"
-    },
-    "operand_magnitude_confound": {
-     "S": {
-      "n_operands": 17836,
-      "min": 3,
-      "max": 19,
-      "mean": 9.9,
-      "median": 10
-     },
-     "P": {
-      "n_operands": 10192,
-      "min": 3,
-      "max": 120,
-      "mean": 48.6,
-      "median": 50
-     },
-     "ratio_of_means": 4.9,
-     "why": "P's range was widened from 6..19 to 6..80 on 2026-09-05 to supply 5,096 distinct instances; at S's own 3..19 only 428 no-carry (a,b) pairs exist across P's two programs, against the 5,096 the curve draws, so P CANNOT match S's operand distribution and supply a full pool. The constraint is structural: P has two operands where S has three or four.",
-     "consequence": "P is meant to differ from S in COMPOSITION only. It also differs in operand magnitude, and e1 sharpened what that costs: S at 3..19 over three or four operands keeps every intermediate inside two digits, while P at 6..80 reaches three, so the two families are different TOKENISATIONS of the operator and not only different difficulties.",
-     "found_by": "e1 (lessons-58) asked whether anything asserts P's ranges; nothing does, and the drift they hypothesised is the actual shipped state",
-     "options_not_yet_ruled": "(a) accept and report the confound with every curve; (b) drop P_pool -- if P is only ever a test-time control it needs 1,000 instances, not 5,096, and 3..40 supplies 2,024; (c) give P a third inert operand so its space grows without changing what it controls for.",
-     "direction": "UNKNOWN, and not merely unmeasured: two live mechanisms push opposite ways. Large-operand arithmetic being the harder axis makes P harder and understates the gap; procedure-following being the harder axis -- the thing the experiment exists to measure -- makes S harder for a reason unrelated to operand size and overstates it. An earlier version of this entry said 'plausibly understated', naming only the first mechanism; e1 caught that a signed guess in a boundary field gets quoted later without its hedge.",
-     "option_b_measured": "Dropping P_pool and drawing test-only from 3..40: 1,012 no-carry (a,b) pairs, x2 programs = 2,024 distinct (program, operands) keys against 1,000 drawn, a 2.02x margin under the real without-replacement draw (e1 asked for this before fb rules). But it does NOT remove the confound: 3..40's operand mean is 22.3 against S's 9.9, still 2.3x. Only 3..19 matches S (mean 11.3, 1.1x) and it supplies 428 keys, below the 1,000 needed. So option (b) narrows 4.9x to 2.3x and buys a pure format control at test time; it does not make the families magnitude-matched."
-    },
-    "four_way_readout": {
-     "n": 1000,
-     "options": 4,
-     "floor_pct": 25.0,
-     "shuffle_seed": 20260907,
-     "label_distribution": {
-      "0": 263,
-      "1": 249,
-      "2": 233,
-      "3": 255
-     },
-     "chi2_vs_uniform": "1.936 on df=3 (critical 16.27 at p=0.001). An earlier header said 1.86; e1 recomputed 1.94 and the recheck gives 1.936, so 1.86 was mine and wrong.",
-     "distractor_usage": {
-      "wrong_order": 642,
-      "swap_operands": 425,
-      "coeff_swap": 418,
-      "add_until": 386,
-      "no_carry": 386,
-      "no_plus_one": 378,
-      "carry_20": 284,
-      "sign_slip": 81
-     },
-     "why": "exact match has no headroom off a 0 floor at 200M (e1's MDE, fb ruling 2026-09-05), so experiment 1's primary readout is 4-way likelihood. Every distractor is the answer under a DIFFERENT misreading of the rule, so which option a model picks says which rule it applied -- the options are diagnostic, not filler.",
-     "why_a_ladder": "only 457 of 1000 items have four distinct values under the obvious three (add_until, no_carry, wrong_order); an eight-rung ladder of further misreadings brings it to 1000 with 0 short. A random-integer filler would have made those items measure something other than rule-following. After the rank fix all EIGHT rungs are load-bearing: carry_20 and no_plus_one went from 0 uses to 122 and 168, because choosing WHICH three distractors an item takes is now a rank decision and not first-come.",
-     "generator": "mathbank/emit_novel_ops_4way.py, selftest 7 worlds",
-     "v1_replaced": {
-      "v1_sha256": "2dbf23e94eefc0cacc07eca9f85170e2d6d872730204d0b89b6aba3432563ff9",
-      "defect": "a content-free rule -- pick the 3rd-largest of the four numbers -- scored 0.6430, 39 points above the 25% the readout's power assumes. Gold's value rank was 6/245/643/106 across ranks 0-3. Structural in two rungs: sign_slip (3a+2b+1 on positive operands) is greater than gold on 298/298 and can never sit below it, and wrong_order is greater on 648/984, so the two most-used rungs crowd the top.",
-      "why_it_was_missed": "v1 shuffled the option POSITIONS and reported a chi-square on the label index. That statistic cannot see a heuristic over the option VALUES: the positions were uniform (chi2 1.936) while the values were not.",
-      "found_by": "e1 (lessons-58), 2026-09-05, by running a battery of content-free rules against the set",
-      "headroom_cost": "two-arm MDE at n=1000, alpha .05, power .80: from a 0.25 floor the treated arm needs 0.3048; from 0.6430 it needs 0.7026 -- 0.357 of headroom instead of 0.750 (e1's calculation).",
-      "nothing_scored": "v1 lived only on branch 3b and no arm ran against it"
-     },
-     "content_free_battery_v2": {
-      "3rd_largest": 0.25,
-      "nearest_zero": 0.249,
-      "smallest": 0.249,
-      "largest": 0.25,
-      "note": "every rule reading only the four numbers is at chance; asserted in the selftest"
-     },
-     "value_rank_distribution": {
-      "0": 250,
-      "1": 251,
-      "2": 250,
-      "3": 249
-     },
-     "v2_replaced": {
-      "v2_sha256": "efb18261738491fde71ec626d686f36039a4b243c6ace0c3c676e20302174493",
-      "defect": "balancing value rank and nearest-zero left a THIRD content-free rule live: closest-to-3*operands[0] scored 0.4190, closest-to-operands[k] 0.3450/0.3400/0.3580/0.3940, closest-to-sum 0.3910. Mechanism, not coincidence: gold is 3*a1 - 2*(the rest) + 1, so a1 enters with coefficient 3 while every rung of the ladder perturbs the LATER operands' contribution, leaving gold systematically nearer 3*a1 than its distractors. Worse with chain length -- 0.5360 on diamond_chain4 against 0.3020 on diamond_chain.",
-      "found_by": "e1 (lessons-58), 2026-09-05, 19-rule battery against the v2 build",
-      "nothing_scored": "v2 lived only on branch 3b for under an hour and no arm ran against it"
-     },
-     "v3_marginal_targets": {
-      "why": "Targeting the 16 (value_rank, proximity_rank) CELLS evenly gives value_rank [196,208,256,340] and proximity_rank [340,295,243,122] -- worse on both axes than balancing either alone, because two cells are structurally unreachable on all 1000 items: gold cannot be the 2nd-largest value AND farthest from 3*a1, since being far from 3*a1 in either direction pushes it toward an extreme of the value order (e1). Targeting the three MARGINALS directly and letting the joint fall out reaches flat on all of them. This was the second even-cell error here; the first asked for 1/2 where chance is 1/4. Same shape: a target stronger than the constraint needs.",
-      "value_rank": {
-       "0": 249,
-       "1": 250,
-       "2": 250,
-       "3": 251
-      },
-      "proximity_rank": {
-       "0": 252,
-       "1": 250,
-       "2": 250,
-       "3": 248
-      },
-      "battery_v3": {
-       "3rd_largest": 0.25,
-       "closest_3a1": 0.252,
-       "closest_a1": 0.25,
-       "nearest_zero": 0.249,
-       "note": "19 rules, all at chance; the selftest fails any above 0.30"
-      }
-     },
-     "reachability_reconciliation": "my enumeration gives gold reachable at value rank 0 on 442 items, 1 on 714, 2 on 950, 3 on 839; e1 measured 220/614/913/761 and traced their lower numbers to deduplicating the candidate subsets twice. Mine is the correct enumeration, confirmed by e1 -- and neither of us would have checked without the other's number."
-    }
-   },
-   "unit": "sha256 of the file as committed",
-   "measured": "2026-09-05",
-   "source": "shasum -a 256 data/probes/novel_ops/*.jsonl at 0389a5ef; properties from python3 mathbank/emit_novel_ops.py --selftest (8 worlds) plus a direct re-read of every row; divergence and carry-fire counts reproduced independently by e1 (lessons-58)",
-   "config": {
-    "generator": "mathbank/math_programs_l5_ext_novel.py at 0389a5ef",
-    "emitter": "mathbank/emit_novel_ops.py at 0389a5ef",
-    "seeds": "TEST_SEED=20260905, POOL_SEED=20260906",
-    "answer_rule": "the label is the add-once fold: the carry adds 10 exactly once and the result may stay negative. The instruction states this (只加一次，结果可能仍为负数); before 0389a5ef it did not, and the label matched only one of three readings"
-   },
-   "uncertainty": "The hashes are exact. What they cannot say is whether a regeneration was intended: the emitter is deterministic at these seeds, so re-running it on the same code reproduces these bytes, and a differing hash means the CODE changed, not the draw.",
-   "boundary": "This entry freezes the ARTIFACT, not the design. It does not say the sets measure a skill absent from pretraining -- that rests on construction and is recorded in cont.novel_operator_collision. A curve scored against any other hash is a different measurement and must say so. The divergence rates apply to S only. In P the carry never fires, so P cannot discriminate the three readings and a clean P label is not evidence the carry rule was applied -- that is correct for a format control and would be a defect in a transfer set. S and P also differ in operand magnitude (means 9.9 vs 48.6), not only in composition; see value.operand_magnitude_confound. Any S-minus-P number carries that term until it is ruled on.",
-   "status": "measured"
-  },
-  {
-   "id": "cont.api_cloze_items_consistent",
-   "value": {
-    "sha256": "8524d9cb58eba72004cede353b458c0c65c3365187bb9021f4355f0c3522b8cd",
-    "items": 4998,
-    "per_region": {
-     "seen": 2499,
-     "unseen": 2499
-    },
-    "distinct_pool_rows": {
-     "seen": 929,
-     "unseen": 924
-    },
-    "region_row_overlap": 0,
-    "was_read_boundary": "seen: 2499/2499 True; unseen: 2499/2499 False",
-    "pool_row_ranges": {
-     "seen": [
-      172,
-      643672
-     ],
-     "unseen": [
-      644289,
-      2138146
-     ]
-    },
-    "pinned_unseen_region": [
-     643969,
-     2139719
-    ],
-    "seen_rows_at_or_above_unseen_lo": 0,
-    "unseen_rows_outside_pinned_region": 0,
-    "options_per_item": {
-     "4": 4998
-    },
-    "items_with_duplicate_options": 0,
-    "label_indexes_gold": "4998/4998",
-    "label_distribution": {
-     "0": 1269,
-     "1": 1295,
-     "2": 1223,
-     "3": 1211
-    },
-    "max_label_share": 0.2591,
-    "chance": 0.25
-   },
-   "unit": "counts over the frozen item file; no model is run",
-   "measured": "2026-09-05",
-   "source": "data/probes/api_cloze.jsonl at sha256 8524d9cb (commit 9b5b0c9c); recomputed from the file by e1, not copied from the header or from prereg amendment_12",
-   "config": {
-    "why_this_exists": "The control floor this file was built for was DROPPED the same day: readout_2_split's estimator is delta_seen - delta_unseen with each arm minus control, and readout_4_result_m1_one_layer STOPS M1 by the pool_touched_frac rule (0.0945 < 0.20) with M2/M3 stopped by controller ruling, so no live readout consumes a control number. The file's INTERNAL consistency is checkable with no GPU, so it is recorded here rather than re-derived by the next reader (4c's instruction).",
-    "what_the_label_distribution_rules_out": "A 4-way probe whose gold sits disproportionately in one option slot can be beaten above chance by position alone. Max share is 0.2591 against 0.25, so position carries almost no signal; label_indexes_gold confirms options[label] == gold on every item, which is what makes the label usable at all.",
-    "what_the_boundary_check_rules_out": "SEEN items must come from rows the control read and UNSEEN from rows the allocation never reached, or the difference-in-differences is diluted -- amendment_4 records an earlier boundary that would have diluted it ~8x into a false null. Zero seen rows reach the pinned unseen_lo, zero unseen rows fall outside the pinned region, and the two regions share no pool row.",
-    "agreement_with_the_header": "The file's own header claims seen/unseen distinct_rows 929/924 and stats.items 2499/2499; both recomputed and identical. prereg amendment_12's claim that only unseen distinct_rows changed (925 -> 924) is therefore confirmed against the file."
-   },
-   "uncertainty": "Exact counts, not estimates. They say nothing about whether the items are GOOD -- distractor plausibility, prompt truncation quality and whether an API name is guessable from the prefix are unmeasured, and no model has scored this file.",
-   "boundary": "Consistency of the artifact only. It is not evidence the readout would have been well-powered: the control's own accuracy against the 0.25 chance floor was never measured, so whether this probe can separate an arm from chance at this scale remains unknown.",
-   "status": "measured"
-  }
- ]
+  ]
 }
