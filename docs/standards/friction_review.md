@@ -160,3 +160,5 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 
 
 open tasks per owner (check one_deliverable_per_owner, WARN threshold >1): de 6, e1 4, 3b 1, 44 1, b0 1, tilerl 1 (14 total)
+
+committer-pushes rule not firing: six committers' files on main had not reached the pod; 4c pushed them with --all (2026-09-05). The rule says each committer pushes their own files; nothing detected the drift until a manual diff.
