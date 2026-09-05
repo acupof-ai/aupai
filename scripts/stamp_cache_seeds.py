@@ -25,8 +25,26 @@ named, so the next run rebuilds it rather than trusting a label.
 """
 import glob
 import os
+import sys
 
-CACHE_DIR = "/data00"
+
+def _cache_dir():
+    """train's accessor, with the old hardcoded "/data00" as the fallback.
+
+    This tool WRITES .seed sidecars beside the caches, so stamping the overlay copy while a run
+    reads the NVMe one would leave the read caches unstamped and the unread ones stamped -- the
+    stamps and the data on different filesystems, which is worse than no stamp at all.
+    """
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+        import train
+
+        return train._token_cache_dir()
+    except Exception:
+        return "/data00"
+
+
+CACHE_DIR = _cache_dir()
 STAMP = "42"
 
 REASON = (
