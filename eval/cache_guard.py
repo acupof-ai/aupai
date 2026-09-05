@@ -443,7 +443,7 @@ def _selftest_overlay():
         # 1. NO NVMe DIR: nothing to prefer, so it must not fire. This is CI and every laptop, and
         #    a refusal here would be a permanent red -- the check would be turned off by week's end.
         NVME_CACHE_DIR = os.path.join(d, "does_not_exist")
-        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")
+        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")  # cache-path-ok: fixture world
         assert assert_cache_dir_not_overlay() is None, (
             "it fired with no NVMe copy present: a refusal whose remedy does not exist on this host")
         n += 1
@@ -465,7 +465,7 @@ def _selftest_overlay():
 
         # 3. THE CACHE DIR IS THE NVMe DIR: accept. Without this the case above would pass for a
         #    predicate that refuses everything.
-        train.TOKEN_CACHE = os.path.join(fake_nvme, "pretrain_1b_tokens.pt")
+        train.TOKEN_CACHE = os.path.join(fake_nvme, "pretrain_1b_tokens.pt")  # cache-path-ok: fixture world
         assert assert_cache_dir_not_overlay() == fake_nvme, "it refused the NVMe dir itself"
         n += 1
 
@@ -483,7 +483,7 @@ def _selftest_overlay():
         #    green if the call is deleted from assert_caches_fresh -- a working guard nothing
         #    invokes. Reached with a domain that has no cache: the freshness loop would refuse it
         #    too, so the assertion is that THIS refusal comes first, identified by its own text.
-        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")
+        train.TOKEN_CACHE = os.path.join(overlay, "pretrain_1b_tokens.pt")  # cache-path-ok: fixture world
         try:
             assert_caches_fresh(["a_domain_with_no_cache"])
             raise AssertionError("assert_caches_fresh accepted an overlay cache dir")

@@ -127,7 +127,8 @@ def replay(mix_path, steps_done, batch, accum, world, seq, val_frac, val_rows_ma
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("--ckpt", required=True)
-    ap.add_argument("--cache-dir", default="/data00")
+    ap.add_argument("--cache-dir", default=None,
+                    help="default: train._token_cache_dir(), which follows AUPAI_TOKEN_CACHE_DIR")
     ap.add_argument("--world", type=int, default=7)
     ap.add_argument("--resumed-from-step", type=int, default=None,
                     help="the step this run RESUMED FROM. A resumed run's checkpoint step is "
@@ -169,6 +170,14 @@ def main():
     from cache_guard import assert_not_co_resident
 
     assert_not_co_resident(list(mix["domains"]))
+    if a.cache_dir is None:
+        # train's accessor: this tool RECONSTRUCTS a missing cursor from the caches, so reading a
+        # different copy than the resume will read is the one thing it must not do. The default was
+        # a hardcoded "/data00".
+        sys.path.insert(0, ROOT)
+        import train
+
+        a.cache_dir = train._token_cache_dir()
     for name in mix["domains"]:
         cache = os.path.join(a.cache_dir, f"tokens_{name}.pt")
         if not os.path.exists(cache):

@@ -432,7 +432,13 @@ def _cache_pool(name):
     2026-09-05). One domain at a time keeps the measured bytes honest: the refusal is
     handed the domain this call reads, not the mix.
     """
-    path = f"/data00/tokens_{name}.pt"
+    # train's accessor, not a literal: this function reports measured cache bytes, so reading the
+    # overlay copy after the caches moved to NVMe would put a number in a mix file that describes
+    # a file no run reads (de, 2026-09-05).
+    sys.path.insert(0, ROOT)
+    import train
+
+    path = os.path.join(train._token_cache_dir(), f"tokens_{name}.pt")
     if not os.path.exists(path):
         return None
     # OUTSIDE THE try, deliberately. The `except Exception` below turns any failure into
