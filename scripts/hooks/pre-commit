@@ -1033,6 +1033,13 @@ def main():
         # pass: its count-based fallback SURVIVED the out-of-Muon mutant, because Muon holds
         # 21 params against the FFN's 8 and a count says nothing about which.
         "scripts/test_moe_defaults_frozen.py",
+        # MoEFFN's correctness contract. Its checks run the CODE against the REAL dense module
+        # rather than asserting a formula, because this program has already been bitten twice by
+        # the formula version: moe_dispatch_bench's import-time equal-compute assertion certified
+        # a configuration its timed code never ran. Check 3 was rewritten after a mutant gating on
+        # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
+        # asserted they differ, which is a fact about softmax, not about the module.
+        "scripts/test_moe_module.py",
         "scripts/moe_dispatch_bench.py",
         "scripts/eval_load_cost.py",
         "scripts/read_lr_probe.py",
@@ -1392,7 +1399,8 @@ def main():
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
-                     "scripts/test_moe_defaults_frozen.py"},                 # 45.4s
+                     "scripts/test_moe_defaults_frozen.py",
+                     "scripts/test_moe_module.py"},                          # 48.9s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
                               "scripts/test_serve_history.py"},              # 22.0s

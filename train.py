@@ -187,6 +187,34 @@ class Cfg:
     # exchanging touched indices instead of all-reducing a 4-billion-parameter table, and it
     # also decides which optimizers can take the group at all (Adagrad/SparseAdam accept a
     # sparse grad, AdamW raises).
+
+    # MoE (charter docs/standards/moe_0905.md, prereg runs/prereg.jsonl#moe_0905). REAL FIELDS,
+    # not getattr defaults in model.py, for exactly the reason the memory block above gives --
+    # and the harness refused the first version of this module on that check: getattr(cfg,
+    # "moe_top_k", 3) returns 3 both when the field says 3 and when the field does not exist, so
+    # a launch setting --moe_top_k=5 against a cfg that could not carry it would train top-3
+    # while the flag, the log and the ledger row all said 5. As fields they travel inside
+    # ck["cfg"], so the checkpoint records the architecture it trained under.
+    #
+    # 0 IS THE OFF SENTINEL, same shape as mem_values: at moe_experts 0 no MoE module is
+    # constructed, no router exists, no optimizer group appears, and Block.ffn is the untouched
+    # dense SwiGLU. scripts/test_moe_defaults_frozen.py pins that (taken pre-flag at e2356ef6).
+    moe_experts = 0  # routed experts per MoE layer (0 = off, the dense control)
+    moe_top_k = 3    # routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn
+    moe_shared = 1   # must equal ffn_hidden exactly or MoEFFN refuses -- equal-ACTIVE parity,
+    moe_expert_ffn = 768  # which is what makes a loss delta attributable to sparsity not FLOPs
+    moe_layers = "0-11"  # block indices that are MoE; "0-11", "0,3,6" or a list (see _moe_layers)
+    # THE BALANCER'S TWO CONSTANTS, pre-registered and NOT tuned after seeing a curve. Borrowed
+    # from facts/moe.json (DeepSeek-V3 arXiv:2412.19437 2.1.2/4.2) at 60x our per-expert token
+    # count, so they are a starting point, not an inherited result. gamma is a step size on a
+    # control loop, not a learning rate: it never enters an optimizer.
+    moe_bias_gamma = 0.001    # aux-loss-free bias step, applied to the SIGN of the load error
+    moe_balance_alpha = 1e-4  # sequence-wise balance loss (eq. 17), complementary to the bias
+    # <=0 means "the dense lr", resolved in build_optimizers. The flag exists so the value is
+    # recorded in the launch line and ck["cfg"] rather than living in a default nobody reads --
+    # same reason mem_sel_lr exists, and the memory collapse is why it must never be the
+    # expert lr (facts/memory_layers.json#mem.m1_key_usage_collapse).
+    moe_router_lr = -1.0
     vocab = 32784  # multiple of 16: 8 for the cuBLAS aligned kernel (32773 fell back to the
     # SM75 align-1 GEMM on Hopper, 41% vs 92% of bf16 peak, +13.9% end-to-end, measured
     # 2026-08-30), 16 so _fp8_ok passes and the fp8-head option stays open (same cost: the

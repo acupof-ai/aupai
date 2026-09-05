@@ -736,6 +736,270 @@ class ProductKeyMemory(nn.Module):
                 "key_gini": gini, "windows": nwin}
 
 
+class MoEFFN(nn.Module):
+    """Fine-grained MoE replacing the dense SwiGLU: N routed experts + 1 always-on shared expert.
+
+    WHY THIS EXISTS (charter docs/standards/moe_0905.md, prereg runs/prereg.jsonl#moe_0905).
+    The memory program measured that what moves loss is how many parameters a token can REACH.
+    A memory table adds reachable parameters in PARALLEL to the FFN; this replaces the FFN with a
+    sparse one, so total capacity grows at constant active compute rather than at constant
+    parameters. E1 is 24 routed + 1 shared per layer, all 12 layers, 0.801B total against the
+    control's 206M.
+
+    EQUAL ACTIVE COMPUTE IS THE DESIGN CONSTRAINT, not an outcome. SwiGLU costs 3*d*ffn_hidden of
+    matmul per token (w13 is 2*d*ffn, w2 is d*ffn). Each expert at width w costs 3*d*w, and a
+    token traverses top_k routed experts plus the shared one, so parity requires
+    (top_k + 1) * w == ffn_hidden. At ffn_hidden 3072 that means (k+1) must divide 3072 = 2^10*3,
+    i.e. k in {3,5,7,11,15}; the charter's cell is k=3, w=768. __init__ REFUSES a config that
+    misses parity rather than training an arm whose loss delta confounds sparsity with FLOPs --
+    the bench's import-time version of this assertion certified a configuration its timed code
+    never ran (b0's review of moe_dispatch_bench, 2026-09-05), so here it is checked against the
+    shapes actually constructed.
+
+    THE ACTIVATION IS K3 SiTU-GLU, NOT TEXTBOOK SwiGLU, and this is the subtlest correctness
+    requirement in the module. model.SwiGLU is beta1*tanh(a/beta1)*sigmoid(b) then
+    beta2*tanh(w2(gate)/beta2) with beta1=4.0, beta2=25.0 (SwiGLU.forward). An expert computing
+    the textbook a*sigmoid(b) would make the arm differ from the control in ACTIVATION as well as
+    in sparsity, and readout 1's delta would not be attributable to the sparsity it is registered
+    to measure. The betas are read off a real SwiGLU instance rather than re-typed, so a change to
+    the dense module propagates here instead of silently diverging. scripts/test_moe_module.py's
+    tied-weights witness is what proves it: one expert holding the dense module's own weights must
+    reproduce its output.
+
+    AUX-LOSS-FREE LOAD BALANCING, with the bias affecting SELECTION ONLY. A per-expert bias is
+    added to the affinity scores for the top-k choice, and the gating value multiplied into the
+    expert output comes from the UN-BIASED score (DeepSeek-V3, arXiv:2412.19437 section 2.1.2:
+    "Note that the bias term is only used for routing"). Biasing the gate as well would change
+    the function the arm computes, not merely which experts it picks. gamma = 0.001 and the
+    sequence-wise balance alpha = 1e-4 are OUR pre-registered values BORROWED from
+    facts/moe.json -- paper-reported at 1,966,080 tokens per routed expert per step against our
+    32,768, a factor of 60.0, so they are a starting point and not an inherited result. Neither is
+    tuned after seeing a curve; if readout 4's stop rule fires, that is the finding.
+
+    THE BIAS IS PERSISTENT STATE (4c's ruling 2026-09-05). It lives in the state dict, and a
+    checkpoint without the key loads zeros. The cards are the RL team's and can be recalled
+    mid-run, so a resume is the expected case rather than a contingency, and a balancer that
+    restarted cold after a resume would make readout 4 unattributable. It is N floats per layer.
+
+    DISPATCH: torch._grouped_mm over experts sorted by assignment, with a sort-and-loop fallback.
+    Three API constraints, each measured by tilerl on card 7 (2026-09-05) after every group size
+    reported a shape refusal:
+      - mat2 must be TRANSPOSED; a contiguous (E, K, N) operand is refused on CUDA with
+        "Expected mat2 to be transposed". Weights are stored (E, N, K) and transposed at use, so
+        no copy happens. NOTE, measured here 2026-09-05: CPU ACCEPTS a contiguous mat2, so a
+        CPU-only test cannot catch a regression on this -- the layout is asserted directly in
+        scripts/test_moe_module.py instead of being left to the op to reject.
+      - `offs` is CUMULATIVE ENDS, not starts.
+      - the grouped backward refuses a grad with stride [0, 0], which is what expanding a scalar
+        (`.sum().backward()`) produces. Not this module's problem in training -- the real loss
+        produces a real grad -- but tests must pass an explicit contiguous grad.
+    """
+
+    def __init__(self, cfg):
+        super().__init__()
+        d = cfg.d
+        self.n_routed = int(getattr(cfg, "moe_experts", 0))
+        self.top_k = int(getattr(cfg, "moe_top_k", 3))
+        self.n_shared = int(getattr(cfg, "moe_shared", 1))
+        w = int(getattr(cfg, "moe_expert_ffn", 0) or 0)
+        if w <= 0:
+            raise ValueError("moe_expert_ffn must be > 0 when moe_experts > 0")
+        if self.top_k < 1 or self.top_k > self.n_routed:
+            raise ValueError(
+                f"moe_top_k {self.top_k} must be in [1, moe_experts {self.n_routed}]")
+        # EQUAL-ACTIVE PARITY, refused rather than warned. This is the property the whole arm
+        # rests on: an arm at 1.25x active compute measures compute, not sparsity.
+        active = (self.top_k + self.n_shared) * w
+        if active != cfg.ffn_hidden:
+            raise ValueError(
+                f"active FFN width {active} != dense ffn_hidden {cfg.ffn_hidden}: "
+                f"(moe_top_k {self.top_k} + moe_shared {self.n_shared}) * moe_expert_ffn {w} "
+                f"must equal ffn_hidden exactly, or the arm differs from the control in FLOPs as "
+                f"well as in sparsity and readout 1's delta is unattributable. "
+                f"ffn_hidden {cfg.ffn_hidden} admits moe_top_k in "
+                f"{sorted(k - self.n_shared for k in range(2, cfg.ffn_hidden + 1) if cfg.ffn_hidden % k == 0 and k - self.n_shared >= 1)[:8]}"
+                f" at the matching widths")
+        self.expert_ffn = w
+        # STORED (E, N, K) AND TRANSPOSED AT USE. _grouped_mm needs a transposed mat2 on CUDA;
+        # keeping the parameter in (E, N, K) means the transpose is a view and no copy happens in
+        # the hot path. Held as one stacked Parameter per matrix rather than a ModuleList: the
+        # grouped op consumes per-expert matrices with a row offset, so a list would be stacked
+        # on every call and the arm would pay for the stacking.
+        self.w13 = nn.Parameter(torch.empty(self.n_routed, 2 * w, d))
+        self.w2 = nn.Parameter(torch.empty(self.n_routed, d, w))
+        # THE SHARED EXPERT is a plain dense FFN at the expert width -- every token traverses it,
+        # so there is nothing to route and a grouped call would be pure overhead.
+        self.sh13 = nn.Linear(d, 2 * w, bias=False)
+        self.sh2 = nn.Linear(w, d, bias=False)
+        self.router = nn.Linear(d, self.n_routed, bias=False)
+        # THE SAME INITIALISATION THE DENSE FFN GETS, per expert. nn.Linear's default is
+        # kaiming_uniform on fan_in, so an expert of width w initialised as if it were width
+        # ffn_hidden would start at the wrong scale and the arm's first steps would measure the
+        # initialisation. Each expert matrix is initialised at ITS own fan_in.
+        for t, fan_in in ((self.w13, d), (self.w2, w)):
+            bound = 1.0 / math.sqrt(fan_in)
+            with torch.no_grad():
+                t.uniform_(-bound, bound)
+        # THE BETAS COME FROM THE DENSE MODULE, not re-typed here. If SwiGLU's bounds change, the
+        # experts follow; a literal 4.0/25.0 in this file would diverge silently and the tied-
+        # weights witness would then be the only thing standing between that and a launched arm.
+        _ref = SwiGLU(cfg)
+        self.beta1, self.beta2 = _ref.beta1, _ref.beta2
+        self.gamma = float(getattr(cfg, "moe_bias_gamma", 0.001))
+        self.balance_alpha = float(getattr(cfg, "moe_balance_alpha", 1e-4))
+        # PERSISTENT, and zeros for a checkpoint that predates it (4c's ruling). Not a Parameter:
+        # it is not updated by a gradient, so handing it to an optimizer would let weight decay
+        # and momentum act on a control-loop variable.
+        self.register_buffer("expert_bias", torch.zeros(self.n_routed), persistent=True)
+        # READOUT 4's counters. Non-persistent: they describe a window, and a resume that restored
+        # a half-finished window would report a fraction over a denominator from another run.
+        self.register_buffer("tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
+                             persistent=False)
+        self.register_buffer("windows", torch.zeros((), dtype=torch.long), persistent=False)
+        # The sequence-wise balance loss for the current forward, read by train.py and added to
+        # the loss there. Kept as an attribute rather than returned so Block.forward's signature
+        # and the AttnRes sublayer protocol stay unchanged.
+        self.aux_loss = None
+
+    def _situ(self, a, b, w2_apply):
+        """model.SwiGLU's bounded activation, applied to whatever the second matmul is."""
+        gate = self.beta1 * torch.tanh(a / self.beta1) * torch.sigmoid(b)
+        return self.beta2 * torch.tanh(w2_apply(gate) / self.beta2)
+
+    @torch.no_grad()
+    def update_bias(self, counts):
+        """The aux-loss-free bias step: -gamma where overloaded, +gamma where underloaded.
+
+        NOT A GRADIENT (arXiv:2412.19437 section 2.1.2). The step is a fixed size on the SIGN of
+        the load error, so an expert that is slightly over and one that is wildly over move by
+        the same gamma -- that is the paper's rule, and a magnitude-proportional version would be
+        a different balancer than the one whose value we borrowed.
+
+        Called by train.py once per optimizer step with the step's summed counts, NOT per
+        micro-batch: with accum 2 a per-micro-batch update would move the bias twice per step and
+        the effective gamma would silently be 2x the registered one.
+        """
+        mean = counts.float().mean()
+        err = counts.float() - mean
+        self.expert_bias -= self.gamma * torch.sign(err).to(self.expert_bias.dtype)
+
+    def forward(self, x):
+        B, T, d = x.shape
+        n = B * T
+        flat = x.reshape(n, d)
+        # ROUTER LOGITS AT fp32. The affinity scores decide WHICH parameters a token reaches, so a
+        # tie broken differently by bf16 rounding is not a tolerance question -- it changes the
+        # function. The charter's kernel question 3 asks the same thing of fp8.
+        logits = self.router(flat).float()
+        affinity = torch.softmax(logits, dim=-1)
+        # THE BIAS ENTERS SELECTION ONLY. `affinity` (un-biased) supplies the gate below; the
+        # biased score chooses. Reversing this is the single easiest way to get a plausible-looking
+        # module that computes the wrong function.
+        sel = (affinity + self.expert_bias.float()).topk(self.top_k, dim=-1).indices
+        gate = affinity.gather(1, sel)                                    # (n, top_k) UN-biased
+        gate = gate / gate.sum(-1, keepdim=True).clamp_min(1e-9)
+        if self.training:
+            # THE SEQUENCE-WISE BALANCE LOSS (eq. 17), alpha = 1e-4. Complementary to the bias,
+            # not an alternative: the bias balances across the step's batch, this term catches
+            # extremes inside ONE sequence. Computed per sequence and averaged over the batch,
+            # which is what "sequence-wise" means -- computing it over the flattened batch would
+            # be a batch-wise loss under a sequence-wise name.
+            f = torch.zeros(B, self.n_routed, device=x.device, dtype=torch.float32)
+            sel_b = sel.view(B, T * self.top_k)
+            f.scatter_add_(1, sel_b, torch.ones_like(sel_b, dtype=torch.float32))
+            f = f * (self.n_routed / (T * self.top_k))
+            P = affinity.view(B, T, self.n_routed).mean(1)
+            self.aux_loss = self.balance_alpha * (f * P).sum(-1).mean()
+        else:
+            self.aux_loss = None
+        # Sorted dispatch: one contiguous row block per expert, which is what _grouped_mm reads.
+        tok = torch.arange(n, device=x.device).repeat_interleave(self.top_k)
+        e_of_row = sel.reshape(-1)
+        order = torch.argsort(e_of_row)
+        counts = torch.bincount(e_of_row, minlength=self.n_routed)
+        if self.training or torch.is_grad_enabled():
+            with torch.no_grad():
+                self.tokens_per_expert += counts
+                self.windows += 1
+        # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
+        offs = torch.cumsum(counts, 0).to(torch.int32)
+        rows = flat[tok[order]]
+        h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)
+        a, b = h.chunk(2, dim=-1)
+        y = self._situ(a, b, lambda g: torch._grouped_mm(
+            g.contiguous(), self.w2.transpose(-2, -1), offs=offs))
+        # Scatter back, weighted by the un-biased gate. index_add_ over the un-sorted token index
+        # so a token's top_k contributions land on its own row.
+        gflat = gate.reshape(-1)[order].to(y.dtype)
+        out = torch.zeros(n, d, device=x.device, dtype=y.dtype)
+        out.index_add_(0, tok[order], y * gflat[:, None])
+        # THE SHARED EXPERT, which every token also traverses.
+        hs = self.sh13(flat)
+        sa, sb = hs.chunk(2, dim=-1)
+        out = out + self._situ(sa, sb, self.sh2)
+        return out.view(B, T, d)
+
+    @torch.no_grad()
+    def diagnostics(self, reset=True):
+        """Readout 4: usage fraction, load entropy normalised by ln(N), and load Gini.
+
+        Reset by default because the readout is per WINDOW: a cumulative counter converges on
+        every expert having been used at least once and stops being able to see a collapse, which
+        is the one thing this exists to catch. Same reasoning as ProductKeyMemory.diagnostics.
+        """
+        c = self.tokens_per_expert.float()
+        tot = float(c.sum())
+        used = int((self.tokens_per_expert > 0).sum())
+        frac = used / self.n_routed
+        if tot <= 0:
+            # NOT 0.0 silently: an all-zero window means no forward ran, which is a different
+            # finding from a perfectly collapsed router and must not print as one.
+            ent_norm, gini = 0.0, 0.0
+        else:
+            p = (c / tot).clamp_min(1e-12)
+            ent = float(-(p * p.log()).sum())
+            ent_norm = ent / math.log(self.n_routed)
+            s = c.sort().values
+            k = s.numel()
+            i = torch.arange(1, k + 1, dtype=torch.float32, device=s.device)
+            gini = float((2.0 * (i * s).sum() / (k * tot)) - (k + 1) / k)
+            gini = min(1.0, max(0.0, gini))
+        out = {"usage_frac": frac, "used_experts": used, "n_routed": self.n_routed,
+               "entropy_norm": ent_norm, "load_gini": gini,
+               "window_steps": int(self.windows), "tokens": int(tot)}
+        if reset:
+            self.tokens_per_expert.zero_()
+            self.windows.zero_()
+        return out
+
+
+def _moe_layers(cfg):
+    """Which block indices are MoE, from cfg.moe_layers. Accepts "0-11", "0,3,6" or a list.
+
+    Parsed in ONE place for the reason _mem_layers documents: a checkpoint written from a string
+    and one written from a list must produce the SAME architecture, or two spellings of one arm
+    read as two arms. The range form is accepted because the charter's cell is "all 12 layers"
+    and writing that as a 12-element list in a launch line invites a typo the parity check
+    cannot catch.
+    """
+    v = getattr(cfg, "moe_layers", None)
+    if v is None or v == "":
+        return list(range(cfg.layers))
+    if isinstance(v, str):
+        v = v.replace(" ", "")
+        out = []
+        for tok in v.split(","):
+            if not tok:
+                continue
+            if "-" in tok[1:]:
+                lo, hi = tok.split("-", 1)
+                out.extend(range(int(lo), int(hi) + 1))
+            else:
+                out.append(int(tok))
+        return out
+    return [int(t) for t in v]
+
+
 def _mem_layers(cfg):
     """Which block indices read the shared memory pool: cfg.mem_layers, or the charter's 3,6,9.
 
