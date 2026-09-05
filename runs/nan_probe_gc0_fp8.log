@@ -1,0 +1,8 @@
+[card_claim] claimed 4 for nan_probe
+  step 10 loss 4.448 gnorm 19.625 max_amax -1
+  step 20 loss 4.254 gnorm 7.875 max_amax -1
+  step 30 loss 4.180 gnorm 6.812 max_amax -1
+  step 40 loss 3.797 gnorm 8.250 max_amax -1
+  step 50 loss 3.816 gnorm 6.844 max_amax -1
+  step 60 loss 3.641 gnorm 7.219 max_amax -1
+grad_ckpt=False bs=2 compile=False muon=False fp8=Float8Linear: 60 steps clean, max FP8 input amax -1

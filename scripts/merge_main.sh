@@ -390,6 +390,32 @@ time.sleep(20)
 fi
 
 
+# SHARED-FILE CLAIM RELEASE (T0, 2026-09-04), unchanged in behaviour, moved into a function so
+# the integration path reads as one sequence. The claim that let the branch's shared-file commit
+# pass lives in the branch worktree, not main, so it is released there.
+#
+# THE OFFSET IS 19, NOT 16. `branch refs/heads/` is 18 characters, so substr($0,16) starts three
+# too early and yields `ds/de` for branch `de` -- it never equals the bare name and the release
+# was silently skipped for EVERY branch. Not cosmetic even with the 6h TTL: $USER is `bytedance`
+# for every session on this box, so one leaked claim blocks every other session.
+_release_claims() {
+  _wt=$(git -C "$MAIN" worktree list --porcelain 2>/dev/null \
+    | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,19)==b && w!="" {print w; exit}')
+  if [ -n "$_wt" ] && [ -f "$_wt/scripts/file_claim.py" ]; then
+    # No --owner: file_claim's default derives from the script's own path, so invoking $_wt's
+    # copy by absolute path already targets $_wt's claims as $_wt's owner. Passing $USER scoped
+    # nothing -- it is `bytedance` for every session here.
+    _rel=$(python3 "$_wt/scripts/file_claim.py" release-all 2>/dev/null || echo "release-all failed")
+    echo "merge_main: shared-file claims on $1: $_rel" >&2
+  elif [ -z "$_wt" ]; then
+    # SAY SO WHEN NOTHING WAS RELEASED -- the absence of this line read as "merged after
+    # --delete", which is how the substr(16) bug survived: it had never fired for any branch.
+    echo "merge_main: no worktree matched branch $1 -- claims NOT released; 6h TTL clears them." >&2
+  else
+    echo "merge_main: $_wt has no scripts/file_claim.py -- claims NOT released" >&2
+  fi
+}
+
 for _ in $(seq 1 120); do
   if _take_lock "merge $1 into main" no; then
     trap 'rm -f "$HOLDER"; rmdir "$LOCK"' EXIT
@@ -432,99 +458,107 @@ for _ in $(seq 1 120); do
     else
       _review_gate "$1" || exit 1
     fi
-    if git -C "$MAIN" merge --no-edit "$1"; then
-      # THE MERGE IS ALREADY A COMMIT HERE, so a drop cannot be aborted -- `git merge --abort`
-      # only works before the commit exists, and `reset --hard` in the shared integration tree
-      # would discard whatever else landed. So: detect, RESTORE the dropped paths from the
-      # parent that held them, and refuse to return 0 until someone has looked.
-      #
-      # runs/redaction_handread_v14.tsv was lost by seven merges and restored four times because
-      # each restore was itself dropped by the next merge. Restoring in the same step is what
-      # breaks that cycle; leaving it to a human is what produced the four attempts.
-      # `|| true` on the capture, then judge the EXIT CODE, not just the text. Exit 1 is "drops
-      # found", 0 is clean, and anything else means the check could not run -- an old harness
-      # without the flag exits 2 with empty stdout, which reads identically to clean. Silence
-      # from a tool that failed to start is the shape this whole guard exists to prevent.
-      # `set -e` would take the script down on the guard's own nonzero exit before rc is read,
-      # so the assignment is split from the capture: `|| rc=$?` keeps the exit code without
-      # letting errexit fire.
-      rc=0
-      drops=$(python3 "$MAIN/scripts/harness.py" --merge-drops 2>/dev/null) || rc=$?
-      if [ "$rc" -gt 1 ]; then
-        echo "merge_main: WARNING -- the merge-drop guard did not run (harness --merge-drops" >&2
-        echo "  exit $rc). The merge stands and was NOT checked for dropped paths." >&2
-        exit 0
-      fi
-      if [ -n "$drops" ]; then
-        echo "merge_main: this merge dropped path(s) a parent held, with nobody deleting them:" >&2
-        printf '%s\n' "$drops" | while IFS=$'\t' read -r path parent; do
-          [ -n "$path" ] || continue
-          echo "  $path (held by ${parent:0:8})" >&2
-          git -C "$MAIN" checkout "$parent" -- "$path" 2>/dev/null || true
-        done
-        git -C "$MAIN" status --short >&2
-        echo "merge_main: the paths above are RESTORED in the working tree and staged. Commit" >&2
-        echo "  them in the integration tree, then re-run. The merge itself stands." >&2
-        # The guard will still report these paths until that commit lands: the merge COMMIT's
-        # tree is history and a restore cannot change it, only the tree that follows. So this
-        # exit is not a retry -- re-running before committing prints the same thing (verified
-        # against the recorded merge d9c9614f: restore stages the file, merge_drops still names
-        # it). Commit first.
-        exit 1
-      fi
-      # SHARED-FILE CLAIM RELEASE ON MERGE (T0, 2026-09-04). The claim that let the branch's
-      # shared-file commit pass lives in the branch worktree, not main (the non-merge commit's
-      # hook reads the tree it ran in). Now that the edit is merged the file is handed back:
-      # release the merging session's claims in the branch's worktree. A session that acquired
-      # a claim and merged a DIFFERENT branch still needs its claim, so scope by owner ($USER),
-      # and the branch may have no worktree (merged after --delete) -- then its claims are moot
-      # and the 6h TTL bounds anything left.
-      # THE OFFSET IS 19, NOT 16. `branch refs/heads/` is 18 characters, so substr($0,16) starts
-      # three too early and yields `ds/de` for branch `de` -- it never equals the bare name, `_wt`
-      # is always empty, and the release is silently skipped for EVERY branch. Measured 2026-09-05
-      # on this tree: substr(16)="ds/de", substr(19)="de", and with 19 the awk matches
-      # /Users/bytedance/code/aupai-de. 58's AGENTS.md claim survived a successful merge and had to
-      # be released by hand. Reported as a branch-naming problem (`ds/<name>` prefixes); it is not
-      # -- `git worktree list --porcelain` prints the full ref and the coincidence is that the
-      # three characters at 16-18 are `ds/`, the tail of `refs/heads/`.
-      #
-      # The consequence is not cosmetic even with the 6h TTL: $USER is `bytedance` for every
-      # session on this box, so one leaked claim blocks every other session's shared-file commits
-      # until it expires.
-      _wt=$(git -C "$MAIN" worktree list --porcelain 2>/dev/null \
-        | awk -v b="$1" '/^worktree /{w=substr($0,10)} /branch refs\/heads\// && substr($0,19)==b && w!="" {print w; exit}')
-      if [ -n "$_wt" ] && [ -f "$_wt/scripts/file_claim.py" ]; then
-        # No --owner: file_claim's own default is LAUNCH_OWNER, else the worktree name, and both
-        # it and the claim dir derive from the script's own path -- so invoking $_wt's copy by
-        # absolute path already targets $_wt's claims as $_wt's owner. Passing $USER scoped
-        # nothing: it is `bytedance` for every session here, so one session's merge handed back
-        # every other session's claims.
-        _rel=$(python3 "$_wt/scripts/file_claim.py" release-all 2>/dev/null \
-          || echo "release-all failed")
-        echo "merge_main: shared-file claims on $1: $_rel" >&2
-      else
-        # SAY SO WHEN NOTHING WAS RELEASED. The absence of the line above was the only signal,
-        # and it read as "merged after --delete" -- which is how the substr(16) bug survived:
-        # the release had never fired for any branch and silence looked like the normal case.
-        if [ -z "$_wt" ]; then
-          echo "merge_main: no worktree matched branch $1 -- shared-file claims NOT released;" >&2
-          echo "  release by hand in that tree, or the 6h TTL clears them." >&2
-        else
-          echo "merge_main: $_wt has no scripts/file_claim.py -- claims NOT released" >&2
-        fi
-      fi
-      exit 0
+    # WHERE THE MERGE HAPPENS, and this is the whole rebuild. It used to run `git merge` HERE,
+    # inside the shared integration tree, which made integrating a four-step non-atomic write
+    # (worktree, index, ~30 s hook, commit) to a directory every session depends on. Any kill,
+    # conflict or hook failure stranded it in a state only another session's files could repair.
+    # The index-equals-HEAD rule, "never edit in the integration tree", the hook-runs-main's-copy
+    # defect and the .hookstaged_* leftovers were all compensation for that one design.
+    #
+    # Now: the merge happens in the CALLER's own worktree, where only the caller depends on the
+    # result, and main advances by an atomic compare-and-swap that touches no working tree at all.
+    _wt_self=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
+    if [ -z "$_wt_self" ] || [ "$(cd "$_wt_self" && git rev-parse --abbrev-ref HEAD)" != "$1" ]; then
+      echo "merge_main: run this from the worktree that holds branch $1 -- the merge happens" >&2
+      echo "  there now, not in the integration tree." >&2
+      exit 1
     fi
-    if [ -e "$MAIN/.git/MERGE_HEAD" ]; then
-      if [ -n "$(git -C "$MAIN" diff --name-only --diff-filter=U)" ]; then
-        why="$1 conflicts with main: run 'git merge main' in your worktree, resolve there, commit, retry"
-      else
-        why="the merge commit was refused (hook or harness check above): fix on your branch, retry"
-      fi
-      git -C "$MAIN" merge --abort
-      echo "merge_main: aborted so the integration tree stays clean; $why" >&2
+    # REFUSE WHILE THE INTEGRATION TREE STILL HOLDS main. A CAS onto a checked-out branch does
+    # NOT refuse: measured 2026-09-05, it returns 0, moves the ref, and leaves that tree's HEAD
+    # and index at the old commit so every changed file reads as staged-modified -- silent, where
+    # a refusal would be loud. Detaching is a precondition of the CAS, not a tidy-up after it.
+    if [ "$(git -C "$MAIN" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "main" ]; then
+      echo "REFUSING: the integration tree is still checked out on main. Detach it first:" >&2
+      echo "  git -C $MAIN checkout --detach main" >&2
+      echo "  A compare-and-swap onto a checked-out branch silently leaves that tree reading as" >&2
+      echo "  modified against the new ref." >&2
+      exit 1
     fi
-    exit 1
+    _old=$(git -C "$MAIN" rev-parse main)
+    if ! git merge --no-edit main; then
+      echo "merge_main: $1 conflicts with main. Resolve in THIS worktree, commit, retry --" >&2
+      echo "  nothing was written to the integration tree and main is unmoved at ${_old:0:8}." >&2
+      exit 1
+    fi
+    _new=$(git rev-parse HEAD)
+    # THE DROP CHECK RUNS BEFORE THE CAS, ON THE CANDIDATE, and a drop is now a REFUSAL. It used
+    # to restore the dropped paths INTO the shared tree and stage them for someone else to
+    # commit -- the shared-tree defect in miniature. Here main has not moved, so the fix happens
+    # on the integrator's own side. --rev is required: merge_drops defaults to HEAD, and against
+    # a detached integration tree that would check the wrong commit and print nothing, which
+    # reads identically to clean (the failure its own docstring names).
+    rc=0
+    drops=$(python3 "$_wt_self/scripts/harness.py" --merge-drops --rev "$_new" 2>/dev/null) || rc=$?
+    if [ "$rc" -gt 1 ]; then
+      echo "merge_main: WARNING -- the merge-drop guard did not run (exit $rc). Main is unmoved." >&2
+      exit 1
+    fi
+    if [ -n "$drops" ]; then
+      echo "merge_main: this merge drops path(s) a parent held, with nobody deleting them:" >&2
+      printf '%s\n' "$drops" | while IFS=$'\t' read -r path parent; do
+        [ -n "$path" ] || continue
+        echo "  $path (held by ${parent:0:8})" >&2
+      done
+      echo "merge_main: REFUSED before main moved. Restore them here and amend:" >&2
+      echo "  git checkout <parent> -- <path> && git commit --amend --no-edit" >&2
+      exit 1
+    fi
+    # THE ATOMIC STEP. On mismatch someone else landed first: re-merge and re-run, which is a
+    # loop the caller drives rather than a lock we hold across a 30 s gate.
+    if ! git -C "$MAIN" update-ref refs/heads/main "$_new" "$_old" 2>/dev/null; then
+      echo "merge_main: main moved while this ran (expected ${_old:0:8}, now" >&2
+      echo "  $(git -C "$MAIN" rev-parse --short main)). Nothing landed. Re-run: the merge above" >&2
+      echo "  is already in this worktree, so this is one more \`merge_main.sh $1\`." >&2
+      exit 1
+    fi
+    echo "merge_main: main ${_old:0:8} -> ${_new:0:8}" >&2
+    # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
+    # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
+    # now records the event under its own git dir (invisible to `git status`, per-worktree) and
+    # this step drains it through the CLI, which owns the accepted-kind list. Drained AFTER the
+    # CAS and truncated only on success, so a kill between the two leaves the rows for next time.
+    _pend="$(git rev-parse --git-dir)/aupai_pending_friction"
+    if [ -s "$_pend" ]; then
+      _n=0
+      while IFS= read -r _row; do
+        [ -n "$_row" ] || continue
+        python3 "$_wt_self/scripts/harness.py" friction add --kind override --who "$1" \
+          --blocked "commit from behind main on $1" --cause "$_row" --commit >/dev/null 2>&1 \
+          && _n=$((_n + 1)) || true
+      done < "$_pend"
+      [ "$_n" -gt 0 ] && : > "$_pend"
+      echo "merge_main: drained $_n pending override row(s) to friction" >&2
+    fi
+    # THE PUSH IS PART OF THE STEP. Measured 2026-09-05: main took 670 commits in 24 h against
+    # 139 origin/main push events, so it advanced ~5x per push and every gap was a window where a
+    # peer's fetch and the pod read a stale main. A FAILING push does NOT roll the ref back: the
+    # commit is durable and reachable, and undoing it to match origin would discard work to fix a
+    # delivery problem.
+    if git -C "$MAIN" push -q origin main 2>/dev/null; then
+      echo "merge_main: pushed origin/main" >&2
+    else
+      echo "merge_main: WARNING -- main is at ${_new:0:8} but the push FAILED. Main stays" >&2
+      echo "  advanced; retry with: git -C $MAIN push origin main" >&2
+    fi
+    # THE POD PUSH ONLY PRINTS. pod_push.sh refuses any file differing from main and stamps
+    # main's sha, but it also carries a running-.sh refusal and an emptyDir path for large files,
+    # and a training run mid-flight is exactly when an automatic pod push is most dangerous and
+    # least expected. Turning it on is a separate change with its own second reader.
+    _scoped=$(git -C "$MAIN" diff --name-only "$_old" "$_new" -- train.py model.py run_ddp.sh \
+              2>/dev/null | tr '\n' ' ')
+    [ -n "$_scoped" ] && echo "merge_main: POD PUSH DUE for: $_scoped" >&2
+    _release_claims "$1"
+    exit 0
   fi
   # THE WAITER'S RULE: liveness, never age. A live holder is waited for however long it takes,
   # because the alternative is what happened on 2026-09-05 -- landing a merge inside someone's
