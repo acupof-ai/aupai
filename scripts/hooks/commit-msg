@@ -19,10 +19,73 @@ here rather than in COMMIT_EDITMSG. Repeating it inside the fix would be its own
 """
 
 import os
+import re
 import subprocess
 import sys
 
 MARKER = "ledger-rewrite:"
+
+# Files whose change must be explained in the message, not just labelled. The list is the two
+# files a wrong commit is most expensive in: train.py is the only data path and model.py defines
+# the architecture every checkpoint is loaded against.
+BODY_REQUIRED = ("train.py", "model.py")
+BODY_MIN_WORDS = 12
+
+
+def _refuse_bodyless_arch_commit(msg_path):
+    """A commit touching train.py or model.py needs a body, not just a subject.
+
+    cf3dbaea's message was "probe 2". It carried a SwiGLU mutant onto main. Nobody reading the log
+    could see that, and nobody reviewing could know what to look for -- a two-word subject on the
+    architecture file is indistinguishable from a typo fix.
+
+    WHY WORDS AND NOT LINES. A subject-only message is the common case, but the failure is a
+    message with no INFORMATION, and "probe 2\n\nprobe" has a body while saying nothing. Counting
+    words across the whole message (minus comments and trailers) catches both, and the threshold is
+    stated as a number so raising it takes an edit rather than an argument. 12 words is roughly one
+    sentence: enough to name what changed and why, which is the minimum a reviewer needs.
+
+    THE MERGE EXEMPTION IS NECESSARY, not a convenience. `git merge` writes "Merge branch 'x'" and
+    the merge may well touch train.py through the branch it integrates; refusing that would make
+    every merge of an architecture change impossible, and the explanation already lives in the
+    commits being merged. Same for a revert, whose generated message names the commit it undoes.
+    """
+    staged = subprocess.run(["git", "diff", "--cached", "--name-only"],
+                            capture_output=True, text=True).stdout.split()
+    touched = [p for p in staged if p in BODY_REQUIRED]
+    if not touched:
+        return 0
+    try:
+        with open(msg_path, encoding="utf-8", errors="replace") as fh:
+            raw = fh.read()
+    except OSError:
+        return 0
+    lines = [ln for ln in raw.splitlines() if not ln.lstrip().startswith("#")]
+    # Trailers (Key: value) are metadata, not explanation, so they do not count toward the body.
+    words = []
+    for ln in lines:
+        s = ln.strip()
+        if not s:
+            continue
+        if re.match(r"^[A-Z][A-Za-z-]+: \S", s) and len(s.split()) < 8:
+            continue
+        words += s.split()
+    if not words:
+        return 0  # an empty message is git's own abort, not ours to explain
+    first = words[0].lower()
+    if first in ("merge", "revert") or raw.lstrip().startswith(("Merge ", "Revert ")):
+        return 0
+    if len(words) >= BODY_MIN_WORDS:
+        return 0
+    print(f"REFUSING: this commit changes {', '.join(touched)} and its message is "
+          f"{len(words)} word(s).", file=sys.stderr)
+    print(f"    {' '.join(words)[:120]}", file=sys.stderr)
+    print(f"cf3dbaea's message was \"probe 2\" and it carried a SwiGLU mutant onto main. On these "
+          f"files a short subject is indistinguishable from a typo fix, so a reviewer cannot know "
+          f"what to look for. Say what changed and why, in at least {BODY_MIN_WORDS} words. "
+          f"Merges and reverts are exempt -- their explanation is in the commits they name.",
+          file=sys.stderr)
+    return 1
 
 
 def marker_path():
@@ -35,6 +98,12 @@ def main():
         return _selftest()
     if len(sys.argv) < 2:
         return 0
+    # BEFORE the ledger marker, and before its consumption: this gate is about the message alone
+    # and must not depend on whether a marker file happens to exist. Ordered first so a refusal
+    # here leaves the marker in place for the retried commit, which still owes its explanation.
+    rc = _refuse_bodyless_arch_commit(sys.argv[1])
+    if rc:
+        return rc
     p = marker_path()
     if not p or not os.path.exists(p):
         return 0
@@ -69,6 +138,89 @@ def main():
           f"record -- it is gone the moment the shell exits, and the message is the only place "
           f"a reader six weeks from now can find the reason.", file=sys.stderr)
     return 1
+
+
+def _selftest_bodyless():
+    """Six worlds for the arch-message gate, each a REAL repo with a REAL staged file.
+
+    Not the current repository: the gate reads `git diff --cached`, so a world that ran here would
+    read whatever the operator happens to have staged -- a fixture reading live state, which is
+    exactly the shape the fixture gate refuses. Each world is a `git init` in a temp dir with
+    train.py or an unrelated file actually staged.
+
+    The load-bearing worlds are 3 and 4, not 1. A gate that refuses "probe 2" is easy; one that
+    refuses a merge would make every integration of an architecture change impossible, and one that
+    fires on an unrelated file would refuse commits it has nothing to say about.
+    """
+    import shutil
+    import tempfile
+
+    fails = []
+    me = os.path.abspath(__file__)
+
+    def world(staged_name, msg):
+        d = tempfile.mkdtemp(prefix="archmsg_")
+        env = dict(os.environ, GIT_DIR="", GIT_INDEX_FILE="", GIT_WORK_TREE="")
+        for k in ("GIT_DIR", "GIT_INDEX_FILE", "GIT_WORK_TREE"):
+            env.pop(k, None)
+
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
+
+        g("init", "-q")
+        g("config", "user.email", "t@t.t")
+        g("config", "user.name", "t")
+        with open(os.path.join(d, staged_name), "w") as fh:
+            fh.write("x = 1\n")
+        g("add", staged_name)
+        mf = os.path.join(d, "MSG")
+        with open(mf, "w", encoding="utf-8") as fh:
+            fh.write(msg)
+        return d, mf, env
+
+    def run(d, mf, env):
+        r = subprocess.run([sys.executable, me, mf], capture_output=True, text=True, cwd=d, env=env)
+        return r.returncode, r.stdout + r.stderr
+
+    cases = [
+        # (staged file, message, must_refuse, label)
+        ("train.py", "probe 2\n", True,
+         "1: the real cf3dbaea message on train.py must refuse"),
+        ("train.py", "probe 2\n\nprobe\n", True,
+         "2: a body with no information must refuse -- words, not lines, is the criterion"),
+        ("train.py", "Merge branch 'moe' into main\n", False,
+         "3: a merge touching train.py must pass; refusing it makes every integration impossible"),
+        ("scripts/whatever.py", "wip\n", False,
+         "4: a two-word message on an unrelated file is not this gate's business"),
+        ("train.py",
+         "train: refuse a rebuild when a configured cache dir is missing its cache, because a "
+         "dropped mount would otherwise retokenize 247.8 GB in silence\n", False,
+         "5: a real explanatory message must pass"),
+        ("model.py", "swiglu\n", True,
+         "6: model.py is covered too, not only train.py"),
+    ]
+    for staged_name, msg, must_refuse, label in cases:
+        d = None
+        try:
+            if "/" in staged_name:
+                d, mf, env = world("placeholder.py", msg)
+                os.makedirs(os.path.join(d, os.path.dirname(staged_name)), exist_ok=True)
+                with open(os.path.join(d, staged_name), "w") as fh:
+                    fh.write("x = 1\n")
+                subprocess.run(["git", "-C", d, "add", staged_name], capture_output=True, env=env)
+            else:
+                d, mf, env = world(staged_name, msg)
+            rc, out = run(d, mf, env)
+            if must_refuse and rc == 0:
+                fails.append(f"{label} (rc=0)")
+            elif must_refuse and "REFUSING" not in out:
+                fails.append(f"{label}: nonzero but no REFUSING line, so it failed for another reason")
+            elif not must_refuse and rc != 0:
+                fails.append(f"{label} (rc={rc}: {out.strip()[:140]})")
+        finally:
+            if d:
+                shutil.rmtree(d, ignore_errors=True)
+    return fails
 
 
 def _selftest():
@@ -136,9 +288,10 @@ def _selftest():
         os.remove(p)
     except OSError:
         pass
+    fails += _selftest_bodyless()
     for f in fails:
         print(f"BUG {f}", file=sys.stderr)
-    print(f"commit-msg selftest: {'PASS (4 worlds)' if not fails else f'{len(fails)} BUG(S)'}")
+    print(f"commit-msg selftest: {'PASS (4 ledger + 6 arch-message worlds)' if not fails else f'{len(fails)} BUG(S)'}")
     return 1 if fails else 0
 
 
