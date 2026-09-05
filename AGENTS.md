@@ -146,6 +146,7 @@ python scripts/exp.py render   # rewrites EXPERIMENTS.md, newest first
 | `prereg_amendments_dated` | every amendment of every `runs/prereg.jsonl` row carries a recoverable timestamp, under any of the three conventions in the file (`amended_N` beside the text, the date as a prefix inside `amendment_N`, or both in one `amended_N`); `amended_N` == `none` beside an `amendment_N` naming the gap passes | amend via `harness prereg amend`, which writes both keys with the date |
 | `doc_commands_exist` | every `.sh`/`.py` cited in a command block exists | the doc rotted; fix the command or the file |
 | `score_matrix_present` | every status=ok training run has a score-matrix record for its checkpoint | run `eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` |
+| `test_integration_tree_guard` | the tasks/friction/board writers refuse in a tree checked out on `main` without `AUPAI_CONTROLLER=1`, and fail open where git cannot answer | the guard was widened or dropped; a refusal that fires in a `_tmp_repo()` world breaks every fixture, one that never fires puts rows back in the integration tree |
 
 ## Add a check
 
@@ -268,12 +269,12 @@ pod "cd /work/aupai && setsid nohup bash -c '<cmd> > runs/x.log 2>&1' </dev/null
 
 ## Ten gate-failure rules (compressed from `docs/lessons/gate_failure_shapes.md`)
 
-Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 204 survive -- the count `shapes_table_covers_doc` derives from the table below, not a separate tally. It read 164 against a table of 165 before 2026-09-05: a hand-maintained number beside a machine-checked one drifts silently, because the check verifies each row against the doc and never reads this sentence.
+Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; incidents live in `docs/lessons/gate_failure_incidents.md`. 33 closed incidents were deleted 2026-09-04 (see commit); 206 survive -- the count `shapes_table_covers_doc` derives from the table below, not a separate tally. It read 164 against a table of 165 before 2026-09-05: a hand-maintained number beside a machine-checked one drifts silently, because the check verifies each row against the doc and never reads this sentence.
 
 | Rule | Shapes | §refs |
 |---|---|---|
 | Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 21 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 §179 §190 §198 §199 §211 |
-| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 104 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 §180 §183 §184 §186 §187 §191 §196 §200 §201 §202 §203 §205 §206 §207 §208 §209 §212 §213 §215 §216 §217 §218 §219 §220 §221 §222 §223 §224 §225 §226 §227 §228 §229 §231 §232 §233 §234 §235 §236 |
+| A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 106 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 §180 §183 §184 §186 §187 §191 §196 §200 §201 §202 §203 §205 §206 §207 §208 §209 §212 §213 §215 §216 §217 §218 §219 §220 §221 §222 §223 §224 §225 §226 §227 §228 §229 §231 §232 §233 §234 §235 §236 §237 §238 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 6 | §4 §24 §44 §182 §189 §210 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 12 | §7 §13 §25 §51 §59 §136 §166 §181 §188 §193 §197 §204 |
 | State the vision before the number; outside it, label unmeasured, not absent | 11 | §3 §5 §6 §17 §19 §28 §30 §32 §36 §53 §100 |
@@ -330,12 +331,14 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
+| `harness task` and `harness friction` write the ledger of the tree | `test_integration_tree_guard` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
 
-39 rules: 18 checked, 21 manual. The count is regenerated from `harness check`'s
+56 rules: 25 checked, 31 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
-checked, 21 manual" while the code said 36/13/23, which is the same drift the table
-itself had before the check began reading it.
+checked, 21 manual" while the code said 36/13/23, and stale again at "39 rules: 18
+checked, 21 manual" on 2026-09-05, which is the same drift the table itself had before
+the check began reading it.
 
 ## Rules kept from before the reset
 
@@ -367,7 +370,7 @@ itself had before the check began reading it.
 
 **One worktree per session (from 2026-08-31 evening).** Six sessions in one working tree share one index: a file left dirty blocked others' moves four times in one afternoon, staged files were swept into other sessions' commits four times, and a hook built the manifest from another session's staged move. Rules replace none of this; isolation does.
 
-- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04).
+- `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses non-controller commits (b0, 2026-09-04). **Enforced from 2026-09-05, and the scope is all three ledgers — tasks, friction, and board.** The writers refuse when the tree they are about to append to is checked out on `main`, unless `AUPAI_CONTROLLER=1`. The predicate is the branch, not a path: a path test would hardcode one laptop's layout and be wrong on the pod and in CI. It fails open where git cannot answer (no repository, detached HEAD, git absent), because such a tree is not the integration tree and refusing there would break every `_tmp_repo()` fixture and every detached CI checkout. The refusal is at the write rather than the commit because by the time the hook refuses, the row is already dirty in the tree everyone merges through — which is what happened twice, ten minutes apart, before this existed.
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). The controller keeps `/Users/bytedance/code/aupai` on `main` as the integration tree and is the only session that commits there directly.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `scripts/merge_main.sh <name>` (a mkdir lock serialises merges into the shared integration worktree; two bare `git merge` calls in one tree raced on HEAD and the index, 2026-09-04); if it conflicts, `git merge main` in your worktree, resolve there, merge again. Never rebase a branch someone else has merged.
 - **To hold the tree quiet, `scripts/merge_main.sh --hold`, then `--release`; never `mkdir` the lock directly.** `--hold` writes the holder file the waiters read, and a waiter refuses to remove a `deliberate=yes` hold even after its pid dies. A bare `mkdir` of the lock is indistinguishable from a crash between mkdir and the write, so a waiter clears it after a 3-second grace and merges into the window — measured 2026-09-05, when the controller's commits took the lock by hand and de's waiter removed it mid-commit. The flag existed before that and this line did not name it, which is the whole reason the hand-rolled path was the reachable one.
