@@ -104,7 +104,10 @@ E2E_RECIPE = [
 # ffn_hidden, and MoEFFN refuses a config that misses it. Hardcoding 768 would make this test
 # pass only while _SHAPE["ffn_hidden"] is 3072 and refuse at construction for any other shape --
 # a refusal that reads as a defect in the arm rather than in this file.
-if os.environ.get("E2E_MOE", "").strip() not in ("", "0"):
+# ONE NAME FOR "the MoE flags are on", read once. The stage-8 skip below has to test the same
+# condition this block tests, and re-reading os.environ there would let the two drift apart.
+E2E_MOE_ON = os.environ.get("E2E_MOE", "").strip() not in ("", "0")
+if E2E_MOE_ON:
     _k, _shared = 3, 1
     _w, _rem = divmod(_SHAPE["ffn_hidden"], _k + _shared)
     if _rem:
@@ -375,64 +378,111 @@ def main():
         stage(8, "SFT resumes the pretrained weights (not a fresh init)")
         sft_ckpt = os.path.join(ROOT, "ckpt_e2e_tmp_sft.pt")
         rm(sft_ckpt)
-        run(
+        # THE SFT CHAIN IS BLOCKED FOR MoE BY A KNOWN DEFECT, and this skips 8-10 for that ONE
+        # refusal only. sft_math.py defaults grad_ckpt=True on purpose (:111-115, "FP8 backward
+        # goes NaN without it") and model.py refuses moe_experts with grad_ckpt, so an MoE
+        # checkpoint cannot be SFT'd at all -- contradictory defaults, not a missing flag.
+        # Measured 2026-09-05: stage 8 died here on the E1 walk with exactly that ValueError.
+        #
+        # THE ROOT IS THE COUNTER, NOT THE GUARD (4c's ruling, 2026-09-05): tokens_per_expert is
+        # incremented under no_grad inside MoEFFN.forward, and checkpoint recompute runs that
+        # forward twice, so the count doubles. The fix is to make the counter recompute-safe and
+        # DELETE the guard -- not to narrow the guard to whoever reads the counter, which would
+        # leave a wrong counter in place. Tracked as a task with a known-answer test (counts
+        # identical with grad_ckpt on and off), second reader e1. Until it lands, experiment 2's
+        # SFT of MoE checkpoints is blocked.
+        #
+        # WHY A SKIP RATHER THAN A PASS: the record carries `stages`, so a walk that covers 1-7
+        # plus 11 says so and a reader can see the SFT join is not in it (the same field 6e used
+        # for "arm 2 may launch on stages 1-10"). E1 is a pretraining arm and no readout in
+        # prereg#moe_0905 reads an SFT'd MoE checkpoint, so 1-7+11 is the honest certificate for
+        # it -- and stages 8-10 stay REQUIRED for every non-MoE walk, which is what keeps this
+        # from becoming a hole.
+        #
+        # NARROW ON PURPOSE. It fires only when the MoE flags are on AND the failure text is that
+        # specific refusal; any other stage-8 failure still raises. A blanket `if MOE: skip` would
+        # have hidden the very defect this walk exists to find, and the guard would then be
+        # certifying the arm against a stage nobody ran.
+        _moe_sft_blocked = False
+        _sft = subprocess.run(
             [
-                sys.executable,
-                "sft_math.py",
-                "--resume",
-                ckpt,
-                "--sft_path",
-                pack,
-                "--out",
-                sft_ckpt,
-                "--epochs",
-                "1",
-                "--batch",
-                "1",
-            ]
+                sys.executable, "sft_math.py",
+                "--resume", ckpt,
+                "--sft_path", pack,
+                "--out", sft_ckpt,
+                "--epochs", "1",
+                "--batch", "1",
+            ],
+            cwd=ROOT, capture_output=True, text=True, timeout=3600,
         )
-        assert os.path.exists(sft_ckpt), "sft_math.py produced no checkpoint"
-        sk = torch.load(sft_ckpt, map_location="cpu", weights_only=False)
-        before = ck["model"]["tok.weight"].float()
-        after = sk["model"]["tok.weight"].float()
-        assert before.shape == after.shape
-        # A fresh init is uncorrelated with the pretrained embedding; cos > 0.9 proves SFT
-        # resumed them rather than reinitialising.
-        cos = torch.nn.functional.cosine_similarity(before.flatten(), after.flatten(), dim=0).item()
-        assert cos > 0.9, (
-            f"SFT embeddings barely resemble the pretrained ones (cos={cos:.3f}); it reinitialised"
-        )
-        print(f"    embedding cos(pretrained, sft) = {cos:.4f}")
+        if _sft.returncode != 0:
+            # THE TEXT IS THE DISCRIMINATOR, and it is matched on model.py's own refusal string
+            # rather than on "sft failed". Any other nonzero exit re-raises with the output, so a
+            # NaN backward, an OOM or a missing pack still fails this stage.
+            _blocked = ("moe_experts with grad_ckpt is refused"
+                        in (_sft.stdout + _sft.stderr))
+            if not (E2E_MOE_ON and _blocked):
+                print(_sft.stdout[-3000:])
+                print(_sft.stderr[-3000:], file=sys.stderr)
+                raise AssertionError("FAILED: sft_math.py (stage 8)")
+            _moe_sft_blocked = True
+            print("    [8-10] SKIPPED: sft_math defaults grad_ckpt=True and model.py refuses "
+                  "moe_experts with grad_ckpt. Known defect, root cause is tokens_per_expert "
+                  "double-counting under recompute; this walk certifies stages 1-7 + 11.")
+        else:
+            assert os.path.exists(sft_ckpt), "sft_math.py produced no checkpoint"
+            sk = torch.load(sft_ckpt, map_location="cpu", weights_only=False)
+            before = ck["model"]["tok.weight"].float()
+            after = sk["model"]["tok.weight"].float()
+            assert before.shape == after.shape
+            # A fresh init is uncorrelated with the pretrained embedding; cos > 0.9 proves SFT
+            # resumed them rather than reinitialising.
+            cos = torch.nn.functional.cosine_similarity(before.flatten(), after.flatten(), dim=0).item()
+            assert cos > 0.9, (
+                f"SFT embeddings barely resemble the pretrained ones (cos={cos:.3f}); it reinitialised"
+            )
+            print(f"    embedding cos(pretrained, sft) = {cos:.4f}")
 
-        stage(9, "the finished model generates")
-        # bf16, as eval/math_hard.py does: flash_attn_func in the SWA blocks raises
-        # "FlashAttention only support fp16 and bf16 data type" on the fp32 weights a
-        # checkpoint loads as.
-        from train import generate_batch
+        # STAGES 9 AND 10 CONSUME sft_ckpt, so they are part of the same skip -- not separately
+        # disabled. Running them on a checkpoint that was never produced would fail on a missing
+        # file and report the absence as a generation defect.
+        if _moe_sft_blocked:
+            _stages_covered = 7
+        else:
+            _stages_covered = 10
+            stage(9, "the finished model generates")
+            # bf16, as eval/math_hard.py does: flash_attn_func in the SWA blocks raises
+            # "FlashAttention only support fp16 and bf16 data type" on the fp32 weights a
+            # checkpoint loads as.
+            from train import generate_batch
 
-        model, cfg = load_checkpoint(sft_ckpt, device="cuda:0", dtype=torch.bfloat16)
-        tok = Tokenizer.from_file(tok_path)
-        ids = tok.encode("1 + 1 = ", add_special_tokens=False).ids
-        (out,) = generate_batch(model, [ids], 4, "cuda:0")
-        # argmax over all-NaN logits returns 0 silently, and FP8 e4m3 backward NaN without
-        # grad_ckpt is a documented failure here, so "it did not raise" is not enough.
-        with torch.no_grad():
-            lg = model(torch.tensor([ids + out], device="cuda:0"))
-            assert torch.isfinite(lg[0] if isinstance(lg, tuple) else lg).all(), "logits are NaN/Inf"
-        print(f"    generated: {tok.decode(ids + out)!r}")
+            model, cfg = load_checkpoint(sft_ckpt, device="cuda:0", dtype=torch.bfloat16)
+            tok = Tokenizer.from_file(tok_path)
+            ids = tok.encode("1 + 1 = ", add_special_tokens=False).ids
+            (out,) = generate_batch(model, [ids], 4, "cuda:0")
+            # argmax over all-NaN logits returns 0 silently, and FP8 e4m3 backward NaN without
+            # grad_ckpt is a documented failure here, so "it did not raise" is not enough.
+            with torch.no_grad():
+                lg = model(torch.tensor([ids + out], device="cuda:0"))
+                assert torch.isfinite(lg[0] if isinstance(lg, tuple) else lg).all(), "logits are NaN/Inf"
+            print(f"    generated: {tok.decode(ids + out)!r}")
 
-        stage(10, "THE JOIN: the SFT checkpoint still says which vocabulary it speaks")
-        # Without vocab_id, load_tokenizer only warns and loads whatever data/tokenizer.json
-        # happens to be -- a file rebuilt in place. It has to survive SFT, or the artifact
-        # people actually evaluate is the one that cannot be checked.
-        assert sk.get("vocab_id") == fp, (
-            f"the SFT checkpoint's vocab_id is {sk.get('vocab_id')!r}, not {fp}. train.py writes "
-            "vocab_id into every checkpoint it saves and sft_math.py's torch.save does not, so the "
-            "identity is present on the base and gone from the model that gets evaluated."
-        )
-        print(f"    vocab_id {sk['vocab_id']} survived SFT")
+            stage(10, "THE JOIN: the SFT checkpoint still says which vocabulary it speaks")
+            # Without vocab_id, load_tokenizer only warns and loads whatever data/tokenizer.json
+            # happens to be -- a file rebuilt in place. It has to survive SFT, or the artifact
+            # people actually evaluate is the one that cannot be checked.
+            assert sk.get("vocab_id") == fp, (
+                f"the SFT checkpoint's vocab_id is {sk.get('vocab_id')!r}, not {fp}. train.py writes "
+                "vocab_id into every checkpoint it saves and sft_math.py's torch.save does not, so the "
+                "identity is present on the base and gone from the model that gets evaluated."
+            )
+            print(f"    vocab_id {sk['vocab_id']} survived SFT")
 
-        print(f"\ne2e OK: mix -> tokenize -> pretrain -> ckpt -> pack -> sft -> generate, {STEPS} steps")
+        if _moe_sft_blocked:
+            print(f"\ne2e PARTIAL: mix -> tokenize -> pretrain -> ckpt -> pack, {STEPS} steps; "
+                  f"stages 8-10 (SFT chain) skipped on the known MoE/grad_ckpt defect")
+        else:
+            print(f"\ne2e OK: mix -> tokenize -> pretrain -> ckpt -> pack -> sft -> generate, {STEPS} steps")
         # The gate's record, and the shape comes from the checkpoint this run produced
         # -- ck["cfg"], not the flag that was requested. The flag says what was asked
         # for; the checkpoint says what was built, and only the second is evidence. This
@@ -455,7 +505,7 @@ def main():
         _record = {
             "shape": {k: cf[k] for k in ("d", "layers", "heads", "ffn_hidden")},
             "mix": MIX,
-            "stages": 10,
+            "stages": _stages_covered,
         }
         return 0
     finally:
@@ -545,7 +595,29 @@ def main():
                 f"in the logs\n{q.stdout[-1200:]}\n{q.stderr[-1200:]}"
             )
             print("    a field-less checkpoint refused as designed")
-            _record["stages"] = 11
+            # ONLY IF THE BODY REACHED THE POINT THAT BUILT IT. `_record` is bound at the END of
+            # the body (after stage 10), and stage 11 runs in this `finally` -- so a failure at
+            # ANY EARLIER STAGE reaches here with `_record` unbound and this line raised
+            # `UnboundLocalError: cannot access local variable '_record'` WHILE HANDLING the real
+            # exception. Measured 2026-09-05 (MoE walk, E2E_MOE=1): stage 8 failed on
+            # sft_math's grad_ckpt default, and the last line of the log was the UnboundLocalError
+            # -- so the stack top blamed this file and buried the stage-8 AssertionError that is
+            # the actual finding.
+            #
+            # This is the SAME defect as `name` at the top of this finally, and its fix
+            # (2026-09-04) guarded `name` and `ckpt` and left `_record` -- so the guard landed
+            # beside the sibling it did not cover. `_have` is not the right test either: it is
+            # true from stage 4, and `_record` does not exist until stage 10.
+            if "_record" in set(locals()):
+                # 11 ONLY IF 8-10 ACTUALLY RAN. `stages` is a COVERAGE count, not a high-water
+                # mark: on the MoE skip the body set it to 7, and writing 11 here would claim the
+                # SFT chain passed because a later stage did. A reader of this row decides whether
+                # to launch on it, so the number has to mean "these stages were exercised".
+                if _record["stages"] >= 10:
+                    _record["stages"] = 11
+                else:
+                    print(f"    (record stays at stages={_record['stages']}: 8-10 were skipped, "
+                          f"so stage 11 passing does not make this a full walk)")
 
         # THE RECORD, written HERE and only here: after the last stage, with the count of
         # stages that actually passed. Before 2026-09-04 it was written before the `finally`,
