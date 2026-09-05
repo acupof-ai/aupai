@@ -363,26 +363,49 @@ def main():
         # makes the two sides differ as strings while naming one directory, and the
         # check then silently never fires -- which is how it first tested green.
         common_abs = os.path.realpath(common)
-        # THE integration tree, not any repo that happens to be on main: the rule is
-        # about the one shared checkout other sessions merge into. Without this every
-        # temp repo in the selftest counts as an integration tree, and the tests that
-        # commit to main there start refusing (four of them did).
-        integration = os.environ.get("AUPAI_INTEGRATION_TREE") or "/Users/bytedance/code/aupai"
-        main_tree = (os.path.dirname(common_abs) == os.path.realpath(top)
-                     and os.path.realpath(top) == os.path.realpath(integration))
-        branch = subprocess.run(["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                                capture_output=True, text=True).stdout.strip()
         # See _merging: MERGE_HEAD alone is False during a CLEAN merge, because git
         # calls this file as pre-merge-commit before writing it.
         merging = _merging(common_abs)
-        if main_tree and branch == "main" and not merging and os.environ.get("AUPAI_CONTROLLER") != "1":
+        # THE TREE, NOT THE BRANCH (tilerl's flip, 2026-09-05). This used to be
+        # `main_tree and branch == "main"`, where branch came from `rev-parse
+        # --abbrev-ref HEAD`. Detached, that returns the literal "HEAD", so the moment
+        # the integration tree was detached the guard went INERT -- for everyone, not
+        # just the controller. Detaching is what makes the tree unwritable-by-accident,
+        # and it was also what turned off the check enforcing it. A commit here is wrong
+        # whatever HEAD points at.
+        #
+        # de's predicate rather than a second spelling of the idea (de-51): main worktree
+        # AND has linked worktrees, both read from git, no path and no branch. The path
+        # form was one laptop's layout -- wrong on the pod, wrong in CI.
+        #
+        # NO CONTROLLER EXEMPTION. `AUPAI_CONTROLLER=1 git commit` in the integration
+        # tree ends with the flip (4c's ruling): the controller commits from its own
+        # worktree through merge_main like everyone else.
+        #
+        # AN UNIMPORTABLE PREDICATE IS LOUD, NOT SILENT. Failing open here would disarm
+        # the guard at exactly the moment it is needed -- the tree is detached, so the
+        # old branch test is gone too, and a stray commit in the integration tree would
+        # be accepted with no refusal at all. The predicate's OWN fail-open (no git, git
+        # erroring -> False) is a different thing and stays: that is a tree which cannot
+        # be the integration tree. This is the module being absent, which is a defect.
+        try:
+            sys.path.insert(0, os.path.join(repo_root() or ".", "scripts"))
+            from integration_tree import is_integration_tree
+            _is_integ = is_integration_tree(top)
+        except Exception as _e:  # noqa: BLE001
+            print(f"hook: NOTE -- scripts/integration_tree.py did not import "
+                  f"({type(_e).__name__}); the integration-tree guard did NOT run",
+                  file=sys.stderr)
+            _is_integ = False
+        if _is_integ and not merging:
             print(
-                "REFUSING: this is the integration tree on main. Commit in your own "
+                "REFUSING: this is the integration tree. Commit in your own "
                 "worktree and merge:\n"
                 "  git -C <your worktree> commit <paths>\n"
                 f"  {top}/scripts/merge_main.sh <your branch>\n"
                 "A file left dirty here blocks every other session's move of it and gets "
-                "swept into their commits. Controller: AUPAI_CONTROLLER=1 git commit ...",
+                "swept into their commits. There is no controller exemption: the "
+                "controller commits from its own worktree too.",
                 file=sys.stderr,
             )
             sys.exit(1)
@@ -459,39 +482,37 @@ def main():
             file=sys.stderr,
         )
         sys.exit(1)
-    # THE OVERRIDE LOGS ITSELF. Measured 2026-09-05: 0 of 62 friction rows named
-    # AUPAI_BEHIND_MAIN_OK or AUPAI_CONTROLLER, and not because overrides are rare -- one session used
-    # the flag four times in two hours. Nobody logs one, so a metric counting them measures the
-    # logging habit and reads 0 as "no overrides happened", which is the absent-vs-empty error this
-    # repo keeps paying for. The hook is the one party that KNOWS an override just fired, so it writes
-    # the row (4c/user ruling: the override writes its own row, the metric measures the event).
+    # THE OVERRIDE RECORDS ITSELF HERE AND IS WRITTEN BY THE GATE. Measured 2026-09-05: 0 of 62
+    # friction rows named AUPAI_BEHIND_MAIN_OK or AUPAI_CONTROLLER, and not because overrides are
+    # rare -- one session used the flag four times in two hours. Nobody logs one, so a metric
+    # counting them measures the logging habit and reads 0 as "no overrides happened", the
+    # absent-vs-empty error this repo keeps paying for.
     #
-    # Through the CLI, never a hand-appended line: `harness friction add` holds the only accepted-kind
-    # list, and a second writer makes that list advisory -- which is exactly how merge_main.sh's
-    # kind="override" existed in a writer the tuple rejected.
+    # IT DOES NOT MOVE WHOLESALE TO THE GATE. The gate runs later and sees only a merge commit --
+    # it cannot tell whether any commit on the branch used the flag. The hook is the one party
+    # that KNOWS. So the EVENT is captured here and the ROW is written there.
     #
-    # NOT --commit. This runs INSIDE a commit: the index is git's right now, and a nested
-    # path-scoped commit would write to it mid-operation. The row lands dirty and the next
-    # ledger-only commit carries it, which the behind-main exemption above allows without a flag.
+    # UNDER THE GIT DIR, NOT THE WORKING TREE. The previous version called `harness friction add`
+    # from inside a commit, which appended to a ledger while the index was git's -- the row landed
+    # dirty and refused the next merge (commit -> refused -> commit again, de 2026-09-05). A file
+    # under $(git rev-parse --git-dir) does not appear in `git status --porcelain` (measured), and
+    # each worktree has its own git dir, so two sessions' pending rows cannot collide.
     #
-    # Failure here never blocks the commit -- best-effort, 20 s cap, and a one-line note if the
-    # write did not land, because a silent failure would rebuild the same blind spot.
+    # APPEND-ONLY, drained and truncated by merge_main after its CAS: a gate killed between
+    # reading and truncating leaves the rows for the next run rather than losing them.
     if behind and not merging and not _ledger_only:
         try:
-            _fr = subprocess.run(
-                [sys.executable, os.path.join(repo_root(), "scripts", "harness.py"),
-                 "friction", "add", "--kind", "override",
-                 "--blocked", f"commit in a tree {behind} commit(s) behind main",
-                 "--cause", "AUPAI_BEHIND_MAIN_OK=1 used to commit from behind main "
-                            f"({', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:3])})"],
-                capture_output=True, text=True, timeout=20)
-            if _fr.returncode != 0:
-                print(f"hook: NOTE -- could not log the AUPAI_BEHIND_MAIN_OK override to friction "
-                      f"({(_fr.stderr or _fr.stdout).strip()[:120]}); the override stands, the "
-                      f"count will be short by one", file=sys.stderr)
+            _gd = subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True,
+                                 text=True, timeout=10).stdout.strip()
+            if _gd:
+                _files = ', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:3])
+                with open(os.path.join(_gd, "aupai_pending_friction"), "a",
+                          encoding="utf-8") as _fh:
+                    _fh.write(f"AUPAI_BEHIND_MAIN_OK=1 used to commit {behind} behind main "
+                              f"({_files})\n")
         except Exception as _e:  # noqa: BLE001 - a ledger write must never block a commit
-            print(f"hook: NOTE -- friction logging raised {type(_e).__name__}; the override stands, "
-                  f"the count will be short by one", file=sys.stderr)
+            print(f"hook: NOTE -- could not record the override ({type(_e).__name__}); the "
+                  f"override stands, the count will be short by one", file=sys.stderr)
     print(f"hook: behind-main {time.time() - t0:.2f}s ({behind} behind)", file=sys.stderr)
 
     # Shared-files rule (T0, 2026-09-04): a staged edit to a listed shared file needs a live
@@ -839,6 +860,21 @@ def main():
         # amending one of two rows for the same id leaves the other stale, which is how nine
         # superseded versions survived a union merge unnoticed.
         "scripts/test_prereg_amend.py",
+        # The three ledger writers' integration-tree refusal. Registered because the failure it
+        # prevents already happened twice in ten minutes (b0's task row, 44's board row) and the
+        # rule was prose until 2026-09-05. The load-bearing worlds are the three FAIL-OPEN ones:
+        # a guard that refused wherever git cannot answer would refuse in all 27 of harness.py's
+        # mkdtemp worlds and on every detached CI checkout, so it would pass a refusal-only test
+        # while breaking the selftest that runs it. Mutation-verified: guard removed fails W1,
+        # refuses-on-any-repo fails W3, ignores-the-override fails W2 -- three distinct worlds.
+        "scripts/test_integration_tree_guard.py",
+        # The shared is_integration_tree() predicate, imported by harness.py's ledger writers and
+        # (from the flip commit) by this hook. Registered because its FAIL-OPEN worlds are the
+        # dangerous half in both directions: a predicate that answers True in a standalone clone
+        # refuses in CI and in all 27 of harness.py's git-init fixtures, and one that reads the
+        # BRANCH goes inert the moment the integration tree is detached -- which is exactly what
+        # 2026-09-05's flip does, and was the first version of this predicate.
+        "scripts/integration_tree.py",
         # de-55 step 2: load_checkpoint claims when it loads to cuda and claims NOTHING on cpu.
         # Registered for the CPU world, which is the one that keeps the placement safe: an ungated
         # acquire there refuses on every box with no CUDA_VISIBLE_DEVICES -- CI runs
@@ -1726,6 +1762,11 @@ def main():
         "algorithms/rlvr_reward.py": {"algorithms/test_rlvr_reward_suite.py"},
         "scripts/e1_28_leak_scan.py": {"scripts/test_e1_28_leak_scan.py"},
         "scripts/e1_28_matched.py": {"scripts/test_e1_28_matched.py"},
+        # board.py holds one of the three integration-tree-guarded writers, and it is the one
+        # that IMPORTS the guard rather than defining it -- so an edit here can break the rule
+        # without touching harness.py. 0.5s. (harness.py itself is deliberately absent from this
+        # map: it is excluded from the hook's selftests for cost, recorded at check_selftests_are_gated.)
+        "scripts/board.py": {"scripts/test_integration_tree_guard.py"},
     }
     _subject_tests = set()
     for _subj in staged("AM"):
@@ -1996,6 +2037,32 @@ def _selftest():
         subprocess.run(["git", "add", "f.txt"], cwd=d, capture_output=True, env=clean)
         subprocess.run(["git", "commit", "-q", "-m", "base"], cwd=d, capture_output=True,
                        env=clean)
+        # A LINKED WORKTREE MAKES THIS AN INTEGRATION TREE. is_integration_tree's second
+        # clause is `<common>/worktrees is non-empty`, and without it a standalone repo --
+        # a CI checkout, or any of harness.py's `git init` fixtures -- would read True and
+        # every write there would refuse (de-51, measured world A). So worlds 1-4 have to
+        # BUILD the property they are testing against rather than assume a bare `git init`
+        # has it. Before this line world 1 asserted "a plain commit on main is refused"
+        # against a repo that was not an integration tree at all, and it failed for that
+        # reason the moment the predicate stopped being a branch-name test.
+        subprocess.run(["git", "worktree", "add", "-q", "-b", "sib",
+                        os.path.join(d, "..", os.path.basename(d) + "_sib")],
+                       cwd=d, capture_output=True, env=clean)
+        # AND THE PREDICATE HAS TO BE IMPORTABLE FROM THE FIXTURE. The hook imports
+        # scripts/integration_tree.py relative to the repo it runs in, so a fixture without
+        # it takes the loud-NOTE path and the guard does not run -- which is correct
+        # behaviour and useless as a test of the refusal. Copy the real module in rather
+        # than writing a stub: a stub would share this file's assumptions about git's
+        # directory layout, which is the shape that leaves a selftest green over a dead
+        # check.
+        _pred_src = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(hook))),
+                                 "integration_tree.py")
+        if os.path.exists(_pred_src):
+            os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+            shutil.copyfile(_pred_src, os.path.join(d, "scripts", "integration_tree.py"))
+        else:
+            fails.append("selftest precondition: scripts/integration_tree.py not found, so "
+                         "worlds 1-4 would test the import-failure path, not the guard")
 
         # WORLD 1 (must REFUSE): an ordinary commit in the integration tree on main.
         rc, out = run(d, "pre-commit", {})
