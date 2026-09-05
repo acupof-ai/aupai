@@ -107,6 +107,83 @@ if [ "$1" = "--release" ]; then
   rm -f "$HOLDER"; rmdir "$LOCK"; echo "merge_main: released $LOCK" >&2; exit 0
 fi
 
+# SECOND READER BEFORE MERGE (4c's ruling 2026-09-05, user-approved). A branch whose
+# not-yet-on-main commits touch train.py or model.py is refused unless runs/review.jsonl
+# carries a row whose `artifact` names one of those shas and whose reviewer is not the author.
+#
+# WHY A REFUSAL RATHER THAN THE PROSE RULE IT REPLACES: on 2026-09-05 every defect that was
+# caught was caught by a second reader and none by the author -- b0's two optimizer misroutings,
+# the SwiGLU mutant that reached main and the pod, my own witness transposed twice and its
+# tolerance set below the noise floor of the device it runs on. The rule already existed as
+# words; what it lacked was a moment where it fires.
+#
+# TRAIN.PY AND MODEL.PY ONLY. They are where a defect is silent: an arm trains, the loss moves,
+# and nothing says the optimizer grouped a 56M-parameter FFN as depth-attention queries. A
+# broader net would refuse routine work and be worked around, which is worse than no gate.
+_review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
+  local shas subject author sha found row
+  # ONLY the commits this merge would ship, and only non-merge ones: a merge commit's diff
+  # against its first parent shows the other side's files, which the other side already
+  # answered for. --no-merges also exempts reverts of merges; a plain revert is exempted by
+  # its subject below.
+  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" 2>/dev/null) || return 0
+  [ -n "$shas" ] || return 0
+  found=""
+  for sha in $shas; do
+    # A REVERT IS EXEMPT (4c): it restores a state that was already reviewed, and refusing one
+    # would make the fastest correction the hardest commit to land -- exactly backwards when a
+    # bad commit is on main and on the pod.
+    subject=$(git -C "$MAIN" log -1 --format=%s "$sha")
+    case "$subject" in Revert*|revert*) continue ;; esac
+    if git -C "$MAIN" show --stat --format= --name-only "$sha" \
+         | grep -qxE 'train\.py|model\.py'; then
+      found="$found $sha"
+    fi
+  done
+  [ -n "$found" ] || return 0
+
+  for sha in $found; do
+    author=$(git -C "$MAIN" log -1 --format=%an "$sha")
+    # The row must name the sha AND be written by someone else. `git log --format=%an` is the
+    # git author, while review.jsonl's reviewer is a roster name -- these are different
+    # namespaces, so the comparison that can actually be made is reviewer-vs-the-branch: a row
+    # whose reviewer is the branch's own name is a self-review. Checked in python because
+    # review.jsonl rows are JSON and a grep for the sha would match it inside any field.
+    row=$(python3 - "$sha" "$1" <<'PY'
+import json, sys
+sha, branch = sys.argv[1], sys.argv[2]
+short = sha[:8]
+try:
+    rows = [json.loads(l) for l in open("runs/review.jsonl", encoding="utf-8") if l.strip()]
+except (OSError, json.JSONDecodeError):
+    sys.exit(0)  # unreadable ledger: say nothing, the caller refuses for want of a row
+for r in rows:
+    if not isinstance(r, dict):
+        continue
+    art = str(r.get("artifact", "")) + " " + str(r.get("item", ""))
+    if short in art or sha in art:
+        rev = str(r.get("reviewer", "")).strip()
+        # SELF-REVIEW IS NOT A REVIEW. The reviewer field is free text ("b0 (self-reported)"),
+        # so the test is whether the branch's own name appears in it, not equality.
+        if rev and branch.lower() not in rev.lower():
+            print(rev)
+            break
+PY
+)
+    if [ -z "$row" ]; then
+      echo "merge_main: REFUSING -- $sha touches train.py or model.py and no second reader" >&2
+      echo "  has signed it. $(git -C "$MAIN" log -1 --format='%h %s' "$sha")" >&2
+      echo "  Author: $author. Needed: a row in runs/review.jsonl whose \`artifact\` names" >&2
+      echo "  $sha (or ${sha:0:8}) with a \`reviewer\` that is not '$1'." >&2
+      echo "  Every defect caught on 2026-09-05 was caught by a second reader, none by the" >&2
+      echo "  author -- that is what this refusal is for." >&2
+      echo "  Controller override: AUPAI_CONTROLLER=1 (logged to runs/friction.jsonl)." >&2
+      return 1
+    fi
+  done
+  return 0
+}
+
 # --selftest drives the REAL _lock_is_dead against fixture locks, in BOTH directions -- a
 # predicate that only ever says "dead" passes every positive case: the live-pid and deliberate-hold
 # rows are the ones that would have prevented 2026-09-05.
@@ -182,12 +259,52 @@ time.sleep(20)
   touch -t 200001010000 "$LOCK" "$HOLDER" 2>/dev/null || true
   _case "26-year-old lock, live holder (age must not decide)" alive
   rm -rf "$_t"
+  # THE SECOND-READER GATE, six worlds, driven against a REAL scratch repo rather than a
+  # reimplementation of the predicate. Both directions: a gate that only ever refuses passes
+  # every negative case, and one that only ever accepts is the prose rule it replaced.
+  _g=$(mktemp -d)
+  (
+    cd "$_g" && git init -q . && git config user.email t@t && git config user.name T
+    mkdir -p runs && echo x > model.py && echo y > train.py && echo z > other.txt
+    : > runs/review.jsonl && git add -A && git commit -qm init
+    _base=$(git rev-parse HEAD)
+    git checkout -q -b feat && echo x2 >> model.py && git commit -qam "feat: touch model"
+    git checkout -q -b docsonly "$_base" && echo w >> other.txt && git commit -qam "docs: elsewhere"
+    git checkout -q -b revonly "$_base" && echo r >> model.py && git commit -qam 'Revert "x"'
+    git checkout -q "$_base" 2>/dev/null
+  ) >/dev/null 2>&1
+  _sha=$(git -C "$_g" rev-parse feat)
+  _gcase() {  # $1=name $2=branch $3=want refused|accepted
+    if ( MAIN=$_g; cd "$_g"; _review_gate "$2" ) 2>/dev/null; then _got=accepted; else _got=refused; fi
+    if [ "$_got" != "$3" ]; then
+      echo "  FAIL review-gate $1: want $3, got $_got" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   review-gate $1: $_got"
+    fi
+  }
+  # main is where the gate compares from, so point it at the base commit.
+  git -C "$_g" branch -f main "$(git -C "$_g" rev-list --max-parents=0 HEAD | head -1)" >/dev/null 2>&1
+  : > "$_g/runs/review.jsonl"
+  _gcase "model.py, no row" feat refused
+  printf '{"reviewer": "b0", "artifact": "model.py @ %s"}\n' "${_sha:0:8}" > "$_g/runs/review.jsonl"
+  _gcase "model.py, row by another" feat accepted
+  # SELF-REVIEW IS NOT A REVIEW -- the case that decides whether this gate enforces anything.
+  printf '{"reviewer": "feat", "artifact": "model.py @ %s"}\n' "${_sha:0:8}" > "$_g/runs/review.jsonl"
+  _gcase "model.py, self-review" feat refused
+  printf '{"reviewer": "b0", "artifact": "model.py @ deadbeef"}\n' > "$_g/runs/review.jsonl"
+  _gcase "row names another sha" feat refused
+  : > "$_g/runs/review.jsonl"
+  _gcase "touches neither file" docsonly accepted
+  _gcase "lone revert is exempt" revonly accepted
+  rm -rf "$_g"
+
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
   echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
   echo "  hold both read alive at any age; gone, zombie and unparseable read dead; a holderless"
   echo "  lock is alive inside its ${_NO_HOLDER_GRACE}s grace and dead after it."
   exit 0
 fi
+
 
 for _ in $(seq 1 120); do
   if _take_lock "merge $1 into main" no; then
@@ -210,6 +327,14 @@ for _ in $(seq 1 120); do
       echo "  ships nothing. Its tip is: $_sub" >&2
       echo "  If that is not the work you meant to merge, you have named the wrong branch:" >&2
       echo "  \`git branch --sort=-committerdate | head\` shows what moved most recently." >&2
+    fi
+    if [ "${AUPAI_CONTROLLER:-0}" = "1" ]; then
+      if ! _review_gate "$1" 2>/dev/null; then
+        printf '%s\n' "{\"when\": \"$(date -u +%Y-%m-%dT%H:%MZ)\", \"who\": \"tilerl\", \"kind\": \"override\", \"blocked_what\": \"merge $1 with unreviewed train.py/model.py commits\", \"cause\": \"AUPAI_CONTROLLER=1 used to bypass the second-reader refusal\", \"cost_min\": 0}" >> "$MAIN/runs/friction.jsonl"
+        echo "merge_main: second-reader gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
+      fi
+    else
+      _review_gate "$1" || exit 1
     fi
     if git -C "$MAIN" merge --no-edit "$1"; then
       # THE MERGE IS ALREADY A COMMIT HERE, so a drop cannot be aborted -- `git merge --abort`
