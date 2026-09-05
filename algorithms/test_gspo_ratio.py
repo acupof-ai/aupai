@@ -219,11 +219,6 @@ def main():
     print(f"gspo ratio test: {'PASS (9 worlds)' if not FAILS else f'{len(FAILS)} BUG(S)'}")
     return 1 if FAILS else 0
 
-    for f in FAILS:
-        print(f"BUG {f}", file=sys.stderr)
-    print(f"gspo ratio test: {'PASS (9 worlds)' if not FAILS else f'{len(FAILS)} BUG(S)'}")
-    return 1 if FAILS else 0
-
 
 if __name__ == "__main__":
     sys.exit(main())
