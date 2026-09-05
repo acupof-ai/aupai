@@ -67,6 +67,32 @@ bash "$(dirname "$0")"/merge_rebuild_fixture.sh >/dev/null
 co=$(git -C "$R" worktree list --porcelain | grep -c "^branch refs/heads/main" || true)
 say $([ "$co" = 0 ] && echo 0 || echo 1) "worktrees holding main: $co (must be 0)"
 
+# W5  A PENDING OVERRIDE ROW SURVIVES A KILLED GATE. The hook records the event under the git
+# dir (invisible to `git status`, per-worktree so two sessions cannot collide) and the GATE
+# writes it through the CLI and truncates. If the gate dies between reading and truncating,
+# the row must still be there for the next run -- a metric that silently loses events reads 0
+# as "no overrides happened", the absent-vs-empty error this repo keeps paying for (4c).
+echo "W5  a pending override row survives a killed gate"
+bash "$(dirname "$0")"/merge_rebuild_fixture.sh >/dev/null
+GD=$(git -C "$W/wt_s1" rev-parse --git-dir)
+[ "${GD#/}" = "$GD" ] && GD=$W/wt_s1/$GD                      # rev-parse may print it relative
+PEND=$GD/aupai_pending_friction
+printf '%s\n' '{"kind":"override","cause":"AUPAI_BEHIND_MAIN_OK=1"}' > "$PEND"
+# The hook's write must not dirty the tree -- that is the defect being removed.
+dirty=$(git -C "$W/wt_s1" status --porcelain | wc -l | tr -d ' ')
+# A gate that dies AFTER reading and BEFORE truncating. Run as a real child and SIGKILL it by
+# its own pid: `kill -9 $$` inside `( )` kills the SCRIPT, because $$ is the parent's pid in a
+# subshell, not the subshell's (caught 2026-09-05 -- W5 printed nothing at all and the run
+# ended silently at 4/5, which reads like a hang rather than a bug in the test).
+{ bash -c 'cat "$1" >/dev/null; kill -9 $$' _ "$PEND"; } 2>/dev/null || true
+survived=$([ -s "$PEND" ] && echo 1 || echo 0)
+# The next gate run drains it: write (simulated), then truncate.
+drained=""
+if [ -s "$PEND" ]; then drained=$(wc -l < "$PEND" | tr -d ' '); : > "$PEND"; fi
+empty_after=$([ -s "$PEND" ] && echo 0 || echo 1)
+say $([ "$dirty" = 0 ] && [ "$survived" = 1 ] && [ "$drained" = 1 ] && [ "$empty_after" = 1 ] && echo 0 || echo 1) \
+    "tree dirty=$dirty, survived the kill=$survived, next run drained=$drained row(s), truncated=$empty_after"
+
 echo
-echo "merge_main fixture: $((4-bad))/4 pass"
+echo "merge_main fixture: $((5-bad))/5 pass"
 exit $([ "$bad" = 0 ] && echo 0 || echo 1)
