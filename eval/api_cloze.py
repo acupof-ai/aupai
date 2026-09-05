@@ -656,7 +656,17 @@ def main():
                  f"its 'seen' region is the interval [n_val, n_val+cursor), which holds only "
                  f"12.6% read rows while its 'tail' holds 87% of the training set. Rebuild "
                  f"with --build before scoring.")
-    model, tok, cfg = load_checkpoint(a.ckpt, a.tokenizer, a.device)
+    # load_checkpoint returns (model, cfg) and takes NO tokenizer argument; the tokenizer
+    # is loaded separately and cross-checked AGAINST cfg (vocab_real, then vocab_id), which
+    # is the whole point of passing cfg rather than None here. The first version of this
+    # line read `model, tok, cfg = load_checkpoint(a.ckpt, a.tokenizer, a.device)`, which
+    # bound the tokenizer path to `device` and reached torch.load as map_location:
+    # "don't know how to restore data location of torch.storage.UntypedStorage (tagged with
+    # data/tokenizer.json)", 18 seconds into the first real launch. Every selftest passed --
+    # they all call score_items and load_items with stub models, so nothing exercised main()
+    # at all. The signature check in the selftest below is what covers this now.
+    model, cfg = load_checkpoint(a.ckpt, device=a.device, dtype=torch.bfloat16)
+    tok = load_tokenizer(a.tokenizer, cfg)
     model.eval()
 
     res = {}
@@ -1049,6 +1059,46 @@ def _selftest():
     _deff = (_sc / _sn) ** 2
     assert abs(_deff - 3.5135) < 0.001, _deff        # dies if the deff uses m0 (1.7541)
 
+    # 12. MAIN()'S CALL INTO THE LOADER ACTUALLY MATCHES THE LOADER, checked by signature
+    #     because no stub can stand in for it: load_checkpoint imports train.HybridLM and
+    #     builds a real model, so exercising it here would mean a checkpoint on disk.
+    #
+    #     This is the check the first real launch needed and did not have. main() had
+    #     `model, tok, cfg = load_checkpoint(a.ckpt, a.tokenizer, a.device)` -- three
+    #     positional arguments into (path, device, dtype, fone_ok), so the tokenizer path
+    #     bound to `device` and arrived at torch.load as map_location. It died 18 seconds
+    #     in with "don't know how to restore data location of torch.storage.UntypedStorage
+    #     (tagged with .../data/tokenizer.json)" after the 892 MB checkpoint read had begun.
+    #     Eleven selftests were green: every one of them calls score_items or load_items
+    #     with a stub model and an empty tokenizer, so not one of them entered main().
+    #
+    #     Signature comparison, not a call, and it fails on either half of the mistake:
+    #     a tokenizer parameter appearing in load_checkpoint, or main() going back to
+    #     three positional arguments. Arity alone would not have caught it -- the bad call
+    #     passed three arguments to a function that accepts four.
+    import inspect as _inspect
+
+    _sig = _inspect.signature(load_checkpoint)
+    _params = list(_sig.parameters)
+    assert _params[:2] == ["path", "device"], (
+        f"load_checkpoint's leading parameters are {_params[:2]}, not (path, device); "
+        f"main()'s keyword call needs re-reading against the new contract"
+    )
+    assert not any("tok" in p for p in _params), (
+        f"load_checkpoint grew a tokenizer parameter {_params}; main() loads the tokenizer "
+        f"separately via load_tokenizer(path, cfg) so the cross-check gets a cfg, and two "
+        f"tokenizer paths would silently disagree"
+    )
+    _src = _inspect.getsource(main)
+    assert "load_checkpoint(a.ckpt, device=a.device" in _src, (
+        "main() no longer calls load_checkpoint with device= by keyword. The positional "
+        "form is what bound the tokenizer path to map_location on 2026-09-05."
+    )
+    assert "load_tokenizer(a.tokenizer, cfg)" in _src, (
+        "main() must pass cfg to load_tokenizer, not None: cfg is what enables the "
+        "vocab_real and vocab_id cross-check, and None skips it silently (loader.py:118)"
+    )
+
     print("api_cloze selftest OK: the region pair on the control's real numbers "
           f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "
           f"cursor sum {cursor_sum} == 3815x16x2x2), the CONTIGUOUS reading rejected three "
@@ -1064,7 +1114,10 @@ def _selftest():
           "exactly sqrt(5)x, the Kish size on 20+80x1 is 4.8 = 3.888x the mean (not the "
           "mean), the group list is masked with the outcomes so a dropped unscoreable item "
           "cannot shift later items into the wrong row, and the undefined-vs-chance test "
-          "reads the WIDER of the two SEs")
+          "reads the WIDER of the two SEs. LOADER CONTRACT: main()'s load_checkpoint call "
+          "matches the real signature (path, device, dtype, fone_ok) by keyword and passes "
+          "cfg to load_tokenizer -- the check that was missing when the positional form "
+          "sent the tokenizer path in as map_location")
     return 0
 
 
