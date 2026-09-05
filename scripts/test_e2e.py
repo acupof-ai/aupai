@@ -93,6 +93,30 @@ E2E_RECIPE = [
     "--accum", "1", "--lr_scale", "1.0", "--warmdown", "0.65", "--anneal_frac", "0.1",
     "--no-grad_ckpt", "--save_every", "1000",
 ]
+# E2E_MOE=1 adds E1's MoE flags, so the walk covers the arm's own path: pretrain a few steps ->
+# checkpoint -> load -> pack -> SFT -> generate. 4c's ruling 2026-09-05, and the reason is
+# measured rather than precautionary: E1 died at two SUCCESSIVE stages -- the forward's expert
+# dtype, then the first optimizer step -- with scripts/test_moe_module.py 9/9 and then 10/10
+# green before each launch. A module test builds a module; it does not step an optimizer, save a
+# checkpoint, or reload one, and each of those is where the arm actually failed.
+#
+# THE WIDTH IS DERIVED, NOT PINNED: parity requires (top_k + shared) * expert_ffn ==
+# ffn_hidden, and MoEFFN refuses a config that misses it. Hardcoding 768 would make this test
+# pass only while _SHAPE["ffn_hidden"] is 3072 and refuse at construction for any other shape --
+# a refusal that reads as a defect in the arm rather than in this file.
+if os.environ.get("E2E_MOE", "").strip() not in ("", "0"):
+    _k, _shared = 3, 1
+    _w, _rem = divmod(_SHAPE["ffn_hidden"], _k + _shared)
+    if _rem:
+        raise SystemExit(
+            f"E2E_MOE=1 needs (top_k + shared) = {_k + _shared} to divide ffn_hidden "
+            f"{_SHAPE['ffn_hidden']} exactly; it leaves {_rem}. Equal-ACTIVE parity is the "
+            f"arm's whole premise, so this is a refusal rather than a rounded width.")
+    E2E_RECIPE += [
+        "--moe_experts", "24", "--moe_top_k", str(_k), "--moe_expert_ffn", str(_w),
+        "--moe_shared", str(_shared), "--moe_layers", f"0-{_SHAPE['layers'] - 1}",
+        "--moe_arm", "e2e",
+    ]
 if not os.path.exists(os.path.join(ROOT, MIX)):
     raise SystemExit(f"E2E_MIX={MIX!r} does not exist. A missing mix is a refusal, not a "
                      f"fall back to the sample mix: falling back is how a sample-mix pass "

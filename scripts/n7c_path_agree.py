@@ -75,8 +75,12 @@ def main():
 
     import model as M  # noqa: PLC0415
     from eval.prefix_mask import PREFIX_ARMS, doc_prompt_lengths, prefix_two_call  # noqa: PLC0415
-    from scripts.loader import load_checkpoint  # noqa: PLC0415
+    from scripts.loader import claim_my_cards, load_checkpoint  # noqa: PLC0415
     from train import doc_cu_seqlens  # noqa: PLC0415
+
+    # de-55 step 3: loads to CPU and moves at `mdl.cuda()`, so load_checkpoint's cuda-gated claim
+    # does not fire.
+    claim_my_cards("n7c_path_agree", note="two constructions compared in BPB")
 
     if not M.HAS_FA:
         raise SystemExit("REFUSING: HAS_FA is False; neither path would run the real kernel.")
