@@ -29,6 +29,7 @@ import sys
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 # Before any of the work below, and before the heavy imports: an unknown flag must fail
 # loudly rather than run the suite and report success for a call nobody meant to make.
@@ -412,6 +413,192 @@ _leg_conv = [f for f, mod in _leg.named_modules() if type(mod).__name__ == "FP8L
 assert _leg_conv, "the legacy converter converted nothing -- this case would be vacuous"
 assert not [f for f in _leg_conv if train._is_mem_fqn(f)], (
     f"the legacy FP8 path converted memory linears: {[f for f in _leg_conv if train._is_mem_fqn(f)]}")
+
+# ------------------------------------------- mem_sel_lr and mem_query_norm (added 2026-09-05)
+# WHY THESE FLAGS EXIST: M1/M2/M3 were stopped under readout 4 with key-usage collapse (M1
+# pool_touched_frac 0.0945 at step 1000, key_gini 0.9192), and both flags are candidate fixes for
+# the SELECTION path. Every case below is about a DEFAULT that must reproduce those arms exactly,
+# because a flag whose default changes the architecture makes every measurement before it
+# incomparable while all three arm names stay the same.
+
+# 1. THE DEFAULTS ARE A BIT-FOR-BIT NO-OP. Asserted on the two things a change could move: the
+# state dict's key set (a new parameter or buffer) and the optimizer grouping (a re-routed
+# tensor). Comparing forward outputs would NOT catch a new parameter that happens to start at
+# identity, and comparing group counts alone would not catch a tensor moving between two groups
+# that both exist.
+Cfg.mem_values, Cfg.mem_top_k, Cfg.mem_layers, Cfg.mem_sparse = _MV, _MK, "1,3", True
+Cfg.attn_res, Cfg.grad_ckpt = True, False
+assert Cfg.mem_sel_lr <= 0, f"Cfg.mem_sel_lr default {Cfg.mem_sel_lr} is not the no-split sentinel"
+assert Cfg.mem_query_norm == "none", f"Cfg.mem_query_norm default is {Cfg.mem_query_norm!r}"
+torch.manual_seed(7)
+_dflt = HybridLM(Cfg).to(DEV)
+_dflt_keys = set(_dflt.state_dict())
+_dflt_groups = {o.aupai_group: [n for n, p in _dflt.named_parameters()
+                                if any(p is q for g in o.param_groups for q in g["params"])]
+                for o in build_optimizers(_dflt, Cfg)}
+assert "mem_sel" not in _dflt_groups, (
+    "the default built a mem_sel group. Then M1's relaunch would not be M1: the selector would "
+    "train at a different lr with nothing in the launch line saying so")
+assert set(_dflt_groups["mem"]) == {n for n, _ in _dflt.named_parameters() if train._is_mem_fqn(n)}, (
+    "at the default, ALL memory parameters must be in the one `mem` group, as M1/M2/M3 ran")
+
+# 2. THE SPLIT MOVES query+keys AND NOTHING ELSE, and the union is unchanged. A split that dropped
+# a tensor would leave it un-optimised -- read every forward, never updated -- which is the §184
+# shape: the diagnostics would still look healthy because `touched` counts reads.
+Cfg.mem_sel_lr = 0.002
+_spl = HybridLM(Cfg).to(DEV)
+_spl_groups = {o.aupai_group: [n for n, p in _spl.named_parameters()
+                               if any(p is q for g in o.param_groups for q in g["params"])]
+               for o in build_optimizers(_spl, Cfg)}
+assert set(_spl_groups["mem_sel"]) == {"memory.query.weight", "memory.keys"}, _spl_groups["mem_sel"]
+assert set(_spl_groups["mem"]) | set(_spl_groups["mem_sel"]) == set(_dflt_groups["mem"]), (
+    f"the split changed WHICH parameters the memory groups hold, not just how they are divided: "
+    f"lost {set(_dflt_groups['mem']) - set(_spl_groups['mem']) - set(_spl_groups['mem_sel'])}, "
+    f"gained {set(_spl_groups['mem']) | set(_spl_groups['mem_sel']) - set(_dflt_groups['mem'])}")
+assert not set(_spl_groups["mem"]) & set(_spl_groups["mem_sel"]), (
+    "a parameter is in BOTH memory groups, so it is stepped twice per step")
+_sel_opt = {o.aupai_group: o for o in build_optimizers(_spl, Cfg)}
+assert _sel_opt["mem_sel"].param_groups[0]["lr"] == 0.002, "mem_sel group is not at Cfg.mem_sel_lr"
+assert _sel_opt["mem"].param_groups[0]["lr"] == Cfg.mem_lr, "the split changed the table's lr"
+# AND THE NAMES STILL LINE UP WITH THE OPTIMIZERS. build_optimizers zips two lists, so a new
+# optimizer appended without its name would shift every label after it and the step line would
+# report the selector's lr as the table's -- the number would look plausible and be wrong.
+for _o in build_optimizers(_spl, Cfg):
+    assert getattr(_o, "aupai_group", None), f"an optimizer got no group name: {type(_o).__name__}"
+Cfg.mem_sel_lr = -1.0
+
+# 3. set_schedule MUST SCALE THE NEW GROUP TOO. It is a separate optimizer, and a group that
+# never enters the warmup loop would run at full lr from step 1 while every printed lr said
+# otherwise -- and at step 1 that is the largest lr the selector ever sees.
+Cfg.mem_sel_lr = 0.002
+_sched = {o.aupai_group: o for o in build_optimizers(HybridLM(Cfg).to(DEV), Cfg)}
+train.set_schedule(list(_sched.values()), 1, 1000, Cfg)
+_warm = _sched["mem_sel"].param_groups[0]["lr"]
+assert 0 < _warm < 0.002, (
+    f"mem_sel lr is {_warm} at step 1 of a 1000-step run with warmup {Cfg.warmup}: the group is "
+    f"not being warmed up, so the selector takes its largest steps before anything is learned")
+train.set_schedule(list(_sched.values()), Cfg.warmup, 1000, Cfg)
+assert abs(_sched["mem_sel"].param_groups[0]["lr"] - 0.002) < 1e-9, (
+    "mem_sel lr does not reach its initial_lr at the end of warmup")
+Cfg.mem_sel_lr = -1.0
+
+# 4. EACH query_norm VALUE CHANGES THE SELECTION, and that is the assertion -- not that the
+# forward runs. A normalisation wired in but never reaching the scores would give a finite loss
+# and an unchanged top-k, which is exactly the silent no-op these three cells are meant to
+# distinguish. Same seed and same input for all three, so a difference is the flag.
+#
+# READ IN TRAIN MODE, and that is not a detail. BatchNorm in EVAL uses running stats, which at
+# init are mean 0 var 1 -- an affine identity -- so an eval read of the bn arm selects EXACTLY the
+# rows the none arm does (measured: identical touched buffers, 235 rows both). An eval-mode
+# fixture would therefore report bn as a no-op when it is not, and would have sent the next reader
+# after a defect in the wiring. The arms train in train mode; that is where the flag has an effect.
+#
+# THE SNAPSHOT IS TAKEN BEFORE diagnostics(reset=True), which zeroes `touched`. The first version
+# of this case cloned the buffer AFTER the reset, so all three arms compared as all-zero and
+# EQUAL -- the assertion below then fired on the l2 arm, which does differ. A fixture that reads
+# the counter it just cleared cannot see any arm's selection.
+_sel_sets = {}
+for _qn in ("none", "l2", "bn"):
+    Cfg.mem_query_norm = _qn
+    torch.manual_seed(21)
+    _qm = HybridLM(Cfg).to(DEV)
+    _qm.train()
+    with _amp():
+        _qh, _ = _qm(x, y)
+    assert torch.isfinite(_qh).all(), f"query_norm={_qn} forward not finite"
+    _rows = _qm.memory.touched.clone()          # BEFORE the reset below
+    _qh.float().sum().backward()
+    _d = _qm.memory.diagnostics(reset=True)
+    assert _d["touched_rows"] > 0, f"query_norm={_qn}: no row was read"
+    assert _qm.memory.values.weight.grad is not None, f"query_norm={_qn}: table got no gradient"
+    assert int(_rows.sum()) == _d["touched_rows"], (
+        f"query_norm={_qn}: the snapshot holds {int(_rows.sum())} rows and diagnostics reports "
+        f"{_d['touched_rows']} -- the clone is not the window this row describes")
+    _sel_sets[_qn] = (_rows, _d["touched_rows"])
+    # The new parameters exist only in the arm that declares them, or a checkpoint from one arm
+    # would load into another and the flag would be recorded in cfg while the weights disagreed.
+    _extra = set(_qm.state_dict()) - _dflt_keys
+    if _qn == "none":
+        assert not _extra, f"query_norm=none added state: {_extra}"
+    elif _qn == "l2":
+        assert _extra == {"memory.q_log_temp"}, _extra
+    else:
+        assert any(k.startswith("memory.q_bn.") for k in _extra), _extra
+# THE THREE ARMS MUST NOT ALL SELECT THE SAME ROWS. Compared on the touched-row SET rather than a
+# count: two arms can read the same NUMBER of distinct rows while reading different ones, and it
+# is which rows that the collapse is about.
+Cfg.mem_query_norm = "none"
+_base_rows = _sel_sets["none"][0]
+for _qn in ("l2", "bn"):
+    assert not torch.equal(_sel_sets[_qn][0], _base_rows), (
+        f"query_norm={_qn} selected exactly the same rows as none, so the branch is not reaching "
+        f"the scores the top-k reads and this arm would be the control under another name")
+
+# 4b. THE l2 ARM MUST NORMALISE THE KEYS, asserted THROUGH THE REAL FORWARD. Deleting the key
+# side is the mutant that survived the first version of this case (2026-09-05): that version
+# computed the comparison from the module's parts with its own einsum, so it never executed the
+# branch it was testing -- a fixture built beside the implementation instead of on it.
+#
+# THE KNOWN ANSWER: normalising an already-unit vector is the identity. So a module whose keys are
+# PRE-normalised must produce the same output as one whose keys are raw, because the correct
+# forward normalises them itself. If the forward does not, the raw-key module reads different keys.
+#
+# JUDGED AGAINST THE none ARM'S OWN SENSITIVITY, not against a tolerance I choose. Exact equality
+# fails on correct code: F.normalize is not bitwise idempotent, and under amp the two paths differ
+# by ~5e-07. A hand-picked epsilon would be a number with no basis, so the reference is the SAME
+# substitution on the none arm, which does not normalise and therefore shows what "the keys really
+# changed" is worth on this input. Measured 2026-09-05: correct l2 5e-07, none arm 1e-02, the
+# mutant that deletes the key line 1e-02 -- four orders between the two worlds, and the assertion
+# is that l2 sits an order below the none arm rather than at it.
+Cfg.mem_query_norm = "none"
+torch.manual_seed(31)
+_nna = HybridLM(Cfg).to(DEV).eval()
+_nnb = copy.deepcopy(_nna)
+with torch.no_grad():
+    _nnb.memory.keys.copy_(F.normalize(_nnb.memory.keys, dim=-1))
+    _yc, _ = _nna(x, y)
+    _yd, _ = _nnb(x, y)
+_none_delta = (_yc.float() - _yd.float()).abs().max().item()
+assert _none_delta > 1e-4, (
+    f"pre-normalising the keys moved the none arm's output by only {_none_delta:.3e}, so this "
+    f"input cannot tell the two key sets apart and the comparison below is vacuous")
+Cfg.mem_query_norm = "l2"
+torch.manual_seed(31)
+_l2a = HybridLM(Cfg).to(DEV).eval()
+_l2b = copy.deepcopy(_l2a)
+with torch.no_grad():
+    _l2b.memory.keys.copy_(F.normalize(_l2b.memory.keys, dim=-1))
+    _ya, _ = _l2a(x, y)
+    _yb, _ = _l2b(x, y)
+_l2_delta = (_ya.float() - _yb.float()).abs().max().item()
+assert _l2_delta < _none_delta / 10.0, (
+    f"the l2 arm does not normalise the keys inside forward: pre-normalising them moved its "
+    f"output by {_l2_delta:.3e}, against {_none_delta:.3e} for the none arm doing the same "
+    f"substitution -- i.e. it responded like a module that reads the keys raw. Query-side L2 "
+    f"alone cannot reorder a half's top-k (every score in a row is scaled by the same positive "
+    f"number), so without the key side the arm cannot change key concentration, which is what "
+    f"key_gini measures and what collapsed on M1 (0.9192)")
+# AND THE PRE-NORMALISATION IS NOT VACUOUS: if the keys were already unit vectors at init, both
+# deltas would be ~0 and the ratio above would be meaningless.
+assert (_l2a.memory.keys.norm(dim=-1) - 1.0).abs().max() > 1e-3, (
+    "the keys are already unit-norm at init, so both deltas are zero and this case proves "
+    "nothing -- re-derive it against the real init scale (key_dim ** -0.5)")
+
+# 5. AN UNKNOWN VALUE MUST RAISE, not fall back to none. A typo that silently ran the control
+# would report a clean null for a change it never applied -- the §177 shape, and the reason
+# argparse also restricts this flag to a choice list.
+Cfg.mem_query_norm = "layernorm"
+try:
+    HybridLM(Cfg)
+    raise AssertionError("query_norm='layernorm' was accepted; the arm would run as the control")
+except ValueError as _e:
+    assert "query_norm" in str(_e), _e
+Cfg.mem_query_norm = "none"
+Cfg.mem_values, Cfg.mem_layers, Cfg.mem_top_k = 0, "3,6,9", 32
+print("mem_sel_lr/mem_query_norm: defaults are a no-op (same state keys, same one mem group), "
+      "the split moves exactly query+keys and preserves the union, set_schedule warms the new "
+      "group, all three norms change which rows are selected, unknown value raises OK")
+Cfg.mem_values, Cfg.mem_top_k, Cfg.mem_layers, Cfg.mem_sparse = _MV, _MK, "1,3", True
 
 # READOUT 6 AND THE TABLE MASTER, as ONE known-answer case with both worlds, because either half
 # alone proves nothing: a checksum probe that never fires cannot show the master works, and a
