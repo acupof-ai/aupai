@@ -3238,6 +3238,43 @@
    "uncertainty": "12 steps at one shape; a recompile triggered by a rarer shape class (e.g. an expert receiving zero rows) would not necessarily appear",
    "boundary": "the compiled region is the two grouped GEMMs and the gating activation, not a full training step; a larger compiled region has more chances to specialize on a dynamic shape",
    "status": "recorded"
+  },
+  {
+   "id": "eff.data00_freed_by_cache_move",
+   "value": "Deleting the 88 /data00 token cache originals after verifying their NVMe copies freed 247,796,625,408 bytes (247.8 GB) and took /data00 from 82.9% to 71.5% used (1794.9 -> 1547.1 GB, 529.3 GB available). /mnt/data02 sits at 13.7% (516.2 GB used, 3071.0 GB available). 88 deleted, 0 failed, 0 groups kept.",
+   "measured": "2026-09-05",
+   "source": "pod: scripts/delete_moved_cache_originals.py --apply; record at runs/token_cache_move.json (sha256 4c9d78ad79eadab5), deleted block stamped 2026-09-05T05:29:00Z with per-path size, df both sides and freed_bytes",
+   "config": {
+    "source_type": "measured, statvfs before and after plus per-file sizes",
+    "rule": "a file was deleted only if it was in runs/token_cache_move.json AND its NVMe copy still hashed to the dst digest recorded at copy time; phase 1 verified all 22 groups before phase 2 unlinked anything",
+    "files": 88,
+    "groups": 22,
+    "kept_groups": 0,
+    "failed": 0,
+    "freed_bytes": 247796625408,
+    "src": "/data00",
+    "dst": "/mnt/data02/tokens",
+    "authorised_by": "user order 2026-09-05, relayed by 4c, naming the 88 files in the record"
+   },
+   "uncertainty": "freed_bytes comes from statvfs and equals the sum of the deleted file sizes to 0.1 GB, which is the check that no live reader was holding a deleted file open. Had one been, the blocks would not have returned until it exited and freed would have read low -- that would not have been a failed delete, and the script says so rather than leaving it to be misread.",
+   "boundary": "Says what the deletion freed on /data00 at one instant. It says nothing about whether the NVMe copies stay reachable: that is a property of the mount, and eval/cache_guard.assert_cache_dir_not_overlay plus train.py's absent-cache refusal are what catch a dropped mount at read time.",
+   "status": "measured"
+  },
+  {
+   "id": "eff.nvme_cache_reverify_before_delete",
+   "value": "Before the deletion, all 22 cache groups (247.8 GB) re-verified on NVMe: every name resolved through train._domain_cache_path to an existing file whose sha256 still equalled the digest recorded at copy time. 22/22, 0 mismatches, 0 absent.",
+   "measured": "2026-09-05",
+   "source": "pod: scripts/verify_cache_accessor_nvme.py; log at runs/verify_nvme_0905.log",
+   "config": {
+    "source_type": "measured, full-file sha256 of the NVMe side, cardless",
+    "properties_checked": "RESOLVE (the accessor lands on the file, so a run can reach it) and MATCH (the bytes are the verified ones)",
+    "groups": 22,
+    "cache_dir": "/mnt/data02/tokens",
+    "reads_data00": "no -- the NVMe side only, so it does not contend for the overlay"
+   },
+   "uncertainty": "A digest match proves the bytes are those recorded at copy time; it does not prove the copy-time digest was itself right. That is covered by the move having hashed BOTH sides and compared them (eff.token_cache_copy_to_nvme).",
+   "boundary": "A point-in-time statement about the copies, taken minutes before the delete. It is the gate for that delete and nothing more.",
+   "status": "measured"
   }
  ]
 }
