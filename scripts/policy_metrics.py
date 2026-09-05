@@ -14,9 +14,14 @@ the ledgers cannot carry is null with the missing field named, never an estimate
   2 gate refusals          the friction ledger's cumulative grouped state
                            (whole-ledger rows/causes, the figure the controller
                            quotes as "N rows / M causes"), top 3 causes.
-  3 card-hours by class    NOT COMPUTABLE: 344/345 experiments rows lack
-                           ended+cards and no row carries the class. Fields
-                           named in the row's `missing` note for the writer.
+  3 card-hours by class    NOT COMPUTABLE: folded by (name, started), cards and
+                           class are on 2/245 rows (de's probes, 2026-09-05);
+                           ended is on 243/245. The missing fields are cards and
+                           class, not ended. The 243 pre-field rows stay null --
+                           a backfilled class is a guess (4c). Field semantics
+                           (test_ledger_field_writers.py): class/cards absent =
+                           UNSTATED, "" forbidden; 'none' is a STATED cards
+                           answer for a CPU or corpus job.
   4 defects author vs      author: friction rows with caught_by == who.
     second reader          second: review rows with a BLOCKING/BLOCKED/REJECT/FAIL
                            verdict. Ledger carried 1 of 2026-09-05's 5 second-
@@ -76,7 +81,10 @@ def compute(date):
     causes = Counter(str(r.get("cause") or "?")[:120] for r in friction)
 
     exp = _rows("runs/experiments.jsonl")
-    computable = sum(1 for r in exp if r.get("cards") and r.get("ended"))
+    exp = list({(r.get("name"), r.get("started")): r for r in exp}.values())
+    with_ended = sum(1 for r in exp if r.get("ended"))
+    with_cards = sum(1 for r in exp if r.get("cards"))
+    with_class = sum(1 for r in exp if r.get("class"))
 
     author = [r for r in today_f
               if r.get("caught_by") and r.get("who") and r["caught_by"] == r["who"]]
@@ -110,8 +118,8 @@ def compute(date):
         },
         "card_hours": {
             "incremental": None, "confirmatory": None, "infra_verification": None,
-            "missing": f"experiments.jsonl rows need ended+cards ({computable}/{len(exp)} have them) "
-                       f"and a class field (incremental/confirmatory/infra-verification)",
+            "missing": f"cards on {with_cards}/{len(exp)} folded rows, class on {with_class} "
+                       f"(ended on {with_ended}); the pre-field rows stay null, no backfill (4c 2026-09-05)",
         },
         "defects": {
             "author_caught": len(author), "second_reader_caught": len(second),

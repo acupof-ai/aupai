@@ -45,6 +45,55 @@ EOS_ID = 1  # <eos> id in data/tokenizer.json
 SAVE_INTERVAL = 200
 LOG_INTERVAL = 10
 
+#: MoE fields that change what the weights MEAN. A checkpoint and a live Cfg that disagree
+#: on any of them build a different model than the one that was trained.
+MOE_KEYS = ("moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers")
+
+
+def assert_moe_matches_ckpt(model, ck_cfg):
+    """The built model's MoE shape is the checkpoint's, checked before load_state_dict.
+
+    WHY, given that :151 copies every ck["cfg"] key onto Cfg before the build. That copy is
+    how "build from ck['cfg']" is implemented here, and it works -- for the keys the
+    checkpoint carries. The hole is the pair it cannot cover: a key the checkpoint does NOT
+    carry keeps whatever the live Cfg class holds, and a CLI flag or module-level default
+    that mutates Cfg between the copy and the build wins silently. Neither is hypothetical
+    for MoE, where `moe_experts` 0 is the off sentinel: a dense checkpoint saved before the
+    field existed, loaded by a Cfg whose default became non-zero, builds an MoE model and
+    the mismatch surfaces as a load error naming a tensor rather than a config.
+
+    The routed count is read from w13.shape[0], a real tensor dimension, not from
+    self.n_routed -- the attribute restates the config the model was built from, so
+    comparing it to the config it came from is the check comparing code against itself.
+    load_state_dict would catch a wrong expert COUNT on its own; it would not catch
+    moe_top_k or moe_layers, which change routing and leave every tensor shape intact.
+    """
+    want = int(ck_cfg.get("moe_experts", 0) or 0)
+    blocks = [b for b in getattr(model, "blocks", []) if hasattr(getattr(b, "ffn", None), "w13")]
+    got = int(blocks[0].ffn.w13.shape[0]) if blocks else 0
+    if got != want:
+        raise SystemExit(
+            f"REFUSING: the checkpoint was trained with moe_experts={want} but the model "
+            f"built here has {got} routed expert(s) in {len(blocks)} MoE block(s). The cfg "
+            f"copy at the top of main() did not take effect -- a flag or a class default "
+            f"moved Cfg between the copy and HybridLM(Cfg). 0 means dense."
+        )
+    bad = {
+        k: (ck_cfg[k], getattr(Cfg, k, None))
+        for k in MOE_KEYS
+        if k in ck_cfg and getattr(Cfg, k, None) != ck_cfg[k]
+    }
+    if bad:
+        raise SystemExit(
+            f"REFUSING: Cfg disagrees with the checkpoint on {', '.join(sorted(bad))}: "
+            + "; ".join(f"{k} ckpt={c!r} live={live!r}" for k, (c, live) in sorted(bad.items()))
+            + ". These change routing, not tensor shapes, so load_state_dict accepts them "
+            "and the SFT runs a different model than the one that was pretrained."
+        )
+    return got
+
+
+
 
 def main():
     parser = argparse.ArgumentParser()
@@ -260,6 +309,7 @@ def main():
         print(f"sft rows {len(X)} per rank (world {world})", flush=True)
 
     raw_model = HybridLM(Cfg).to(device)
+    assert_moe_matches_ckpt(raw_model, ck.get("cfg", {}))
     raw_model.load_state_dict(ck["model"])
     fp8 = not args.no_fp8 and amp
     if fp8:
