@@ -1537,15 +1537,28 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
             # below the plan length, wrong above it, which is the shape that survives
             # testing: stage 1 starts at 0, where absolute and relative are equal.
             rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
-            # The world the PLAN was striped at, from build_mix, falling back to the
-            # environment only when no plan published one. The prefix is rows_done * world
-            # over a vector build_mix striped, so reading a different world here slices a
-            # prefix the ranks never jointly consumed (58, 2026-09-06).
-            world = _plan_world or int(os.environ.get("WORLD_SIZE", 1))
+            # The world the PLAN was striped at, from build_mix. The prefix is rows_done *
+            # world over a vector build_mix striped, so reading a different world here slices a
+            # prefix the ranks never jointly consumed (e1, 2026-09-06).
+            #
+            # NOT `_plan_world or <env>`: a fallback restores the two-independent-sources
+            # condition this exists to remove, and silently -- e1's finding 2 measured that
+            # deleting build_mix's publish left every test green, because the reader quietly
+            # went back to the environment. `is None` rather than falsy, since a published 0
+            # is a broken publisher and must not read as absent either. The environment is
+            # consulted only to decide whether this is a single-rank save, where the stripe IS
+            # the full plan and the whole question is moot.
+            _env_world = int(os.environ.get("WORLD_SIZE", 1))
+            world = _env_world if _plan_world is None else int(_plan_world)
             # At world 1 the stripe IS the full plan -- `plan[:, 0::1]` is the identity -- so
             # the stripe answers the per-domain question exactly there and refusing would
             # discard a correct count. Above world 1 it does not, and there is no fallback.
             _full = _dom_full if _dom_full is not None else (dom_idx if world == 1 else None)
+            if _plan_world is None and _env_world > 1 and _dom_full is not None:
+                # A plan vector with no world beside it: the prefix length cannot be derived,
+                # and guessing it from the environment is what finding 2 is about. Refuse; the
+                # branch below writes the reason into the checkpoint.
+                _full = None
             if rows_done < 0 or rows_done > len(dom_idx):
                 # Refuse rather than clamp, and record WHY in the checkpoint. A wrong
                 # cursor is not recoverable by a later reader -- it looks exactly like a
@@ -1558,15 +1571,22 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                     f"the origin is wrong or the plan is not this run's. No cursor written."
                 )
             elif _full is None:
-                # No full plan means no way to answer the per-domain question, and the
-                # stripe cannot substitute for it (see below). Refuse for the same reason
-                # as above: a wrong cursor is indistinguishable from a right one.
-                ck["row_cursor_refused"] = (
-                    f"step {step}: build_mix published no _plan_domains_full, so the "
-                    f"per-domain consumed count cannot be computed -- this rank's stripe "
-                    f"x world is wrong for any domain whose row count is not a multiple "
-                    f"of {world}. No cursor written."
-                )
+                # No usable full plan, for one of two reasons, and the message says which.
+                # Refuse rather than approximate: a wrong cursor is indistinguishable from a
+                # right one to every later reader, while a missing one costs a resume that
+                # repeats rows and says so in the file.
+                if _dom_full is None:
+                    _lack = (f"build_mix published no _plan_domains_full, so the per-domain "
+                             f"consumed count cannot be computed -- this rank's stripe x world "
+                             f"is wrong for any domain whose row count is not a multiple of "
+                             f"{world}")
+                else:
+                    _lack = (f"the plan vector is here but build_mix published no _plan_world, "
+                             f"so the prefix length rows_done x world cannot be derived. "
+                             f"WORLD_SIZE says {_env_world}, and taking that would put the "
+                             f"striping world and the counting world back on two independent "
+                             f"sources -- the condition 88be635a removed")
+                ck["row_cursor_refused"] = f"step {step}: {_lack}. No cursor written."
             else:
                 # The count comes from the FULL plan, not this rank's stripe. The plan is
                 # striped by column (`plan[:, rank::world]`), so rank r holds columns
