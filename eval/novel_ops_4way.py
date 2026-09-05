@@ -284,7 +284,14 @@ def score_checkpoint(ckpt, device="cuda", items=None, batch_size=None):
         items, _ = load_items()
     model, cfg = load_checkpoint(ckpt, device=device)
     set_vocab_id(cfg)
-    tok = load_tokenizer(os.path.join(ROOT, "data", "tokenizer.json"))
+    # cfg IS REQUIRED and is the point: load_tokenizer asserts the tokenizer's size against
+    # cfg.vocab_real and its fingerprint against cfg.vocab_id, so passing the checkpoint's own
+    # cfg is what makes "these options were scored under the vocabulary this checkpoint was
+    # trained on" a checked claim rather than an assumption. Calling it with one argument raised
+    # TypeError on the pod at the first real arm -- the ten selftest worlds use a stub tokenizer
+    # and never reach this line, so no fixture could have caught it (score_matrix.py:1662 is the
+    # same two-argument call).
+    tok = load_tokenizer(os.path.join(ROOT, "data", "tokenizer.json"), cfg)
     model.eval()
     return score(model, tok, items, device, num_id=None, batch_size=batch_size)
 
@@ -619,6 +626,45 @@ def _selftest():
                    f"is not the continuation: the summed argmax is invariant to a constant, so "
                    f"this is asserted on the SCORES rather than on the pick")
 
+    # 11. score_checkpoint's CALLS MATCH THE SIGNATURES THEY CALL. Worlds 1-10 all enter through
+    #     `score`, which takes a model and tokenizer as arguments -- so score_checkpoint's body,
+    #     the code that BUILDS those two from a checkpoint path, is executed by no world at all.
+    #     MEASURED: it called `load_tokenizer(path)` and raised TypeError on the pod at the first
+    #     real arm, after ten green worlds and two clean mutation runs. A fixture cannot reach it
+    #     (loading a real checkpoint needs a card), so the contract is checked against the real
+    #     signature instead.
+    import ast
+    import inspect
+
+    from loader import load_checkpoint as _lc
+    from loader import load_tokenizer as _lt
+
+    # BY AST, NOT BY REGEX. The first version split the argument text on commas, so
+    # `load_tokenizer(os.path.join(ROOT, "data", "tokenizer.json"))` counted THREE arguments --
+    # the commas inside the nested call -- and the very mutant this world exists to catch
+    # SURVIVED. ast counts the call's own arguments and nothing else.
+    calls = {}
+    for node in ast.walk(ast.parse(inspect.getsource(score_checkpoint).lstrip())):
+        if isinstance(node, ast.Call):
+            fname = getattr(node.func, "id", None) or getattr(node.func, "attr", None)
+            if fname:
+                calls.setdefault(fname, []).append((len(node.args), {k.arg for k in node.keywords}))
+    for fn, name in ((_lt, "load_tokenizer"), (_lc, "load_checkpoint")):
+        params = inspect.signature(fn).parameters
+        req = [p_ for p_, v in params.items() if v.default is inspect.Parameter.empty]
+        if name not in calls:
+            bad.append(f"score_checkpoint does not call {name} -- worlds 1-10 all enter through "
+                       f"score() and never execute its body, so nothing else would notice")
+            continue
+        for n_pos, kw in calls[name]:
+            supplied = set(list(params)[:n_pos]) | kw
+            missing = [r for r in req if r not in supplied]
+            if missing:
+                bad.append(f"score_checkpoint calls {name} without {', '.join(missing)} -- it "
+                           f"requires ({', '.join(req)}) and got {n_pos} positional + "
+                           f"{sorted(kw)}. TypeError at the first real checkpoint, which no "
+                           f"stub-based world can reach.")
+
     for b in bad:
         print(f"BUG {b}", file=sys.stderr)
     if not bad:
@@ -630,7 +676,7 @@ def _selftest():
               f"correct; the substring-trap item scores its continuation; the mean row's lengths "
               f"come from the same encoder AND the two normalisations diverge on a 1-vs-4-token "
               f"fixture; and a prompt-inclusive span is caught on the score, not the pick")
-    print(f"novel_ops_4way selftest: {'PASS (10 worlds)' if not bad else f'{len(bad)} BUG(S)'}")
+    print(f"novel_ops_4way selftest: {'PASS (11 worlds)' if not bad else f'{len(bad)} BUG(S)'}")
     return 1 if bad else 0
 
 
