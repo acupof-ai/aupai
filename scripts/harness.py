@@ -7638,6 +7638,146 @@ def check_fact_refs(root):
     return PASS, f"{n} fact citation(s) all resolve"
 
 
+PREREG_ANCHORED_RE = re.compile(r"runs/prereg\.jsonl#([A-Za-z0-9_]+)(?:@amended_(\d+))?")
+PREREG_UNANCHORED_RE = re.compile(r"runs/prereg\.jsonl`?[ ,]+([A-Za-z0-9_]+)")
+PREREG_FLIP = "2026-09-07"
+
+
+def prereg_amendment_n(row):
+    """N for a prereg row, from the amendment keys it actually carries.
+
+    Both spellings exist and neither is redundant: `amended*` holds the timestamp,
+    `amendment*` holds the amendment text, and three rows carry a suffix on one family
+    that the other lacks (b0_head_hybrid_3to1 has amendment_2/_3 and no amended_N;
+    conversion_rate_0905 has amended_1..5 against amendment_1.., _2.. only). Reading one
+    family alone would have reported N=1 for b0 and N=2 for conversion_rate, both wrong
+    by the file's own content, so N is the max suffix over BOTH.
+
+    A bare `amended`/`amendment` with no suffixed sibling is amendment 1: that is the
+    convention val_flat_at_8500 uses and it is not ambiguous. Zero amendment keys of any
+    kind means the row was registered and never amended -- N=0, which a citation may
+    state as @amended_0 or omit.
+    """
+    ns = [
+        int(m.group(1))
+        for k in row
+        for m in [re.fullmatch(r"amend(?:ed|ment)_(\d+)", k)]
+        if m
+    ]
+    if ns:
+        return max(ns)
+    return 1 if any(k in row for k in ("amended", "amendment")) else 0
+
+
+def check_prereg_citations_current(root):
+    """A doc citing a prereg row states which version of it the doc read.
+
+    The failure this catches: a recipe cites runs/prereg.jsonl#moe_0905, the row is
+    amended four times afterwards, and the doc still describes the thresholds of the
+    version its author read. Nothing in either file says they disagree. The check does
+    NOT compare content -- it compares the version the citation names against the row's
+    current N, which is the cheap half and the half that is machine-checkable.
+
+    Two shapes WARN. An anchored citation whose @amended_N is older than the row's N is
+    a stale read. A citation with no version marker at all -- and today that is all 11 of
+    them -- cannot be checked at any later date, so it WARNs until its owner adds one.
+    An UNANCHORED mention (`runs/prereg.jsonl b0_head_hybrid_3to1`, the path and the id
+    with no `#`) WARNs until 2026-09-07 and FAILs after: it is the shape a citation rots
+    into, because no scan looking for `#<id>` can see it.
+    """
+    ledger = os.path.join(root, "runs", "prereg.jsonl")
+    if not os.path.exists(ledger):
+        return SKIP, "runs/prereg.jsonl absent"
+    rows = {}
+    for ln, line in enumerate(open(ledger, encoding="utf-8"), 1):
+        if not line.strip():
+            continue
+        try:
+            obj = json.loads(line)
+        except Exception as e:
+            return FAIL, f"runs/prereg.jsonl:{ln} is not JSON: {e}"
+        if obj.get("id"):
+            rows[obj["id"]] = prereg_amendment_n(obj)
+    if not rows:
+        return FAIL, "runs/prereg.jsonl holds no row with an id"
+    docs = os.path.join(root, "docs")
+    if not os.path.isdir(docs):
+        return SKIP, "docs/ absent"
+    stale, unversioned, unresolved, unanchored, n = [], [], [], [], 0
+    for dp, _dirs, fs in os.walk(docs):
+        for f in sorted(fs):
+            if not f.endswith(".md"):
+                continue
+            p = os.path.join(dp, f)
+            rel = os.path.relpath(p, root)
+            text = open(p, encoding="utf-8", errors="replace").read()
+            spans = []
+            for m in PREREG_ANCHORED_RE.finditer(text):
+                n += 1
+                spans.append((m.start(), m.end()))
+                cid, cited = m.group(1), m.group(2)
+                line = text[: m.start()].count("\n") + 1
+                if cid not in rows:
+                    unresolved.append(f"{rel}:{line} cites {cid}, no such row")
+                elif cited is None:
+                    unversioned.append(f"{rel}:{line} #{cid} (row is at amended_{rows[cid]})")
+                elif int(cited) < rows[cid]:
+                    stale.append(f"{rel}:{line} #{cid}@amended_{cited} vs row amended_{rows[cid]}")
+            for m in PREREG_UNANCHORED_RE.finditer(text):
+                if m.group(1) not in rows:
+                    continue
+                if any(a <= m.start() < b for a, b in spans):
+                    continue
+                line = text[: m.start()].count("\n") + 1
+                unanchored.append(f"{rel}:{line} names {m.group(1)} with no #")
+    if unresolved:
+        return FAIL, "; ".join(unresolved[:4])
+    if unanchored and time.strftime("%Y-%m-%d", time.gmtime()) >= PREREG_FLIP:
+        return FAIL, f"{len(unanchored)} unanchored: " + "; ".join(unanchored[:4])
+    parts = []
+    if stale:
+        parts.append(f"{len(stale)} stale: " + "; ".join(stale[:3]))
+    if unversioned:
+        parts.append(f"{len(unversioned)} with no @amended_N: " + "; ".join(unversioned[:3]))
+    if unanchored:
+        parts.append(
+            f"{len(unanchored)} unanchored (FAIL from {PREREG_FLIP}): " + "; ".join(unanchored[:3])
+        )
+    if parts:
+        return WARN, f"{n} anchored citation(s); " + "; ".join(parts)
+    return PASS, f"{n} citation(s), each naming the row's current amended_N"
+
+
+def _broken_prereg_citation():
+    """The REAL docs and the REAL ledger, with one real recipe's real citation rewritten
+    to @amended_1 -- the row it names is at a higher N, so the stale tier must fire.
+
+    It edits an EXISTING citation rather than appending a new one, because appending
+    would also test the file-walk and could pass on a doc the check reaches for an
+    unrelated reason. Rewriting in place changes exactly one variable: the version the
+    citation claims.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copytree(os.path.join(ROOT, "docs"), os.path.join(d, "docs"))
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "runs", "prereg.jsonl"), os.path.join(d, "runs", "prereg.jsonl"))
+    for dp, _dirs, fs in os.walk(os.path.join(d, "docs")):
+        for f in sorted(fs):
+            if not f.endswith(".md"):
+                continue
+            p = os.path.join(dp, f)
+            text = open(p, encoding="utf-8", errors="replace").read()
+            m = PREREG_ANCHORED_RE.search(text)
+            if not m or m.group(2) is not None:
+                continue
+            out = text[: m.end()] + "@amended_1" + text[m.end() :]
+            open(p, "w", encoding="utf-8").write(out)
+            return d
+    raise SelftestSkip("no docs/ citation of runs/prereg.jsonl#<id> to make stale")
+
+
 def _broken_docs_root():
     """The REAL docs tree plus one stray .md at the root -- the rule is zero .md files
     directly under docs/, so any new root file FAILs until classified."""
@@ -12690,6 +12830,16 @@ CHECKS = [
         _broken_fact_ref,
     ),
     (
+        "prereg_citations_current",
+        "every docs/ citation of runs/prereg.jsonl#<id> names the row's current amended_N; "
+        "an unversioned or unanchored citation WARNs",
+        "docs/standards/moe_0905.md numbered its own amendments to 7 while the ledger row "
+        "read 3, and nothing joined the two -- a doc can describe a superseded version of "
+        "the row it cites and both files stay internally consistent",
+        check_prereg_citations_current,
+        _broken_prereg_citation,
+    ),
+    (
         "corpus_fp_matches",
         "every domain the default mix names carries a build-time fingerprint matching its live directory; a missing stamp is FAIL, not SKIP",
         "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
@@ -13049,6 +13199,7 @@ EVIDENCE = {
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
     "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
+    "prereg_citations_current": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
@@ -13842,6 +13993,7 @@ def cmd_brief(kind):
         print(f"unknown kind {kind!r}. kinds: {', '.join(sorted(BRIEF_KINDS))}")
         return 2
     if kind == "policy":
+        print(f"BRIEF: {kind}")
         return _brief_policy()
 
     bullets, err = _agents_rule_bullets(ROOT)
@@ -16179,7 +16331,7 @@ def _demo(only=None):
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
-                 "one_deliverable_per_owner"}
+                 "one_deliverable_per_owner", "prereg_citations_current"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:
