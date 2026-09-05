@@ -113,6 +113,25 @@ def assert_not_co_resident(domains, root=ROOT):
     refusal here covers ppl.py, domain_loss.py, domain_bpb.py and score_matrix's
     domain_loss metric with no per-caller line to forget.
 
+    THE TRAINING PATH IS NOT COVERED, AND THAT IS DELIBERATE (de ruling 2026-09-05, found by
+    58 with /proc/<pid>/status VmRSS 101,434,380 kB and fd/8 -> tokens_zh_web.pt). The
+    paragraph above is true of every EVAL and reads as though it were true of _domain_seqs
+    itself; it is not. train.py calls _domain_seqs directly -- neither train.py nor
+    scripts/loader.py contains assert_caches_fresh -- and train.py:1956 is a full
+    torch.load, so a plan build over the E1 mix reads 166.2 GB unrefused. That is the same
+    quantity this guard's own refusal text calls out as ppl.py's 166 GB.
+
+    A training launch is the job the lane EXISTS for, so refusing it because another team
+    holds a card inverts the priority: this guard was written to stop a 166 GB SCORING read
+    from contending with a run, not to stop the run. Routing the training path through here
+    would have blocked E1 on 2026-09-05. The exemption is recorded rather than left implicit
+    because the sentence above had already been read as coverage once.
+
+    What would change the ruling: a measurement that a full plan build under
+    torch.load(mmap=True) is cheaper in practice. 58 measured that mmap gives the shape at
+    0.0 MB rchar, but build_mix then indexes pools[name][mine[1][m]] across the whole plan
+    and the pages fault in anyway -- unmeasured, so not a basis for editing the data path.
+
     WHY score_matrix WAS THE WRONG PLACE (6e proposed it, and the table says otherwise):
     of its fourteen metrics exactly one reaches a cache. Refusing at its entry would refuse
     the thirteen that read only a checkpoint -- including the four likelihood metrics whose

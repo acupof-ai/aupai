@@ -2137,7 +2137,22 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
     this function either they equal the value the plan was built at or the run never started,
     so returning a value instead of threading it through those three sites leaves nothing
     that can disagree. Making it a parameter would create a second source of truth for the
-    same quantity, which is the shape the refusal exists to remove."""
+    same quantity, which is the shape the refusal exists to remove.
+
+    That is a REACHABILITY claim, so it was measured rather than reasoned (58 pushed back on
+    exactly this, and reachability claims are what survive code review and fail on
+    execution). `git grep` finds six writers of Cfg.anneal_frac in the tree; five are tests
+    or tools, and the sixth is main()'s flag-application loop at :2656 -- which runs BEFORE
+    the build_mix call at :2798, with no write after it. So inside a real run the three
+    readers cannot see a value the plan was not built at.
+
+    The remaining way to produce that divergence is a TOOL that sets Cfg.anneal_frac around
+    its own build_mix call and restores it afterwards -- scripts/e1_arm_plan_check.py:379-384
+    does precisely that, in a try/finally, because reading the mix file used to tell it
+    nothing. Such a tool reading the log lines or the phase label after its finally would see
+    the pre-set value, and this refusal cannot help there because it already ran. After this
+    change that pattern is unnecessary: declare anneal_frac in the mix and build_mix reads
+    it, with Cfg untouched."""
     if "anneal_frac" not in mix:
         return Cfg.anneal_frac
     declared = float(mix["anneal_frac"])
