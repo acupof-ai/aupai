@@ -92,6 +92,7 @@ def _save(tmp, as_of, origin, base, discarded=None, world=WORLD, full=None, tag=
         full = _plan_full(origin, as_of)
     cfg._plan_domains_full = full
     cfg._plan_domains = _stripe(full, 0, world)
+    cfg._plan_world = world  # what build_mix striped at; save_checkpoint refuses without it
     cfg._plan_names = list(NAMES)
     cfg._plan_step_origin = origin
     cfg._row_cursor = {n: 0 for n in NAMES}
@@ -252,50 +253,19 @@ def _check_striping(bad, tmp):
                    f"Re-derive the domain sizes")
         return
 
-    p, ck, err = _save(tmp, as_of, origin, {n: 0 for n in NAMES}, full=full, tag="_stripe")
-    if err:
-        bad.append(f"the striping case RAISED on a correct plan: {err[:180]}")
-        return
-    got = [ck["row_cursor"][nm] for nm in NAMES]
+    # THE DISCARD PATH FIRST, mid-plan, because it is the path with NO backstop (e1,
+    # 2026-09-06, finding 1 on ba05651e). `_discarded` non-empty skips the sum identity by
+    # design -- a domain that restarted at row 0 is legitimately short -- so here the
+    # per-domain assertion is the only thing that can fire. It ran LAST until this commit,
+    # after a `return` on the no-discard raise, and all three mutants of the bound die on the
+    # identity in the no-discard case: measured, the backstop never executed in the world it
+    # was written for. Order is the fix, and this order cannot rot the same way -- a later
+    # `return` added below cannot reach backwards.
+    #
+    # With the rows_done*world bound deleted: this case is WRITTEN, [25, 203, 20252], a cursor
+    # 2x past every pool, labelled row_cursor_sum_unchecked, and only this assertion objects.
+    # Mid-plan plus a changed corpus fingerprint is ordinary under --auto-resume, not exotic.
     want = truth.tolist()
-    print(f"  striping      : got {got} want {want} (rank0 x world would write "
-          f"{stripe0.tolist()}, whole plan {whole.tolist()})")
-    if got != want:
-        bad.append(f"per-domain cursor is {got}, the plan's consumed prefix holds {want}. "
-                   f"58's defect writes {stripe0.tolist()}; an unbounded read writes "
-                   f"{whole.tolist()}")
-    if sum(got) != as_of * ROWS_PER_STEP:
-        bad.append(f"the striping case's sum is {sum(got)}, not {as_of * ROWS_PER_STEP} -- the "
-                   f"fixture is wrong, not the code")
-    # BOTH DIRECTIONS, asserted separately. 58 measured a `cursor > pool` guard catching 3 of
-    # 9 real violations and calling two wholly-wrong checkpoints clean, so a fixture that
-    # reproduces only the over-pool direction would certify exactly the guard that misses the
-    # majority. Over-pool is the damaging one -- stage 2 skips the tail -- and under-plan is
-    # the one no bound can see.
-    over = [(NAMES[i], int(stripe0[i]), sizes[i]) for i in range(len(NAMES))
-            if int(stripe0[i]) > sizes[i]]
-    under = [(NAMES[i], int(stripe0[i]), int(truth[i])) for i in range(len(NAMES))
-             if int(stripe0[i]) != int(truth[i]) and int(stripe0[i]) <= sizes[i]]
-    if not over:
-        bad.append("no domain's rank0 x world count exceeds its pool, so this fixture does "
-                   "not reproduce the ckpt_e1_conv_n8 direction (212 against a 204 pool)")
-    if not under:
-        bad.append("no domain is wrong while staying under its pool, so this fixture would be "
-                   "fully caught by a `cursor > pool` bound -- the guard 58 measured as "
-                   "catching only 3 of 9 real violations")
-    if over and under:
-        print(f"  over-count    : {', '.join(f'{nm} {c} against a {s}-row pool' for nm, c, s in over)}"
-              f" under the old computation")
-        print(f"  under-count   : {', '.join(f'{nm} {c} against a true {t}' for nm, c, t in under)}"
-              f" -- invisible to any `cursor > pool` bound")
-
-    # THE DISCARD PATH, mid-plan, which has NO backstop (58, 2026-09-06). `_discarded`
-    # non-empty skips the sum identity by design -- a domain that restarted at row 0 is
-    # legitimately short -- so on this path the per-domain assertion is the only thing that
-    # can fire. Measured with the rows_done*world bound deleted: the no-discard case above is
-    # REFUSED by the identity (30,720 against a want of 10,240), and this one is WRITTEN, a
-    # cursor 3x past every pool, labelled row_cursor_sum_unchecked. Mid-plan plus a changed
-    # corpus fingerprint is ordinary under --auto-resume, not exotic.
     p, ckd, errd = _save(tmp, as_of, origin, {n: 0 for n in NAMES}, full=full,
                          discarded=[f"{NAMES[0]} (corpus abc -> def)"], tag="_stripe_disc")
     if errd:
@@ -312,6 +282,42 @@ def _check_striping(bad, tmp):
         else:
             print(f"  discard+midplan: got {gotd}, identity skipped and labelled -- the "
                   f"per-domain assertion is this path's only backstop")
+
+    p, ck, err = _save(tmp, as_of, origin, {n: 0 for n in NAMES}, full=full, tag="_stripe")
+    if err:
+        bad.append(f"the striping case RAISED on a correct plan: {err[:180]}")
+        return
+    got = [ck["row_cursor"][nm] for nm in NAMES]
+    print(f"  striping      : got {got} want {want} (rank0 x world would write "
+          f"{stripe0.tolist()}, whole plan {whole.tolist()})")
+    if got != want:
+        bad.append(f"per-domain cursor is {got}, the plan's consumed prefix holds {want}. "
+                   f"the striping defect writes {stripe0.tolist()}; an unbounded read writes "
+                   f"{whole.tolist()}")
+    if sum(got) != as_of * ROWS_PER_STEP:
+        bad.append(f"the striping case's sum is {sum(got)}, not {as_of * ROWS_PER_STEP} -- the "
+                   f"fixture is wrong, not the code")
+    # BOTH DIRECTIONS, asserted separately. e1 measured a `cursor > pool` guard catching 3 of
+    # 9 real violations and calling two wholly-wrong checkpoints clean, so a fixture that
+    # reproduces only the over-pool direction would certify exactly the guard that misses the
+    # majority. Over-pool is the damaging one -- stage 2 skips the tail -- and under-plan is
+    # the one no bound can see.
+    over = [(NAMES[i], int(stripe0[i]), sizes[i]) for i in range(len(NAMES))
+            if int(stripe0[i]) > sizes[i]]
+    under = [(NAMES[i], int(stripe0[i]), int(truth[i])) for i in range(len(NAMES))
+             if int(stripe0[i]) != int(truth[i]) and int(stripe0[i]) <= sizes[i]]
+    if not over:
+        bad.append("no domain's rank0 x world count exceeds its pool, so this fixture does "
+                   "not reproduce the ckpt_e1_conv_n8 direction (212 against a 204 pool)")
+    if not under:
+        bad.append("no domain is wrong while staying under its pool, so this fixture would be "
+                   "fully caught by a `cursor > pool` bound -- the guard e1 measured as "
+                   "catching only 3 of 9 real violations")
+    if over and under:
+        print(f"  over-count    : {', '.join(f'{nm} {c} against a {s}-row pool' for nm, c, s in over)}"
+              f" under the old computation")
+        print(f"  under-count   : {', '.join(f'{nm} {c} against a true {t}' for nm, c, t in under)}"
+              f" -- invisible to any `cursor > pool` bound")
 
 
 def _check_no_full_plan_refuses(bad, tmp):
@@ -416,6 +422,59 @@ def _check_world_source(bad, tmp):
         print(f"  world source  : plan {WORLD} beat WORLD_SIZE={WORLD * 2}, got {got}")
 
 
+def _check_no_plan_world_refuses(bad, tmp):
+    """A plan vector with no _plan_world beside it must REFUSE at world > 1.
+
+    e1's finding 2 on 88be635a: the reader was `_plan_world or int(os.environ[...])`, so
+    deleting build_mix's publish fell back to the environment and restored the two-independent-
+    sources condition that commit removed -- silently, with every test green. The fallback is
+    gone; absence is a refusal above world 1, and the message says WHICH of the two fields is
+    missing. At world 1 it still writes, because there the stripe is the full plan and the
+    prefix length is unambiguous.
+    """
+    import train
+
+    for env_world, expect_cursor in ((WORLD, False), (1, True)):
+        as_of = 40
+        consumed = as_of * BATCH * ACCUM * env_world
+        full = torch.tensor([i % len(NAMES) for i in range(consumed)], dtype=torch.int8)
+        cfg = FakeCfg()
+        cfg._plan_domains_full = full
+        cfg._plan_domains = _stripe(full, 0, env_world)
+        cfg._plan_world = None  # the publisher stopped publishing
+        cfg._plan_names = list(NAMES)
+        cfg._plan_step_origin = 0
+        cfg._row_cursor = {nm: 0 for nm in NAMES}
+        cfg._row_cursor_srcfp = {nm: "fp" for nm in NAMES}
+        cfg._row_cursor_base = {}
+        cfg._cursor_discarded = []
+        cfg._total_steps = 3814
+        p = os.path.join(tmp, f"ck_noworld_{env_world}.pt")
+        prev = os.environ.get("WORLD_SIZE")
+        os.environ["WORLD_SIZE"] = str(env_world)
+        try:
+            train.save_checkpoint(p, {"w": torch.zeros(2)}, cfg, "vocab", step=as_of)
+        finally:
+            if prev is None:
+                os.environ.pop("WORLD_SIZE", None)
+            else:
+                os.environ["WORLD_SIZE"] = prev
+        ck = torch.load(p, map_location="cpu", weights_only=False)
+        wrote = ck.get("row_cursor_as_of_step") is not None
+        if wrote != expect_cursor:
+            bad.append(f"no _plan_world at WORLD_SIZE={env_world}: cursor "
+                       f"{'written' if wrote else 'refused'}, expected "
+                       f"{'written' if expect_cursor else 'refused'}. Above world 1 the prefix "
+                       f"length cannot be derived and falling back to the environment is the "
+                       f"defect; at world 1 the stripe IS the full plan")
+        elif not expect_cursor and "_plan_world" not in (ck.get("row_cursor_refused") or ""):
+            bad.append(f"the refusal does not name _plan_world, so a reader cannot tell it from "
+                       f"a missing plan vector: {ck.get('row_cursor_refused')!r}")
+        else:
+            state = "wrote (world 1, stripe is the plan)" if wrote else "refused, naming _plan_world"
+            print(f"  no plan world : WORLD_SIZE={env_world} -> {state}")
+
+
 def main():
     bad = []
     tmp = tempfile.mkdtemp()
@@ -484,6 +543,7 @@ def main():
 
     _check_striping(bad, tmp)
     _check_no_full_plan_refuses(bad, tmp)
+    _check_no_plan_world_refuses(bad, tmp)
     _check_world_source(bad, tmp)
 
     print()

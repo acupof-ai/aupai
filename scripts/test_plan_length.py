@@ -211,6 +211,31 @@ def main():
     if seeded0:
         bad.append("the cursor flag is true with NO cursor, so it cannot mean 'a cursor seeded used[]'")
 
+    # 5: build_mix PUBLISHES the fields save_checkpoint's cursor needs. This is a call, not a
+    # fixture, and that is the whole point (e1's finding 2 on 88be635a): every case in
+    # test_cursor_sum.py sets _plan_world and _plan_domains_full on a fabricated cfg, so
+    # deleting build_mix's publish left them all green -- the fixture supplied what the
+    # producer should have produced. save_checkpoint now refuses without them rather than
+    # falling back to WORLD_SIZE, so a silent regression here turns into every checkpoint
+    # carrying row_cursor_refused, which is loud but only if something asserts the publish.
+    _pw = getattr(train.Cfg, "_plan_world", None)
+    _pf = getattr(train.Cfg, "_plan_domains_full", None)
+    if _pw is None:
+        bad.append("build_mix published no Cfg._plan_world: save_checkpoint cannot derive the "
+                   "prefix length rows_done x world and refuses, so every checkpoint of this "
+                   "run would carry row_cursor_refused instead of a cursor")
+    elif int(_pw) != WORLD:
+        bad.append(f"Cfg._plan_world is {_pw}, but the plan was striped at world {WORLD} -- the "
+                   f"counting world and the striping world must be one number")
+    if _pf is None:
+        bad.append("build_mix published no Cfg._plan_domains_full: the per-domain consumed "
+                   "count cannot be computed from a rank's stripe, which is the striping "
+                   "defect e1 measured on five e1_conv checkpoints")
+    elif int(_pf.shape[0]) != total0:
+        bad.append(f"Cfg._plan_domains_full holds {int(_pf.shape[0])} rows but the plan is "
+                   f"{total0} across all ranks -- they do not describe the same plan, so the "
+                   f"prefix bincount is about different rows than the run consumed")
+
     # 1 + 2 + 3: a cursor at exactly RESUME_STEP steps' worth of rows, split by weight so
     # nothing caps and the only variable is the cursor.
     consumed = RESUME_STEP * ROWS_PER_STEP
