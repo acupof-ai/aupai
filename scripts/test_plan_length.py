@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """build_mix's plan length against the row cursor: does a resume allocate the REMAINDER?
 
-THE DEFECT. train.py:1597 is `want = int(rows * frac * d.get(key, d["weight"]))`, and
-`rows` at :1528 is the mix's FULL budget. The row cursor moves where consumption starts
-(:1607 `arange(used[name], used[name] + want)`); it never reduces how much is allocated.
-So a resume plans the whole budget again, on top of what the earlier segment already
-trained, and :2140 turns that plan into total_steps -- the run ends LONGER than the recipe.
+THE DEFECT. build_mix's per-phase allocation is `want = int(rows * frac * d.get(key,
+d["weight"]))`, and `rows` there is the mix's FULL budget. The row cursor moves where
+consumption starts (`arange(used[name], used[name] + want)`); it never reduces how much is
+allocated. So a resume plans the whole budget again, on top of what the earlier segment
+already trained, and main() turns that plan into total_steps -- the run ends LONGER than the
+recipe. No line numbers: three citations in this file rotted into unrelated code and one sent
+a reader chasing them (e1, 2026-09-06). Roles identify these; numbers did not.
 Measured on p200m_4b_0902: plan 976,556 rows = 4.00B in the fresh run AND in the resume,
 identical, so 832 steps' worth of tokens are trained twice over on the token axis.
 `--max_steps` caps the symptom by truncating consumption; the allocation stays wrong, and
@@ -121,7 +123,7 @@ def _sha(rows):
 
 
 def _warmdown_start(train, total_steps):
-    """The ABSOLUTE step the warmdown begins at, as train.py:2160 prints it."""
+    """The ABSOLUTE step the warmdown begins at, as train.py's own schedule line prints it."""
     return total_steps - max(1, int(train.Cfg.warmdown * total_steps))
 
 
@@ -210,6 +212,31 @@ def main():
                    f"rows, different rows")
     if seeded0:
         bad.append("the cursor flag is true with NO cursor, so it cannot mean 'a cursor seeded used[]'")
+
+    # 5: build_mix PUBLISHES the fields save_checkpoint's cursor needs. This is a call, not a
+    # fixture, and that is the whole point (e1's finding 2 on 88be635a): every case in
+    # test_cursor_sum.py sets _plan_world and _plan_domains_full on a fabricated cfg, so
+    # deleting build_mix's publish left them all green -- the fixture supplied what the
+    # producer should have produced. save_checkpoint now refuses without them rather than
+    # falling back to WORLD_SIZE, so a silent regression here turns into every checkpoint
+    # carrying row_cursor_refused, which is loud but only if something asserts the publish.
+    _pw = getattr(train.Cfg, "_plan_world", None)
+    _pf = getattr(train.Cfg, "_plan_domains_full", None)
+    if _pw is None:
+        bad.append("build_mix published no Cfg._plan_world: save_checkpoint cannot derive the "
+                   "prefix length rows_done x world and refuses, so every checkpoint of this "
+                   "run would carry row_cursor_refused instead of a cursor")
+    elif int(_pw) != WORLD:
+        bad.append(f"Cfg._plan_world is {_pw}, but the plan was striped at world {WORLD} -- the "
+                   f"counting world and the striping world must be one number")
+    if _pf is None:
+        bad.append("build_mix published no Cfg._plan_domains_full: the per-domain consumed "
+                   "count cannot be computed from a rank's stripe, which is the striping "
+                   "defect e1 measured on five e1_conv checkpoints")
+    elif int(_pf.shape[0]) != total0:
+        bad.append(f"Cfg._plan_domains_full holds {int(_pf.shape[0])} rows but the plan is "
+                   f"{total0} across all ranks -- they do not describe the same plan, so the "
+                   f"prefix bincount is about different rows than the run consumed")
 
     # 1 + 2 + 3: a cursor at exactly RESUME_STEP steps' worth of rows, split by weight so
     # nothing caps and the only variable is the cursor.
