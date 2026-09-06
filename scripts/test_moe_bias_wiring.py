@@ -102,16 +102,23 @@ def main():
     torch.manual_seed(1)
     x = torch.randn(2, 16, D, device="cuda", dtype=torch.bfloat16)
 
-    m1 = build(g)                      # correct: 2 forwards, 1 update on the summed counts
+    # SEED BEFORE build, not after: build() draws the router weights from the RNG, so seeding
+    # only the forwards left m1 and m2 with DIFFERENT routers. Measured on card 7: m1 counted
+    # [5,9,9,6,10,6,8,11] and m2 [7,7,7,12,4,7,9,11], and the projected absmax is
+    # g*max|sign(err) - mean(sign(err))| -- 1.125g for m1's 4+/3-/1-zero pattern, 1.25g for
+    # m2's 3+/5-. The ratio read 2*1.25/1.125 = 2.222x and the world went red on a fixture
+    # defect, in all three trees including the pre-fix ancestor. The doubling claim is only
+    # about calling update_bias twice; it needs the two models to route identically.
     torch.manual_seed(2)
+    m1 = build(g)                      # correct: 2 forwards, 1 update on the summed counts
     m1(x)
     m1(x)
     c1 = m1.step_tokens_per_expert.clone()
     m1.update_bias(c1)
     once = m1.expert_bias.float().abs().max().item()
 
-    m2 = build(g)                      # wrong: 2 forwards, 1 update EACH
     torch.manual_seed(2)
+    m2 = build(g)                      # wrong: 2 forwards, 1 update EACH
     m2(x)
     m2.update_bias(m2.step_tokens_per_expert.clone())
     m2.step_tokens_per_expert.zero_()
