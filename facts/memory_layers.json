@@ -10,7 +10,7 @@
     "",
     "THE VAL NUMBERS ARE NOT READOUT 1. Readout 1 is block-paired doc_cu val from",
     "runs/score_matrix.jsonl, scored after a run ends; these are the in-training validate() calls",
-    "at train.py:3053, 20 batches of the val split. They are comparable between the two runs",
+    "by main()'s in-training validate() call, 20 batches of the val split. They are comparable between the two runs",
     "(same split, same batch, same seed, same corpus fingerprint -- all verified, see the config",
     "field) and they are NOT the estimator the adopt/null bars were written for. A reader who",
     "compares -0.013 against the -0.010 adopt bar is comparing two different quantities."
@@ -20,9 +20,9 @@
       "id": "mem.m1_train_val_delta_500_1000",
       "value": "M1 (1,048,576-value product-key table, 1.07B memory params, one pooled layer) minus the memory-off control on in-training val: -0.013 nat at step 500 (2.904 vs 2.917), +0.003 nat at step 1000 (2.592 vs 2.589). The advantage present at 500 is gone by 1000.",
       "measured": "2026-09-05",
-      "source": "runs/b0_mem_m1.log:85,136 and runs/b0_headmix_armA.log:76,127 (pod, /work/aupai); train.py:3067 writes the line",
+      "source": "runs/b0_mem_m1.log:85,136 and runs/b0_headmix_armA.log:76,127 (pod, /work/aupai); train.py's val print writes the line",
       "config": {
-        "estimator": "in-training validate() at train.py:3053, Cfg.val_every 500, Cfg.val_batches 20 = 20 x batch 16 x seq 4096 = 1,310,720 val tokens. NOT readout 1's block-paired doc_cu val.",
+        "estimator": "in-training validate() called from main(), Cfg.val_every 500, Cfg.val_batches 20 = 20 x batch 16 x seq 4096 = 1,310,720 val tokens. NOT readout 1's block-paired doc_cu val.",
         "arm": "b0_mem_m1, --mem_values 1048576 --mem_top_k 32 --mem_layers 6 --no-mem_sparse, fp32 table master, world 2",
         "control": "b0_headmix_armA, identical launch line without the memory flags",
         "comparability_verified": "same mix data/mix_200m_8b.json, same corpus_fp (sha256 of the corpus_fp line identical in both logs, b8cac4ca42f1), seed 42 / sample_seed 42 both, same batch 16 accum 2 seq 4096 doc_mask True attn_res True, same val split and val_batches -- so the two val numbers are on the same data",

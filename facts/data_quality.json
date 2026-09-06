@@ -807,16 +807,16 @@
    "value": 0.00625,
    "unit": "fraction of scored docs that are actually held out",
    "measured": "2026-09-01",
-   "source": "probes/t64_val_head_overlap.py@381d922; eval/domain_loss.py:33-47; train.py:1556-1560, 1750-1752",
+   "source": "probes/t64_val_head_overlap.py@381d922; eval/domain_loss.py's cache read; train.py's build_mix shuffle-then-slice pair",
    "config": {
     "task": "P0 -- whether the per-domain readout nats are a generalisation measure",
-    "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle, :1560) and THEN slices val = seqs[:n_val] (:1751). eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
+    "mechanism": "train.py shuffles the concatenated docs (random.Random(_sample_seed()).shuffle) and THEN slices val = seqs[:n_val]. eval/domain_loss.py reads the first 4000 lines of sorted(shards)[0] -- the PRE-shuffle head -- and its comment at :47 says 'the head, matching train.py's val split'. The shuffle destroys that correspondence.",
     "measured_on": "cot, 851,965 docs, 13 shards, seed 0",
     "scored_docs_landing_in_first_5000_shuffled": 0.00625,
     "expected_if_uniform": 0.00587,
     "reading": "0.625% vs 0.587% expected by chance -- indistinguishable. The scored set is a uniform random sample of the pool, i.e. ~99.4% training data.",
     "affected_numbers": "every per-domain nat in the 16B/22B/30B readouts and all four score_matrix profiles, including code_rp1t 0.795 nats = ppl 2.21",
-    "not_affected": "train.py's own printed val figure (validate() at :977) reads vcat, which comes from val and never from pools -- that one is genuinely row-disjoint."
+    "not_affected": "train.py's own printed val figure (validate()) reads vcat, which comes from val and never from pools -- that one is genuinely row-disjoint."
    },
    "uncertainty": "Measured on cot at seed 0. The mechanism is seed-independent (any shuffle scatters the first shard uniformly), but the exact fraction per domain is not separately measured. eval/ppl.py reproduces the real val slice correctly and has zero callers.",
    "boundary": "THE DEEPER POINT, which survives even if the head/val bug is fixed: a val set drawn from the training DISTRIBUTION cannot separate 'learned the distribution' from 'memorised its documents'. Row-disjointness is not the property the question needs. This explains loss falling while MC sits at chance without requiring any duplication -- and it is why the duplication hypothesis was reachable at all: the instrument that would have refuted it earlier was measuring the wrong rows.",
