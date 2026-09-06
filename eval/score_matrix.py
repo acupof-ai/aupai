@@ -287,7 +287,10 @@ def _capture_failure(r):
     return [ln for ln in (r.stdout + r.stderr).strip().splitlines() if ln.strip()]
 
 
-def _failure_cause(script, r):
+_EXC = re.compile(r"^\w[\w.]*(Error|Exception|Exit|Interrupt|Exists)\b")
+
+
+def _failure_cause(script, r, no_match=False):
     """One "<script> exited <rc>: <cause>" string, for every runner that shells out.
 
     THE CAUSE IS THE SUBJECT. Three shapes, in the order they are worth reporting:
@@ -306,8 +309,24 @@ def _failure_cause(script, r):
     Shared by all three runners so a fix cannot land on one and miss the others, which is exactly
     what E18 found: `metric_minimal_pairs` kept ONE line with no exception search while
     `_run_eval_json` kept three, in the same file.
+
+    FOUR runners, since 2026-09-06 (e1-38). `_run` and `metric_mc` do not fail on a return code at
+    all -- they fail on "no line matched my pattern", so they were writing their own tail-3 string
+    and never reached this function. Measured on runs/score_matrix.jsonl before the change: of 45
+    errored metric entries 11 name no cause, and 4 of those 11 are the two no-score sites (mc_ceval
+    records `C-Eval (zh) 25.1% | ──────── | Average 25.1%`, i.e. THE SCORE TABLE as the reason
+    scoring failed, and three math/code entries record a bare `raise ArtifactExists(` source line).
+    A pattern that stopped matching is a different failure from a crash, so `no_match=True` says
+    "the script ran and printed no score I recognise" instead of "exited 0", and the exception
+    search then applies to it like any other.
     """
     lines = _capture_failure(r)
+    if no_match and r.returncode == 0:
+        # RAN AND SAID NOTHING I PARSE. Not a crash: reporting "exited 0" would read as success.
+        exc = [ln for ln in lines if _EXC.match(ln)]
+        tail = exc[-1:] or lines[-3:] or ["no output"]
+        return (f"{script} produced no score I recognise (exit 0): "
+                f"{' | '.join(t.strip() for t in tail)}")[:400]
     if r.returncode < 0:
         try:
             sig = signal.Signals(-r.returncode).name
@@ -317,7 +336,7 @@ def _failure_cause(script, r):
         where = f"; last output: {lines[-1].strip()}" if lines else ""
         return (f"{script} killed by {sig} (exit {r.returncode}) -- no exception was raised, so "
                 f"nothing here is a cause{where}")[:400]
-    exc = [ln for ln in lines if re.match(r"^\w[\w.]*(Error|Exception|Exit|Interrupt)\b", ln)]
+    exc = [ln for ln in lines if _EXC.match(ln)]
     tail = exc[-1:] or lines[-3:] or ["no output"]
     return f"{script} exited {r.returncode}: {' | '.join(t.strip() for t in tail)[:400]}"
 
@@ -586,8 +605,7 @@ def _run(cmd, patterns, env=None):
             if m:
                 out[name] = float(m.group(1))
     if not out:
-        tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
-        return None, f"{cmd[0]} produced no score: {' | '.join(tail)[:200]}"
+        return None, _failure_cause(os.path.basename(cmd[0]), r, no_match=True)
     return out, None
 
 
@@ -620,8 +638,7 @@ def metric_mc(ckpt_path, tok_path, benchmarks):
         if m:
             out[m.group(1).strip()] = float(m.group(2))
     if not out:
-        tail = (r.stdout + r.stderr).strip().splitlines()[-3:]
-        return None, f"run_eval.py produced no score: {' | '.join(tail)[:200]}"
+        return None, _failure_cause("run_eval.py", r, no_match=True)
     return out, None
 
 
@@ -1075,6 +1092,94 @@ def selftest():
     assert "ValueError: cache stamps disagree" in _cause2, \
         f"the exception was not found; the tail-3 fallback recorded shutdown noise: {_cause2}"
     assert "NCCL" not in _cause2, f"an exception existed and the tail was used anyway: {_cause2}"
+
+    # THE NO-MATCH PATH, which the two parsing runners take and which did not reach _failure_cause
+    # at all until 2026-09-06 (e1-38). `_run` and `metric_mc` fail on "no line matched my pattern",
+    # not on a return code, so each wrote its own tail-3 string -- and 4 of the 11 causeless entries
+    # in runs/score_matrix.jsonl came from there, the worst being mc_ceval recording
+    # `C-Eval (zh) 25.1% | ──────── | Average 25.1%`: THE SCORE TABLE as the reason scoring failed.
+    #
+    # TWO WORLDS, because the two halves fail differently and one fixture cannot separate them.
+    # (a) exit 0 with output the pattern does not match: the record must NOT say "exited 0", which
+    #     reads as success, and it must not present the unmatched table as a cause.
+    _nomatch = subprocess.run(
+        [sys.executable, "-c",
+         'print("C-Eval (zh)        25.1%")\n'
+         'print("Average            25.1%")\n'],
+        capture_output=True, text=True,
+    )
+    _cause3 = _failure_cause("run_eval.py", _nomatch, no_match=True)
+    assert "no score I recognise" in _cause3, \
+        f"a parse miss is not reported as one: {_cause3}"
+    assert "exited 0" not in _cause3, \
+        f"'exited 0' reads as success: {_cause3}"
+    # (b) THE SAME PATH WITH AN EXCEPTION PRESENT: the exception must win over the tail, exactly as
+    #     it does on the return-code path. This is the half that the old inline code could not do
+    #     at all -- it had no exception search -- so the three `raise ArtifactExists(` entries
+    #     recorded a bare source line. Discriminating fixture: three non-empty lines AFTER the
+    #     exception, so lines[-3:] does not contain it by luck.
+    _nomatch_exc = subprocess.run(
+        [sys.executable, "-c",
+         'import sys\n'
+         'sys.stderr.write("    raise ArtifactExists(\\n")\n'
+         'sys.stderr.write("eval_artifacts.ArtifactExists: preds_l1_d3.jsonl exists\\n")\n'
+         'sys.stderr.write("[rank0] NCCL WARN Destroy comm aborted\\n")\n'
+         'sys.stderr.write("[rank0] NCCL INFO Bootstrap: socket closed\\n")\n'
+         'sys.stderr.write("terminate called after throwing an instance\\n")\n'],
+        capture_output=True, text=True,
+    )
+    _cause4 = _failure_cause("l1_fewshot.py", _nomatch_exc, no_match=True)
+    assert "ArtifactExists: preds_l1_d3.jsonl exists" in _cause4, \
+        f"the exception was not found on the no-match path: {_cause4}"
+    assert "NCCL" not in _cause4, \
+        f"an exception existed and the tail was used anyway: {_cause4}"
+    # AND THE NEGATIVE CONTROL: no_match must not swallow a real crash. A nonzero rc goes down the
+    # ordinary path even when the caller passes no_match, because "the script died" outranks "I
+    # could not parse it" -- without this, a crash under _run would report exit 0.
+    _nomatch_crash = subprocess.run(
+        [sys.executable, "-c",
+         'import sys\n'
+         'sys.stderr.write("RuntimeError: CUDA out of memory\\n")\n'
+         'sys.exit(1)\n'],
+        capture_output=True, text=True,
+    )
+    _cause5 = _failure_cause("math_v2_like.py", _nomatch_crash, no_match=True)
+    assert "exited 1" in _cause5 and "RuntimeError" in _cause5, \
+        f"a real crash was reported as a parse miss: {_cause5}"
+
+    # AND THE TWO CALL SITES, because the five worlds above test _failure_cause and NOT whether
+    # anything calls it. Measured: reverting either `_run` or `metric_mc` to its own inline tail
+    # string left every assertion above green -- the same shape as the dead-parameter gate that
+    # reported PASS with both load-bearing assertions skipped. So each runner is DRIVEN here, with
+    # a real subprocess whose exception sits three lines from the end: the inline version had no
+    # exception search, so it can only return the NCCL tail and cannot pass this.
+    # The stdout line matches NEITHER runner's pattern: `_run` here wants `acc=<float>` and
+    # metric_mc wants `<name><2+ spaces><float>%`. A first version printed
+    # "Average            25.1%", which metric_mc PARSED -- the fixture has to miss both patterns
+    # or the world tests nothing.
+    _probe = ('import sys\n'
+              'print("Average            25.1 points")\n'
+              'sys.stderr.write("eval_artifacts.ArtifactExists: preds.jsonl exists\\n")\n'
+              'sys.stderr.write("[rank0] NCCL WARN Destroy comm aborted\\n")\n'
+              'sys.stderr.write("[rank0] NCCL INFO Bootstrap: socket closed\\n")\n'
+              'sys.stderr.write("terminate called after throwing an instance\\n")\n')
+    _vals, _err = _run([sys.executable, "-c", _probe], {"acc": r"acc=([\d.]+)"})
+    assert _vals is None, f"_run parsed a score out of a fixture that prints none: {_vals}"
+    assert "ArtifactExists: preds.jsonl exists" in _err, \
+        f"_run does not route its parse miss through _failure_cause: {_err}"
+    # metric_mc shells out to eval/run_eval.py by name, so the fixture reaches it by replacing
+    # subprocess.run for one call -- the alternative is scoring a real checkpoint, which needs a
+    # card. Restored in a finally: leaking this would silently stub every later world.
+    _real_run = subprocess.run
+    try:
+        subprocess.run = lambda *a, **k: _real_run(
+            [sys.executable, "-c", _probe], capture_output=True, text=True)
+        _mc_vals, _mc_err = metric_mc("ckpt_fake.pt", "tok_fake", ["ceval"])
+    finally:
+        subprocess.run = _real_run
+    assert _mc_vals is None, f"metric_mc parsed a score from a fixture that prints none: {_mc_vals}"
+    assert "ArtifactExists: preds.jsonl exists" in _mc_err, \
+        f"metric_mc does not route its parse miss through _failure_cause: {_mc_err}"
 
     # domain_loss.py's standalone CLI must take the mix from the checkpoint too -- the same
     # defect, the same fix, and 44 found it by reading 3415e9e rather than by running anything.

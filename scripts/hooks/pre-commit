@@ -1101,6 +1101,21 @@ def main():
         # stale -- following the docstring drops seqlen_info and breaks the call at mask.py:232.
         "eval/prefix_mask.py",
         "scripts/test_exp_done_started.py",
+        # exp.py amend: adds reading_artifact to a CLOSED row without touching status. Four
+        # worlds, and the two REFUSALS are the load-bearing ones. Mutating away the retracted
+        # guard makes amend print "logged amend ... status 'retracted' unchanged" while the fold
+        # DISCARDS the event -- reporting success and changing nothing -- so a test that only
+        # checked the happy path would bless a command that silently does nothing. The path
+        # check is case 1's negative control: without it amend satisfies score_matrix_present
+        # with a file nobody wrote, which is worse than the gap it closes.
+        "scripts/test_exp_amend.py",
+        # exp.py `done` on an already-closed row. Six worlds, and four of them are controls,
+        # because the refusal has to be narrow in two directions: a name with NO row must still
+        # close (run_sft.sh:97 and run_pretrain.sh:45 call `done` unconditionally at exit, and
+        # closing a run whose start event was lost is what the fabrication is for), and an OPEN
+        # row must close with and without --started. Measured over all 8 combinations of
+        # (retracted, --started, later minute): retraction was not the variable, being closed was.
+        "scripts/test_exp_done_retracted.py",
         # run_ddp.sh's end-of-run chain: exit codes, the two score notes, and the row close
         # (de-47). It is registered LATE and that is the finding, not a footnote -- it has
         # been unguarded since it was written, and the commit adding the row close printed
@@ -1825,6 +1840,31 @@ def main():
     # Only pairs where the test genuinely exercises the subject go here -- a test listed against
     # a file it does not read costs seconds on every commit and buys nothing.
     TESTS_FOR_SUBJECT = {
+        # scripts/exp.py was a subject of five tests and a key of none, so all five ran only when
+        # someone edited the test file -- the exact gap this table exists to close, and it let
+        # de-46 in: `done` on an already-closed row fabricated a row with cmd='' and exited 0
+        # printing "logged done", and every one of them was green because no exp.py edit ever
+        # asked them. They drive the CLI as a subprocess (`exp.py --root <tmp> done ...`), which
+        # is what makes them exercisers of it rather than importers. 3.4s for the five, measured,
+        # against the table's 45s-per-subject budget.
+        #
+        # THE MEMBERSHIP IS MUTATION-CHECKED, not read off the imports, because this table's own
+        # rule ("a test listed against a file it does not read costs seconds and buys nothing")
+        # needs evidence and my first attempt got it backwards in both directions. Deleting the
+        # de-46 refusal left five of six green, which reads as "they do not exercise exp.py" and
+        # is wrong -- the mutant was too narrow to be evidence. Under a mutant every writer path
+        # must cross (append() inert) or every reader path must cross (fold() returning raw
+        # events), four of those five go red. So a green from a narrow mutant is not a finding
+        # about the test.
+        #
+        # test_ledger_predicates is OUT: it survives both core mutants, and its only mentions of
+        # exp.py are prose citations in a docstring. Its subject is predicates over ledger data,
+        # not the writer. test_score_exit is out for a different reason -- it does drive `done`,
+        # but spends 7.3s on run_ddp.sh's whole end-of-run chain where that call is one line
+        # already covered here.
+        "scripts/exp.py": {"scripts/test_exp_done_retracted.py", "scripts/test_exp_amend.py",
+                           "scripts/test_exp_done_started.py", "scripts/test_exp_fold_agree.py",
+                           "scripts/test_ledger_field_writers.py"},
         "eval/l1_fewshot.py": {"eval/test_l1_fewshot_2x2.py", "eval/score_matrix.py",
                                "scripts/test_fewshot_demos.py", "scripts/test_fewshot_stop.py"},
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
