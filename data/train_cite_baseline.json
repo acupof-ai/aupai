@@ -1,0 +1,84 @@
+{
+  "why": "train.py:<N> citations already pointing at a line that cannot support any claim, at 9851b797. A RATCHET: this list may shrink, never grow. A NEW dead citation FAILs check_train_cite_targets. Each entry is '<citing file>:<citing line>-><cited train.py line>'; the reason and the line's text at baseline time are recorded so a later reader can tell a fix from a coincidence.",
+  "measured": "2026-09-06",
+  "total_citations_at_baseline": 196,
+  "dead": [
+    "scripts/e1_arm_plan_check.py:526->2251",
+    "scripts/e1_arm_plan_check.py:712->2230",
+    "scripts/n7c_gates.py:273->2102",
+    "scripts/probe_gradckpt_sources.py:93->784",
+    "scripts/profile_step_cost.py:462->964",
+    "scripts/profile_step_cost.py:773->2603",
+    "scripts/profile_step_cost.py:877->2212",
+    "scripts/profile_step_cost.py:1108->964",
+    "scripts/test_arch_L32.py:178->716",
+    "scripts/test_arch_compat.py:1348->135",
+    "scripts/test_arch_compat.py:1395->135",
+    "scripts/test_mix_val_frac.py:6->2155",
+    "scripts/test_num_id_resolve.py:7->808",
+    "scripts/test_resume_cursor_pod.py:21->2230",
+    "eval/api_cloze.py:485->1712"
+  ],
+  "detail": {
+    "scripts/e1_arm_plan_check.py:526->2251": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/e1_arm_plan_check.py:712->2230": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/n7c_gates.py:273->2102": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/probe_gradckpt_sources.py:93->784": {
+      "reason": "a bare delimiter",
+      "target_text_at_baseline": "#"
+    },
+    "scripts/profile_step_cost.py:462->964": {
+      "reason": "a bare delimiter",
+      "target_text_at_baseline": "#"
+    },
+    "scripts/profile_step_cost.py:773->2603": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/profile_step_cost.py:877->2212": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/profile_step_cost.py:1108->964": {
+      "reason": "a bare delimiter",
+      "target_text_at_baseline": "#"
+    },
+    "scripts/test_arch_L32.py:178->716": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/test_arch_compat.py:1348->135": {
+      "reason": "an import",
+      "target_text_at_baseline": "from model import (  # noqa: E402,F401"
+    },
+    "scripts/test_arch_compat.py:1395->135": {
+      "reason": "an import",
+      "target_text_at_baseline": "from model import (  # noqa: E402,F401"
+    },
+    "scripts/test_mix_val_frac.py:6->2155": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/test_num_id_resolve.py:7->808": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "scripts/test_resume_cursor_pod.py:21->2230": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    },
+    "eval/api_cloze.py:485->1712": {
+      "reason": "blank",
+      "target_text_at_baseline": ""
+    }
+  }
+}
