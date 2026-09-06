@@ -44,6 +44,17 @@ POD = os.path.expanduser("~/bin/pod")
 POD_RUNS = "/work/aupai/runs"
 
 ARM = "b0_moe48_8b"
+
+# THE ARM'S LOG IS IN SEGMENTS AND THE FIRST ONE IS DEAD. b0_moe48_8b.log ends at step 1000
+# with `SignalException: Process 1585157 got signal: 15` and b0_moe48_8b.rc holds 1; the run
+# continues in 1.5b-a0.2b-e48_8b.log, which prints "Resumed from ckpt_b0_moe48_8b.pt.step1000
+# (step 1000)" under a cfg line identical to the first segment's and the same total 10172.
+# Reading only the first name is not a stale table, it is a table that DOES NOT SAY IT IS
+# SHORT: measured 2026-09-06, that read returned exactly 5 pairs and printed "5 matched-token
+# pairs" while steps 1200 and 1400 existed on the pod. Segments are read in order, last write
+# wins, and their cfg tok/step must agree or the pairing is refused.
+ARM_LOGS = ("b0_moe48_8b", "1.5b-a0.2b-e48_8b")
+
 # name -> (label, what the confound list says)
 COMPARATORS = {
     "b0_e1p_dense": "dense 0.2b",
@@ -55,7 +66,18 @@ COMPARATORS = {
 TOK_PER_STEP = {ARM: 8 * 4 * 6 * 4096, "b0_e1p_dense": 16 * 2 * 2 * 4096,
                 "b0_e1p_moe48": 16 * 2 * 2 * 4096}
 
+# WSD warmdown fraction, identical in all three arms' cfg lines. train.py:3391 starts the
+# warmdown at `total - max(1, int(warmdown * total))`, so the comparators (total 3815) enter it
+# at 3434 and the arm (total 10172) at 9155 -- confirmed against the arm's own printed
+# "warmdown starts at step 9155".
+WARMDOWN_FRAC = 0.1
+
 VAL_RE = re.compile(r"^step (\d+)/(\d+) val ([\d.]+)")
+
+
+def warmdown_start(total):
+    """First step of the cosine tail, by train.py:3391's formula."""
+    return total - max(1, int(WARMDOWN_FRAC * total))
 
 # The landed pairs, per comparator: {moe_step: gap}. Both sets are pinned because the mixup this
 # script exists to prevent is exactly using one arm's numbers under the other's name.
@@ -90,6 +112,41 @@ def parse_val(text):
     return out
 
 
+def parse_total(text):
+    """Total steps off any `step N/TOTAL` line, for the warmdown boundary. None if absent."""
+    m = VAL_RE.search(text) or re.search(r"^step (\d+)/(\d+) ", text, re.M)
+    return int(m.group(2)) if m else None
+
+
+def read_arm():
+    """(val, tok_per_step, total) for the arm, across every segment of its log.
+
+    Segments in ARM_LOGS order, later writes winning, so a resumed step supersedes the one the
+    dead segment printed. A segment whose cfg tok/step disagrees with the first is refused
+    rather than merged: a resume at a different world size or accum breaks the pairing that the
+    whole comparison rests on, and merging it would hide that behind a longer table.
+    """
+    val, tok, total, seen = {}, None, None, []
+    for name in ARM_LOGS:
+        text = pod_read(name)
+        v = parse_val(text)
+        t = parse_tok_per_step(text, 6)
+        if not v and t is None:
+            continue
+        seen.append(name)
+        if t is not None:
+            if tok is not None and t != tok:
+                raise RuntimeError(
+                    f"{name}.log gives {t} tok/step but an earlier segment gave {tok} -- the "
+                    f"arm changed batch across a resume and step-for-step pairing is void")
+            tok = t
+        total = parse_total(text) or total
+        val.update(v)
+    if not seen:
+        raise RuntimeError(f"no segment of the arm's log was readable: {list(ARM_LOGS)}")
+    return val, tok, total, seen
+
+
 def parse_tok_per_step(text, cards):
     """tok/step read off the cfg line, so the pairing rests on the log and not on my arithmetic.
 
@@ -102,19 +159,28 @@ def parse_tok_per_step(text, cards):
     return b * acc * cards * seq
 
 
-def pairs(arm_val, cmp_val, ratio):
-    """[(moe_step, tokens, arm_val, cmp_val, gap)] at matched tokens.
+def pairs(arm_val, cmp_val, ratio, cmp_total=None):
+    """[(moe_step, tokens, arm_val, cmp_val, gap, tail)] at matched tokens.
 
     Only steps where BOTH sides have a val point: the comparator stops at its own max step, and
     silently dropping the arm's later points would shorten the table without saying so.
+
+    `tail` is True when the COMPARATOR's paired step is inside its own WSD warmdown while the
+    arm is not. That is not a nuisance flag: measured 2026-09-06, the dense comparator's lr is
+    1.00e-02 through step 3400 and 5.41e-04 by 3800, and its val drops 2.259 -> 2.128 over that
+    span -- a fall driven by the decaying lr, not by the tokens. The arm at 10172 total does not
+    reach its own warmdown until step 9155, so any pair past comparator step 3434 compares an
+    annealed model against an un-annealed one. Those pairs are still returned, because dropping
+    them silently is the failure this script exists to prevent, but they are marked.
     """
     out = []
+    wd = warmdown_start(cmp_total) if cmp_total else None
     for s in sorted(arm_val):
         cs = s * ratio
         if cs not in cmp_val:
             continue
         out.append((s, s * TOK_PER_STEP[ARM], arm_val[s], cmp_val[cs],
-                    round(arm_val[s] - cmp_val[cs], 4)))
+                    round(arm_val[s] - cmp_val[cs], 4), bool(wd and cs >= wd)))
     return out
 
 
@@ -132,7 +198,7 @@ def _selftest():
 
     n = 0
     for name, cmp_val in (("b0_e1p_dense", dense), ("b0_e1p_moe48", moe_small)):
-        got = {s: g for s, _t, _a, _c, g in pairs(arm, cmp_val, 3)}
+        got = {s: g for s, _t, _a, _c, g, _w in pairs(arm, cmp_val, 3)}
         want = KNOWN_ANSWERS[name]
         assert set(got) == set(want), f"{name}: paired {sorted(got)}, expected {sorted(want)}"
         for s in want:
@@ -155,7 +221,7 @@ def _selftest():
     # PAIRING AT MATCHED STEPS INSTEAD OF MATCHED TOKENS. ratio=1 is the error the whole
     # exercise guards against, and against the dense arm it does not merely shift the numbers --
     # it REVERSES THE SIGN, reporting the MoE arm ahead at every point.
-    same_step = {s: g for s, _t, _a, _c, g in pairs(arm, dense, 1)}
+    same_step = {s: g for s, _t, _a, _c, g, _w in pairs(arm, dense, 1)}
     assert all(g < 0 for g in same_step.values()), \
         f"matched-STEP pairing was expected to reverse the sign; got {same_step}"
     assert all(same_step[s] * KNOWN_ANSWERS["b0_e1p_dense"][s] < 0 for s in same_step), \
@@ -168,6 +234,68 @@ def _selftest():
     assert [p[0] for p in got] == [200, 400], \
         f"a comparator with points to step 1200 paired {[p[0] for p in got]}, expected [200, 400]"
     print("  ok   a comparator that stops early yields fewer pairs, never an invented one")
+
+    # THE DEAD FIRST SEGMENT. b0_moe48_8b.log stops at step 1000 on signal 15 and the run
+    # continues under a different name, so reading one name returns a table that is short
+    # without saying so. Two worlds: the merge recovers the later points, and a segment that
+    # resumed at a different batch is REFUSED rather than merged.
+    seg1 = ("step 200/10172 val 3.465\nstep 1000/10172 val 2.321\n"
+            "cfg batch 8 accum 4 seq 4096 grad_ckpt False\n")
+    seg2 = ("step 1200/10172 val 2.280\nstep 1400/10172 val 2.241\n"
+            "cfg batch 8 accum 4 seq 4096 grad_ckpt False\n")
+    saved, texts = pod_read, {"seg1": seg1, "seg2": seg2}
+    try:
+        globals()["pod_read"] = lambda n: texts[n]
+        globals()["ARM_LOGS"] = ("seg1", "seg2")
+        val, tok, total, seen = read_arm()
+        assert sorted(val) == [200, 1000, 1200, 1400], sorted(val)
+        assert val[1400] == 2.241 and tok == 786432 and total == 10172, (val, tok, total)
+        assert seen == ["seg1", "seg2"], seen
+        only_first = parse_val(seg1)
+        assert max(only_first) == 1000 and max(val) == 1400, (
+            "the merge did not recover any point past the dead segment, so this world cannot "
+            "tell the fix from the defect")
+        print("  ok   segments merge: reading one name stops at 1000, both reach 1400")
+
+        texts["seg2"] = seg2.replace("batch 8 accum 4", "batch 4 accum 4")
+        try:
+            read_arm()
+            raise AssertionError("a resume at a different batch was merged instead of refused")
+        except RuntimeError as e:
+            assert "tok/step" in str(e) and "void" in str(e), str(e)
+        print("  ok   a segment that resumed at fewer tokens/step is refused, not merged")
+
+        # AND THE NEGATIVE CONTROL, which is what my first fixture got wrong: "batch 16 accum 2"
+        # is 32 per rank exactly as "batch 8 accum 4" is, so it is the SAME 786,432 tok/step and
+        # the pairing still holds. The guard compares tokens per step, not the batch spelling,
+        # and a reshuffle at equal product must be ACCEPTED -- my first version asserted this
+        # case refused, which would have made the guard reject a legitimate resume.
+        texts["seg2"] = seg2.replace("batch 8 accum 4", "batch 16 accum 2")
+        val2, tok2, _tot, _seen = read_arm()
+        assert tok2 == 786432 and max(val2) == 1400, (tok2, sorted(val2))
+        print("  ok   a reshuffle at equal tokens/step is accepted, not refused")
+    finally:
+        globals()["pod_read"] = saved
+        globals()["ARM_LOGS"] = ("b0_moe48_8b", "1.5b-a0.2b-e48_8b")
+
+    # THE COMPARATOR'S WARMDOWN. Its lr is 1.00e-02 through step 3400 and 5.41e-04 by 3800, and
+    # its val falls 2.259 -> 2.128 across that span on lr alone. The arm at 10172 total is not
+    # in its warmdown until 9155, so a pair past comparator step 3434 is annealed-vs-stable and
+    # must be marked. Measured: the pair at arm step 1200 lands on comparator step 3600.
+    assert warmdown_start(3815) == 3434, warmdown_start(3815)
+    assert warmdown_start(10172) == 9155, warmdown_start(10172)
+    late_arm = {1000: 2.321, 1200: 2.280, 1266: 2.260}
+    late_dense = {3000: 2.283, 3600: 2.194, 3798: 2.130}
+    marked = {s: w for s, _t, _a, _c, _g, w in pairs(late_arm, late_dense, 3, cmp_total=3815)}
+    assert marked == {1000: False, 1200: True, 1266: True}, marked
+    assert not any(w for *_r, w in pairs(late_arm, late_dense, 3)), \
+        "the tail flag fired with no cmp_total, so it is not reading the comparator's total"
+    print("  ok   pairs past comparator step 3434 are marked annealed-vs-stable")
+
+    print("\nequal_token_gap selftest OK: both known-answer sets reproduce, the curves are "
+          "distinguishable,\nmatched-step pairing is caught by a sign reversal, the arm's dead "
+          "segment is merged,\nand the comparator's warmdown tail is marked")
+    return 0
 
     # tok/step comes off the cfg line. The arm's own line must give 786,432 and the comparators'
     # 262,144: if a future launch changes batch, the 3x ratio is wrong and this catches it.
@@ -193,21 +321,23 @@ def main():
     if a.selftest:
         return _selftest()
 
-    arm_text = pod_read(ARM)
-    arm_val = parse_val(arm_text)
+    arm_val, arm_tok, arm_total, seen = read_arm()
     if not arm_val:
-        print(f"REFUSING: no val lines in {ARM}.log", flush=True)
+        print(f"REFUSING: no val lines in any segment of the arm's log: {list(ARM_LOGS)}",
+              flush=True)
         return 1
-    arm_tok = parse_tok_per_step(arm_text, a.cards_arm)
     if arm_tok != TOK_PER_STEP[ARM]:
         print(f"REFUSING: {ARM}'s cfg line gives {arm_tok} tok/step, not "
               f"{TOK_PER_STEP[ARM]} -- the 3x pairing no longer holds", flush=True)
         return 1
+    print(f"{ARM}: {len(arm_val)} val points to step {max(arm_val)} of {arm_total}, "
+          f"read from {len(seen)} segment(s): {', '.join(seen)}")
 
     rc = 0
     for name, label in COMPARATORS.items():
         text = pod_read(name)
         cmp_val = parse_val(text)
+        cmp_total = parse_total(text)
         cmp_tok = parse_tok_per_step(text, a.cards_cmp)
         if cmp_tok != TOK_PER_STEP[name]:
             print(f"REFUSING: {name}'s cfg line gives {cmp_tok} tok/step, not "
@@ -215,15 +345,22 @@ def main():
             rc = 1
             continue
         ratio = arm_tok // cmp_tok
-        rows = pairs(arm_val, cmp_val, ratio)
-        print(f"\n{ARM} vs {name} ({label}), ratio {ratio}x, {len(rows)} matched-token pairs:")
-        for s, tok, av, cv, gap in rows:
+        rows = pairs(arm_val, cmp_val, ratio, cmp_total=cmp_total)
+        wd = warmdown_start(cmp_total) if cmp_total else None
+        n_tail = sum(1 for r in rows if r[5])
+        print(f"\n{ARM} vs {name} ({label}), ratio {ratio}x, {len(rows)} matched-token pairs"
+              + (f", {n_tail} inside the comparator's warmdown (its step >= {wd})" if n_tail
+                 else ""))
+        for s, tok, av, cv, gap, tail in rows:
             known = KNOWN_ANSWERS[name].get(s)
             mark = ""
             if known is not None:
                 mark = "  KNOWN ok" if abs(gap - known) < 5e-4 else f"  KNOWN {known:+.3f} MISMATCH"
                 if "MISMATCH" in mark:
                     rc = 1
+            if tail:
+                mark += "  ANNEALED-vs-STABLE: the comparator is in its lr warmdown here, the " \
+                        "arm is not -- not a token-matched comparison"
             print(f"  step {s:5d}  {tok / 1e9:.2f}B tok   {av:.3f} - {cv:.3f} = {gap:+.4f}{mark}")
     return rc
 

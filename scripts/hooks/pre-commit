@@ -1030,6 +1030,15 @@ def main():
         # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
         # pairing at matched STEPS instead of matched tokens reverses the sign.
         "eval/equal_token_gap.py",
+        # The rate printed on a val_every boundary covers the validation pass, so it is not a
+        # training rate. Registered because reading two of them as a ratio does NOT cancel:
+        # validation costs two arms different absolute amounts, and sampling steps
+        # 3000/3200/3400 of the two batch-64 comparators gave 1.457x against the true 1.283x,
+        # which was reported to the controller before being retracted. The trap is single-point
+        # sampling at ROUND step numbers, since round numbers are the val_every boundaries; a
+        # median over all intervals is unaffected, and one world asserts exactly that so the
+        # comment cannot drift from what the guard checks.
+        "scripts/val_step_rates.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
@@ -1716,8 +1725,9 @@ def main():
         # reporting it as unguarded while the exemption states the truth.
         "scripts/test_moe_bias_wiring.py": "asserts torch.cuda.is_available(); MoEFFN reaches "
                                            "chunk_kda/l2norm, Triton with no CPU fallback, so "
-                                           "there is no CPU world for it -- PASSED 4/4 on the "
-                                           "pod, card 1, 2026-09-06",
+                                           "there is no CPU world for it -- PASSED 7/7 on the "
+                                           "pod, card 7, 2026-09-06, in a three-tree run where "
+                                           "F goes red at 87ef5985 and G at 2f95a797",
         "scripts/test_domain_loss_val.py": "needs data/tokenizer.json, gitignored; SKIPs "
                                            "cleanly here and passes on the pod",
         # Kept rather than deleted in de-21, and listed here so the reason it is not run is
