@@ -34,6 +34,7 @@ the legacy-format fallback -- that branch needs a file written with
 _use_new_zipfile_serialization=False, which no cache here is, and asserting on a file the
 fixture had to write in a format the code never produces tests the fixture.
 """
+import ast
 import json
 import os
 import re
@@ -243,21 +244,49 @@ def _check_premises():
     input this tree cannot produce, and would go green forever while telling a reader the branch
     is exercised.
 
-    The deletion is safe only while both premises hold, and NEITHER was checked: one writer of a
-    tokens_*.pt, and nothing in the tree asking for a non-default serialization. If someone adds a
-    second writer or passes the flag, the deleted branch becomes a crash at step 0 instead of a
-    slow load. Two greps, so the premise fails loudly the day it dies -- a check with a real
-    subject, unlike the fixture.
+    The deletion is safe only while its premise holds, and it was NOT checked: every cache
+    reaching _domain_seqs must be in torch.save's default zip format. If someone writes one another
+    way, the deleted branch becomes a crash at step 0 instead of a slow load. Greps, so the premise
+    fails loudly the day it dies -- a check with a real subject, unlike the fixture.
+
+    THE FLAG IS FOUND WITH ast, NOT A REGEX, and that is the second thing the first version got
+    wrong. Stripping `#` comments does not strip DOCSTRINGS or message strings, so the check went
+    red on this very file -- which necessarily discusses the flag in its own prose, including in
+    the FAIL text it prints. Exempting the file by name would have been the wrong repair: this file
+    IS a cache writer, so an exemption would blind the check to the one writer it can see least.
+    `ast` asks the precise question instead -- is there a Call with a keyword argument of that
+    name -- which prose cannot satisfy and a real caller cannot evade by formatting.
+
+    THE WRITER REGEX DOES NOT PARSE THE ARGUMENT LIST (de, 2026-09-07). `torch.save\\([^)]*cache`
+    cannot cross an inner `)`, so it missed `torch.save(dict(...), cache)` and
+    `torch.save(model.state_dict(), cache)`, and a trailing `\\b` after `cache` missed
+    `cache_path`. Measured: 4 of 6 real shapes invisible, including the dict-literal one a second
+    writer actually looks like. Co-occurrence in the statement instead -- verified on 6 positives
+    and 3 negatives (train.py's checkpoint save, readout_30b's fixture, train_quality_head's
+    weights), and tree-wide it returns 4 hits, all genuine cache writers, 0 false positives.
 
     Greps the tracked tree via git, not os.walk: an untracked scratch file is not the tree, and
     including one would make this fail on someone's local copy of a script.
     """
+    # Known cache writers, all confirmed to use torch.save's default zip format. A new one trips
+    # PREMISE 1 -- not because a second writer is wrong, but because nobody has confirmed its
+    # format, and the deleted fallback is what used to make that not matter.
+    KNOWN_WRITERS = {
+        "train.py",                                # the real one: torch.save(data, cache)
+        "scripts/test_mix_val_frac.py",             # fixture: a real cache in a temp dir
+        "scripts/test_mix_anneal_and_cursor.py",    # fixture: same
+        "scripts/test_cache_mmap.py",               # this file's own 0.92 GiB fixture
+    }
     src = subprocess.run(["git", "ls-files", "-z", "*.py"],
                          capture_output=True, text=True, cwd=ROOT)
     if src.returncode != 0:
-        FAILS.append(f"cannot list tracked .py files, so neither premise is checked: "
+        FAILS.append(f"cannot list tracked .py files, so the premise is not checked: "
                      f"{src.stderr[-200:]}")
         return
+    # torch.save and a cache-ish destination CO-OCCURRING in the statement. Case-insensitive and
+    # deliberately loose on the destination: a false positive costs one line in KNOWN_WRITERS, a
+    # false negative costs the whole check.
+    writer_re = re.compile(r"torch\.save\b[^\n]*(?:cache|tokens_)", re.I)
     writers, flaggers = [], []
     for rel in [p for p in src.stdout.split("\0") if p]:
         try:
@@ -265,38 +294,48 @@ def _check_premises():
                 body = f.read()
         except OSError:
             continue
-        # A MENTION IS NOT A CALL, and the first version of this check tested for the string:
-        # it fired on train.py, whose only two hits are the comment EXPLAINING the deletion. So
-        # the predicate is the flag being PASSED -- `_use_new_zipfile_serialization=` followed by
-        # anything but a comment -- and every source line here has its comment stripped first.
-        # Same shape as the mention-vs-trainer correction in check_launcher_states_anneal_frac:
-        # a file that talks about a thing is not a file that does it.
+        try:
+            tree = ast.parse(body)
+        except SyntaxError:
+            # A file that does not parse cannot be cleared, and staying silent about it would be
+            # the vacuous-pass shape: report it rather than skipping it.
+            FAILS.append(f"{rel} does not parse, so it cannot be cleared of passing "
+                         f"_use_new_zipfile_serialization")
+            continue
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and any(
+                    kw.arg == "_use_new_zipfile_serialization" for kw in node.keywords):
+                flaggers.append(rel)
+                break
         code = "\n".join(ln.split("#", 1)[0] for ln in body.splitlines())
-        if re.search(r"_use_new_zipfile_serialization\s*=", code):
-            flaggers.append(rel)
-        # A writer is a torch.save whose destination is a token cache. The real one names the
-        # variable `cache`; a new one is far more likely to build the name from the tokens_
-        # prefix, so both shapes count.
-        if re.search(r"torch\.save\([^)]*\bcache\b", code) or re.search(r"torch\.save\([^)]*tokens_", code):
+        if writer_re.search(code):
             writers.append(rel)
-    # This test does not count itself, and neither does the test that mutates train.py's load.
-    writers = [w for w in writers if os.path.basename(w) != os.path.basename(__file__)]
-    if not (len(writers) == 1 and writers[0] == "train.py"):
+    # THE PREMISE, stated as the FORMAT rather than the writer count. A cache writer that also
+    # passes the flag is the one case the deletion cannot survive.
+    both = sorted(set(writers) & set(flaggers))
+    if both:
         FAILS.append(
-            f"PREMISE 1 BROKEN: the deleted legacy fallback assumed train.py is the only writer "
-            f"of a token cache, so every cache is in torch.save's default zip format. Now: "
-            f"{writers or 'none found'}. A cache written any other way reaches "
-            f"`torch.load(..., mmap=True)` in _domain_seqs, which has no fallback and will raise "
-            f"at step 0. Either route the new writer through the same torch.save, or restore the "
-            f"fallback WITH a test that can fail")
-    # test_cache_mmap.py itself is allowed to mention the flag -- in this very docstring.
-    flaggers = [f for f in flaggers if os.path.basename(f) != os.path.basename(__file__)]
-    if flaggers:
+            f"PREMISE BROKEN, and this is the case the deletion cannot survive: {both} write a "
+            f"token cache AND pass _use_new_zipfile_serialization, so that cache can be in the "
+            f"legacy format. `torch.load(..., mmap=True)` in _domain_seqs raises RuntimeError on "
+            f"it and has no fallback -- the run dies at step 0. Either write the default format, "
+            f"or restore the fallback WITH a test that can fail")
+    unknown = sorted(set(writers) - KNOWN_WRITERS)
+    if unknown:
         FAILS.append(
-            f"PREMISE 2 BROKEN: {flaggers} pass _use_new_zipfile_serialization, so a file in this "
-            f"tree can be written in the legacy format. _domain_seqs' mmap=True raises "
-            f"RuntimeError on such a file and its fallback was deleted on the grounds that no "
-            f"caller can ask for that format")
+            f"PREMISE 1: {unknown} write a token cache and are not in this test's KNOWN_WRITERS. "
+            f"That is not wrong by itself -- two test fixtures legitimately do -- but the deleted "
+            f"legacy fallback means every cache MUST be torch.save's default zip format, and "
+            f"nobody has confirmed these are. Confirm the format and add the path, or route the "
+            f"write through train.py's")
+    # A flag passed anywhere else is worth reporting: the tree now holds the capability, so the
+    # next cache writer can reach for it. Not broken yet, which the message says.
+    elsewhere = sorted(set(flaggers) - set(writers))
+    if elsewhere:
+        FAILS.append(
+            f"PREMISE 2: {elsewhere} pass _use_new_zipfile_serialization. No cache write does it "
+            f"today, so nothing is broken yet -- but the tree now holds the pattern next to the "
+            f"caches, and _domain_seqs has no fallback. Confirm no cache reaches it")
 
 
 def _skip(why):
