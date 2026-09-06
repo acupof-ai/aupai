@@ -1022,6 +1022,14 @@ class MoEFFN(nn.Module):
             step_tokens_per_expert -= surplus * micro_tokens_per_expert
             windows                -= surplus
 
+        THE ARITHMETIC STAYS ON THE DEVICE. `int(self.micro_forwards)` would read the surplus to
+        the host, and this runs once per MoE layer per micro-batch -- 12 layers x accum 4 = 48
+        device-to-host syncs per step on the 1.5b-a0.2b-e48_8b shape, in the training loop's hot
+        path. clamp_min(0) on the tensor gives the same result with no sync, verified equal for
+        both the 1-pass and 2-pass cases. The `if surplus > 0` shortcut was dropped for the same
+        reason: branching on a tensor's value requires reading it, and multiplying by a zero
+        surplus is already a no-op.
+
         WHY NOT DETECT RECOMPUTE INSIDE forward: `self.training` and `torch.is_grad_enabled()`
         are both true in the recompute pass, and torch exposes no public recompute marker. Counting
         the passes and correcting afterwards needs no such marker.
@@ -1049,11 +1057,10 @@ class MoEFFN(nn.Module):
         configuration; it corrects no published number, because no arm has ever run checkpointed.
         """
         with torch.no_grad():
-            surplus = int(self.micro_forwards) - 1
-            if surplus > 0:
-                self.tokens_per_expert -= surplus * self.micro_tokens_per_expert
-                self.step_tokens_per_expert -= surplus * self.micro_tokens_per_expert
-                self.windows -= surplus
+            surplus = (self.micro_forwards - 1).clamp_min(0)
+            self.tokens_per_expert -= surplus * self.micro_tokens_per_expert
+            self.step_tokens_per_expert -= surplus * self.micro_tokens_per_expert
+            self.windows -= surplus
             self.micro_forwards.zero_()
 
     def update_bias(self, counts):
