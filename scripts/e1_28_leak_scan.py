@@ -99,7 +99,7 @@ def scan_text(t, ws_need, ch_need, use_char):
 def domain_fp(d, root=None):
     """The CANONICAL fingerprint, imported -- never reimplemented.
 
-    row_cursor_srcfp is written by train.py:1796 from _corpus_fp, which is sha1 over sorted
+    row_cursor_srcfp is written by train.py's build_mix from _corpus_fp, which is sha1 over sorted
     "name:size:sha256(first 64KB):sha256(last 64KB)" per shard, skipping build_corpus_stats.json.
     My first version invented its own: sha256 of every full file, no skip list. It reported
     SRCFP CHANGED for six of nine domains -- 720,000 rows including all of code_py_starcoder --
@@ -194,8 +194,8 @@ def main():
         "This file stays because datagen/scan_eval_golds.py imports ws_grams/char_grams/scan_text/"
         "low_entropy from it -- the GRAM FUNCTIONS are sound and tested; only the cursor "
         "population is not. A consumed-rows rate needs a document-level cursor, which no "
-        "instrument here provides, and the pre-tokenize shuffle at train.py:1456 means the first "
-        "N documents are not the first N of the token cache either.")
+        "instrument here provides, and the pre-tokenize shuffle in train.py's _domain_seqs means "
+        "the first N documents are not the first N of the token cache either.")
 
     # 1. THE HELD-OUT COMPLETIONS, restricted to the scored population.
     keep = None

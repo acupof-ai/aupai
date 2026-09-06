@@ -257,6 +257,24 @@ PY
   return 0
 }
 
+# WHY `git merge` RETURNED NONZERO, as a function so --selftest drives it against both worlds.
+# Two different states return nonzero and reporting one as the other is 4c's 2026-09-06 defect:
+#   conflict        unmerged index entries; conflict markers are in the files.
+#   refused-commit  the merge RESOLVED and its commit was refused by the pre-commit hook: zero
+#                   unmerged paths, main's versions of every merged file staged.
+#   none            no merge is in flight at all.
+# MERGE_HEAD is set in the first two alike, so it cannot be the discriminator; `git ls-files -u`
+# can. Prints one of the three words.
+_merge_failure_kind() {
+  if [ -n "$(git ls-files -u)" ]; then
+    echo conflict
+  elif [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    echo refused-commit
+  else
+    echo none
+  fi
+}
+
 # THE STAGED-INDEX CARRY (tilerl-31), as two functions so --selftest drives the REAL code in a
 # scratch repo rather than a reimplementation of it. A reimplemented predicate shares the
 # original's assumptions and its agreement is not evidence (gate_failure_shapes §231).
@@ -267,6 +285,20 @@ PY
 _carry_stage() {
   _cs_staged=$(git diff --cached --name-only)
   [ -n "$_cs_staged" ] || return 0
+  # A PENDING MERGE IS NOT A STAGED INDEX TO CARRY. When a merge resolves and its commit is
+  # refused by the hook, MERGE_HEAD stays set and main's versions of every merged file are
+  # staged -- so this function sees 10-30 "staged paths" that are not the operator's work at
+  # all, and carrying them writes main's own content to refs/wip/ and then restores it over the
+  # merge. 4c hit this twice in aupai-fb on 2026-09-06. Refuse and name the recovery: the
+  # pending merge has to be concluded or aborted before there is anything here to carry.
+  if [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ]; then
+    echo "merge_main: a merge is already in progress in this worktree -- refusing to carry" >&2
+    echo "  its staged paths. $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') path(s) are staged, and after a refused merge" >&2
+    echo "  commit those are MAIN's versions, not your work. Conclude or abandon it first:" >&2
+    echo "    git commit --no-edit     # if the merge was resolved and only its commit failed" >&2
+    echo "    git merge --abort        # to throw the merge away" >&2
+    return 1
+  fi
   # THE TRIGGER IS "WILL THIS MERGE TOUCH A STAGED PATH", and fast-forward vs true merge only
   # decides WHICH paths that is. My first version returned early on any fast-forward, on the
   # measurement that a fast-forward tolerates a staged index -- and that measurement was taken
@@ -764,6 +796,108 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     echo "       markers in the file; ref present: $( cd "$_c/w3" && git rev-parse -q --verify refs/wip/work >/dev/null && echo yes || echo NO), markers: $( cd "$_c/w3" && grep -q '<<<<<<<' f.txt && echo yes || echo NO)" >&2
     _fails=$((_fails + 1))
   fi
+  # W10: A PENDING MERGE (MERGE_HEAD set, index full of MAIN's versions) IS REFUSED, not carried.
+  # 4c hit this twice in aupai-fb on 2026-09-06: a merge resolved, its COMMIT was refused by the
+  # hook, and the next run read main's 10-30 staged files as the operator's index and carried them
+  # to refs/wip/. The world reproduces it with `git merge --no-commit`, which leaves exactly that
+  # state -- MERGE_HEAD set, zero unmerged paths, main's content staged.
+  rm -rf "$_c/w10"; mkdir -p "$_c/w10"
+  (
+    cd "$_c/w10" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'one\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > sentinel && git add -A && git commit -qm s
+    git checkout -q main && printf 'MAIN\n' > g.txt && git add -A && git commit -qm "main adds g"
+    git checkout -q work
+    git merge --no-commit --no-ff main
+  ) >/dev/null 2>&1
+  _cgot=ok; _cwhy=""
+  # The 2>&1 is INSIDE the substitution: the refusal goes to stderr, so with the redirect
+  # outside, _cout is empty and any grep of it passes for the wrong reason.
+  _cout=$( cd "$_c/w10" && _carry_stage work 2>&1 ) \
+    && _cwhy="carried a pending merge's index instead of refusing" || _cgot=fail
+  _ccase "W10 pending merge: carry refuses instead of carrying main's staged files" fail
+  if printf '%s' "$_cout" | grep -q "merge is already in progress"; then
+    echo "  ok   carry W10 the refusal names the pending merge"
+  else
+    echo "  FAIL carry W10: the refusal must say a merge is in progress, so the reader knows to" >&2
+    echo "       run \`git commit --no-edit\`; it said: $(printf '%s' "$_cout" | head -1)" >&2
+    _fails=$((_fails + 1))
+  fi
+  if ( cd "$_c/w10" && ! git rev-parse -q --verify refs/wip/work >/dev/null ); then
+    echo "  ok   carry W10 no ref was written"
+  else
+    echo "  FAIL carry W10: refusing must write NO ref -- a refs/wip/ holding main's own content" >&2
+    echo "       is worse than none, because the restore would put it back over the merge" >&2
+    _fails=$((_fails + 1))
+  fi
+  # W10-CONTROL, IN THE OPPOSITE DIRECTION: an ordinary staged index in a world with no pending
+  # merge must still carry. Without it, a _carry_stage that refused every call would pass W10.
+  # It builds its OWN world rather than concluding w10's: under a mutant that never refuses, w10's
+  # merge is left mid-flight and the control then fails downstream, on state rather than on merit.
+  rm -rf "$_c/w10c"; mkdir -p "$_c/w10c"
+  (
+    cd "$_c/w10c" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'one\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > sentinel && git add -A && git commit -qm s
+    git checkout -q main && printf 'MAIN\n' > f.txt && git add -A && git commit -qm "main edits f"
+    git checkout -q work && printf 'mine\n' > f.txt && git add f.txt
+  ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w10c" && _carry_stage work 2>/dev/null ) && _cgot=ok \
+    || _cwhy="refused an ordinary staged index in a world with no merge in progress"
+  _ccase "W10-control no pending merge: a real staged index still carries" ok
+
+  # K1-K3: _merge_failure_kind's THREE states, each in its own world. The whole defect was one
+  # state being reported as another, so every state is driven and the two nonzero ones must
+  # DISAGREE -- a predicate answering the same word for both would restore the bug.
+  _kcase() {  # <label> <dir> <want>
+    _kgot=$( cd "$2" && _merge_failure_kind )
+    if [ "$_kgot" = "$3" ]; then
+      echo "  ok   kind $1 -> $3"
+    else
+      echo "  FAIL kind $1: want $3, got $_kgot" >&2
+      _fails=$((_fails + 1))
+    fi
+  }
+  # K1 CONFLICT: both sides edit one line, so the index holds unmerged entries.
+  rm -rf "$_c/k1"; mkdir -p "$_c/k1"
+  (
+    cd "$_c/k1" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'one\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'WORK\n' > f.txt && git add -A && git commit -qm w
+    git checkout -q main && printf 'MAIN\n' > f.txt && git add -A && git commit -qm m
+    git checkout -q work && git merge --no-edit main
+  ) >/dev/null 2>&1 || true   # the merge conflicts BY DESIGN; under set -e it would abort the run
+  _kcase "K1 both sides edited one line" "$_c/k1" conflict
+  # K2 REFUSED COMMIT: the merge resolves (disjoint files) and a hook that always exits 1 refuses
+  # its commit. A REAL failing hook, not `--no-commit` -- the state has to arrive the way 4c's did.
+  # The hook is `pre-merge-commit`, NOT `pre-commit`: `git merge` runs only the former, so a world
+  # built on `pre-commit` merges cleanly and reads `none`. This repo symlinks both to one script
+  # (`git rev-parse --git-common-dir`/hooks, read 2026-09-07), which is why 4c's merge hit it.
+  rm -rf "$_c/k2"; mkdir -p "$_c/k2"
+  (
+    cd "$_c/k2" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'one\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > s.txt && git add -A && git commit -qm w
+    git checkout -q main && printf 'MAIN\n' > g.txt && git add -A && git commit -qm m
+    git checkout -q work
+    printf '#!/bin/sh\nexit 1\n' > .git/hooks/pre-merge-commit
+    chmod +x .git/hooks/pre-merge-commit
+    git merge --no-edit main
+  ) >/dev/null 2>&1 || true   # the hook refuses the commit BY DESIGN, so this exits nonzero too
+  _kcase "K2 resolved merge whose commit the hook refused" "$_c/k2" refused-commit
+  if ( cd "$_c/k2" && [ -z "$(git ls-files -u)" ] \
+       && [ -f "$(git rev-parse --git-dir)/MERGE_HEAD" ] \
+       && [ -n "$(git diff --cached --name-only)" ] ); then
+    echo "  ok   kind K2 world control: zero unmerged, MERGE_HEAD set, main's files staged"
+  else
+    echo "  FAIL kind K2 world control: the world did not reproduce the state -- the hook may" >&2
+    echo "       have been skipped, so K2 would pass against something else entirely" >&2
+    _fails=$((_fails + 1))
+  fi
+  # K3 NONE: a clean worktree with no merge in flight.
+  _kcase "K3 no merge in flight" "$_c/w10c" none
+
   # W3b-CONTROL: the bare merge on that world must FAIL, or W3b proves nothing.
   rm -rf "$_c/w"; mkdir -p "$_c/w"
   (
@@ -1058,7 +1192,36 @@ for _ in $(seq 1 120); do
     _carry=$(printf '%s\n' "$_carry_out" | head -1)
     _carry_paths=$(printf '%s\n' "$_carry_out" | tail -n +2)
     if ! git merge --no-edit main; then
-      echo "merge_main: $1 conflicts with main. Resolve in THIS worktree, commit, retry --" >&2
+      # WHY `git merge` FAILED, WHICH IS TWO DIFFERENT THINGS. A content conflict leaves
+      # unmerged index entries and no commit. A merge that resolved cleanly and then had its
+      # COMMIT refused by the pre-commit hook leaves MERGE_HEAD set, ZERO unmerged paths, and
+      # main's versions of every merged file staged. Both return nonzero, and reporting the
+      # second as a conflict is what 4c hit twice in aupai-fb on 2026-09-06 (16:4xZ and
+      # 17:5xZ): the message named no file because there was no conflicting file, and the next
+      # run then carried 10-30 of main's staged paths to refs/wip/. Both times the recovery was
+      # `git commit` of the pending merge, which the hook passed on retry.
+      #
+      # `git ls-files -u` is the discriminator, not MERGE_HEAD: MERGE_HEAD is set in BOTH cases.
+      # It is `_merge_failure_kind`, a function, so --selftest drives the REAL predicate against
+      # both worlds; inline here it would have been reachable only by running a whole merge.
+      _unmerged=$(git ls-files -u | awk '{print $4}' | sort -u)
+      if [ "$(_merge_failure_kind)" = "refused-commit" ]; then
+        echo "merge_main: the merge RESOLVED, and its commit was refused -- read the refusal" >&2
+        echo "  above this line, not a conflict message. Zero unmerged paths; main's versions" >&2
+        echo "  of $(git diff --cached --name-only | wc -l | tr -d ' ') file(s) are staged and MERGE_HEAD is set." >&2
+        echo "  Fix what the refusal names, then CONCLUDE the merge -- do not re-run this" >&2
+        echo "  script first, it would carry main's staged paths to refs/wip/$1:" >&2
+        echo "    git commit --no-edit        # the hook runs again; it passed on retry both" >&2
+        echo "                               # times this was seen (4c, 2026-09-06)" >&2
+        echo "    bash scripts/merge_main.sh $1" >&2
+        echo "  To abandon instead: git merge --abort" >&2
+      else
+        echo "merge_main: $1 conflicts with main. Resolve in THIS worktree, commit, retry --" >&2
+        if [ -n "$_unmerged" ]; then
+          echo "  the conflicting path(s):" >&2
+          printf '%s\n' "$_unmerged" | sed 's/^/    /' >&2
+        fi
+      fi
       if [ -n "$_carry" ]; then
         echo "  YOUR STAGED INDEX IS AT $_carry -- it is NOT lost and NOT restored. After you" >&2
         echo "  resolve, restore the carried paths BY NAME (never \`-- .\`, which reverts the" >&2

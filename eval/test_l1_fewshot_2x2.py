@@ -183,7 +183,8 @@ def main():
                      "path would be versioned twice (verified: preds_x.r1.r1.jsonl)")
 
     # 8. THE DECODER IS THE SAME ON BOTH ARMS, AND THE RUN RECORDS WHICH DECODER IT WAS.
-    #    train.generate_batch gates rep_stop on `tokenizer is not None` (train.py:944), so the
+    #    train.generate_batch gates rep_stop on `rep_stop = rep_stop and tokenizer is not None`,
+    #    so the
     #    original call here -- which omitted the argument -- ran OUR arm with NO repetition stop
     #    while the control arm, whose tokenizer was passed explicitly, ran with one. The 2x2's
     #    length gap (794-851 characters against 84-86) and our 98.8% loop rate are partly that:

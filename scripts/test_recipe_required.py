@@ -18,9 +18,9 @@ making the launch refuse.
 
 THREE MECHANISMS, one per knob class, measured on main 2026-09-02 (e1-16 prep):
 
-  ten generated knobs   train.py:2031/2036/2043 build them with default=None and
-                        write Cfg only when passed, so the Cfg field is the silent
-                        fallback -- delete the Cfg default
+  ten generated knobs   train.py's three add_argument(f"--{name}") loops build them with
+                        default=None and write Cfg only when passed, so the Cfg field is
+                        the silent fallback -- delete the Cfg default
   lr_scale, save_every  argparse-only (:2095, :2066), no Cfg field at all --
                         required=True
   grad_ckpt             store_true has NO None state: absent and False are one
@@ -28,9 +28,9 @@ THREE MECHANISMS, one per knob class, measured on main 2026-09-02 (e1-16 prep):
                         argparse.BooleanOptionalAction with required=True, which
                         gives the --grad_ckpt/--no-grad_ckpt pair for free (fb's
                         ruling; better than the three-valued flag I proposed).
-                        train.py:2112-2119 records the same trap for attn_res,
-                        where a blanket `is not None` sweep would have silently
-                        disabled Attention Residuals on every run.
+                        train.py's _switches store_true exclusion records the same trap
+                        for attn_res, where a blanket `is not None` sweep would have
+                        silently disabled Attention Residuals on every run.
 
     python scripts/test_recipe_required.py            # report, exit 0 while red
     python scripts/test_recipe_required.py --strict    # exit 1 unless all green
@@ -81,8 +81,8 @@ BASE = {
 SWITCHES = ("grad_ckpt",)
 
 # What the recipe argues for, and the ONE knob whose Cfg field is spelled differently.
-# --dim writes Cfg.d through an explicit special case at train.py:2108, not the generic
-# loop, because "d" has no flag of its own.
+# --dim writes Cfg.d through train.py's explicit `Cfg.d = args.dim` special case, not the
+# generic loop, because "d" has no flag of its own.
 RECIPE = dict(BASE, grad_ckpt="True")
 CFG_NAME = {"dim": "d"}
 
@@ -91,9 +91,10 @@ def cfg_defaults():
     """train.py's Cfg class attributes, read from source without importing torch.
 
     The effective value of an omitted generated knob is Cfg's, not argparse's None
-    (train.py:2110-2122 writes Cfg only when the flag was passed), so a test that
-    reports the parser's None alone describes the mechanism and hides the consequence.
-    Parsed rather than imported: importing train.py pulls in torch and the model.
+    (train.py's `for k, v in vars(args).items()` sweep writes Cfg only when the flag was
+    passed), so a test that reports the parser's None alone describes the mechanism and
+    hides the consequence. Parsed rather than imported: importing train.py pulls in torch
+    and the model.
     """
     with open(os.path.join(ROOT, "train.py"), encoding="utf-8") as fh:
         body = ast.parse(fh.read()).body
@@ -398,10 +399,11 @@ def main():
             green.append(f"{knob}: omission refused (exit {code})")
             continue
         # Accepted. Report what the RUN would actually use, which is not what the parser
-        # returns: for the ten generated knobs argparse yields None and train.py:2110-2122
-        # then leaves Cfg's own value standing, so `None` is the mechanism and the Cfg
-        # field is the effective value. Reporting the parser's None alone would understate
-        # this -- it reads like "no value" when the run proceeds with a real one.
+        # returns: for the ten generated knobs argparse yields None and train.py's
+        # `for k, v in vars(args).items()` sweep then leaves Cfg's own value standing, so
+        # `None` is the mechanism and the Cfg field is the effective value. Reporting the
+        # parser's None alone would understate this -- it reads like "no value" when the
+        # run proceeds with a real one.
         got = getattr(args, knob, "<no attribute>")
         eff = cfg.get(CFG_NAME.get(knob, knob), got) if got is None else got
         note = f"argparse None -> Cfg.{CFG_NAME.get(knob, knob)} = {eff!r}" if got is None \
