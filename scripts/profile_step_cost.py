@@ -149,10 +149,22 @@ def _selftest():
     _me_main = next((n for n in _me_tree.body
                      if isinstance(n, _a0.FunctionDef) and n.name == "main"), None)
     tok_expr = reset_line = loop_line = loop_node = None
+    tok_assigns, rate_exprs = [], []
     for n in _a0.walk(_me_main) if _me_main else ():
         if isinstance(n, _a0.Assign) and any(
                 isinstance(t, _a0.Name) and t.id == "tok_step" for t in n.targets):
             tok_expr = _a0.unparse(n.value).replace(" ", "")
+            tok_assigns.append(n.lineno)
+        # EVERY EXPRESSION THAT COMPUTES A RATE, not just the one named tok_step. The check
+        # below used to read only the tok_step assignment, and the --peak-only path computed
+        # `a.steps * B * SEQ / wall` into a DIFFERENT name -- so the guarded formula was right
+        # while the printed one dropped accum, understating every accum>1 run by exactly accum
+        # (b8a4 printed 13.0K against b16a2's 27.8K for identical tokens per step). A guard
+        # anchored to one name cannot see a second site computing the same quantity.
+        elif isinstance(n, _a0.Assign) and any(
+                isinstance(t, _a0.Name) and t.id in ("tok_s_gpu", "tok_s_per_gpu")
+                for t in n.targets):
+            rate_exprs.append(_a0.unparse(n.value).replace(" ", ""))
         elif isinstance(n, _a0.Call) and isinstance(n.func, _a0.Attribute) \
                 and n.func.attr == "reset_peak_memory_stats":
             reset_line = n.lineno
@@ -195,6 +207,16 @@ def _selftest():
     for ok, why, hint in (
         (tok_expr == "B*train.Cfg.accum*SEQ", "tok/s/gpu counts batch*accum*seq",
          f"tok_step is {tok_expr!r}; a rate over one micro-batch reports the b8a4 arm at 4x"),
+        # BOTH RATE SITES MUST DERIVE FROM tok_step, and this is the check the old one was
+        # missing. --peak-only printed `a.steps * B * SEQ / wall`: correct-looking, wrong by
+        # exactly accum, and invisible to a check that reads only the tok_step assignment.
+        (bool(rate_exprs) and all("tok_step" in e for e in rate_exprs),
+         "every tok/s expression derives from tok_step rather than recomputing it",
+         f"rate expressions are {rate_exprs}; one that spells out B*SEQ without accum "
+         f"understates an accum>1 run by exactly accum, and the two paths then disagree"),
+        (len(tok_assigns) == 1, "tok_step is computed once, not per path",
+         f"tok_step is assigned at lines {tok_assigns}; two assignments of the same quantity "
+         f"is how the printed rate and the JSON rate came to differ"),
         (reset_line is not None, "the peak is reset in main()",
          "the peak would carry setup both arms pay identically, not the step's own cost"),
         (_startup_before_reset(), "the startup peak is read BEFORE the reset",
@@ -557,7 +579,7 @@ def _selftest():
     # running 31, so the total said nothing about what ran. It is kept because a mismatch between
     # the printed count and the case list is itself worth noticing -- but the count is not evidence
     # that a case exists, and a check whose absence shows up only in this integer is not registered.
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2 + 3 + 3
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2 + 3 + 3 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -943,7 +965,19 @@ def main():
     wall = time.perf_counter() - wall0
     peak_gib = torch.cuda.max_memory_allocated() / 1024**3
     peak_res_gib = torch.cuda.max_memory_reserved() / 1024**3
-    tok_s_gpu = a.steps * B * SEQ / wall
+    # THE SAME tokens-per-step AS THE JSON PATH, accum INCLUDED. This line read
+    # `a.steps * B * SEQ / wall` until 2026-09-06 and understated every accum>1 run by exactly
+    # accum: it reported b16a2 at 27.8K and b8a4 at 13.0K tok/s/gpu, a 2.14x ratio for two
+    # configs that push IDENTICAL tokens per step (32 sequences per rank either way), which
+    # would have read as "the b8a4 split is half the speed" in a launch decision.
+    #
+    # The existing selftest could not see it. That check reads the assignment named `tok_step`
+    # and asserts it is B*accum*SEQ -- and THIS path assigned a different expression to a
+    # different name, so the guarded formula stayed correct while the printed one was wrong.
+    # A guard anchored to one name does not cover a second site computing the same quantity;
+    # the fix is one expression used by both, which is why tok_step is hoisted here.
+    tok_step = B * train.Cfg.accum * SEQ
+    tok_s_gpu = a.steps * tok_step / wall
     if is_main:
         print(f"\nPEAK {peak_gib:.2f} GiB allocated, {peak_res_gib:.2f} GiB reserved | "
               f"{tok_s_gpu / 1e3:.1f}K tok/s/gpu over {a.steps} timed steps "
@@ -1098,7 +1132,9 @@ def main():
     # decides that. Per-GPU, so an arm run on a different card count is still comparable -- the
     # 300M A/B runs on 4 while the p200m numbers came from 4 and the ladder from 7.
     med = _stats(steps)
-    tok_step = B * train.Cfg.accum * SEQ
+    # tok_step is computed ONCE, at the --peak-only readout above, and reused here. Two
+    # assignments of the same quantity is how the two paths came to disagree in the first place:
+    # this one was right and the printed one dropped accum, and nothing compared them.
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.d,
