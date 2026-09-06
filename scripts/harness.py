@@ -10541,12 +10541,26 @@ def cmd_friction(argv):
         # table for every correction and make the top cause look less frequent than it was.
         resolutions = [r for r in rows if r.get("kind") == "resolution"]
         rows = [r for r in rows if r.get("kind") != "resolution"]
+
+        def _mechanism(cause):
+            """The mechanism behind a free-text cause, stripping variable detail.
+
+            AUPAI_BEHIND_MAIN_OK=1 used to commit N behind main (files) is one
+            mechanism regardless of N or the file list. Grouping by the raw cause
+            text fragments it into one row per (N, file-list) pair, hiding that it
+            is the top toll (34 rows across 10 variants on 2026-09-06)."""
+            if cause.startswith("AUPAI_BEHIND_MAIN_OK="):
+                return "AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main)"
+            return cause
+
         by_cause = {}
         for r in rows:
             c = (r.get("cause") or "?")
-            d = by_cause.setdefault(c, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
-                                        "fixed": 0, "last": ""})
+            mech = _mechanism(c)
+            d = by_cause.setdefault(mech, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
+                                           "fixed": 0, "last": "", "causes": set()})
             d["n"] += 1
+            d["causes"].add(c)
             if isinstance(r.get("minutes_lost"), int):
                 d["min"] += r["minutes_lost"]
                 d["reported"] += 1
@@ -10554,20 +10568,29 @@ def cmd_friction(argv):
             if r.get("fix_applied"):
                 d["fixed"] += 1
             d["last"] = max(d["last"], r.get("when") or "")
-        print(f"{len(rows)} row(s), {len(by_cause)} cause(s), {len(resolutions)} resolution(s) "
+        print(f"{len(rows)} row(s), {len(by_cause)} mechanism(s), {len(resolutions)} resolution(s) "
               f"-- most rows first\n")
         for c, d in sorted(by_cause.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
             mins = (f"~{d['min']} min (self-reported, {d['reported']}/{d['n']} rows)"
                     if d["reported"] else "minutes not reported")
             print(f"{d['n']:>3}x  {','.join(sorted(d['kinds'])):<14} {mins}")
             print(f"      {c}")
+            if len(d["causes"]) > 1:
+                variants = sorted(v for v in d["causes"] if v != c)
+                for v in variants[:5]:
+                    print(f"        variant: {v[:100]}")
+                if len(variants) > 5:
+                    print(f"        ... and {len(variants) - 5} more variant(s)")
             print(f"      {d['fixed']}/{d['n']} row(s) carry a fix; last {d['last']}")
             # PRINT THE SUPERSESSION UNDER THE CAUSE IT CORRECTS, not in a section of its own.
             # A resolution row filed away elsewhere leaves the refuted mechanism as the first
             # and last thing a reader sees -- which is the §159 shape: the retraction was
             # written down, in a place that did not reach the site that published the number.
+            # Match against the RAW causes, not the mechanism key: a supersession names a
+            # specific variant ("16 behind main") that the normalized key does not contain.
             for r in resolutions:
-                if (r.get("supersedes_cause") or "").lower() in c.lower():
+                sc = (r.get("supersedes_cause") or "").lower()
+                if any(sc in vc.lower() for vc in d["causes"]):
                     print(f"      SUPERSEDED {r.get('when')} by {r.get('who')}: "
                           f"{r.get('now_known')}")
                     if r.get("fixed_by"):
