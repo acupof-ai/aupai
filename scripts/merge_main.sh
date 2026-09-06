@@ -506,7 +506,8 @@ for _ in $(seq 1 120); do
     # A DIRTY LEDGER ABORTS THE MERGE BEFORE IT STARTS, and git's own advice for it is `git
     # stash`, which is forbidden here (.git/refs/stash is shared across every worktree).
     # Naming the order costs three lines and is the whole recovery: commit the ledger row
-    # path-scoped FIRST -- those files are merge=union, so a row commits cleanly on its own and
+    # path-scoped FIRST -- git can merge those without a person (merge=union, or prereg.jsonl's
+    # key-union driver), so a row commits cleanly on its own and
     # the pre-commit behind-main refusal exempts a union-only commit -- and merge after. Doing
     # it the other way round means letting `friction add` commit mid-merge, which is the
     # dirty-during-commit shape the flip exists to remove (3b, 2026-09-05).
@@ -517,8 +518,8 @@ for _ in $(seq 1 120); do
     if [ -n "$_dirty" ]; then
       echo "merge_main: uncommitted changes will abort the merge:" >&2
       echo "$_dirty" | sed 's/^/    /' >&2
-      echo "  If these are ledger rows (runs/*.jsonl, merge=union), commit them ALONE first," >&2
-      echo "  then re-run: git commit -m '<msg>' -- <the ledger file>" >&2
+      echo "  If these are ledger rows (runs/*.jsonl -- union, or prereg's key-union driver)," >&2
+      echo "  commit them ALONE first, then re-run: git commit -m '<msg>' -- <the ledger file>" >&2
       echo "  A union-only commit is exempt from the behind-main refusal, so this works from" >&2
       echo "  a stale worktree. Do NOT git stash: .git/refs/stash is shared with every peer." >&2
       echo "  main is unmoved at ${_old:0:8}." >&2
