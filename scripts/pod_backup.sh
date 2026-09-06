@@ -146,7 +146,21 @@ if [ "${1:-}" = "--dry-run" ]; then
 fi
 
 mkdir -p "$DEST"
-rsync -a --files-from="$list" "$SRC/" "$DEST/"
+# IDLE-PRIORITY, so this stops competing with the work it exists to protect. 84 GB of rsync
+# shares /dev/vda2 with whatever is running: b0's 6 GB torch.load and domain_loss pass, and a
+# launch reading ~150 GB of token caches before its first step. Those are one-shot
+# measurements and a frozen launch window; a backup is neither and loses nothing by being
+# slow (b0's read, 4c's ruling, 2026-09-06). Without this the backup has to be SCHEDULED
+# around other work, which is a coordination cost paid forever instead of one flag.
+#
+# `ionice -c3` is idle I/O class, `nice -n 10` is CPU. Both verified present on the pod
+# (/usr/bin/ionice, /usr/bin/nice); the `command -v` guard keeps the script runnable on a
+# machine without them rather than failing the backup over a scheduling nicety.
+_pri=""
+if command -v nice >/dev/null 2>&1 && command -v ionice >/dev/null 2>&1; then
+  _pri="nice -n 10 ionice -c3"
+fi
+$_pri rsync -a --files-from="$list" "$SRC/" "$DEST/"
 
 # MANIFEST LAST, and only after rsync exits 0 (set -e). It is what check_root_durable reads,
 # so writing it before the copy would stamp a backup that did not finish -- the same ordering
