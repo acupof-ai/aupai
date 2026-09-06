@@ -12695,9 +12695,10 @@ def check_getattr_cfg_names_exist(root):
 def _broken_getattr_cfg_names():
     """The REAL train.py with one getattr name misspelled -- mutated, not hand-written.
 
-    `attn_res_lr` at :756 is the benign instance the docstring cites, so breaking exactly
-    it makes the broken world the same shape as the defect: a real field name, off by a
-    suffix, with a plausible default beside it."""
+    `getattr(cfg, "attn_res_lr", 0.01)` in the AttnRes optimizer group is the benign
+    instance the docstring cites, so breaking exactly it makes the broken world the same
+    shape as the defect: a real field name, off by a suffix, with a plausible default
+    beside it."""
     import shutil
 
     d = _tmp_repo_shaped()
@@ -12713,126 +12714,161 @@ def _broken_getattr_cfg_names():
     return d
 
 
-#: The `train.py:<N>` citations that already point at a line which cannot support any
-#: claim -- a blank line, an import, a bare comment or delimiter. A RATCHET, like
-#: _ENV_FP_BASELINE: the count may shrink, never grow, and a NEW dead citation FAILs.
-#: A file, not a literal here, because the fixes land in 10+ files owned by other
-#: sessions and each owner shrinks the list as they land theirs; a literal in this
-#: source would make every one of those a harness.py edit.
+#: The `train.py:<N>` citations that are ALLOWED to keep a bare line number, because the
+#: 2026-09-06 conversion could not reach them. A RATCHET, like _ENV_FP_BASELINE: the list
+#: may shrink, never grow. A file, not a literal here, so an owner shrinking it does not
+#: have to edit harness.py.
 _CITE_BASELINE = os.path.join("data", "train_cite_baseline.json")
 _CITE_RE = re.compile(r"train\.py:(\d+)")
+#: A 7+ hex run in the same sentence anchors the number to a frozen tree. `[0-9a-f]{7,40}`
+#: with a word boundary either side: a sha, not the tail of a longer hex string, and not a
+#: decimal number (a bare `1234567` matches [0-9a-f]{7} and is not a sha, so at least one
+#: letter is required).
+_CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
 
 
-def _cite_hopeless(target):
-    """Why a cited line cannot support ANY claim, or None if a reader must rule.
+def _cite_sentence(line, pos):
+    """The sentence a citation at `pos` sits in, for the sha search.
 
-    Only the mechanical cases. Whether line 314 supports the claim beside it is a
-    judgement; whether line 314 is blank is not."""
-    t = target.strip()
-    if not t:
-        return "blank"
-    if re.match(r"^(import|from)\s", t):
-        return "an import"
-    if t in ("#", '"""', "'''"):
-        return "a bare delimiter"
-    return None
+    Sentence, not line: the ruling says "the same sentence names a sha", and a comment
+    wraps across lines, so a line-scoped search would miss a sha one line below the number
+    and a whole-file search would accept a sha from an unrelated paragraph. Bounded by
+    sentence punctuation, falling back to the line when there is none."""
+    left = max((line.rfind(c, 0, pos) for c in (". ", "; ", "! ")), default=-1)
+    right = min((r for r in (line.find(c, pos) for c in (". ", "; ", "! ")) if r != -1),
+                default=len(line))
+    return line[left + 1:right]
 
 
 def check_train_cite_targets(root):
-    """Every `train.py:<N>` citation points at a line that could support a claim.
+    """A `train.py:<N>` citation is anchored to a commit sha, or it does not exist.
 
-    train.py is ~4000 lines and every session edits it, so a line number written into a
-    comment, an assertion message or a docstring rots the moment someone inserts above it.
-    Found by hand three times on 2026-09-06 -- e1 fixed a diagnosis string with two dead
-    numbers, then three more in the same two files, then four more beside those -- and each
-    hand-count missed the next round, which is what a check is for.
+    train.py is 3996 lines and every session edits it, so a line number in a comment, an
+    assertion message or a docstring rots on the next insertion above it. MEASURED
+    2026-09-06 by auditing all 198 citations in the tree -- one reader per file, then one
+    adversarial refuter per rot verdict: 103 rotten, 15 correct. The rot is not carelessness
+    at the margin, it is the default state of the form. `train.py:2315` was cited four times
+    and all four rotted together, because citations cluster on build_mix's plan block, which
+    is the region that moves most.
 
-    Only the MECHANICAL half is enforced here: a citation pointing at a blank line, an
-    import, or a bare `#` cannot support any claim, whatever it says. Measured at
-    9851b797: 210 citations, 18 of them mechanically dead. What the class looks like,
-    written WITHOUT the citation form so this docstring is not itself a citation: two
-    sites in this file cite train.py line 2168 for "writes the run-end checkpoint" and
-    that line is blank -- the save is at line 3987; test_arch_compat.py cites line 135
-    twice, which is `from model import (`.
+    So the form is banned rather than repaired (aupai-4c ruling, 2026-09-06): cite a role or
+    a symbol -- `train.py's build_mix`, `Cfg.anneal_frac in the Cfg body`, `the rolling-save
+    pruner's glob` -- which survives an insertion. A repoint buys until the next edit; a
+    symbol does not rot at all.
+
+    THE ONE EXCEPTION, and it is load-bearing: a line number qualified by a commit sha in
+    the same sentence cannot rot, because the tree it resolves against is frozen in the
+    citation itself. Two such citations were converted in 59245542 and had to be reverted --
+    both were describing a defect's PRE-FIX state, so repointing them at HEAD made the
+    sentence contradict the line it cited and destroyed the only pointer to the state that
+    justified the guard. `git show 169da865:train.py | sed -n 1963p` still returns the
+    quoted text character-for-character. Without this carve-out the check would ban the one
+    spelling that is permanently correct, and the conversion would destroy evidence.
+
+    A sha-anchored citation is verified AT its sha: `git show <sha>:train.py`, and the line
+    must exist and be non-blank there. An anchor nobody can resolve is not an anchor.
 
     WHICH POSITIVES THIS DELIBERATELY MISSES, named before writing it rather than after:
-      - a citation pointing at real code that is simply the WRONG code. That is the larger
-        population -- 118 of the 148 need a reader -- and it is not decidable here. The
-        2026-09-06 audit ruled those by hand; a scan cannot.
-      - a range citation `train.py:2736-2760` is judged on its FIRST line only, because a
-        range whose start is real and whose body has shifted is the same undecidable case.
-      - citations in docs/ and in .md files, which `doc_commands_exist` and the prereg
-        checks already cover on their own terms.
-      - a citation of a line that is a comment WITH text: a comment is frequently the
-        subject being cited (a comment at line 2075 states what value save_checkpoint
-        writes), so flagging it would refuse the correct usage."""
+      - a citation pointing at real but WRONG code, once the number is gone. Naming a symbol
+        that exists but is not the one the claim is about is still undecidable here; that is
+        what the audit's readers were for.
+      - `model.py:<N>`, `sft.py:<N>` and every other file. train.py is the measured case:
+        3996 lines, edited by every session. Widening to files nobody has audited would
+        assert a rate that has not been measured.
+      - a bare `:NNN` with no filename (`a real field at :221`). It cannot be told from a
+        column number or a version string without knowing the sentence's subject. One such
+        citation was in this file and was found by reading, not by this check.
+      - citations in docs/ and .md files, which the prereg and fact-ref checks cover on
+        their own terms."""
     train = os.path.join(root, "train.py")
     if not os.path.exists(train):
         return SKIP, "no train.py here"
     lines = open(train, encoding="utf-8", errors="replace").read().splitlines()
     try:
         with open(os.path.join(root, _CITE_BASELINE), encoding="utf-8") as f:
-            baseline = set(json.load(f)["dead"])
+            baseline = set(json.load(f)["allowed_bare"])
     except (OSError, ValueError, KeyError):
         baseline = set()
-    dead, n = [], 0
+    bad, n, anchored = [], 0, 0
+    sha_cache = {}
     for p, txt in walk_tracked(root, (".py", ".sh")):
         rel = os.path.relpath(p, root)
         for i, line in enumerate(txt.splitlines(), 1):
             for m in _CITE_RE.finditer(line):
                 n += 1
                 num = int(m.group(1))
-                target = lines[num - 1] if 0 < num <= len(lines) else ""
-                why = "past EOF" if not (0 < num <= len(lines)) else _cite_hopeless(target)
-                if why and f"{rel}:{i}->{num}" not in baseline:
-                    dead.append(f"{rel}:{i} cites train.py:{num} which is {why}")
-    if dead:
-        return FAIL, (f"{len(dead)} citation(s) of train.py point at a line that cannot support "
-                      f"any claim (baseline {len(baseline)}): {'; '.join(dead[:4])}")
-    return PASS, (f"{n} train.py citation(s); {len(baseline)} known-dead baselined, "
-                  f"no new ones")
+                key = f"{rel}:{i}->{num}"
+                sha = _CITE_SHA_RE.search(_cite_sentence(line, m.start()))
+                if sha:
+                    anchored += 1
+                    s = sha.group(0)
+                    if s not in sha_cache:
+                        r = subprocess.run(["git", "show", f"{s}:train.py"], cwd=root,
+                                           capture_output=True, text=True)
+                        sha_cache[s] = (r.stdout.splitlines() if r.returncode == 0 else None)
+                    at = sha_cache[s]
+                    if at is None:
+                        bad.append(f"{key} names sha {s}, which this repo cannot resolve")
+                    elif not (0 < num <= len(at)) or not at[num - 1].strip():
+                        bad.append(f"{key} is blank or absent in train.py at {s}")
+                    continue
+                if key in baseline:
+                    continue
+                target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
+                bad.append(f"{key} is a bare line number (now holds {target[:44]!r}) -- "
+                           f"cite the symbol, or anchor it to a sha")
+    if bad:
+        return FAIL, (f"{len(bad)} train.py citation(s) carry a line number with no commit sha "
+                      f"(baseline {len(baseline)}): {'; '.join(bad[:4])}")
+    return PASS, (f"{n} train.py citation(s): {anchored} sha-anchored and verified at their sha, "
+                  f"{len(baseline)} baselined bare, no new bare ones")
 
 
 def _broken_train_cite_targets():
-    """The REAL train.py with one CITED line blanked -- mutated, not hand-written.
+    """A REAL tracked file with one sha-anchored citation stripped of its sha.
 
-    Picks a line that some tracked file actually cites and that currently holds code, so
-    the world is the exact shape of the defect: the citation was right when written and a
-    later edit emptied the line under it."""
+    Mutated, not hand-written, and the mutation is the exact shape of the defect the ruling
+    names: a citation that was anchored loses its anchor and becomes a bare line number
+    against a file that moves. Stripping the sha from a real citation also proves the
+    carve-out is doing work -- if the check ignored the sha, this world would stay green."""
     import shutil
 
     d = _tmp_repo_shaped()
-    real_train = os.path.join(d, "train.py")
-    if os.path.islink(real_train):
-        os.unlink(real_train)
-    shutil.copy(os.path.join(ROOT, "train.py"), real_train)
-    lines = open(real_train, encoding="utf-8").read().splitlines()
-    try:
-        with open(os.path.join(ROOT, _CITE_BASELINE), encoding="utf-8") as f:
-            baseline = set(json.load(f)["dead"])
-    except (OSError, ValueError, KeyError):
-        baseline = set()
     victim = None
     for p, txt in walk_tracked(ROOT, (".py", ".sh")):
         rel = os.path.relpath(p, ROOT)
+        if rel.startswith("data/"):
+            continue
         for i, line in enumerate(txt.splitlines(), 1):
-            for m in _CITE_RE.finditer(line):
-                num = int(m.group(1))
-                if not (0 < num <= len(lines)):
-                    continue
-                if _cite_hopeless(lines[num - 1]):
-                    continue
-                if f"{rel}:{i}->{num}" in baseline:
-                    continue
-                victim = num
-                break
-            if victim:
+            m = _CITE_RE.search(line)
+            if not m:
+                continue
+            sha = _CITE_SHA_RE.search(_cite_sentence(line, m.start()))
+            if sha:
+                victim = (rel, i, line, sha.group(0))
                 break
         if victim:
             break
-    assert victim, "no live train.py citation left to break; the world has no subject"
-    lines[victim - 1] = ""
-    open(real_train, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    assert victim, "no sha-anchored train.py citation in the tree; the world has no subject"
+    rel, i, line, sha = victim
+    dst = os.path.join(d, rel)
+    if os.path.islink(dst) or os.path.exists(dst):
+        # The shaped world SYMLINKS scripts/ to the real tree, so the file must be replaced
+        # by a temp-local copy or the mutation would edit the repo (de, 2026-09-01).
+        parent = os.path.dirname(dst)
+        if os.path.islink(parent):
+            os.unlink(parent)
+            os.makedirs(parent, exist_ok=True)
+            for f in os.listdir(os.path.join(ROOT, os.path.dirname(rel))):
+                src = os.path.join(ROOT, os.path.dirname(rel), f)
+                if os.path.isfile(src):
+                    shutil.copy(src, os.path.join(parent, f))
+        elif os.path.islink(dst):
+            os.unlink(dst)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+    src_lines = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read().splitlines()
+    src_lines[i - 1] = line.replace(sha, "an earlier commit")
+    open(dst, "w", encoding="utf-8").write("\n".join(src_lines) + "\n")
     return d
 
 

@@ -324,7 +324,8 @@ def main():
     #
     # THE DEFECT, and why checks 1-9 could not see it: they build the module in the default fp32
     # and feed it fp32, so mat_a.dtype == mat_b.dtype and _grouped_mm is satisfied. The run casts
-    # the model to bf16 (train.py:2743) and wraps the step in bf16 autocast (train.py:3064), and
+    # the model to bf16 (train.py's `raw_model = raw_model.to(torch.bfloat16)` under --fp8/--bf16) and wraps the
+    # step in bf16 autocast (train.py's `torch.autocast(device_type="cuda", dtype=amp_dtype`), and
     # autocast covers nn.Linear but NOT _grouped_mm -- so the routed path received fp32
     # activations against bf16 experts and dynamo's meta for aten._grouped_mm refused:
     #

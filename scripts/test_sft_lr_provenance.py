@@ -2,7 +2,7 @@
 """sft_math.py records what it was asked to do, and --stop_after does not touch the schedule.
 
 Both properties exist because of one hole: ckpt_control_ours.pt's lr_scale is unrecoverable.
-train.py:848 applies the scale inside set_schedule (initial_lr * lr_scale * m), so it reached
+train.py's set_schedule applies the scale as initial_lr * lr_scale * m, so it reached
 neither Cfg nor any log, and the checkpoint whose held-out loss divides every number in
 docs/audits/control_pythia160m_vs_ours.md cannot say what lr produced it. The argparse default
 being 0.1 is not evidence of what ran.
@@ -37,7 +37,7 @@ RESUMED_WARMUP, RESUMED_WARMDOWN = 300, 0.1
 
 def lr_mult(step, total, warmup=CFG_DEFAULT_WARMUP, warmdown=CFG_DEFAULT_WARMDOWN,
             final_lr_frac=0.05):
-    """train.py:1823 restated. Restated deliberately: importing train.py pulls torch and CUDA
+    """train.py's lr_mult restated. Restated deliberately: importing train.py pulls torch and CUDA
     into a source-level test, and the point here is the ARITHMETIC of total, which is stable."""
     if step < warmup:
         return (step + 1) / warmup

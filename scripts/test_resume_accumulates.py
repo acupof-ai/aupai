@@ -10,9 +10,9 @@ This asserts the property those two lines break:
     a checkpoint's row_cursor must count every row the RUN has consumed,
     not only the rows the current segment drew
 
-train.py:1387  rows_done = (step - _origin) * _batch * _accum
-train.py:2309  Cfg._plan_step_origin = resume_step
-train.py:1906  used[name] = int(row_cursor[name])        # assignment, not accumulation
+rows_done = (step - _origin) * _batch * _accum      -- in train.py's save_checkpoint
+Cfg._plan_step_origin = resume_step                 -- in train.py's main, the resume block
+used[name] = int(row_cursor[name])                  -- in train.py's build_mix, assignment not accumulation
 
 So a checkpoint written after a resume describes that resume, and every earlier segment is
 invisible in it. MEASURED on p500m_20b_0902 (facts/data_scaling.json#ds.second_resume_
