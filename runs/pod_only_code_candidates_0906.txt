@@ -20,7 +20,9 @@
 #
 # live-proc refs: 0 (ps aux scanned; only defunct python zombies).
 # runs/*.log refs: 0 (grep -lF basename; 'harness' control matched, basenames did not).
-# DELETE NOTHING. Disposal (fb ruling 2026-09-06): no session deletes anything on the pod without
+# DELETED 2026-09-06T12:2xZ by fb on the user's instruction ("检查一下之后清楚", 12:1xZ): all 42 rows re-verified on the pod
+# (exist, untracked on main 72f85817, 0 live procs, 0 runs/*.sh|*.log citations) and removed by exact path; filters/__init__.py left in place.
+# Prior ruling, kept for the record: DELETE NOTHING. Disposal (fb ruling 2026-09-06): no session deletes anything on the pod without
 # the user's explicit instruction naming the target (user order 2026-09-05). This list is the record;
 # fb puts the 42 to the user as one question when the run results go up. Reviewer: de.
 
