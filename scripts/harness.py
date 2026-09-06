@@ -10075,6 +10075,45 @@ def _read_tasks(path=None, raw=False):
     return list(folded.values())
 
 
+def _ids_at_every_ref(owner, root=None):
+    """Every `<owner>-<n>` id present at ANY ref in the common git dir, as a set of ints.
+
+    THE WORKING TREE IS NOT THE POPULATION. `task add` allocated max+1 over the rows it could
+    SEE, which is this branch's file; a peer's allocation on their own branch is invisible
+    until they merge, so two sessions hand out the same id and the union merge keeps both
+    rows. Four collisions on 2026-09-06, plus one id (tilerl-30) that both 4c and I used in
+    messages for an hour and that no row ever carried.
+
+    Refs, not branches: refs/heads/* covers peers' branches, and a ref this clone has fetched
+    but not checked out still holds ids that were really handed out. A ref whose tree has no
+    register contributes nothing rather than erroring -- an old branch from before the file
+    existed is not evidence of anything.
+    """
+    r = subprocess.run(["git", "for-each-ref", "--format=%(refname)"],
+                       cwd=root or ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None  # not a repo, or git is unusable: the caller must not silently allocate
+    pat = re.compile(rf"{re.escape(owner)}-(\d+)$")
+    seen = set()
+    rel = os.path.relpath(TASKS_PATH, ROOT)
+    for ref in r.stdout.split():
+        blob = subprocess.run(["git", "show", f"{ref}:{rel}"],
+                              cwd=root or ROOT, capture_output=True, text=True)
+        if blob.returncode != 0:
+            continue
+        for line in blob.stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                rid = json.loads(line).get("id", "")
+            except json.JSONDecodeError:
+                continue  # a torn line at some ref is not worth failing an allocation over
+            m = pat.fullmatch(rid or "")
+            if m:
+                seen.add(int(m.group(1)))
+    return seen
+
+
 def _append_task(row, path=None):
     """One event. Append, never rewrite: see _read_tasks.
 
@@ -10303,17 +10342,25 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None, resolved=N
                 f"the commit does not deliver what the evidence claims "
                 f"(tokens read as paths: {tried[:5]})")
     for fname, fid in fact_refs:
-        r = subprocess.run(g + ["show", f"HEAD:facts/{fname}.json"],
+        # THE INDEX, NOT HEAD. This check runs from the pre-commit hook, where the content the
+        # commit will carry is staged and HEAD is the parent. Reading HEAD made a MERGE that
+        # brings the cited fact in fail at the exact moment it resolves the citation: de,
+        # 2026-09-06, e1-44 citing eff.moe48_dense_step_cost_ratio -- absent at HEAD, present
+        # at MERGE_HEAD and in the index, so `git merge main` could not be committed by anyone
+        # until the fact reached HEAD, which only that commit could do. `git show :<path>` is
+        # the staged blob and equals HEAD's for an unmodified file, so CI reads the same thing.
+        r = subprocess.run(g + ["show", f":facts/{fname}.json"],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            return f"evidence cites facts/{fname}.json#{fid} but that file is not at HEAD"
+            return f"evidence cites facts/{fname}.json#{fid} but that file is not in the index"
         try:
             ids = {e.get("id") for e in json.loads(r.stdout).get("facts", [])}
         except ValueError:
-            return f"evidence cites facts/{fname}.json#{fid} but that file is not valid JSON at HEAD"
+            return (f"evidence cites facts/{fname}.json#{fid} but that file is not valid JSON "
+                    f"in the index")
         if fid not in ids:
             return (f"evidence cites facts/{fname}.json#{fid} but that id is not in the file "
-                    f"at HEAD -- the citation does not resolve")
+                    f"being committed -- the citation does not resolve")
     when = _main_when(root).get(full, "")
     if closed and closed >= "2026-09-02" and when and when > closed[:16] + ":59":
         return (f"{sha[:8]} was committed at {when}, after the row closed at {closed} -- "
@@ -10403,8 +10450,28 @@ def cmd_task(argv):
         # Owner-scoped ids: a global max+1 collides when two branches allocate
         # concurrently and the union merge keeps both (t52 twice, 2026-08-31).
         # <owner>-<n> is collision-free across branches; existing t-ids stay.
-        n = max([int(r["id"].split("-", 1)[1]) for r in rows
-                 if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))] or [0]) + 1
+        #
+        # ACROSS EVERY REF, not this tree's file. Owner-scoping fixed collisions BETWEEN
+        # owners and left the ones within one owner: two sessions running as `tilerl` on
+        # different branches each read their own register, each computed the same max+1, and
+        # both used it. Four such collisions on 2026-09-06, plus tilerl-30, an id used in
+        # messages for an hour that no row ever carried.
+        #
+        # WHY THIS IS AN ALLOCATION FIX AND NOT A REFUSAL. 4c asked for "refuse on collision,
+        # never renumber". Refusing here is unreachable: the candidate is max+1 over the very
+        # set it would be tested against, so it is free by construction. What the scan really
+        # buys is that a peer's COMMITTED-BUT-UNMERGED allocation is now in that set. The
+        # residual race -- two sessions allocating in the same instant, neither committed --
+        # no scan can see, and it is caught after the fact by check_tasks_well_formed, which
+        # FAILs on two rows sharing an id with different tasks.
+        local = [int(r["id"].split("-", 1)[1]) for r in rows
+                 if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))]
+        everywhere = _ids_at_every_ref(args.owner)
+        if everywhere is None:
+            print("refusing: cannot enumerate refs, so an id cannot be shown to be free",
+                  file=sys.stderr)
+            return 1
+        n = max(sorted(everywhere) + local or [0]) + 1
         if args.pair == args.owner:
             print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
             return 1
@@ -16717,11 +16784,32 @@ def _selftest_commit_delivers_fact_ref():
         why = _commit_delivers(sha, "scripts/nonexistent_xyz.py", d)
         assert "tokens read as paths" in why and "scripts/nonexistent_xyz.py" in why, \
             f"the refusal does not name the tokens tried: {why}"
+        # THE MID-MERGE WORLD, which is the only one that separates HEAD from the index. Every
+        # world above commits first, so HEAD and the index agree and both readings pass -- the
+        # reason reading HEAD survived until it blocked a real merge (de, 2026-09-06: `git merge
+        # main` brought eff.moe48_dense_step_cost_ratio in, the check read HEAD where it was
+        # still absent, and no session could complete the merge that would have added it).
+        # Stage a NEW id without committing: at HEAD it does not exist, in the index it does.
+        fp = os.path.join(d, "facts", "efficiency.json")
+        json.dump({"facts": [{"id": "eff.real", "status": "measured"},
+                             {"id": "eff.staged_only", "status": "measured"}]}, open(fp, "w"))
+        sh("add", "facts/efficiency.json")
+        assert "eff.staged_only" not in sh("show", "HEAD:facts/efficiency.json").stdout, \
+            "world invalid: the new id must be absent at HEAD or this world tests nothing"
+        assert "eff.staged_only" in sh("show", ":facts/efficiency.json").stdout, \
+            "world invalid: the new id must be present in the index"
+        why = _commit_delivers(sha, "facts/efficiency.json#eff.staged_only", d)
+        assert why == "", f"a staged-but-uncommitted fact id was refused (reads HEAD, not the index): {why}"
+        # ...and the same world must still catch an id that is in NEITHER, or the fix above is
+        # just a disabled check.
+        why = _commit_delivers(sha, "facts/efficiency.json#eff.nowhere", d)
+        assert "eff.nowhere" in why, f"an id in neither HEAD nor the index was not caught: {why}"
     finally:
         import shutil
         shutil.rmtree(d, ignore_errors=True)
     print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path "
-          "unchanged, prose punctuation stripped (6 forms), prose still names no path")
+          "unchanged, prose punctuation stripped (6 forms), prose still names no path, "
+          "staged-not-committed id resolves and an absent one still refuses")
 
 
 def _selftest_review_present_legacy():
@@ -17201,6 +17289,67 @@ def _selftest_register_union():
     assert state == FAIL and "collision" in evidence, f"a real id collision must FAIL: {state} {evidence}"
     shutil.rmtree(d, ignore_errors=True)
     print("  register: union-merged closes fold to done; a same-id different-task row still FAILs")
+
+
+def _selftest_id_allocation_sees_every_ref():
+    """4c's world: two branches allocate from the same base and must get N and N+1.
+
+    THE WORLD IS TWO REAL BRANCHES, not two files. What was broken is specifically that a
+    peer's allocation lives at a ref this tree has not merged, so a fixture that writes both
+    allocations into one file cannot hold the condition -- it would pass against the old
+    tree-only max as well, and prove nothing.
+
+    The mutation control is at the end and it is the point of the test: restoring the old
+    predicate (max over the working tree's rows) must produce the SAME id twice.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="alloc_")
+    def g(*a):
+        return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    g("init", "-q", ".")
+    g("config", "user.email", "t@example.invalid")
+    g("config", "user.name", "t")
+    g("checkout", "-q", "-B", "main")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    rel = os.path.relpath(TASKS_PATH, ROOT)
+    p = os.path.join(d, rel)
+    _write_tasks([{"id": "own-7", "owner": "own", "state": "open", "task": "base"}], p)
+    g("add", "-A"); g("commit", "-q", "-m", "base register")
+
+    # The peer allocates own-8 on THEIR branch and commits it. Nothing merges.
+    g("checkout", "-q", "-b", "peer")
+    _write_tasks(_read_tasks(p) + [{"id": "own-8", "owner": "own", "state": "open",
+                                    "task": "peer's"}], p)
+    g("add", "-A"); g("commit", "-q", "-m", "peer allocates own-8")
+    g("checkout", "-q", "main")  # our tree: own-8 is NOT here and never was
+
+    tree_ids = {r["id"] for r in _read_tasks(p)}
+    assert tree_ids == {"own-7"}, f"the world must hide the peer's row from the tree: {tree_ids}"
+
+    everywhere = _ids_at_every_ref("own", root=d)
+    assert everywhere == {7, 8}, f"the scan must see the peer's unmerged own-8: {everywhere}"
+    ours = max(sorted(everywhere) + [int(r["id"].split("-")[1]) for r in _read_tasks(p)]) + 1
+    assert ours == 9, f"we must allocate own-9, not own-8: {ours}"
+
+    # THE MUTATION: the old predicate, max over the working tree only. It must produce 8 --
+    # the id the peer already holds. Without this the test would pass against the bug.
+    old = max([int(r["id"].split("-")[1]) for r in _read_tasks(p)]) + 1
+    assert old == 8, f"the old tree-only predicate must reproduce the collision: {old}"
+    assert old in everywhere, "the collision is that the old answer is an id already handed out"
+
+    # A ref whose tree predates the register contributes nothing rather than erroring.
+    g("checkout", "-q", "-b", "ancient", "--orphan")
+    g("rm", "-rq", "--cached", ".")
+    open(os.path.join(d, "x.txt"), "w").write("no register here\n")
+    g("add", "x.txt"); g("commit", "-q", "-m", "a branch from before the register")
+    g("checkout", "-q", "main")
+    assert _ids_at_every_ref("own", root=d) == {7, 8}, "a ref with no register must not break the scan"
+
+    shutil.rmtree(d, ignore_errors=True)
+    print("  ids: an unmerged peer allocation at another ref is seen (own-9, not own-8); the "
+          "tree-only max reproduces the collision; a ref with no register is skipped")
 
 
 def _selftest_auto_resume():
@@ -18154,6 +18303,7 @@ def _demo(only=None):
     _selftest_brief()
     _selftest_gate_timeout()
     _selftest_register_union()
+    _selftest_id_allocation_sees_every_ref()
     _selftest_auto_resume()
     _selftest_devs_map()
     _selftest_gpu_descendants()
