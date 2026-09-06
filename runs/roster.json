@@ -12,14 +12,15 @@
   "members": [
     {
       "name": "fb",
-      "socket": "use listagents_name [ref]; the old 1a0b5e socket is dead",
+      "socket": "uds:/tmp/cc-socks/67870.sock",
       "role": "controller",
       "topics": [
         "*"
       ],
-      "note": "rulings, card allocation, launch; the run's supervisor of record",
+      "note": "rulings, card allocation, launch; the run's supervisor of record Socket verified 2026-09-06 12:2xZ: PPID of this session's shell is 67870, cwd /Users/bytedance/code/aupai (integration tree; worktree ../aupai-fb).",
       "listagents_name": "aupai-4c",
-      "listagents_ref": "61638d"
+      "listagents_ref": "61638d",
+      "ref": "61638d"
     },
     {
       "name": "tilerl",
@@ -128,5 +129,5 @@
     "fb": "44",
     "e1": "3b"
   },
-  "refreshed": "2026-09-02T02:10Z by fb: e1 returned"
+  "refreshed": "2026-09-06T12:2xZ by fb: fb socket 67870 recorded (b0 found it absent)"
 }

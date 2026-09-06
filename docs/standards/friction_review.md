@@ -2,6 +2,10 @@
 
 Daily summary of `harness friction` (runs/friction.jsonl), ranked by count then minutes lost. Top two causes get a fix commit or a task; one line per cause. Owner: 44. Reviewer: de.
 
+## Method
+
+`harness friction` groups rows by **mechanism**, not raw cause text. A mechanism normalizes variable detail (N behind main, file lists) into one row; up to 5 raw variants are shown under each for drill-down. Ranking is by row count (most rows first). Minutes are self-reported and shown as `~N min (self-reported, k/n rows)`; when most rows report nothing (n/r), the minutes column is inert for ranking and count is the only signal.
+
 ## 2026-09-04 (43 rows, 38 causes; ran 14:08Z)
 
 Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows without minutes_lost → `check_friction_minutes_required` (baseline 3, FAILs on 4th violation); (2) 1x ff merge runs no pre-commit hook → `scripts/hooks/post-merge` (runs harness check after fast-forward, warns on failure).
@@ -166,6 +170,18 @@ committer-pushes rule not firing: six committers' files on main had not reached 
 ## 2026-09-06 (141 rows, 116 causes; ran 02:5xZ)
 
 Top two unfixed causes are the same mechanism (AUPAI_BEHIND_MAIN_OK=1 overrides): task tilerl-? opened — pre-commit behind-main refusal should auto-merge main (the flip's worktree-first workflow) instead of requiring an override; overrides persist post-flip (42-behind at 22:53Z, 164/169-behind at 02:24Z).
+
+**Aggregated view (method fix a8633d9e):** the table below fragments the top cause into ~15 rows. By mechanism:
+
+| mechanism | n | min lost | resolution |
+|---|---|---|---|
+| AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main) | 85 | ~3 (1/85 reported) | **task tilerl** (this section) |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d86882 |
+| near_miss/process_failure, cause "?" | 3 | n/r | **unfixed** (0/3 rows) |
+| bare train.py launch: no claim, no ledger row, 12 GB unintended ckpt | 1 | ~8 | fix carried (1/1 rows) |
+| bypassed CAS with bare update-ref on refs/heads/main | 1 | ~20 | rule: only merge_main.sh writes main |
+
+The remaining 14 AUPAI_BEHIND_MAIN_OK rows in the table below are variants of the 85-row mechanism (different N-behind and file lists), not separate causes.
 
 | cause | n | min lost | resolution |
 |---|---|---|---|
