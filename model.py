@@ -913,7 +913,24 @@ class MoEFFN(nn.Module):
         # PERSISTENT, and zeros for a checkpoint that predates it (4c's ruling). Not a Parameter:
         # it is not updated by a gradient, so handing it to an optimizer would let weight decay
         # and momentum act on a control-loop variable.
-        self.register_buffer("expert_bias", torch.zeros(self.n_routed), persistent=True)
+        #
+        # fp32 EXPLICITLY, and it is load-bearing rather than tidy. This buffer inherits the
+        # module's dtype otherwise, which is bf16 under --fp8, and bf16's spacing at magnitude
+        # 0.5 is 0.00391 -- FOUR TIMES the gamma 0.001 step. MEASURED on
+        # ckpt_b0_moe48_8b.pt.step1000: 10 of 12 layers had 2-3 DISTINCT bias values left across
+        # 48 experts, i.e. the differential signal that actually routes had been rounded away.
+        # It is 48 floats x 12 layers = 2,304 values, so fp32 costs 9 KiB and buys the
+        # resolution the control loop is built on. A bf16 saved tensor casts into this buffer on
+        # load (verified: dtype stays fp32, values preserved), so old checkpoints still resume.
+        #
+        # THE dtype= ARGUMENT ALONE DOES NOTHING, and saying so here is the whole point: this
+        # buffer was ALREADY fp32 at construction (torch.zeros defaults to fp32), and train.py
+        # :3134 and :3162 both call `raw_model.to(torch.bfloat16)`, which casts every floating
+        # buffer -- so it became bf16 before step 0 either way. That is why the failed run's
+        # checkpoint holds bf16. _apply below is what actually keeps it fp32; the argument is
+        # kept only so the declaration states the intent (4c, reviewing 87ef5985).
+        self.register_buffer("expert_bias", torch.zeros(self.n_routed, dtype=torch.float32),
+                             persistent=True)
         # READOUT 4's counters. Non-persistent: they describe a window, and a resume that restored
         # a half-finished window would report a fraction over a denominator from another run.
         self.register_buffer("tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
@@ -938,6 +955,45 @@ class MoEFFN(nn.Module):
         return self.beta2 * torch.tanh(w2_apply(gate) / self.beta2)
 
     @torch.no_grad()
+    def _apply(self, fn, recurse=True):
+        """Cast/move the module while keeping expert_bias's fp32 VALUES, not just its dtype.
+
+        `raw_model.to(torch.bfloat16)` (train.py:3134 under --fp8, :3162 under --bf16) walks every
+        floating buffer, so register_buffer's `dtype=torch.float32` is overwritten before step 0 --
+        the buffer was already fp32 at construction and became bf16 anyway, which is why
+        ckpt_b0_moe48_8b.pt.step1000 holds bf16. Same trap the store's checksum path records at
+        :608-632 ("THE STORE IS RE-FLOATED"); this is that pattern for the control loop.
+
+        WHY fp32 IS REQUIRED HERE, not preferred: the bias is an accumulator stepped by
+        gamma 0.001, and bf16's spacing at magnitude 0.5 is 0.00391 -- four times the step. On the
+        run that died, 10 of 12 layers had 2-3 distinct values left across 48 experts: the
+        DIFFERENTIAL, which is the only part topk can see, had been rounded away while the
+        common mode kept climbing. 2,304 values, 9 KiB.
+
+        THE ORIGINAL TENSOR IS KEPT, NOT RE-FLOATED AFTER THE FACT, and that distinction is the
+        whole point (4c, reviewing 2f95a797). `fn(eb).float()` restores the DTYPE and has already
+        destroyed the VALUES: fn rounds to bf16's grid first, so .float() returns rounded numbers
+        in an fp32 box and every dtype assertion passes. MEASURED on [0.5, 0.501, 0.502] ->
+        [0.5, 0.5, 0.50390625]: three distinct biases became two, which is exactly the
+        differential collapse this override exists to prevent. train.py loads the checkpoint at
+        :3043 and casts at :3134/:3162 -- LOAD BEFORE CAST -- so that rounding would be applied
+        once per resume to every value the previous run accumulated.
+        So: keep the pre-cast tensor and follow only the DEVICE.
+
+        Hooked at _apply rather than at .to() because .to(), .cuda(), .float() and DDP's own
+        movement all route through here, so a single override covers every path instead of the
+        one call site I happened to look at. This REPLACES the buffer entry rather than mutating
+        in place (an earlier version of this docstring claimed in-place, wrongly); that is safe
+        because every reader reaches the buffer through _buffers/getattr, never through a
+        long-lived reference to the tensor object.
+        """
+        orig = self._buffers.get("expert_bias")
+        out = super()._apply(fn, recurse)
+        if orig is not None:
+            moved = out._buffers["expert_bias"]
+            out._buffers["expert_bias"] = orig.to(device=moved.device, dtype=torch.float32)
+        return out
+
     def update_bias(self, counts):
         """The aux-loss-free bias step: -gamma where overloaded, +gamma where underloaded.
 
@@ -959,6 +1015,23 @@ class MoEFFN(nn.Module):
         mean = counts.float().mean()
         err = counts.float() - mean
         self.expert_bias -= self.gamma * torch.sign(err).to(self.expert_bias.dtype)
+        # ZERO-MEAN BY CONSTRUCTION, and this is a FIX for a measured failure, not a nicety.
+        # sign() returns 0 only on an exact tie, and with 48 experts on integer counts ties are
+        # rare, so the 48 signs almost never cancel: the mean bias moves gamma*(48-2k)/48 per
+        # step for k experts above mean, and any persistent asymmetry INTEGRATES WITHOUT BOUND.
+        # There is no clamp anywhere in this update.
+        #
+        # MEASURED on b0_moe48_8b, steps 500 -> 1000: common mode +0.1067 -> +0.4997 (x4.68,
+        # a drift of 0.786 gamma/step, i.e. only ~5 of 48 experts reading below mean each step)
+        # while the per-layer SPREAD collapsed 0.0992 -> 0.0101 (x0.10). Load gini went 0.0935 ->
+        # 0.5959 and the run was stopped on its pre-registered band at step 1000.
+        #
+        # THE COMMON MODE CANNOT AFFECT ROUTING AT ALL: selection is
+        # `(affinity + expert_bias).topk(top_k)` below, and topk is INVARIANT to a constant added
+        # to every entry. So the runaway term was pure windup -- it did nothing for balance while
+        # consuming the bf16 resolution that the spread needed. Subtracting the mean therefore
+        # changes NO routing decision at the moment it is applied, and stops the integrator dead.
+        self.expert_bias -= self.expert_bias.mean()
 
     def forward(self, x):
         B, T, d = x.shape
