@@ -59,12 +59,25 @@ ARM_LOGS = ("b0_moe48_8b", "1.5b-a0.2b-e48_8b")
 COMPARATORS = {
     "b0_e1p_dense": "dense 0.2b",
     "b0_e1p_moe48": "MoE-48 at 0.2b batch",
+    # THE RATIO-1 COMPARATOR (e1-46). Same 786,432 tok/step as the arm, so pairing is
+    # step-for-step and no token arithmetic enters; and the same total 10,172, so both sides
+    # enter their warmdown at step 9155 and NO pair is annealed-vs-stable. That is what the
+    # batch-64 comparators cannot give: past their step 3434 one side is annealing, which caps
+    # them at arm step 1144. Registered in runs/prereg.jsonl#matched_batch_dense_0906 before
+    # the arm existed.
+    "0.2b_8b_b192": "dense 0.2b at batch 192 (ratio 1)",
 }
 
 # tok/step, from the cfg line: batch x accum x cards x seq. Asserted against the log, never
 # assumed -- a comparator launched at a different batch would silently break the 3N pairing.
 TOK_PER_STEP = {ARM: 8 * 4 * 6 * 4096, "b0_e1p_dense": 16 * 2 * 2 * 4096,
-                "b0_e1p_moe48": 16 * 2 * 2 * 4096}
+                "b0_e1p_moe48": 16 * 2 * 2 * 4096,
+                "0.2b_8b_b192": 8 * 4 * 6 * 4096}
+
+# Cards each comparator ran on, for the tok/step assertion. The ratio-1 arm is world 6 like the
+# arm itself, not world 2 like the batch-64 pair -- reading it with --cards-cmp 2 would compute
+# 262,144 from a batch-192 cfg line and refuse for the wrong reason.
+CMP_CARDS = {"b0_e1p_dense": 2, "b0_e1p_moe48": 2, "0.2b_8b_b192": 6}
 
 # WSD warmdown fraction, identical in all three arms' cfg lines. train.py:3391 starts the
 # warmdown at `total - max(1, int(warmdown * total))`, so the comparators (total 3815) enter it
@@ -73,11 +86,51 @@ TOK_PER_STEP = {ARM: 8 * 4 * 6 * 4096, "b0_e1p_dense": 16 * 2 * 2 * 4096,
 WARMDOWN_FRAC = 0.1
 
 VAL_RE = re.compile(r"^step (\d+)/(\d+) val ([\d.]+)")
+# train.py:3391 prints this on a WSD join. Reading it beats recomputing: the printed line is
+# what the run's own scheduler used, and a recomputation silently disagrees if warmdown,
+# total_steps or the formula ever differ from what this file assumes.
+WARMDOWN_LINE_RE = re.compile(r"warmdown starts at step (\d+)")
+VAL_EVERY_RE = re.compile(r"val_every (\d+)")
 
 
 def warmdown_start(total):
-    """First step of the cosine tail, by train.py:3391's formula."""
+    """First step of the cosine tail, by train.py:3391's formula.
+
+    The FALLBACK only. Prefer warmdown_from_log: a fresh run prints no WSD-join line (only a
+    resume does), so this is what covers the arm that starts from scratch, and the two must
+    agree wherever both exist -- a selftest world asserts exactly that on the arm's real 9155.
+    """
     return total - max(1, int(WARMDOWN_FRAC * total))
+
+
+def warmdown_from_log(text, total=None):
+    """The warmdown step this log's own scheduler used, or the computed one if it printed none.
+
+    Returns (step, source) so a caller can say which it got. A log that prints the line AND
+    disagrees with the formula is a real finding, not a rounding difference, so it raises:
+    every pair's anneal flag depends on this number and quietly preferring one reading would
+    make the flag describe a schedule nobody ran.
+    """
+    m = WARMDOWN_LINE_RE.search(text)
+    computed = warmdown_start(total) if total else None
+    if not m:
+        if computed is None:
+            raise RuntimeError("no 'warmdown starts at step N' line and no total to compute "
+                               "one from -- the anneal phase cannot be located")
+        return computed, "computed"
+    printed = int(m.group(1))
+    if computed is not None and printed != computed:
+        raise RuntimeError(
+            f"the log prints warmdown starting at step {printed} but total {total} at "
+            f"warmdown {WARMDOWN_FRAC} computes {computed} -- the run used a schedule this "
+            f"file does not model, and every anneal flag would describe the wrong one")
+    return printed, "printed"
+
+
+def parse_val_every(text):
+    """val_every off the cfg line. None when absent."""
+    m = VAL_EVERY_RE.search(text)
+    return int(m.group(1)) if m else None
 
 # The landed pairs, per comparator: {moe_step: gap}. Both sets are pinned because the mixup this
 # script exists to prevent is exactly using one arm's numbers under the other's name.
@@ -88,17 +141,34 @@ KNOWN_ANSWERS = {
 KNOWN_ARM_VAL = {200: 3.465, 400: 2.676, 600: 2.465, 800: 2.384, 1000: 2.321}
 
 
-def pod_read(name):
+def pod_read(name, missing_ok=False):
     """The val lines and the cfg line of <name>.log on the pod, as text.
 
     One pod call per log: ~/bin/pod re-parses its argument, so the command stays a plain grep
     with no parentheses or quoted prose (pod argv cannot carry prose).
+
+    `missing_ok` returns "" for a log that does not exist yet. A COMPARATOR THAT HAS NOT
+    LAUNCHED IS A NORMAL STATE, not an error: 0.2b_8b_b192 was registered before its arm
+    existed, and without this the run crashed with a traceback AFTER printing two correct
+    tables -- the reader gets a stack trace where the answer should be. A read that fails for
+    any other reason still raises.
+
+    THE GREP HAS TO FETCH EVERY LINE THE PARSERS READ, and it did not. warmdown_from_log looks
+    for "warmdown starts at step N", which train.py prints on a WSD join; the grep asked only
+    for val lines and the cfg line, so that line never arrived and the header printed
+    "warmdown at 9155 (computed)" for an arm whose log states 9155 explicitly. The computed
+    fallback agreed here, which is exactly why it went unnoticed -- a silent fallback that
+    happens to be right is indistinguishable from a read that worked.
     """
     cmd = (f"grep -E '^step [0-9]+/[0-9]+ val ' {POD_RUNS}/{name}.log; "
-           f"grep -m1 'cfg batch' {POD_RUNS}/{name}.log")
+           f"grep -m1 'cfg batch' {POD_RUNS}/{name}.log; "
+           f"grep -m1 'warmdown starts at step' {POD_RUNS}/{name}.log")
     r = subprocess.run([POD, cmd], capture_output=True, text=True, timeout=300)
     if r.returncode != 0 and not r.stdout.strip():
-        raise RuntimeError(f"pod read of {name}.log failed: {(r.stderr or '')[:200]}")
+        err = r.stderr or ""
+        if missing_ok and "No such file or directory" in err:
+            return ""
+        raise RuntimeError(f"pod read of {name}.log failed: {err[:200]}")
     return r.stdout
 
 
@@ -159,28 +229,36 @@ def parse_tok_per_step(text, cards):
     return b * acc * cards * seq
 
 
-def pairs(arm_val, cmp_val, ratio, cmp_total=None):
+def pairs(arm_val, cmp_val, ratio, cmp_total=None, cmp_wd=None, arm_wd=None):
     """[(moe_step, tokens, arm_val, cmp_val, gap, tail)] at matched tokens.
 
     Only steps where BOTH sides have a val point: the comparator stops at its own max step, and
     silently dropping the arm's later points would shorten the table without saying so.
 
-    `tail` is True when the COMPARATOR's paired step is inside its own WSD warmdown while the
-    arm is not. That is not a nuisance flag: measured 2026-09-06, the dense comparator's lr is
-    1.00e-02 through step 3400 and 5.41e-04 by 3800, and its val drops 2.259 -> 2.128 over that
-    span -- a fall driven by the decaying lr, not by the tokens. The arm at 10172 total does not
-    reach its own warmdown until step 9155, so any pair past comparator step 3434 compares an
-    annealed model against an un-annealed one. Those pairs are still returned, because dropping
-    them silently is the failure this script exists to prevent, but they are marked.
+    `tail` marks a pair where THE TWO SIDES ARE IN DIFFERENT LR PHASES -- one annealing, the
+    other not. It is symmetric, because with a ratio-1 comparator either side can be the one in
+    its tail, and an arm-only tail would go unflagged if the test only looked at the comparator.
+    Measured 2026-09-06: the dense comparator's lr is 1.00e-02 through step 3400 and 5.41e-04 by
+    3800, and its val drops 2.259 -> 2.128 across that span on the decaying lr rather than on
+    tokens, while the arm at total 10172 stays at stable lr until 9155. Such pairs are returned
+    and marked, never dropped: dropping them silently is the failure this script exists for.
+
+    `cmp_wd`/`arm_wd` are the warmdown steps read from each log's own printed line where it has
+    one (warmdown_from_log). `cmp_total` remains as the fallback for a comparator that printed
+    none. For the ratio-1 arm both sides share total 10,172 and warmdown 9155, so no pair is
+    mixed-phase by construction -- and the count of mixed pairs is therefore a CHECK on that
+    construction, not a nuisance: a non-zero count means the totals diverged.
     """
     out = []
-    wd = warmdown_start(cmp_total) if cmp_total else None
+    wd_c = cmp_wd if cmp_wd is not None else (warmdown_start(cmp_total) if cmp_total else None)
     for s in sorted(arm_val):
         cs = s * ratio
         if cs not in cmp_val:
             continue
+        cmp_annealing = bool(wd_c is not None and cs >= wd_c)
+        arm_annealing = bool(arm_wd is not None and s >= arm_wd)
         out.append((s, s * TOK_PER_STEP[ARM], arm_val[s], cmp_val[cs],
-                    round(arm_val[s] - cmp_val[cs], 4), bool(wd and cs >= wd)))
+                    round(arm_val[s] - cmp_val[cs], 4), cmp_annealing != arm_annealing))
     return out
 
 
@@ -292,31 +370,138 @@ def _selftest():
         "the tail flag fired with no cmp_total, so it is not reading the comparator's total"
     print("  ok   pairs past comparator step 3434 are marked annealed-vs-stable")
 
-    print("\nequal_token_gap selftest OK: both known-answer sets reproduce, the curves are "
-          "distinguishable,\nmatched-step pairing is caught by a sign reversal, the arm's dead "
-          "segment is merged,\nand the comparator's warmdown tail is marked")
-    return 0
-
-    # tok/step comes off the cfg line. The arm's own line must give 786,432 and the comparators'
-    # 262,144: if a future launch changes batch, the 3x ratio is wrong and this catches it.
+    # tok/step comes off the cfg line. The arm's own line must give 786,432 and the batch-64
+    # comparators' 262,144: if a future launch changes batch, the 3x ratio is wrong and this
+    # catches it. THIS WORLD WAS DEAD FROM 06a47515 UNTIL e1-46: my edit for the two-segment fix
+    # inserted its new worlds plus a `return 0` ABOVE this block, so the block sat after a
+    # return and never ran -- and the selftest still printed OK, because a world that does not
+    # execute cannot fail. The tell was in the output all along: no "tok/step is read from the
+    # cfg line" line among the oks. Restored here, and the duplicated closing print that came
+    # with the accident is gone.
     cfg_arm = "cfg batch 8 accum 4 seq 4096 grad_ckpt False"
     cfg_cmp = "cfg batch 16 accum 2 seq 4096 grad_ckpt False"
     assert parse_tok_per_step(cfg_arm, 6) == 786432, parse_tok_per_step(cfg_arm, 6)
     assert parse_tok_per_step(cfg_cmp, 2) == 262144, parse_tok_per_step(cfg_cmp, 2)
     assert parse_tok_per_step("no cfg here", 6) is None
-    print("  ok   tok/step is read from the cfg line: 786,432 vs 262,144, ratio 3")
+    # ...and the ratio-1 comparator's own line, read at ITS card count. Reading a batch-192 cfg
+    # line with the batch-64 pair's 2 cards computes 262,144 and would refuse for the wrong
+    # reason, which is why CMP_CARDS exists rather than one --cards-cmp for every comparator.
+    assert parse_tok_per_step(cfg_arm, CMP_CARDS["0.2b_8b_b192"]) == TOK_PER_STEP["0.2b_8b_b192"]
+    assert parse_tok_per_step(cfg_arm, 2) != TOK_PER_STEP["0.2b_8b_b192"], \
+        "the ratio-1 comparator's cfg line gives its right tok/step at the WRONG card count, " \
+        "so CMP_CARDS is not load-bearing and this world proves nothing"
+    print("  ok   tok/step is read from the cfg line at each comparator's own card count")
 
-    print("\nequal_token_gap selftest OK: both known-answer sets reproduce, the curves are "
-          "distinguishable,\nmatched-step pairing is caught by a sign reversal, and the token "
-          "ratio comes from the logs")
+    n_new = _selftest_ratio1()
+
+    print(f"\nequal_token_gap selftest OK: both known-answer sets reproduce, the curves are "
+          f"distinguishable,\nmatched-step pairing is caught by a sign reversal, the arm's dead "
+          f"segment is merged,\nmixed-phase pairs are marked, and the ratio-1 comparator's "
+          f"{n_new} world(s) hold")
     return 0
+
+
+def _selftest_ratio1():
+    """The ratio-1 comparator (e1-46), on synthetic two-log fixtures.
+
+    Returns the number of worlds asserted, so the closing line cannot claim worlds that were
+    skipped -- the failure the block above this one just demonstrated.
+    """
+    ARM_CFG = "cfg batch 8 accum 4 seq 4096 val_every 200 warmup 300 warmdown 0.1"
+    n = 0
+
+    # THE WARMDOWN STEP COMES FROM THE LOG, NOT FROM MY ARITHMETIC. Both arms print total 10172
+    # and warmdown 9155, so the printed and computed values must agree -- and where they do not,
+    # that is a schedule this file does not model and the read must refuse rather than pick one.
+    txt = ARM_CFG + "\nWSD JOIN: resumed at step 1000/10172 | warmdown starts at step 9155\n"
+    assert warmdown_from_log(txt, 10172) == (9155, "printed")
+    assert warmdown_from_log(ARM_CFG, 10172) == (9155, "computed"), \
+        "a fresh run prints no WSD-join line, so the computed fallback has to cover it"
+    try:
+        warmdown_from_log(txt.replace("step 9155", "step 8000"), 10172)
+        raise AssertionError("a printed warmdown disagreeing with the formula was accepted")
+    except RuntimeError as e:
+        assert "does not model" in str(e), str(e)
+    n += 3
+    print("  ok   warmdown is read from the log's printed line, computed only when absent, "
+          "and a disagreement refuses")
+
+    # NO PAIR IS MIXED-PHASE, BY CONSTRUCTION, and the count is the check on that. Both sides
+    # share total 10,172 and warmdown 9155, so every pair is stable-vs-stable or tail-vs-tail --
+    # including one at step 9200, inside BOTH warmdowns, which must NOT be flagged.
+    arm = {200: 3.465, 1000: 2.321, 9200: 1.900, 10000: 1.850}
+    cmp_ = {200: 2.900, 1000: 2.250, 9200: 1.880, 10000: 1.840}
+    rows = pairs(arm, cmp_, 1, cmp_total=10172, cmp_wd=9155, arm_wd=9155)
+    assert [r[0] for r in rows] == [200, 1000, 9200, 10000], [r[0] for r in rows]
+    assert not any(r[5] for r in rows), \
+        f"a mixed-phase flag fired on two arms that anneal together: {[(r[0], r[5]) for r in rows]}"
+    assert rows[0][4] == round(3.465 - 2.900, 4), rows[0][4]
+    assert rows[0][1] == 200 * 786432, rows[0][1]
+    n += 4
+    print("  ok   ratio 1: every val point pairs step-for-step and none is mixed-phase, "
+          "including a pair inside both warmdowns")
+
+    # THE FLAG IS SYMMETRIC, which the batch-64 world could not show: there the comparator was
+    # always the one annealing. If the arm alone is in its tail, that pair is mixed too, and a
+    # one-sided test would pass a comparison of an annealing arm against a stable comparator.
+    only_arm = pairs({9200: 1.9}, {9200: 1.88}, 1, cmp_wd=None, cmp_total=None, arm_wd=9155)
+    assert only_arm[0][5], "the arm being alone in its warmdown was not flagged"
+    only_cmp = pairs({9200: 1.9}, {9200: 1.88}, 1, cmp_wd=9155, arm_wd=None)
+    assert only_cmp[0][5], "the comparator being alone in its warmdown was not flagged"
+    n += 2
+    print("  ok   the mixed-phase flag is symmetric: either side alone in its tail is marked")
+
+    # A val_every MISMATCH REFUSES. 100 against 200 would pair on the arm's grid and drop half
+    # the comparator's points without saying so -- the exact shape of this script's own defect.
+    assert parse_val_every(ARM_CFG) == 200
+    assert parse_val_every(ARM_CFG.replace("val_every 200", "val_every 100")) == 100
+    assert parse_val_every("no cfg") is None
+    n += 3
+    print("  ok   val_every is parsed from each cfg line, so a mismatch is detectable")
+
+    # AND THE NEGATIVE WORLD 4c ASKED FOR: a comparator whose tok/step differs must refuse the
+    # pairing rather than pair on a ratio it computed from the wrong batch. A batch-4 cfg line
+    # at 6 cards is 393,216 -- exactly half -- so integer division would give ratio 2 and pair
+    # arm step N against comparator step 2N, a table that looks fine and compares nothing.
+    bad = parse_tok_per_step("cfg batch 4 accum 4 seq 4096 val_every 200", 6)
+    assert bad == 393216, bad
+    assert bad != TOK_PER_STEP["0.2b_8b_b192"], bad
+    assert TOK_PER_STEP[ARM] // bad == 2, "the wrong-batch fixture must produce a plausible " \
+        "integer ratio, or the refusal is not the thing being tested"
+    n += 3
+    print("  ok   a comparator at half the tok/step yields ratio 2, which the refusal catches")
+
+    # AND THE FETCH ITSELF, which is where this went wrong twice over. warmdown_from_log can
+    # only read a line pod_read actually greps for, and it did not: the command asked for val
+    # lines and the cfg line only, so the header printed "(computed)" for an arm whose log
+    # states 9155 explicitly. THE COMPUTED FALLBACK AGREED, which is why it survived a real run
+    # -- a silent fallback that happens to be right looks identical to a read that worked. The
+    # assertion is on the command string rather than on a parse, because the defect was in what
+    # was requested, not in what was parsed.
+    probe = []
+    saved_run = subprocess.run
+    try:
+        subprocess.run = lambda argv, **kw: (probe.append(argv[1]),
+                                             type("R", (), {"returncode": 0, "stdout": "",
+                                                            "stderr": ""})())[1]
+        pod_read("whatever")
+    finally:
+        subprocess.run = saved_run
+    assert len(probe) == 1, probe
+    for needle in ("val ", "cfg batch", "warmdown starts at step"):
+        assert needle in probe[0], \
+            f"pod_read does not fetch {needle!r}, so any parser reading it silently gets nothing"
+    n += 3
+    print("  ok   pod_read fetches every line the parsers read, warmdown line included")
+
+    return n
 
 
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--cards-arm", type=int, default=6, help="cards the MoE arm ran on")
-    ap.add_argument("--cards-cmp", type=int, default=2, help="cards the comparators ran on")
+    ap.add_argument("--only", help="one comparator name, instead of all of them")
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -330,37 +515,68 @@ def main():
         print(f"REFUSING: {ARM}'s cfg line gives {arm_tok} tok/step, not "
               f"{TOK_PER_STEP[ARM]} -- the 3x pairing no longer holds", flush=True)
         return 1
+    arm_text = pod_read(ARM_LOGS[-1])
+    arm_ve = parse_val_every(arm_text)
+    arm_wd, arm_wd_src = warmdown_from_log(arm_text, arm_total)
     print(f"{ARM}: {len(arm_val)} val points to step {max(arm_val)} of {arm_total}, "
-          f"read from {len(seen)} segment(s): {', '.join(seen)}")
+          f"read from {len(seen)} segment(s): {', '.join(seen)}; val_every {arm_ve}, "
+          f"warmdown at {arm_wd} ({arm_wd_src})")
 
     rc = 0
-    for name, label in COMPARATORS.items():
-        text = pod_read(name)
+    todo = [a.only] if a.only else list(COMPARATORS)
+    for name in todo:
+        if name not in COMPARATORS:
+            print(f"REFUSING: {name} is not a comparator: {list(COMPARATORS)}", flush=True)
+            return 1
+        label = COMPARATORS[name]
+        text = pod_read(name, missing_ok=True)
         cmp_val = parse_val(text)
+        if not text.strip():
+            print(f"\n{ARM} vs {name} ({label}): NOT LAUNCHED -- no {name}.log on the pod. No "
+                  f"pairs, no row. Registered in runs/prereg.jsonl before its arm existed.")
+            continue
+        if not cmp_val:
+            print(f"\n{ARM} vs {name} ({label}): no val line yet -- NO PAIRS, and no row is "
+                  f"written. The arm has to print a val point before it can be paired.")
+            continue
         cmp_total = parse_total(text)
-        cmp_tok = parse_tok_per_step(text, a.cards_cmp)
+        cmp_tok = parse_tok_per_step(text, CMP_CARDS[name])
         if cmp_tok != TOK_PER_STEP[name]:
-            print(f"REFUSING: {name}'s cfg line gives {cmp_tok} tok/step, not "
-                  f"{TOK_PER_STEP[name]}", flush=True)
+            print(f"REFUSING: {name}'s cfg line gives {cmp_tok} tok/step at "
+                  f"{CMP_CARDS[name]} cards, not {TOK_PER_STEP[name]} -- the pairing this "
+                  f"comparator was registered for does not hold", flush=True)
             rc = 1
             continue
+        # A val_every MISMATCH IS A REFUSAL, not a warning. The two sides only pair where both
+        # printed a val point, so a comparator at val_every 100 against the arm's 200 would
+        # silently pair on the arm's grid and quietly drop half the comparator's points -- a
+        # shorter table that does not say it is short, which is this script's own history.
+        cmp_ve = parse_val_every(text)
+        if arm_ve is not None and cmp_ve is not None and cmp_ve != arm_ve:
+            print(f"REFUSING: {name} runs val_every {cmp_ve} against the arm's {arm_ve} -- the "
+                  f"two val grids do not line up and pairing would drop points without saying "
+                  f"so", flush=True)
+            rc = 1
+            continue
+        cmp_wd, cmp_wd_src = warmdown_from_log(text, cmp_total)
         ratio = arm_tok // cmp_tok
-        rows = pairs(arm_val, cmp_val, ratio, cmp_total=cmp_total)
-        wd = warmdown_start(cmp_total) if cmp_total else None
+        rows = pairs(arm_val, cmp_val, ratio, cmp_total=cmp_total, cmp_wd=cmp_wd, arm_wd=arm_wd)
         n_tail = sum(1 for r in rows if r[5])
-        print(f"\n{ARM} vs {name} ({label}), ratio {ratio}x, {len(rows)} matched-token pairs"
-              + (f", {n_tail} inside the comparator's warmdown (its step >= {wd})" if n_tail
-                 else ""))
+        head = (f"\n{ARM} vs {name} ({label}), ratio {ratio}x, {len(rows)} matched-token pairs; "
+                f"warmdown {cmp_wd} ({cmp_wd_src}) vs the arm's {arm_wd}")
+        head += (f" -- {n_tail} pair(s) MIXED-PHASE" if n_tail
+                 else " -- no mixed-phase pair" if ratio == 1 else "")
+        print(head)
         for s, tok, av, cv, gap, tail in rows:
-            known = KNOWN_ANSWERS[name].get(s)
+            known = KNOWN_ANSWERS.get(name, {}).get(s)
             mark = ""
             if known is not None:
                 mark = "  KNOWN ok" if abs(gap - known) < 5e-4 else f"  KNOWN {known:+.3f} MISMATCH"
                 if "MISMATCH" in mark:
                     rc = 1
             if tail:
-                mark += "  ANNEALED-vs-STABLE: the comparator is in its lr warmdown here, the " \
-                        "arm is not -- not a token-matched comparison"
+                mark += ("  MIXED-PHASE: one side is in its lr warmdown and the other is not, "
+                         "so this is not a token-matched comparison")
             print(f"  step {s:5d}  {tok / 1e9:.2f}B tok   {av:.3f} - {cv:.3f} = {gap:+.4f}{mark}")
     return rc
 
