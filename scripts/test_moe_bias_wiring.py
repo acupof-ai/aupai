@@ -154,12 +154,23 @@ def main():
     else:
         print("   OK: mean pinned at zero, spread grows -- windup cannot consume the resolution")
 
-    # ---- F: fp32, checked BY ITS BEHAVIOUR at the magnitude that broke. A dtype assertion alone
-    # would pass on a buffer that is fp32 and then silently cast somewhere; what matters is that
-    # a gamma step at magnitude 0.5 moves the value by gamma. In bf16 the spacing there is
-    # 0.00391, so a 0.001 step lands on the grid and this check FAILS -- which is the point.
-    m5 = build(g)
-    print(f"F dtype {m5.expert_bias.dtype}  (want torch.float32)")
+    # ---- F: fp32 SURVIVING train.py's CAST, which is the only version of this check that means
+    # anything. A dtype assertion on a freshly-constructed module passes trivially: torch.zeros
+    # defaults to fp32, so register_buffer's dtype= argument changes nothing on its own. The
+    # buffer became bf16 because train.py:3134 (--fp8) and :3162 (--bf16) both call
+    # `raw_model.to(torch.bfloat16)`, which walks every floating buffer -- which is why
+    # ckpt_b0_moe48_8b.pt.step1000 holds bf16 despite the declaration. So this world casts the
+    # way the arms cast, and asserts AFTER. On 87ef5985 (dtype= only, no _apply override) it is
+    # RED; with the override it is green. 4c caught that the first version of this check would
+    # have passed on a module that never went through the cast.
+    #
+    # BOTH CLAUSES: the dtype after the cast, AND the behaviour at the magnitude that broke --
+    # a gamma step at 0.5 must move the value by ~gamma, which bf16's 0.00391 spacing cannot do.
+    # The dtype alone would miss a later re-cast; the behaviour alone would not say why.
+    m5 = build(g)                      # build() already ends in .to(torch.bfloat16)
+    m5 = m5.to(torch.bfloat16)         # and again, explicitly, exactly as train.py does
+    m5 = m5.cuda()                     # .cuda() routes through _apply too, so it must also hold
+    print(f"F dtype after .to(bfloat16) and .cuda(): {m5.expert_bias.dtype}  (want torch.float32)")
     if m5.expert_bias.dtype != torch.float32:
         fails.append(f"F: expert_bias is {m5.expert_bias.dtype}, want float32 -- bf16 spacing at "
                      f"0.5 is 0.00391, four times the gamma {g} step")

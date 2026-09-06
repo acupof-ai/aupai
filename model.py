@@ -922,6 +922,13 @@ class MoEFFN(nn.Module):
         # It is 48 floats x 12 layers = 2,304 values, so fp32 costs 9 KiB and buys the
         # resolution the control loop is built on. A bf16 saved tensor casts into this buffer on
         # load (verified: dtype stays fp32, values preserved), so old checkpoints still resume.
+        #
+        # THE dtype= ARGUMENT ALONE DOES NOTHING, and saying so here is the whole point: this
+        # buffer was ALREADY fp32 at construction (torch.zeros defaults to fp32), and train.py
+        # :3134 and :3162 both call `raw_model.to(torch.bfloat16)`, which casts every floating
+        # buffer -- so it became bf16 before step 0 either way. That is why the failed run's
+        # checkpoint holds bf16. _apply below is what actually keeps it fp32; the argument is
+        # kept only so the declaration states the intent (4c, reviewing 87ef5985).
         self.register_buffer("expert_bias", torch.zeros(self.n_routed, dtype=torch.float32),
                              persistent=True)
         # READOUT 4's counters. Non-persistent: they describe a window, and a resume that restored
@@ -948,6 +955,32 @@ class MoEFFN(nn.Module):
         return self.beta2 * torch.tanh(w2_apply(gate) / self.beta2)
 
     @torch.no_grad()
+    def _apply(self, fn, recurse=True):
+        """Cast/move the module, then RESTORE expert_bias to fp32.
+
+        `raw_model.to(torch.bfloat16)` (train.py:3134 under --fp8, :3162 under --bf16) walks every
+        floating buffer, so register_buffer's `dtype=torch.float32` is overwritten before step 0 --
+        the buffer was already fp32 at construction and became bf16 anyway, which is why
+        ckpt_b0_moe48_8b.pt.step1000 holds bf16. Same trap the store's checksum path records at
+        :608-632 ("THE STORE IS RE-FLOATED"); this is that pattern for the control loop.
+
+        WHY fp32 IS REQUIRED HERE, not preferred: the bias is an accumulator stepped by
+        gamma 0.001, and bf16's spacing at magnitude 0.5 is 0.00391 -- four times the step. On the
+        run that died, 10 of 12 layers had 2-3 distinct values left across 48 experts: the
+        DIFFERENTIAL, which is the only part topk can see, had been rounded away while the
+        common mode kept climbing. 2,304 values, 9 KiB.
+
+        Hooked at _apply rather than at .to() because .to(), .cuda(), .float() and DDP's own
+        movement all route through here, so a single override covers every path instead of the
+        one call site I happened to look at. Cast the DATA back, in place, so the buffer object
+        and any reference to it survive.
+        """
+        out = super()._apply(fn, recurse)
+        eb = out._buffers.get("expert_bias")
+        if eb is not None and eb.dtype != torch.float32:
+            out._buffers["expert_bias"] = eb.float()
+        return out
+
     def update_bias(self, counts):
         """The aux-loss-free bias step: -gamma where overloaded, +gamma where underloaded.
 
