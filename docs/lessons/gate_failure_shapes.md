@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (118 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (119 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -159,7 +159,7 @@ Guard and assertion read different keys, or the guard reads a key nobody writes.
 
 Cannot see: whether the guard and the assertion agree on the key (§54, §75, §85, §128).
 
-### R2-g Criterion answers an adjacent question (31 incidents)
+### R2-g Criterion answers an adjacent question (32 incidents)
 
 The metric measures a neighbour property, not the one asked.
 
@@ -167,6 +167,7 @@ The metric measures a neighbour property, not the one asked.
 - §170: an unresolvable fact reference was used for four days; the criterion (reference present) did not measure the property (reference resolves).
 - §177: an arm's flags said it carried a 1.07B-parameter memory table; the criterion (the flags the run was given) did not measure the property (which of two code paths consumed them), and the arm would have trained as the control and reported a clean null.
 - §184: excluding a parameter from the fp32 master copy would have left it read every forward and never updated; the criterion (is the exclusion correct) did not measure the property (who clears its gradient), and the diagnostics would have shown a healthy pool.
+- §254: a signature-based check's criterion (signed/unsigned) measures a neighbour property (written by a new-tool copy) to the one asked (bypassed the CAS); in a shared checkout every session runs its own copy, so the rollout window during which legitimate writers are unsigned closes per-session, not at a timestamp, and a date-based cutoff WARNs on innocent writes.
 
 Cannot see: whether the metric's null hypothesis is the property's null hypothesis (§9, §10, §23, §45, §67, §73, §84, §91, §108, §112, §114, §135, §140, §142, §147, §148, §149, §150, §158, §165, §173, §174, §176, §177, §178, §184, §191, §208).
 
