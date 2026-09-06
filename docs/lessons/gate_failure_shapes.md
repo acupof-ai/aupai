@@ -208,8 +208,9 @@ Cannot see: whether a number's population matches the vision it is reported unde
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
 - §251: a verification command read exit 0 from a program that exited 1, because it piped into `tail` — `$?` is the last stage's status. `set -e` does not catch it, so a script that looks defended is not. Tracked population zero: 39 of 58 `.sh` set `pipefail`, and the failing form was typed at a terminal, where no scan reaches it.
+- §256: a broken world was red for a reason other than its mutation — built on a non-git directory, so it failed on absent git and stayed red with its planted row deleted. The selftest counts such a world as coverage while the check it guards is never exercised. `156 of 156` was the second tell: failures equal to the total is an absent comparison side, not N defects.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204); whether a loud failure was READ correctly by the command that checked for it (§251).
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204); whether a loud failure was READ correctly by the command that checked for it (§251); whether a broken world is red for its own mutation or for something else (§256) — checkable by running each `_broken_*` twice, priced out at 104 worlds.
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
