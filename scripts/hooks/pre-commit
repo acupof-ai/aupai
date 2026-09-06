@@ -1101,6 +1101,14 @@ def main():
         # stale -- following the docstring drops seqlen_info and breaks the call at mask.py:232.
         "eval/prefix_mask.py",
         "scripts/test_exp_done_started.py",
+        # exp.py amend: adds reading_artifact to a CLOSED row without touching status. Four
+        # worlds, and the two REFUSALS are the load-bearing ones. Mutating away the retracted
+        # guard makes amend print "logged amend ... status 'retracted' unchanged" while the fold
+        # DISCARDS the event -- reporting success and changing nothing -- so a test that only
+        # checked the happy path would bless a command that silently does nothing. The path
+        # check is case 1's negative control: without it amend satisfies score_matrix_present
+        # with a file nobody wrote, which is worse than the gap it closes.
+        "scripts/test_exp_amend.py",
         # run_ddp.sh's end-of-run chain: exit codes, the two score notes, and the row close
         # (de-47). It is registered LATE and that is the finding, not a footnote -- it has
         # been unguarded since it was written, and the commit adding the row close printed
