@@ -2760,14 +2760,24 @@ def check_main_advances_by_ancestry(root):
     # fixed cause until they age out of the window -- the shape people learn to --no-verify
     # past. The signature only discriminates going FORWARD, and _SIGNING_FROM below is the
     # honest boundary: entries at or before it are not evidence of anything.
+    #
+    # AND THE ROLLOUT IS NOT INSTANT. Every session's merge_main.sh is its own worktree's
+    # copy, so a peer whose tree predates the signing commit writes an unsigned entry AFTER
+    # the cutoff -- measured within five minutes of shipping: fb's legitimate merge at
+    # 20:00:30 flagged, my signing commit landed at 20:05:03. That is a false positive with a
+    # known lifetime (until every session merges main), which is exactly what a WARN is for
+    # and exactly why this is not a FAIL. The evidence says so rather than reading as a
+    # detected bypass.
     if unsigned:
         detail = "; ".join(f"{o[:8]} -> {n[:8]}" for o, n, _m in unsigned[:4])
         return WARN, (
             f"{len(unsigned)} of {len(lines)} move(s) of refs/heads/main carry no writer "
             f"signature: {detail}. merge_main signs its CAS with `-m merge_main: <branch>`, so "
             f"an unsigned fast-forward is a hand `git update-ref` -- which bypasses the CAS and "
-            f"can discard a peer's advance. Entries predating 2026-09-06 are the backlog, not "
-            f"a finding."
+            f"can discard a peer's advance. TWO INNOCENT CAUSES FIRST: an entry from before "
+            f"2026-09-06 is the backlog, and a peer running a merge_main.sh copy older than "
+            f"102e62ac signs nothing until they merge main. Check the commit at the new sha "
+            f"before treating this as a bypass."
         )
     return PASS, (f"main advanced by ancestry in all {len(lines)} recorded move(s), each "
                   f"written by a signed merge_main CAS or a normal git command")
