@@ -153,7 +153,7 @@
    "id": "eff.kda_kernel_path",
    "value": "training KDA runs through fla Triton chunk_kda kernel; FlashKDA CUTLASS kernel is inference-only (state_v_first=True 'unblocks FlashKDA at inference, zero training cost'); torch.compile is DISABLED on the AttnRes .chunk() path (train.py's @torch._dynamo.disable on FP8Linear.forward)",
    "measured": "2026-08-30",
-   "source": "aupai train.py:93,111,211,225,351 @0c9acba2d (read-only inspection; all five read verbatim at that sha: 93 the chunk_kda import, 111 the hd=128 FlashKDA comment, 225 disable_recompute, 351 Float8LinearConfig)",
+   "source": "aupai train.py:93,111,225,351 @0c9acba2d (read-only inspection; FOUR read verbatim at that sha: 93 the chunk_kda import, 111 the hd=128 FlashKDA comment, 225 disable_recompute, 351 Float8LinearConfig. A fifth citation of :211 was DROPPED 2026-09-08: that line is `q,`, a bare argument, which resolves and is non-blank and therefore passes check_train_cite_targets while carrying no content any reader could check the claim against. An anchor in form and not in substance. Caught because this annotation said `all five` and then enumerated four -- the count and the list disagreed in one sentence, written together in the same batch)",
    "config": {
     "mfu_basis": "6*n_params*tps/peak_tflops, n_params incl. embedding (the live divisor is n_dense since 1c935add, which subtracts memory-layer tables; equal to n_params on this arm), peak = 296 TFLOPS fp8 / 148 bf16 (train.py's PEAK_TFLOPS env default); this entry measures no MFU, the mention is an unmeasured hypothesis",
     "method": "read-only inspection",
