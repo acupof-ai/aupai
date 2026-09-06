@@ -2078,7 +2078,29 @@ def main():
                      # breaking change to every hand-built cfg in the repo. ~1.5s and ~2.0s.
                      "scripts/test_cursor_save.py",
                      "scripts/test_cursor_sum.py",
+                     # build_s_inject's selftest asserts AGREEMENT WITH train.py, not with itself:
+                     # its world compares its stamp against train._corpus_fp (build_s_inject.py:262
+                     # via fp_dir, against train.py:2034's guard). So an edit to train.py's
+                     # fingerprint helper is exactly what breaks it, and SELFTEST_FILES alone ran it
+                     # only when someone edited build_s_inject.py -- the same gap as the four
+                     # comments above, at a fourth set of files.
+                     #
+                     # THE ASSERTION HAS TEETH, measured by mutation: patching train._corpus_fp in
+                     # memory to drop its skip of build_corpus_stats.json -- the edit that makes the
+                     # stamp invalidate itself -- kills it with "stamped 7fabe18a4af4e0e3 != live
+                     # f5f7e06f0fa43981; the guard at train.py:2039 would refuse this domain". That
+                     # is the 2026-09-05 failure that cost all five E1 arms, and the test catches
+                     # it; nothing was asking. ~0.6s.
+                     "datagen/build_s_inject.py",
                      "scripts/moe_diag.py"},                                # 54.0s
+        # BOTH FINGERPRINT SOURCES GET THE SAME TRIGGER, and neither had ANY entry in this table
+        # before. build_s_inject's world also compares against corpus_fingerprint.fp_dir
+        # (build_s_inject.py:249) and build_corpus.CANONICAL_STATS_KEYS (:543), so an edit to
+        # either one can invalidate a stamp that every training arm reads. A test that reads a
+        # file belongs on that file's trigger list -- the rule the test_moe_module comment above
+        # states, applied to the two files it did not cover.
+        "datagen/corpus_fingerprint.py": {"datagen/build_s_inject.py"},      # ~0.6s
+        "datagen/build_corpus.py": {"datagen/build_s_inject.py"},            # ~0.6s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",

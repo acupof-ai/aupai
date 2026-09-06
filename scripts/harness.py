@@ -2042,7 +2042,7 @@ def _broken_deletion_list_no_tracked():
     os.makedirs(os.path.join(d, os.path.dirname(victim)), exist_ok=True)
     with open(os.path.join(d, victim), "w", encoding="utf-8") as f:
         f.write('{"text": "a tracked sample row"}\n')
-    for cmd in (["init", "-q"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
+    for cmd in (["init", "-q", "-b", "main"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
                                                    "commit", "-qm", "sample"]):
         subprocess.run(["git", "-C", d, *cmd], capture_output=True)
 
@@ -2704,7 +2704,7 @@ def _broken_test_integration_tree_guard():
         return None
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
-    subprocess.run(["git", "-C", d, "init", "-q", "."], capture_output=True, timeout=30)
+    subprocess.run(["git", "-C", d, "init", "-q", "-b", "main", "."], capture_output=True, timeout=30)
     for f in os.listdir(src):
         t = os.path.join(d, "scripts", f)
         if f != "integration_tree.py" and not os.path.exists(t):
@@ -2890,7 +2890,7 @@ def _broken_main_advances_by_ancestry():
     # this init every git call below fails with "not a git repository", the fixture builds no
     # reflog, and the check SKIPs. Measured: the broken world and a clean control both returned
     # the same SKIP, so the world could not have failed and proved nothing.
-    g("init", "-q", ".")
+    g("init", "-q", "-b", "main", ".")
     g("config", "user.email", "t@example.invalid")
     g("config", "user.name", "t")
     g("checkout", "-q", "-B", "main")
@@ -3166,7 +3166,7 @@ def _selftest_unsigned_fast_forward_warns():
         def g(*a, **kw):
             env = dict(os.environ, **kw.pop("env", {}))
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
-        g("init", "-q", ".")
+        g("init", "-q", "-b", "main", ".")
         g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
         g("checkout", "-q", "-B", "main")
         open(os.path.join(d, "f.txt"), "w").write("base\n")
@@ -3586,7 +3586,7 @@ def _tmp_repo_shaped(mix_obj=None):
     # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
     # .gitignore, so this one is copied while everything else is linked.
     shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     for sub in os.listdir(os.path.join(ROOT, "data")):
         src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
         if not os.path.exists(dst):
@@ -5580,7 +5580,7 @@ def _broken_shared_file_claim():
     import subprocess as sp
     tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
     try:
-        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
         sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
         sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
         # world A: stage train.py with no claim -> FAIL
@@ -5637,7 +5637,7 @@ def _broken_blob():
     with open(big, "wb") as f:
         f.write(b"x" * ((MAX_TRACKED_MB + 1) * 2**20))
     for cmd in (
-        ["git", "init", "-q"],
+        ["git", "init", "-q", "-b", "main"],
         ["git", "config", "user.email", "t@t"],
         ["git", "config", "user.name", "t"],
         ["git", "add", "-f", "big.jsonl"],
@@ -6080,7 +6080,7 @@ def _broken_merge_complete():
     sequence, minimised."""
     d = _tmp_repo()
     sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-    sh("init", "-q")
+    sh("init", "-q", "-b", "main")
     sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
     # A repo-real path: the selftest's meta-check rejects a world built entirely from
     # invented paths, and rightly -- a world hand-written from the check's own
@@ -6625,13 +6625,19 @@ def _broken_corpus_filters_fp():
     domain that is NOT in the baseline (new debt). Both must FAIL."""
     d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
-    # All three PIPELINE filters, copied from the real tree. fp_filters raises on a missing
-    # one rather than hashing "absent" -- a build whose filter file vanished must not carry a
-    # valid-looking fingerprint -- so a world holding only pass1 makes the check RAISE, which
-    # the selftest reports as "cannot be made to fail" rather than as a FAIL (measured
-    # 2026-09-06, when scoping fp_filters to the pipeline turned this world red that way).
+    # EVERY member of cfp.PIPELINE_FILTERS, imported rather than restated, and copied from the
+    # real tree. fp_filters raises FileNotFoundError on a missing member
+    # (datagen/corpus_fingerprint.py:80) rather than hashing "absent", so a world holding only
+    # pass1 makes the check RAISE -- and a raise is reported as "cannot be made to fail", not as
+    # a FAIL. Writing only pass1_garbage.py was correct until f93f99f6 (2026-09-06 10:17Z) added
+    # the three-file tuple; that commit touched neither this file nor any check.
+    #
+    # THE TUPLE IS IMPORTED, NOT RESTATED. Restating the three names here is the same drift in
+    # the other direction: a fourth pipeline filter would leave this world short one file and
+    # raise again. corpus_fingerprint._assert_pipeline_filters_current keeps PIPELINE_FILTERS
+    # equal to what build_corpus.py loads, so reading it here tracks the pipeline by construction.
     import shutil
-    for _n in ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py"):
+    for _n in cfp.PIPELINE_FILTERS:
         shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "web_hq")
     os.makedirs(dom, exist_ok=True)
@@ -7772,8 +7778,39 @@ def check_tasks_closed_by_commit(root):
 
 
 def _broken_tasks_closed_by_commit():
+    """The real ledger plus one done row whose commit is 40 zeros.
+
+    A REAL main CARRYING THE REAL HISTORY, not a bare `_tmp_repo()`. The world used to be a
+    plain directory, so `git log main` exited 128 there -- _main_touched swallowed that into
+    an empty map and EVERY row in scope read as "does not reach main". The fixture was red
+    for a reason that had nothing to do with its planted row: remove the seed and it stayed
+    red, at `156 of 156`. Failures equal to the total is the signature of an absent
+    comparison side rather than N real defects, and it is what this world was producing.
+
+    An empty `git init` is not enough either -- main exists but holds none of the shas the
+    ledger cites, so all 157 fail as "not a commit in this repo", the same shape one layer
+    up. The object store is shared by an `alternates` line (no copy, 5436 commits visible)
+    and main is pointed at the real tip, so the ONLY thing wrong with this world is the row
+    this function adds.
+    """
     import shutil as _sh
     d = _tmp_repo()
+    subprocess.run(["git", "-C", d, "init", "-q", "-b", "main", "."], capture_output=True)
+    common = subprocess.run(
+        ["git", "-C", ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True, text=True).stdout.strip()
+    alt = os.path.join(d, ".git", "objects", "info", "alternates")
+    os.makedirs(os.path.dirname(alt), exist_ok=True)
+    with open(alt, "w") as fh:
+        fh.write(os.path.join(common, "objects") + "\n")
+    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", "main"],
+                         capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "-C", d, "update-ref", "refs/heads/main", tip], capture_output=True)
+    # The facts/ tree read from the INDEX. _commit_delivers resolves a
+    # facts/<f>.json#<id> citation against the index, so a world whose index is empty fails
+    # 8 rows on "that file is not in the index" -- again nothing to do with the planted row.
+    # `read-tree` populates the index from the real tip without writing a working tree.
+    subprocess.run(["git", "-C", d, "read-tree", tip], capture_output=True)
     src = os.path.join(ROOT, "runs", "tasks.jsonl")
     dst = os.path.join(d, "runs", "tasks.jsonl")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -7783,6 +7820,12 @@ def _broken_tasks_closed_by_commit():
                 evidence="scripts/harness.py", commit="0" * 40, reviewer="44")
     with open(dst, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    # THE SEED MUST BE STAGED, not just written. read-tree above put the real
+    # runs/tasks.jsonl in the index, and the check reads rows via _read_tasks(index_root=...)
+    # which prefers `git show :runs/tasks.jsonl` over the file -- so an appended-only row is
+    # invisible and the world PASSes, i.e. a broken world that is not broken. Measured while
+    # building this: PASS with the seed present.
+    subprocess.run(["git", "-C", d, "add", "runs/tasks.jsonl"], capture_output=True)
     return d
 
 
@@ -7883,7 +7926,20 @@ def check_one_deliverable_per_owner(root):
 
 
 def _broken_one_deliverable_per_owner():
-    """The real ledger plus a second open row for a member who holds exactly one."""
+    """The real ledger, cut down so one member holds exactly one open task, plus a second.
+
+    THE PRECONDITION IS CONSTRUCTED, NOT HOPED FOR. This used to look for a member who
+    already held exactly one open row and raise SelftestSkip when nobody did -- and nobody
+    ever does: the real distribution on 2026-09-06 was 2, 7, 19, 35, 39, 43, 56, 72, so the
+    world could not be built, the check and its direct selftest both SKIPped, and they were
+    named in the closing line every run. A broken world whose premise depends on the ledger
+    happening to hold a particular shape is a gate that stops existing whenever the project
+    is busy, which is exactly when it is worth having.
+
+    The register is an event log folded by id (see _read_tasks), so closing a row means
+    appending a done row for the same id, not rewriting the original. The member with the
+    fewest open rows is chosen because that is the fewest appends.
+    """
     import shutil as _sh
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -7892,16 +7948,20 @@ def _broken_one_deliverable_per_owner():
     dst = os.path.join(d, "runs", "tasks.jsonl")
     roster = {m["name"] for m in json.load(open(os.path.join(d, "runs", "roster.json"),
                                                 encoding="utf-8"))["members"]}
-    counts = {}
+    open_by_owner = {}
     for t in _read_tasks(dst):
         if t.get("state") == "open" and t.get("owner") in roster:
-            counts[t["owner"]] = counts.get(t["owner"], 0) + 1
-    singles = sorted(o for o, n in counts.items() if n == 1)
-    if not singles:
-        raise SelftestSkip("no roster member with exactly one open task; "
-                           "update _broken_one_deliverable_per_owner")
+            open_by_owner.setdefault(t["owner"], []).append(t)
+    if not open_by_owner:
+        raise SelftestSkip("no roster member holds an open task; the register is empty")
+    owner = min(open_by_owner, key=lambda o: (len(open_by_owner[o]), o))
     with open(dst, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"id": "broken-odpo-1", "owner": singles[0], "state": "open",
+        # Close all but one, so the member holds exactly one -- the state the check calls
+        # legal, and the state the added row below must turn into a finding.
+        for t in open_by_owner[owner][1:]:
+            fh.write(json.dumps(dict(t, state="done", closed="2099-01-01 00:00"),
+                                ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"id": "broken-odpo-1", "owner": owner, "state": "open",
                              "title": "broken world: second open deliverable",
                              "opened": "2099-01-01 00:00"}, ensure_ascii=False) + "\n")
     return d
@@ -10984,6 +11044,22 @@ def _main_touched(root):
         r = subprocess.run(["git", "-C", root, "log", "main", "-m",
                             "--name-only", "--format=%x00%H"],
                            capture_output=True, text=True)
+        # A NONZERO rc RAISES. It used to be discarded: a tree with no readable `main` exits 128
+        # with an empty stdout, the parse below yields {}, and the map says "main touches
+        # nothing" rather than "main could not be read". Both consumers then report every closed
+        # task as undelivered -- measured 2026-09-06 on a clone whose local main was deleted,
+        # `FAIL 156 of 156 ... does not reach main`, whose text sends the reader to the worktree
+        # while the cause is the missing ref.
+        #
+        # THE :7750 GUARD CANNOT COVER THIS, which is why the fix belongs here and not there.
+        # That guard exists for this function going blind, but keys on "the sha is in the map
+        # with no paths": `blind = [s for s in merges if s in touched and not touched[s]]`. On an
+        # empty map no sha is in it, so blind == [] and `0 > len(merges)//2` is false. Deleting
+        # its `if touched:` would not help -- partial blindness and total blindness look different
+        # in the same structure, and it only ever described the first.
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"git log main failed in {root} (exit {r.returncode}): {r.stderr.strip()[:200]}")
         out = {}
         for block in r.stdout.split("\x00")[1:]:
             lines = block.split("\n")
@@ -12347,7 +12423,7 @@ def _broken_untracked_aged():
     import subprocess as sp
 
     d = _tmp_repo()
-    sp.run(["git", "init"], cwd=d, capture_output=True)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True)
     # A real tracked file so the selftest's repo-real-path check passes.
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
@@ -12407,7 +12483,7 @@ def _broken_dirty_aged():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
@@ -12571,7 +12647,7 @@ def _broken_frozen_paths():
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
     ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
     with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
@@ -12747,7 +12823,8 @@ def check_train_cite_targets(root):
     assertion message or a docstring rots on the next insertion above it. MEASURED
     2026-09-06 by auditing all 198 citations in the tree -- one reader per file, then one
     adversarial refuter per rot verdict: 103 rotten, 15 correct. The rot is not carelessness
-    at the margin, it is the default state of the form. `train.py:2315` was cited four times
+    at the margin, it is the default state of the form. One line in build_mix's plan block was
+    cited four times
     and all four rotted together, because citations cluster on build_mix's plan block, which
     is the region that moves most.
 
@@ -12983,7 +13060,7 @@ def _broken_no_shared_stash():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
@@ -13849,7 +13926,8 @@ _HARDCODED_CACHE_BASELINE = 0
 def _hardcoded_cache_paths(root):
     """[(file, line, text)] for source that builds a token cache path from a literal.
 
-    THE ONE CONSTANT IS train.py:93. Every other copy stops following AUPAI_TOKEN_CACHE_DIR the
+    THE ONE CONSTANT IS train.py's `TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"`. Every other copy
+    stops following AUPAI_TOKEN_CACHE_DIR the
     moment the caches move -- which happened on 2026-09-05, when they went to /mnt/data02/tokens
     because the overlay reads at 193 MB/s against NVMe's 1.3 GB/s. A tool holding its own copy then
     reads a file that still exists, still has matching stamps, and is not the one the run is using.
@@ -16285,7 +16363,7 @@ def _selftest_provenance_states_the_tree():
         def git(*a, cwd=d):
             return sp.run(["git", "-C", cwd, *a], capture_output=True, text=True)
 
-        git("init", "-q", ".")
+        git("init", "-q", "-b", "main", ".")
         git("config", "user.email", "t@t")
         git("config", "user.name", "t")
         open(os.path.join(d, "f"), "w").write("a")
@@ -16640,6 +16718,23 @@ def _selftest_milestone_pin_only():
     try:
         globals()["cmd_launch"] = lambda argv: launched.append(argv) or 0
         globals()["_run_alive"] = lambda r: True
+        # --dry FIRST, on the same world, because its property is an ABSENCE and an absence is
+        # only meaningful before the real run creates the things. Measured 2026-09-06: this
+        # branch ignored a.dry entirely, so a rehearsal on the pod hard-linked a live
+        # checkpoint and appended a row to the shared ledger while printing "pinned". The two
+        # assertions below are exactly what that defect violated.
+        _dry_ledger_before = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        rc_dry = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                                "--pin-steps", "5000", "--ledger", ms, "--dry"])
+        assert rc_dry == 0, f"--dry returned {rc_dry}"
+        assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [], \
+            f"--dry created a pin: {sorted(glob.glob(os.path.join(d, '*.milestone_*.pt')))}"
+        _dry_ledger_after = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        assert _dry_ledger_after == _dry_ledger_before, \
+            "--dry appended to the ledger it was asked not to touch"
+        # And it must not hang: the wait loop's exit condition is `want - done`, which --dry
+        # never shrinks unless it counts a named step as settled.
+
         rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
                             "--pin-steps", "5000", "--ledger", ms])
         assert rc == 0, f"pin-only returned {rc}"
@@ -16651,7 +16746,7 @@ def _selftest_milestone_pin_only():
         assert os.stat(pin).st_ino == src.st_ino, "pin is a copy, not a link"
         assert os.stat(pin).st_nlink >= 2, "link count says nothing else holds these weights"
 
-        # train.py:3623-3648's two globs, applied to the names actually on disk.
+        # The rolling-save pruner's two globs in train.py, applied to the names actually on disk.
         assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [pin], \
             "the pruner's pinned-inode glob does not see this name"
         assert pin not in glob.glob(os.path.join(d, f"ckpt_{run}.pt.step*")), \
@@ -17263,7 +17358,7 @@ def _selftest_merge_cherry_pick_not_a_drop():
     d = _tmp_repo()
     sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)  # noqa: E731
     try:
-        sh("init", "-q")
+        sh("init", "-q", "-b", "main")
         sh("config", "user.email", "t@t")
         sh("config", "user.name", "t")
         rel = os.path.join("scripts", "loader.py")
@@ -17447,7 +17542,7 @@ def _selftest_merge_reverted_content():
     try:
         def sh(*a):
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-        sh("init", "-q"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+        sh("init", "-q", "-b", "main"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
         os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
         f = os.path.join(d, "scripts", "loader.py")
         open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n    return 2\n")
@@ -17492,6 +17587,79 @@ def _selftest_merge_reverted_content():
           "deliberate deletion not flagged")
 
 
+def _selftest_main_touched_raises_on_unreadable_main():
+    """An unreadable `main` must RAISE, not read as "main touches nothing".
+
+    Three worlds, because the failure is that an empty map is indistinguishable from a
+    legitimately empty answer, and one of them is the reason the fix cannot live in the
+    :7750 guard:
+
+      1. no `main` at all      -> RuntimeError naming the exit code
+      2. a readable `main`     -> a populated map (so the fix is not "always raise", which
+                                  would pass world 1 and disable the function)
+      3. the guard on world 1  -> `blind` is EMPTY, i.e. the guard that exists for this
+                                  function going blind cannot see total blindness. Asserted
+                                  so nobody "simplifies" the raise away and trusts :7750.
+
+    Measured 2026-09-06 on a clone with local main deleted: check_tasks_closed_by_commit
+    returned `FAIL 156 of 156 ... does not reach main`. Every closed task at once, from a
+    check whose subject is individual deliveries -- failures equal to total is the signature
+    of an absent comparison side, not of N real defects.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="mt_")
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        with open(os.path.join(d, "f.py"), "w") as fh:
+            fh.write("x = 1\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base")
+        sha = g("rev-parse", "HEAD").stdout.strip()
+
+        # World 2 FIRST: a readable main must produce a real map, and it pins the path that
+        # world 1's raise must not have broken.
+        _MAIN_TOUCHED.pop(d, None)
+        ok = _main_touched(d)
+        assert sha in ok and "f.py" in ok[sha], f"a readable main must map its commits: {ok}"
+
+        # World 1: the same repo with main gone. Detach first -- a checked-out branch
+        # cannot be deleted, and the deletion is the whole world.
+        g("checkout", "-q", "--detach")
+        g("branch", "-D", "main")
+        _MAIN_TOUCHED.pop(d, None)
+        try:
+            got = _main_touched(d)
+            raise AssertionError(
+                f"an unreadable main must raise, got {len(got)} entries: {list(got)[:3]}")
+        except RuntimeError as e:
+            assert "128" in str(e) or "main" in str(e), f"the raise must name the failure: {e}"
+
+        # World 3: the :7750 guard, driven on world 1's data. It keys on "sha present, paths
+        # empty", so an EMPTY map leaves it with nothing to count -- this is the assertion
+        # that says the raise above is load-bearing and not redundant with the guard.
+        # World 3: the :7750 guard, driven through the REAL check on world 1. Asserting
+        # against a literal `{}` here would be an assertion that cannot fail -- it would
+        # restate the guard's arithmetic rather than test the code. So: neuter the raise for
+        # one call, hand check_tasks_closed_by_commit the mainless world, and read what it
+        # says. If the guard could see total blindness it would return the "_main_touched
+        # sees no paths" FAIL; instead it reports every row, which is the finding this whole
+        # commit is about and the reason the raise cannot be replaced by that guard.
+        _MAIN_TOUCHED[d] = {}          # what the swallow used to produce
+        st_blind, ev_blind = check_tasks_closed_by_commit(d)
+        assert "_main_touched sees no paths" not in ev_blind, (
+            "the :7750 guard now fires on total blindness -- this selftest's premise is "
+            f"stale and the raise may be reconsidered: {ev_blind[:120]}")
+    finally:
+        _MAIN_TOUCHED.pop(d, None)
+        shutil.rmtree(d, ignore_errors=True)
+    print("  _main_touched: an unreadable main raises; a readable one maps; the :7750 guard "
+          "is blind to the empty map, so the raise is the only cover")
+
+
 def _selftest_scoped_index_is_read():
     """A path-scoped commit's staged diff is visible to _funcs_in_diff.
 
@@ -17515,7 +17683,7 @@ def _selftest_scoped_index_is_read():
     def g(*a):
         return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
 
-    g("init", "-q")
+    g("init", "-q", "-b", "main")
     g("config", "user.email", "t@t")
     g("config", "user.name", "t")
     src = os.path.join(d, "m.py")
@@ -18536,7 +18704,7 @@ def _selftest_id_allocation_sees_every_ref():
     d = tempfile.mkdtemp(prefix="alloc_")
     def g(*a):
         return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-    g("init", "-q", ".")
+    g("init", "-q", "-b", "main", ".")
     g("config", "user.email", "t@example.invalid")
     g("config", "user.name", "t")
     g("checkout", "-q", "-B", "main")
@@ -19214,7 +19382,21 @@ def _demo(only=None):
               f"`harness check --selftest` before trusting this as coverage.")
         return 0
 
-    assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
+    # DEFERRED, NOT ASSERTED HERE. This assertion used to fire at this point, and everything
+    # below it -- 39 _selftest_* calls, the real-tree sweep, the EVIDENCE equality, the
+    # non-vacuous-PASS sweep -- is in this same function, so ONE unbuildable broken world made
+    # all of them unreachable. MEASURED 2026-09-06: f93f99f6 (10:17Z) made fp_filters raise on a
+    # missing PIPELINE_FILTERS member; _broken_corpus_filters_fp wrote only pass1_garbage.py, so
+    # `corpus_filters_fp raised instead of reporting FAIL` landed in `untested` and aborted here.
+    # CI ran `harness.py --selftest` on every push (ci.yml:54) and was red from that commit until
+    # this one -- the red existed and named the right check, and it hid 39 selftests behind a
+    # single line nobody read as "the rest did not run".
+    #
+    # The failure is still fatal: it is re-raised at the END of this function, with everything
+    # below it having run. A broken world that cannot be built is one defect; it must not decide
+    # whether the other coverage gets measured.
+    _untested_deferred = list(untested)
+    skipped_direct = []
 
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
@@ -19323,7 +19505,18 @@ def _demo(only=None):
     # so a stale manifest refuses before a byte is pushed.
     import tempfile
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    # -b main, NOT a bare `git init`: write_manifest's default is ref="main"
+    # (pod_drift.py:362) and scoped_paths passes check=True, so `git ls-files
+    # --with-tree=main` in a repo whose branch came from the caller's
+    # init.defaultBranch RAISES "fatal: tree-ish main not found" -- exit 128, no red
+    # check, just a traceback out of _demo. MEASURED 2026-09-06: green on every dev box
+    # (a Mac reads init.defaultBranch=main from Xcode's system gitconfig) and red in CI
+    # for everyone, because the runner leaves it unset and gets master. The default
+    # branch name is a property of the ENVIRONMENT, and this fixture was asserting it.
+    # pod_drift.py:784 already records the same trap and solved it the other way
+    # (ref="HEAD"); here the ref stays "main" so the fixture exercises the production
+    # default, and the branch is created to match.
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     os.makedirs(os.path.join(d, "scripts"))
@@ -19362,7 +19555,7 @@ def _demo(only=None):
     # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
     # allowed data file must pass; a small unallowed data file must refuse.
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
@@ -19419,7 +19612,7 @@ def _demo(only=None):
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
     d2 = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
     hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
@@ -19552,43 +19745,66 @@ def _demo(only=None):
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
-    _selftest_milestone_reachable()
-    _selftest_shard_contract_worlds()
-    _selftest_cold_cache_refuses()
-    _selftest_refusal_writes_no_row()
-    _selftest_provenance_states_the_tree()
-    _selftest_pool_not_raw_supply()
-    _selftest_killpg_reaps_children()
-    _selftest_kill_verify_ignores_zombies()
-    _selftest_milestone_selection()
-    _selftest_milestone_pin_only()
-    _selftest_monitor_suppression()
-    _selftest_monitor_stop_rules()
-    _selftest_diag_closed_arms()
-    _selftest_clean_merge_claim()
-    _selftest_brief()
-    _selftest_gate_timeout()
-    _selftest_register_union()
-    _selftest_id_allocation_sees_every_ref()
-    _selftest_auto_resume()
-    _selftest_devs_map()
-    _selftest_gpu_descendants()
-    _selftest_exp_fold()
-    _selftest_check_timeout_skips()
-    _selftest_attest_written_path()
-    _selftest_merge_fix_not_deadlocked()
-    _selftest_merge_cherry_pick_not_a_drop()
-    _selftest_content_restored_read_failure()
-    _selftest_unsigned_fast_forward_warns()
-    _selftest_tasks_read_from_index()
-    _selftest_root_durable_backup_ack()
-    _selftest_merge_reverted_content()
-    _selftest_commit_delivers_fact_ref()
-    _selftest_batched_git_probes()
-    _selftest_scoped_index_is_read()
-    _selftest_peer_stalled_names_the_fixture()
-    _selftest_one_deliverable_names_the_fixture()
-    _selftest_review_present_legacy()
+    # RUN AS A LIST, NOT 37 BARE CALLS. Each of these is a direct selftest, and a bare call
+    # that raises takes every later one with it -- the same defect this commit fixes for the
+    # broken-world assert, at a second site. MEASURED on main at ee81fe91: once the
+    # corpus_filters_fp world was fixed and the loop got this far,
+    # _broken_one_deliverable_per_owner raised SelftestSkip ("no roster member with exactly one
+    # open task") and aborted the 3 selftests after it plus the real-tree sweep, the EVIDENCE
+    # equality and the non-vacuous-PASS sweep. The abort had been hiding it.
+    #
+    # A SelftestSkip here is a SKIP, exactly as it is in the broken-world loop: the world could
+    # not be staged on this machine, which is not a defect. Any other exception is a failure,
+    # collected and re-raised at the end of _demo with every other selftest having run, so one
+    # broken fixture costs its own coverage and nothing else's.
+    _direct_failures = []
+    for _fn in (
+        _selftest_milestone_reachable,
+        _selftest_shard_contract_worlds,
+        _selftest_cold_cache_refuses,
+        _selftest_refusal_writes_no_row,
+        _selftest_provenance_states_the_tree,
+        _selftest_pool_not_raw_supply,
+        _selftest_killpg_reaps_children,
+        _selftest_kill_verify_ignores_zombies,
+        _selftest_milestone_selection,
+        _selftest_milestone_pin_only,
+        _selftest_monitor_suppression,
+        _selftest_monitor_stop_rules,
+        _selftest_diag_closed_arms,
+        _selftest_clean_merge_claim,
+        _selftest_brief,
+        _selftest_gate_timeout,
+        _selftest_register_union,
+        _selftest_id_allocation_sees_every_ref,
+        _selftest_auto_resume,
+        _selftest_devs_map,
+        _selftest_gpu_descendants,
+        _selftest_exp_fold,
+        _selftest_check_timeout_skips,
+        _selftest_attest_written_path,
+        _selftest_merge_fix_not_deadlocked,
+        _selftest_merge_cherry_pick_not_a_drop,
+        _selftest_content_restored_read_failure,
+        _selftest_unsigned_fast_forward_warns,
+        _selftest_tasks_read_from_index,
+        _selftest_root_durable_backup_ack,
+        _selftest_merge_reverted_content,
+        _selftest_commit_delivers_fact_ref,
+        _selftest_batched_git_probes,
+        _selftest_main_touched_raises_on_unreadable_main,
+        _selftest_scoped_index_is_read,
+        _selftest_peer_stalled_names_the_fixture,
+        _selftest_one_deliverable_names_the_fixture,
+        _selftest_review_present_legacy,
+    ):
+        try:
+            _fn()
+        except SelftestSkip as e:
+            print(f"  SKIP {_fn.__name__}: {e}")
+            skipped_direct.append(_fn.__name__)
+        except Exception as e:
+            _direct_failures.append(f"{_fn.__name__} raised {type(e).__name__}: {e}")
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
@@ -19612,6 +19828,19 @@ def _demo(only=None):
     # commit fixes: a number that reads as coverage without being it.
     _verified = len(CHECKS) - len(skipped)
     _tail = f"; {len(skipped)} SKIPPED, not verified: {', '.join(sorted(skipped))}" if skipped else ""
+    # THE DEFERRED FAILURES, RAISED LAST. Everything above has now run and reported, so one
+    # unbuildable world or one broken fixture costs its own coverage and nothing else's. Raised
+    # before the OK line so a run with a deferred failure never prints one. Both lists together
+    # in one message: two defects must not need two runs to both be seen.
+    _deferred = ([f"broken world cannot be made to fail: {u}" for u in _untested_deferred]
+                 + [f"direct selftest: {f}" for f in _direct_failures])
+    assert not _deferred, "selftest failures (every other selftest still ran):\n  " + "\n  ".join(_deferred)
+    # A DIRECT SKIP IS NAMED IN THE OK LINE. The broken-world skips already are; a direct
+    # selftest whose fixture could not be staged was silently absent, which is the shape of a
+    # green line describing more coverage than it has.
+    if skipped_direct:
+        _tail += (f"; {len(skipped_direct)} direct selftest(s) SKIPPED: "
+                  f"{', '.join(sorted(skipped_direct))}")
     print(f"harness self-test OK ({_verified} of {len(CHECKS)} checks each verified to FAIL on a "
           f"broken world; every PASS verified a non-zero count{_tail})")
 
@@ -22549,6 +22778,26 @@ def cmd_milestone(argv):
                 ckpt = f"ckpt_{a.run}.pt.step{step}"
                 if not os.path.exists(os.path.join(a.watch, ckpt)):
                     continue
+                if a.dry:
+                    # --dry NAMES THE TWO SIDE EFFECTS AND PERFORMS NEITHER. It used to
+                    # perform both: this branch never read a.dry, so a rehearsal against a
+                    # live run hard-linked the checkpoint and appended a row to the shared
+                    # ledger, and its output said "pinned". MEASURED 2026-09-06 on the pod --
+                    # ckpt_0.2b_8b_b192.pt.step3000 carries a pin, and milestones.jsonl a row,
+                    # from a --dry meant as a no-op. Both are real and stay (the row's inode and
+                    # nlink were true when written, the ledger is append-only, and deleting the
+                    # link would make pin_nlink=2 false AND change which saves train.py's
+                    # roller may evict -- it reads pinned_inodes from this glob at :3623-3648).
+                    # The cost of the wrong default here is not a stray file: --dry is what
+                    # someone reaches for precisely to touch a shared ledger with nothing.
+                    print(f"  step {step}: WOULD pin -> "
+                          f"ckpt_{a.run}.milestone_{a.pin_token}_step{step}.pt "
+                          f"and append one row to {ms_path} (--dry, nothing written)", flush=True)
+                    # Counted as settled so the wait loop terminates. Without this, --dry
+                    # never grows `done` and spins on a condition it can never satisfy --
+                    # a rehearsal that hangs instead of reporting.
+                    done.add(step)
+                    continue
                 pinned = _pin_milestone(a.watch, a.run, ckpt, a.pin_token)
                 if not pinned:
                     print(f"  step {step}: PIN FAILED, not recording a promise "
@@ -22606,7 +22855,12 @@ def cmd_milestone(argv):
                           f"exist; nothing can pin them now.", file=sys.stderr, flush=True)
                     return 2
                 time.sleep(a.interval)
-        print(f"pin-only: all of {want} pinned and recorded", flush=True)
+        # The closing line must not claim a write that --dry did not make. It is the line
+        # people quote, and "pinned and recorded" was true of the dry run only because the
+        # dry run was not dry.
+        print(f"pin-only: all of {want} "
+              + ("named; nothing pinned and no row written (--dry)" if a.dry
+                 else "pinned and recorded"), flush=True)
         return 0
 
     if a.watch:
