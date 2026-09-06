@@ -361,6 +361,30 @@
     "code_supply is the same as starcoder",
     "code_supply pair yield is 0.65% at full size"
    ]
+  },
+  {
+   "id": "cs.cot_fable_supply",
+   "value": 2764751,
+   "unit": "tokens",
+   "measured": "2026-09-06",
+   "source": "datagen/fable5/measure_fable5_supply.py over /work/aupai/data/raw/fable5_2m/data/train.parquet (2,006,487 rows) on the pod; uid overlap by datagen/fable5/fable5_uid_overlap.py against data/raw/fable5_traces/fable5_cot_merged.jsonl",
+   "config": {
+    "pipeline": "steps 1-9 of the cot_fable cleaning spec: non-empty thinking span AND final answer, thinking >=200 chars after whitespace normalisation, no boilerplate opener, output_type=text (tool-call-only dropped), <=10% non-ASCII over the first 600 chars, exact dedup on the first 400 chars of the thinking span, credential redaction via filters/secrets.py, then frozen-tokenizer count",
+    "tokenizer": "data/tokenizer.json, the frozen 32,784-slot vocabulary",
+    "counted_text": "context + thinking + answer, the plain continuation rendering with no ChatML markers",
+    "rows_in": 2006487,
+    "rows_kept": 831,
+    "reject_histogram": {
+     "no_cot_schema": 2002003,
+     "tool_call_only": 3652,
+     "not_english": 1
+    },
+    "ruling": "4c 2026-09-06: fold into cot's next shard, no cot_fable domain -- 2.76M is 72x below the 200M gate for a domain of its own",
+    "reproducibility": "the 831/2,764,751 figures reproduce exactly across two independent runs (the /tmp draft and the vendored datagen/fable5 copy) after the within-set dedup was moved from the builtin hash() to sha1; hash() is salted per process, so the draft was not reproducible by construction"
+   },
+   "uncertainty": "Exact frozen-tokenizer count over the rows that survive the cut, not an estimate. The dedup is exact-match on a 400-char prefix, so near-duplicates within the kept set are not removed and the true unique-token figure is at or below 2.76M. Steps 4 (MinHash against cot/cot_open_thoughts) and 5 (contamination against the eval registry) were NOT run: no MinHash path exists against those domains, and MBPP is absent from datagen/holdout.py's registry, so a contamination hit against it cannot be detected. Both are unmeasured, not zero.",
+   "status": "measured",
+   "boundary": "This is the TOTAL Fable CoT supply, not an increment. All 4,484 cot-schema rows in fable5_2m are present in kelexine/Fable-5-traces by uid (parquet-only 0, kelexine-only 181), so fable5_2m is a strict subset and the earlier 2.4M kelexine figure and this 2.76M are the same rows measured twice. 99.78% of fable5_2m is raw Claude Code JSONL envelopes with no thinking field. Credential redaction removed 30 secrets across 14 rows in 3 session sources (20/6/4); one of them, 68396a0d, is the source of the row 44's hand-read found the live Groq key in, so the automated pass reproduces facts/data_quality.json#dq.fable5_cot_handread_50 independently. Says nothing about the ~4B cot gap beyond covering 0.07% of it."
   }
  ]
 }
