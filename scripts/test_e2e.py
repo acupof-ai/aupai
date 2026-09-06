@@ -119,7 +119,8 @@ if E2E_MOE_ON:
         "--moe_experts", "24", "--moe_top_k", str(_k), "--moe_expert_ffn", str(_w),
         "--moe_shared", str(_shared), "--moe_layers", f"0-{_SHAPE['layers'] - 1}",
         "--moe_arm", "e2e",
-        # --fp8, WHICH THIS FILE OTHERWISE NEVER PASSES. run_ddp.sh passes it (:110) and this test
+        # --fp8, WHICH THIS FILE OTHERWISE NEVER PASSES. run_ddp.sh's torchrun line passes it and
+        # this test
         # invokes train.py directly, so the walk was running the launch's flags in a precision the
         # launch never uses -- and train.py casts the model to bf16 only under `if fp8:`. The MoE
         # dispatch needs bf16 (torch._grouped_mm compiles only for it), so without this the walk
