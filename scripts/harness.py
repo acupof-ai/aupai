@@ -135,6 +135,38 @@ _CHECK_TIMEOUTS = {
     # and a cached answer is exactly the stale reading it exists to catch.
     "pod_stamp_is_main": 60,
     "snapshot_logs_say_so_at_the_tail": 60,
+    # mix_supply's WORK is 0.07s. Its cost is a module import: `_token_cache_dir` imports train
+    # lazily to keep ONE definition of the cache dir (the 2026-09-02 two-accessors incident), and
+    # train pulls in torch. Measured on the pod, three calls in one process while the 8B arm ran:
+    # 6.19s / 0.00s / 0.00s, and by stopwatch inside the first -- _token_cache_dir 6.74s, of which
+    # `import train` 5.05s and `import torch` 1.17s, while `train._token_cache_dir()` itself is
+    # 0.00s and all seven caches read in 0.00s each (_cache_rows reads the zip central directory,
+    # never the payload). The check PASSes: 1 live mix, 7 domains, val-split loss 0.00% at 1.00B.
+    #
+    # So the variance is a torch import competing for host IO with a live run: it struck at 5s and
+    # had passed all evening, which is a load sensor wearing a supply check's label -- cost growth,
+    # not a hang. 15s is ~2.4x the measured cold cost under load.
+    #
+    # RAISING THE BUDGET IS THE INTERIM FIX, NOT THE FIX (4c ruling, 2026-09-06). Having
+    # _token_cache_dir answer from the env var or an NVMe-dir test BEFORE importing train was
+    # refused: a branch here that can answer without train is a SECOND definition of the cache dir,
+    # and "fall back to train only when neither answers" is precisely where the two disagree in
+    # silence -- the 2026-09-02 incident rebuilt in the tool that exists to catch it. Root fix is
+    # de-66: move _token_cache_dir into a torch-free module both sides import. Blocked on the
+    # run's stop window; reviewer tilerl.
+    "mix_supply": 15,
+    # 0.2s on the laptop, 10.20s on the pod -- and the pod is where it was timing out. Measured
+    # 2026-09-06 by walking the same 8 extensions check_no_conflict_markers walks: 0.00s to file
+    # 50, 10.19s by file 500, 10.20s for all 729. The cost is reading file bodies off the pod's
+    # filesystem, not git, so it grows with the tracked-file count exactly as
+    # snapshot_logs_say_so_at_the_tail grows with the log count. 30s is ~3x the measured walk.
+    #
+    # HOW IT WAS FOUND, and why it went unseen for 36 runs: it had banked 36 consecutive strikes
+    # in runs/check_timeouts.json on the pod, so its state was FAIL "has not actually run since"
+    # -- and the auth=repo pod conversion below turned that into SKIP, which reads as "the subject
+    # is not here". It was in nobody's FAIL list. See the conversion's own comment for the fix
+    # (4c ruling, 2026-09-06): a TIMEOUT is no longer converted.
+    "no_conflict_markers": 30,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -14777,6 +14809,10 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
+        # Set by the TimeoutError branch below, read by the auth=repo pod conversion after it: a
+        # deadline hit must not be reported as SKIP. Not `state == TIMEOUT`, because the second
+        # strike promotes the state to FAIL and that is the case that most needs to stay visible.
+        timed_out = False
         try:
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
@@ -14804,6 +14840,7 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             else:
                 # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
                 # is what separates "this machine was busy" from "this check never runs".
+                timed_out = True
                 n = prev_strikes.get(name, 0) + 1
                 strikes[name] = n
                 if n >= _TIMEOUT_STRIKES:
@@ -14831,7 +14868,17 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
         # A blanket red is worse than no red: launch_gate weighs these, so five structural FAILs
         # made every real signal on the pod unreadable, which is the permanent-red rule in AGENTS.
         # SKIP names the reason so nobody reads it as "checked and fine".
-        if (state in (FAIL, WARN, TIMEOUT) and pod_drift.is_pod(root)
+        #
+        # A TIMEOUT IS NOT CONVERTED (4c ruling, 2026-09-06, found by de). SKIP asserts the subject
+        # is not here; a timeout asserts the subject IS here and the check gave up reading it. The
+        # two read identically in this output and to launch_gate, and the cost was measured:
+        # no_conflict_markers had banked 36 consecutive strikes on the pod, so its state was FAIL
+        # "timed out after 5s on 36 consecutive runs -- this check has not actually run since", and
+        # the conversion printed it as SKIP. A check that had not run in 36 runs appeared in
+        # nobody's FAIL list, while passing in 0.2s on the laptop. `timed_out` rather than
+        # `state == TIMEOUT`, because the second strike already promoted it to FAIL -- keying on
+        # the state would convert exactly the case that matters most.
+        if (state in (FAIL, WARN, TIMEOUT) and not timed_out and pod_drift.is_pod(root)
                 and EVIDENCE.get(name) == "repo"):
             state = SKIP
             evidence = (f"repo check, not authoritative here: {evidence[:110]}"
@@ -17425,9 +17472,64 @@ def _selftest_repo_auth_mirror():
             assert _raw2 != FAIL, f"an artifact that EXISTS still FAILs: {_raw2}"
         finally:
             shutil.rmtree(d2, ignore_errors=True)
+        # A TIMEOUT IS NOT MIRRORED (4c ruling 2026-09-06, found by de). SKIP asserts the subject
+        # is not here; a timeout asserts it IS here and the check gave up. Conflated, a check that
+        # had not run in 36 consecutive pod runs printed as SKIP and was in nobody's FAIL list.
+        #
+        # Driven through run_checks with a REAL deadline hit, not by inspecting the condition: a
+        # world that read the `if` would pass for a version whose new clause never reached it.
+        # CHECKS is patched with one check that sleeps past a 1s budget, in the pod-shaped world,
+        # with auth=repo -- the exact combination that was being converted.
+        _slow_name = "_selftest_slow_repo_check"
+
+        def _slow(_root):
+            time.sleep(3)
+            return PASS, "never reached"
+
+        def _raiser(_root):
+            return FAIL, "the subject is not here at all"
+
+        _rname = "_selftest_raising_repo_check"
+        _saved_checks = list(CHECKS)
+        _saved_ev = dict(EVIDENCE)
+        _saved_to = dict(_CHECK_TIMEOUTS)
+        d3 = tempfile.mkdtemp(prefix="authmirror_to_")
+        try:
+            os.makedirs(os.path.join(d3, "runs"), exist_ok=True)
+            assert pod_drift.is_pod(d3), "world invalid: must read as the pod's shape"
+            CHECKS.append((_slow_name, "times out on purpose", "", _slow, lambda: d3))
+            CHECKS.append((_rname, "returns FAIL on purpose", "", _raiser, lambda: d3))
+            EVIDENCE[_slow_name] = "repo"
+            EVIDENCE[_rname] = "repo"
+            _CHECK_TIMEOUTS[_slow_name] = 1
+            _r4 = run_checks(d3, quiet=True, persist_timeouts=False)
+            _by4 = {n: (s, e) for n, s, e, _a, _i in _r4}
+            _st4, _ev4 = _by4[_slow_name]
+            assert _st4 in (TIMEOUT, FAIL), (
+                f"a timed-out auth=repo check reads {_st4} on the pod's shape -- SKIP asserts the "
+                f"subject is absent, a timeout asserts it is present and unread: {(_ev4 or '')[:140]}")
+            assert "not authoritative here" not in (_ev4 or ""), (
+                f"the timeout was mirrored to a SKIP: {(_ev4 or '')[:160]}")
+            assert "timed out" in (_ev4 or ""), (
+                f"the timeout's evidence no longer says it timed out: {(_ev4 or '')[:160]}")
+            # THE OTHER DIRECTION, which keeps the conversion doing its job: a repo check that FAILs
+            # for the ordinary reason -- its subject is not on the pod -- still mirrors. Without this
+            # the fix could have disabled the conversion entirely and passed.
+            _st5, _ev5 = _by4[_rname]
+            assert _st5 == SKIP, (
+                f"a non-timeout auth=repo FAIL no longer mirrors on the pod's shape ({_st5}): the "
+                f"blanket-red problem is back: {(_ev5 or '')[:140]}")
+            assert "not authoritative here" in (_ev5 or ""), (
+                f"the mirrored SKIP lost its reason: {(_ev5 or '')[:160]}")
+        finally:
+            CHECKS[:] = _saved_checks
+            EVIDENCE.clear(); EVIDENCE.update(_saved_ev)
+            _CHECK_TIMEOUTS.clear(); _CHECK_TIMEOUTS.update(_saved_to)
+            shutil.rmtree(d3, ignore_errors=True)
         print(f"  repo-auth mirror: {len(mirrored)} of {len(repo)} auth=repo checks FAIL and "
               f"mirror to SKIP on the pod's shape, 0 on a checkout, 0 auth=pod mirrored; a "
-              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept")
+              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept; a "
+              f"TIMEOUT stays visible and an ordinary repo FAIL still mirrors")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
