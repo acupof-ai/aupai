@@ -162,3 +162,28 @@ Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows 
 open tasks per owner (check one_deliverable_per_owner, WARN threshold >1): de 6, e1 4, 3b 1, 44 1, b0 1, tilerl 1 (14 total)
 
 committer-pushes rule not firing: six committers' files on main had not reached the pod; 4c pushed them with --all (2026-09-05). The rule says each committer pushes their own files; nothing detected the drift until a manual diff.
+
+## 2026-09-06 (141 rows, 116 causes; ran 02:5xZ)
+
+Top two unfixed causes are the same mechanism (AUPAI_BEHIND_MAIN_OK=1 overrides): task tilerl-? opened — pre-commit behind-main refusal should auto-merge main (the flip's worktree-first workflow) instead of requiring an override; overrides persist post-flip (42-behind at 22:53Z, 164/169-behind at 02:24Z).
+
+| cause | n | min lost | resolution |
+|---|---|---|---|
+| AUPAI_BEHIND_MAIN_OK=1 commit 16 behind (harness.py) | 4 | n/r | **task tilerl** (this section) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 42 behind (test_cursor_sum, test_plan_length, train.py) | 4 | n/r | **task tilerl** (this section) |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d86882 |
+| near_miss/process_failure, cause "?" | 3 | n/r | **unfixed** (0/3 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 26 behind (pre-commit, test_cursor_save/sum) | 3 | n/r | **unfixed** (0/3 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 3 behind (pre-commit, test_mix_anneal, train.py) | 3 | n/r | **unfixed** (0/3 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit behind (AGENTS.md, incidents, shapes) | 3 | n/r | **unfixed** (0/3 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit behind (AGENTS.md, board.py, harness.py) | 3 | n/r | **unfixed** (0/3 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 2 behind (model.py, test_moe_bias, train.py) | 2 | n/r | **unfixed** (0/2 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 4 behind (efficiency.json, model.py, pre-commit) | 2 | n/r | **unfixed** (0/2 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 5 behind (e1_arm_plan_check.py) | 2 | n/r | **unfixed** (0/2 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 60 behind (AGENTS.md, harness.py, launch_gate.py) | 2 | n/r | **unfixed** (0/2 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit behind (mix_e1 files) | 2 | n/r | **unfixed** (0/2 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit behind (gate_failure_incidents.md) | 2 | n/r | **unfixed** (0/2 rows) |
+| bare train.py launch: no claim, no ledger row, 12 GB unintended ckpt | 1 | ~8 | fix carried (1/1 rows) |
+| check_shared_file_claim clean-merge exemption dead under harness.py check | 1 | n/r | **unfixed** (0/1 rows) |
+| runs/ reading_artifact has no sanctioned route to the pod | 1 | ~15 | fix carried (1/1 rows) |
+| AUPAI_BEHIND_MAIN_OK=1 commit 164/169 behind (.gitattributes, pre-commit, merge_drivers) | 2 | n/r | **unfixed** (0/2 rows) |
