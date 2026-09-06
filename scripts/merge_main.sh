@@ -36,8 +36,18 @@ HOLDER=$LOCK/holder
 if [ "${MERGE_MAIN_ALLOW_TIMEOUT:-0}" != "1" ] && [ "$1" != "--selftest" ] && [ "$1" != "--hold" ] \
    && [ "$1" != "--release" ]; then
   _parent_cmd=$(ps -o command= -p "$PPID" 2>/dev/null || true)
-  case "$_parent_cmd" in
-    *timeout\ *)
+  # ARGV[0], NOT ANYWHERE IN THE LINE (4c, 2026-09-06). The test was `*timeout\ *`, which matches
+  # the substring wherever it falls -- and ps prints the parent's WHOLE cmdline, heredoc body
+  # included. A merge invoked from a shell command that merely CONTAINED the words "timeout 20"
+  # in quoted text was refused for a deadline that existed only inside a string. Measured both
+  # directions: under a real `timeout 30` the first field is `timeout`; with the words in a
+  # heredoc it is `/bin/zsh`.
+  #
+  # A path is allowed before the name (/usr/bin/timeout, gtimeout) but the deadline must be the
+  # parent's own argv[0], not text it happens to carry.
+  _parent_argv0=${_parent_cmd%% *}
+  case "${_parent_argv0##*/}" in
+    timeout|gtimeout)
       # The first bare number after `timeout`, skipping its flags (-k, -s TERM, --preserve-status).
       #
       # THE SUFFIX IS SCALED, NOT STRIPPED. My first version did `gsub(/[smhd]/,"")`, which reads
@@ -368,19 +378,70 @@ time.sleep(20)
   # exit 0 and a merge must still be refused -- because a case that only inspected the `case`
   # pattern would pass for a version whose exemption never reached the branch.
   _dcase() {  # $1=name $2=args $3=want exempt|refused
-    _out=$(timeout 20 bash "$0" $2 2>&1 || true)
+    # THREE OUTCOMES, NOT TWO (4c, 2026-09-06). This was `case $_out in *REFUSING*) refused;;
+    # *) exempt;; esac`, so ANY output that lacked the refusal line read as `exempt` -- including
+    # the case where the guard never answered at all. Measured under three concurrent merges:
+    # `timeout 20` killed the inner run while it was reading the parent cmdline through ps, the
+    # output had no REFUSING line, and the world reported `want refused, got exempt` -- a red
+    # against the guard for a fact about machine load. Direct reruns passed.
+    #
+    # The exit code is the discriminator and it was being thrown away by `|| true`. 124 is
+    # timeout's own kill; anything else nonzero with no verdict in the output is a crash. Both
+    # are "could not check", which is a RETRY here rather than a failure, for the same reason
+    # pod_sync_check exits 2 on "cannot run": a check that cannot run has not found anything.
+    _drc=0; _out=$(timeout 20 bash "$0" $2 2>&1) || _drc=$?
     case "$_out" in
       *"REFUSING: this merge is running under"*) _got=refused;;
-      *) _got=exempt;;
+      *) if [ "$_drc" -eq 124 ] || { [ "$_drc" -ne 0 ] && [ "$_drc" -ne 2 ]; }; then
+           _got=no-answer
+         else
+           _got=exempt
+         fi;;
     esac
-    if [ "$_got" != "$3" ]; then
+    if [ "$_got" = "no-answer" ]; then
+      # One retry, then say what happened rather than scoring it. Under load the read succeeds
+      # on the second try; if it does not, "the guard could not be exercised" is the honest
+      # result and it is not the same claim as "the guard is wrong".
+      _drc=0; _out=$(timeout 20 bash "$0" $2 2>&1) || _drc=$?
+      case "$_out" in
+        *"REFUSING: this merge is running under"*) _got=refused;;
+        *) [ "$_drc" -eq 124 ] && _got=no-answer || _got=exempt;;
+      esac
+    fi
+    if [ "$_got" = "no-answer" ]; then
+      echo "  SKIP deadline guard, $1: the guard did not answer twice (exit $_drc, likely a slow" >&2
+      echo "       ps under load). NOT a failure and NOT a pass -- rerun when the box is quiet." >&2
+    elif [ "$_got" != "$3" ]; then
       echo "  FAIL deadline guard, $1: want $3, got $_got" >&2; _fails=$((_fails + 1))
     else
       echo "  ok   deadline guard, $1 -> $_got"
     fi
   }
-  _dcase "--selftest under a timeout is exempt" --selftest exempt
+  # --release, NOT --selftest, FOR THE EXEMPT CASE. Recursing into --selftest cannot work: a full
+  # selftest takes 41 s (measured 2026-09-06) and _dcase runs it under `timeout 20`, so the inner
+  # run was ALWAYS killed and its empty output scored `exempt` by the catch-all. The world passed
+  # for the wrong reason -- it never once reached the exemption it claims to test, on main or here.
+  # --release is exempt by the same clause, does no merge, and returns in milliseconds, so what is
+  # scored is the guard's verdict rather than a timeout kill. It is a no-op when no lock is held.
+  _dcase "an exempt mode under a timeout is not refused" --release exempt
   _dcase "a branch merge under a timeout is refused" _no_such_branch_selftest refused
+
+  # THE DEADLINE MUST BE THE PARENT'S OWN argv[0], NOT TEXT IT CARRIES (4c, 2026-09-06). Run with
+  # NO timeout parent, but from a shell whose cmdline contains the words in a heredoc -- which is
+  # what refused 4c's merge for a `timeout 1` that existed only inside a string. _dcase cannot
+  # express this: every case it runs is already under `timeout 20`, so the property needs its own
+  # world with no deadline at all.
+  _o_quoted=$(bash -c 'cat <<XX >/dev/null
+a heredoc that mentions timeout 1 in quoted text
+XX
+bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
+  case "$_o_quoted" in
+    *"REFUSING: this merge is running under"*)
+      echo "  FAIL deadline guard, quoted text: refused for a deadline that exists only inside a" >&2
+      echo "       string in the parent's cmdline -- match argv[0], not the whole line" >&2
+      _fails=$((_fails + 1));;
+    *) echo "  ok   deadline guard, the words in quoted text are not a deadline";;
+  esac
 
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
   echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
@@ -530,6 +591,33 @@ for _ in $(seq 1 120); do
       echo "  nothing was written to the integration tree and main is unmoved at ${_old:0:8}." >&2
       exit 1
     fi
+    # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
+    # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
+    # records the event under its own git dir (invisible to `git status`, per-worktree) and this
+    # step drains it through the CLI, which owns the accepted-kind list.
+    #
+    # MOVED BEFORE THE CAS (2026-09-06). It drained AFTER, so every row it wrote landed on the
+    # BRANCH one commit behind the ref the CAS had just advanced: measured, 008ee382. A row
+    # delay rather than a row loss -- the rows arrive inside whoever integrates next -- which is
+    # why it went unnoticed. The CAS advances main to `_new`, so anything that must land has to
+    # be committed before `_new` is read.
+    #
+    # AND IT GOES THROUGH THE SAME QUEUE, not `--commit` per row. That flag commits once PER ROW,
+    # which is the cost tilerl-24 exists to remove; --defer appends to aupai_pending_rows and the
+    # drain immediately below writes all of them in one commit. Two queues, one exit -- which is
+    # also why this step must run BEFORE that drain and not merely before the CAS.
+    _pend="$(git rev-parse --git-dir)/aupai_pending_friction"
+    if [ -s "$_pend" ]; then
+      _n=0
+      while IFS= read -r _row; do
+        [ -n "$_row" ] || continue
+        python3 "$_wt_self/scripts/harness.py" friction add --kind override --who "$1" \
+          --blocked "commit from behind main on $1" --cause "$_row" --defer >/dev/null 2>&1 \
+          && _n=$((_n + 1)) || true
+      done < "$_pend"
+      [ "$_n" -gt 0 ] && : > "$_pend"
+      echo "merge_main: queued $_n pending override row(s) for the drain" >&2
+    fi
     # THE QUEUED FRICTION ROWS, ONE COMMIT FOR ALL OF THEM (4c, 2026-09-06). 601 commits landed
     # on main in 24 h and 98 were single ledger rows. The 105 merge commits cannot batch -- each
     # is one integration -- but these can, because nobody reads friction.jsonl in real time.
@@ -627,23 +715,6 @@ for _ in $(seq 1 120); do
       echo "merge_main: WARNING -- the integration tree is dirty, so its files were NOT advanced." >&2
       echo "  Every worktree executes ITS copy of scripts/hooks/pre-commit, which is now stale:" >&2
       git -C "$MAIN" status --porcelain 2>/dev/null | sed 's/^/    /' >&2
-    fi
-    # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
-    # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
-    # now records the event under its own git dir (invisible to `git status`, per-worktree) and
-    # this step drains it through the CLI, which owns the accepted-kind list. Drained AFTER the
-    # CAS and truncated only on success, so a kill between the two leaves the rows for next time.
-    _pend="$(git rev-parse --git-dir)/aupai_pending_friction"
-    if [ -s "$_pend" ]; then
-      _n=0
-      while IFS= read -r _row; do
-        [ -n "$_row" ] || continue
-        python3 "$_wt_self/scripts/harness.py" friction add --kind override --who "$1" \
-          --blocked "commit from behind main on $1" --cause "$_row" --commit >/dev/null 2>&1 \
-          && _n=$((_n + 1)) || true
-      done < "$_pend"
-      [ "$_n" -gt 0 ] && : > "$_pend"
-      echo "merge_main: drained $_n pending override row(s) to friction" >&2
     fi
     # THE PUSH IS PART OF THE STEP. Measured 2026-09-05: main took 670 commits in 24 h against
     # 139 origin/main push events, so it advanced ~5x per push and every gap was a window where a
