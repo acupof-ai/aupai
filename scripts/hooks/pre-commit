@@ -819,6 +819,13 @@ def main():
         # the gate cannot be on at all. An unregistered selftest is an unguarded one -- the hook
         # checks what it happens to check, not what the commit changed.
         "scripts/credential_scan.py",
+        # The corpus-side redactor that imports the gate's patterns. Registered for a reason the
+        # gate's own entry does not cover: this file REWRITES bytes that enter the corpus, so its
+        # false positives are silent. A gate's false positive refuses a commit and someone argues
+        # with it; a redactor's false positive replaces a git sha or a vocab_id inside a training
+        # document with <REDACTED_KEY> and nothing downstream ever reports it. The 9 negatives are
+        # the load-bearing half, and the reconstructed row-44 case must yield exactly 3.
+        "filters/secrets.py",
         # merge_main.sh's lock predicate. Registered because the rule it replaces is exactly the
         # kind someone reinstates for looking simpler: `find -mmin +10` reads as an obviously
         # correct stale-lock cleanup, and it silently expired 4c's quiet window on 2026-09-05 while
