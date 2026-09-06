@@ -1,0 +1,78 @@
+# pod-only code candidates, listed 2026-09-06T08:2xZ by 44 (fb task: inventory pod-only code).
+# Computed against main c15e22ce (`git ls-tree main -r --name-only | grep .py$`).
+# 42 throwaway probes + 1 redundant package marker (filters/__init__.py, listed separately).
+# Method: diff pod find vs main-tracked .py, filtered to dirs holding >=1 tracked .py;
+# excludes __pycache__, inductor_src, vendored trees. fb counted 53 via pod_push manifest;
+# the gap is main advancing + exclusions + 2 scripts b0 tracked at 552428dc.
+#
+# REVIEWED BY de (2026-09-06): method holds; two zeros are scans not absences. Signals added:
+#   39 of 42 basenames start with `_` (one-shot probes); 17 are under 1000 bytes.
+# CITATION SCAN CAVEAT (de, 2026-09-06): a basename-keyed scan over a tree that has both `x.py`
+#   and `dir/x.py` answers "is this NAME cited", not "is this file cited". de's first pass overcounted
+#   (4 of 43) for exactly this reason. The trustworthy count is 3 of 42 cited, 2 of those 3 only by
+#   the earlier audit inventory (runs/audit_0904/c2_untracked_pod_inventory.txt — circular, not
+#   independent evidence). The 3rd, cs_probe.py, is a STALE DUPLICATE: facts/corpus_supply.json:344,358
+#   cites `scripts/cs_probe.py` (tracked, 3216 B), not the root copy (3099 B, 2 fewer header lines).
+#   The fact's provenance is intact; nothing needs landing. Root copy is deletable as a stale dup
+#   (pending user instruction per fb ruling below).
+# OWNER GUESSES: content-header claims, not provenance (de). The 39 `_`-prefixed one-shots are
+#   throwaways; owner matters only for the 3 cited, and is derivable from the citing artifact.
+#
+# live-proc refs: 0 (ps aux scanned; only defunct python zombies).
+# runs/*.log refs: 0 (grep -lF basename; 'harness' control matched, basenames did not).
+# DELETE NOTHING. Disposal (fb ruling 2026-09-06): no session deletes anything on the pod without
+# the user's explicit instruction naming the target (user order 2026-09-05). This list is the record;
+# fb puts the 42 to the user as one question when the run results go up. Reviewer: de.
+
+path                                        size mtime             owner_guess / cited_by
+----------------------------------------------------------------------------------------------------------------------------------
+scripts/de5_classify.py                     4272 2026-09-03T07:10Z 6e/fb? — de-5 reachability (header cites 6e)  || CITED: runs/audit_0904/c2_untracked_pod_inventory.txt only (circular)
+ct_overlap.py                               4917 2026-09-03T22:49Z e1/tilerl? — code_tests overlap  || CITED: runs/audit_0904/c2_untracked_pod_inventory.txt only (earlier version of this inventory — circular, not independent)
+cs_probe.py                                 3099 2026-09-03T23:21Z STALE DUP of tracked scripts/cs_probe.py (3216B); fact cites scripts/ path, NOT this root copy  || root copy itself uncited (basename match was de's overcount error)
+_probe_sgm.py                               1425 2026-09-05T13:14Z tilerl? — _grouped_mm bf16
+_probe_sgm2.py                              1635 2026-09-05T13:14Z tilerl? — _grouped_mm fp8
+_probe_sgm3.py                              1755 2026-09-05T13:15Z tilerl? — _grouped_mm fp8
+_probe_mmap_shape.py                        3254 2026-09-05T14:07Z de? — mmap shape
+_probe_mmap_rows.py                         3543 2026-09-05T14:09Z de? — mmap row cost
+_mut_plan_small.py                         10607 2026-09-05T14:50Z de/44? — e1_arm_plan_check mutation
+_sz.py                                       207 2026-09-05T14:56Z e1? — s_inject cache size
+_fix_e1v2.py                                1981 2026-09-05T15:06Z b0? — b0_p5_e1 row patch
+_fix_ctrlv2.py                              1619 2026-09-05T15:07Z b0? — b0_p5_ctrl row patch
+_stamp_inject.py                            4404 2026-09-05T15:34Z e1? — s_inject corpus stamp
+_verify_stamp.py                             888 2026-09-05T15:35Z e1? — stamp verify
+_ckpt_cmp.py                                1811 2026-09-05T15:41Z e1? — control_arm vs armA tensors
+_ck_step.py                                  592 2026-09-05T16:24Z e1? — ckpt_e1_conv_control_arm step
+_ls_ca.py                                    311 2026-09-05T17:21Z e1? — control_arm listing
+_ca_detail.py                                854 2026-09-05T17:22Z e1? — control_arm detail
+_ca_cmd.py                                   500 2026-09-05T17:22Z e1? — control_arm cmd
+_ck64.py                                     379 2026-09-05T17:36Z e1? — ckpt_e1_conv_n64
+_enum_err.py                                 644 2026-09-05T17:39Z de? — score_matrix err enum
+_close_arms.py                              1165 2026-09-05T17:42Z de/44? — ledger row close
+_why_open.py                                 315 2026-09-05T17:43Z e1? — conv_n1 open diagnosis
+_arm_state.py                                647 2026-09-05T17:43Z e1? — e1_conv arm state
+_err_text.py                                 317 2026-09-05T17:44Z e1? — conv_n1 error text
+_ck256.py                                    382 2026-09-05T18:01Z e1? — ckpt_e1_conv_n256
+_verify_cursor_guard.py                     2231 2026-09-05T18:12Z de/44? — guard #45 failing-case
+_patch_score.py                              868 2026-09-05T18:44Z de? — _score_all5.sh patch
+_patch_score2.py                            2528 2026-09-05T18:51Z de? — _score_all5.sh patch
+_patch_score3.py                            1590 2026-09-05T18:52Z de? — _score_all5.sh patch
+_readbytes.py                               1412 2026-09-05T18:52Z de? — CO_RESIDENCY_BYTES
+_read_curve.py                              1485 2026-09-05T19:05Z e1? — conv arm curve
+_curve2.py                                  1778 2026-09-05T19:05Z e1? — conv arm doc_cu curve
+_probe_align.py                             1289 2026-09-05T19:55Z e1? — control_arm align
+_probe_len.py                                720 2026-09-05T19:55Z e1? — control_arm len
+_probe_env.py                               1099 2026-09-05T19:56Z b0? — template {ck}
+_probe_card.py                               869 2026-09-05T19:58Z b0? — b0_e1p_dense card
+_probe_b.py                                 1093 2026-09-05T19:59Z b0? — b0_e1p_dense
+_probe_dt.py                                1205 2026-09-05T20:01Z b0? — b0_e1p_dense dtype
+_probe_mem.py                               1009 2026-09-05T20:06Z e1? — control_arm mem
+_mem_one.py                                  598 2026-09-05T20:06Z e1? — control_arm mem
+_mem_len.py                                  763 2026-09-05T20:08Z e1? — control_arm mem
+
+----------------------------------------------------------------------------------------------------------------------------------
+SEPARATE — not a probe, opposite deletion reason:
+  filters/__init__.py  0 bytes  2026-09-06T05:47Z  owner: ? (redundant package marker)
+    datagen/fable5/measure_fable5_supply.py:28 does `from filters.secrets import redact_text`,
+    and that import SUCCEEDS with no __init__.py (PEP 420 namespace package; filters.__file__ is None).
+    Deletable because it is redundant, NOT because nobody owns it. Do not let a claim on this row
+    be read as evidence the import needs it. (de measured the PEP 420 resolution.)
