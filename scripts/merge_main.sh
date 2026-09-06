@@ -1161,7 +1161,16 @@ for _ in $(seq 1 120); do
     fi
     # THE ATOMIC STEP. On mismatch someone else landed first: re-merge and re-run, which is a
     # loop the caller drives rather than a lock we hold across a 30 s gate.
-    if ! git -C "$MAIN" update-ref refs/heads/main "$_new" "$_old" 2>/dev/null; then
+    #
+    # -m SIGNS THE REFLOG ENTRY, and that is what makes a hand write detectable at all. A bare
+    # `git update-ref refs/heads/main <new>` that happens to be a FAST-FORWARD passes
+    # check_main_advances_by_ancestry -- ancestry holds -- so the §245 rule "only merge_main
+    # writes main" had no enforcement for that shape (44-37). Measured 2026-09-06: an unsigned
+    # CAS and a bare hand write produce IDENTICAL reflog lines, both with an empty message, so
+    # nothing downstream could tell them apart. All 60 entries in main's window were empty.
+    # With -m the legitimate writer is the only one that leaves a mark, and the CAS still
+    # refuses a stale old-value (verified: "cannot lock ref ... but expected <old>").
+    if ! git -C "$MAIN" update-ref -m "merge_main: $1" refs/heads/main "$_new" "$_old" 2>/dev/null; then
       echo "merge_main: main moved while this ran (expected ${_old:0:8}, now" >&2
       echo "  $(git -C "$MAIN" rev-parse --short main)). Nothing landed. Re-run: the merge above" >&2
       echo "  is already in this worktree, so this is one more \`merge_main.sh $1\`." >&2
