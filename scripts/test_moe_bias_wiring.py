@@ -125,13 +125,68 @@ def main():
     else:
         print("   OK: accumulates across micro-batches, tokens x top_k per forward")
 
+    # ---- E: the integrator does not wind up. THE WORLD THAT b0_moe48_8b DIED IN.
+    # A PERSISTENT ASYMMETRY, not a random one: 5 of 48 experts below mean every step is what
+    # the failed run measured (common mode drifted 0.786 gamma/step, which is (48-2*5)/48 =
+    # 0.79). Without the zero-mean projection the mean bias integrates linearly and reached
+    # +0.4997 by step 1000, at which point bf16's 0.00391 spacing had rounded the SPREAD -- the
+    # only part that routes -- down to 2-3 distinct values across 48 experts.
+    m4 = build(g)
+    nr = m4.expert_bias.numel()   # model.py:801 -- n_routed == moe_experts
+    n_below = 5
+    counts_e = torch.full((nr,), 100, dtype=torch.long, device="cuda")
+    counts_e[:n_below] = 10  # these read below mean every single step
+    for _ in range(1000):
+        m4.update_bias(counts_e)
+    mean_abs = m4.expert_bias.float().mean().abs().item()
+    spread_e = (m4.expert_bias.float().max() - m4.expert_bias.float().min()).item()
+    drift_per_step = (1.0 - 2.0 * n_below / nr)
+    print(f"E 1000 updates, {n_below}/{nr} below mean every step:")
+    print(f"   |mean bias| {mean_abs:.3e}  (want < 1e-6; unprojected would reach "
+          f"{1000 * g * drift_per_step:.4f})")
+    print(f"   spread {spread_e:.6f}  (want > 0: the differential signal must GROW)")
+    if mean_abs >= 1e-6:
+        fails.append(f"E: |mean bias| {mean_abs:.3e} after 1000 updates -- the integrator is "
+                     f"winding up; unprojected drift would be {1000 * g * drift_per_step:.4f}")
+    elif spread_e <= 0:
+        fails.append(f"E: spread {spread_e:.6f} -- zero-mean must not flatten the signal it "
+                     f"exists to preserve")
+    else:
+        print("   OK: mean pinned at zero, spread grows -- windup cannot consume the resolution")
+
+    # ---- F: fp32, checked BY ITS BEHAVIOUR at the magnitude that broke. A dtype assertion alone
+    # would pass on a buffer that is fp32 and then silently cast somewhere; what matters is that
+    # a gamma step at magnitude 0.5 moves the value by gamma. In bf16 the spacing there is
+    # 0.00391, so a 0.001 step lands on the grid and this check FAILS -- which is the point.
+    m5 = build(g)
+    print(f"F dtype {m5.expert_bias.dtype}  (want torch.float32)")
+    if m5.expert_bias.dtype != torch.float32:
+        fails.append(f"F: expert_bias is {m5.expert_bias.dtype}, want float32 -- bf16 spacing at "
+                     f"0.5 is 0.00391, four times the gamma {g} step")
+    else:
+        with torch.no_grad():
+            m5.expert_bias.fill_(0.5)
+        before = m5.expert_bias[0].item()
+        counts_f = torch.full((m5.expert_bias.numel(),), 100, dtype=torch.long, device="cuda")
+        counts_f[0] = 1000  # expert 0 alone is overloaded -> -gamma, others +gamma/...
+        m5.update_bias(counts_f)
+        moved = abs(m5.expert_bias[0].item() - before)
+        # the projection subtracts the mean, so expert 0 moves gamma plus the mean shift
+        print(f"   0.5 -> {m5.expert_bias[0].item():.6f}, |delta| {moved:.6f} "
+              f"(bf16 could not represent a {g} step here)")
+        if moved < g * 0.5:
+            fails.append(f"F: a {g} step at magnitude 0.5 moved the value by only {moved:.6f} "
+                         f"-- the resolution loss that destroyed the spread is still present")
+        else:
+            print("   OK: a gamma step is representable at the magnitude the run reached")
+
     print()
     if fails:
         print("FAIL")
         for f in fails:
             print("  -", f)
         return 1
-    print("PASS: all four worlds")
+    print("PASS: all six worlds")
     return 0
 
 
