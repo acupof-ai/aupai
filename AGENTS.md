@@ -72,6 +72,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Eval, full matrix | `eval/eval_all.sh <ckpt> [tokenizer]` — math-hard, math-500, MC suite, digit head |
 | Score matrix | `eval/score_matrix.py --ckpt <ckpt> [--json runs/score_matrix.jsonl]` — per-type metrics; generative SKIPs on base, never 0 |
 | Pod drift | `scripts/pod_sync_check.sh` — sha256 of tracked code vs /work/aupai; exit 1 on DIFF/MISSING |
+| Back up what a pod deletion destroys | `~/bin/pod "cd /work/aupai && bash scripts/pod_backup.sh"` — rsyncs final/milestone `ckpt_*.pt` (never the `.pt.step<N>` rolling saves), `runs/*.jsonl`, `facts/`, `data/tokenizer.json` and `data/mix_*.json` to `/mnt/data02/aupai_backup/`, then writes MANIFEST with sha256 and size per file. Refuses a destination that is not a mounted filesystem. `root_durable` reads MANIFEST's mtime and goes red past 48h, so a backup nobody runs stops counting |
 | Is it safe to overwrite a RUNNING .sh | `python3 scripts/pod_sh_offset.py --check <rel>` — reads each live shell's script offset from `/proc/<pid>/fdinfo` on the pod and exits 2 unless every differing byte is at or after the earliest of them. `pod_push.sh` calls it, so `POD_PUSH_ALLOW_RUNNING_SH=1` is now checked rather than trusted: the safety is a property of the diff, not of the flag |
 | Measure everything unscored | `python scripts/harness.py measure` |
 | pass@k gate for RL | `python eval/math_hard.py --ckpt X --k 8 --temperature 0.8` — needs pass@8 − pass@1 ≥ 15pt |
