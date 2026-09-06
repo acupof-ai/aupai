@@ -60,6 +60,13 @@ require_durable() {
     echo "refusing: $DEST_MOUNT does not exist. Nothing was copied." >&2
     exit 1
   fi
+  # The selftest's end-to-end world sets this: a temp dir cannot be a mount point, so without
+  # an escape the copy itself would stay untested -- which is exactly how the rsync-is-absent
+  # defect shipped. Not a production escape hatch: the real run never sets it, and the
+  # negative world above still drives this function unmodified.
+  if [ "${AUPAI_BACKUP_SKIP_MOUNT_CHECK:-}" = 1 ]; then
+    return 0
+  fi
   if ! is_mounted "$DEST_MOUNT"; then
     echo "refusing: $DEST_MOUNT is a directory, not a mounted filesystem." >&2
     echo "  A backup onto the same emptyDir dies with the pod it is protecting against," >&2
@@ -181,9 +188,38 @@ if [ "${1:-}" = "--selftest" ]; then
       echo "      the negative case above proves nothing: $out" >&2
       fails=1;;
   esac
+  # END TO END, THROUGH THE REAL COPY. Every assertion above returns before the line that
+  # moves the bytes, which is how the first real run died on `rsync: No such file or
+  # directory` with a green selftest on BOTH machines -- rsync is not installed on the pod.
+  # A guard tested only where it does not run is untested; a line NO test reaches is worse.
+  #
+  # AUPAI_BACKUP_SKIP_MOUNT_CHECK exists for this world alone: a temp dir cannot be a mount
+  # point, and require_durable correctly refuses one. Without it the copy stays untested for
+  # exactly the reason the copy broke. The negative case above still drives the real guard.
+  e2e="$d/e2e"; mkdir -p "$e2e/src/runs" "$e2e/dest"
+  : > "$e2e/src/ckpt_final.pt"; printf 'row\n' > "$e2e/src/runs/tasks.jsonl"
+  ln "$e2e/src/ckpt_final.pt" "$e2e/src/ckpt_final.pt.step10" 2>/dev/null || true
+  if ! ( AUPAI_BACKUP_SKIP_MOUNT_CHECK=1 AUPAI_BACKUP_DEST="$e2e/dest" AUPAI_ROOT="$e2e/src" \
+         AUPAI_SETTLE_TRIES=1 AUPAI_SETTLE_SLEEP=1 bash "$0" >/dev/null 2>&1 ); then
+    echo "FAIL: an end-to-end backup into a writable destination did not complete" >&2; fails=1
+  else
+    for want in "aupai_backup/ckpt_final.pt" "aupai_backup/runs/tasks.jsonl" "aupai_backup/MANIFEST"; do
+      [ -f "$e2e/dest/$want" ] || { echo "FAIL: e2e produced no $want" >&2; fails=1; }
+    done
+    # MANIFEST must describe what landed, not merely exist: sha256, size, path per file.
+    if [ -f "$e2e/dest/aupai_backup/MANIFEST" ]; then
+      grep -q "ckpt_final.pt" "$e2e/dest/aupai_backup/MANIFEST" \
+        || { echo "FAIL: MANIFEST does not name the file it copied" >&2; fails=1; }
+      grep -q "^[0-9a-f]\{64\}  " "$e2e/dest/aupai_backup/MANIFEST" \
+        || { echo "FAIL: MANIFEST rows carry no sha256" >&2; fails=1; }
+    fi
+    # The rolling save must NOT have been copied, even though it is a hardlink of a file that was.
+    [ -f "$e2e/dest/aupai_backup/ckpt_final.pt.step10" ] \
+      && { echo "FAIL: e2e copied a .pt.step rolling save" >&2; fails=1; }
+  fi
   rm -rf "$d"
   [ "$fails" -eq 0 ] || { echo "pod_backup selftest: FAIL"; exit 1; }
-  echo "pod_backup selftest ok: finals and milestones are listed, .step/.interrupt rolling saves and data/corpus are not, and a destination that is not a mounted filesystem is refused"
+  echo "pod_backup selftest ok: finals and milestones are listed, .step/.interrupt rolling saves and data/corpus are not, a destination that is not a mounted filesystem is refused, a growing file is waited out, and an end-to-end run copies the files and writes a sha256 MANIFEST"
   exit 0
 fi
 
@@ -205,30 +241,57 @@ if [ "${1:-}" = "--dry-run" ]; then
 fi
 
 mkdir -p "$DEST"
-# IDLE-PRIORITY, so this stops competing with the work it exists to protect. 84 GB of rsync
-# shares /dev/vda2 with whatever is running: b0's 6 GB torch.load and domain_loss pass, and a
-# launch reading ~150 GB of token caches before its first step. Those are one-shot
-# measurements and a frozen launch window; a backup is neither and loses nothing by being
-# slow (b0's read, 4c's ruling, 2026-09-06). Without this the backup has to be SCHEDULED
-# around other work, which is a coordination cost paid forever instead of one flag.
+# THE COPY. rsync IS NOT INSTALLED ON THE POD -- measured 2026-09-06, the first real run died
+# with "ionice: failed to execute rsync: No such file or directory" after the selftest passed
+# on the laptop AND on the pod. Neither could catch it: --selftest exercises backup_paths,
+# _settle and require_durable, and returns before this line, so the one command that moves the
+# bytes was the only part never executed. Third instance today of "a guard tested only where
+# it does not run"; this is its sharper form -- a path no test reaches at all.
 #
-# `ionice -c3` is idle I/O class, `nice -n 10` is CPU. Both verified present on the pod
-# (/usr/bin/ionice, /usr/bin/nice); the `command -v` guard keeps the script runnable on a
-# machine without them rather than failing the backup over a scheduling nicety.
+# `cp -a --parents -u` is the replacement and it is not a downgrade here:
+#   -a        preserves mode, mtime and symlinks, like rsync -a
+#   --parents recreates the source's directory structure under DEST (runs/x.jsonl lands at
+#             DEST/runs/x.jsonl), which is what --files-from gave
+#   -u        skips a destination file that is already newer, so a re-run copies only what
+#             changed -- the incremental property this needs from rsync
+# Hardlinks: cp preserves them WITHIN one invocation (-a implies -d and links are detected by
+# inode), so the milestone/rolling pairs stay shared exactly as rsync -H did.
+#
+# One invocation with every path, not a loop: cp can only see that two paths share an inode
+# if it processes them together.
 _pri=""
 if command -v nice >/dev/null 2>&1 && command -v ionice >/dev/null 2>&1; then
   _pri="nice -n 10 ionice -c3"
+fi
+if ! command -v cp >/dev/null 2>&1; then
+  echo "refusing: no cp on this machine -- nothing can be copied." >&2
+  exit 1
 fi
 
 while IFS= read -r f; do
   case "$f" in *.pt) [ -f "$SRC/$f" ] && { _settle "$SRC/$f" || exit 1; } ;; esac
 done < "$list"
 
-# -H PRESERVES HARDLINKS. Milestones are hardlinks of a rolling save (measured: the
-# step5000 milestone and .pt.step5000 share inode 84228303, links=2), and the rolling half
-# is excluded from the list -- so without -H each milestone is copied as an independent 6 GB
-# file. Correct either way, but -H keeps the backup the same shape as the source.
-$_pri rsync -aH --files-from="$list" "$SRC/" "$DEST/"
+# GNU cp's `--parents -t` where it exists, a POSIX loop where it does not. The pod is GNU
+# (that is where this runs, and where the one-invocation hardlink preservation matters); the
+# laptop is BSD, where `cp --parents` and `cp -t` are both rejected outright. Detected rather
+# than assumed, because assuming is what produced the last three defects here: rsync absent,
+# `stat -c%s` GNU-only, `xargs -a` GNU-only.
+#
+# The POSIX fallback copies file by file and therefore does NOT preserve hardlinks between
+# them -- stated rather than hidden. It exists so the end-to-end world can run on the laptop;
+# the pod takes the first branch.
+if cp --parents /dev/null /tmp 2>/dev/null; then rm -f /tmp/dev/null 2>/dev/null; _cp_parents=1
+else _cp_parents=0; fi
+if [ "$_cp_parents" = 1 ]; then
+  ( cd "$SRC" && xargs $_pri cp -a --parents -u -t "$DEST" < "$list" )
+else
+  while IFS= read -r f; do
+    [ -n "$f" ] || continue
+    mkdir -p "$DEST/$(dirname "$f")"
+    $_pri cp -p "$SRC/$f" "$DEST/$f"
+  done < "$list"
+fi
 
 # MANIFEST LAST, and only after rsync exits 0 (set -e). It is what check_root_durable reads,
 # so writing it before the copy would stamp a backup that did not finish -- the same ordering
@@ -236,10 +299,24 @@ $_pri rsync -aH --files-from="$list" "$SRC/" "$DEST/"
 #
 # sha256 per file, not just sizes: a truncated copy has a plausible size and the point of the
 # manifest is that somebody can tell whether the bytes are recoverable.
-( cd "$DEST" && while IFS= read -r f; do
-    [ -f "$f" ] || continue
-    printf '%s  %s  %s\n' "$(sha256sum "$f" | cut -d' ' -f1)" "$(stat -c%s "$f")" "$f"
-  done < "$list" ) > "$DEST/MANIFEST.tmp"
+#
+# python3 for BOTH the hash and the size. `sha256sum` and `stat -c%s` are GNU-only, and this
+# line carried the same defect the copy did -- it ran only after a successful copy, so no
+# selftest reached it until the end-to-end world existed. Reading the file once in python is
+# also one pass instead of two over 84 GB.
+( cd "$DEST" && python3 - "$list" <<'PYEOF'
+import hashlib, os, sys
+for line in open(sys.argv[1], encoding="utf-8"):
+    f = line.strip()
+    if not f or not os.path.isfile(f):
+        continue
+    h = hashlib.sha256()
+    with open(f, "rb") as fh:
+        for chunk in iter(lambda: fh.read(1 << 20), b""):
+            h.update(chunk)
+    print(f"{h.hexdigest()}  {os.path.getsize(f)}  {f}")
+PYEOF
+) > "$DEST/MANIFEST.tmp"
 mv "$DEST/MANIFEST.tmp" "$DEST/MANIFEST"
 rm -f "$list"
 
