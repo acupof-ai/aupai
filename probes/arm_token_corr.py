@@ -49,13 +49,28 @@ def val_rows(domain, cache_path, val_frac, val_rows_max, seq=SEQ):
 
 @torch.no_grad()
 def token_losses(model, X, Y, batch, device):
-    """Per-token cross-entropy, flattened. No reduction: the correlation is per token."""
+    """Per-token cross-entropy, flattened. No reduction: the correlation is per token.
+
+    THE AUTOCAST IS LOAD-BEARING ON CUDA, not a speed choice. Measured 2026-09-05 on this
+    model: of the four combinations of load dtype and autocast, exactly one fails --
+    fp32 weights with no autocast raises `CUDA error: misaligned address` from
+    fla/ops/kda/chunk.py, at every batch size and every sequence length, on every card. The
+    other three run. This probe's first attempt was that one combination, so the whole run
+    died in chunk_kda (runs/arm_corr.log, 2026-09-05) and the error read as a broken box.
+    Paired with the bf16 load in main(); autocast is enabled only on cuda, so the CPU path
+    and every selftest world are unchanged. domain_loss.py:252 and score_matrix.py:739 take
+    the same pair, and eval/novel_ops_4way.py was fixed the same way for readout_1.
+    """
     out = []
+    use_amp = str(device).startswith("cuda")
     for j in range(0, len(X), batch):
         xb = X[j : j + batch].to(device)
         yb = Y[j : j + batch].to(device)
-        logits = model(xb)
+        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_amp):
+            logits = model(xb)
         logits = logits[0] if isinstance(logits, tuple) else logits
+        # .float() AFTER autocast, not inside it: the loss is the quantity being correlated and
+        # a bf16 cross-entropy would quantise it. The forward runs in bf16, the loss in fp32.
         ls = torch.nn.functional.cross_entropy(
             logits.reshape(-1, logits.size(-1)).float(), yb.reshape(-1), reduction="none"
         )
@@ -156,12 +171,21 @@ def claim_own_card(name, device):
         else:
             card = str(local)
         ok, msg = acquire(
-            "e1_arm_token_corr", [int(card)], pid=os.getpid(), require_device=True,
+            "e1_arm_token_corr", [card], pid=os.getpid(), require_device=True,
             note="claimed from inside the probe after torch.cuda.set_device",
         )
         return ok, msg
     except Exception as e:  # noqa: BLE001 -- see the docstring: never kill the run over this
-        return False, f"claim attempt raised {type(e).__name__}: {e}"
+        # A RAISE HERE MEANS "DON'T KNOW", NOT "NOT CLAIMED", and saying the wrong one cost a
+        # release. MEASURED 2026-09-06: card_claim.acquire wrote the claim file and THEN raised
+        # TypeError formatting its own success message (int cards, since fixed at
+        # card_claim.py:674), so this handler returned False on a card the process was holding.
+        # main() guards its release on that flag, so the claim leaked while the log said "running
+        # UNCLAIMED" -- the exact inverse of the truth, and the inverse of 2026-09-05's real
+        # unclaimed run. The release is now attempted regardless, so an unknown state cannot leak
+        # a card; a release with no claim is a no-op that reports so.
+        return False, (f"claim attempt raised {type(e).__name__}: {e} -- state UNKNOWN, not "
+                       f"proven unclaimed; the release will run anyway")
 
 
 def release_own_card():
@@ -241,10 +265,17 @@ def main():
 
     losses = {}
     claimed = False
+    attempted = False
     try:
         for tag, path in (("a", a.ckpt_a), ("b", a.ckpt_b)):
             print(f"  loading {path}", flush=True)
-            model, cfg = load_checkpoint(path, device=a.device)
+            # bf16 ON CUDA, and the dtype is HALF of a pair -- see token_losses' docstring for
+            # the measurement. fp32 weights with no autocast is the one combination of four that
+            # raises `CUDA error: misaligned address` in chunk_kda, and it is what this probe did
+            # on 2026-09-05. On cpu the dtype is left alone: chunk_kda has no CPU kernel at all,
+            # so the CPU path never reaches the code that cares.
+            _ld = torch.bfloat16 if str(a.device).startswith("cuda") else None
+            model, cfg = load_checkpoint(path, device=a.device, dtype=_ld)
             load_tokenizer(a.tokenizer, cfg)  # cross-checks vocab_real then vocab_id
             model.eval()
             # CLAIM AFTER THE FIRST MODEL IS RESIDENT, not before: card_claim refuses a pid
@@ -253,6 +284,7 @@ def main():
             # claim_own_card. Unclaimed is REPORTED, not fatal: the measurement is still valid,
             # and a probe that refuses to run because bookkeeping failed wastes the card window.
             if not claimed:
+                attempted = True
                 claimed, cmsg = claim_own_card("e1_arm_token_corr", a.device)
                 print(f"  card claim: {'held' if claimed else 'NOT HELD'} -- {cmsg}", flush=True)
                 if not claimed:
@@ -262,9 +294,15 @@ def main():
             losses[tag] = token_losses(model, X, Y, a.batch, a.device)
             del model
     finally:
-        if claimed:
+        # RELEASE ON `attempted`, NOT ON `claimed`. A claim attempt that RAISED leaves the state
+        # unknown, and card_claim's failure mode is to write the file and then raise -- so a
+        # release guarded on `claimed` skips exactly the case where a card is held and nobody
+        # thinks so (measured 2026-09-06; the claim sat on disk for the whole run and then made
+        # `card_claim.py status` raise for every peer). A release with no claim is a no-op that
+        # says so, which is cheaper than a leak.
+        if attempted:
             ok, rmsg = release_own_card()
-            print(f"  card release: {'ok' if ok else 'FAILED'} -- {rmsg}", flush=True)
+            print(f"  card release: {'ok' if ok else 'no-op or FAILED'} -- {rmsg}", flush=True)
 
     st = paired_stats(losses["a"], losses["b"], rpt)
     st.update(
@@ -342,6 +380,96 @@ def _selftest():
     st = paired_stats(torch.randn(n), torch.randn(n), rpt)
     assert 0.5 < st["deff"] < 2.0, st["deff"]
 
+    # 5b. token_losses ENTERS AUTOCAST FOR A CUDA DEVICE AND NOT FOR CPU. This is the other half
+    #     of the misaligned-address fix and it needs its own world: the dtype assertion in the
+    #     main()-running block below checks that bf16 WEIGHTS are requested, and a version that
+    #     loaded bf16 but dropped the autocast passes that one while still not being any of the
+    #     three combinations measured to work. MEASURED: removing only the `with torch.autocast`
+    #     line, keeping the bf16 load, left every other world in this file GREEN.
+    #
+    #     THE SPY IS ON torch.autocast ITSELF, not on torch.is_autocast_enabled(), and that is
+    #     forced rather than stylistic. On a box with no card, entering a cuda autocast block
+    #     succeeds but torch DISABLES it with a UserWarning, so is_autocast_enabled() reads False
+    #     inside the block -- a state-observing world can only assert on the pod, and this
+    #     selftest's gating home is the pre-commit hook, which runs here. Spying on the
+    #     constructor sees the call the code makes and its arguments, which is the property, and it
+    #     sees it on any box. Not a source grep: world 6 records why (`if False:` around a call
+    #     leaves the text in place and the assertion green).
+    #
+    #     THE CPU LEG IS NOT DECORATION: this probe's DEFAULT device is cpu, and an autocast
+    #     enabled unconditionally would run every CPU forward in bf16 and quantise the very
+    #     per-token losses being correlated. So the assertion is on `enabled`, not on presence.
+    class _Holder:
+        """Stands in for the row tensors so a 'cuda:0' device needs no card: .to() is identity.
+
+        A plain tensor would call .to('cuda:0') and raise before autocast was ever reached, which
+        is what makes the cuda leg of this world unreachable with real tensors on this box.
+        """
+
+        def __init__(self, t):
+            self.t = t
+
+        def __len__(self):
+            return len(self.t)
+
+        def __getitem__(self, s):
+            return _Holder(self.t[s])
+
+        def to(self, _dev):
+            return self.t
+
+        @property
+        def shape(self):
+            return self.t.shape
+
+    class _FakeModel(torch.nn.Module):
+        def forward(self, x):
+            return torch.zeros(x.shape[0], x.shape[1], 7)  # [batch, seq, vocab]
+
+    _ac_calls = []
+    _real_autocast = torch.autocast
+
+    class _AutocastSpy:
+        def __init__(self, *args, **kw):
+            _ac_calls.append((args, kw))
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+    _XH = _Holder(torch.zeros(2, 3, dtype=torch.long))
+    _YH = _Holder(torch.zeros(2, 3, dtype=torch.long))
+    torch.autocast = _AutocastSpy
+    try:
+        token_losses(_FakeModel(), _XH, _YH, 1, "cuda:0")
+        _cuda_calls = list(_ac_calls)
+        _ac_calls.clear()
+        token_losses(_FakeModel(), _XH, _YH, 1, "cpu")
+        _cpu_calls = list(_ac_calls)
+    finally:
+        torch.autocast = _real_autocast
+
+    assert len(_cuda_calls) == 2, (
+        f"token_losses entered autocast {len(_cuda_calls)} time(s) for two batches on cuda; the "
+        f"forward must run inside it on every batch. fp32-or-unwrapped is the one combination of "
+        f"four that raises `CUDA error: misaligned address` in chunk_kda, and it killed this "
+        f"probe's 2026-09-05 run (runs/arm_corr.log)"
+    )
+    for _a, _kw in _cuda_calls:
+        assert _a and _a[0] == "cuda", _a
+        assert _kw.get("dtype") is torch.bfloat16, _kw
+        assert _kw.get("enabled") is True, (
+            f"autocast was constructed with enabled={_kw.get('enabled')!r} for a cuda device; "
+            f"a disabled autocast is the unwrapped fp32 path under another name"
+        )
+    assert len(_cpu_calls) == 2 and all(kw.get("enabled") is False for _, kw in _cpu_calls), (
+        f"token_losses enabled autocast on device 'cpu' ({_cpu_calls}); cpu is this probe's "
+        f"DEFAULT device and a bf16 forward there would quantise the per-token losses being "
+        f"correlated"
+    )
+
     # 6. THE CUDA REFUSAL IS IN main() AND READS --allow_cuda. Checked by source, because
     #    calling main() needs two checkpoints on disk. The cards belong to another team;
     #    a probe that takes one silently is the defect, not the wrong number.
@@ -412,7 +540,12 @@ def _selftest():
         return torch.zeros(2, SEQ + 1, dtype=torch.long), 1000, 50
 
     def _fake_load_ckpt(path, device="cpu", dtype=None, fone_ok=True):
+        # RECORD THE DTYPE main() ASKED FOR. Dropping it here is what let the misaligned-address
+        # crash ship: with the argument thrown away, a load that requested fp32 on cuda was
+        # indistinguishable from one that requested bf16, and the only failing combination of the
+        # four went untested through a whole card window.
         _events.append(("load", path))
+        _events.append(("load_dtype", (str(device), dtype)))
         return types.SimpleNamespace(eval=lambda: None), types.SimpleNamespace(
             vocab=None, vocab_id=None
         )
@@ -467,7 +600,32 @@ def _selftest():
         assert kinds.index("load") < kinds.index("claim"), kinds
         assert kinds.index("claim") < kinds.index("score"), kinds
         assert kinds[-1] == "release", f"release is not last: {kinds}"
-        assert _events[kinds.index("claim")][1] == [7], _events[kinds.index("claim")][1]
+        # THE PHYSICAL CARD, AS A STRING. `["7"]` and not `[7]`: card_claim's contract is the
+        # CUDA_VISIBLE_DEVICES token, and every other caller passes strings (loader.py:456 splits
+        # CVD). This assertion read `== [7]` while the code passed `[int(card)]`, and that
+        # agreement is what hid the defect -- both sides were the one type card_claim's own
+        # message formatting could not handle, so the claim file was written and then acquire
+        # raised out of `','.join(cards)`. Fixed on both sides 2026-09-06; card_claim.py:674 now
+        # normalises so no future caller can reproduce it, and this line pins the convention.
+        assert _events[kinds.index("claim")][1] == ["7"], _events[kinds.index("claim")][1]
+
+        # THE CUDA LOAD ASKS FOR bf16. This is the world that fails on the pre-fix path: the old
+        # line was `load_checkpoint(path, device=a.device)`, i.e. dtype None, which on cuda means
+        # fp32 weights, and paired with no autocast that is the ONE combination of four that
+        # raises `CUDA error: misaligned address` in chunk_kda. Asserted on the argument main()
+        # actually passed rather than on the source text, because a source assertion cannot tell a
+        # call that executes from one that does not -- the lesson this file already carries at
+        # world 6 for the claim.
+        _dts = [e[1] for e in _events if e[0] == "load_dtype"]
+        assert len(_dts) == 2, f"expected two loads, saw {_dts}"
+        for dev, dt in _dts:
+            assert dev.startswith("cuda"), dev
+            assert dt is torch.bfloat16, (
+                f"main() loaded a cuda checkpoint with dtype={dt!r}; it must be torch.bfloat16. "
+                f"dtype None on cuda gives fp32 weights, and fp32 outside autocast raises "
+                f"`CUDA error: misaligned address` in chunk_kda -- measured, and it killed this "
+                f"probe's 2026-09-05 run (runs/arm_corr.log)"
+            )
 
         # THE CACHE PATH FOLLOWED AUPAI_TOKEN_CACHE_DIR. Asserted on the path main() actually
         # passed to val_rows, not on the source: the literal it replaced
@@ -529,6 +687,38 @@ def _selftest():
         assert [e[0] for e in _events][-1] == "release", (
             f"a crash mid-scoring left the card CLAIMED: {[e[0] for e in _events]}"
         )
+
+        # AND THE RELEASE RUNS WHEN THE CLAIM *RAISED*, which is a different world from the two
+        # above and the one that actually leaked a card. THE REAL SHAPE, measured 2026-09-06:
+        # card_claim.acquire wrote the claim file and THEN raised formatting its own success
+        # message, so claim_own_card's handler returned False on a card the process was holding.
+        # A release guarded on `claimed` skipped -- the claim sat on disk for the whole run while
+        # the log printed "running UNCLAIMED", and that row later made `card_claim.py status`
+        # raise for every peer. Both worlds above pass with the guard on `claimed`: the first
+        # never fails the claim, the second fails LATER than the claim. Only this one separates
+        # "claim failed" from "claim outcome unknown".
+        _events.clear()
+        _fake_losses.boom = False
+
+        def _raise_after_writing(name, cards, pid=None, require_device=False, note=""):
+            # Records the claim, exactly as card_claim did (the file was written), then raises
+            # the way it did on the return-message join.
+            _events.append(("claim", cards))
+            raise TypeError("sequence item 0: expected str instance, int found")
+
+        _stub2.acquire = _raise_after_writing
+        try:
+            main()
+        finally:
+            _stub2.acquire = _acq
+        _kinds_r = [e[0] for e in _events]
+        assert "claim" in _kinds_r, _kinds_r
+        assert _kinds_r[-1] == "release", (
+            f"a claim that RAISED after writing its file left the card unreleased: {_kinds_r}. "
+            f"The release must be guarded on whether a claim was ATTEMPTED, not on whether it "
+            f"was reported held -- an exception means the state is unknown, not that no card is "
+            f"held, and card_claim's own failure mode is to write the file and then raise."
+        )
     finally:
         _fake_losses.boom = False
         for k, v in _orig.items():
@@ -566,7 +756,13 @@ def _selftest():
 
         _real_curdev = torch.cuda.current_device
         torch.cuda.current_device = lambda: 0
-        for vis, want in (("7", 7), ("2,5", 2), ("", 0)):
+        # STRINGS, not ints. card_claim's contract is the CUDA_VISIBLE_DEVICES token and every
+        # other caller passes strings (loader.py:456 splits CVD). This tuple read (7, 2, 0) while
+        # the code passed [int(card)] -- the two agreed, which is exactly why neither noticed that
+        # ints were the one type card_claim's own success message could not format: it wrote the
+        # claim file and then raised out of `','.join(cards)`, so the probe reported NOT HELD on a
+        # card it held (2026-09-06).
+        for vis, want in (("7", "7"), ("2,5", "2"), ("", "0")):
             _seen.clear()
             if vis:
                 os.environ["CUDA_VISIBLE_DEVICES"] = vis
