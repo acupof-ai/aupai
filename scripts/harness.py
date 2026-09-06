@@ -85,6 +85,18 @@ _CHECK_TIMEOUTS = {
     # consecutive runs and FAILed with "has not actually run since", blocking a commit
     # whose changes it has nothing to say about. 30s is ~4x the measured total.
     "tasks_closed_by_commit": 30,
+    # Measured 2026-09-06 on two laptops: 3.3-3.6s solo here and on de's, which fits 5s
+    # alone and does not fit inside the full set -- it banked 4 consecutive strikes on
+    # de's box and read FAIL "has not actually run since", so the signal was off exactly
+    # where it looked red. One subprocess per reflog pair at ~17ms; batching does not
+    # help (measured: rev-list per unique `new` is 3.89s, slower than the 3.25s it would
+    # replace, because every pair has a distinct new commit).
+    #
+    # The window is capped at 60 entries rather than 200, which is the real fix -- the
+    # walk grew with the reflog, so ANY fixed budget is crossed eventually. 60 covers
+    # ~a day of six sessions merging and costs 0.86s; 20s is >20x that, so the entry
+    # stops being about this machine's speed.
+    "main_advances_by_ancestry": 20,
     # Measured on this checkout under load (load avg 28, 25 users), 2026-09-03:
     # getattr_cfg_names_exist 6.5s, restartability 4.5s (291 files scanned) -- both
     # pass by hand but cross 5s when the shared machine is busy, and each banked
@@ -123,6 +135,38 @@ _CHECK_TIMEOUTS = {
     # and a cached answer is exactly the stale reading it exists to catch.
     "pod_stamp_is_main": 60,
     "snapshot_logs_say_so_at_the_tail": 60,
+    # mix_supply's WORK is 0.07s. Its cost is a module import: `_token_cache_dir` imports train
+    # lazily to keep ONE definition of the cache dir (the 2026-09-02 two-accessors incident), and
+    # train pulls in torch. Measured on the pod, three calls in one process while the 8B arm ran:
+    # 6.19s / 0.00s / 0.00s, and by stopwatch inside the first -- _token_cache_dir 6.74s, of which
+    # `import train` 5.05s and `import torch` 1.17s, while `train._token_cache_dir()` itself is
+    # 0.00s and all seven caches read in 0.00s each (_cache_rows reads the zip central directory,
+    # never the payload). The check PASSes: 1 live mix, 7 domains, val-split loss 0.00% at 1.00B.
+    #
+    # So the variance is a torch import competing for host IO with a live run: it struck at 5s and
+    # had passed all evening, which is a load sensor wearing a supply check's label -- cost growth,
+    # not a hang. 15s is ~2.4x the measured cold cost under load.
+    #
+    # RAISING THE BUDGET IS THE INTERIM FIX, NOT THE FIX (4c ruling, 2026-09-06). Having
+    # _token_cache_dir answer from the env var or an NVMe-dir test BEFORE importing train was
+    # refused: a branch here that can answer without train is a SECOND definition of the cache dir,
+    # and "fall back to train only when neither answers" is precisely where the two disagree in
+    # silence -- the 2026-09-02 incident rebuilt in the tool that exists to catch it. Root fix is
+    # de-66: move _token_cache_dir into a torch-free module both sides import. Blocked on the
+    # run's stop window; reviewer tilerl.
+    "mix_supply": 15,
+    # 0.2s on the laptop, 10.20s on the pod -- and the pod is where it was timing out. Measured
+    # 2026-09-06 by walking the same 8 extensions check_no_conflict_markers walks: 0.00s to file
+    # 50, 10.19s by file 500, 10.20s for all 729. The cost is reading file bodies off the pod's
+    # filesystem, not git, so it grows with the tracked-file count exactly as
+    # snapshot_logs_say_so_at_the_tail grows with the log count. 30s is ~3x the measured walk.
+    #
+    # HOW IT WAS FOUND, and why it went unseen for 36 runs: it had banked 36 consecutive strikes
+    # in runs/check_timeouts.json on the pod, so its state was FAIL "has not actually run since"
+    # -- and the auth=repo pod conversion below turned that into SKIP, which reads as "the subject
+    # is not here". It was in nobody's FAIL list. See the conversion's own comment for the fix
+    # (4c ruling, 2026-09-06): a TIMEOUT is no longer converted.
+    "no_conflict_markers": 30,
 }
 #: Consecutive-timeout counts, keyed by check name. On disk, not in memory: the point is
 #: to notice a check that times out run AFTER run, and each run is a fresh process.
@@ -940,7 +984,15 @@ def check_milestone_ckpt_pinned(root):
             ok += 1
             continue
         tok = r.get("milestone")
-        pins = glob.glob(os.path.join(root, f"*milestone_{tok}*.pt")) if tok else []
+        # ANCHORED TO THE RUN, because `*milestone_{tok}*.pt` accepts any run's pin. Two runs
+        # reaching the same milestone is the normal case (every ladder point has one per stage),
+        # and the unanchored glob let one of them vouch for the other: a row for
+        # ckpt_runA.pt.step5000 read PASS while only ckpt_runB.milestone_<tok>_step5000.pt was
+        # on disk, which is the 3.24B loss this check exists to catch, wearing a sibling's name.
+        # Same class as the _MILESTONE_RE comment below (a run NAMED 30b parsed as the 30b
+        # milestone) one level up: the pin belongs to a run, not to a token.
+        run = re.sub(r"\.pt(\.step\d+)?$", "", ck)
+        pins = glob.glob(os.path.join(root, f"{run}.milestone_{tok}*.pt")) if tok else []
         if pins:
             ok += 1
         elif r.get("unrepeatable"):
@@ -976,6 +1028,36 @@ def _broken_milestone_ckpt_pinned():
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     # a checkpoint must exist or the check SKIPs instead of failing
     open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    return d
+
+
+def _broken_milestone_pin_belongs_to_another_run():
+    """A row whose pin exists -- under a DIFFERENT run's name.
+
+    The unanchored glob `*milestone_{tok}*.pt` counted that as pinned, so a row could read
+    PASS while its own weights were gone. Two runs at the same milestone is the normal case,
+    which is what made this reachable rather than theoretical: the ladder has 8b pins for
+    pretrain_15b_s1 and matchedtok_step5000 for 1.5b-a0.2b-e48_8b, and any future pair
+    sharing a token would have vouched for each other.
+
+    Both halves are asserted, because an anchor that refuses everything would also make this
+    world red: run B's pin must FAIL and run A's own pin must PASS on the same row."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    row = {"ckpt": "ckpt_runA.pt.step5000", "milestone": "matchedtok_step5000",
+           "pinned_as": "ckpt_runA.milestone_matchedtok_step5000.pt"}
+    with open(os.path.join(d, "runs", "milestones.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+    # a checkpoint must exist or the check SKIPs instead of failing
+    open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    # THE NEGATIVE CONTROL, checked here rather than trusted: rename the pin to run A and the
+    # same row must go green. Without this the world stays red under an anchor so strict that
+    # no pin ever resolves, and a check that always fails is as blind as one that never does.
+    own = os.path.join(d, "ckpt_runA.milestone_matchedtok_step5000.pt")
+    open(own, "w").write("x")
+    st, msg = check_milestone_ckpt_pinned(d)
+    assert st == PASS, f"run A's own pin must resolve, got {st}: {msg}"
+    os.rename(own, os.path.join(d, "ckpt_runB.milestone_matchedtok_step5000.pt"))
     return d
 
 
@@ -2586,19 +2668,34 @@ def check_main_advances_by_ancestry(root):
             lines = fh.read().splitlines()
     except OSError as e:
         return SKIP, f"cannot read main's reflog: {e}"
-    # The last N entries only. The whole file is every advance since the repo began, and a jump
-    # from months ago is not actionable -- it names a sha nobody can still recover from a branch.
-    lines = [ln for ln in lines if ln.strip()][-200:]
+    # The last N entries only. The whole file is every advance since the repo began (1561 by
+    # 2026-09-06), and a jump from months ago is not actionable -- it names a sha nobody can
+    # still recover from a branch.
+    #
+    # 60, NOT 200. The walk is one subprocess per pair at ~17ms, so the cost grew with the
+    # reflog: 3.25s at 200 against a 5s budget, which fits alone and does not fit inside the
+    # full check set -- de measured 4 consecutive timeout strikes on their laptop, where this
+    # then read FAIL "has not actually run since" rather than absent. A window that grows
+    # crosses ANY fixed budget eventually, so the window is what changes. 60 covers about a
+    # day of six sessions merging and costs 0.86s measured. A sideways move is caught on the
+    # commit after it, not weeks later, so a shorter window loses no signal anyone acts on.
+    lines = [ln for ln in lines if ln.strip()][-60:]
     ZERO = "0" * 40
     # THE ONE INCIDENT THAT ALREADY HAPPENED, named by its exact sha pair rather than excused by
     # a rule. It is in the reflog forever, so without this the check FAILs every commit until the
-    # entry ages past the 200-line window -- and a check that is red for a fixed cause is one
-    # people learn to pass with --no-verify. Recorded, not suppressed: the row stays in
-    # runs/friction.jsonl, AGENTS.md names the rule, and any OTHER pair still FAILs.
+    # entry ages past the window -- and a check that is red for a fixed cause is one people learn
+    # to pass with --no-verify. Recorded, not suppressed: the row stays in runs/friction.jsonl,
+    # AGENTS.md names the rule, and any OTHER pair still FAILs.
     #
     # A PAIR, NOT A SHA. Excusing `9a11b9ea` as a destination would hide a second sideways move
     # onto the same commit; excusing bc95abe8 as a source would hide the next thing that
     # discards it. Only this exact transition is known.
+    #
+    # KEPT THOUGH IT NO LONGER FIRES. Measured 2026-09-06 after the window went 200 -> 60: the
+    # incident is 61 entries from the end, so it has just aged out and this set matches nothing
+    # today. Deleting it would be right if the window were fixed, and it is not -- a shrinking
+    # reflog or a bigger window brings the entry back, and then the check goes red for a cause
+    # that was settled. The cost of keeping it is one tuple.
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
                   "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
     jumps = []
@@ -2796,7 +2893,14 @@ def check_root_durable(root):
     FAIL again -- automatically, because `durable` is computed from what _is_mount actually says
     rather than from a hardcoded verdict.
 
-    Reports FAIL on the pod today (root is /work/aupai, /mnt/data02 is mounted).
+    AND THEN IT WAS RED FOREVER ANYWAY (4c, 2026-09-06). Nobody relocates AUPAI_ROOT
+    mid-campaign: /work/aupai is a standing emptyDir and that is the pod's shape, not a
+    defect a run can fix. So the check was back in the state the WARN tier existed to avoid,
+    one tier louder. Two fixes are accepted now, not one -- move the root, OR back up what a
+    pod deletion would destroy to the durable mount. The second is verified by a marker file
+    that must EXIST and be recent, never by a recorded promise: a fact row saying "we accept
+    this and back up" would turn the check green forever whether or not anyone ran a backup,
+    replacing a permanent red with a permanent green. See _durable_backup_state.
     """
     env = os.environ.get("AUPAI_ROOT")
     aupai = os.path.abspath(env) if env else root
@@ -2823,9 +2927,53 @@ def check_root_durable(root):
         if aupai == m or aupai.startswith(m + os.sep):
             note = f"root {aupai} is on {m}, a Kubernetes emptyDir -- a pod deletion erases it"
             if durable:
-                return FAIL, f"{note}; move AUPAI_ROOT to {durable[0]}"
+                # THE MOVE IS NOT THE ONLY FIX, AND IT HAS NOT HAPPENED. /work/aupai is a
+                # standing emptyDir and the pod's shape; nobody is relocating AUPAI_ROOT
+                # mid-campaign, so this FAILed on every pod run and a permanent red is no
+                # signal -- it gets --force'd along with the real ones (4c, 2026-09-06).
+                #
+                # So the second fix is accepted: BACK UP what a pod deletion would destroy.
+                # The acknowledgement is not a sentence, it is a path that must EXIST on the
+                # durable mount and be NEWER than the age below -- a backup nobody has run
+                # for a week is the same lost data as no backup, and a check that reads only
+                # a promise cannot tell those apart.
+                ack = _durable_backup_state(durable)
+                if ack:
+                    return PASS, (f"{note} -- accepted, with {ack} on {durable[0]}. The move is "
+                                  f"declined deliberately: /work is the pod's shape")
+                return FAIL, (
+                    f"{note}; move AUPAI_ROOT to {durable[0]}, or record a backup there. "
+                    f"A backup is {BACKUP_MARKER} under {durable[0]}, refreshed within "
+                    f"{BACKUP_MAX_AGE_H}h, listing what it holds -- checkpoints and ledgers "
+                    f"are what a pod deletion destroys"
+                )
             return WARN, f"{note}; no durable mount is visible in the container, so nothing to move to"
     return PASS, f"root {aupai} is not on a known-ephemeral mount"
+
+
+BACKUP_MARKER = "aupai_backup/MANIFEST"
+BACKUP_MAX_AGE_H = 48
+
+
+def _durable_backup_state(durable):
+    """"<marker>, Nh old" when a fresh backup marker exists on a durable mount, else "".
+
+    A PATH AND AN AGE, NOT A DECLARATION. The acknowledgement 4c asked for could have been a
+    fact row saying "we accept /work and back up to /mnt/data02", and that would turn the
+    check green forever regardless of whether anyone ever ran the backup -- the permanent
+    red replaced by a permanent green, which is the same non-signal facing the other way.
+    Requiring the marker to be recent means the check answers "is the data recoverable
+    today", which is the question the FAIL was gesturing at.
+    """
+    for m in durable:
+        p = os.path.join(m, BACKUP_MARKER)
+        try:
+            age_h = (time.time() - os.path.getmtime(p)) / 3600.0
+        except OSError:
+            continue
+        if age_h <= BACKUP_MAX_AGE_H:
+            return f"a backup manifest {age_h:.0f}h old"
+    return ""
 
 
 def _broken_root_durable():
@@ -2842,6 +2990,103 @@ def _broken_root_durable():
     with open(os.path.join(d, ".durable_mounts"), "w") as f:
         f.write(d + "\n")
     return d
+
+
+def _selftest_tasks_read_from_index():
+    """A row STAGED but absent from the working tree must be the one the check judges.
+
+    4c's world for b0's finding. The two sources only disagree while a commit is being
+    built, which is exactly when this check runs (the pre-commit hook), so a fixture that
+    commits first would have both sides agree and prove nothing -- the reason reading the
+    working tree survived this long.
+
+    The reverse direction is the control: a row in the working tree but NOT staged must be
+    invisible. Without it "read the index" could be implemented as "read both", which passes
+    the first assertion while still judging rows that are not being committed.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="tri_")
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "tasks.jsonl")
+        with open(p, "w") as fh:
+            fh.write(json.dumps({"id": "committed-1", "state": "open"}) + "\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base register")
+
+        # Staged, never committed: present in the index, and then REMOVED from the working
+        # tree so the two sources cannot both be right.
+        with open(p, "a") as fh:
+            fh.write(json.dumps({"id": "staged-only", "state": "open"}) + "\n")
+        g("add", "runs/tasks.jsonl")
+        with open(p, "w") as fh:
+            fh.write(json.dumps({"id": "committed-1", "state": "open"}) + "\n")
+            fh.write(json.dumps({"id": "worktree-only", "state": "open"}) + "\n")
+
+        ids = {r.get("id") for r in _read_tasks(p, index_root=d)}
+        assert "staged-only" in ids, f"the staged row must be read; got {ids}"
+        assert "worktree-only" not in ids, (
+            f"a working-tree row that is NOT staged must be invisible -- the check judges what "
+            f"the commit will contain, not what the tree happens to hold; got {ids}")
+
+        # No index entry (the path is untracked here) falls back to the file rather than
+        # returning nothing: a check run outside a repo must still read the register.
+        d2 = tempfile.mkdtemp(prefix="tri2_")
+        p2 = os.path.join(d2, "tasks.jsonl")
+        with open(p2, "w") as fh:
+            fh.write(json.dumps({"id": "file-only", "state": "open"}) + "\n")
+        got = {r.get("id") for r in _read_tasks(p2, index_root=d2)}
+        shutil.rmtree(d2, ignore_errors=True)
+        assert got == {"file-only"}, f"no index entry must fall back to the file, got {got}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  tasks: the register is read from the index, so rows and their fact citations come "
+          "from one tree; an unstaged row is invisible and a non-repo path still falls back")
+
+
+def _selftest_root_durable_backup_ack():
+    """The three tiers, on one world, because only their DIFFERENCE is the change.
+
+    Tier order matters: a fresh backup PASSes, a stale one FAILs again, and no marker at
+    all FAILs. Without the stale case the acknowledgement is a promise -- somebody records
+    a backup once, the check is green forever, and a permanent red has become a permanent
+    green, which is the same non-signal facing the other way (the thing the WARN tier
+    exists to avoid).
+    """
+    import shutil
+
+    d = _broken_root_durable()
+    try:
+        durable = open(os.path.join(d, ".durable_mounts")).read().strip()
+        state, ev = check_root_durable(d)
+        assert state == FAIL, f"no backup marker must FAIL, got {state}: {ev}"
+        assert BACKUP_MARKER in ev, f"the FAIL must name the marker path a person creates: {ev}"
+
+        marker = os.path.join(durable, BACKUP_MARKER)
+        os.makedirs(os.path.dirname(marker), exist_ok=True)
+        with open(marker, "w") as fh:
+            fh.write("checkpoints/ ledgers/\n")
+        state, ev = check_root_durable(d)
+        assert state == PASS, f"a fresh backup marker must PASS, got {state}: {ev}"
+        assert "declined deliberately" in ev, f"the PASS must say the move was declined, not hide it: {ev}"
+
+        # STALE: the same marker, older than the window. This is the case that separates a
+        # verified backup from a recorded intention -- the file still exists and still says
+        # the same thing, and the check must go red anyway.
+        old = time.time() - (BACKUP_MAX_AGE_H + 1) * 3600
+        os.utime(marker, (old, old))
+        state, ev = check_root_durable(d)
+        assert state == FAIL, (f"a backup marker {BACKUP_MAX_AGE_H + 1}h old must FAIL -- a backup "
+                               f"nobody has run is the same lost data as no backup, got {state}: {ev}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  root_durable: a fresh backup marker on the durable mount PASSes with the declined "
+          "move named; a stale one and a missing one both FAIL")
 
 
 # Pipeline step -> the data paths it writes, relative to the repo root.
@@ -7267,8 +7512,14 @@ def check_tasks_closed_by_commit(root):
 
     Closing wrote free text, so a task closed on a path that never existed read as
     delivered and the register could not tell the difference. The rule dates from
-    TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
-    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    TASK_COMMIT_FROM; rows closed before it keep their prose evidence.
+
+    ONE TREE FOR BOTH SIDES. The rows come from the index, because _commit_delivers resolves
+    the fact citations they carry against the index too. Reading rows from the working tree
+    and facts from the index judges a tree that exists nowhere (b0, 2026-09-06): during a
+    merge the working tree already holds the incoming row while the index is what the commit
+    will be, and the two answer differently the moment they diverge."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"), index_root=root)
     # THE MAP MUST SEE MERGE COMMITS. `git log --name-only` prints no paths for a merge, so this
     # check silently could not verify any delivery that landed in one -- 607 of main's 2755
     # commits (22%) read as touching nothing, and closing de-30 against c889bc2 was refused with
@@ -10302,7 +10553,7 @@ def _head_sha():
 
 
 
-def _read_tasks(path=None, raw=False):
+def _read_tasks(path=None, raw=False, index_root=None):
     """The register, folded by id: last row for an id wins.
 
     The file is an EVENT LOG, not a table. `task done`/`reopen` append a new row
@@ -10314,17 +10565,33 @@ def _read_tasks(path=None, raw=False):
     state whichever order they land in.
 
     raw=True returns every event, for the checks that must see collisions.
+
+    index_root reads the STAGED register (`git show :runs/tasks.jsonl`) instead of the
+    working tree's. For a check that also resolves fact citations against the index, the
+    two sides must come from ONE tree: reading rows from the working tree and facts from
+    the index means the check judges a tree that exists nowhere (b0, 2026-09-06). Falls
+    back to the file when the path is not in the index -- a fresh clone, a check run
+    outside a repo, or simply an unstaged register, none of which are errors here.
     """
     p = path or TASKS_PATH
-    if not os.path.exists(p):
-        return []
+    text = None
+    if index_root is not None:
+        rel = os.path.relpath(p, index_root)
+        r = subprocess.run(["git", "-C", index_root, "show", f":{rel}"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            text = r.stdout
+    if text is None:
+        if not os.path.exists(p):
+            return []
+        text = open(p, encoding="utf-8").read()
     # A concurrent append can be observed mid-write: the reader sees a torn line and
     # json.loads raises, so `harness check` failed inside a hook and passed 20 s later
     # by hand -- a flake that reads as a real refusal (fb, 2026-08-31). Skip a line
     # that will not parse; ledgers_one_line_per_row is what judges malformed rows, and
     # it runs when nobody is mid-write.
     rows = []
-    for line in open(p, encoding="utf-8"):
+    for line in text.splitlines():
         if not line.strip():
             continue
         try:
@@ -14542,6 +14809,10 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
     _prev_alarm_handler = signal.signal(signal.SIGALRM, _check_deadline)
     for name, asserts, incident, fn, _broken in CHECKS:
         t0 = time.time()
+        # Set by the TimeoutError branch below, read by the auth=repo pod conversion after it: a
+        # deadline hit must not be reported as SKIP. Not `state == TIMEOUT`, because the second
+        # strike promotes the state to FAIL and that is the case that most needs to stay visible.
+        timed_out = False
         try:
             signal.alarm(_CHECK_TIMEOUTS.get(name, _CHECK_TIMEOUT))
             state, evidence = fn(root)
@@ -14569,6 +14840,7 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
             else:
                 # A deadline hit is never a SKIP: see the TIMEOUT constant. The strike count
                 # is what separates "this machine was busy" from "this check never runs".
+                timed_out = True
                 n = prev_strikes.get(name, 0) + 1
                 strikes[name] = n
                 if n >= _TIMEOUT_STRIKES:
@@ -14596,7 +14868,17 @@ def run_checks(root=ROOT, quiet=False, persist_timeouts=True):
         # A blanket red is worse than no red: launch_gate weighs these, so five structural FAILs
         # made every real signal on the pod unreadable, which is the permanent-red rule in AGENTS.
         # SKIP names the reason so nobody reads it as "checked and fine".
-        if (state in (FAIL, WARN, TIMEOUT) and pod_drift.is_pod(root)
+        #
+        # A TIMEOUT IS NOT CONVERTED (4c ruling, 2026-09-06, found by de). SKIP asserts the subject
+        # is not here; a timeout asserts the subject IS here and the check gave up reading it. The
+        # two read identically in this output and to launch_gate, and the cost was measured:
+        # no_conflict_markers had banked 36 consecutive strikes on the pod, so its state was FAIL
+        # "timed out after 5s on 36 consecutive runs -- this check has not actually run since", and
+        # the conversion printed it as SKIP. A check that had not run in 36 runs appeared in
+        # nobody's FAIL list, while passing in 0.2s on the laptop. `timed_out` rather than
+        # `state == TIMEOUT`, because the second strike already promoted it to FAIL -- keying on
+        # the state would convert exactly the case that matters most.
+        if (state in (FAIL, WARN, TIMEOUT) and not timed_out and pod_drift.is_pod(root)
                 and EVIDENCE.get(name) == "repo"):
             state = SKIP
             evidence = (f"repo check, not authoritative here: {evidence[:110]}"
@@ -15898,6 +16180,130 @@ def _selftest_milestone_selection():
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
 
 
+def _selftest_milestone_pin_only():
+    """`harness milestone --pin-only` is driven through cmd_milestone, not read.
+
+    Four things it must do, each of which was a real failure mode somewhere in this file:
+      - pin by HARD LINK, so the roller's os.remove of the .step name cannot free the weights
+        (verified by inode equality and nlink >= 2, because a copy passes an existence test);
+      - claim no card and launch nothing -- cmd_launch is replaced by a tripwire here, since
+        the case this exists for is a pin during a run that holds every GPU;
+      - record actual_tokens as null when no geometry is given, rather than reaching for the
+        module's TOKENS_PER_STEP, which is the stage-1 ladder's 917,504 and would overstate a
+        786,432-token step by 16.7% under a matched-token pin's own name;
+      - refuse, not hang, when the run is gone and a requested step never saved.
+
+    The pruner half is asserted against train.py's real rule rather than restated: the
+    inode-collecting glob `*.milestone_*.pt` must match the pinned name, and the stale-save
+    glob `<ckpt>.pt.step*` must not."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    run = "pin_probe"
+    for step in (5000, 5500):
+        with open(os.path.join(d, f"ckpt_{run}.pt.step{step}"), "w") as f:
+            f.write(f"weights@{step}")
+
+    ms = os.path.join(d, "runs", "milestones.jsonl")
+    # THE PRODUCTION LEDGER IS NOT TOUCHED, and this is asserted rather than arranged. The
+    # first version of this test wrote to runs/milestones.jsonl and restored it in `finally`;
+    # a mutation run killed one variant mid-poll, the finally never ran, and
+    # ckpt_pin_probe.pt.step5000 sat in the real ledger -- where it also poisoned every later
+    # mutant, which then reported "already recorded" and read as red for the wrong reason.
+    real = os.path.join(ROOT, "runs", "milestones.jsonl")
+    real_before = open(real, encoding="utf-8").read() if os.path.exists(real) else None
+    launched = []
+    _real_launch, _real_alive = cmd_launch, _run_alive
+    try:
+        globals()["cmd_launch"] = lambda argv: launched.append(argv) or 0
+        globals()["_run_alive"] = lambda r: True
+        rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                            "--pin-steps", "5000", "--ledger", ms])
+        assert rc == 0, f"pin-only returned {rc}"
+        assert not launched, f"pin-only claimed a card: {launched}"
+
+        pin = os.path.join(d, f"ckpt_{run}.milestone_matchedtok_step5000.pt")
+        assert os.path.exists(pin), f"no pin written; dir holds {sorted(os.listdir(d))}"
+        src = os.stat(os.path.join(d, f"ckpt_{run}.pt.step5000"))
+        assert os.stat(pin).st_ino == src.st_ino, "pin is a copy, not a link"
+        assert os.stat(pin).st_nlink >= 2, "link count says nothing else holds these weights"
+
+        # train.py:3623-3648's two globs, applied to the names actually on disk.
+        assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [pin], \
+            "the pruner's pinned-inode glob does not see this name"
+        assert pin not in glob.glob(os.path.join(d, f"ckpt_{run}.pt.step*")), \
+            "the pin matches the stale-save glob: it would be a rotation candidate"
+
+        rows = [json.loads(x) for x in open(ms, encoding="utf-8") if x.strip()]
+        row = [r for r in rows if r.get("ckpt") == f"ckpt_{run}.pt.step5000"][-1]
+        assert row["actual_tokens"] is None, \
+            f"tokens invented with no geometry given: {row['actual_tokens']}"
+        assert row["pin_inode"] == src.st_ino, "the row's inode is not the pinned file's"
+        assert row["metrics_moved"] is None, "an evaluation field carries a number, not null"
+
+        # The geometry, when given, is THIS run's -- not the module constant. 5000 x 786,432
+        # is 3.932B; 5000 x TOKENS_PER_STEP would be 4.588B, 16.7% high.
+        rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run, "--pin-steps", "5500",
+                            "--pin-tok-per-step", "786432", "--ledger", ms])
+        assert rc == 0, f"second pin returned {rc}"
+        r55 = [json.loads(x) for x in open(ms, encoding="utf-8") if x.strip()][-1]
+        assert r55["actual_tokens"] == 5500 * 786432, f"got {r55['actual_tokens']}"
+        assert r55["actual_tokens"] != 5500 * TOKENS_PER_STEP, \
+            "the module constant was used for a run with a different geometry"
+
+        # A second call must not append a duplicate: the ledger folds on (ckpt, milestone),
+        # so a repeat would survive as a differing row rather than being subsumed.
+        n = len(open(ms, encoding="utf-8").read().splitlines())
+        assert cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                              "--pin-steps", "5000", "--ledger", ms]) == 0
+        assert len(open(ms, encoding="utf-8").read().splitlines()) == n, "second call appended"
+
+        # A dead run with an unsaved step must REFUSE rather than poll forever.
+        globals()["_run_alive"] = lambda r: False
+        assert cmd_milestone(["--pin-only", "--watch", d, "--run", run, "--pin-steps", "9999",
+                              "--interval", "1", "--ledger", ms]) == 2, \
+            "a step that never saved on a dead run did not refuse"
+
+        real_after = open(real, encoding="utf-8").read() if os.path.exists(real) else None
+        assert real_after == real_before, \
+            "this test wrote to the PRODUCTION ledger; --ledger did not hold"
+
+        # THE COPY-IS-NOT-A-PIN BRANCH, exercised rather than trusted. _pin_milestone falls
+        # back to shutil.copy2 when os.link fails (a cross-device pin), and a copy is exactly
+        # what must NOT be recorded as a promise: the roller frees the .step name's inode and
+        # the "pinned" file holds bytes nothing keeps in sync. Nothing reached this branch
+        # until it was forced -- a mutation that deleted the whole check stayed green, because
+        # every other world pins successfully. Forced by making os.link raise.
+        globals()["_run_alive"] = lambda r: False   # so a failed pin exits instead of polling
+        d2 = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d2, "runs"), exist_ok=True)
+        with open(os.path.join(d2, f"ckpt_{run}.pt.step5000"), "w") as f:
+            f.write("weights")
+        ms2 = os.path.join(d2, "runs", "milestones.jsonl")
+        _real_link = os.link
+        try:
+            os.link = lambda s, t: (_ for _ in ()).throw(OSError("EXDEV forced"))
+            rc = cmd_milestone(["--pin-only", "--watch", d2, "--run", run,
+                                "--pin-steps", "5000", "--interval", "1", "--ledger", ms2])
+        finally:
+            os.link = _real_link
+        copied = os.path.join(d2, f"ckpt_{run}.milestone_matchedtok_step5000.pt")
+        assert os.path.exists(copied), "the fallback did not even copy; world is not the one meant"
+        assert os.stat(copied).st_nlink == 1, "forced copy still shares an inode"
+        assert rc == 2, f"a copy was accepted as a pin (rc {rc})"
+        rows2 = [x for x in open(ms2, encoding="utf-8").read().splitlines() if x.strip()] \
+            if os.path.exists(ms2) else []
+        assert not rows2, f"a copy was recorded as a kept promise: {rows2}"
+        shutil.rmtree(d2, ignore_errors=True)
+    finally:
+        globals()["cmd_launch"], globals()["_run_alive"] = _real_launch, _real_alive
+        shutil.rmtree(d, ignore_errors=True)
+    print("  milestone --pin-only: hard link (inode+nlink), no card, own geometry or null "
+          "tokens, idempotent, a dead run's missing step refuses, production ledger untouched")
+
+
 def _selftest_clean_merge_claim():
     """A clean merge that has not written MERGE_HEAD must not read as a local shared-file edit.
 
@@ -17066,9 +17472,64 @@ def _selftest_repo_auth_mirror():
             assert _raw2 != FAIL, f"an artifact that EXISTS still FAILs: {_raw2}"
         finally:
             shutil.rmtree(d2, ignore_errors=True)
+        # A TIMEOUT IS NOT MIRRORED (4c ruling 2026-09-06, found by de). SKIP asserts the subject
+        # is not here; a timeout asserts it IS here and the check gave up. Conflated, a check that
+        # had not run in 36 consecutive pod runs printed as SKIP and was in nobody's FAIL list.
+        #
+        # Driven through run_checks with a REAL deadline hit, not by inspecting the condition: a
+        # world that read the `if` would pass for a version whose new clause never reached it.
+        # CHECKS is patched with one check that sleeps past a 1s budget, in the pod-shaped world,
+        # with auth=repo -- the exact combination that was being converted.
+        _slow_name = "_selftest_slow_repo_check"
+
+        def _slow(_root):
+            time.sleep(3)
+            return PASS, "never reached"
+
+        def _raiser(_root):
+            return FAIL, "the subject is not here at all"
+
+        _rname = "_selftest_raising_repo_check"
+        _saved_checks = list(CHECKS)
+        _saved_ev = dict(EVIDENCE)
+        _saved_to = dict(_CHECK_TIMEOUTS)
+        d3 = tempfile.mkdtemp(prefix="authmirror_to_")
+        try:
+            os.makedirs(os.path.join(d3, "runs"), exist_ok=True)
+            assert pod_drift.is_pod(d3), "world invalid: must read as the pod's shape"
+            CHECKS.append((_slow_name, "times out on purpose", "", _slow, lambda: d3))
+            CHECKS.append((_rname, "returns FAIL on purpose", "", _raiser, lambda: d3))
+            EVIDENCE[_slow_name] = "repo"
+            EVIDENCE[_rname] = "repo"
+            _CHECK_TIMEOUTS[_slow_name] = 1
+            _r4 = run_checks(d3, quiet=True, persist_timeouts=False)
+            _by4 = {n: (s, e) for n, s, e, _a, _i in _r4}
+            _st4, _ev4 = _by4[_slow_name]
+            assert _st4 in (TIMEOUT, FAIL), (
+                f"a timed-out auth=repo check reads {_st4} on the pod's shape -- SKIP asserts the "
+                f"subject is absent, a timeout asserts it is present and unread: {(_ev4 or '')[:140]}")
+            assert "not authoritative here" not in (_ev4 or ""), (
+                f"the timeout was mirrored to a SKIP: {(_ev4 or '')[:160]}")
+            assert "timed out" in (_ev4 or ""), (
+                f"the timeout's evidence no longer says it timed out: {(_ev4 or '')[:160]}")
+            # THE OTHER DIRECTION, which keeps the conversion doing its job: a repo check that FAILs
+            # for the ordinary reason -- its subject is not on the pod -- still mirrors. Without this
+            # the fix could have disabled the conversion entirely and passed.
+            _st5, _ev5 = _by4[_rname]
+            assert _st5 == SKIP, (
+                f"a non-timeout auth=repo FAIL no longer mirrors on the pod's shape ({_st5}): the "
+                f"blanket-red problem is back: {(_ev5 or '')[:140]}")
+            assert "not authoritative here" in (_ev5 or ""), (
+                f"the mirrored SKIP lost its reason: {(_ev5 or '')[:160]}")
+        finally:
+            CHECKS[:] = _saved_checks
+            EVIDENCE.clear(); EVIDENCE.update(_saved_ev)
+            _CHECK_TIMEOUTS.clear(); _CHECK_TIMEOUTS.update(_saved_to)
+            shutil.rmtree(d3, ignore_errors=True)
         print(f"  repo-auth mirror: {len(mirrored)} of {len(repo)} auth=repo checks FAIL and "
               f"mirror to SKIP on the pod's shape, 0 on a checkout, 0 auth=pod mirrored; a "
-              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept")
+              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept; a "
+              f"TIMEOUT stays visible and an ordinary repo FAIL still mirrors")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -18157,6 +18618,22 @@ def _demo(only=None):
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
 
+    # milestone_ckpt_pinned needs a SECOND world for the same reason: its registered world
+    # breaks the EXISTENCE half (a row naming a checkpoint that is not there), and the
+    # ATTRIBUTION half -- a pin that exists under another run's name -- cannot be produced by
+    # it. That half was unguarded until 2026-09-06 and the glob accepted any run's pin, so a
+    # row could read PASS while its own weights were gone. The world asserts both directions
+    # itself (run A's pin PASSes before it is renamed to run B), so an anchor too strict to
+    # ever resolve a pin fails inside broken() rather than passing as a red here.
+    _mis = _broken_milestone_pin_belongs_to_another_run()
+    try:
+        _st, _why = check_milestone_ckpt_pinned(_mis)
+        if _st != FAIL:
+            untested.append(f"milestone_ckpt_pinned reported {_st} on a pin belonging to "
+                            f"another run ({_why[:80]})")
+    finally:
+        shutil.rmtree(_mis, ignore_errors=True)
+
     # coresident_cache_refusal has THREE halves and CHECKS carries one world per row, so the
     # two population halves were written and never run -- the §71 shape, in the commit that
     # added the check (e1, 38af3d47, caught 2026-09-05 while using it). The registered world
@@ -18663,6 +19140,7 @@ def _demo(only=None):
     _selftest_killpg_reaps_children()
     _selftest_kill_verify_ignores_zombies()
     _selftest_milestone_selection()
+    _selftest_milestone_pin_only()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
     _selftest_diag_closed_arms()
@@ -18680,6 +19158,8 @@ def _demo(only=None):
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_content_restored_read_failure()
+    _selftest_tasks_read_from_index()
+    _selftest_root_durable_backup_ack()
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
     _selftest_batched_git_probes()
@@ -21413,6 +21893,15 @@ def cmd_milestone(argv):
     domain_loss needs no launch of its own: the milestone profile scores it on the
     3.24b mix, the same heads as the ladder records, and readout_30b falls back to
     the score record when no explicit domain-loss file is given.
+
+    --pin-only takes the rotation half WITHOUT the scoring half: hard-link the step
+    saves named by --pin-steps as they land, append the ledger row, and never touch a
+    card. Scoring a milestone needs a GPU, and the case this exists for is a
+    matched-token pin during a run that is holding every card -- there the choice is
+    a pin now or weights gone in three saves. It also accepts a free-form token,
+    because the reason for the pin is not always a budget on the ladder: `matchedtok`
+    pins the step another arm will be compared against step-for-step. The scored
+    verdict is a later, separate call once a card is free.
     """
     ap = argparse.ArgumentParser(prog="harness milestone")
     ap.add_argument("ckpt", nargs="?", help="checkpoint file (single-run mode)")
@@ -21431,6 +21920,24 @@ def cmd_milestone(argv):
                          "checkpoint (ckpt_<run>.pt) at this step so a final milestone fires")
     ap.add_argument("--save-every", type=int, default=500, help="watch: max distance from the milestone step to score a save")
     ap.add_argument("--interval", type=int, default=120, help="watch poll interval in seconds")
+    ap.add_argument("--pin-only", action="store_true",
+                    help="hard-link the --pin-steps saves as they land and record the rows; "
+                         "no score_matrix, no card, no readout")
+    ap.add_argument("--pin-steps", default=None,
+                    help="pin-only: '5000,10000' -- the exact step saves to pin")
+    ap.add_argument("--pin-token", default="matchedtok",
+                    help="pin-only: the milestone label; the step is appended by _pin_milestone")
+    ap.add_argument("--pin-tok-per-step", type=int, default=None,
+                    help="pin-only: THIS run's tokens per step (batch x accum x seq x world). "
+                         "Omitted means actual_tokens is recorded as null: the module's "
+                         "TOKENS_PER_STEP is the stage-1 ladder's 16x2x4096x7 and using it for "
+                         "another geometry overstates a b192 arm by 16.7%%")
+    ap.add_argument("--ledger", default=None,
+                    help="pin-only: write the rows here instead of runs/milestones.jsonl. Exists "
+                         "so the selftest never appends to the production ledger: a test that "
+                         "has to save and restore a real file leaves a row behind the moment it "
+                         "is killed before its finally block, which is how ckpt_pin_probe "
+                         "reached runs/milestones.jsonl on 2026-09-06")
     ap.add_argument("--dry", action="store_true", help="print the commands, run nothing")
     a = ap.parse_args(argv)
 
@@ -21583,6 +22090,102 @@ def cmd_milestone(argv):
         })
         json.dump(facts, open(facts_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         return "ok"
+
+    if a.pin_only:
+        # THE ROTATION HALF ALONE. No cmd_launch, no card claim, no readout: a pin is a
+        # filesystem operation and the only clock it races is the roller's, which does not
+        # wait for a lane. Measured on the arm this was written for: at save_every 500 the
+        # newest-3 window is 1500 steps, and step5000 was already outside {5500,6000,6500}
+        # while still on disk -- kept only because a link shared its inode.
+        if not a.watch or not a.run or not a.pin_steps:
+            ap.error("--pin-only needs --watch <dir>, --run <name> and --pin-steps '5000,10000'")
+        want = sorted({int(s) for s in a.pin_steps.split(",") if s.strip()})
+        ms_path = a.ledger or os.path.join(ROOT, "runs", "milestones.jsonl")
+        print(f"pin-only: {a.watch}/ckpt_{a.run}.pt.step<N> for N in {want}, "
+              f"token {a.pin_token!r}; no card is claimed", flush=True)
+        print(f"  ledger: {ms_path}", flush=True)
+        done = set()
+        # Which steps ALREADY have a row, so a restart does not append a second one. Keyed on
+        # the row's own step field, since the ledger folds on (ckpt, milestone) and a duplicate
+        # would survive the fold as a differing row rather than being subsumed.
+        if os.path.exists(ms_path):
+            for line in open(ms_path, encoding="utf-8"):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("ckpt", "").startswith(f"ckpt_{a.run}.pt.step") and r.get("step") in want:
+                    done.add(r["step"])
+        if done:
+            print(f"  already recorded: {sorted(done)}", flush=True)
+        while set(want) - done:
+            for step in want:
+                if step in done:
+                    continue
+                ckpt = f"ckpt_{a.run}.pt.step{step}"
+                if not os.path.exists(os.path.join(a.watch, ckpt)):
+                    continue
+                pinned = _pin_milestone(a.watch, a.run, ckpt, a.pin_token)
+                if not pinned:
+                    print(f"  step {step}: PIN FAILED, not recording a promise "
+                          f"nothing keeps", file=sys.stderr, flush=True)
+                    continue
+                # VERIFY BY INODE, not by existence. A copy under the pin name would pass an
+                # existence test while costing 6 GB, and a copy taken after the weights moved
+                # would hold different weights under the pinned step's name. st_nlink >= 2 is
+                # the same statement from the other side: the .step name and the pin name are
+                # two links to one file, so the roller's os.remove of the first cannot free it.
+                src_st = os.stat(os.path.join(a.watch, ckpt))
+                pin_st = os.stat(pinned)
+                if src_st.st_ino != pin_st.st_ino or pin_st.st_nlink < 2:
+                    print(f"  step {step}: {os.path.basename(pinned)} is NOT a link to {ckpt} "
+                          f"(ino {pin_st.st_ino} vs {src_st.st_ino}, nlink {pin_st.st_nlink}) -- "
+                          f"a copy is not a pin", file=sys.stderr, flush=True)
+                    continue
+                row = {
+                    "ckpt": ckpt,
+                    "pinned_as": os.path.basename(pinned),
+                    "pin_inode": pin_st.st_ino,
+                    "pin_nlink": pin_st.st_nlink,
+                    "step": step,
+                    # NOT module TOKENS_PER_STEP: that constant is 16x2x4096x7 = 917,504, the
+                    # stage-1 ladder's geometry, and this arm is 8x4x4096x6 = 786,432 -- 16.7%
+                    # apart. A wrong token count under a matched-token pin's name defeats the
+                    # pin's whole purpose, so an unsupplied geometry records null rather than
+                    # a plausible number from the wrong run.
+                    "actual_tokens": (step * a.pin_tok_per_step) if a.pin_tok_per_step else None,
+                    "tok_per_step": a.pin_tok_per_step,
+                    "milestone": f"{a.pin_token}_step{step}",
+                    "launcher": "harness milestone --pin-only",
+                    # EVERY EVALUATION FIELD IS None, not absent and not zero: a 0.0 in a
+                    # metric field reads as a measurement. This row promises weights, not a
+                    # number, and the scored row comes later from run_one.
+                    "paired": None, "tokens": None, "mix": None, "score_matrix": None,
+                    "preds": None, "readout": None, "metrics_moved": None,
+                    "measured": time.strftime("%Y-%m-%d", time.gmtime()),
+                }
+                with open(ms_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                print(f"  step {step}: pinned -> {os.path.basename(pinned)} "
+                      f"(inode {pin_st.st_ino}, nlink {pin_st.st_nlink}"
+                      + (f", {step * a.pin_tok_per_step / 1e9:.3f}B tok"
+                         if a.pin_tok_per_step else ", tokens not recorded: no --pin-tok-per-step")
+                      + "), row appended", flush=True)
+                done.add(step)
+            if set(want) - done:
+                if not _run_alive(a.run):
+                    # The run is over and the remaining saves will never appear. Say which,
+                    # because silence here is indistinguishable from still waiting -- and a
+                    # step past the run's end is the case that produced this branch.
+                    print(f"REFUSING TO WAIT: run {a.run} has no process and steps "
+                          f"{sorted(set(want) - done)} never saved. Their weights do not "
+                          f"exist; nothing can pin them now.", file=sys.stderr, flush=True)
+                    return 2
+                time.sleep(a.interval)
+        print(f"pin-only: all of {want} pinned and recorded", flush=True)
+        return 0
 
     if a.watch:
         if not a.run or not a.milestones:
