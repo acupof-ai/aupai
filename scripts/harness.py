@@ -6625,13 +6625,19 @@ def _broken_corpus_filters_fp():
     domain that is NOT in the baseline (new debt). Both must FAIL."""
     d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
-    # All three PIPELINE filters, copied from the real tree. fp_filters raises on a missing
-    # one rather than hashing "absent" -- a build whose filter file vanished must not carry a
-    # valid-looking fingerprint -- so a world holding only pass1 makes the check RAISE, which
-    # the selftest reports as "cannot be made to fail" rather than as a FAIL (measured
-    # 2026-09-06, when scoping fp_filters to the pipeline turned this world red that way).
+    # EVERY member of cfp.PIPELINE_FILTERS, imported rather than restated, and copied from the
+    # real tree. fp_filters raises FileNotFoundError on a missing member
+    # (datagen/corpus_fingerprint.py:80) rather than hashing "absent", so a world holding only
+    # pass1 makes the check RAISE -- and a raise is reported as "cannot be made to fail", not as
+    # a FAIL. Writing only pass1_garbage.py was correct until f93f99f6 (2026-09-06 10:17Z) added
+    # the three-file tuple; that commit touched neither this file nor any check.
+    #
+    # THE TUPLE IS IMPORTED, NOT RESTATED. Restating the three names here is the same drift in
+    # the other direction: a fourth pipeline filter would leave this world short one file and
+    # raise again. corpus_fingerprint._assert_pipeline_filters_current keeps PIPELINE_FILTERS
+    # equal to what build_corpus.py loads, so reading it here tracks the pipeline by construction.
     import shutil
-    for _n in ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py"):
+    for _n in cfp.PIPELINE_FILTERS:
         shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "web_hq")
     os.makedirs(dom, exist_ok=True)
@@ -19178,7 +19184,21 @@ def _demo(only=None):
               f"`harness check --selftest` before trusting this as coverage.")
         return 0
 
-    assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
+    # DEFERRED, NOT ASSERTED HERE. This assertion used to fire at this point, and everything
+    # below it -- 39 _selftest_* calls, the real-tree sweep, the EVIDENCE equality, the
+    # non-vacuous-PASS sweep -- is in this same function, so ONE unbuildable broken world made
+    # all of them unreachable. MEASURED 2026-09-06: f93f99f6 (10:17Z) made fp_filters raise on a
+    # missing PIPELINE_FILTERS member; _broken_corpus_filters_fp wrote only pass1_garbage.py, so
+    # `corpus_filters_fp raised instead of reporting FAIL` landed in `untested` and aborted here.
+    # CI ran `harness.py --selftest` on every push (ci.yml:54) and was red from that commit until
+    # this one -- the red existed and named the right check, and it hid 39 selftests behind a
+    # single line nobody read as "the rest did not run".
+    #
+    # The failure is still fatal: it is re-raised at the END of this function, with everything
+    # below it having run. A broken world that cannot be built is one defect; it must not decide
+    # whether the other coverage gets measured.
+    _untested_deferred = list(untested)
+    skipped_direct = []
 
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
@@ -19516,43 +19536,65 @@ def _demo(only=None):
     assert "code_rp1t" in blocked_gate[0][2], f"gate must name the blocked domain: {blocked_gate[0][2]}"
     shutil.rmtree(d30, ignore_errors=True)
 
-    _selftest_milestone_reachable()
-    _selftest_shard_contract_worlds()
-    _selftest_cold_cache_refuses()
-    _selftest_refusal_writes_no_row()
-    _selftest_provenance_states_the_tree()
-    _selftest_pool_not_raw_supply()
-    _selftest_killpg_reaps_children()
-    _selftest_kill_verify_ignores_zombies()
-    _selftest_milestone_selection()
-    _selftest_milestone_pin_only()
-    _selftest_monitor_suppression()
-    _selftest_monitor_stop_rules()
-    _selftest_diag_closed_arms()
-    _selftest_clean_merge_claim()
-    _selftest_brief()
-    _selftest_gate_timeout()
-    _selftest_register_union()
-    _selftest_id_allocation_sees_every_ref()
-    _selftest_auto_resume()
-    _selftest_devs_map()
-    _selftest_gpu_descendants()
-    _selftest_exp_fold()
-    _selftest_check_timeout_skips()
-    _selftest_attest_written_path()
-    _selftest_merge_fix_not_deadlocked()
-    _selftest_merge_cherry_pick_not_a_drop()
-    _selftest_content_restored_read_failure()
-    _selftest_unsigned_fast_forward_warns()
-    _selftest_tasks_read_from_index()
-    _selftest_root_durable_backup_ack()
-    _selftest_merge_reverted_content()
-    _selftest_commit_delivers_fact_ref()
-    _selftest_batched_git_probes()
-    _selftest_scoped_index_is_read()
-    _selftest_peer_stalled_names_the_fixture()
-    _selftest_one_deliverable_names_the_fixture()
-    _selftest_review_present_legacy()
+    # RUN AS A LIST, NOT 37 BARE CALLS. Each of these is a direct selftest, and a bare call
+    # that raises takes every later one with it -- the same defect this commit fixes for the
+    # broken-world assert, at a second site. MEASURED on main at ee81fe91: once the
+    # corpus_filters_fp world was fixed and the loop got this far,
+    # _broken_one_deliverable_per_owner raised SelftestSkip ("no roster member with exactly one
+    # open task") and aborted the 3 selftests after it plus the real-tree sweep, the EVIDENCE
+    # equality and the non-vacuous-PASS sweep. The abort had been hiding it.
+    #
+    # A SelftestSkip here is a SKIP, exactly as it is in the broken-world loop: the world could
+    # not be staged on this machine, which is not a defect. Any other exception is a failure,
+    # collected and re-raised at the end of _demo with every other selftest having run, so one
+    # broken fixture costs its own coverage and nothing else's.
+    _direct_failures = []
+    for _fn in (
+        _selftest_milestone_reachable,
+        _selftest_shard_contract_worlds,
+        _selftest_cold_cache_refuses,
+        _selftest_refusal_writes_no_row,
+        _selftest_provenance_states_the_tree,
+        _selftest_pool_not_raw_supply,
+        _selftest_killpg_reaps_children,
+        _selftest_kill_verify_ignores_zombies,
+        _selftest_milestone_selection,
+        _selftest_milestone_pin_only,
+        _selftest_monitor_suppression,
+        _selftest_monitor_stop_rules,
+        _selftest_diag_closed_arms,
+        _selftest_clean_merge_claim,
+        _selftest_brief,
+        _selftest_gate_timeout,
+        _selftest_register_union,
+        _selftest_id_allocation_sees_every_ref,
+        _selftest_auto_resume,
+        _selftest_devs_map,
+        _selftest_gpu_descendants,
+        _selftest_exp_fold,
+        _selftest_check_timeout_skips,
+        _selftest_attest_written_path,
+        _selftest_merge_fix_not_deadlocked,
+        _selftest_merge_cherry_pick_not_a_drop,
+        _selftest_content_restored_read_failure,
+        _selftest_unsigned_fast_forward_warns,
+        _selftest_tasks_read_from_index,
+        _selftest_root_durable_backup_ack,
+        _selftest_merge_reverted_content,
+        _selftest_commit_delivers_fact_ref,
+        _selftest_batched_git_probes,
+        _selftest_scoped_index_is_read,
+        _selftest_peer_stalled_names_the_fixture,
+        _selftest_one_deliverable_names_the_fixture,
+        _selftest_review_present_legacy,
+    ):
+        try:
+            _fn()
+        except SelftestSkip as e:
+            print(f"  SKIP {_fn.__name__}: {e}")
+            skipped_direct.append(_fn.__name__)
+        except Exception as e:
+            _direct_failures.append(f"{_fn.__name__} raised {type(e).__name__}: {e}")
 
     # Every check must PASS or SKIP on the real tree at the moment it lands.
     # A check that is red on the real artifact the day it ships is the
@@ -19576,6 +19618,19 @@ def _demo(only=None):
     # commit fixes: a number that reads as coverage without being it.
     _verified = len(CHECKS) - len(skipped)
     _tail = f"; {len(skipped)} SKIPPED, not verified: {', '.join(sorted(skipped))}" if skipped else ""
+    # THE DEFERRED FAILURES, RAISED LAST. Everything above has now run and reported, so one
+    # unbuildable world or one broken fixture costs its own coverage and nothing else's. Raised
+    # before the OK line so a run with a deferred failure never prints one. Both lists together
+    # in one message: two defects must not need two runs to both be seen.
+    _deferred = ([f"broken world cannot be made to fail: {u}" for u in _untested_deferred]
+                 + [f"direct selftest: {f}" for f in _direct_failures])
+    assert not _deferred, "selftest failures (every other selftest still ran):\n  " + "\n  ".join(_deferred)
+    # A DIRECT SKIP IS NAMED IN THE OK LINE. The broken-world skips already are; a direct
+    # selftest whose fixture could not be staged was silently absent, which is the shape of a
+    # green line describing more coverage than it has.
+    if skipped_direct:
+        _tail += (f"; {len(skipped_direct)} direct selftest(s) SKIPPED: "
+                  f"{', '.join(sorted(skipped_direct))}")
     print(f"harness self-test OK ({_verified} of {len(CHECKS)} checks each verified to FAIL on a "
           f"broken world; every PASS verified a non-zero count{_tail})")
 
