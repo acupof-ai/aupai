@@ -55,6 +55,12 @@ fi
 rm -f "ckpt_${NAME}.pt" "ckpt_${NAME}.pt.step"* runs/${NAME}_*.log
 rm -rf /tmp/torchinductor_root
 
+# de-60: run_ddp.sh refuses a call that did not come from `harness launch`. This script KILLS its
+# own run 1 at step 40 on purpose and resumes it as run 2 -- the launcher's monitor would read that
+# kill as a crash and its auto-resume would fight this script's own second launch. So it takes the
+# named escape; the run-1/run-2 pair is the measurement and it owns both.
+export ALLOW_DIRECT_RUN=1
+
 FLAGS="--mix $MIX --dim 1024 --layers 32 --heads 8 --ffn_hidden 3072 \
 --batch 32 --accum 1 --grad_ckpt --seq 4096 --warmup 300 --seed $SEED \
 --lr_scale 1.0 --warmdown 0.65 --anneal_frac 0.1 \
