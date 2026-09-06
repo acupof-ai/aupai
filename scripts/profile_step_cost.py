@@ -149,10 +149,22 @@ def _selftest():
     _me_main = next((n for n in _me_tree.body
                      if isinstance(n, _a0.FunctionDef) and n.name == "main"), None)
     tok_expr = reset_line = loop_line = loop_node = None
+    tok_assigns, rate_exprs = [], []
     for n in _a0.walk(_me_main) if _me_main else ():
         if isinstance(n, _a0.Assign) and any(
                 isinstance(t, _a0.Name) and t.id == "tok_step" for t in n.targets):
             tok_expr = _a0.unparse(n.value).replace(" ", "")
+            tok_assigns.append(n.lineno)
+        # EVERY EXPRESSION THAT COMPUTES A RATE, not just the one named tok_step. The check
+        # below used to read only the tok_step assignment, and the --peak-only path computed
+        # `a.steps * B * SEQ / wall` into a DIFFERENT name -- so the guarded formula was right
+        # while the printed one dropped accum, understating every accum>1 run by exactly accum
+        # (b8a4 printed 13.0K against b16a2's 27.8K for identical tokens per step). A guard
+        # anchored to one name cannot see a second site computing the same quantity.
+        elif isinstance(n, _a0.Assign) and any(
+                isinstance(t, _a0.Name) and t.id in ("tok_s_gpu", "tok_s_per_gpu")
+                for t in n.targets):
+            rate_exprs.append(_a0.unparse(n.value).replace(" ", ""))
         elif isinstance(n, _a0.Call) and isinstance(n.func, _a0.Attribute) \
                 and n.func.attr == "reset_peak_memory_stats":
             reset_line = n.lineno
@@ -195,6 +207,16 @@ def _selftest():
     for ok, why, hint in (
         (tok_expr == "B*train.Cfg.accum*SEQ", "tok/s/gpu counts batch*accum*seq",
          f"tok_step is {tok_expr!r}; a rate over one micro-batch reports the b8a4 arm at 4x"),
+        # BOTH RATE SITES MUST DERIVE FROM tok_step, and this is the check the old one was
+        # missing. --peak-only printed `a.steps * B * SEQ / wall`: correct-looking, wrong by
+        # exactly accum, and invisible to a check that reads only the tok_step assignment.
+        (bool(rate_exprs) and all("tok_step" in e for e in rate_exprs),
+         "every tok/s expression derives from tok_step rather than recomputing it",
+         f"rate expressions are {rate_exprs}; one that spells out B*SEQ without accum "
+         f"understates an accum>1 run by exactly accum, and the two paths then disagree"),
+        (len(tok_assigns) == 1, "tok_step is computed once, not per path",
+         f"tok_step is assigned at lines {tok_assigns}; two assignments of the same quantity "
+         f"is how the printed rate and the JSON rate came to differ"),
         (reset_line is not None, "the peak is reset in main()",
          "the peak would carry setup both arms pay identically, not the step's own cost"),
         (_startup_before_reset(), "the startup peak is read BEFORE the reset",
@@ -331,7 +353,16 @@ def _selftest():
     _main = next((n for n in _ast.parse(me).body
                   if isinstance(n, _ast.FunctionDef) and n.name == "main"), None)
     calls, casts, loops, dicts = set(), set(), [], []
+    cfg_set = set()
     for n in _ast.walk(_main) if _main else ():
+        if isinstance(n, (_ast.Assign, _ast.AugAssign)):
+            # WHICH Cfg FIELDS main() ASSIGNS. Needed because setting a Cfg field is an
+            # ASSIGNMENT, not a call, so the `calls` set below cannot see it -- and an
+            # unset field is not inert here: build_mix refuses outright when Cfg.anneal_frac
+            # disagrees with the mix (train.py:2286), which killed every run of this probe.
+            for _t in (n.targets if isinstance(n, _ast.Assign) else [n.target]):
+                if isinstance(_t, _ast.Attribute) and _ast.unparse(_t).startswith("train.Cfg."):
+                    cfg_set.add(_t.attr)
         if isinstance(n, _ast.Call):
             f = n.func
             if isinstance(f, _ast.Attribute):
@@ -359,6 +390,35 @@ def _selftest():
     ):
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
+
+    # anneal_frac: PAIRWISE, because the defect is a DISAGREEMENT between two files rather than
+    # a property of either. train.py:2286 refuses to build the mix when the mix's declared
+    # "anneal_frac" differs from Cfg.anneal_frac, Cfg's default is 0.10, and every 200m mix
+    # declares 0.0 -- so a probe that does not set the field cannot run AT ALL, which is what
+    # happened: three consecutive launches died in setup and were read as memory failures
+    # because torchrun's summary is printed last and the child's traceback scrolls off a tail.
+    # Asserting only that train.py has the guard goes green on a probe that ignores it;
+    # asserting only that this file sets the field goes green after the guard is removed and
+    # the value stops mattering. The value itself is NOT asserted here -- it is read from the
+    # mix at runtime, and hard-coding 0.0 in this check would make the check disagree with a
+    # mix that legally declares something else.
+    _mixes = [d for d in (os.path.join(ROOT, "data", f) for f in
+                          ("mix_200m_4b.json", "mix_200m_8b.json")) if os.path.exists(d)]
+    _declaring = [os.path.basename(p) for p in _mixes
+                  if "anneal_frac" in json.load(open(p, encoding="utf-8"))]
+    for ok, why, hint in (
+        ("_mix_anneal_frac" in src, "train.py still gates the mix on anneal_frac",
+         "the guard is gone; if this probe still forces Cfg.anneal_frac it is now setting a "
+         "value nothing reads, and the reason recorded here no longer applies"),
+        ("anneal_frac" in cfg_set, "main() sets Cfg.anneal_frac from the mix",
+         f"main() assigns {sorted(cfg_set)} and not anneal_frac; Cfg's 0.10 default would "
+         f"contradict every mix that declares it ({_declaring}) and build_mix would refuse "
+         f"in setup, before any step -- the probe would report no peak at all"),
+        (bool(_declaring), "at least one 200m mix declares anneal_frac",
+         "no mix declares it, so the guard cannot fire and this pair of checks is vacuous"),
+    ):
+        bad += 0 if ok else 1
+        print(f"  {'ok  ' if ok else 'BUG '} {why}" + ("" if ok else f" -- {hint}"))
 
     # EVERY MEMORY-PATH CONSTRUCTION train.py PERFORMS MUST BE PERFORMED HERE TOO, and this check
     # exists because the previous version of this file omitted one: train.py builds TableMaster for
@@ -519,7 +579,7 @@ def _selftest():
     # running 31, so the total said nothing about what ran. It is kept because a mismatch between
     # the printed count and the case list is itself worth noticing -- but the count is not evidence
     # that a case exists, and a check whose absence shows up only in this integer is not registered.
-    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2 + 3
+    n = 6 + 3 + 2 + 2 + 4 + 2 + 4 + 2 + 1 + 2 + 3 + 3 + 2
     print(f"profile_step_cost selftest: {n - bad}/{n} pass")
     return 1 if bad else 0
 
@@ -566,6 +626,21 @@ def main():
     ap.add_argument("--mem_sparse", action=argparse.BooleanOptionalAction, default=False,
                     help="COO grads for the value table. Default FALSE, matching the arms: NCCL "
                          "raises on all_reduce of a sparse tensor (tilerl, 2026-09-05)")
+    # MoE, for the same reason the memory fields are here and with the same consequence if they
+    # are missing: without them this file builds a DENSE model and reports its peak, which for a
+    # MoE arm is an answer to a different question that looks like a comfortable fit. Arm D's
+    # measured world-2 peak is 79.79 GiB of 80 -- 0.2 GiB of headroom -- so the batch/world
+    # question for stage 3 cannot be answered by arithmetic from one point: peak(batch) has a
+    # fixed term (parameters plus optimizer state, which DDP replicates and world size does not
+    # reduce) and a term linear in the per-card batch, and one measurement is one equation in two
+    # unknowns. Two batch sizes separate them.
+    ap.add_argument("--moe_experts", type=int, default=0,
+                    help="routed experts (0 = dense FFN, the default)")
+    ap.add_argument("--moe_top_k", type=int, default=3)
+    ap.add_argument("--moe_expert_ffn", type=int, default=768)
+    ap.add_argument("--moe_shared", type=int, default=1)
+    ap.add_argument("--moe_layers", type=str, default="0-11")
+    ap.add_argument("--moe_bias_gamma", type=float, default=0.001)
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -610,11 +685,52 @@ def main():
     for _f in ("mem_values", "mem_top_k", "mem_layers", "mem_sparse"):
         assert hasattr(train.Cfg, _f), f"Cfg has no {_f!r}, which --{_f} is supposed to set"
         setattr(train.Cfg, _f, getattr(a, _f))
+    # Same map, same assert, for the MoE fields. A name here is one this file PROMISES to apply,
+    # so an absent field is a bug in the map -- and the failure it prevents is the one the memory
+    # block above already records: build a dense FFN, report its peak, and the number reads as a
+    # comfortable fit for an arm that does not fit.
+    for _f in ("moe_experts", "moe_top_k", "moe_expert_ffn", "moe_shared", "moe_layers",
+               "moe_bias_gamma"):
+        assert hasattr(train.Cfg, _f), f"Cfg has no {_f!r}, which --{_f} is supposed to set"
+        setattr(train.Cfg, _f, getattr(a, _f))
+    # moe_arm is train.py's launch-time requirement and not this probe's, exactly as mem_arm is:
+    # nothing here writes a moe_diag row. Set explicitly so a reader does not take the empty
+    # string for an oversight.
+    if a.moe_experts and hasattr(train.Cfg, "moe_arm"):
+        train.Cfg.moe_arm = "probe"
+    # THE bf16 REQUIREMENT IS THE MoE PATH'S, not a preference: torch._grouped_mm's META
+    # registration rejects fp32 under compile, and train.py reaches bf16 only via --fp8
+    # (`fp8 = args.fp8 and amp`). A --peak-only of a MoE shape without --fp8 would measure an
+    # fp32 model -- every activation doubled -- and that peak is not the arm's.
+    if a.moe_experts and not a.fp8:
+        raise SystemExit(
+            "refusing: --moe_experts without --fp8 measures an fp32 MoE model. train.py reaches "
+            "bf16 only under --fp8 (args.fp8 and amp), and _grouped_mm's meta registration "
+            "rejects fp32 under compile, so this peak would belong to a model no arm runs."
+        )
     # mem_arm is train.py's launch-time requirement, not this probe's: nothing here writes a
     # memory_diag row, so there is no arm label to get wrong. Set explicitly rather than left
     # empty so a future reader does not read the empty string as an oversight.
     if hasattr(train.Cfg, "mem_arm"):
         train.Cfg.mem_arm = "probe"
+
+    # THE PLAN'S anneal_frac COMES FROM THE MIX, and this file has to state it or build_mix
+    # refuses before a single step runs. train.py:2286 compares the mix's declared
+    # "anneal_frac" against Cfg.anneal_frac and RAISES on any difference; Cfg's default is
+    # 0.10 (train.py:387) and every 200m mix declares 0.0, so EVERY invocation of this probe
+    # died in setup. It cost three attempts to see, because torchrun prints its own summary
+    # last and the child's traceback scrolls off any tail window -- two of those attempts were
+    # read as memory-shaped failures and one as a bad flag.
+    #
+    # DERIVED FROM THE MIX, NOT ADDED AS A FLAG. The guard's own text says a launcher outside
+    # `harness launch` has no flag to change, and the mix's declaration is the ONLY value a
+    # legal launch can carry -- any other value would hit this same refusal from the other
+    # side. So reading the file cannot disagree with the run that launches, while a flag
+    # carrying a default could, silently, exactly as Cfg's default just did.
+    with open(os.path.join(ROOT, a.mix), encoding="utf-8") as fh:
+        _mix_af = json.load(fh).get("anneal_frac")
+    if _mix_af is not None:
+        train.Cfg.anneal_frac = float(_mix_af)
 
     ddp, rank, world, local = train.setup_ddp()
     is_main = rank == 0
@@ -849,7 +965,19 @@ def main():
     wall = time.perf_counter() - wall0
     peak_gib = torch.cuda.max_memory_allocated() / 1024**3
     peak_res_gib = torch.cuda.max_memory_reserved() / 1024**3
-    tok_s_gpu = a.steps * B * SEQ / wall
+    # THE SAME tokens-per-step AS THE JSON PATH, accum INCLUDED. This line read
+    # `a.steps * B * SEQ / wall` until 2026-09-06 and understated every accum>1 run by exactly
+    # accum: it reported b16a2 at 27.8K and b8a4 at 13.0K tok/s/gpu, a 2.14x ratio for two
+    # configs that push IDENTICAL tokens per step (32 sequences per rank either way), which
+    # would have read as "the b8a4 split is half the speed" in a launch decision.
+    #
+    # The existing selftest could not see it. That check reads the assignment named `tok_step`
+    # and asserts it is B*accum*SEQ -- and THIS path assigned a different expression to a
+    # different name, so the guarded formula stayed correct while the printed one was wrong.
+    # A guard anchored to one name does not cover a second site computing the same quantity;
+    # the fix is one expression used by both, which is why tok_step is hoisted here.
+    tok_step = B * train.Cfg.accum * SEQ
+    tok_s_gpu = a.steps * tok_step / wall
     if is_main:
         print(f"\nPEAK {peak_gib:.2f} GiB allocated, {peak_res_gib:.2f} GiB reserved | "
               f"{tok_s_gpu / 1e3:.1f}K tok/s/gpu over {a.steps} timed steps "
@@ -1004,7 +1132,9 @@ def main():
     # decides that. Per-GPU, so an arm run on a different card count is still comparable -- the
     # 300M A/B runs on 4 while the p200m numbers came from 4 and the ladder from 7.
     med = _stats(steps)
-    tok_step = B * train.Cfg.accum * SEQ
+    # tok_step is computed ONCE, at the --peak-only readout above, and reused here. Two
+    # assignments of the same quantity is how the two paths came to disagree in the first place:
+    # this one was right and the printed one dropped accum, and nothing compared them.
     rec = {"mix": a.mix, "world": world, "params_m": round(n_par / 1e6, 2),
            "shape": "step = e19eeb7's p200m launch line", "batch": B, "accum": train.Cfg.accum,
            "seq": SEQ, "layers": train.Cfg.layers, "dim": train.Cfg.d,

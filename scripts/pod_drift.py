@@ -244,10 +244,39 @@ def _classify_files():
     return classes
 
 
-def scoped_paths(root=ROOT):
-    out = subprocess.run(
-        ["git", "ls-files", *SCOPE], cwd=root, capture_output=True, text=True, check=True
-    ).stdout.split()
+def scoped_paths(root=ROOT, ref=None):
+    """Manifest paths. `ref=None` reads the INDEX (git ls-files); a ref reads that tree.
+
+    THE PATH LIST IS HALF THE BUG, and the half a ref-only fix leaves behind (measured
+    2026-09-05 by the world in _selftest_ref, which failed against the first fix). Pointing
+    only the SHAS at main still enumerates from the index, so a file that exists on main and
+    not in this checkout is absent from the manifest entirely -- and a path the manifest omits
+    is never offered to push_one's per-file gate, so it is SKIPPED rather than refused. That
+    is the silent direction. The two must come from one ref or the manifest describes a tree
+    that is neither.
+
+    ls-files is kept for `ref=None` because the index is not a tree: write_manifest_index runs
+    inside a commit and must see staged paths, which no ref names yet.
+    """
+    if ref is None:
+        out = subprocess.run(
+            ["git", "ls-files", *SCOPE], cwd=root, capture_output=True, text=True, check=True
+        ).stdout.split()
+    else:
+        # ls-files --with-tree, NOT ls-tree, BECAUSE ls-tree CANNOT MATCH SCOPE. Measured:
+        # `git ls-tree -r --name-only main -- '*.py'` returns 0 paths (no glob magic, and it
+        # does not walk the way ls-files does), and the `:!...` excludes are a hard error --
+        # "pathspec magic not supported by this command: 'exclude'".
+        #
+        # --with-tree is a UNION of the index and the ref's tree, and that is what is wanted:
+        # a scoped path present only in the index is still listed, and write_manifest's
+        # `if not sha` then names it and raises (de-37). Intersecting to the ref instead would
+        # DROP it silently, leaving it unwatched on both sides with nothing red -- measured,
+        # that is what de-37's own fixture caught when I tried it.
+        out = subprocess.run(
+            ["git", "ls-files", "--with-tree=" + ref, *SCOPE],
+            cwd=root, capture_output=True, text=True, check=True
+        ).stdout.split()
     return sorted(p for p in out if not p.startswith(EXCLUDE_DIRS))
 
 
@@ -255,9 +284,20 @@ def _sha_bytes(b):
     return hashlib.sha256(b).hexdigest()
 
 
-def sha_head(root, path):
+def sha_head(root, path, ref="HEAD"):
+    """sha256 of `path`'s blob at `ref`.
+
+    THE REF IS A PARAMETER BECAUSE HEAD STOPPED MEANING main (2026-09-05 flip). This read
+    was `HEAD:` unconditionally and was correct by coincidence: the integration tree was
+    always checked out on main, so `HEAD:` and `main:` named one tree. The tree is now
+    DETACHED, and pod_push cds relative to its own copy -- so running the copy that lives
+    in the integration tree made every one of these answer about a commit behind main.
+    Measured 2026-09-05: tree detached at 0425accb, main at 1595220e, and --all skipped a
+    rewritten file rather than refusing it, because a path the manifest never lists is
+    never offered to push_one's per-file `main:` gate at all.
+    """
     r = subprocess.run(
-        ["git", "show", f"HEAD:{path}"], cwd=root, capture_output=True
+        ["git", "show", f"{ref}:{path}"], cwd=root, capture_output=True
     )
     if r.returncode != 0:
         return None
@@ -319,10 +359,17 @@ def mode_disk(path):
     return "755" if os.stat(path).st_mode & 0o111 else "644"
 
 
-def write_manifest(root=ROOT):
-    """Manifest from HEAD. The live generator: scripts/pod_push.sh:193 and :274 call --write.
+def write_manifest(root=ROOT, ref="main"):
+    """Manifest from `ref`. The live generator: scripts/pod_push.sh:193 and :274 call --write.
 
-    A path in scope whose HEAD blob cannot be read is an ERROR, not a missing line (de-37).
+    DEFAULT main, NOT HEAD (2026-09-05 flip). The pod runs main -- push_one gates every file
+    against `main:<path>` and resolve_stamp_sha stamps main's sha -- so a manifest built from
+    HEAD made the two halves of --all speak different refs. The manifest decides WHICH files
+    are offered, so a file it omits is skipped silently rather than refused by the per-file
+    gate. Measured: HEAD 0425accb vs main 1595220e, one rewritten file skipped, stamp claimed
+    main. See sha_head for why HEAD was correct before the tree was detached.
+
+    A path in scope whose blob cannot be read is an ERROR, not a missing line (de-37).
     `sha_head` returns None on failure and this used to interpolate it, writing the literal
     string "None" as a sha -- a row that matches no file on either side, so `--check` reports
     it as drift on a file nobody touched, and the real cause (an unreadable blob) is invisible.
@@ -331,10 +378,10 @@ def write_manifest(root=ROOT):
     manifest's whole contract is that it lists what must match. Both now name the path and
     exit nonzero."""
     classes = _classify_files()
-    modes = git_modes(root, "HEAD")
+    modes = git_modes(root, ref)
     lines, bad = [], []
-    for p in scoped_paths(root):
-        sha = sha_head(root, p)
+    for p in scoped_paths(root, ref):
+        sha = sha_head(root, p, ref)
         if not sha:
             bad.append(p)
             continue
@@ -354,6 +401,13 @@ def write_manifest(root=ROOT):
 def write_manifest_index(root=ROOT):
     """Manifest from the index (staged blobs), not HEAD. Used by the pre-commit
     hook so the committed manifest matches HEAD after the commit lands.
+
+    THIS ONE KEEPS HEAD, deliberately, unlike write_manifest which moved to `main` in the
+    2026-09-05 flip. It runs inside a commit in a SESSION's own worktree, where HEAD is that
+    branch's tip -- exactly the commit being described. Pointing it at main would make it
+    describe a tree the commit is not being made against. The rule is not "HEAD is suspect";
+    it is that HEAD is wrong where HEAD is not what the caller means, which is the detached
+    integration tree and nowhere else.
 
     Entries unchanged since HEAD are reused from HEAD's manifest (sha only; the
     class is recomputed -- a changed import elsewhere can reclassify an unchanged
@@ -726,7 +780,12 @@ def selftest():
         globals()["MANIFEST"] = os.path.join(g, "data", "pod_head_manifest.txt")
         os.makedirs(os.path.dirname(MANIFEST), exist_ok=True)
         try:
-            write_manifest(g)
+            # ref="HEAD" here, not the `main` default: this fixture is a bare `git init` whose
+            # branch name comes from the caller's init.defaultBranch. It is `main` on this
+            # machine and `master` on a box configured that way, so defaulting would make the
+            # selftest pass or fail on a git config rather than on the code. HEAD is what the
+            # fixture unambiguously has.
+            write_manifest(g, ref="HEAD")
         except ManifestIncomplete as e:
             assert "d.py" in str(e), f"refused without naming the path: {e}"
         else:
@@ -736,7 +795,7 @@ def selftest():
             )
         # The positive beside it: once committed, the same call must succeed and name the file.
         _g("commit", "-m", "d")
-        n_ok = write_manifest(g)
+        n_ok = write_manifest(g, ref="HEAD")
         assert n_ok >= 2, f"the positive world wrote {n_ok} entries"
         rows = read_manifest(MANIFEST)
         assert "d.py" in rows, "the positive world omitted d.py"
@@ -948,14 +1007,121 @@ def selftest():
         globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
         shutil.rmtree(pod, ignore_errors=True)
 
+    evidence += "; " + _selftest_ref()
     print("pod_drift selftest OK:", evidence)
+
+
+def _selftest_ref():
+    """THE REF IS LOAD-BEARING: a manifest built at a stale HEAD must DIFFER from one at main.
+
+    The bug this covers is silent by construction, so asserting "--write works" cannot see it.
+    The world is the deployed one: a repository whose HEAD is DETACHED and behind main, which
+    is what the 2026-09-05 flip made the integration tree, with pod_push's `cd $(dirname $0)/..`
+    landing there.
+
+    THE ASSERTION IS ON CONTENT, NOT ON THE CALL. Both refs return a manifest and both exit 0 --
+    that is precisely why the old code looked fine. What separates them is that a file rewritten
+    on main is ABSENT from the HEAD manifest, and a path a manifest omits is never offered to
+    push_one's per-file gate, so it is skipped rather than refused.
+
+    A NEGATIVE CONTROL SITS BESIDE IT: at a HEAD that equals main the two manifests must be
+    IDENTICAL. Without it, a `write_manifest` that ignored its `ref` and always read main would
+    pass the first assertion (the shas would differ from the stale HEAD's) for the wrong reason.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="drift_ref_")
+    _saved_manifest, _saved_root = MANIFEST, ROOT
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True,
+                                  timeout=60)
+
+        os.makedirs(os.path.join(d, "scripts"))
+        os.makedirs(os.path.join(d, "data"))
+        g("init", "-q", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        p = os.path.join(d, "scripts", "shipped.py")
+        with open(p, "w") as fh:
+            fh.write("x = 1\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "base")
+        g("branch", "-M", "main")
+        stale = g("rev-parse", "HEAD").stdout.strip()
+
+        globals()["ROOT"] = d
+        # OUTSIDE the repo: `git add -A` would otherwise commit the manifest, and the detach
+        # below then deletes it out from under the next write.
+        globals()["MANIFEST"] = os.path.join(d, "..", "ref_manifest.txt")
+
+        # The negative control FIRST, while HEAD still equals main: the ref must not change the
+        # answer where the two refs name one commit.
+        at_main_head = _manifest_text(d, "HEAD")
+        at_main_main = _manifest_text(d, "main")
+        assert at_main_head == at_main_main, (
+            "with HEAD == main the two refs disagreed, so a later difference would not be "
+            "evidence about the ref at all")
+
+        # Now the deployed world: main moves, HEAD stays where pod_push would read it.
+        with open(p, "w") as fh:
+            fh.write("x = 2\n")
+        with open(os.path.join(d, "scripts", "added.py"), "w") as fh:
+            fh.write("y = 1\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "moved")
+        g("checkout", "-q", "--detach", stale)
+
+        assert g("rev-parse", "HEAD").stdout.strip() == stale, (
+            "precondition: the tree is not detached at the old commit, so this world proves "
+            "nothing about the integration tree")
+
+        at_head = _manifest_text(d, "HEAD")
+        at_mainref = _manifest_text(d, "main")
+        assert at_head != at_mainref, (
+            "a manifest built at a stale detached HEAD equalled one built at main -- the ref "
+            "argument is not load-bearing and the flip fixed nothing")
+        assert "scripts/added.py" in at_mainref and "scripts/added.py" not in at_head, (
+            "the difference is not the one that matters: a file added on main must be PRESENT "
+            "in main's manifest and ABSENT from the stale HEAD's, which is how it gets skipped "
+            f"instead of refused.\n  main: {at_mainref!r}\n  head: {at_head!r}")
+
+        # And the default is main, not HEAD -- the whole point of the flip. Asserted by calling
+        # write_manifest with NO ref, which is how pod_push.sh:193 and :274 call it.
+        write_manifest(d)
+        with open(MANIFEST, encoding="utf-8") as fh:
+            default_text = fh.read()
+        assert default_text == at_mainref, (
+            "write_manifest's default ref is not main; pod_push's own call sites take the "
+            "default, so they would still read the detached HEAD")
+        return ("ref load-bearing: stale detached HEAD omits a file main has, HEAD==main "
+                "identical, default is main")
+    finally:
+        globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def _manifest_text(root, ref):
+    write_manifest(root, ref=ref)
+    with open(MANIFEST, encoding="utf-8") as fh:
+        return fh.read()
 
 
 def main():
     mode = sys.argv[1] if len(sys.argv) > 1 else "--check"
     if mode == "--write":
-        n = write_manifest()
-        print(f"wrote {n} entries to {os.path.relpath(MANIFEST, ROOT)}")
+        # --ref <r> overrides the `main` default. Positional-free so the existing callers
+        # (pod_push.sh:193 and :274) keep working and get main without changing.
+        _ref = "main"
+        if "--ref" in sys.argv:
+            _i = sys.argv.index("--ref")
+            if _i + 1 >= len(sys.argv):
+                print("--ref needs a value", file=sys.stderr)
+                return 2
+            _ref = sys.argv[_i + 1]
+        n = write_manifest(ref=_ref)
+        print(f"wrote {n} entries to {os.path.relpath(MANIFEST, ROOT)} (from {_ref})")
     elif mode == "--write-index":
         n = write_manifest_index()
         print(f"wrote {n} entries from index to {os.path.relpath(MANIFEST, ROOT)}")

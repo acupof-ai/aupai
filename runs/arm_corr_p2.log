@@ -1,0 +1,109 @@
+# COMPLETE COPY of the pod's /work/aupai/_p2.log, 2793 bytes / 105 lines, fetched 2026-09-06 after P2_DONE. sha256 16090a7c852278decc42831d983262136d4d1f17a6cc4b3b0373c76d892362c0
+# Experiment 3 part 2, lane 5, world 1. The two 'card claim: NOT HELD' lines are the
+# defect this run found and are KEPT: the claim file WAS written, then card_claim raised
+# formatting its own success message, so the probe reported NOT HELD on a card it held.
+code_py_starcoder: cache holds 2144719 rows, train's val prefix is 5000, scoring 64 rows = 262144 tokens
+  loading /work/aupai/ckpt_b0_headmix_armA.pt
+[card_claim] claimed 5 for arm_token_corr
+  card claim: NOT HELD -- claim attempt raised TypeError: sequence item 0: expected str instance, int found
+  WARNING: running UNCLAIMED. Another job reading card_claim will see this card as free while it is in use.
+  scoring a
+    rows 2/64
+    rows 4/64
+    rows 6/64
+    rows 8/64
+    rows 10/64
+    rows 12/64
+    rows 14/64
+    rows 16/64
+    rows 18/64
+    rows 20/64
+    rows 22/64
+    rows 24/64
+    rows 26/64
+    rows 28/64
+    rows 30/64
+    rows 32/64
+    rows 34/64
+    rows 36/64
+    rows 38/64
+    rows 40/64
+    rows 42/64
+    rows 44/64
+    rows 46/64
+    rows 48/64
+    rows 50/64
+    rows 52/64
+    rows 54/64
+    rows 56/64
+    rows 58/64
+    rows 60/64
+    rows 62/64
+    rows 64/64
+  loading /work/aupai/ckpt_b0_headmix_armB.pt
+[card_claim] arm_token_corr already holds 5 for pid 1489923 (same pid, same cards -- claim reused, not re-taken)
+  card claim: NOT HELD -- claim attempt raised TypeError: sequence item 0: expected str instance, int found
+  WARNING: running UNCLAIMED. Another job reading card_claim will see this card as free while it is in use.
+  scoring b
+    rows 2/64
+    rows 4/64
+    rows 6/64
+    rows 8/64
+    rows 10/64
+    rows 12/64
+    rows 14/64
+    rows 16/64
+    rows 18/64
+    rows 20/64
+    rows 22/64
+    rows 24/64
+    rows 26/64
+    rows 28/64
+    rows 30/64
+    rows 32/64
+    rows 34/64
+    rows 36/64
+    rows 38/64
+    rows 40/64
+    rows 42/64
+    rows 44/64
+    rows 46/64
+    rows 48/64
+    rows 50/64
+    rows 52/64
+    rows 54/64
+    rows 56/64
+    rows 58/64
+    rows 60/64
+    rows 62/64
+    rows 64/64
+{
+ "n_tokens": 262144,
+ "n_rows": 64,
+ "mean_a": 1.2047436237335205,
+ "mean_b": 1.2667524814605713,
+ "mean_diff": -0.06200890615582466,
+ "sd_a": 2.1287899017333984,
+ "sd_b": 2.193629503250122,
+ "corr": 0.9568470259507115,
+ "sd_diff": 0.6381500959396362,
+ "sd_diff_if_independent": 3.0567559345246176,
+ "se_diff_naive": 0.001246386906132102,
+ "se_diff_cluster": 0.002219674709794594,
+ "deff": 3.17155985471848,
+ "pairing_gain_vs_unpaired": 4.790026600283959,
+ "ckpt_a": "/work/aupai/ckpt_b0_headmix_armA.pt",
+ "ckpt_b": "/work/aupai/ckpt_b0_headmix_armB.pt",
+ "domain": "code_py_starcoder",
+ "rows_scored": 64,
+ "val_prefix_rows": 5000,
+ "cache_rows": 2144719,
+ "device": "cuda:0"
+}
+
+corr = 0.9568
+sd of the per-token difference = 0.6382 nat (vs 3.0568 if the arms were independent)
+pairing buys 4.79x on the SE
+SE(mean diff): naive 0.00125, document-clustered 0.00222, deff 3.2
+The CLUSTERED SE is the one a design decision uses: tokens within a document are not independent, and the naive SE understates by sqrt(deff).
+P2_DONE rc=0

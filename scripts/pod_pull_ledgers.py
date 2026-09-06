@@ -603,9 +603,43 @@ def main(argv=None):
         "--push", action="store_true", help="the reverse direction: report/append rows the POD lacks (de-41)"
     )
     ap.add_argument("--pod-root", default=POD_ROOT)
+    ap.add_argument(
+        "--ledger-dest",
+        default=None,
+        help="repository whose ledgers are read and appended to (default: this script's own "
+             "tree). Give your worktree when running the integration tree's copy.",
+    )
     a = ap.parse_args(argv)
 
-    rows = survey(pod_root=a.pod_root, push=a.push)
+    # THE DEST FEEDS THE READ TOO, NOT ONLY THE WRITE. `missing` is pod rows absent from
+    # `root`, so pointing only the append at a different tree would append the wrong SET --
+    # rows chosen by comparing against one repository, written into another.
+    #
+    # WHY THE FLAG EXISTS (2026-09-05 flip). ROOT is derived from __file__, so the copy in
+    # the integration tree pulls into the integration tree -- which is now DETACHED, making
+    # every appended row an edit to a shared tree nobody commits from. Same failure shape as
+    # pod_push: one script, two behaviours, decided by which copy you invoked.
+    dest = os.path.abspath(a.ledger_dest) if a.ledger_dest else ROOT
+    if a.ledger_dest and not os.path.isdir(os.path.join(dest, ".git")) \
+            and not os.path.isfile(os.path.join(dest, ".git")):
+        print(f"--ledger-dest {dest} is not a git repository", file=sys.stderr)
+        return 2
+    if not a.push:
+        try:
+            sys.path.insert(0, os.path.join(ROOT, "scripts"))
+            from integration_tree import is_integration_tree
+            if is_integration_tree(dest):
+                print(f"REFUSING: {dest} is the integration tree.", file=sys.stderr)
+                print("  Since the 2026-09-05 flip it is detached and nobody commits from it,"
+                      " so rows appended", file=sys.stderr)
+                print("  there are never committed by anyone. Pass --ledger-dest <your"
+                      " worktree>.", file=sys.stderr)
+                return 1
+        except ImportError as _e:
+            print(f"NOTE: scripts/integration_tree.py did not import ({_e}); the "
+                  f"integration-tree guard did NOT run", file=sys.stderr)
+
+    rows = survey(root=dest, pod_root=a.pod_root, push=a.push)
     side = "local-only" if a.push else "pod-only"
     total_missing = 0
     by_class = {}
@@ -686,8 +720,8 @@ def main(argv=None):
             else:
                 print(f"appended {n} row(s) to {rel} on the pod (verified by re-read)")
         else:
-            n = append_rows(rel, missing)
-            print(f"appended {n} row(s) to {rel}")
+            n = append_rows(rel, missing, root=dest)
+            print(f"appended {n} row(s) to {rel} in {dest}")
     return rc
 
 

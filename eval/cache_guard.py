@@ -79,11 +79,28 @@ class CoResidentCacheRead(RuntimeError):
 
 
 def _live_run_cards():
-    """{card: claim_name} for cards a LIVE claim holds, or {} if that cannot be read.
+    """{card: claim_name} for cards a live claim held by SOMEONE ELSE holds, or {} if that
+    cannot be read.
 
     Reads runs/claims/ through scripts/card_claim.py, which is the only writer and already
     knows the two things a naive reader gets wrong: a claim whose pid is gone is stale, and
-    a zombie pid is NOT stale (deleting that claim hands its cards away -- card_claim.py:294).
+    a zombie pid is NOT stale (deleting that claim hands its cards away -- card_claim.py's
+    claims() docstring).
+
+    SOMEONE ELSE, and that clause is the fix for a self-deadlock (4c, 2026-09-06). Every GPU
+    entry point now claims its own cards at startup via scripts/loader.claim_my_cards, so
+    score_matrix wrote a claim and then read it back here and refused its own cache read. A
+    claim naming this process, or an ancestor of it, is not something this process can be
+    co-resident WITH -- it IS this process. `harness launch` claims for the job's ancestor, so
+    the ancestor case is as ordinary as the self case.
+
+    The cost of getting it wrong was not a stuck job: the refusal exited 0, so three rows
+    landed in runs/score_matrix.jsonl with every metric an {"error": ...} dict and nothing
+    said they were not scores (e1; main 5c0319dc makes score_matrix_present see them).
+
+    Ancestry by the real ppid chain from card_claim, capped at MAX_DEPTH, so this cannot loop
+    on a cyclic ppid table. A pid the table cannot see is treated as foreign -- the safe
+    direction, since an unreadable table must not silently disable the guard.
 
     {} on any failure, and the caller WARNS rather than refusing on it. A guard that
     refuses when it cannot read the claims would block every eval on a laptop with no
@@ -97,9 +114,39 @@ def _live_run_cards():
         mod = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(mod)
         live, _stale = mod.claims()
-        return mod.held_cards(live)
+        mine = _own_pids(mod)
+        others = [c for c in live if int(c.get("pid", -1)) not in mine]
+        return mod.held_cards(others)
     except Exception:
         return {}
+
+
+def _own_pids(card_claim):
+    """{this pid} plus every ancestor pid, for excluding this job's own claim.
+
+    Walks the ppid chain from card_claim._ps_table(), which is the reader that works in both
+    namespaces (macOS has no /proc, the pod's container has both). Depth-capped by
+    card_claim.MAX_DEPTH: a cyclic ppid table would otherwise loop forever.
+
+    Falls back to {this pid, its parent} when ps cannot run, rather than to everything or to
+    nothing: the direct parent is the case `harness launch` produces, and treating an
+    unreachable grandparent as foreign leaves the guard on.
+    """
+    me = os.getpid()
+    out = {me}
+    table = card_claim._ps_table()
+    if not table:
+        out.add(os.getppid())
+        return out
+    parent = {p: ppid for p, ppid, _args in table}
+    cur = me
+    for _ in range(card_claim.MAX_DEPTH):
+        nxt = parent.get(cur)
+        if nxt is None or nxt in out or nxt <= 0:
+            break
+        out.add(nxt)
+        cur = nxt
+    return out
 
 
 def assert_not_co_resident(domains, root=ROOT):
@@ -112,6 +159,25 @@ def assert_not_co_resident(domains, root=ROOT):
     _domain_seqs, and assert_caches_fresh is already the one function they all reach, so a
     refusal here covers ppl.py, domain_loss.py, domain_bpb.py and score_matrix's
     domain_loss metric with no per-caller line to forget.
+
+    THE TRAINING PATH IS NOT COVERED, AND THAT IS DELIBERATE (de ruling 2026-09-05, found by
+    58 with /proc/<pid>/status VmRSS 101,434,380 kB and fd/8 -> tokens_zh_web.pt). The
+    paragraph above is true of every EVAL and reads as though it were true of _domain_seqs
+    itself; it is not. train.py calls _domain_seqs directly -- neither train.py nor
+    scripts/loader.py contains assert_caches_fresh -- and train.py:1956 is a full
+    torch.load, so a plan build over the E1 mix reads 166.2 GB unrefused. That is the same
+    quantity this guard's own refusal text calls out as ppl.py's 166 GB.
+
+    A training launch is the job the lane EXISTS for, so refusing it because another team
+    holds a card inverts the priority: this guard was written to stop a 166 GB SCORING read
+    from contending with a run, not to stop the run. Routing the training path through here
+    would have blocked E1 on 2026-09-05. The exemption is recorded rather than left implicit
+    because the sentence above had already been read as coverage once.
+
+    What would change the ruling: a measurement that a full plan build under
+    torch.load(mmap=True) is cheaper in practice. 58 measured that mmap gives the shape at
+    0.0 MB rchar, but build_mix then indexes pools[name][mine[1][m]] across the whole plan
+    and the pages fault in anyway -- unmeasured, so not a basis for editing the data path.
 
     WHY score_matrix WAS THE WRONG PLACE (6e proposed it, and the table says otherwise):
     of its fourteen metrics exactly one reaches a cache. Refusing at its entry would refuse
@@ -510,18 +576,31 @@ def _selftest_co_resident():
     not by stubbing _live_run_cards: the thing under test is whether a claim on disk reaches
     the refusal, and a stub asserts my belief about the reader instead of the reader.
 
-    The claim must name a LIVE pid, so it names this process. A dead pid is filed stale and
-    the guard would pass for the right reason on the wrong world -- which is the mistake
-    this docstring exists to stop the next reader repeating.
+    The claim must name a LIVE pid, so a real subprocess is spawned and the claim names IT.
+    A dead pid is filed stale and the guard would pass for the right reason on the wrong world
+    -- which is the mistake this docstring exists to stop the next reader repeating.
+
+    A FOREIGN live pid, not os.getpid(), since 2026-09-06. The guard now excludes a claim held
+    by this process or an ancestor of it -- score_matrix claims its own cards at startup and
+    then read that claim back here and refused its own cache read (4c's #46) -- so every world
+    below that names this pid would test the exclusion instead of the refusal, and worlds 2-6
+    went red the moment the exclusion landed. The subprocess is a `sleep`: alive, unrelated,
+    and reaped in the finally.
     """
     import json
     import shutil
+    import subprocess
+    import sys
     import tempfile
 
     elc = _elc()
     d = tempfile.mkdtemp(prefix="coresident_")
     old_dir = os.environ.get("AUPAI_CLAIM_DIR")
     old_allow = os.environ.pop("AUPAI_ALLOW_CORESIDENT_CACHE", None)
+    # A live pid that is NOT this process and NOT an ancestor of it. Spawned rather than
+    # borrowed from the process table: a pid found by scanning could be an ancestor, and the
+    # world would then silently become the exclusion case again.
+    foreign = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(300)"])
     # BIG must exceed the threshold and SMALL must not, read from the table rather than
     # hardcoded: a future re-measurement moves the bytes and a literal here would go stale
     # while still passing.
@@ -558,7 +637,7 @@ def _selftest_co_resident():
         held = os.path.join(d, "held")
         os.makedirs(held)
         with open(os.path.join(held, "p500m.json"), "w", encoding="utf-8") as fh:
-            json.dump({"name": "p500m_selftest", "cards": ["0", "1"], "pid": os.getpid(),
+            json.dump({"name": "p500m_selftest", "cards": ["0", "1"], "pid": foreign.pid,
                        "cmdline": "python train.py --name p500m_selftest",
                        "acquired": "2026-09-04 00:00:00", "note": "cache_guard selftest"}, fh)
         os.environ["AUPAI_CLAIM_DIR"] = held
@@ -661,7 +740,135 @@ def _selftest_co_resident():
             "a claim whose pid is gone still refused -- a crashed run would lock every "
             "cache read until someone deleted the file by hand") == 0
         n += 1
+
+        # 8 + 9. THE SELF AND ANCESTOR CASES: a claim held by THIS process, or by an ancestor
+        #    of it, must not refuse this process's own read (4c's #46). Every GPU entry point
+        #    claims its own cards at startup, so score_matrix wrote a claim, read it back
+        #    here, and refused itself -- and the refusal exited 0, so three rows landed in
+        #    runs/score_matrix.jsonl with every metric an error dict and nothing said they
+        #    were not scores. The ancestor case is `harness launch`, which claims for the
+        #    job's ancestor rather than for the job.
+        #
+        #    Note the pairing with world 2: this world and that one differ ONLY in whose pid
+        #    the claim names, so together they say the guard keys on WHO holds the claim and
+        #    not on whether one exists. Neither is meaningful alone -- world 2 alone passes
+        #    for a guard that refuses everything, and these alone pass for one that refuses
+        #    nothing.
+        for label, pid in (("self", os.getpid()), ("ancestor", os.getppid())):
+            own = os.path.join(d, f"own_{label}")
+            os.makedirs(own)
+            with open(os.path.join(own, "score_matrix.json"), "w", encoding="utf-8") as fh:
+                json.dump({"name": f"score_matrix_{label}", "cards": ["0", "1"], "pid": pid,
+                           "cmdline": "python eval/score_matrix.py --ckpt x.pt",
+                           "acquired": "2026-09-06 00:00:00"}, fh)
+            os.environ["AUPAI_CLAIM_DIR"] = own
+            assert _must_pass(
+                big,
+                f"a claim held by this process's {label} pid ({pid}) refused this process's "
+                f"own cache read -- that is the self-deadlock: the job claims its cards, then "
+                f"refuses itself, and the refusal used to exit 0 and write a row that looked "
+                f"like a score") == 0
+            n += 1
+
+        # 10. THE MIXED DIR, which is what production actually looks like (e1's finding 2 on
+        #     91531b49): score_matrix claims its own cards WHILE the lane job holds its own.
+        #     Every world above points AUPAI_CLAIM_DIR at a directory holding exactly one
+        #     claim, so none of them distinguishes "filter the self claim out of the set" from
+        #     "if any claim is mine, disable the guard entirely" -- and that second mutant
+        #     SURVIVED the whole selftest. The shipped code was correct; the world was missing.
+        mixed = os.path.join(d, "mixed")
+        os.makedirs(mixed)
+        with open(os.path.join(mixed, "score_matrix.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "score_matrix_mine", "cards": ["0"], "pid": os.getpid(),
+                       "cmdline": "python eval/score_matrix.py --ckpt x.pt",
+                       "acquired": "2026-09-06 00:00:00"}, fh)
+        with open(os.path.join(mixed, "lane_job.json"), "w", encoding="utf-8") as fh:
+            json.dump({"name": "b0_moe48", "cards": ["1"], "pid": foreign.pid,
+                       "cmdline": "python train.py --name b0_moe48",
+                       "acquired": "2026-09-06 00:00:00"}, fh)
+        os.environ["AUPAI_CLAIM_DIR"] = mixed
+        try:
+            assert_not_co_resident(big)
+            raise AssertionError(
+                "a big read was allowed with MY claim on card 0 and a foreign live claim on "
+                "card 1: the exclusion dropped the whole set rather than my own claim, so any "
+                "job that claims its own cards disables the guard for everyone")
+        except CoResidentCacheRead as e:
+            assert "b0_moe48" in str(e), (
+                f"the refusal does not name the foreign claimant: {str(e)[:200]}")
+            assert "score_matrix_mine" not in str(e), (
+                f"the refusal names MY OWN claim as a reason to refuse me: {str(e)[:200]}")
+            # Card 1 is the foreign one; card 0 is mine and must not appear as held.
+            _cards = str(e).split("while cards ", 1)[1].split(" ", 1)[0] if "while cards " in str(e) else ""
+            assert _cards == "1", (
+                f"the refusal reports cards {_cards!r}, expected just the foreign card 1 -- "
+                f"reporting card 0 means my own claim survived the filter")
+        n += 1
+
+        # 11-13. _own_pids WITH ps UNAVAILABLE, WITH A DEEP CHAIN, AND WITH A CYCLIC TABLE.
+        #     None of those is reachable from a claim-dir world: 8-10 run where `ps` works, so
+        #     the `if not table` fallback and the MAX_DEPTH cap could be deleted or inverted
+        #     unnoticed. e1 reported the fallback as mutation-RED on 2026-09-06 and then
+        #     RETRACTED it (review row 073f725b): both shapes SURVIVE, because the ancestor
+        #     world's claim names getppid() and the fallback supplies exactly that. A coverage
+        #     gap that a measurement was briefly claimed for is a reason to write the world.
+        #
+        #     UNIT-LEVEL, and stated as such: _own_pids is called with a stub rather than
+        #     through _live_run_cards, which loads the real card_claim by path and cannot be
+        #     stubbed from here. What this cannot see is whether _live_run_cards still calls
+        #     _own_pids at all -- worlds 8-10 are what say that.
+        class _NoPs:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                return []
+
+        got = _own_pids(_NoPs)
+        assert got == {os.getpid(), os.getppid()}, (
+            f"with ps unavailable _own_pids returned {sorted(got)}, expected this pid and its "
+            f"parent. Dropping the parent deadlocks every job launched through `harness "
+            f"launch`, which claims for the job's ancestor; returning more would exclude a "
+            f"foreign claim and disable the guard")
+        n += 1
+
+        class _Chain:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                # me <- 10 <- 11 <- init. Real pid, fabricated ancestry.
+                return [(os.getpid(), 10, "python"), (10, 11, "bash"), (11, 0, "init")]
+
+        got = _own_pids(_Chain)
+        assert got == {os.getpid(), 10, 11}, (
+            f"_own_pids walked to {sorted(got)}, expected the whole chain. A walk that stops "
+            f"at the parent treats a grandparent's claim as foreign, and the pod's tree is "
+            f"wrapper bash -> torchrun -> rank, so the claiming ancestor is two levels up")
+        n += 1
+
+        class _Cycle:
+            MAX_DEPTH = 6
+
+            @staticmethod
+            def _ps_table():
+                # A ppid cycle: a real table should never hold one, a corrupt read can.
+                return [(os.getpid(), 20, "python"), (20, 21, "bash"), (21, 20, "bash")]
+
+        got = _own_pids(_Cycle)
+        assert got == {os.getpid(), 20, 21}, (
+            f"_own_pids returned {sorted(got)} on a CYCLIC ppid table. It must terminate and "
+            f"return what it reached -- without the depth cap and the `nxt in out` test this "
+            f"call never returns and the guard hangs instead of refusing")
+        n += 1
     finally:
+        # The foreign process first: a leaked `sleep 300` from a failed selftest would sit in
+        # the table for five minutes, and this file's own worlds are the ones that read it.
+        try:
+            foreign.terminate()
+            foreign.wait(timeout=10)
+        except (OSError, subprocess.SubprocessError):
+            pass
         if old_dir is None:
             os.environ.pop("AUPAI_CLAIM_DIR", None)
         else:
