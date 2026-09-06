@@ -798,9 +798,9 @@
       "value": 0.0153,
       "unit": "fraction of the 3.24b budget lost to the epoch cap",
       "measured": "2026-08-30",
-      "source": "exact arithmetic on the pretokenize row counts against train.py:1348/1362/1363",
+      "source": "exact arithmetic on the pretokenize row counts against build_mix's n_val carve and its epoch-cap print",
       "config": {
-        "cause": "the mix consumes six of seven domains exactly once (demand = supply to the row); train.py:1348 removes n_val = min(max(1,int(rows*0.05)),5000) BEFORE building the pool, and the epoch cap at line 1362 measures len(pool), so each of the six is capped by exactly its own n_val",
+        "cause": "the mix consumes six of seven domains exactly once (demand = supply to the row); build_mix removes n_val = min(max(1,int(rows*0.05)),5000) BEFORE building the pool, and the epoch cap at line 1362 measures len(pool), so each of the six is capped by exactly its own n_val",
         "lost_Mtok": {
           "textbook": 20.49,
           "wiki": 12.29,
@@ -813,7 +813,7 @@
         "web_hq_surplus_Mtok": 383.6,
         "why_surplus_does_not_help": "want is computed per domain from its own weight; nothing redistributes",
         "binds_only_at": "3.24b -- checked at 0.2b/0.3b/0.4b/0.8b/1.6b, no domain caps at any",
-        "not_silent": "train.py:1363 prints 'wants N rows, epoch cap leaves M -> capped'; line 1384 prints the true scheduled total"
+        "not_silent": "build_mix prints 'wants N rows, epoch cap leaves M -> capped'; line 1384 prints the true scheduled total"
       },
       "uncertainty": "exact (integer rows)",
       "status": "measured",
