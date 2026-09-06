@@ -3571,6 +3571,21 @@ def main():
             else:
                 loss.backward()
 
+            # THE MoE TOKEN COUNTERS ADVANCE HERE, once per micro-batch (b0-27, 2026-09-06).
+            # MoEFFN.forward only ASSIGNS its counts to a scratch buffer, because gradient
+            # checkpointing runs that forward twice and nothing inside it can tell the passes
+            # apart -- `self.training` and `torch.is_grad_enabled()` are both true in the
+            # recompute. Measured on card 7 before the fix: tokens_per_expert read exactly 2x
+            # with grad_ckpt on, uniformly per expert on every MoE layer, `windows` 2 -> 4.
+            #
+            # AFTER backward, not before: the recompute happens during backward, so committing
+            # earlier would fold a count the recompute is about to overwrite. In the loop body
+            # rather than the accum-boundary block, because every micro-batch's tokens belong in
+            # the window -- the boundary block runs once per OPTIMIZER step and would drop
+            # accum-1 micro-batches out of the readout.
+            for _bl in _moe_balance_layers:
+                _bl.commit_token_counts()
+
             if (i // Cfg.batch + 1) % Cfg.accum == 0:
                 grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
                 # One CPU sync per step: finite(loss) & finite(grad_norm), MIN-reduced across ranks
