@@ -1116,6 +1116,22 @@ def main():
         # row must close with and without --started. Measured over all 8 combinations of
         # (retracted, --started, later minute): retraction was not the variable, being closed was.
         "scripts/test_exp_done_retracted.py",
+        # run_ddp.sh's launcher gate (de-60): a direct call writes no experiments row, takes no
+        # card claim and arms no monitor. Six worlds, and four are the narrowness: an EMPTY marker
+        # must refuse (`-n` instead of `-z` passes it, and an exported-but-unset variable is what a
+        # forwarding wrapper produces), ALLOW_DIRECT_RUN=0 must refuse (the flag is compared to
+        # "1", not tested for presence), the marker path must RUN, and the refusal must name both
+        # the launcher command and the escape. torchrun is stubbed so "did it launch" is observable
+        # rather than inferred from the exit code.
+        "scripts/test_run_ddp_launcher.py",
+        # The ALLOW_DIRECT_RUN population is an ALLOWLIST, not a count (4c, de-60): three scripts
+        # take the escape and each carries its reason both here and at its call site, so a fourth
+        # exporter FAILs until somebody writes down why. Case 4 is what keeps the other three from
+        # being decoration -- an unnamed caller must still be refused, measured against the real
+        # run_ddp.sh with torchrun stubbed, because an allowlist over a gate that no longer refuses
+        # anything is satisfied by every world. test_score_exit is deliberately NOT in the list: it
+        # sets the MARKER, whose subject is the end-of-run chain that sits after the gate.
+        "scripts/test_direct_run_population.py",
         # run_ddp.sh's end-of-run chain: exit codes, the two score notes, and the row close
         # (de-47). It is registered LATE and that is the finding, not a footnote -- it has
         # been unguarded since it was written, and the commit adding the row close printed
@@ -1865,6 +1881,22 @@ def main():
         "scripts/exp.py": {"scripts/test_exp_done_retracted.py", "scripts/test_exp_amend.py",
                            "scripts/test_exp_done_started.py", "scripts/test_exp_fold_agree.py",
                            "scripts/test_ledger_field_writers.py"},
+        # run_ddp.sh had the same gap as exp.py: the subject of two tests and the key of none, so
+        # both ran only when someone edited the test. de-60 measured what that costs -- adding the
+        # launcher gate broke test_score_exit (it invokes run_ddp.sh directly, twice in one file)
+        # and nothing would have asked it. 0.7s for the pair. test_launch_line_cache_dir and
+        # test_pod_sync_stamp read it too and are left out: they assert on its SOURCE with grep and
+        # ast rather than running it, so they cannot see a behaviour change -- which is the same
+        # reason test_ledger_predicates is out of exp.py's list.
+        "run_ddp.sh": {"scripts/test_run_ddp_launcher.py", "scripts/test_score_exit.py",
+                       "scripts/test_direct_run_population.py"},
+        # The three escape takers are keyed too, and this is the direction that actually rots: the
+        # gate and its tests stay put while somebody edits lr_probe.sh and drops the note the
+        # allowlist reads, or adds a second export. 0.6s each -- the population scan is git ls-files
+        # plus a regex, and case 4 stubs torchrun.
+        "scripts/lr_probe.sh": {"scripts/test_direct_run_population.py"},
+        "scripts/prove_resume.sh": {"scripts/test_direct_run_population.py"},
+        "scripts/b0_se_launch_arm2.sh": {"scripts/test_direct_run_population.py"},
         "eval/l1_fewshot.py": {"eval/test_l1_fewshot_2x2.py", "eval/score_matrix.py",
                                "scripts/test_fewshot_demos.py", "scripts/test_fewshot_stop.py"},
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,

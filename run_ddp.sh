@@ -107,6 +107,32 @@ elif [ -d /mnt/data02/tokens ]; then
   export AUPAI_TOKEN_CACHE_DIR=/mnt/data02/tokens
 fi
 
+# A DIRECT CALL GETS NO BOOKKEEPING, and nothing said so (de-60, friction review 2026-09-05).
+# `harness launch` is what writes the experiments row, acquires the card claim, and arms the
+# monitor; calling this script straight from a shell skips all three, and the run looks identical
+# while it happens. Prior art, runs/friction.jsonl 2026-09-04T09:20Z (b0): a 2-arm A/B launched by
+# calling run_ddp.sh directly -- no row, no claim, no watchdog. The cards were held invisibly, so
+# card_held_without_claim reported an orphan and nobody could say whose it was.
+#
+# CHECKED ON THE MARKER THE LAUNCHER SETS, not on the parent process name. A ppid walk would read
+# `setsid nohup bash -c '...'` -- the launcher detaches on purpose (AGENTS.md: setsid, not nohup),
+# so by the time this runs its parent is init and the launcher is gone. The env var survives the
+# detach because it is inherited, which is the only signal that outlives the process tree.
+#
+# THE ESCAPE IS DELIBERATE AND NAMED. A refusal with no way past it would be broken for the
+# controller's own probes, and for a rerun of a stopped window where the row already exists; those
+# are real and they say so in one variable. What it buys is that the direct call is now a decision
+# somebody typed rather than the default.
+if [ -z "${AUPAI_LAUNCHED_BY:-}" ] && [ "${ALLOW_DIRECT_RUN:-}" != "1" ]; then
+  echo "REFUSING: run_ddp.sh was not invoked by \`harness launch\`." >&2
+  echo "  A direct call writes no experiments row, acquires no card claim, and arms no monitor," >&2
+  echo "  so the cards are held invisibly and nothing closes the row if the run dies." >&2
+  echo "  Use: python scripts/harness.py launch <name> --training -- ./run_ddp.sh $*" >&2
+  echo "  Deliberate exception: ALLOW_DIRECT_RUN=1 -- then the row, the claim and the" >&2
+  echo "  watchdog are yours to create by hand." >&2
+  exit 1
+fi
+
 torchrun --nproc_per_node="${NGPU:-8}" --master_port="${PORT:-29500}" train.py --fp8 "$@"
 rc=$?
 # A training run without a score-matrix record is what the score_matrix_present

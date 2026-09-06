@@ -81,6 +81,13 @@ def run(script_src, train_rc=0, score_rc=0, card="7", note_rc=0, done_rc=0, log=
         env["FAKE_NOTE_RC"] = str(note_rc)
         env["FAKE_DONE_RC"] = str(done_rc)
         env["NOTE_TRACE"] = trace
+        # de-60: run_ddp.sh now refuses a call that did not come from `harness launch`. This test's
+        # subject is the END-OF-RUN chain (exit codes, the two score notes, the row close), which
+        # sits after that gate, so the marker goes in rather than the escape -- the escape would
+        # test the gate's bypass and this test is not about the gate at all. Without it all four
+        # cases exit 1 and only the three wanting 1 stay green: the ONE that wants 0 is what caught
+        # this, which is why a test with a positive case is worth more than three refusals.
+        env["AUPAI_LAUNCHED_BY"] = "test_score_exit"
         r = subprocess.run(["bash", os.path.join(d, "run_ddp.sh"), "--name", "probe"],
                            capture_output=True, text=True, env=env, cwd=d, timeout=120)
         notes = open(trace).read() if os.path.exists(trace) else ""
@@ -245,6 +252,7 @@ def _run_with_blocking_scorer(script_src):
         env["PATH"] = bin_ + os.pathsep + env["PATH"]
         env["FAKE_TRAIN_RC"] = "0"
         env["NOTE_TRACE"] = trace
+        env["AUPAI_LAUNCHED_BY"] = "test_score_exit"  # de-60, same reason as the site above
         try:
             r = subprocess.run(["bash", os.path.join(d, "run_ddp.sh"), "--name", "probe"],
                                capture_output=True, text=True, env=env, cwd=d, timeout=30)

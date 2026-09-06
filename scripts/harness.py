@@ -19916,6 +19916,10 @@ def cmd_launch(rest):
     env = os.environ.copy()
     env["CUDA_VISIBLE_DEVICES"] = cards
     env["PYTHONUNBUFFERED"] = "1"  # Python block-buffers stdout when it is a file
+    # THE MARKER run_ddp.sh REFUSES WITHOUT (de-60). It survives the setsid detach because it is
+    # inherited; the parent process is init by the time the script runs, so a ppid walk cannot see
+    # the launcher and this env var is the only signal that outlives the tree.
+    env["AUPAI_LAUNCHED_BY"] = f"harness launch {args.name}"
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
     # Token caches on NVMe, for EVERY launched job and not just training. run_ddp.sh sets this
@@ -20236,6 +20240,10 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = cards
         env["PYTHONUNBUFFERED"] = "1"
+        # THE RESUME IS STILL A LAUNCH. This path rebuilds env from os.environ rather than reusing
+        # the one above, so without this the auto-resume would hit run_ddp.sh's de-60 refusal and a
+        # 66-hour run would die at its first crash instead of resuming.
+        env["AUPAI_LAUNCHED_BY"] = f"harness launch {args.name} (auto-resume {attempt + 1})"
         if args.training and cards:
             env["NGPU"] = str(len(cards.split(",")))
         with open(log_path, "a") as log_f:
