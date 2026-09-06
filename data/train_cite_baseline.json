@@ -1,84 +1,95 @@
 {
-  "why": "train.py:<N> citations already pointing at a line that cannot support any claim, at 9851b797. A RATCHET: this list may shrink, never grow. A NEW dead citation FAILs check_train_cite_targets. Each entry is '<citing file>:<citing line>-><cited train.py line>'; the reason and the line's text at baseline time are recorded so a later reader can tell a fix from a coincidence.",
-  "measured": "2026-09-06",
-  "total_citations_at_baseline": 196,
-  "dead": [
-    "scripts/e1_arm_plan_check.py:526->2251",
-    "scripts/e1_arm_plan_check.py:712->2230",
+  "why": "train.py:<N> citations still carrying a bare line number. A RATCHET: this list may shrink, never grow, and a NEW bare citation FAILs check_train_cite_targets. Ruling (aupai-4c, 2026-09-06): cite a role or a symbol, or anchor the number to a commit sha. These entries are the audited-and-converted set's REMAINDER: the 2026-09-06 audit read the 198 citations under scripts/ and converted the 103 rotten ones, so every entry here lives in a file the audit never judged -- train.py itself, model.py, eval/, datagen/, probes/, and repo-root scripts. They are debt with a known shape, not exceptions: the audited population rotted at 103/118, so assume these are mostly rotten too and read them before believing any of them.",
+  "measured": "2026-09-07",
+  "at_commit": "514f3874",
+  "bare_by_directory": {
+    "(repo root)": 17,
+    "probes": 5,
+    "scripts": 27,
+    "eval": 24,
+    "datagen": 7
+  },
+  "sha_anchored_count": 1,
+  "allowed_bare": [
+    "datagen/build_s_inject.py:11->2195",
+    "datagen/build_s_inject.py:130->1361",
+    "datagen/build_s_inject.py:14->1899",
+    "datagen/build_s_inject.py:230->2034",
+    "datagen/build_s_inject.py:27->319",
+    "datagen/build_s_inject.py:528->2039",
+    "datagen/build_s_inject.py:567->2034",
+    "eval/api_cloze.py:102->1783",
+    "eval/api_cloze.py:173->1142",
+    "eval/api_cloze.py:226->1163",
+    "eval/api_cloze.py:26->1783",
+    "eval/api_cloze.py:35->1163",
+    "eval/api_cloze.py:485->1712",
+    "eval/api_cloze.py:774->1163",
+    "eval/api_cloze.py:779->1774",
+    "eval/cache_guard.py:10->1462",
+    "eval/cache_guard.py:12->1647",
+    "eval/cache_guard.py:167->1956",
+    "eval/cache_guard.py:22->1472",
+    "eval/cache_guard.py:316->1652",
+    "eval/domain_loss.py:238->669",
+    "eval/domain_loss.py:338->669",
+    "eval/domain_loss.py:50->1187",
+    "eval/equal_token_gap.py:82->3391",
+    "eval/equal_token_gap.py:89->3391",
+    "eval/equal_token_gap.py:97->3391",
+    "eval/l1_fewshot.py:40->107",
+    "eval/l1_fewshot.py:575->944",
+    "eval/loop_wrapper.py:20->219",
+    "eval/prefix_mask.py:168->669",
+    "eval/test_l1_fewshot_2x2.py:186->944",
+    "model.py:1101->2786",
+    "model.py:115->2058",
+    "model.py:171->669",
+    "model.py:418->2058",
+    "model.py:431->2058",
+    "model.py:608->2435",
+    "model.py:961->3134",
+    "probes/arm_token_corr.py:12->1989",
+    "probes/arm_token_corr.py:484->1989",
+    "probes/arm_token_corr.py:793->1989",
+    "probes/mem_boundary_audit.py:5->543",
+    "probes/mem_toy.py:79->543",
+    "scripts/attnres_fused_reference.py:327->219",
+    "scripts/b0_se_launch_arm2.sh:20->1836",
+    "scripts/check_split_page_lines.py:63->314",
+    "scripts/check_split_page_lines.py:79->701",
+    "scripts/check_split_page_lines.py:97->314",
+    "scripts/harness.py:6174->1963",
+    "scripts/launch_30b.sh:130->1807",
+    "scripts/launch_30b.sh:131->1396",
+    "scripts/launch_30b.sh:131->1886",
+    "scripts/launch_30b.sh:83->1733",
     "scripts/n7c_gates.py:273->2102",
+    "scripts/probe_gradckpt_sources.py:9->772",
     "scripts/probe_gradckpt_sources.py:93->784",
-    "scripts/profile_step_cost.py:462->964",
-    "scripts/profile_step_cost.py:773->2603",
-    "scripts/profile_step_cost.py:877->2212",
-    "scripts/profile_step_cost.py:1108->964",
-    "scripts/test_arch_L32.py:178->716",
-    "scripts/test_arch_compat.py:1348->135",
-    "scripts/test_arch_compat.py:1395->135",
+    "scripts/read_lr_probe.py:19->2518",
+    "scripts/supervise_run.sh:14->2308",
+    "scripts/test_cursor_save.py:19->1289",
+    "scripts/test_cursor_save.py:92->1289",
+    "scripts/test_eta_window.py:109->46",
     "scripts/test_mix_val_frac.py:6->2155",
+    "scripts/test_mix_val_frac.py:78->1957",
+    "scripts/test_moe_bias_wiring.py:185->3134",
+    "scripts/test_moe_bias_wiring.py:236->3134",
+    "scripts/test_moe_defaults_frozen.py:130->1069",
     "scripts/test_num_id_resolve.py:7->808",
-    "scripts/test_resume_cursor_pod.py:21->2230",
-    "eval/api_cloze.py:485->1712"
-  ],
-  "detail": {
-    "scripts/e1_arm_plan_check.py:526->2251": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/e1_arm_plan_check.py:712->2230": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/n7c_gates.py:273->2102": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/probe_gradckpt_sources.py:93->784": {
-      "reason": "a bare delimiter",
-      "target_text_at_baseline": "#"
-    },
-    "scripts/profile_step_cost.py:462->964": {
-      "reason": "a bare delimiter",
-      "target_text_at_baseline": "#"
-    },
-    "scripts/profile_step_cost.py:773->2603": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/profile_step_cost.py:877->2212": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/profile_step_cost.py:1108->964": {
-      "reason": "a bare delimiter",
-      "target_text_at_baseline": "#"
-    },
-    "scripts/test_arch_L32.py:178->716": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/test_arch_compat.py:1348->135": {
-      "reason": "an import",
-      "target_text_at_baseline": "from model import (  # noqa: E402,F401"
-    },
-    "scripts/test_arch_compat.py:1395->135": {
-      "reason": "an import",
-      "target_text_at_baseline": "from model import (  # noqa: E402,F401"
-    },
-    "scripts/test_mix_val_frac.py:6->2155": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/test_num_id_resolve.py:7->808": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "scripts/test_resume_cursor_pod.py:21->2230": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    },
-    "eval/api_cloze.py:485->1712": {
-      "reason": "blank",
-      "target_text_at_baseline": ""
-    }
-  }
+    "scripts/test_shard_glob.py:143->96",
+    "scripts/test_shard_glob.py:165->96",
+    "scripts/verify_endpoint_ckpt.py:5->3348",
+    "sft_math.py:566->1024",
+    "train.py:1022->2435",
+    "train.py:1086->2481",
+    "train.py:1950->96",
+    "train.py:2410->2278",
+    "train.py:3691->46",
+    "train.py:3709->263",
+    "train.py:3713->46",
+    "train.py:3738->46",
+    "train.py:967->2435"
+  ]
 }

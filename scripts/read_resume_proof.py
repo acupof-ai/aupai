@@ -6,7 +6,7 @@ Five conditions were handed down; two of them, taken literally, test something t
 cannot fail:
 
   the compensation condition, in its first form ("total_steps shows the resume_step
-    compensation") -- train.py:2443 adds resume_step only when _plan_trimmed, which the
+    compensation") -- train.py's total_steps += resume_step fires only when _cursor_seeded, which the
     cursor conditions force true, and :2431's min() then clamps it straight back:
     min(20+40, 60) = 60. The compensation fires and is invisible. fb's final version is
     de's EQUATION, total == N + this stage's plan steps, which asserts the result and
@@ -39,7 +39,7 @@ PASS, FAIL, UNCOVERED = "PASS", "FAIL", "UNCOVERED"
 OUT_OF_SCOPE = "N/A-SCOPE"
 
 CURSOR_RE = re.compile(r"cursor discarded")
-# train.py:1907, the line the ADOPT branch prints -- verified against the source, not
+# the "resuming at row" print in build_mix's ADOPT branch -- verified against the source, not
 # guessed from the shape of the other mix: lines. An earlier version of this pattern
 # matched none of them, and would have reported UNCOVERED on a run that printed all nine.
 START_RE = re.compile(r"mix: (\w+) resuming at row (\d+)")
@@ -166,7 +166,7 @@ def read_sum(cursor, step, batch, accum, world, origin=0):
 def read_opt(opts):
     """Condition 5, b0's version: the buffers were LOADED, not merely present.
 
-    `opts` is ck["opt"], a LIST in build_optimizers order (train.py:1114): [0] Muon, then
+    `opts` is ck["opt"], a LIST in build_optimizers order (its `opts = [` literal): [0] Muon, then
     AdamW for embed, scalar and (when fp32_master is on) the master copy -- four in the
     launch recipe, measured. Index 0 is not cosmetic: fb's condition names Muon's
     momentum, and an AdamW's exp_avg is nonzero too, so reading the wrong index goes
@@ -187,7 +187,7 @@ def read_opt(opts):
                  "opt[0] state is empty -- Muon never stepped, or the load was skipped"),
                 (OUT_OF_SCOPE, "5b. optimizer ORDER unchanged", "see above; debt ledger")]
     # "mb", not torch's "momentum_buffer": Muon is this repo's own optimizer and names
-    # its buffer at train.py:960. Reading the torch name found nothing and reported the
+    # its buffer in Muon.step. Reading the torch name found nothing and reported the
     # 168-param Muon state as "is [0] really Muon?" -- a red on correct code, measured
     # 2026-09-02. The convention comes from the implementation, not from torch.
     bufs = [v["mb"] for v in state.values() if isinstance(v, dict) and "mb" in v]

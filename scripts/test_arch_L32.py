@@ -175,7 +175,7 @@ def block_mode():
 
 def kda_layer_count():
     """attn_every must still leave KDA layers at 32. GatedMLA is NoPE, so zero KDA
-    layers means no position information at all -- train.py:716 raises on it, and the
+    layers means no position information at all -- HybridLM's n_kda == 0 raise refuses it, and the
     count is depth-dependent.
 
     Block has no `is_attn` attribute: the flag is a constructor argument and what
@@ -213,7 +213,7 @@ def optimizer_grouping():
 def kda_decay_init():
     """KDA A_log and dt_bias must be sane in EVERY block at 32 layers.
 
-    A_log lives on the DeltaRecurrence mixer (train.py:278), not on the Block --
+    A_log lives on DeltaRecurrence, the mixer train.py re-exports from model.py, not on the Block --
     `b.mix` does not exist, which is what my first version looked for. The dt_bias
     init is the load-bearing one: zero init gave softplus(0)=0.69 log-decay per token
     and erased the recurrent state, and with NoPE the recurrent state is the only
@@ -290,7 +290,7 @@ def roundtrip_32():
 def dynamo_cache_limit():
     """The one that fired, and the fix.
 
-    train.py:2332 computes 1 + 2*layers AttnRes sources and asserts the dynamo
+    train.py's _dynamo_need computes 1 + 2*layers AttnRes sources and asserts the dynamo
     cache_size_limit covers it. That limit was the literal 64, sized when layers was
     12 (need 25). At 32 the need is 65 -- one over -- so an AttnRes Full launch at the
     ruled shape hit the assert and refused to start. It refuses rather than degrading,
@@ -312,7 +312,7 @@ def dynamo_cache_limit():
     assert "Cfg.layers" in expr or "_cache_need" in expr, (
         f"train.py sets cache_size_limit to `{expr}` -- a constant that does not move "
         f"with depth. At layers=32 AttnRes Full needs {1 + 2 * L} graphs and the assert "
-        f"at train.py:2332 refuses the launch.")
+        f"on train.py's _dynamo_need refuses the launch.")
     # and the value it produces must actually cover the need at this depth
     need = 1 + 2 * L
     got = max(64, 2 * L + 8)
