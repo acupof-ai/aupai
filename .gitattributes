@@ -58,3 +58,12 @@ runs/moe_diag.jsonl merge=union
 # with the other side's file content at 81f091af, so main asserted a hash for a file it did
 # not contain, with the driver configured and attributed the whole time.
 EXPERIMENTS.md merge=aupai-experiments
+
+# runs/prereg.jsonl is AMENDED IN PLACE -- one row per id, keys added over time -- so a LINE
+# merge is always wrong for it: union would leave two lines carrying the same id. It was left
+# unspecified for that reason, which put it outside the pre-commit behind-main exemption and
+# created a state with no legal move (b0, 2026-09-05): git refuses to merge while it is dirty,
+# the hook refuses the commit that would fix that, and git stash is forbidden here. This driver
+# pairs rows by id and unions their KEYS, refusing only a key both sides hold at different
+# values -- an amended registration is a decision, not a merge.
+runs/prereg.jsonl merge=prereg-union

@@ -55,6 +55,14 @@ DRIVERS = {
         "regen": ["python3", "scripts/exp.py", "render"],
         "why": "rendered from runs/experiments.jsonl, which merges by union, so the render conflicts while its source does not",
     },
+    # NOT A REGENERATOR, so no "regen" key -- this one has no source of truth to re-derive
+    # from; the two sides ARE the truth and it merges them. install() and check() only need
+    # `path` and `cmd`, and regen() is reached solely through the regen-* argv it names.
+    "prereg-union": {
+        "path": "runs/prereg.jsonl",
+        "cmd": "python3 scripts/prereg_merge.py %O %A %B %L %P",
+        "why": "amended in place, one row per id, so a LINE merge (union) is always wrong for it; pairs rows by id and unions keys, refusing a key both sides hold at different values",
+    },
 }
 
 
@@ -70,7 +78,7 @@ def install(root=ROOT, quiet=False):
     n = 0
     for name, d in DRIVERS.items():
         _git(
-            "config", f"merge.{name}.name", "regenerate {} instead of conflicting".format(d["path"]), cwd=root
+            "config", f"merge.{name}.name", d.get("why", d["path"])[:120], cwd=root
         )
         _git("config", f"merge.{name}.driver", d["cmd"], cwd=root)
         n += 1
@@ -97,8 +105,13 @@ def check(root=ROOT):
                 f"{name}: no merge.{name}.driver in this clone's config -- run "
                 "`harness install-hooks` (the attribute alone does nothing)"
             )
-        elif "merge_drivers.py" not in got:
-            missing.append(f"{name}: driver is {got!r}, not this script")
+        elif d["cmd"] not in got:
+            # COMPARE AGAINST THE TABLE'S OWN COMMAND, not the substring "merge_drivers.py":
+            # a driver registered here may live in its own script (prereg-union does), and
+            # that test would report a correctly-installed driver as wrong. This also catches
+            # a STALE config -- an entry left by an older command string -- which the
+            # substring test passed.
+            missing.append(f"{name}: driver is {got!r}, not {d['cmd']!r}")
     if missing:
         return False, "; ".join(missing)
     return True, f"{len(DRIVERS)} driver(s) configured and attributed"
