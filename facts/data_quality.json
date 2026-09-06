@@ -1017,6 +1017,20 @@
    },
    "uncertainty": "n=50 with ~4 rows per source; Wilson 95% upper bound on a per-source content-defect rate is ~52% when 0 defects are found in 4 rows, so KEEP means no defect found, not defect-free. 11/50 rows share a session with another sampled row (consecutive steps), so independent samples < 50. Eval-duplicate check covered data/eval/ filenames only, not content hashes. Credential-leak rate of 1/50 is a hand-read lower bound; the automated scan covered 7 common patterns (groq/openai/anthropic/aws/github/google/bearer) and found only the Groq key, but other secret types are unmeasured.",
    "status": "recorded"
+  },
+  {
+   "id": "dq.filters_fp_scoped_to_pipeline_0906",
+   "value": "corpus_filters_fp went red on 2026-09-06 not because any corpus changed but because filters/ gained a file. The nine-domain mismatch 33462c13868a2194 -> 88ee503b38941bf4 was already ruled and forgiven (dq.stage2_corpus_built_with_weaker_filters, fb 2026-09-01, 0.25% residue, no rebuild); the baseline forgives that exact PAIR, keyed on both fingerprints. Committing filters/secrets.py moved the live side off 88ee503b, so the pair no longer matched the baseline and every forgiven domain re-failed. A second cause was in the same red: an untracked filters/__init__.py written by hand on the pod at 05:47Z to fix an import, which put the pod's live fp at 9c0c1fd3160ebd27 -- a value no laptop tree can reproduce. FIX: fp_filters is now scoped to the three filters build_corpus.py:62 actually loads, so a non-pipeline file in filters/ cannot move it. Evidence the scope is right rather than convenient: the scoped value 88ee503b38941bf4 is what data/corpus/en_c4_30b and rp1t_arxiv_papers already carry from real builds, so it reproduces stamps written before the change, and the ruled pair matches the baseline again.",
+   "measured": "2026-09-06",
+   "source": "datagen/corpus_fingerprint.py fp_filters + --self-check; fingerprint history reconstructed with git show over filters/ at 9176f859, df2b7744^, df2b7744, HEAD; pod filters/ listing read in the container",
+   "config": {
+    "scope": "PIPELINE_FILTERS = pass1_garbage.py, pass2_garbage.py, pass3_garbage.py, verified against build_corpus.py's loader tuple by ast in _assert_pipeline_filters_current",
+    "selftest": "both directions -- a non-pipeline .py added to filters/ must NOT move the fp, and an edit to a pipeline filter MUST move it",
+    "values": "33462c13868a2194 = old all-files algorithm at 9176f859 (filters/ then held clean_school_math.py, deleted 964101ea, never imported); 88ee503b38941bf4 = the 3 pipeline filters at current content; 9c0c1fd3160ebd27 = pod all-files including the hand-written __init__.py; 5bc5da79c67e8fad = laptop all-files including secrets.py"
+   },
+   "uncertainty": "The scoping removes a false positive and does not re-examine the true one: pass3_garbage.py did change at df2b7744, so the nine domains remain genuinely behind the current filter, exactly as the 2026-09-01 ruling says. That ruling's 0.25% weighted residue is unchanged by anything here. Whether a fourth filter could enter the pipeline without PIPELINE_FILTERS following is guarded by the ast assertion, which reads build_corpus.py's loader tuple -- it cannot see a filter reached by some other mechanism, such as an import added elsewhere in that file.",
+   "status": "measured",
+   "boundary": "Says which files the fingerprint should cover. It does not re-rule the stage-2 staleness, does not measure any corpus, and does not touch the pod's untracked filters/__init__.py, which still needs removing or committing for the pod's fp to equal a tree's."
   }
  ]
 }
