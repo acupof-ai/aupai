@@ -165,7 +165,7 @@ def doc_prompt_lengths(labels, cu, ignore_index=-100):
     """Per-DOCUMENT prompt length, in document-local coordinates, for aux_tensors[0].
 
     WHY THIS EXISTS. The pack's loss mask is per row, but the kernel's masking unit is the
-    DOCUMENT: doc_cu_seqlens (train.py:669) opens a document at every row start and after every
+    DOCUMENT: train.doc_cu_seqlens opens a document at every row start and after every
     <eos> run, and mask_mod is called with a document index and document-local positions
     (measured 2026-09-04, see build_mask_mods). A row-sized tensor is not merely mislabelled --
     it is read out of bounds for most documents.

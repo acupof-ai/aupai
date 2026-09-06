@@ -47,7 +47,7 @@ from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 # on packed sequences, so there is no way back to "which lines were val".
 #
 # Original reasoning, retained:
-# train.py:1187 holds out the HEAD of each domain -- seqs[:n_val] is validation, seqs[n_val:]
+# build_mix holds out the HEAD of each domain -- seqs[:n_val] is validation, seqs[n_val:]
 # is the training pool -- so the head is unseen for EVERY budget by construction. Scoring the
 # tail instead reads the training pool, and reads more of it the larger the budget: at epoch cap
 # 1 the 3.24B run consumes essentially the whole pool while the 0.2B run barely touches it. That
@@ -235,7 +235,7 @@ def _ce(model, x, y, bs, per_row=False, cu_path="cu_none"):
     # move published conclusions.
     #
     # ONE ROW PER FORWARD when cu is on, and this is not a style choice: cu_seqlens indexes the FLAT
-    # B*T stream (train.py:669), so a batch of 4 rows is one 4T-long stream whose row boundaries are
+    # B*T stream (train.doc_cu_seqlens), so a batch of 4 rows is one 4T-long stream whose row boundaries
     # documents too. That is legitimate for training, but it makes the number depend on bs, and
     # scripts/b0_sd_cu_rescore.py:76 already scored Stage D one row at a time. Matching that exactly
     # is the point: 6e's ruling is that the repo ends with ONE cu path, not two that agree by
@@ -335,7 +335,7 @@ def selftest(model, tok, texts, seq, device):
     if two.shape[1] % 2:  # odd length misaligns chunk_kda (model.py:125): a crash, not a warning
         two = torch.cat([two, two.new_full((1, 1), EOS_ID)], dim=1)
     packed, n_p = domain_loss_seqs(model, two, device, cu_path="doc_cu")
-    # The same two documents as separate ROWS: cu marks every row start too (train.py:669), so this
+    # The same two documents as separate ROWS: doc_cu_seqlens marks every row start too, so this
     # is the same document set with the same boundaries and no packing.
     d1 = tok.encode(texts[0]).ids + [EOS_ID]
     d2 = tok.encode(texts[1]).ids + [EOS_ID]
