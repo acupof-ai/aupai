@@ -990,7 +990,6 @@ class MoEFFN(nn.Module):
         else:
             self.aux_loss = None
         # Sorted dispatch: one contiguous row block per expert, which is what _grouped_mm reads.
-        tok = torch.arange(n, device=x.device).repeat_interleave(self.top_k)
         e_of_row = sel.reshape(-1)
         order = torch.argsort(e_of_row)
         counts = torch.bincount(e_of_row, minlength=self.n_routed)
@@ -1051,7 +1050,26 @@ class MoEFFN(nn.Module):
         # torch.float32" instead of a message naming the cause. A guard that the compiler can
         # elide is not a guard. It lives in train.py, before the first step, where the model's
         # dtype is a plain fact.
-        rows = xr[tok[order]]
+        # ROW-OF-SLOT WITHOUT MATERIALISING IT, and it replaces two allocations plus a gather.
+        # The old code built `tok = arange(n).repeat_interleave(top_k)` and then indexed it as
+        # `tok[order]` -- twice, once for the dispatch gather and again inside index_add_ below.
+        # But tok[i] == i // top_k BY CONSTRUCTION, so integer division gives tok[order]
+        # directly and the arange, the repeat_interleave and both gathers of it are removable.
+        # PROVEN, not assumed: torch.equal(tok[order], order // top_k) is True on the arm's
+        # shape, and a negative control with top_k+1 as the divisor makes it False (so the
+        # equality test can fail). Measured on card 3 at 4096 tok x top_k 3 x 48 experts:
+        # arange+repeat_interleave 0.0174 ms against 0.0075 ms for the div.
+        #
+        # HOW SMALL THIS IS, stated so nobody budgets a speed win on it: the whole change saves
+        # 0.0195 ms of a 0.854 ms dispatch+combine, which scales to 0.0037 s of the 0.517 s
+        # step gap against dense -- 0.72%, i.e. 1.265x dense becomes 1.263x. The cost is not
+        # the index arithmetic. It is index_add_ at 0.2073 ms (70% of these two regions), split
+        # about evenly between materialising the fp32 y*gate temp (0.0953 ms, 37.7 MB) and the
+        # scatter itself (0.1003 ms). Scaling in bf16 first would save 0.0137 ms of that and was
+        # REJECTED: it rounds the gate to bf16 and moves the FFN output by 3.3e-03 relative,
+        # which is a precision change bought for 0.03% of a step.
+        row_of_slot = torch.div(order, self.top_k, rounding_mode="floor")
+        rows = xr[row_of_slot]
         h = torch._grouped_mm(rows, self.w13.transpose(-2, -1), offs=offs)
         a, b = h.chunk(2, dim=-1)
         y = self._situ(a, b, lambda g: torch._grouped_mm(
@@ -1075,7 +1093,7 @@ class MoEFFN(nn.Module):
         de = self.d_latent or d
         gflat = gate.reshape(-1)[order]
         out = torch.zeros(n, de, device=x.device, dtype=torch.float32)
-        out.index_add_(0, tok[order], y.float() * gflat[:, None])
+        out.index_add_(0, row_of_slot, y.float() * gflat[:, None])
         if self.d_latent:
             # UP-PROJECT ONCE, in the accumulator's dtype rather than casting back first: `up` is
             # an nn.Linear so autocast decides its compute dtype, and the fp32 accumulation above
