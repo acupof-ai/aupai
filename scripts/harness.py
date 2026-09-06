@@ -13151,7 +13151,17 @@ def check_train_cite_targets(root):
                     if s not in sha_cache:
                         r = subprocess.run(["git", "show", f"{s}:train.py"], cwd=root,
                                            capture_output=True, text=True)
-                        sha_cache[s] = (r.stdout.splitlines() if r.returncode == 0 else None)
+                        if r.returncode == 0:
+                            sha_cache[s] = r.stdout.splitlines()
+                        else:
+                            # A BLOB sha cannot be resolved as <sha>:<path>; cat-file reads
+                            # it directly.  The blob is the content the citation pins -- the
+                            # check stays syntactic (line exists, non-blank), not semantic
+                            # (the blob is train.py's), same as the commit path.
+                            r = subprocess.run(["git", "cat-file", "blob", s], cwd=root,
+                                               capture_output=True, text=True)
+                            sha_cache[s] = (r.stdout.splitlines()
+                                            if r.returncode == 0 else None)
                     at = sha_cache[s]
                     if at is None:
                         bad.append(f"{where} names sha {s}, which this repo cannot resolve")
@@ -13541,6 +13551,76 @@ def _selftest_cite_scope_covers_facts():
         shutil.rmtree(d, ignore_errors=True)
     return ("facts/ in scope: a bare citation in a fact FAILs naming the file, the same fact "
             "by symbol PASSes, and the untouched tree PASSes (3 cases)")
+
+
+def _selftest_cite_blob_anchor():
+    """A blob-anchored citation resolves via cat-file, and a wrong line number FAILs.
+
+    The check resolves sha-anchored citations via `git show <sha>:train.py`, which only
+    answers for commit shas.  A blob sha -- the most precise pin, immutable content --
+    cannot be resolved that way, so the most precisely-pinned citation form was the one
+    form the check rejected.  The fix is a second resolution path: `git cat-file blob
+    <sha>` when `git show <sha>:train.py` fails.
+
+    Two cases, same shape as the facts/ pair:
+      1. a blob-anchored citation with an in-range line number  -> PASS
+      2. the same citation with a number past the blob's length  -> FAIL
+
+    The blob is train.py's own at HEAD, so the in-range line is real code, not a fixture.
+    Resolvability + in-range + non-blank, same as the commit path -- no content checking.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        # Shared alternates, so the world can resolve the real blob sha.  Same mechanism
+        # as _selftest_cite_scope_covers_facts: a fresh init holds one commit and
+        # resolves nothing.
+        _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
+                                 capture_output=True, text=True)
+        if _common.returncode != 0:
+            raise SelftestSkip("git cannot name this tree's object store")
+        _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
+                                "objects")
+        assert os.path.isdir(_objects), f"no object store at {_objects}"
+        _alt = os.path.join(d, ".git", "objects", "info")
+        os.makedirs(_alt, exist_ok=True)
+        with open(os.path.join(_alt, "alternates"), "w", encoding="utf-8") as fh:
+            fh.write(_objects + "\n")
+        for rel in ("train.py", _CITE_BASELINE):
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+        g("add", "-A")
+        g("commit", "-qm", "base")
+
+        # train.py's blob sha at HEAD, from the real repo.
+        blob_sha = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD:train.py"],
+                                  capture_output=True, text=True).stdout.strip()
+        assert len(blob_sha) == 40, f"expected a full sha, got {blob_sha!r}"
+        n_lines = len(open(os.path.join(d, "train.py"), encoding="utf-8").read().splitlines())
+
+        probe = os.path.join(d, "probe_blob_anchor.py")
+        for num, want, why in (
+                (1, PASS, "an in-range blob-anchored citation must PASS"),
+                (n_lines + 1, FAIL,
+                 "a blob-anchored citation past the blob's length must FAIL")):
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(f'# see {"train" + ".py"}:{num} at blob {blob_sha}\n')
+            g("add", "-A")
+            g("commit", "-qm", f"probe {num}")
+            st, ev = check_train_cite_targets(d)
+            assert st is want, f"{why}, got {st}: {ev[:200]}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("blob-anchored citations resolve via cat-file: in-range PASS, past-length "
+            "FAIL (2 cases)")
 
 
 def check_no_conflict_markers(root):
@@ -20369,6 +20449,7 @@ def _demo(only=None):
         _selftest_cite_sentence_wraps,
         _selftest_train_cite_baseline_is_content_keyed,
         _selftest_cite_scope_covers_facts,
+        _selftest_cite_blob_anchor,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
