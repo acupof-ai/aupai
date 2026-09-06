@@ -100,6 +100,31 @@ KEYS = {
     # folding than one reviewer's separate reviews should get. (de, 1e's authorization)
     "runs/review.jsonl":        lambda r: (r.get("ts") or r.get("at"), r.get("reviewer"), r.get("task")),
     "runs/board.jsonl":         lambda r: (r.get("ts"), r.get("from") or r.get("who")),
+    # (ts, from, words) -- THE WHOLE ROW, because the row has exactly three fields
+    # (scripts/msg_log.py:5) and none of them is an id. This is not laziness about the key: with
+    # every field in it, subsumption degenerates to "no HEAD row may vanish or change", which is
+    # the correct and complete check for a ledger whose rows are immutable counters nothing ever
+    # revisits. There are no value fields left to second-read, and that is a property of the
+    # writer rather than a gap here.
+    #
+    # WHY NOT A SHORTER KEY, measured on main's 159 rows: (ts, from) gives 95 distinct -- seven
+    # rows share ('2026-09-05T13:14Z', 'e1') -- because ts is MINUTE granularity
+    # (strftime %Y-%m-%dT%H:%MZ) and the controller logs a batch of peer messages in one minute.
+    # Folding seven real messages onto one key would let six vanish while subsumption reads clean.
+    # (ts,) alone gives 58. (ts, from, words) gives 159 of 159 with 0 None-rows and there are 0
+    # byte-identical duplicate lines, so nothing legitimate collides. Two messages from one peer
+    # in the same minute with the same word count would still fold -- accepted, because the
+    # alternative is asking msg_log.py for a row id, and its rows feed a count
+    # (policy_metrics.py:113) where such a pair is indistinguishable anyway.
+    #
+    # REGISTERED 2026-09-06 by e1. It was union-merged from the moment it existed
+    # (.gitattributes:9) and had NO key, so ledger_audit's own selftest world 0 was FAILING on
+    # main -- verified on a clean `git archive HEAD` tree, not inferred from my own dirty one.
+    # The scan skips a file it has no key for, so 159 rows behind six peers' message accounting
+    # were unaudited the whole time. The counts here are from main AFTER a merge: measured first
+    # on my own worktree at 157 rows, which was two commits behind and would have put a number
+    # in this comment that main does not read.
+    "runs/msg_log.jsonl":       lambda r: (r.get("ts"), r.get("from"), r.get("words")),
     # (ckpt, milestone). The first version read (name, at|ts), and NO milestones row has any of
     # those three fields -- every one of the 13 keyed to None, which is worse than a wrong key:
     # with one key holding the file, subsume asks only "is the last row preserved somewhere" and
@@ -154,6 +179,20 @@ KEYS = {
     # numbers, and for a MoE arm a relaunch after a stop rule fires is the expected case. The
     # ledger carries no run id, so ts is the only field separating two runs of one arm.
     "runs/moe_diag.jsonl":      lambda r: (r.get("name"), r.get("step"), r.get("ts")),
+    # (ckpt, items_sha256) -- and NO ts, which is the opposite decision from the two diag ledgers
+    # above and for a reason that does not apply to them. They sample a RUNNING arm per step, so a
+    # relaunch re-visits step numbers and ts is the only separator. This one scores a FROZEN
+    # checkpoint against a HASHED item set: the same (ckpt, items_sha256) must yield the same
+    # accuracies, and control_arm was in fact scored twice in two independent processes
+    # (2026-09-05 19:54Z, 20:14Z) reading 0.2440/0.2560 summed and 0.1960/0.1840 mean digit for
+    # digit. With ts in the key every re-score becomes a new key and subsumption stops checking
+    # that; without it, a changed value under an existing key is flagged, which is the fault worth
+    # catching. Measured on the live file: 5 distinct keys over 6 rows, 0 None-rows, the one
+    # collision being a byte-identical duplicate control row -- a real duplicate, so a key that
+    # separated them would be hiding it. items_sha256 is load-bearing: an accuracy is readable only
+    # against the floor and MDE registered for its items, and this set has been through four
+    # versions, so one ckpt under two hashes is two measurements rather than a replacement.
+    "runs/novel_ops_4way.jsonl": lambda r: (r.get("ckpt"), r.get("items_sha256")),
 }
 
 # HOW EACH LEDGER IS WRITTEN decides which predicate is honest for it (1e/44/de, verified at the
@@ -166,12 +205,16 @@ KEYS = {
 WRITE_STYLE = {
     "runs/experiments.jsonl":  "append",   # scripts/exp.py:82
     "runs/board.jsonl":        "append",   # scripts/board.py:66, open(..., "a")
+    "runs/msg_log.jsonl":      "append",   # scripts/msg_log.py:6, open(..., "a"), one row per message
     "runs/milestones.jsonl":   "append",   # scripts/harness.py:11308, open(..., "a")
     "runs/review.jsonl":       "append",   # no in-repo writer; .gitattributes merge=union
     "runs/friction.jsonl":     "append",   # harness.py:7951 _append_task(FRICTION_PATH), O_APPEND
     "runs/retro.jsonl":        "append",   # no in-repo writer; .gitattributes merge=union
     "runs/memory_diag.jsonl":  "append",   # scripts/memory_diag.py:148, O_APPEND, one row per write
     "runs/moe_diag.jsonl":     "append",   # scripts/moe_diag.py log_diag, O_APPEND, one row per write
+    # eval/novel_ops_4way.py:745 open(..., "a"), one row per checkpoint written INSIDE the loop so
+    # an interrupt three arms in leaves those three on disk. Nothing is ever replaced.
+    "runs/novel_ops_4way.jsonl": "append",
     "runs/tasks.jsonl":        "rewrite",  # harness.py:5805 _write_tasks, open(..., "w")
     "runs/score_matrix.jsonl": "rewrite",  # score_matrix.py:573 write_records, read-modify-write
     # A ruling is REPLACED when re-issued (a fingerprint mismatch sends the key back for a
@@ -198,6 +241,9 @@ from test_ledger_predicates import key_present, subsume  # noqa: E402
 PREDICATE = {
     "runs/experiments.jsonl":   subsume,      # scripts/exp.py:82, append
     "runs/board.jsonl":         subsume,      # scripts/board.py:66, open(..., "a")
+    # Append, and with all three fields in the key subsumption reduces to "no row may vanish or
+    # change" -- which is what this ledger needs, since a message count is never revised.
+    "runs/msg_log.jsonl":       subsume,
     "runs/milestones.jsonl":    subsume,      # scripts/harness.py:11308, open(..., "a")
     "runs/review.jsonl":        subsume,      # no in-repo writer; .gitattributes merge=union
     "runs/friction.jsonl":      subsume,      # harness.py:7951, O_APPEND -- rows accumulate
@@ -206,6 +252,11 @@ PREDICATE = {
     # changed value under an existing key is a real regression, not the writer working.
     "runs/memory_diag.jsonl":   subsume,
     "runs/moe_diag.jsonl":      subsume,
+    # Append-style and every row its own key, so a changed value under an existing key is a real
+    # regression. Stronger here than for the diag ledgers: the same (ckpt, items_sha256) is a
+    # DETERMINISTIC re-measurement, verified on control_arm across two processes, so a difference
+    # is either a scorer change or a corrupted row and neither should pass silently.
+    "runs/novel_ops_4way.jsonl": subsume,
     "runs/tasks.jsonl":         key_present,  # harness.py:5805 _write_tasks, open(..., "w")
     # score_matrix.py:573 write_records is read-modify-write and replaces same-(ckpt, profile) BY
     # DESIGN -- ":574 the matrix is the current state, not a history". So a changed value is the
