@@ -910,6 +910,14 @@ def main():
         # deleting the exemption passed. All five worlds are now mutation-verified.
         "scripts/test_pending_claim.py",
         "eval/readout_30b.py", "eval/math_v2_like.py", "eval/score_matrix.py",
+        # conversion_rate_0905's PRIMARY readout. 1.4s, no card, no model: its ten worlds run on
+        # stub models whose preference is a fact of the fixture. Registered rather than exempted
+        # because the numbers it produces are the experiment's answer, and three of its worlds
+        # exist only because the mutant they catch SURVIVED an earlier version -- an inverted
+        # argmax, a mean row that ignored option length, and a continuation span that included
+        # prompt tokens. It also asserts the pinned items hash, so an item-set change that would
+        # invalidate the registered floor and MDE stops here.
+        "eval/novel_ops_4way.py",
         # lambada_en's selftest needs neither tokenizer nor data -- it covers the stop rule
         # and the row splitter, both pure string logic -- so it belongs here and not in
         # NEEDS_DATA. It caught two defects in its own file before that file's first commit:
@@ -1111,10 +1119,13 @@ def main():
         # 305,152 = 1192 x 256 absolute after a resume at origin 832, and the
         # segment-only 92,160 at the same checkpoint must be REFUSED. It was in
         # NEEDS_DATA as "RED, and the test is right" for part of 2026-09-04 and that
-        # reading was WRONG: train.py:1134 writes counts x world + _base, an absolute
-        # cursor, so the guard's absolute _want is correct and the resumed FIXTURE was
-        # the defect -- it declared origin 16000 with no _row_cursor_base, a run that
-        # consumed 512,000 rows and remembered none. 28s, no card, no data.
+        # reading was WRONG: save_checkpoint writes an ABSOLUTE cursor (this segment's
+        # consumed rows + _base), so the guard's absolute _want is correct and the resumed
+        # FIXTURE was the defect -- it declared origin 16000 with no _row_cursor_base, a run
+        # that consumed 512,000 rows and remembered none. The count itself came from rank 0's
+        # stripe x world until 58 found it wrong per-domain (2026-09-06); this file's fixture
+        # has one domain, where the two agree, so the striping case lives in test_cursor_sum.
+        # 28s, no card, no data.
         "scripts/test_cursor_save.py",
         # The holdout guard's two machine-dependence guards (6e ruling, 2026-09-04):
         # _fingerprint() skips absent files, so the laptop (5 of 13 registry files) and
@@ -1353,6 +1364,13 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # The MoE step profiler. In SELFTEST_FILES and NOT in NEEDS_DATA because its --selftest
+        # needs no card: it asserts the shape constants still match arm D's launch line, that the
+        # parity (top_k+shared)*expert_ffn == ffn_hidden holds -- the whole "equal active FLOPs"
+        # premise rests on that, so a drift there silently invalidates every share the tool prints
+        # -- and that each documented region is actually recorded. The GPU-only equivalence check
+        # is behind --equiv and the hook does not run it.
+        "scripts/profile_moe_step.py",
         # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
         # the gap it closes is a gap that file has by construction: test_moe_module asserts
         # which optimizer GROUP each parameter lands in and never calls .step(), so group
@@ -1379,6 +1397,14 @@ def main():
         # every fp32 arm's arithmetic, which is the objection this program raises about the
         # fp8/bf16 confound in the first place.
         "scripts/test_bf16_flag.py",
+        # The latent MoE. Registered here AND on model.py's trigger list below, because the defect
+        # it guards is in model.py: the routed experts contract over d_latent, so w13's fan_in
+        # changes from d to d_latent, and initialising at d is a 1.63x scale error at the
+        # registered cell that no shape check can see -- the arm's first steps would measure its
+        # initialisation. The other load-bearing half is PLACEMENT: two mutants (shared expert fed
+        # from the up-projection, down-projection per dispatched row instead of per token) have
+        # identical shapes to the correct code and were caught only by counting projection calls.
+        "scripts/test_moe_latent.py",
         # The per-domain val_frac override. Registered here AND on train.py's trigger list below,
         # because the defect it guards lands in build_mix and not in this file: the 5% val split
         # came off the FRONT of every domain including an injection shard whose row count IS the
@@ -1387,20 +1413,20 @@ def main():
         # than a smaller number, because the old expression's max(1, ...) floors an explicit zero
         # back up to one row -- so a test asserting "fewer rows held back" passes on the defect.
         "scripts/test_mix_val_frac.py",
-        # NOT YET REGISTERED: scripts/test_eta_window.py, the printed ETA's window mean. 8a06c567
-        # (mine) registered it here and on train.py's trigger list before writing it, and the file
-        # has never existed in any commit or any worktree -- so selftests_are_gated FAILed on main
-        # for every session until it was found by a merge 40 minutes later. A map entry is a claim
-        # that the file is there; registering ahead of the file inverts the check, which exists to
-        # catch a registration whose subject was DELETED and cannot tell that from one never
-        # written. The test waits on its subject: `eta = (total_steps - step) * dt / 10`
-        # (train.py:3322) extrapolates one 10-step interval over all 19,151 remaining steps, so a
-        # 54s interval printed 29 lost hours and every checkpoint save printed ~99h -- and train.py
-        # is frozen for p500m_20b_0902. Both land together in the stop window: the assertion is a
-        # BOUND (one interval moves the ETA by at most 1/N of what it moved before), never a bare
-        # smaller-than, because any smoothing passes smaller-than including one that swallows the
-        # spike, and a swallowed save is worse than a visible one. No quoted words in this comment:
-        # a double quote inside either map re-pairs every quote below it (harness.py:1285).
+        # build_mix reads the mix's own anneal_frac and refuses a disagreement with Cfg, and
+        # publishes no cursor base across calls. Registered here AND on train.py's trigger list:
+        # the subject is build_mix, not this file. Two reverts of the fix were run in real
+        # worktrees and each fails this test at its own assertion. ~4s, no card.
+        "scripts/test_mix_anneal_and_cursor.py",
+        # scripts/test_eta_window.py IS NOW REGISTERED, below in this map and on train.py's trigger
+        # list. It is entered here where its NOT-YET note stood, because the note recorded a
+        # failure worth keeping: 8a06c567 (mine) registered the file in both places BEFORE writing
+        # it, the file existed in no commit and no worktree, and selftests_are_gated FAILed on main
+        # for every session until a merge found it 40 minutes later. A map entry is a claim that
+        # the file is there. The order is write, run, mutate, then register -- and the two
+        # registrations land in the same commit as the file, never ahead of it.
+        # No quoted words in this comment: a double quote inside either map re-pairs every quote
+        # below it (harness.py:1285).
         # The MoE diagnostics writer. Its selftest is the argument for readout 4 being able to
         # fire at all: known-answer worlds for a healthy router (fires nothing) and a collapsed
         # one (fires BOTH rules), a missing/typo'd/bool/out-of-range field refused rather than
@@ -1433,6 +1459,11 @@ def main():
         #                           Also (de-31) every save_checkpoint call site passes opt
         #                           and step, by AST: a call that omits step writes no cursor,
         #                           so the identity above passes VACUOUSLY on that path.
+        #                           And (58, 2026-09-06) the PER-DOMAIN counts under uneven
+        #                           striping: the sum identity is exact for rank 0's stripe x
+        #                           world even when individual domains are wrong in opposite
+        #                           directions, so the sum alone passed on two bad checkpoints.
+        #                           3/3 mutants of the count red, M1 the pre-fix expression.
         # Neither takes a --selftest flag: the file IS the test, and its default path is
         # the gate. They are in the map so a train.py edit cannot land without them.
         "scripts/test_plan_length.py",
@@ -1527,6 +1558,29 @@ def main():
         # privileged bare value) does NOT match -- measured -- so it would have stopped every
         # trackio metric on that line while the log looked richer. Pure regex, milliseconds.
         "scripts/test_step_line_parses.py",
+        # The printed ETA. `(total_steps - step) * dt / 10` extrapolated ONE 10-step interval over
+        # every remaining step, so a checkpoint save -- which lands inside one interval -- printed
+        # ~99h at 19,151 steps and consecutive lines disagreed by tens of hours. Seven worlds over
+        # _eta_fields, which is module-level precisely so this test calls the arithmetic instead of
+        # reimplementing it: it lived inline first and two mutations of the real expression
+        # SURVIVED, because a test that recomputes the quantity under test moves with it.
+        # Mutation-tested 5/5 on the real train.py, each mutant killed by its own named assertion
+        # and the baseline green in between -- including the one that first SURVIVED (deleting the
+        # overrun interpolation from the f-string), because the render worlds bind that name
+        # themselves and cannot see whether the line uses it. That assertion is now on the
+        # extracted source.
+        # NO BRACE AND NO QUOTED WORD IN THIS COMMENT, and that rule has to be stated without
+        # writing the thing it forbids. harness.check_selftests_are_gated reads this map with a
+        # regex whose body is a negated character class on the closing brace, so the parse stops at
+        # the FIRST closing brace anywhere below -- including one inside a comment -- and every
+        # entry after it reads as ungated. Measured twice today: writing the overrun field's name
+        # in braces here cut the parse from 208 entries to 184, and then QUOTING THE REGEX ITSELF
+        # in this very comment cut it to 195, because the class contains that brace too. Both runs
+        # FAILed the check naming 10 innocent files (eval/compare_fewshot_arms.py,
+        # mathbank/dist_check.py and others), none of them mine. Same trap as the odd-double-quote
+        # rule noted above, different character.
+        # Pure arithmetic and one regex, milliseconds, no card and no data.
+        "scripts/test_eta_window.py",
         # A/B (2a)'s arm: an inverted ratio shrinks exactly the matrices the record says to
         # grow (and the clamp hides it, making the arm a bit-exact baseline), and a factor
         # hoisted to the group gives every shape the first shape's number. Both still train.
@@ -1601,6 +1655,24 @@ def main():
         #                           died in its own setup and read as unrunnable
         "scripts/test_resume_cursor_pod.py": "needs data/tokenizer.json and data/corpus/, "
                                              "both gitignored; run on the pod",
+        # RUN BEFORE BEING JUDGED, per this map's own rule, and the reason is what it printed
+        # rather than a guess about what it needs. On the pod, card 1, against the wired
+        # model.py: all four worlds PASS -- gamma 0.0 leaves the bias at absmax 0.000000; one
+        # update on counts [100,0,50,...] gives bias [-0.000999,+0.000999,0,...], i.e. exactly
+        # gamma with the sign opposite to the load error; two forwards with one update move the
+        # bias 0.000999 against 0.001999 for two forwards with two updates, ratio 2.00x, which
+        # is the accum trap the balancer's placement avoids; and the new step counter reads
+        # 64 then 128 for tokens x top_k over two micro-batches.
+        # It cannot run at commit time on a dev box for one reason: it asserts
+        # torch.cuda.is_available() at the top of main(). model.py's MoEFFN reaches
+        # chunk_kda/l2norm, which are Triton with no CPU fallback, so there is no CPU world for
+        # this module to be tested in -- a "CPU-side probe" of this model is not a thing that
+        # exists (b0, measured). Registered here rather than in SELFTEST_FILES so the gate stops
+        # reporting it as unguarded while the exemption states the truth.
+        "scripts/test_moe_bias_wiring.py": "asserts torch.cuda.is_available(); MoEFFN reaches "
+                                           "chunk_kda/l2norm, Triton with no CPU fallback, so "
+                                           "there is no CPU world for it -- PASSED 4/4 on the "
+                                           "pod, card 1, 2026-09-06",
         "scripts/test_domain_loss_val.py": "needs data/tokenizer.json, gitignored; SKIPs "
                                            "cleanly here and passes on the pod",
         # Kept rather than deleted in de-21, and listed here so the reason it is not run is
@@ -1759,6 +1831,15 @@ def main():
         # score_matrix's own selftest loads l1_fewshot by path and asserts on artifact_path,
         # verify_artifact and the transcriber, so a change to either file can break it.
         "eval/score_matrix.py": {"eval/test_l1_fewshot_2x2.py"},
+        # novel_ops_4way delegates its scoring to run_eval.score_mc_items and asserts on that
+        # function's own contract: the continuation is sliced by token id, and an item whose
+        # options all failed to tokenize must not read as correct. So an edit to run_eval.py is
+        # exactly what can break it, and two of its worlds were built by mutating run_eval
+        # rather than the readout. 1.4s.
+        "eval/run_eval.py": {"eval/novel_ops_4way.py"},
+        # And the item set: the readout pins its sha256, so a rebuild of the items has to run
+        # the readout that scores them or the pinned hash goes stale silently.
+        "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
@@ -1776,13 +1857,50 @@ def main():
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
+                     "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
+                     "scripts/test_moe_latent.py",
+                     # test_eta_window READS train.py -- it extracts main's step-line f-string with
+                     # inspect.getsource and asserts on that template, and calls _eta_fields
+                     # directly. So an edit to train.py is exactly what can break it, and
+                     # SELFTEST_FILES alone would run it only when someone edits the test. That is
+                     # the gap this table exists to close, measured today: a65f595e appended
+                     # `s/step {dt / 10}` to that same line, the extracted template then raised
+                     # NameError on an unbound `dt`, and the test was right that the line had
+                     # changed -- but nothing would have asked it. ~0.1s.
+                     "scripts/test_eta_window.py",
+                     # test_moe_module READS train.py -- it execs the fp8/bf16 refusal's own block
+                     # out of train.main and drives it through six worlds -- and it was on
+                     # model.py's trigger list ONLY. So da5ef8bf, which widened that guard's
+                     # condition with `and not bf16_only`, never ran it, and the test's exact-line
+                     # anchor stopped matching: it reported "no guard in train.main" for a guard
+                     # sitting right there, and stayed red on main until a model.py edit happened
+                     # to fire it. A test that reads a file belongs on that file's trigger list.
+                     "scripts/test_moe_module.py",
+                     # BOTH CURSOR TESTS CALL save_checkpoint DIRECTLY and were on NO trigger
+                     # list, so SELFTEST_FILES ran them only when someone edited the test itself
+                     # -- the precise gap the two comments above describe, at a third pair of
+                     # files. MEASURED 2026-09-06: db's f5f8600e added a refusal in train.py when
+                     # _plan_world is absent, and test_cursor_save's mid-run fixture constructs a
+                     # cfg with _plan_domains_full and no _plan_world. It landed GREEN and broke
+                     # that file; db found it only when a later merge re-ran everything. Verified
+                     # here by parsing this table with the check's own regex: before this edit
+                     # test_cursor_save.py and test_cursor_sum.py were named by NO subject, while
+                     # test_plan_length.py was already on train.py.
+                     #
+                     # THE CLASS, worth stating because it will recur: a REFUSAL added in one file
+                     # invalidates every fixture in every other file that constructs the same cfg,
+                     # and nothing joins those files except this table. A new required field is a
+                     # breaking change to every hand-built cfg in the repo. ~1.5s and ~2.0s.
+                     "scripts/test_cursor_save.py",
+                     "scripts/test_cursor_sum.py",
                      "scripts/moe_diag.py"},                                # 54.0s
         "model.py": {"scripts/test_arch_compat.py", "scripts/test_split_bitwise.py",
                      "scripts/test_value_embed.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
+                     "scripts/test_moe_latent.py",
                      "scripts/test_moe_module.py"},                          # 48.9s
         "scripts/loader.py": {"scripts/test_arch_compat.py", "scripts/test_sft_pack.py",
                               "scripts/test_eval_base_prompt_format.py",
