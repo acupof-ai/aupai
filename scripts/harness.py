@@ -16610,6 +16610,23 @@ def _selftest_milestone_pin_only():
     try:
         globals()["cmd_launch"] = lambda argv: launched.append(argv) or 0
         globals()["_run_alive"] = lambda r: True
+        # --dry FIRST, on the same world, because its property is an ABSENCE and an absence is
+        # only meaningful before the real run creates the things. Measured 2026-09-06: this
+        # branch ignored a.dry entirely, so a rehearsal on the pod hard-linked a live
+        # checkpoint and appended a row to the shared ledger while printing "pinned". The two
+        # assertions below are exactly what that defect violated.
+        _dry_ledger_before = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        rc_dry = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                                "--pin-steps", "5000", "--ledger", ms, "--dry"])
+        assert rc_dry == 0, f"--dry returned {rc_dry}"
+        assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [], \
+            f"--dry created a pin: {sorted(glob.glob(os.path.join(d, '*.milestone_*.pt')))}"
+        _dry_ledger_after = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        assert _dry_ledger_after == _dry_ledger_before, \
+            "--dry appended to the ledger it was asked not to touch"
+        # And it must not hang: the wait loop's exit condition is `want - done`, which --dry
+        # never shrinks unless it counts a named step as settled.
+
         rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
                             "--pin-steps", "5000", "--ledger", ms])
         assert rc == 0, f"pin-only returned {rc}"
@@ -22579,6 +22596,26 @@ def cmd_milestone(argv):
                 ckpt = f"ckpt_{a.run}.pt.step{step}"
                 if not os.path.exists(os.path.join(a.watch, ckpt)):
                     continue
+                if a.dry:
+                    # --dry NAMES THE TWO SIDE EFFECTS AND PERFORMS NEITHER. It used to
+                    # perform both: this branch never read a.dry, so a rehearsal against a
+                    # live run hard-linked the checkpoint and appended a row to the shared
+                    # ledger, and its output said "pinned". MEASURED 2026-09-06 on the pod --
+                    # ckpt_0.2b_8b_b192.pt.step3000 carries a pin, and milestones.jsonl a row,
+                    # from a --dry meant as a no-op. Both are real and stay (the row's inode and
+                    # nlink were true when written, the ledger is append-only, and deleting the
+                    # link would make pin_nlink=2 false AND change which saves train.py's
+                    # roller may evict -- it reads pinned_inodes from this glob at :3623-3648).
+                    # The cost of the wrong default here is not a stray file: --dry is what
+                    # someone reaches for precisely to touch a shared ledger with nothing.
+                    print(f"  step {step}: WOULD pin -> "
+                          f"ckpt_{a.run}.milestone_{a.pin_token}_step{step}.pt "
+                          f"and append one row to {ms_path} (--dry, nothing written)", flush=True)
+                    # Counted as settled so the wait loop terminates. Without this, --dry
+                    # never grows `done` and spins on a condition it can never satisfy --
+                    # a rehearsal that hangs instead of reporting.
+                    done.add(step)
+                    continue
                 pinned = _pin_milestone(a.watch, a.run, ckpt, a.pin_token)
                 if not pinned:
                     print(f"  step {step}: PIN FAILED, not recording a promise "
@@ -22636,7 +22673,12 @@ def cmd_milestone(argv):
                           f"exist; nothing can pin them now.", file=sys.stderr, flush=True)
                     return 2
                 time.sleep(a.interval)
-        print(f"pin-only: all of {want} pinned and recorded", flush=True)
+        # The closing line must not claim a write that --dry did not make. It is the line
+        # people quote, and "pinned and recorded" was true of the dry run only because the
+        # dry run was not dry.
+        print(f"pin-only: all of {want} "
+              + ("named; nothing pinned and no row written (--dry)" if a.dry
+                 else "pinned and recorded"), flush=True)
         return 0
 
     if a.watch:
