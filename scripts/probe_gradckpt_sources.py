@@ -6,7 +6,7 @@ is sized against "AttnRes Full builds 1 + 2*layers distinct graphs". If gradient
 checkpointing changed what dynamo sees per step, the constant would be sized against
 the wrong quantity -- the same defect one level up from the one it fixes.
 
-Reading train.py:772-789 says it should not: the checkpoint wraps `fn = f(norm(t))`,
+Reading model.py's `_body` says it should not: the checkpoint wraps `fn = f(norm(t))`,
 the sublayer function, and AttnRes is deliberately OUTSIDE it ("only [B,T] logits on
 the tape, never [B,T,D]"). So the `ar(done + partial)` call and its source list are
 identical either way. But reading is what produced the 12-layer constant in the first
@@ -90,5 +90,5 @@ if bad:
     sys.exit(1)
 print(f"\nOK: grad_ckpt does not change the count. {need} distinct source counts at "
       f"L={L}, identical with and without checkpointing -- AttnRes sits outside the "
-      f"checkpoint (train.py:784), so recompute never re-enters it. max(64, 2*layers+8) "
+      f"checkpoint (model.py's _body), so recompute never re-enters it. max(64, 2*layers+8) "
       f"= {max(64, 2 * L + 8)} covers {need}.")

@@ -17,7 +17,7 @@
 # than silently fixed -- changing warmup here would make the two points differ in the
 # recipe as well as the length.
 #
-# train.py:1836 computes wd_steps from `total`, so a wrong --max_steps is not merely a
+# train.py's lr_mult computes wd_steps from `total`, so a wrong --max_steps is not merely a
 # short run: it is a different cosine tail on every step before it, and unresumable.
 set -euo pipefail
 cd "$(dirname "$0")/.."

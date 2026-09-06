@@ -3,7 +3,7 @@
 
     python3 scripts/test_mix_val_frac.py
 
-WHY THIS EXISTS. train.py:2155 took `n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), ...)`
+WHY THIS EXISTS. build_mix took `n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), ...)`
 off the FRONT of every domain, injection shards included. Experiment 1
 (runs/prereg.jsonl#conversion_rate_0905) injects the same 1,000 documents n times and reads a
 curve against n, so a 5% hold-back makes the realised exposure count 0.95n while the axis says
@@ -75,7 +75,7 @@ def _write_cache(tmp, domain, n_rows):
     with open(os.path.join(cdir, f"{domain}_000.jsonl"), "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"text": "x" * 8}) + "\n")
     # FLAT, not pre-shaped. The real cache is a 1-D token stream that _domain_seqs reshapes
-    # with `n = len(data) // (seq+1)` (train.py:1957). A pre-shaped [n_rows, seq+1] tensor makes
+    # with `n = len(data) // (seq+1)`. A pre-shaped [n_rows, seq+1] tensor makes
     # len(data) the ROW count, so n came out 200//33 = 6 and the function returned 198 rows of a
     # 200-row fixture -- a fixture that silently measured a different quantity than it claimed.
     torch.save(torch.arange(n_rows * (SEQ + 1), dtype=torch.int32), cache)

@@ -8,10 +8,10 @@ them through the normal path and no training code changes.
 
 WHY A SHARD AND NOT A CODE CHANGE. The alternative is a hook in build_mix that splices rows into
 the plan. That would be a second scheduling path used by one experiment, and the plan is where
-the shuffle (train.py:2195) and the rank stripe (:2241) live -- the two things this experiment's
+the shuffle (build_mix's per-phase randperm) and the rank stripe live -- the two things this experiment's
 exposure schedule depends on. A shard reaches those through the same code the control ran.
 
-THE UNIT IS A ROW OF seq+1 TOKENS, NOT A DOCUMENT (train.py:1899-1903 reshapes the
+THE UNIT IS A ROW OF seq+1 TOKENS, NOT A DOCUMENT (_domain_seqs reshapes the
 <eos>-separated stream to [-1, seq+1]). S documents are 104.0 tokens mean, so ~39 share a
 4,097-token row and 1,000 documents pack into 25.4 rows. Two consequences the recipe has to
 answer rather than ignore:
@@ -19,12 +19,12 @@ answer rather than ignore:
   * "n exposures" is n passes over the 1,000-document SET, so the shard holds N*1,000 documents
     and the mix reads it at epochs 1. Putting 1,000 documents in the shard and asking for N
     epochs would work too, but the epoch cap interacts with used[] bookkeeping in build_mix
-    (:2181-2190) and a capped want silently reduces exposures -- writing the repeats into the
+    and a capped want silently reduces exposures -- writing the repeats into the
     shard makes the count a property of the data instead of the scheduler.
 
   * Documents sharing a row see each other unless masked. Cfg.doc_mask is True by default and
     resets KDA state and SWA per <eos>, but conv_doc_isolated is False in the control
-    (train.py:319, and the control's launch line does not pass it), so the short_conv still
+    (Cfg.conv_doc_isolated, and the control's launch line does not pass it), so the short_conv still
     convolves across the boundary -- eff.kda_document_isolation_violated, measured 48.88 at the
     block-0 output. The arms MUST match the control here: passing --conv_doc_isolated would
     change the topology relative to the checkpoint being continued. So the leak stays, identically
@@ -127,7 +127,7 @@ def build_docs(items, n_exposures, n_docs=N_DOCS, seed=SEED):
 
 #: The keys train._jsonl_content requires of every corpus line, and the one it forbids. Named
 #: here rather than assumed, because it was assumed once and cost the launch: this builder wrote
-#: {"text": ...} doc lines with a {"_header": true} line at the top, and train.py:1361 is
+#: {"text": ...} doc lines with a {"_header": true} line at the top, and train._jsonl_content is
 #: `json.loads(ln)["content"]` with NO header skip -- so all five injection domains raised
 #: KeyError: 'content' when the caches were built on the pod, and the arm could not start.
 #: Both halves were independently fatal (measured 2026-09-05: header+text, header+content, and
@@ -227,7 +227,7 @@ def write_shard(out_dir, name, docs, header):
 def write_stats(d, name, docs):
     """<out>/<name>/build_corpus_stats.json, carrying the build-time fingerprint.
 
-    WITHOUT THIS EVERY ARM DIES AT STEP 0. train.py:2034 asserts the domain carries a stamped
+    WITHOUT THIS EVERY ARM DIES AT STEP 0. train._assert_mix_domains asserts the domain carries a stamped
     fingerprint -- "an unstamped domain cannot be distinguished from a swapped-in one" -- and
     refuses the run otherwise. Measured 2026-09-05: control_arm's launch failed on
     `AssertionError: mix domain 'p_format' carries no build-time fingerprint`, and all five
@@ -525,7 +525,7 @@ def _selftest():
         import train as _t2
         assert st.get("fingerprint"), f"no fingerprint key: {sorted(st)}"
         assert st["fingerprint"] == _t2._corpus_fp(sd), (
-            f"stamped {st['fingerprint']} != live {_t2._corpus_fp(sd)}; the guard at train.py:2039 "
+            f"stamped {st['fingerprint']} != live {_t2._corpus_fp(sd)}; the guard in train._assert_mix_domains "
             f"would refuse this domain")
 
         # 2. WRITING THE STAMP MUST NOT MOVE THE FINGERPRINT. Only true because both fp
@@ -564,8 +564,9 @@ def _selftest():
           "_header line (even one carrying \"content\"), a \"text\"-keyed doc line, a non-shard "
           "filename, an empty shard and a missing sidecar -- while what write_shard now emits "
           "reads back through train._jsonl_content itself, and the build_corpus_stats.json stamp "
-          "satisfies train.py:2034's fingerprint guard read through train._corpus_fp, does not "
-          "move the fingerprint by being written, carries build_corpus.py's canonical key set, "
+          "satisfies train._assert_mix_domains's fingerprint guard read through train._corpus_fp, "
+          "does not move the fingerprint by being written, carries build_corpus.py's canonical "
+          "key set, "
           "and rejects a wrong fingerprint")
     return 0
 

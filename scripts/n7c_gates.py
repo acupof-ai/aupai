@@ -270,7 +270,7 @@ def main():
 
     from train import doc_cu_seqlens  # noqa: PLC0415
 
-    # eos_id FROM THE TOKENIZER, as train.py:2102 does, not from cfg (it is not a cfg field --
+    # eos_id FROM THE TOKENIZER, as train.py's main does (`tok.token_to_id("<eos>")`), not from cfg (it is not a cfg field --
     # my first version read getattr(cfg, "eos_id") and would have refused on every checkpoint)
     # and not from sft_math.py:44's hardcoded EOS_ID = 1: a literal and a lookup can drift, and
     # the wrong eos id silently changes every document boundary, which changes what the mask
