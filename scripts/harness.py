@@ -1579,6 +1579,117 @@ def _broken_selftest_counts_computed():
     return d
 
 
+def check_executed_hook_matches_main(root):
+    """The pre-commit hook that ACTUALLY RUNS is main's blob for that path.
+
+    .git/hooks/pre-commit is a symlink to ../../scripts/hooks/pre-commit, resolved against the
+    INTEGRATION TREE's worktree, so every worktree executes that tree's WORKING FILE. That tree
+    is kept at a detached HEAD on purpose (merge_main.sh:1189-1196: a CAS onto a checked-out
+    branch leaves the tree reading as modified), and merge_main re-detaches it onto the new main
+    after each successful merge. But that step has two paths that only WARN -- a dirty tree, and
+    a failed checkout -- and after either one the executed hook is frozen at an older commit
+    while every worktree's own copy shows the new registrations.
+
+    MEASURED 2026-09-06, before merge_main gained the re-detach: the executed hook had 169
+    SELFTEST_FILES entries against main's 170, and TESTS_FOR_SUBJECT was missing
+    test_moe_latent.py under model.py and train.py plus test_moe_module.py under train.py. All
+    three landed in 0a738e75, which was on main. None of them executed anywhere. The
+    test_moe_module registration is the one with a history: the hook's own comment records that
+    it sat on model.py's list only, so da5ef8bf widened the fp8/bf16 guard without running it and
+    the test stayed red on main -- 0a738e75 fixed exactly that, and the fix was inert.
+
+    WHY THIS IS CHECKABLE WHEN "WHICH HOOK BODY RAN FOR COMMIT X" IS NOT. The manual-rule note at
+    the top of this file records the hook-symlink rule as unenforceable, and for a PAST commit it
+    is: no artifact says which body executed. The CURRENT executed body is a file on disk, and
+    main's blob for that path is one `git show` away. This check compares those two, which is a
+    different question with an answer.
+
+    Runs only where the integration tree is reachable -- it is a property of this checkout's
+    layout, not of the repo's content, so a CI clone with no linked worktrees SKIPs."""
+    rel = os.path.join("scripts", "hooks", "pre-commit")
+    link = os.path.join(root, ".git", "hooks", "pre-commit")
+    # A worktree's .git is a FILE pointing at the common dir, so the hook path has to come from
+    # git rather than from a join. rev-parse answers for both layouts.
+    r = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                        "--git-common-dir"], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return SKIP, "cannot resolve --git-common-dir"
+    link = os.path.join(os.path.realpath(r.stdout.strip()), "hooks", "pre-commit")
+    if not os.path.exists(link):
+        return SKIP, "no .git/hooks/pre-commit installed"
+    executed = os.path.realpath(link)
+    if not os.path.exists(executed):
+        return FAIL, (f"the installed hook resolves to {executed}, which does not exist -- "
+                      f"every commit in every worktree runs no hook at all")
+    blob = subprocess.run(["git", "-C", root, "show", f"main:{rel}"],
+                          capture_output=True, text=True)
+    if blob.returncode != 0:
+        # NOT a pass. A missing main ref here means the comparison could not be made, and an
+        # unasked question must not read as agreement (the shape this repo has bought repeatedly).
+        return SKIP, f"cannot read main:{rel} ({blob.stderr.strip()[:60]})"
+    with open(executed, encoding="utf-8", errors="replace") as f:
+        on_disk = f.read()
+    if on_disk == blob.stdout:
+        return PASS, f"the executed hook ({executed}) is byte-identical to main:{rel}"
+    # NAME WHAT DIFFERS IN THE UNITS THAT MATTER, not "the files differ". A registration that
+    # does not execute is the consequence people need to see, and it is what makes this silent:
+    # reading the hook in your own worktree shows the entry present.
+    try:
+        import ast as _ast
+
+        def _sf(src):
+            for n in _ast.walk(_ast.parse(src)):
+                if isinstance(n, _ast.Assign) and any(
+                        isinstance(t, _ast.Name) and t.id == "SELFTEST_FILES" for t in n.targets):
+                    return set(_ast.literal_eval(n.value))
+            return set()
+
+        missing = sorted(_sf(blob.stdout) - _sf(on_disk))
+        extra = sorted(_sf(on_disk) - _sf(blob.stdout))
+    except (SyntaxError, ValueError):
+        missing = extra = []
+    detail = ""
+    if missing:
+        detail += (f"; {len(missing)} selftest(s) registered on main do NOT run: "
+                   f"{', '.join(missing[:4])}")
+    if extra:
+        detail += f"; {len(extra)} run that main does not register: {', '.join(extra[:4])}"
+    return FAIL, (f"the hook every worktree executes ({executed}) differs from main:{rel}, so a "
+                  f"registration on main can be inert while your own copy shows it{detail}. Fix: "
+                  f"git -C <integration tree> checkout --detach main")
+
+
+def _broken_executed_hook_matches_main():
+    """A world whose installed hook resolves to a file that differs from main's blob.
+
+    Built as a real repo with a real linked worktree, because the defect IS the layout: the
+    symlink resolving into another worktree's working file is the whole mechanism, and a fixture
+    that wrote two unrelated files would assert on string inequality rather than on the
+    condition anyone can hit."""
+    d = _tmp_repo()
+    subprocess.run(["git", "init", "-q", "-b", "main", d], capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "t"], capture_output=True)
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    hook = os.path.join(d, "scripts", "hooks", "pre-commit")
+    with open(hook, "w") as f:
+        f.write('SELFTEST_FILES = {"scripts/a.py", "scripts/b.py"}\n')
+    subprocess.run(["git", "-C", d, "add", "-A"], capture_output=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "hook with two registrations"],
+                   capture_output=True)
+    # The installed hook is the symlink the real repo uses, and the working file it resolves to
+    # loses a registration -- exactly the frozen-tree state, without needing a second worktree.
+    hooks_dir = os.path.join(d, ".git", "hooks")
+    os.makedirs(hooks_dir, exist_ok=True)
+    installed = os.path.join(hooks_dir, "pre-commit")
+    if os.path.exists(installed):
+        os.remove(installed)
+    os.symlink(os.path.join("..", "..", "scripts", "hooks", "pre-commit"), installed)
+    with open(hook, "w") as f:
+        f.write('SELFTEST_FILES = {"scripts/a.py"}\n')
+    return d
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -6171,9 +6282,8 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 AT
-    # 169da865 carried
-    # "weights 14% off against fp64 truth", so `train.py --help` had been dead
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 at 169da865
+    # carried "weights 14% off against fp64 truth", so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
     roots = sorted(glob.glob(os.path.join(root, "*.py")))
@@ -8100,20 +8210,56 @@ def _selftest_peer_stalled_names_the_fixture():
 
 
 def _selftest_one_deliverable_names_the_fixture():
-    """one_deliverable_per_owner names the member given a second open row.
+    """one_deliverable_per_owner sees its world's seed: 4 members with it, 3 without.
 
-    The real tree already WARNs (members with 6 and 4 open), so the registered broken
-    world fires regardless of the mutation; this pins the part that matters -- the
-    added row's id and owner are in the evidence."""
+    BOTH DIRECTIONS AND THE COUNT, because the registered broken world discriminates
+    nothing on its own (db, 2026-09-06, driving ea82d2e2 rather than reading it). This
+    check is in --selftest's warn_only set, where the predicate is `state not in (PASS,
+    SKIP)` rather than `state == FAIL`. The real ledger already holds violators, so the
+    world WARNs, the world minus its seed WARNs, and the bare real tree WARNs -- measured
+    4, 3, 4. Every state passes the loop. A mutant that drops broken-odpo-1 before counting
+    still reports WARN and the loop accepts it: the check can go blind to exactly the row
+    its world plants. Naming the id was not enough either -- that was this selftest's
+    previous assertion, and it holds for a check that finds the row by accident while
+    miscounting everything else.
+
+    The general form is worth more than this instance: warn_only weakens every world under
+    it from "FAIL on the seed" to "not PASS", so any warn_only world that is already
+    non-PASS for pre-existing reasons tests nothing. 15 checks sit in that set and their
+    discrimination is unaudited.
+    """
     import shutil as _sh
     d = _broken_one_deliverable_per_owner()
     try:
         state, ev = check_one_deliverable_per_owner(d)
         assert state == WARN and "broken-odpo-1" in ev, (
             f"the added open row must be named, got {state}: {ev}")
+        m = re.match(r"(\d+) member", ev)
+        assert m, f"evidence must lead with a member count: {ev[:120]}"
+        with_seed = int(m.group(1))
+
+        # The same world with ONLY the seed removed. Not a fresh build: two builds could
+        # differ for a reason that has nothing to do with the row.
+        p = os.path.join(d, "runs", "tasks.jsonl")
+        kept = [ln for ln in open(p, encoding="utf-8")
+                if ln.strip() and json.loads(ln).get("id") != "broken-odpo-1"]
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(kept)
+        state2, ev2 = check_one_deliverable_per_owner(d)
+        m2 = re.match(r"(\d+) member", ev2)
+        assert m2, f"evidence must lead with a member count: {ev2[:120]}"
+        without = int(m2.group(1))
+
+        assert with_seed == without + 1, (
+            f"the seed must move the count by exactly one: {with_seed} with it, {without} "
+            f"without -- if these are equal the check is blind to the row its world plants")
+        assert "broken-odpo-1" not in ev2, (
+            f"the removed row must not be named once it is gone: {ev2[:120]}")
     finally:
         _sh.rmtree(d, ignore_errors=True)
-    print("  one_deliverable_per_owner: fixture row named on the broken world")
+    print(f"  one_deliverable_per_owner: the seed moves the count {without} -> {with_seed} "
+          f"and is named only while present (warn_only makes the world's WARN itself "
+          f"non-discriminating)")
 
 
 def check_review_present(root):
@@ -14947,6 +15093,13 @@ CHECKS = [
         _broken_cache_readers_set_vocab_id,
     ),
     (
+        "executed_hook_matches_main",
+        "the pre-commit hook every worktree actually runs is main's blob for that path",
+        "the integration tree holds the file every worktree executes and is kept detached, so a merge that only WARNs instead of re-detaching leaves the executed hook frozen: measured 2026-09-06, three registrations that were on main -- test_moe_latent under model.py and train.py, test_moe_module under train.py -- executed nowhere, and reading the hook in your own worktree showed all three present",
+        check_executed_hook_matches_main,
+        _broken_executed_hook_matches_main,
+    ),
+    (
         "selftests_are_gated",
         "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
         "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
@@ -15266,6 +15419,10 @@ EVIDENCE = {
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
+    # tree's working file, neither of which is repo content. Green here says nothing about
+    # another machine, and a clone with no linked worktrees SKIPs.
+    "executed_hook_matches_main": "local",
     "selftest_worlds_reachable": "repo", "selftest_counts_computed": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
