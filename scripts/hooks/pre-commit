@@ -1022,6 +1022,14 @@ def main():
         "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
+        # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
+        # the real val curves, so the known answers run anywhere. Registered because the mistake it
+        # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-
+        # DENSE curve and they are the MoE-vs-MoE one, differing by 0.028 to 0.072 at every point,
+        # larger than the effect either curve gets read for. Both curves are pinned, and one world
+        # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
+        # pairing at matched STEPS instead of matched tokens reverses the sign.
+        "eval/equal_token_gap.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
