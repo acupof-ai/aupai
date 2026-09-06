@@ -1,14 +1,14 @@
 {
   "why": "train.py line citations still carrying a bare number, in both forms the check reads: the qualified `train.py:NNN` and the abbreviated `:NNN` inside a sentence that names train.py and no sha. A RATCHET -- a NEW bare citation FAILs check_train_cite_targets. Ruling (aupai-4c, 2026-09-06 and the abbreviated-form narrowing 2026-09-07): cite a role or a symbol, or anchor the number to a commit sha. Every entry is DEBT, not an exception: the 2026-09-06 audit read the 198 qualified citations under scripts/ and 103 of 118 judgement cases were rotten, so assume these are mostly rotten too and read each one before believing it. 4c has ordered the audit of these, eval/ first, one commit per directory, shrinking this list each time.",
   "measured": "2026-09-07",
-  "at_commit": "1de2a9fd",
+  "at_commit": "54bb308f",
   "schema": "allowed_bare maps `<citing file>-><cited number>` to HOW MANY bare citations that pair may carry. CONTENT-KEYED, NOT POSITION-KEYED, and a MULTISET rather than a set. The first schema keyed on `<file>:<citing line>-><target>` and any insertion above a baselined citation moved its key, turning the ratchet red on whoever merged next (4c, 2026-09-07; e1 hit it landing #48, 122 lines inserted, key 6174 -> 6285). A line-text hash was the other candidate and trades one false red for another: measured, it gives 87 distinct keys for 87 citations against this key's 70, but it goes red on a comment REFLOW, which happens whenever a sentence around a citation is edited. The count is what keeps the ratchet honest under a colliding key: 15 pairs carry more than one citation, so a set would let a file grow from one to three with the baseline unchanged.",
-  "qualified_bare_count": 100,
-  "abbreviated_bare_count": 16,
-  "sha_anchored_count": 13,
-  "total_bare_count": 116,
+  "qualified_bare_count": 75,
+  "abbreviated_bare_count": 15,
+  "sha_anchored_count": 15,
+  "total_bare_count": 90,
   "bare_by_directory": {
-    "facts": 116
+    "facts": 90
   },
   "allowed_bare": {
     "facts/data_quality.json->1556": 1,
@@ -39,15 +39,12 @@
     "facts/efficiency.json->1807": 1,
     "facts/efficiency.json->1886": 1,
     "facts/efficiency.json->1906": 1,
-    "facts/efficiency.json->1912": 4,
     "facts/efficiency.json->1914": 1,
     "facts/efficiency.json->1961": 1,
     "facts/efficiency.json->1994": 1,
     "facts/efficiency.json->2143": 2,
     "facts/efficiency.json->219": 1,
     "facts/efficiency.json->2235": 1,
-    "facts/efficiency.json->2267": 3,
-    "facts/efficiency.json->2276": 7,
     "facts/efficiency.json->230": 1,
     "facts/efficiency.json->2367": 2,
     "facts/efficiency.json->2368": 1,
@@ -57,7 +54,6 @@
     "facts/efficiency.json->2508": 1,
     "facts/efficiency.json->2557": 1,
     "facts/efficiency.json->2561": 1,
-    "facts/efficiency.json->2618": 3,
     "facts/efficiency.json->2620": 1,
     "facts/efficiency.json->272": 1,
     "facts/efficiency.json->2865": 1,
@@ -66,7 +62,6 @@
     "facts/efficiency.json->3549": 1,
     "facts/efficiency.json->402": 1,
     "facts/efficiency.json->448": 1,
-    "facts/efficiency.json->454": 3,
     "facts/efficiency.json->488": 1,
     "facts/efficiency.json->519": 1,
     "facts/efficiency.json->521": 2,
@@ -77,12 +72,10 @@
     "facts/efficiency.json->717": 1,
     "facts/efficiency.json->733": 1,
     "facts/efficiency.json->746": 1,
-    "facts/efficiency.json->855": 5,
     "facts/efficiency.json->93": 1,
     "facts/efficiency.json->945": 2,
     "facts/efficiency.json->:1034": 1,
     "facts/efficiency.json->:1607": 1,
-    "facts/efficiency.json->:1913": 1,
     "facts/efficiency.json->:1926": 1,
     "facts/efficiency.json->:2151": 1,
     "facts/efficiency.json->:2367": 1,
@@ -98,5 +91,5 @@
     "facts/multilingual.json->1348": 2,
     "facts/multilingual.json->1363": 1
   },
-  "count_growth_reason": "116, all of it facts/. The code side is at ZERO (95 -> 0 on 2026-09-07 across six commits: eval/, model.py + sft_math.py, train.py's own, scripts/ in two batches, datagen/ + probes/). facts/*.json entered scope on 4c's 2026-09-07 ruling and had never been counted -- 125 at entry, now 116 after the six small files. Remaining: efficiency.json 91, data_scaling 13, data_quality 4, memory_layers 3, multilingual 3, moe.json 2 (b0's, symbol form sent). 4c's field rules: uncertainty/boundary/prose -> symbols; source/config -> sha-anchored at the tree the measurement ran against, never a guessed sha; value -> symbol where the citation is incidental, number PLUS symbol where it is part of the measurement. A new bare citation anywhere FAILs, so this may only shrink."
+  "count_growth_reason": "90, all of it facts/, down from 116. This ratchet is efficiency.json's high-multiplicity keys: the 7 mfu_basis peak citations, 5x :855, 4x :1912, 3x :2618, 3x :2267 and 3x :454, 26 converted with two of the :454 pair sha-anchored (train.py:454-537 @8491325a2, a line-RANGE read scope no symbol can express -- 454 = `def _fp8_mm`, 537 = the fp8-head print). sha_anchored_count 13 -> 15 for that pair. NOTE ON THE SHA FORM: the anchor was first written @8491325, which the check could not see -- _CITE_SHA_RE requires at least one [a-f] so a decimal is not read as a sha, and an all-digit short sha is invisible to it. Lengthened to a letter-bearing prefix. Remaining: efficiency.json 65, data_scaling 13, data_quality 4, memory_layers 3, multilingual 3, moe.json 2 (b0's). The code side stays at ZERO. 4c's field rules: uncertainty/boundary/prose -> symbols; source/config -> sha-anchored at the tree the measurement ran against, never a guessed sha; value -> symbol where the citation is incidental, number PLUS symbol where it is part of the measurement; one-off keys are prose under rule (1). A new bare citation anywhere FAILs, so this may only shrink."
 }
