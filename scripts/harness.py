@@ -10075,6 +10075,45 @@ def _read_tasks(path=None, raw=False):
     return list(folded.values())
 
 
+def _ids_at_every_ref(owner, root=None):
+    """Every `<owner>-<n>` id present at ANY ref in the common git dir, as a set of ints.
+
+    THE WORKING TREE IS NOT THE POPULATION. `task add` allocated max+1 over the rows it could
+    SEE, which is this branch's file; a peer's allocation on their own branch is invisible
+    until they merge, so two sessions hand out the same id and the union merge keeps both
+    rows. Four collisions on 2026-09-06, plus one id (tilerl-30) that both 4c and I used in
+    messages for an hour and that no row ever carried.
+
+    Refs, not branches: refs/heads/* covers peers' branches, and a ref this clone has fetched
+    but not checked out still holds ids that were really handed out. A ref whose tree has no
+    register contributes nothing rather than erroring -- an old branch from before the file
+    existed is not evidence of anything.
+    """
+    r = subprocess.run(["git", "for-each-ref", "--format=%(refname)"],
+                       cwd=root or ROOT, capture_output=True, text=True)
+    if r.returncode != 0:
+        return None  # not a repo, or git is unusable: the caller must not silently allocate
+    pat = re.compile(rf"{re.escape(owner)}-(\d+)$")
+    seen = set()
+    rel = os.path.relpath(TASKS_PATH, ROOT)
+    for ref in r.stdout.split():
+        blob = subprocess.run(["git", "show", f"{ref}:{rel}"],
+                              cwd=root or ROOT, capture_output=True, text=True)
+        if blob.returncode != 0:
+            continue
+        for line in blob.stdout.splitlines():
+            if not line.strip():
+                continue
+            try:
+                rid = json.loads(line).get("id", "")
+            except json.JSONDecodeError:
+                continue  # a torn line at some ref is not worth failing an allocation over
+            m = pat.fullmatch(rid or "")
+            if m:
+                seen.add(int(m.group(1)))
+    return seen
+
+
 def _append_task(row, path=None):
     """One event. Append, never rewrite: see _read_tasks.
 
@@ -10403,8 +10442,28 @@ def cmd_task(argv):
         # Owner-scoped ids: a global max+1 collides when two branches allocate
         # concurrently and the union merge keeps both (t52 twice, 2026-08-31).
         # <owner>-<n> is collision-free across branches; existing t-ids stay.
-        n = max([int(r["id"].split("-", 1)[1]) for r in rows
-                 if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))] or [0]) + 1
+        #
+        # ACROSS EVERY REF, not this tree's file. Owner-scoping fixed collisions BETWEEN
+        # owners and left the ones within one owner: two sessions running as `tilerl` on
+        # different branches each read their own register, each computed the same max+1, and
+        # both used it. Four such collisions on 2026-09-06, plus tilerl-30, an id used in
+        # messages for an hour that no row ever carried.
+        #
+        # WHY THIS IS AN ALLOCATION FIX AND NOT A REFUSAL. 4c asked for "refuse on collision,
+        # never renumber". Refusing here is unreachable: the candidate is max+1 over the very
+        # set it would be tested against, so it is free by construction. What the scan really
+        # buys is that a peer's COMMITTED-BUT-UNMERGED allocation is now in that set. The
+        # residual race -- two sessions allocating in the same instant, neither committed --
+        # no scan can see, and it is caught after the fact by check_tasks_well_formed, which
+        # FAILs on two rows sharing an id with different tasks.
+        local = [int(r["id"].split("-", 1)[1]) for r in rows
+                 if re.fullmatch(rf"{re.escape(args.owner)}-\d+", r.get("id", ""))]
+        everywhere = _ids_at_every_ref(args.owner)
+        if everywhere is None:
+            print("refusing: cannot enumerate refs, so an id cannot be shown to be free",
+                  file=sys.stderr)
+            return 1
+        n = max(sorted(everywhere) + local or [0]) + 1
         if args.pair == args.owner:
             print(f"refusing: {args.owner} cannot pair with itself", file=sys.stderr)
             return 1
@@ -17203,6 +17262,67 @@ def _selftest_register_union():
     print("  register: union-merged closes fold to done; a same-id different-task row still FAILs")
 
 
+def _selftest_id_allocation_sees_every_ref():
+    """4c's world: two branches allocate from the same base and must get N and N+1.
+
+    THE WORLD IS TWO REAL BRANCHES, not two files. What was broken is specifically that a
+    peer's allocation lives at a ref this tree has not merged, so a fixture that writes both
+    allocations into one file cannot hold the condition -- it would pass against the old
+    tree-only max as well, and prove nothing.
+
+    The mutation control is at the end and it is the point of the test: restoring the old
+    predicate (max over the working tree's rows) must produce the SAME id twice.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="alloc_")
+    def g(*a):
+        return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    g("init", "-q", ".")
+    g("config", "user.email", "t@example.invalid")
+    g("config", "user.name", "t")
+    g("checkout", "-q", "-B", "main")
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    rel = os.path.relpath(TASKS_PATH, ROOT)
+    p = os.path.join(d, rel)
+    _write_tasks([{"id": "own-7", "owner": "own", "state": "open", "task": "base"}], p)
+    g("add", "-A"); g("commit", "-q", "-m", "base register")
+
+    # The peer allocates own-8 on THEIR branch and commits it. Nothing merges.
+    g("checkout", "-q", "-b", "peer")
+    _write_tasks(_read_tasks(p) + [{"id": "own-8", "owner": "own", "state": "open",
+                                    "task": "peer's"}], p)
+    g("add", "-A"); g("commit", "-q", "-m", "peer allocates own-8")
+    g("checkout", "-q", "main")  # our tree: own-8 is NOT here and never was
+
+    tree_ids = {r["id"] for r in _read_tasks(p)}
+    assert tree_ids == {"own-7"}, f"the world must hide the peer's row from the tree: {tree_ids}"
+
+    everywhere = _ids_at_every_ref("own", root=d)
+    assert everywhere == {7, 8}, f"the scan must see the peer's unmerged own-8: {everywhere}"
+    ours = max(sorted(everywhere) + [int(r["id"].split("-")[1]) for r in _read_tasks(p)]) + 1
+    assert ours == 9, f"we must allocate own-9, not own-8: {ours}"
+
+    # THE MUTATION: the old predicate, max over the working tree only. It must produce 8 --
+    # the id the peer already holds. Without this the test would pass against the bug.
+    old = max([int(r["id"].split("-")[1]) for r in _read_tasks(p)]) + 1
+    assert old == 8, f"the old tree-only predicate must reproduce the collision: {old}"
+    assert old in everywhere, "the collision is that the old answer is an id already handed out"
+
+    # A ref whose tree predates the register contributes nothing rather than erroring.
+    g("checkout", "-q", "-b", "ancient", "--orphan")
+    g("rm", "-rq", "--cached", ".")
+    open(os.path.join(d, "x.txt"), "w").write("no register here\n")
+    g("add", "x.txt"); g("commit", "-q", "-m", "a branch from before the register")
+    g("checkout", "-q", "main")
+    assert _ids_at_every_ref("own", root=d) == {7, 8}, "a ref with no register must not break the scan"
+
+    shutil.rmtree(d, ignore_errors=True)
+    print("  ids: an unmerged peer allocation at another ref is seen (own-9, not own-8); the "
+          "tree-only max reproduces the collision; a ref with no register is skipped")
+
+
 def _selftest_auto_resume():
     """de-1's three cases, on real child processes: a crash after a .step save is
     resumed once, a clean exit is not, the kill-criterion code is not.
@@ -18154,6 +18274,7 @@ def _demo(only=None):
     _selftest_brief()
     _selftest_gate_timeout()
     _selftest_register_union()
+    _selftest_id_allocation_sees_every_ref()
     _selftest_auto_resume()
     _selftest_devs_map()
     _selftest_gpu_descendants()
