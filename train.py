@@ -964,7 +964,7 @@ class MasterWeights:
         #
         # AN EARLIER VERSION OF THIS COMMENT WAS WRONG in a way worth keeping visible: it said the
         # exclusion was safe because the table "is ALREADY fp32 -- nn.Embedding is built in the
-        # default dtype and nothing casts it". train.py:2435 casts it. `raw_model.to(
+        # default dtype and nothing casts it". The --fp8 branch in main() casts it. `raw_model.to(
         # torch.bfloat16)` under --fp8 walks every floating parameter, the value table included,
         # measured on the pod 2026-09-05 (runs/b0_mem_m3_peak_1448.json: TABLE dtype=bfloat16,
         # 6 B/param). The claim was read off the construction site instead of the model that
@@ -1019,7 +1019,8 @@ class MasterWeights:
 class TableMaster:
     """An fp32 master for the sparse memory's value table, and for nothing else.
 
-    WHY IT EXISTS. Under --fp8 the model is cast to bf16 (train.py:2435), and that cast reaches
+    WHY IT EXISTS. Under --fp8 the model is cast to bf16 (`raw_model = raw_model.to(
+    torch.bfloat16)` in main()), and that cast reaches
     nn.Embedding: the value table, its dense gradient and Adagrad's `sum` are all bf16, measured
     on the pod (runs/b0_mem_m3_peak_1448.json, TABLE line, 6 B/param). bf16 carries 8 mantissa
     bits, so an update below ~2^-9 of the weight rounds away and the write is discarded -- 91% of
@@ -1083,10 +1084,10 @@ class TableMaster:
         Without a resync the next push() would write the pre-rollback table straight back in.
 
         The --resume load is NOT such a path, and it is worth saying why rather than adding a
-        defensive call: raw_model.load_state_dict(ck["model"]) runs at train.py:2481, and this
-        object is constructed at :2601 from whatever the model holds by then. A resume therefore
-        builds the master FROM the loaded table. If those two ever swap order, this method is what
-        the new order needs called.
+        defensive call: raw_model.load_state_dict(ck["model"]) runs in main()'s resume block, and
+        this object is constructed AFTER it, from whatever the model holds by then. A resume
+        therefore builds the master FROM the loaded table. If those two ever swap order, this method
+        is what the new order needs called.
         """
         with torch.no_grad():
             for p, m in self.pairs:
@@ -1947,7 +1948,8 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     # the third refuses. Silently ignoring the unknown would keep new artifacts out of
     # the training data (the point of the whitelist) while throwing away the property
     # the original blacklist was chosen for: "a sniffer silently skips a shard whose
-    # first line broke; this list fails loud on the next such file" (train.py:96). The
+    # first line broke; this list fails loud on the next such file" (NON_SHARD_JSONL's own
+    # comment). The
     # blacklist picked the wrong DEFAULT, not the wrong volume, so the fix keeps the
     # volume. A real shard that someone names oddly must stop the run, not vanish from
     # it -- silently training on 8 of 9 domains is the expensive failure; this one costs
@@ -2406,8 +2408,9 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                 # The base the next save adds to. Set HERE, in the branch that actually
                 # applied the cursor: a domain whose cursor was discarded above restarted at
                 # row 0, so adding its old value back would claim rows this run never read.
-                # Cfg, not a return value, because build_mix runs BEFORE the resume block
-                # (train.py:2278 vs :2307) and already publishes _plan_* the same way.
+                # Cfg, not a return value, because build_mix runs BEFORE the resume block that
+                # loads the checkpoint (main() calls build_mix first, then `ck = torch.load(
+                # args.resume)`) and already publishes _plan_* the same way.
                 #
                 # PER-CALL, written into the dict this call created above. It used to be
                 # accumulated into whatever dict was already on Cfg, so a second build_mix in
@@ -3688,7 +3691,7 @@ def main():
                     # rather than reimplement it.
                     #
                     # BOTH NEW FIELDS GO PAST `MFU (\d+)%`, never before it: RunLog._STEP_RE
-                    # (train.py:46) ends there and matches on ADJACENCY, so a field inserted ahead
+                    # ends there and matches on ADJACENCY, so a field inserted ahead
                     # of MFU silently stops every trackio metric on the line. `_overrun` rides on
                     # the ETA field and `s/step` is appended after it -- measured by moving each
                     # to the other side (62's test_step_line_parses asserts the same constraint
@@ -3706,11 +3709,11 @@ def main():
                     torch.cuda.reset_peak_memory_stats()
                     # EVERY optimizer group's lr, not just optimizers[0]'s. Two sessions read
                     # this line's `lr 1.00e-02` as the embedding lr on 2026-09-02 while the
-                    # embedding group was at 0.1 (Cfg.embed_lr, train.py:263) -- a log that
+                    # embedding group was at 0.1 (Cfg.embed_lr) -- a log that
                     # shows one of four optimizers' lr guarantees that misread (b0-14).
                     #
                     # THE BARE `lr <value>` STAYS FIRST, and that is a constraint rather than a
-                    # style choice: RunLog._STEP_RE (train.py:46) parses this line to feed
+                    # style choice: RunLog._STEP_RE parses this line to feed
                     # trackio, and it has no test. Measured against the real regex -- a fully
                     # labeled field (`lr muon 7.00e-03 embed 1.00e-01 ...`) does NOT match, and
                     # neither does a slash-joined one, so either would silently stop every
@@ -3735,7 +3738,7 @@ def main():
                         # unrounded, so steady-state seconds is computable on any arm at ~0.1%.
                         #
                         # APPENDED, NOT INSERTED, and that is load-bearing rather than tidy:
-                        # RunLog._STEP_RE (train.py:46) ends with `([\d.]+)K tok/s/gpu \| MFU
+                        # RunLog._STEP_RE ends with `([\d.]+)K tok/s/gpu \| MFU
                         # (\d+)%` and matches on ADJACENCY, so a field placed between those two
                         # would silently stop every trackio metric on this line while the log
                         # looked richer. test_step_line_parses covers exactly that.
