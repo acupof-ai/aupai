@@ -13074,6 +13074,13 @@ def check_train_cite_targets(root):
       - a citation pointing at real but WRONG code, once the number is gone. Naming a symbol
         that exists but is not the one the claim is about is still undecidable here; that is
         what the audit's readers were for.
+      - a citation whose FILE is wrong, not only its line. eval/l1_fewshot.py cited line 107 of
+        train.py for the `chunk_kda=None` import fallback; that fallback is in model.py, and that
+        line of train.py was a shard-naming comment. Both halves of a file:line pair can be
+        wrong independently, and a check reading only train.py sees a resolvable line and
+        passes. Found by reading during the 2026-09-07 eval/ conversion, not by this check.
+        Spelled without the citation form on purpose: this docstring is inside the tree the
+        check walks, so writing the form here would make the check report its own prose.
       - `model.py:<N>`, `sft.py:<N>` and every other file. train.py is the measured case:
         3996 lines, edited by every session. Widening to files nobody has audited would
         assert a rate that has not been measured.
