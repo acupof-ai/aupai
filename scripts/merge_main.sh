@@ -5,6 +5,13 @@
 # half-applied index). git's ref lock does not protect the shared working tree; this does.
 set -euo pipefail
 MAIN=/Users/bytedance/code/aupai
+# RESOLVED ONCE, HERE, BEFORE ANY cd. The review gate calls scripts/review_row_lookup.py beside this
+# file, and both a `cd` and $MAIN break the two obvious spellings: `$MAIN/scripts/...` does not exist
+# in the selftest's fixture repo (a scratch tree with model.py and runs/ and no scripts/), so every
+# gate world refused and the gate enforced nothing; and `dirname "$0"` evaluated at the call site
+# resolves against whatever directory the caller has cd'd into, which _gcase does. Absolute at
+# startup is the only spelling that is right in both.
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # Overridable so --selftest can drive the real predicate against fixture locks instead of a
 # reimplementation of it. Nothing else sets these.
 LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
@@ -217,32 +224,25 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
 
   for sha in $found; do
     author=$(git -C "$MAIN" log -1 --format=%an "$sha")
-    # The row must name the sha AND be written by someone else. `git log --format=%an` is the
-    # git author, while review.jsonl's reviewer is a roster name -- these are different
-    # namespaces, so the comparison that can actually be made is reviewer-vs-the-branch: a row
-    # whose reviewer is the branch's own name is a self-review. Checked in python because
-    # review.jsonl rows are JSON and a grep for the sha would match it inside any field.
-    row=$(python3 - "$sha" "$1" <<'PY'
-import json, sys
-sha, branch = sys.argv[1], sys.argv[2]
-short = sha[:8]
-try:
-    rows = [json.loads(l) for l in open("runs/review.jsonl", encoding="utf-8") if l.strip()]
-except (OSError, json.JSONDecodeError):
-    sys.exit(0)  # unreadable ledger: say nothing, the caller refuses for want of a row
-for r in rows:
-    if not isinstance(r, dict):
-        continue
-    art = str(r.get("artifact", "")) + " " + str(r.get("item", ""))
-    if short in art or sha in art:
-        rev = str(r.get("reviewer", "")).strip()
-        # SELF-REVIEW IS NOT A REVIEW. The reviewer field is free text ("b0 (self-reported)"),
-        # so the test is whether the branch's own name appears in it, not equality.
-        if rev and branch.lower() not in rev.lower():
-            print(rev)
-            break
-PY
-)
+    # ONE IMPLEMENTATION, in scripts/review_row_lookup.py, because this logic used to live in a
+    # heredoc where nothing could test it -- and the defect it hid was that it read only the
+    # invoking worktree's review.jsonl. That ledger is union-merged, so a branch behind main does
+    # not hold rows a reviewer appended on main, and the gate refused a merge for want of a row
+    # that existed (4c, 2026-09-07; e1 and de each lost a merge cycle to it the same evening).
+    # The lookup now unions the worktree copy with `main:runs/review.jsonl` and carries
+    # `--selftest` with the both-directions world: main-has-it/worktree-lacks-it AND
+    # worktree-has-it/main-lacks-it, plus the self-review control so widening the SOURCES does
+    # not widen who may sign. The reviewer-vs-branch comparison is unchanged: `git log --format=%an`
+    # is a git author while review.jsonl's reviewer is a roster name, so the test that can be made
+    # is whether the branch's own name appears in the reviewer field.
+    # THE SCRIPT BESIDE THIS ONE, via SCRIPT_DIR resolved at startup rather than from $MAIN or from
+    # $0 here. The selftest points $MAIN at a scratch repo holding model.py and runs/ and no
+    # scripts/ at all, so "$MAIN/scripts/..." does not exist there and every world refused -- a gate
+    # that only ever refuses is the prose rule it replaced, and the hook caught it one commit later.
+    # `dirname "$0"` at this point is wrong too: _gcase cd's into the fixture first. The lookup
+    # reads the LEDGER from the cwd ($MAIN) and its own SOURCE from where merge_main.sh lives; those
+    # are two different roots and conflating them is what made the gate unconditional.
+    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" "$sha" "$1" 2>/dev/null)
     if [ -z "$row" ]; then
       echo "merge_main: REFUSING -- $sha touches train.py or model.py and no second reader" >&2
       echo "  has signed it. $(git -C "$MAIN" log -1 --format='%h %s' "$sha")" >&2

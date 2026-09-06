@@ -887,6 +887,16 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # The review-row lookup merge_main.sh's gate calls. Registered because this logic spent its
+        # whole life in a heredoc inside merge_main.sh, where nothing could reach it -- and what it
+        # hid was that it read only the invoking worktree's review.jsonl, a union-merged ledger, so
+        # it refused merges for want of rows that were already on main (4c, 2026-09-07; e1 and de
+        # each lost a cycle to it). The selftest runs BOTH directions against a real git repo:
+        # main-has-it/worktree-lacks-it is the defect's world, worktree-has-it/main-lacks-it is the
+        # control that would go red if someone "simplified" it to read main only. The self-review
+        # case is registered with them because widening where rows come from must not widen who may
+        # sign one.
+        "scripts/review_row_lookup.py",
         # THIS FILE'S OWN _main_touched_staged. Registered because 06ed3b2a shipped that
         # predicate with no test anywhere in the tree -- it appears once, here -- and because the
         # rule it replaced is the kind someone reinstates for reading simpler: "refuse when HEAD

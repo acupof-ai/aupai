@@ -68,6 +68,17 @@ RETRACT_THEN_OK = [
 ]
 
 
+MONITOR_THEN_HUMAN = [
+    {"name": "epsilon", "started": "2026-09-07 21:30", "status": "running",
+     "cmd": "python train.py --name epsilon"},
+    {"name": "epsilon", "started": "2026-09-07 21:30", "status": "ok", "result": "val 2.884",
+     "finding": "key usage collapsed to 3.1%; stop rule 4 tripped", "decision": "stop the arm"},
+    {"name": "epsilon", "started": "2026-09-07 21:30", "status": "ok", "result": "exit 0",
+     "finding": "monitor: process exited cleanly", "decision": "check the log",
+     "writer": "monitor"},
+]
+
+
 def _key(r):
     return (r.get("name"), r.get("started"))
 
@@ -127,6 +138,10 @@ def take(path, name):
 try:
     from exp import fold
     out["exp"] = [(r.get("name"), r.get("started"), r.get("status")) for r in fold(evs)]
+    # THE FINDING TOO, for the monitor-vs-human case. status alone cannot see it: both rows are
+    # `ok`, and which one is live is visible only in the field a human wrote.
+    out["exp_finding"] = {{"%s|%s" % (r.get("name"), r.get("started")): r.get("finding")
+                          for r in fold(evs)}}
 except Exception as e:
     out["exp"] = "unavailable: %s" % type(e).__name__
 
@@ -136,6 +151,8 @@ ns = {{"sys": sys, "os": os, "ROOT": ROOT}}
 exec(take(os.path.join({HERE!r}, "harness.py"), "_exp_fold"), ns)
 out["harness"] = [(r.get("name"), r.get("started"), r.get("status"))
                   for r in ns["_exp_fold"](evs)]
+out["harness_finding"] = {{"%s|%s" % (r.get("name"), r.get("started")): r.get("finding")
+                          for r in ns["_exp_fold"](evs)}}
 
 # 3. launch_gate._recorded_cmd -- same technique. It returns (cmd, source) for the ONE running
 #    run, so its answer is which run is running, not the whole fold.
@@ -218,8 +235,30 @@ def main():
         _agree("ok ordered after retracted", RETRACT_THEN_OK, _blocked, want4)
     print("  case 4: a retraction survives a later ok, both paths")
 
+    # CASE 5: a monitor's close ordered AFTER a human's. Both rows are `ok`, so status agreement is
+    # blind to this one -- the finding is the only field that says which close is live, which is why
+    # the probe returns it. 4c's report, 2026-09-07: `exit 0 / monitor: process exited cleanly`
+    # replacing a real reading, with nothing red because the row still says ok.
+    want5 = {("epsilon", "2026-09-07 21:30"): "ok"}
+    for _blocked in (False, True):
+        got5 = _agree("monitor close after a human's", MONITOR_THEN_HUMAN, _blocked, want5)
+        key = "epsilon|2026-09-07 21:30"
+        har_f = got5["harness_finding"][key]
+        assert "stop rule 4" in str(har_f), (
+            f"harness._exp_fold kept the monitor's close over a human's ({har_f!r}). A monitor "
+            f"reports process state, not a result, so it cannot outvote the reading a human took "
+            f"-- and with exp.py {'hidden' if _blocked else 'present'} this is the "
+            f"{'fallback' if _blocked else 'delegated'} path")
+        if not _blocked:
+            exp_f = got5["exp_finding"][key]
+            assert "stop rule 4" in str(exp_f), (
+                f"exp.fold itself kept the monitor's close: {exp_f!r}")
+    print("  case 5: a monitor's close loses to a human's in exp.fold and harness, both paths; "
+          "launch_gate's copy is parity only -- it filters to status=running, so reverting it "
+          "there leaves this test green (measured)")
+
     print("exp fold agreement: exp.py, harness._exp_fold and launch_gate._recorded_cmd agree on "
-          "4 shapes, with exp.py present and hidden")
+          "5 shapes, with exp.py present and hidden")
 
 
 if __name__ == "__main__":
