@@ -324,7 +324,7 @@ def main():
           f"that arm, so the factor 2 IS the double read, not two stacks.")
 
     # THE COUNT THE FUSION REMOVES, and a retraction. `attn_res_blocks` defaults to 0
-    # (train.py:219) and model.py:330 reads it as `min(n_sub, blocks or n_sub)` -- the `or`
+    # (Cfg.attn_res_blocks) and model.py:330 reads it as `min(n_sub, blocks or n_sub)` -- the `or`
     # makes 0 a SENTINEL meaning Full, so n_blocks = n_sub = 2L and EVERY sublayer is a block
     # boundary that promotes immediately. So eff.grad_ckpt_inverts_with_depth's 325/2145 (peak
     # 65/25) is the shipped configuration and is correct. An earlier version of this file

@@ -89,11 +89,12 @@ def _d1_present():
     """Is the ORIGINAL D1 defect back -- a `cfg = ... vars(cfg)` rebind before the cursor read?
 
     Computed, not asserted. This function replaced a fixed string that every failure printed
-    verbatim: "D1 is open: train.py:1289 rebinds cfg to a dict, so the guard at :1315 always
-    takes its else-None branch." Those line numbers were true when the file was written and
-    are now an Adagrad append and a length assertion, so when an unrelated change broke this
+    verbatim, naming two train.py line numbers as the cause. Those numbers were true when the
+    file was written and by 2026-09-06 were an Adagrad append and a length assertion, so when an
+    unrelated change broke this
     file the message sent a reader to two innocent lines (e1, 2026-09-06, cost them minutes).
-    A hardcoded cause is a claim about a tree nobody re-read.
+    A hardcoded cause is a claim about a tree nobody re-read. The numbers are deliberately NOT
+    reproduced here: quoting them would put the rot back in the file that exists to record it.
 
     Returns the rebind's line number, or None. By AST over save_checkpoint's own body: an
     assignment to `cfg` whose value calls vars(), textually before the first `_row_cursor`

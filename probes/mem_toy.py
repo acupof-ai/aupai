@@ -76,7 +76,8 @@ def report_sparse_grad():
 
 def report_fp8_boundary():
     """FP8 EXCLUSION IS BY FQN, AND THE LEAF NAME IS NOT ENOUGH -- the thing to check with
-    tilerl. train._fp8_ok is called as _fp8_ok(m, fqn.rsplit(".", 1)[-1]) (train.py:543), so
+    tilerl. train._fp8_ok is called as _fp8_ok(m, fqn.rsplit(".", 1)[-1]) by train's fp8 module
+    filter, so
     inside the memory it sees `query`, `gate`, `out` -- names that carry no hint of belonging to
     the memory, and every one of them is 128x128 here, so `all(d % 16 == 0)` passes and torchao
     would convert them. Excluding the memory therefore needs the FULL fqn at that call site, not
