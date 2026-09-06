@@ -8100,20 +8100,56 @@ def _selftest_peer_stalled_names_the_fixture():
 
 
 def _selftest_one_deliverable_names_the_fixture():
-    """one_deliverable_per_owner names the member given a second open row.
+    """one_deliverable_per_owner sees its world's seed: 4 members with it, 3 without.
 
-    The real tree already WARNs (members with 6 and 4 open), so the registered broken
-    world fires regardless of the mutation; this pins the part that matters -- the
-    added row's id and owner are in the evidence."""
+    BOTH DIRECTIONS AND THE COUNT, because the registered broken world discriminates
+    nothing on its own (db, 2026-09-06, driving ea82d2e2 rather than reading it). This
+    check is in --selftest's warn_only set, where the predicate is `state not in (PASS,
+    SKIP)` rather than `state == FAIL`. The real ledger already holds violators, so the
+    world WARNs, the world minus its seed WARNs, and the bare real tree WARNs -- measured
+    4, 3, 4. Every state passes the loop. A mutant that drops broken-odpo-1 before counting
+    still reports WARN and the loop accepts it: the check can go blind to exactly the row
+    its world plants. Naming the id was not enough either -- that was this selftest's
+    previous assertion, and it holds for a check that finds the row by accident while
+    miscounting everything else.
+
+    The general form is worth more than this instance: warn_only weakens every world under
+    it from "FAIL on the seed" to "not PASS", so any warn_only world that is already
+    non-PASS for pre-existing reasons tests nothing. 15 checks sit in that set and their
+    discrimination is unaudited.
+    """
     import shutil as _sh
     d = _broken_one_deliverable_per_owner()
     try:
         state, ev = check_one_deliverable_per_owner(d)
         assert state == WARN and "broken-odpo-1" in ev, (
             f"the added open row must be named, got {state}: {ev}")
+        m = re.match(r"(\d+) member", ev)
+        assert m, f"evidence must lead with a member count: {ev[:120]}"
+        with_seed = int(m.group(1))
+
+        # The same world with ONLY the seed removed. Not a fresh build: two builds could
+        # differ for a reason that has nothing to do with the row.
+        p = os.path.join(d, "runs", "tasks.jsonl")
+        kept = [ln for ln in open(p, encoding="utf-8")
+                if ln.strip() and json.loads(ln).get("id") != "broken-odpo-1"]
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(kept)
+        state2, ev2 = check_one_deliverable_per_owner(d)
+        m2 = re.match(r"(\d+) member", ev2)
+        assert m2, f"evidence must lead with a member count: {ev2[:120]}"
+        without = int(m2.group(1))
+
+        assert with_seed == without + 1, (
+            f"the seed must move the count by exactly one: {with_seed} with it, {without} "
+            f"without -- if these are equal the check is blind to the row its world plants")
+        assert "broken-odpo-1" not in ev2, (
+            f"the removed row must not be named once it is gone: {ev2[:120]}")
     finally:
         _sh.rmtree(d, ignore_errors=True)
-    print("  one_deliverable_per_owner: fixture row named on the broken world")
+    print(f"  one_deliverable_per_owner: the seed moves the count {without} -> {with_seed} "
+          f"and is named only while present (warn_only makes the world's WARN itself "
+          f"non-discriminating)")
 
 
 def check_review_present(root):
