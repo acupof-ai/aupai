@@ -5248,9 +5248,22 @@ def _content_restored(root, base, losing, path, staged_blob):
     reads as missing, which errs toward FAIL and asks for a human -- the direction this
     check is supposed to fail in."""
     def show(rev):
+        """The blob at rev, or None if it could not be read. NOT "" for both.
+
+        ABSENCE AND READ FAILURE ARE DIFFERENT ANSWERS and this returned "" for each
+        (b0, 2026-09-06). Every caller below turns "" into an empty line set, so a git
+        that failed -- a rev this clone cannot resolve, a path absent at that side, git
+        itself erroring -- produced `added == set()` and the escape hatch returned True:
+        "the losing side added nothing here, nothing to restore". A PASS.
+
+        That is the wrong direction for this function. Its own docstring says a line it
+        cannot account for must err toward FAIL and ask for a human; the read failure
+        errs toward GO instead, and silently, on a check whose whole job is to notice
+        that a merge discarded someone's work.
+        """
         r = subprocess.run(["git", "-C", root, "show", f"{rev}:{path}"],
                            capture_output=True, text=True)
-        return r.stdout if r.returncode == 0 else ""
+        return r.stdout if r.returncode == 0 else None
 
     def code(src):
         return {ln.strip() for ln in src.splitlines()
@@ -5260,7 +5273,12 @@ def _content_restored(root, base, losing, path, staged_blob):
                        capture_output=True, text=True)
     if r.returncode != 0:
         return False
-    added = code(show(losing)) - code(show(base))
+    losing_src, base_src = show(losing), show(base)
+    if losing_src is None or base_src is None:
+        # Cannot read one side, so "did the losing side's content survive" has no answer
+        # here. False routes to the same place a real loss does: a human looks.
+        return False
+    added = code(losing_src) - code(base_src)
     if not added:
         return True  # the losing side added nothing here; there is nothing to restore
     return not (added - code(r.stdout))
@@ -16217,6 +16235,66 @@ def _selftest_merge_cherry_pick_not_a_drop():
     print("  merge cherry-pick: picked commit not counted as lost, genuine drop still refused")
 
 
+def _selftest_content_restored_read_failure():
+    """An UNREADABLE side must not read as "the losing side added nothing".
+
+    b0's shape, 2026-09-06. _content_restored returning True deletes the path from
+    check_merge_complete's FAIL list -- it is the escape hatch that says "this loss is
+    already being repaired". So a read that fails does not merely lose information, it
+    CLEARS a real loss, on the one check whose job is to notice discarded work.
+
+    Two worlds, because proving the failure path is refused is only half: a readable
+    world where nothing was added must still return True, or the fix would be "always
+    return False", which passes the negative world and disables the hatch.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="cr_")
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        with open(os.path.join(d, "f.py"), "w") as fh:
+            fh.write("shared = 1\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base")
+        base = g("rev-parse", "HEAD").stdout.strip()
+        # The losing side adds a line, and the staged blob does NOT carry it: a real loss.
+        with open(os.path.join(d, "f.py"), "w") as fh:
+            fh.write("shared = 1\nlosing_side_line = 2\n")
+        g("add", "-A"); g("commit", "-q", "-m", "losing side")
+        losing = g("rev-parse", "HEAD").stdout.strip()
+        staged = g("hash-object", "-w", "--stdin").stdout  # placeholder, replaced below
+        with open(os.path.join(d, "only_shared"), "w") as fh:
+            fh.write("shared = 1\n")
+        staged = g("hash-object", "-w", os.path.join(d, "only_shared")).stdout.strip()
+
+        assert not _content_restored(d, base, losing, "f.py", staged), \
+            "world invalid: a staged blob missing the losing side's line must not read as restored"
+
+        # THE READ FAILURE: a rev this repo cannot resolve. Before the fix show() returned ""
+        # for it, `added` came out empty, and this returned True -- clearing the loss.
+        missing = "0" * 40
+        assert not _content_restored(d, base, missing, "f.py", staged), \
+            ("a losing side that cannot be READ returned True -- an unreadable rev must not "
+             "clear a contested file from the FAIL list")
+        assert not _content_restored(d, missing, losing, "f.py", staged), \
+            "an unreadable BASE returned True -- same hole, other operand"
+
+        # The hatch must still open when it should: staged blob carries the losing line.
+        with open(os.path.join(d, "both"), "w") as fh:
+            fh.write("shared = 1\nlosing_side_line = 2\n")
+        good = g("hash-object", "-w", os.path.join(d, "both")).stdout.strip()
+        assert _content_restored(d, base, losing, "f.py", good), \
+            ("a staged blob that DOES carry the losing side's line must still read as restored, "
+             "or the fix disabled the escape hatch instead of narrowing it")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  content_restored: an unreadable side (either operand) no longer reads as "
+          "'nothing was added'; a real restore still opens the hatch")
+
+
 def _selftest_merge_reverted_content():
     """Real merges as the cases, plus the deliberate deletion that must NOT fire.
 
@@ -18312,6 +18390,7 @@ def _demo(only=None):
     _selftest_attest_written_path()
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_cherry_pick_not_a_drop()
+    _selftest_content_restored_read_failure()
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
     _selftest_batched_git_probes()
