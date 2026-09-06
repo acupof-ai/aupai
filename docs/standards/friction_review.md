@@ -187,3 +187,4 @@ Top two unfixed causes are the same mechanism (AUPAI_BEHIND_MAIN_OK=1 overrides)
 | check_shared_file_claim clean-merge exemption dead under harness.py check | 1 | n/r | **unfixed** (0/1 rows) |
 | runs/ reading_artifact has no sanctioned route to the pod | 1 | ~15 | fix carried (1/1 rows) |
 | AUPAI_BEHIND_MAIN_OK=1 commit 164/169 behind (.gitattributes, pre-commit, merge_drivers) | 2 | n/r | **unfixed** (0/2 rows) |
+| bypassed CAS with bare update-ref on refs/heads/main (push-protection refusal; overwrote tilerl's landed bc95abe8) | 1 | ~20 | rule: only merge_main.sh writes main; refused push fixed on branch + re-merged |
