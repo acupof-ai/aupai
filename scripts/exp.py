@@ -241,6 +241,19 @@ def pick_open_row(name, started, verb):
     if started:
         base = next((r for r in open_rows if r.get("started") == started), None)
         if base is None:
+            # NAME THE STATE FOUND, not just the absence. "Open rows: none" is true and useless:
+            # it reads identically for a name nobody started and for the row the caller is
+            # holding in their hand, already closed -- and the second is the common case, since
+            # --started is copied off a row someone just looked at. Returning None instead would
+            # be worse: `done`'s caller fabricates a base when it gets None, which is how the
+            # orphan row of de-46 was written.
+            closed = [r for r in rows() if r["name"] == name and r.get("started") == started
+                      and r["status"] != "running"]
+            if closed:
+                sys.exit(f"{name} ({started}) is not open -- it is already closed as "
+                         f"{closed[-1]['status']!r}, result "
+                         f"{str(closed[-1].get('result', ''))[:60]!r}. {verb.capitalize()} it "
+                         f"again would overwrite that. `start` a new run if this is a new attempt.")
             seen = [r.get("started") for r in open_rows]
             sys.exit(f"no open row for {name} started {started!r}. Open rows: {seen or 'none'}")
         return base
@@ -436,6 +449,58 @@ def main():
         # run and written the OOM as its result. Fixing the count does not make picking one
         # of two live runs a decision this tool can make.
         base = pick_open_row(a.name, a.started, "closing")
+        if base is None:
+            # A CLOSED ROW IS NOT AN ABSENT ROW, and this branch could not tell them apart.
+            # pick_open_row's subject is rows whose last event is `running`, so it returns None
+            # for a name nobody started AND for a name already closed. The `or {...}` below then
+            # fabricated a base with started=now() and this exited 0 printing "logged done".
+            #
+            # MEASURED over the 8 combinations of (retracted, --started, later minute) on
+            # 2026-09-06 (de-46): a bare `done` on any closed row fabricates -- retraction is not
+            # the variable, being closed is -- and what it produces depends on the CLOCK, because
+            # now() is minute resolution:
+            #
+            #   same minute as the close -> the fabricated `started` collides with the original's
+            #     and the event folds onto that row. On a retracted row fold() then DISCARDS it
+            #     (`retracted` is terminal by kind): success printed, nothing changed.
+            #   a later minute -> TWO folded rows for one run: the original keeping its result,
+            #     and a new row carrying this one with cmd='', hypothesis='' and no commit -- a
+            #     result orphaned from the run that produced it. EXPERIMENTS.md then shows a row
+            #     whose command is blank, which reads as a ledger defect rather than a misuse.
+            #
+            # The fabrication is legitimate for a name with NO row: closing a run whose start
+            # event was lost is the case it was written for, and run_sft.sh/run_pretrain.sh call
+            # `done` unconditionally at exit. So the refusal is keyed on a CLOSED row existing,
+            # not on `base is None`. Passing --started already exits inside pick_open_row, but
+            # with "Open rows: none" -- true and useless, since it names neither the status found
+            # nor what to do; both paths now say the same thing.
+            #
+            # NOT a fold change: 4c ruled 2026-09-06 that `retracted` stays terminal and `amend`
+            # is the field-only edit. exp.py's amend comment asserted `done` already "refuses --
+            # the row is not open"; it did not.
+            #
+            # The `!= "running"` filter is redundant and kept as insurance: this branch runs only
+            # when pick_open_row found no open row, so nothing running can be in scope. Dropping
+            # it changes no behaviour -- measured, and it is why no world covers that clause. The
+            # guard that keeps an open row closing is `base is None` itself.
+            _closed = [r for r in rows() if r["name"] == a.name and r["status"] != "running"
+                       and (a.started is None or r.get("started") == a.started)]
+            if _closed:
+                _r = _closed[-1]
+                _how = ("A retraction is terminal by kind -- record the corrected result as a NEW "
+                        "run (`start` under its own name, then `done`), and if only the reading is "
+                        "missing use `amend`."
+                        if _r["status"] == "retracted" else
+                        "Re-close it explicitly with --started "
+                        f"{_r.get('started')!r}, or `start` a new run if this is a new attempt.")
+                sys.exit(
+                    f"{a.name} ({_r.get('started')}) is already closed as {_r['status']!r}"
+                    + (f": {str(_r.get('retracted_reason', ''))[:80]!r}"
+                       if _r["status"] == "retracted" else
+                       f", result {str(_r.get('result', ''))[:60]!r}")
+                    + f". Closing it again would append a row with no cmd, or an event the fold "
+                      f"discards. {_how}"
+                )
         ev = dict(
             base
             or {
@@ -526,9 +591,10 @@ def main():
         # ADDS reading_artifact TO A CLOSED ROW WITHOUT TOUCHING status, which is the one thing
         # neither `done` nor `note` nor `retract` can do. Three rows of mine were closed `ok`
         # with no reading, so score_matrix_present read them as unscored training runs; the only
-        # tools available were `done` (refuses -- the row is not open) and `retract` (withdraws
-        # the RESULT to satisfy a gate about its READING, which is the wrong trade). 4c's ruling
-        # 2026-09-06: add this rather than change the fold.
+        # tools available were `done` (refuses -- the row is not open, and on a RETRACTED row that
+        # refusal had to be written: until de-46 it fabricated an orphan and exited 0) and
+        # `retract` (withdraws the RESULT to satisfy a gate about its READING, which is the wrong
+        # trade). 4c's ruling 2026-09-06: add this rather than change the fold.
         #
         # NOT A PATH TO UN-RETRACT. A retracted row is refused below, because `retracted` is
         # terminal by KIND (see fold) and an amend that revived one would be a rewrite of that
