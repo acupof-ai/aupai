@@ -6079,9 +6079,9 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py's --help
-    # string for the fp64 truth check carried
-    # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 AT
+    # 169da865 carried
+    # "weights 14% off against fp64 truth", so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
     roots = sorted(glob.glob(os.path.join(root, "*.py")))
@@ -15685,7 +15685,7 @@ BRIEF_EXTRA = {
         ("verify a peer's premise before acting on it; a correct conclusion does not "
          "certify its argument", "R1, 16 shapes"),
         ("a number is a claim: compute it before printing it",
-         "58 asserted what a train.py line held without running the grep, 2026-09-05"),
+         "58 asserted train.py:1478 AT 1fd88227 without running the grep, 2026-09-05"),
     ],
     "git": [
         ("working around an un-loaded hook by reordering commits can produce an "
