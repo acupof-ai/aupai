@@ -42,6 +42,7 @@ ALLOWED = [
     "data/PROVENANCE.md",
     "data/MANIFEST.tsv",
     "data/env_fp_baseline.json",
+    "data/train_cite_baseline.json",
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
     "data/t2s_table.json",
