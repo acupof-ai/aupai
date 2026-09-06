@@ -4,8 +4,8 @@
 Second-reader review of 1928e13e / 15d45870 / 440bd579 (tilerl for b0, 2026-09-05). The nine
 listed cases cover construction, the disjointness of the two masters, pull_grads/push, the
 optimizer group, the FP8 exclusion and readout 6's freeze detection. `resync` is called at
-exactly one site -- train.py:2895, inside the 20-skip rollback -- and `grep -rn resync
-scripts/ probes/` finds nothing, so the method has no live exercise at all.
+exactly one site -- train.py's `for _m in _masters` resync loop in the 20-skip rollback -- and
+`grep -rn resync scripts/ probes/` finds nothing, so the method has no live exercise at all.
 
 WHY IT MATTERS RATHER THAN BEING A COVERAGE GAP. The rollback calls
 raw_model.load_state_dict(good_state), which rewrites the bf16 table in place while the
@@ -57,7 +57,7 @@ def main():
     bad = 0
     torch.manual_seed(0)
 
-    # SNAPSHOT, then diverge, then roll back -- train.py:2720/2886's sequence.
+    # SNAPSHOT, then diverge, then roll back -- train.py's good_state / load_state_dict sequence.
     m, tm = build()
     good_state = {k: v.cpu().clone() for k, v in m.state_dict().items()}
     snap = table_of(m).detach().clone()
@@ -69,7 +69,7 @@ def main():
     diverged = table_of(m).detach().clone()
     assert not torch.equal(snap, diverged), "the divergence did not take"
 
-    # THE ROLLBACK, exactly train.py:2886-2895: load_state_dict then resync.
+    # THE ROLLBACK, exactly train.py's 20-skip path: load_state_dict(good_state) then resync.
     m.load_state_dict(good_state)
     ok = torch.equal(table_of(m), snap)
     bad += 0 if ok else 1
@@ -83,8 +83,8 @@ def main():
     print(f"  {'ok  ' if ok else 'BUG '} with resync, the next push keeps the snapshot")
 
     # THE OTHER WORLD. Same sequence, resync SKIPPED -- the state the code would be in if
-    # train.py:2894's loop were dropped. If this does not differ, the test above proves
-    # nothing about resync.
+    # train.py's `for _m in _masters` rollback loop were dropped. If this does not differ, the
+    # test above proves nothing about resync.
     m2, tm2 = build()
     good2 = {k: v.cpu().clone() for k, v in m2.state_dict().items()}
     snap2 = table_of(m2).detach().clone()

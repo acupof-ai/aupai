@@ -2,7 +2,7 @@
 """Host-side per-step cost on the 200M config, timing train.py's OWN step (de sprint).
 
 fb asked for four numbers with their measurement config: loader wait, save, val, NCCL share.
-The run's own log gives one -- wall time per 10-step window (train.py:2736-2760) -- so a
+The run's own log gives one -- wall time per 10-step window (train.py's step % 10 == 0 runlog block) -- so a
 decomposition needs instrumentation train.py does not have. This measures from outside
 instead of editing a file that is about to be relaunched.
 
@@ -290,7 +290,7 @@ def _selftest():
           + ("" if ok else f" -- {_bad_fields or 'no literal pairs found'}; --dim would set "
                            "nothing while the record claims it did"))
 
-    # The RNG must be seeded BEFORE the model is built, as train.py:1835 does. Without it two
+    # The RNG must be seeded BEFORE the model is built, as train.py's torch.manual_seed does. Without it two
     # arms of an A/B get different initial weights and their loss-parity gate fires on the
     # harness rather than on the variable -- measured, 1.53 nat apart at step 5. Line order is
     # the whole assertion: seeding after construction leaves the init already drawn.
@@ -359,7 +359,8 @@ def _selftest():
             # WHICH Cfg FIELDS main() ASSIGNS. Needed because setting a Cfg field is an
             # ASSIGNMENT, not a call, so the `calls` set below cannot see it -- and an
             # unset field is not inert here: build_mix refuses outright when Cfg.anneal_frac
-            # disagrees with the mix (train.py:2286), which killed every run of this probe.
+            # disagrees with the mix (train.py's _mix_anneal_frac), which killed every run of this
+            # probe.
             for _t in (n.targets if isinstance(n, _ast.Assign) else [n.target]):
                 if isinstance(_t, _ast.Attribute) and _ast.unparse(_t).startswith("train.Cfg."):
                     cfg_set.add(_t.attr)
@@ -381,9 +382,11 @@ def _selftest():
     fp8_field = next((d["'fp8'"] for d in dicts if "'fp8'" in d), None)
     for ok, why, hint in (
         (_main is not None, "has a main() to check at all", "main() is gone"),
-        ("convert_to_fp8_compute" in calls, "calls convert_to_fp8_compute (train.py:2020)",
+        ("convert_to_fp8_compute" in calls,
+         "calls convert_to_fp8_compute (train.py's if fp8: branch)",
          "fp8 would be recorded but the linears never converted"),
-        (any("bfloat16" in c for c in casts), "casts the model to bf16 (train.py:2019)",
+        (any("bfloat16" in c for c in casts),
+         "casts the model to bf16 (train.py's raw_model.to(torch.bfloat16) under fp8)",
          "the model stays fp32 and every activation doubles -- this is what OOMed"),
         (fp8_field == "fp8", "records the APPLIED fp8, not the requested flag",
          f"the record's fp8 field is {fp8_field!r}; a.fp8 is the request, fp8 is what ran"),
@@ -392,7 +395,8 @@ def _selftest():
         print(f"  {'ok  ' if ok else 'BUG '} main() {why}" + ("" if ok else f" -- {hint}"))
 
     # anneal_frac: PAIRWISE, because the defect is a DISAGREEMENT between two files rather than
-    # a property of either. train.py:2286 refuses to build the mix when the mix's declared
+    # a property of either. train.py's _mix_anneal_frac refuses to build the mix when the mix's
+    # declared
     # "anneal_frac" differs from Cfg.anneal_frac, Cfg's default is 0.10, and every 200m mix
     # declares 0.0 -- so a probe that does not set the field cannot run AT ALL, which is what
     # happened: three consecutive launches died in setup and were read as memory failures
@@ -459,7 +463,8 @@ def _selftest():
     # __dict__/__weakref__ getset_descriptors inside it -- so `dict(vars(cls))` still raises,
     # and the underscore filter is load-bearing rather than cosmetic. This selftest found that
     # second layer; the first draft of the fix asserted only dict() and would have shipped a
-    # save that raises exactly as before. train.py:964 does not hit either half because it
+    # save that raises exactly as before. train.py's save_checkpoint does not hit either half
+    # because it
     # already writes {k: v for k, v in cfg.items() if not k.startswith("_")}; copying train.py's
     # save shape while dropping that comprehension is the whole bug.
     #
@@ -498,7 +503,8 @@ def _selftest():
     # timed step, so step_total did not depend on accum at all -- and the b32a1-vs-b16a2 A/B
     # is a comparison whose ONLY variable is accum, so the b16a2 arm would have reported half
     # its work and won. Checked structurally: some loop in main() must iterate over Cfg.accum,
-    # and the DDP no_sync that train.py:2246 applies to every micro-batch but the last must be
+    # and the DDP no_sync that train.py's `with model.no_sync():` applies to every micro-batch but
+    # the last must be
     # called, or the high-accum arm all-reduces accum times per step and pays what the run
     # does not.
     for ok, why, hint in (
@@ -506,7 +512,8 @@ def _selftest():
          "loops over range(Cfg.accum) micro-batches",
          f"no loop in main() iterates range(Cfg.accum) (loops: {loops}); step_total would be "
          "independent of accum, deciding the b32a1/b16a2 A/B backwards"),
-        ("no_sync" in calls, "calls no_sync for all but the last micro-batch (train.py:2246)",
+        ("no_sync" in calls,
+         "calls no_sync for all but the last micro-batch (train.py's `with model.no_sync():`)",
          "DDP would all-reduce accum times per step, inflating the high-accum arm"),
     ):
         bad += 0 if ok else 1
@@ -542,7 +549,8 @@ def _selftest():
     bad += 0 if ok else 1
     print(f"  {'ok  ' if ok else 'BUG '} every train.* name resolves"
           + ("" if ok else f" -- MISSING {absent}, this file would die in setup on a card"))
-    # Runtime-only: imported inside a try at train.py:129, so not a top-level binding an AST
+    # Runtime-only: imported inside train.py's `try: from liger_kernel.transformers import
+    # LigerFusedLinearCrossEntropyLoss`, so not a top-level binding an AST
     # scan lists. Asserted by its import line instead.
     ok = "from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss" in src
     bad += 0 if ok else 1
@@ -715,9 +723,10 @@ def main():
         train.Cfg.mem_arm = "probe"
 
     # THE PLAN'S anneal_frac COMES FROM THE MIX, and this file has to state it or build_mix
-    # refuses before a single step runs. train.py:2286 compares the mix's declared
+    # refuses before a single step runs. train.py's _mix_anneal_frac compares the mix's declared
     # "anneal_frac" against Cfg.anneal_frac and RAISES on any difference; Cfg's default is
-    # 0.10 (train.py:387) and every 200m mix declares 0.0, so EVERY invocation of this probe
+    # 0.10 (Cfg.anneal_frac in the Cfg body) and every 200m mix declares 0.0, so EVERY invocation
+    # of this probe
     # died in setup. It cost three attempts to see, because torchrun prints its own summary
     # last and the child's traceback scrolls off any tail window -- two of those attempts were
     # read as memory-shaped failures and one as a bad flag.
@@ -752,7 +761,8 @@ def main():
     vseqs = va[0] if train.Cfg.fone else va
     Xva, Yva = vseqs[:, :-1], vseqs[:, 1:]
 
-    # train.py:1835 seeds before building the model, and this file did not -- so two arms of an
+    # train.py's torch.manual_seed seeds before building the model, and this file did not -- so two arms
+    # of an
     # A/B initialized DIFFERENT weights and their per-step losses diverged by up to 1.53 nat,
     # failing the <=1e-3 parity gate for a reason that has nothing to do with the variable under
     # test (grad_ckpt and the batch/accum split). MEASURED 2026-09-02: the b16a2 and b8a4 arms
@@ -760,7 +770,7 @@ def main():
     # could differ. A parity gate that fires on an unseeded init tests the harness, not the arms.
     torch.manual_seed(train.Cfg.seed)
     raw = train.HybridLM(train.Cfg).to(dev)
-    # train.py:2016-2020 -- fp8 is `args.fp8 and amp`, and it does TWO things: casts the
+    # train.py's `if fp8:` branch -- fp8 is `args.fp8 and amp`, and it does TWO things: casts the
     # module to bf16 and then converts the linears. Recording fp8=True while doing neither
     # is a number without its premise: the model stays fp32, every activation doubles, and
     # 32x4096 OOMs at 93 GiB on a 95 GiB card (measured, this run's first attempt). The
@@ -770,7 +780,8 @@ def main():
     if fp8:
         raw = raw.to(torch.bfloat16)
         train.convert_to_fp8_compute(raw)
-    # THE TABLE'S fp32 MASTER, mirroring train.py:2603. WITHOUT THIS THE PROBE MEASURES A WORLD THAT
+    # THE TABLE'S fp32 MASTER, mirroring train.py's `table_master = TableMaster(raw_model)`
+    # construction. WITHOUT THIS THE PROBE MEASURES A WORLD THAT
     # NO LONGER LAUNCHES: train.py constructs TableMaster for any mem_values > 0, taking the table
     # from 6 B/param (w2 + g2 + Adagrad sum2) to 14 steady and 16 while both gradients are live, and
     # a probe that omits it reports 8.17 GiB of table tensors at side 1195 where the arm allocates
@@ -784,8 +795,9 @@ def main():
         print("FAIL: the memory pool exists but TableMaster matched no value table. The probe would "
               "report the non-master peak as the arm's.", file=sys.stderr)
         return 1
-    # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
-    # :2491 compile). Building the optimizers first would hand Muon fp32 parameter references
+    # AFTER the cast, BEFORE DDP and compile -- train.py's order: the fp8 branch's
+    # `raw_model.to(torch.bfloat16)`, then the DDP wrap, then torch.compile of the step.
+    # Building the optimizers first would hand Muon fp32 parameter references
     # that the cast then replaces, so the optimizer would step tensors the model no longer uses.
     optimizers = train.build_optimizers(raw, train.Cfg,
                                         table_master.map if table_master else None)
@@ -797,8 +809,9 @@ def main():
         torch._dynamo.config.cache_size_limit = max(64, 2 * train.Cfg.layers + 8)
         model = torch.compile(model, dynamic=False)
 
-    # train.LigerFusedLinearCrossEntropyLoss is a module-level import inside a try (train.py:129,
-    # None at :131 when liger is absent), so it resolves at runtime even though an AST scan of
+    # train.LigerFusedLinearCrossEntropyLoss is a module-level import inside train.py's try
+    # (`from liger_kernel.transformers import LigerFusedLinearCrossEntropyLoss`, set to None in the
+    # ImportError handler when liger is absent), so it resolves at runtime even though an AST scan of
     # train.py does not list it. Refuse rather than substitute another loss: FLCE with a softcap
     # is what the run computes, and a different loss changes the backward being timed.
     if train.LigerFusedLinearCrossEntropyLoss is None:
@@ -809,7 +822,8 @@ def main():
     B, SEQ = train.Cfg.batch, train.Cfg.seq
     xb_pin = torch.empty((B, SEQ), dtype=X.dtype).pin_memory()
     yb_pin = torch.empty((B, SEQ), dtype=Y.dtype).pin_memory()
-    # From the tokenizer, exactly as train.py:2256 does it. My first version fell back to a
+    # From the tokenizer, exactly as train.py's `eos_id = tok.token_to_id("<eos>")` does it. My
+    # first version fell back to a
     # literal 1 behind a hasattr -- train has no EOS_ID module constant, so the fallback was
     # the only branch, and a wrong eos id changes the document mask and therefore the step
     # being timed. A default that is always taken is not a default.
@@ -874,7 +888,8 @@ def main():
         timed = st >= a.warmup
         marks = [] if timed else None
         step_loss = torch.zeros((), device=dev)
-        # ACCUM micro-batches per optimizer step, as train.py:2212 does: its loop strides by
+        # ACCUM micro-batches per optimizer step, as train.py's `range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch)`
+        # training loop does: it strides by
         # Cfg.batch and steps the optimizer every Cfg.accum-th iteration, so one "step" is
         # accum forward/backward passes. Timing a single pass and calling it a step made
         # step_total independent of accum -- which would have decided fb's b32a1 vs b16a2 A/B
@@ -901,7 +916,8 @@ def main():
             loss = loss / train.Cfg.accum
             step_loss += loss.detach()
             _mark(marks)
-            # train.py:2246 -- no_sync on every micro-batch but the last, or DDP all-reduces
+            # train.py's `with model.no_sync():` -- no_sync on every micro-batch but the last, or
+            # DDP all-reduces
             # accum times per step and the NCCL cost of the b16a2 arm doubles for no reason.
             if ddp and train.Cfg.accum > 1 and micro + 1 != train.Cfg.accum:
                 with model.no_sync():
@@ -918,7 +934,8 @@ def main():
             _g = raw.memory.values.weight.grad
             mem_grad = (0, "absent") if _g is None else (
                 _g.element_size(), "sparse COO" if _g.is_sparse else "dense")
-        # train.py:2904-2910's order, and the order is the measurement: pull_grads makes the
+        # The order of train.py's `_m.pull_grads()` before opt.step() and
+        # `_m.push()` after it, and the order is the measurement: pull_grads makes the
         # master's fp32 gradient while the model's still exists, which is the 16 B/param moment a
         # peak has to hold; push writes the master back after every optimizer has stepped.
         if table_master is not None:
@@ -1105,7 +1122,8 @@ def main():
     saves = vals = []
     if not a.skip_save_val:
         # vars() on a CLASS returns a mappingproxy, which pickle refuses -- train.py never hits
-        # this because train.py:964 passes vars(cfg) through a dict comprehension first. The save
+        # this because train.py's save_checkpoint passes vars(cfg) through a dict comprehension
+        # first. The save
         # is the LAST thing this script does, so the timings and the trace were already complete
         # and correct when it raised; the crash cost the record, not the measurement.
         cfg_dict = {k: v for k, v in dict(vars(train.Cfg)).items() if not k.startswith("_")}

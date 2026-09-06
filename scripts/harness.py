@@ -1579,6 +1579,117 @@ def _broken_selftest_counts_computed():
     return d
 
 
+def check_executed_hook_matches_main(root):
+    """The pre-commit hook that ACTUALLY RUNS is main's blob for that path.
+
+    .git/hooks/pre-commit is a symlink to ../../scripts/hooks/pre-commit, resolved against the
+    INTEGRATION TREE's worktree, so every worktree executes that tree's WORKING FILE. That tree
+    is kept at a detached HEAD on purpose (merge_main.sh:1189-1196: a CAS onto a checked-out
+    branch leaves the tree reading as modified), and merge_main re-detaches it onto the new main
+    after each successful merge. But that step has two paths that only WARN -- a dirty tree, and
+    a failed checkout -- and after either one the executed hook is frozen at an older commit
+    while every worktree's own copy shows the new registrations.
+
+    MEASURED 2026-09-06, before merge_main gained the re-detach: the executed hook had 169
+    SELFTEST_FILES entries against main's 170, and TESTS_FOR_SUBJECT was missing
+    test_moe_latent.py under model.py and train.py plus test_moe_module.py under train.py. All
+    three landed in 0a738e75, which was on main. None of them executed anywhere. The
+    test_moe_module registration is the one with a history: the hook's own comment records that
+    it sat on model.py's list only, so da5ef8bf widened the fp8/bf16 guard without running it and
+    the test stayed red on main -- 0a738e75 fixed exactly that, and the fix was inert.
+
+    WHY THIS IS CHECKABLE WHEN "WHICH HOOK BODY RAN FOR COMMIT X" IS NOT. The manual-rule note at
+    the top of this file records the hook-symlink rule as unenforceable, and for a PAST commit it
+    is: no artifact says which body executed. The CURRENT executed body is a file on disk, and
+    main's blob for that path is one `git show` away. This check compares those two, which is a
+    different question with an answer.
+
+    Runs only where the integration tree is reachable -- it is a property of this checkout's
+    layout, not of the repo's content, so a CI clone with no linked worktrees SKIPs."""
+    rel = os.path.join("scripts", "hooks", "pre-commit")
+    link = os.path.join(root, ".git", "hooks", "pre-commit")
+    # A worktree's .git is a FILE pointing at the common dir, so the hook path has to come from
+    # git rather than from a join. rev-parse answers for both layouts.
+    r = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
+                        "--git-common-dir"], capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return SKIP, "cannot resolve --git-common-dir"
+    link = os.path.join(os.path.realpath(r.stdout.strip()), "hooks", "pre-commit")
+    if not os.path.exists(link):
+        return SKIP, "no .git/hooks/pre-commit installed"
+    executed = os.path.realpath(link)
+    if not os.path.exists(executed):
+        return FAIL, (f"the installed hook resolves to {executed}, which does not exist -- "
+                      f"every commit in every worktree runs no hook at all")
+    blob = subprocess.run(["git", "-C", root, "show", f"main:{rel}"],
+                          capture_output=True, text=True)
+    if blob.returncode != 0:
+        # NOT a pass. A missing main ref here means the comparison could not be made, and an
+        # unasked question must not read as agreement (the shape this repo has bought repeatedly).
+        return SKIP, f"cannot read main:{rel} ({blob.stderr.strip()[:60]})"
+    with open(executed, encoding="utf-8", errors="replace") as f:
+        on_disk = f.read()
+    if on_disk == blob.stdout:
+        return PASS, f"the executed hook ({executed}) is byte-identical to main:{rel}"
+    # NAME WHAT DIFFERS IN THE UNITS THAT MATTER, not "the files differ". A registration that
+    # does not execute is the consequence people need to see, and it is what makes this silent:
+    # reading the hook in your own worktree shows the entry present.
+    try:
+        import ast as _ast
+
+        def _sf(src):
+            for n in _ast.walk(_ast.parse(src)):
+                if isinstance(n, _ast.Assign) and any(
+                        isinstance(t, _ast.Name) and t.id == "SELFTEST_FILES" for t in n.targets):
+                    return set(_ast.literal_eval(n.value))
+            return set()
+
+        missing = sorted(_sf(blob.stdout) - _sf(on_disk))
+        extra = sorted(_sf(on_disk) - _sf(blob.stdout))
+    except (SyntaxError, ValueError):
+        missing = extra = []
+    detail = ""
+    if missing:
+        detail += (f"; {len(missing)} selftest(s) registered on main do NOT run: "
+                   f"{', '.join(missing[:4])}")
+    if extra:
+        detail += f"; {len(extra)} run that main does not register: {', '.join(extra[:4])}"
+    return FAIL, (f"the hook every worktree executes ({executed}) differs from main:{rel}, so a "
+                  f"registration on main can be inert while your own copy shows it{detail}. Fix: "
+                  f"git -C <integration tree> checkout --detach main")
+
+
+def _broken_executed_hook_matches_main():
+    """A world whose installed hook resolves to a file that differs from main's blob.
+
+    Built as a real repo with a real linked worktree, because the defect IS the layout: the
+    symlink resolving into another worktree's working file is the whole mechanism, and a fixture
+    that wrote two unrelated files would assert on string inequality rather than on the
+    condition anyone can hit."""
+    d = _tmp_repo()
+    subprocess.run(["git", "init", "-q", "-b", "main", d], capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.email", "t@t"], capture_output=True)
+    subprocess.run(["git", "-C", d, "config", "user.name", "t"], capture_output=True)
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    hook = os.path.join(d, "scripts", "hooks", "pre-commit")
+    with open(hook, "w") as f:
+        f.write('SELFTEST_FILES = {"scripts/a.py", "scripts/b.py"}\n')
+    subprocess.run(["git", "-C", d, "add", "-A"], capture_output=True)
+    subprocess.run(["git", "-C", d, "commit", "-qm", "hook with two registrations"],
+                   capture_output=True)
+    # The installed hook is the symlink the real repo uses, and the working file it resolves to
+    # loses a registration -- exactly the frozen-tree state, without needing a second worktree.
+    hooks_dir = os.path.join(d, ".git", "hooks")
+    os.makedirs(hooks_dir, exist_ok=True)
+    installed = os.path.join(hooks_dir, "pre-commit")
+    if os.path.exists(installed):
+        os.remove(installed)
+    os.symlink(os.path.join("..", "..", "scripts", "hooks", "pre-commit"), installed)
+    with open(hook, "w") as f:
+        f.write('SELFTEST_FILES = {"scripts/a.py"}\n')
+    return d
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -2042,7 +2153,7 @@ def _broken_deletion_list_no_tracked():
     os.makedirs(os.path.join(d, os.path.dirname(victim)), exist_ok=True)
     with open(os.path.join(d, victim), "w", encoding="utf-8") as f:
         f.write('{"text": "a tracked sample row"}\n')
-    for cmd in (["init", "-q"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
+    for cmd in (["init", "-q", "-b", "main"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
                                                    "commit", "-qm", "sample"]):
         subprocess.run(["git", "-C", d, *cmd], capture_output=True)
 
@@ -2704,7 +2815,7 @@ def _broken_test_integration_tree_guard():
         return None
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
-    subprocess.run(["git", "-C", d, "init", "-q", "."], capture_output=True, timeout=30)
+    subprocess.run(["git", "-C", d, "init", "-q", "-b", "main", "."], capture_output=True, timeout=30)
     for f in os.listdir(src):
         t = os.path.join(d, "scripts", f)
         if f != "integration_tree.py" and not os.path.exists(t):
@@ -2890,7 +3001,7 @@ def _broken_main_advances_by_ancestry():
     # this init every git call below fails with "not a git repository", the fixture builds no
     # reflog, and the check SKIPs. Measured: the broken world and a clean control both returned
     # the same SKIP, so the world could not have failed and proved nothing.
-    g("init", "-q", ".")
+    g("init", "-q", "-b", "main", ".")
     g("config", "user.email", "t@example.invalid")
     g("config", "user.name", "t")
     g("checkout", "-q", "-B", "main")
@@ -3166,7 +3277,7 @@ def _selftest_unsigned_fast_forward_warns():
         def g(*a, **kw):
             env = dict(os.environ, **kw.pop("env", {}))
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
-        g("init", "-q", ".")
+        g("init", "-q", "-b", "main", ".")
         g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
         g("checkout", "-q", "-B", "main")
         open(os.path.join(d, "f.txt"), "w").write("base\n")
@@ -3586,7 +3697,7 @@ def _tmp_repo_shaped(mix_obj=None):
     # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
     # .gitignore, so this one is copied while everything else is linked.
     shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     for sub in os.listdir(os.path.join(ROOT, "data")):
         src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
         if not os.path.exists(dst):
@@ -5580,7 +5691,7 @@ def _broken_shared_file_claim():
     import subprocess as sp
     tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
     try:
-        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
         sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
         sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
         # world A: stage train.py with no claim -> FAIL
@@ -5637,7 +5748,7 @@ def _broken_blob():
     with open(big, "wb") as f:
         f.write(b"x" * ((MAX_TRACKED_MB + 1) * 2**20))
     for cmd in (
-        ["git", "init", "-q"],
+        ["git", "init", "-q", "-b", "main"],
         ["git", "config", "user.email", "t@t"],
         ["git", "config", "user.name", "t"],
         ["git", "add", "-f", "big.jsonl"],
@@ -6080,7 +6191,7 @@ def _broken_merge_complete():
     sequence, minimised."""
     d = _tmp_repo()
     sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-    sh("init", "-q")
+    sh("init", "-q", "-b", "main")
     sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
     # A repo-real path: the selftest's meta-check rejects a world built entirely from
     # invented paths, and rightly -- a world hand-written from the check's own
@@ -6171,9 +6282,8 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py's --help
-    # string for the fp64 truth check carried
-    # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 at 169da865
+    # carried "weights 14% off against fp64 truth", so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
     roots = sorted(glob.glob(os.path.join(root, "*.py")))
@@ -7778,8 +7888,39 @@ def check_tasks_closed_by_commit(root):
 
 
 def _broken_tasks_closed_by_commit():
+    """The real ledger plus one done row whose commit is 40 zeros.
+
+    A REAL main CARRYING THE REAL HISTORY, not a bare `_tmp_repo()`. The world used to be a
+    plain directory, so `git log main` exited 128 there -- _main_touched swallowed that into
+    an empty map and EVERY row in scope read as "does not reach main". The fixture was red
+    for a reason that had nothing to do with its planted row: remove the seed and it stayed
+    red, at `156 of 156`. Failures equal to the total is the signature of an absent
+    comparison side rather than N real defects, and it is what this world was producing.
+
+    An empty `git init` is not enough either -- main exists but holds none of the shas the
+    ledger cites, so all 157 fail as "not a commit in this repo", the same shape one layer
+    up. The object store is shared by an `alternates` line (no copy, 5436 commits visible)
+    and main is pointed at the real tip, so the ONLY thing wrong with this world is the row
+    this function adds.
+    """
     import shutil as _sh
     d = _tmp_repo()
+    subprocess.run(["git", "-C", d, "init", "-q", "-b", "main", "."], capture_output=True)
+    common = subprocess.run(
+        ["git", "-C", ROOT, "rev-parse", "--path-format=absolute", "--git-common-dir"],
+        capture_output=True, text=True).stdout.strip()
+    alt = os.path.join(d, ".git", "objects", "info", "alternates")
+    os.makedirs(os.path.dirname(alt), exist_ok=True)
+    with open(alt, "w") as fh:
+        fh.write(os.path.join(common, "objects") + "\n")
+    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", "main"],
+                         capture_output=True, text=True).stdout.strip()
+    subprocess.run(["git", "-C", d, "update-ref", "refs/heads/main", tip], capture_output=True)
+    # The facts/ tree read from the INDEX. _commit_delivers resolves a
+    # facts/<f>.json#<id> citation against the index, so a world whose index is empty fails
+    # 8 rows on "that file is not in the index" -- again nothing to do with the planted row.
+    # `read-tree` populates the index from the real tip without writing a working tree.
+    subprocess.run(["git", "-C", d, "read-tree", tip], capture_output=True)
     src = os.path.join(ROOT, "runs", "tasks.jsonl")
     dst = os.path.join(d, "runs", "tasks.jsonl")
     os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -7789,6 +7930,12 @@ def _broken_tasks_closed_by_commit():
                 evidence="scripts/harness.py", commit="0" * 40, reviewer="44")
     with open(dst, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(seed, ensure_ascii=False) + "\n")
+    # THE SEED MUST BE STAGED, not just written. read-tree above put the real
+    # runs/tasks.jsonl in the index, and the check reads rows via _read_tasks(index_root=...)
+    # which prefers `git show :runs/tasks.jsonl` over the file -- so an appended-only row is
+    # invisible and the world PASSes, i.e. a broken world that is not broken. Measured while
+    # building this: PASS with the seed present.
+    subprocess.run(["git", "-C", d, "add", "runs/tasks.jsonl"], capture_output=True)
     return d
 
 
@@ -7889,7 +8036,20 @@ def check_one_deliverable_per_owner(root):
 
 
 def _broken_one_deliverable_per_owner():
-    """The real ledger plus a second open row for a member who holds exactly one."""
+    """The real ledger, cut down so one member holds exactly one open task, plus a second.
+
+    THE PRECONDITION IS CONSTRUCTED, NOT HOPED FOR. This used to look for a member who
+    already held exactly one open row and raise SelftestSkip when nobody did -- and nobody
+    ever does: the real distribution on 2026-09-06 was 2, 7, 19, 35, 39, 43, 56, 72, so the
+    world could not be built, the check and its direct selftest both SKIPped, and they were
+    named in the closing line every run. A broken world whose premise depends on the ledger
+    happening to hold a particular shape is a gate that stops existing whenever the project
+    is busy, which is exactly when it is worth having.
+
+    The register is an event log folded by id (see _read_tasks), so closing a row means
+    appending a done row for the same id, not rewriting the original. The member with the
+    fewest open rows is chosen because that is the fewest appends.
+    """
     import shutil as _sh
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
@@ -7898,16 +8058,20 @@ def _broken_one_deliverable_per_owner():
     dst = os.path.join(d, "runs", "tasks.jsonl")
     roster = {m["name"] for m in json.load(open(os.path.join(d, "runs", "roster.json"),
                                                 encoding="utf-8"))["members"]}
-    counts = {}
+    open_by_owner = {}
     for t in _read_tasks(dst):
         if t.get("state") == "open" and t.get("owner") in roster:
-            counts[t["owner"]] = counts.get(t["owner"], 0) + 1
-    singles = sorted(o for o, n in counts.items() if n == 1)
-    if not singles:
-        raise SelftestSkip("no roster member with exactly one open task; "
-                           "update _broken_one_deliverable_per_owner")
+            open_by_owner.setdefault(t["owner"], []).append(t)
+    if not open_by_owner:
+        raise SelftestSkip("no roster member holds an open task; the register is empty")
+    owner = min(open_by_owner, key=lambda o: (len(open_by_owner[o]), o))
     with open(dst, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps({"id": "broken-odpo-1", "owner": singles[0], "state": "open",
+        # Close all but one, so the member holds exactly one -- the state the check calls
+        # legal, and the state the added row below must turn into a finding.
+        for t in open_by_owner[owner][1:]:
+            fh.write(json.dumps(dict(t, state="done", closed="2099-01-01 00:00"),
+                                ensure_ascii=False) + "\n")
+        fh.write(json.dumps({"id": "broken-odpo-1", "owner": owner, "state": "open",
                              "title": "broken world: second open deliverable",
                              "opened": "2099-01-01 00:00"}, ensure_ascii=False) + "\n")
     return d
@@ -8046,20 +8210,56 @@ def _selftest_peer_stalled_names_the_fixture():
 
 
 def _selftest_one_deliverable_names_the_fixture():
-    """one_deliverable_per_owner names the member given a second open row.
+    """one_deliverable_per_owner sees its world's seed: 4 members with it, 3 without.
 
-    The real tree already WARNs (members with 6 and 4 open), so the registered broken
-    world fires regardless of the mutation; this pins the part that matters -- the
-    added row's id and owner are in the evidence."""
+    BOTH DIRECTIONS AND THE COUNT, because the registered broken world discriminates
+    nothing on its own (db, 2026-09-06, driving ea82d2e2 rather than reading it). This
+    check is in --selftest's warn_only set, where the predicate is `state not in (PASS,
+    SKIP)` rather than `state == FAIL`. The real ledger already holds violators, so the
+    world WARNs, the world minus its seed WARNs, and the bare real tree WARNs -- measured
+    4, 3, 4. Every state passes the loop. A mutant that drops broken-odpo-1 before counting
+    still reports WARN and the loop accepts it: the check can go blind to exactly the row
+    its world plants. Naming the id was not enough either -- that was this selftest's
+    previous assertion, and it holds for a check that finds the row by accident while
+    miscounting everything else.
+
+    The general form is worth more than this instance: warn_only weakens every world under
+    it from "FAIL on the seed" to "not PASS", so any warn_only world that is already
+    non-PASS for pre-existing reasons tests nothing. 15 checks sit in that set and their
+    discrimination is unaudited.
+    """
     import shutil as _sh
     d = _broken_one_deliverable_per_owner()
     try:
         state, ev = check_one_deliverable_per_owner(d)
         assert state == WARN and "broken-odpo-1" in ev, (
             f"the added open row must be named, got {state}: {ev}")
+        m = re.match(r"(\d+) member", ev)
+        assert m, f"evidence must lead with a member count: {ev[:120]}"
+        with_seed = int(m.group(1))
+
+        # The same world with ONLY the seed removed. Not a fresh build: two builds could
+        # differ for a reason that has nothing to do with the row.
+        p = os.path.join(d, "runs", "tasks.jsonl")
+        kept = [ln for ln in open(p, encoding="utf-8")
+                if ln.strip() and json.loads(ln).get("id") != "broken-odpo-1"]
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(kept)
+        state2, ev2 = check_one_deliverable_per_owner(d)
+        m2 = re.match(r"(\d+) member", ev2)
+        assert m2, f"evidence must lead with a member count: {ev2[:120]}"
+        without = int(m2.group(1))
+
+        assert with_seed == without + 1, (
+            f"the seed must move the count by exactly one: {with_seed} with it, {without} "
+            f"without -- if these are equal the check is blind to the row its world plants")
+        assert "broken-odpo-1" not in ev2, (
+            f"the removed row must not be named once it is gone: {ev2[:120]}")
     finally:
         _sh.rmtree(d, ignore_errors=True)
-    print("  one_deliverable_per_owner: fixture row named on the broken world")
+    print(f"  one_deliverable_per_owner: the seed moves the count {without} -> {with_seed} "
+          f"and is named only while present (warn_only makes the world's WARN itself "
+          f"non-discriminating)")
 
 
 def check_review_present(root):
@@ -10990,6 +11190,22 @@ def _main_touched(root):
         r = subprocess.run(["git", "-C", root, "log", "main", "-m",
                             "--name-only", "--format=%x00%H"],
                            capture_output=True, text=True)
+        # A NONZERO rc RAISES. It used to be discarded: a tree with no readable `main` exits 128
+        # with an empty stdout, the parse below yields {}, and the map says "main touches
+        # nothing" rather than "main could not be read". Both consumers then report every closed
+        # task as undelivered -- measured 2026-09-06 on a clone whose local main was deleted,
+        # `FAIL 156 of 156 ... does not reach main`, whose text sends the reader to the worktree
+        # while the cause is the missing ref.
+        #
+        # THE :7750 GUARD CANNOT COVER THIS, which is why the fix belongs here and not there.
+        # That guard exists for this function going blind, but keys on "the sha is in the map
+        # with no paths": `blind = [s for s in merges if s in touched and not touched[s]]`. On an
+        # empty map no sha is in it, so blind == [] and `0 > len(merges)//2` is false. Deleting
+        # its `if touched:` would not help -- partial blindness and total blindness look different
+        # in the same structure, and it only ever described the first.
+        if r.returncode != 0:
+            raise RuntimeError(
+                f"git log main failed in {root} (exit {r.returncode}): {r.stderr.strip()[:200]}")
         out = {}
         for block in r.stdout.split("\x00")[1:]:
             lines = block.split("\n")
@@ -12353,7 +12569,7 @@ def _broken_untracked_aged():
     import subprocess as sp
 
     d = _tmp_repo()
-    sp.run(["git", "init"], cwd=d, capture_output=True)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True)
     # A real tracked file so the selftest's repo-real-path check passes.
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
@@ -12413,7 +12629,7 @@ def _broken_dirty_aged():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
@@ -12577,7 +12793,7 @@ def _broken_frozen_paths():
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
     ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
     with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
@@ -12701,9 +12917,10 @@ def check_getattr_cfg_names_exist(root):
 def _broken_getattr_cfg_names():
     """The REAL train.py with one getattr name misspelled -- mutated, not hand-written.
 
-    `attn_res_lr` at :756 is the benign instance the docstring cites, so breaking exactly
-    it makes the broken world the same shape as the defect: a real field name, off by a
-    suffix, with a plausible default beside it."""
+    `getattr(cfg, "attn_res_lr", 0.01)` in the AttnRes optimizer group is the benign
+    instance the docstring cites, so breaking exactly it makes the broken world the same
+    shape as the defect: a real field name, off by a suffix, with a plausible default
+    beside it."""
     import shutil
 
     d = _tmp_repo_shaped()
@@ -12719,127 +12936,691 @@ def _broken_getattr_cfg_names():
     return d
 
 
-#: The `train.py:<N>` citations that already point at a line which cannot support any
-#: claim -- a blank line, an import, a bare comment or delimiter. A RATCHET, like
-#: _ENV_FP_BASELINE: the count may shrink, never grow, and a NEW dead citation FAILs.
-#: A file, not a literal here, because the fixes land in 10+ files owned by other
-#: sessions and each owner shrinks the list as they land theirs; a literal in this
-#: source would make every one of those a harness.py edit.
+#: The `train.py:<N>` citations that are ALLOWED to keep a bare line number, because the
+#: 2026-09-06 conversion could not reach them. A RATCHET, like _ENV_FP_BASELINE: the list
+#: may shrink, never grow. A file, not a literal here, so an owner shrinking it does not
+#: have to edit harness.py.
 _CITE_BASELINE = os.path.join("data", "train_cite_baseline.json")
 _CITE_RE = re.compile(r"train\.py:(\d+)")
+#: A 7+ hex run in the same sentence anchors the number to a frozen tree. `[0-9a-f]{7,40}`
+#: with a word boundary either side: a sha, not the tail of a longer hex string, and not a
+#: decimal number (a bare `1234567` matches [0-9a-f]{7} and is not a sha, so at least one
+#: letter is required).
+_CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+#: The ABBREVIATED form: a bare `:NNN` with no filename. Undecidable in general -- it cannot
+#: be told from a column number, a port, or a version -- so it is checked ONLY inside a
+#: sentence that already names train.py and no sha (4c ruling, 2026-09-07, narrowing the
+#: wider form which stays prose). 3+ digits: `:12` is a time or a column far more often than
+#: a line, and train.py has no interesting code below line 100.
+_CITE_BARE_RE = re.compile(r"(?<![\w.]):(\d{3,})\b")
 
 
-def _cite_hopeless(target):
-    """Why a cited line cannot support ANY claim, or None if a reader must rule.
+def _bare_cite_targets(sentence):
+    """The `:NNN` line numbers in a sentence that names train.py and no sha.
 
-    Only the mechanical cases. Whether line 314 supports the claim beside it is a
-    judgement; whether line 314 is blank is not."""
-    t = target.strip()
-    if not t:
-        return "blank"
-    if re.match(r"^(import|from)\s", t):
-        return "an import"
-    if t in ("#", '"""', "'''"):
-        return "a bare delimiter"
-    return None
+    Returns [] for any sentence that does not name train.py, so a version string or a
+    column reference elsewhere in the tree is never read as a citation."""
+    if "train.py" not in sentence or _CITE_SHA_RE.search(sentence):
+        return []
+    # Everything the qualified form already covers is skipped: a filename-qualified citation
+    # matches
+    # _CITE_RE and is reported there, and reporting it twice would double every count.
+    stripped = _CITE_RE.sub("train.py", sentence)
+    return [int(m.group(1)) for m in _CITE_BARE_RE.finditer(stripped)]
+
+
+#: How many following lines a sentence may continue onto. 2, not unbounded: the sha has to be
+#: near the number it anchors, and an unbounded reach becomes the whole-file search that would
+#: accept a sha from an unrelated paragraph.
+_CITE_WRAP_LINES = 2
+
+
+def _cite_sentence(line, pos, following=()):
+    """The sentence a citation at `pos` sits in, for the sha search.
+
+    Sentence, not line: the ruling says "the same sentence names a sha", and a comment
+    wraps across lines, so a line-scoped search would miss a sha one line below the number
+    and a whole-file search would accept a sha from an unrelated paragraph. Bounded by
+    sentence punctuation, falling back to the line when there is none.
+
+    A LINE BREAK INSIDE A BLOCK CONTINUES THE SENTENCE (4c's second finding, 2026-09-07; the
+    rule is stated here because either answer had to be). Measured: `# the cast at
+    train.py:2315 AT` / `# 169da865 held the fp8 branch.` -- the sha is on the second line, so
+    the line-scoped search found none and the check reported a correctly ANCHORED citation as
+    bare debt. That is the same class of false red as the position-keyed baseline: a spurious
+    FAIL on a citation nobody touched, and here it also pushes an author toward deleting the
+    one spelling that cannot rot.
+
+    The continuation is bounded three ways, so it cannot become the whole-file search:
+      - it stops at the first sentence punctuation, as on the citing line;
+      - it stops after _CITE_WRAP_LINES following lines;
+      - it stops at a line of a different KIND -- a comment continues onto a comment, prose
+        onto prose, and neither onto a blank line. A `#` block ending and code resuming is a
+        different kind, so the sha in the next statement is not read as part of the sentence.
+    """
+    left = max((line.rfind(c, 0, pos) for c in (". ", "; ", "! ")), default=-1)
+    ends = [r for r in (line.find(c, pos) for c in (". ", "; ", "! ")) if r != -1]
+    if ends:
+        return line[left + 1:min(ends)]
+    sent = line[left + 1:]
+    is_comment = line.lstrip().startswith("#")
+    for nxt in list(following)[:_CITE_WRAP_LINES]:
+        stripped = nxt.strip()
+        if not stripped or stripped.startswith("#") != is_comment:
+            break
+        sent += " " + stripped.lstrip("#").strip()
+        if any(c in stripped for c in (". ", "; ", "! ")) or stripped.endswith("."):
+            break
+    return sent
+
+
+def _cite_baseline_key(rel, form):
+    """A baselined citation's identity: the citing FILE and the cited number, never a line.
+
+    KEYED ON CONTENT, NOT POSITION (4c's report, 2026-09-07). The first version keyed on
+    `<file>:<citing line>-><target>`, so any insertion above a baselined citation moved its
+    key and the ratchet went red on whoever merged next -- e1 hit it landing #48, 122 lines
+    inserted, key 6174 -> 6285. Reproduced before fixing: 122 blank lines at the top of
+    scripts/attnres_fused_reference.py turned this check PASS -> FAIL with nothing about the
+    citation changed.
+
+    A LINE-TEXT HASH WAS THE OTHER CANDIDATE AND IT TRADES ONE FALSE RED FOR ANOTHER.
+    Measured over the live tree: a hash of the normalised citing line gives 87 distinct keys
+    for 87 citations, zero collisions, against this key's 70 for 87. But it goes red when the
+    comment REFLOWS, which is what happens whenever a sentence around a citation is edited --
+    measured, the same citation wrapped one word earlier hashes 3ec0bde72809 vs ba2cdc4668f5.
+    Insertions above are common and reflows are common; a key immune to both is worth the
+    collisions, and the collisions are handled rather than ignored.
+
+    THE COLLISIONS ARE REAL AND ARE COUNTED, NOT DEDUPED. 15 of the 95 entries share a
+    (file, number) pair -- eval/api_cloze.py cited :1163 three times -- so a set would let a
+    file grow from one bare citation to three with the baseline unchanged. The baseline is
+    therefore a MULTISET: `allowed_bare` maps this key to how many citations that pair may
+    carry, and the check FAILs when a pair exceeds its recorded count. New debt still goes
+    red; a citation that merely moved does not."""
+    return f"{rel}->{form}"
+
+
+def _cite_subjects(root):
+    """Every file the citation ban covers: tracked .py/.sh, plus facts/*.json as TEXT.
+
+    ONE DEFINITION because the ratchet's rekeyer reads the same population, and a rekeyer
+    that walks a narrower set silently drops keys the check still counts. Measured 2026-09-07:
+    the rekeyer and the check disagreed once already, over the wrap lines rather than the file
+    set, and the symptom was a baseline that looked correct and was short.
+
+    facts/*.json is read as text, not json.load, because the report has to name the citing
+    line and parsing throws line numbers away. 4c's ruling 2026-09-07, (ii) enforced by (i):
+    a fact's evidence is a formula, a symbol or a log line. The class is worse than the code
+    case -- a fact IS the claim and the cited line is its evidence, so the fact's reader is
+    the person most likely to go and read it.
+    """
+    yield from walk_tracked(root, (".py", ".sh"))
+    fdir = os.path.join(root, "facts")
+    if os.path.isdir(fdir):
+        for fn in sorted(os.listdir(fdir)):
+            if fn.endswith(".json"):
+                p = os.path.join(fdir, fn)
+                yield p, open(p, encoding="utf-8", errors="replace").read()
 
 
 def check_train_cite_targets(root):
-    """Every `train.py:<N>` citation points at a line that could support a claim.
+    """A `train.py:<N>` citation is anchored to a commit sha, or it does not exist.
 
-    train.py is ~4000 lines and every session edits it, so a line number written into a
-    comment, an assertion message or a docstring rots the moment someone inserts above it.
-    Found by hand three times on 2026-09-06 -- e1 fixed a diagnosis string with two dead
-    numbers, then three more in the same two files, then four more beside those -- and each
-    hand-count missed the next round, which is what a check is for.
+    train.py is 3996 lines and every session edits it, so a line number in a comment, an
+    assertion message or a docstring rots on the next insertion above it. MEASURED
+    2026-09-06 by auditing all 198 citations in the tree -- one reader per file, then one
+    adversarial refuter per rot verdict: 103 rotten, 15 correct. The rot is not carelessness
+    at the margin, it is the default state of the form. One line in build_mix's plan block was
+    cited four times
+    and all four rotted together, because citations cluster on build_mix's plan block, which
+    is the region that moves most.
 
-    Only the MECHANICAL half is enforced here: a citation pointing at a blank line, an
-    import, or a bare `#` cannot support any claim, whatever it says. Measured at
-    9851b797: 210 citations, 18 of them mechanically dead. What the class looks like,
-    written WITHOUT the citation form so this docstring is not itself a citation: two
-    sites in this file cite train.py line 2168 for "writes the run-end checkpoint" and
-    that line is blank -- the save is at line 3987; test_arch_compat.py cites line 135
-    twice, which is `from model import (`.
+    So the form is banned rather than repaired (aupai-4c ruling, 2026-09-06): cite a role or
+    a symbol -- `train.py's build_mix`, `Cfg.anneal_frac in the Cfg body`, `the rolling-save
+    pruner's glob` -- which survives an insertion. A repoint buys until the next edit; a
+    symbol does not rot at all.
+
+    THE ONE EXCEPTION, and it is load-bearing: a line number qualified by a commit sha in
+    the same sentence cannot rot, because the tree it resolves against is frozen in the
+    citation itself. Two such citations were converted in 59245542 and had to be reverted --
+    both were describing a defect's PRE-FIX state, so repointing them at HEAD made the
+    sentence contradict the line it cited and destroyed the only pointer to the state that
+    justified the guard. `git show 169da865:train.py | sed -n 1963p` still returns the
+    quoted text character-for-character. Without this carve-out the check would ban the one
+    spelling that is permanently correct, and the conversion would destroy evidence.
+
+    A sha-anchored citation is verified AT its sha: `git show <sha>:train.py`, and the line
+    must exist and be non-blank there. An anchor nobody can resolve is not an anchor.
 
     WHICH POSITIVES THIS DELIBERATELY MISSES, named before writing it rather than after:
-      - a citation pointing at real code that is simply the WRONG code. That is the larger
-        population -- 118 of the 148 need a reader -- and it is not decidable here. The
-        2026-09-06 audit ruled those by hand; a scan cannot.
-      - a range citation `train.py:2736-2760` is judged on its FIRST line only, because a
-        range whose start is real and whose body has shifted is the same undecidable case.
-      - citations in docs/ and in .md files, which `doc_commands_exist` and the prereg
-        checks already cover on their own terms.
-      - a citation of a line that is a comment WITH text: a comment is frequently the
-        subject being cited (a comment at line 2075 states what value save_checkpoint
-        writes), so flagging it would refuse the correct usage."""
+      - a citation pointing at real but WRONG code, once the number is gone. Naming a symbol
+        that exists but is not the one the claim is about is still undecidable here; that is
+        what the audit's readers were for.
+      - a citation whose FILE is wrong, not only its line. eval/l1_fewshot.py cited line 107 of
+        train.py for the `chunk_kda=None` import fallback; that fallback is in model.py, and that
+        line of train.py was a shard-naming comment. Both halves of a file:line pair can be
+        wrong independently, and a check reading only train.py sees a resolvable line and
+        passes. Found by reading during the 2026-09-07 eval/ conversion, not by this check.
+        Spelled without the citation form on purpose: this docstring is inside the tree the
+        check walks, so writing the form here would make the check report its own prose.
+      - `model.py:<N>`, `sft.py:<N>` and every other file. train.py is the measured case:
+        3996 lines, edited by every session. Widening to files nobody has audited would
+        assert a rate that has not been measured.
+      - a bare `:NNN` with no filename (`a real field at :221`). It cannot be told from a
+        column number or a version string without knowing the sentence's subject. One such
+        citation was in this file and was found by reading, not by this check.
+      - citations in docs/ and .md files, which the prereg and fact-ref checks cover on
+        their own terms.
+
+    THE BASELINE IS A MULTISET KEYED ON CONTENT, not a set keyed on position. See
+    _cite_baseline_key for why, and for the two measurements that decided it."""
     train = os.path.join(root, "train.py")
     if not os.path.exists(train):
         return SKIP, "no train.py here"
     lines = open(train, encoding="utf-8", errors="replace").read().splitlines()
     try:
         with open(os.path.join(root, _CITE_BASELINE), encoding="utf-8") as f:
-            baseline = set(json.load(f)["dead"])
+            _raw = json.load(f)["allowed_bare"]
+        # A LIST IS THE OLD POSITION-KEYED SCHEMA and cannot be converted here: its keys carry
+        # line numbers that have already moved. Read as an empty baseline so every bare
+        # citation reports, which is loud; silently accepting it would let the old schema
+        # vouch for citations it can no longer identify.
+        baseline = dict(_raw) if isinstance(_raw, dict) else {}
     except (OSError, ValueError, KeyError):
-        baseline = set()
-    dead, n = [], 0
-    for p, txt in walk_tracked(root, (".py", ".sh")):
+        baseline = {}
+    bad, n, anchored = [], 0, 0
+    sha_cache = {}
+    seen_counts = {}
+    for p, txt in _cite_subjects(root):
         rel = os.path.relpath(p, root)
-        for i, line in enumerate(txt.splitlines(), 1):
+        src_lines = txt.splitlines()
+        for i, line in enumerate(src_lines, 1):
+            # The following lines, so a sentence wrapping onto the next comment line carries its
+            # sha with it. See _cite_sentence for the three bounds that keep this from becoming
+            # a whole-file search.
+            after = src_lines[i:i + _CITE_WRAP_LINES]
             for m in _CITE_RE.finditer(line):
                 n += 1
                 num = int(m.group(1))
-                target = lines[num - 1] if 0 < num <= len(lines) else ""
-                why = "past EOF" if not (0 < num <= len(lines)) else _cite_hopeless(target)
-                if why and f"{rel}:{i}->{num}" not in baseline:
-                    dead.append(f"{rel}:{i} cites train.py:{num} which is {why}")
-    if dead:
-        return FAIL, (f"{len(dead)} citation(s) of train.py point at a line that cannot support "
-                      f"any claim (baseline {len(baseline)}): {'; '.join(dead[:4])}")
-    return PASS, (f"{n} train.py citation(s); {len(baseline)} known-dead baselined, "
-                  f"no new ones")
+                where = f"{rel}:{i}->{num}"
+                sha = _CITE_SHA_RE.search(_cite_sentence(line, m.start(), after))
+                if sha:
+                    anchored += 1
+                    s = sha.group(0)
+                    if s not in sha_cache:
+                        r = subprocess.run(["git", "show", f"{s}:train.py"], cwd=root,
+                                           capture_output=True, text=True)
+                        if r.returncode == 0:
+                            sha_cache[s] = r.stdout.splitlines()
+                        else:
+                            # A BLOB sha cannot be resolved as <sha>:<path>; cat-file reads
+                            # it directly.  The blob is the content the citation pins -- the
+                            # check stays syntactic (line exists, non-blank), not semantic
+                            # (the blob is train.py's), same as the commit path.
+                            r = subprocess.run(["git", "cat-file", "blob", s], cwd=root,
+                                               capture_output=True, text=True)
+                            sha_cache[s] = (r.stdout.splitlines()
+                                            if r.returncode == 0 else None)
+                    at = sha_cache[s]
+                    if at is None:
+                        bad.append(f"{where} names sha {s}, which this repo cannot resolve")
+                    elif not (0 < num <= len(at)) or not at[num - 1].strip():
+                        bad.append(f"{where} is blank or absent in train.py at {s}")
+                    continue
+                key = _cite_baseline_key(rel, str(num))
+                seen_counts[key] = seen_counts.get(key, 0) + 1
+                if seen_counts[key] <= baseline.get(key, 0):
+                    continue
+                target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
+                bad.append(f"{where} is a bare line number (now holds {target[:44]!r}) -- "
+                           f"cite the symbol, or anchor it to a sha")
+            # The ABBREVIATED form, checked per line rather than per match: a sentence naming
+            # train.py and holding a bare number with no sha. Sentence-scoped, so a bare
+            # number in a line that never names the file is not read as a citation.
+            seen_sentences = set()
+            for m in _CITE_BARE_RE.finditer(line):
+                s = _cite_sentence(line, m.start(), after)
+                if s in seen_sentences:
+                    continue
+                seen_sentences.add(s)
+                for num in _bare_cite_targets(s):
+                    key = _cite_baseline_key(rel, f":{num}")
+                    seen_counts[key] = seen_counts.get(key, 0) + 1
+                    if seen_counts[key] <= baseline.get(key, 0):
+                        continue
+                    n += 1
+                    target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
+                    bad.append(f"{rel}:{i}->:{num} names train.py and cites `:{num}` with no sha "
+                               f"(now holds {target[:40]!r}) -- write the symbol")
+    if bad:
+        return FAIL, (f"{len(bad)} train.py citation(s) carry a line number with no commit sha "
+                      f"(baseline {sum(baseline.values())}): {'; '.join(bad[:4])}")
+    return PASS, (f"{n} train.py citation(s): {anchored} sha-anchored and verified at their sha, "
+                  f"{sum(baseline.values())} baselined bare in {len(baseline)} key(s), no new "
+                  f"bare ones")
 
 
 def _broken_train_cite_targets():
-    """The REAL train.py with one CITED line blanked -- mutated, not hand-written.
+    """A REAL tracked file with one sha-anchored citation stripped of its sha.
 
-    Picks a line that some tracked file actually cites and that currently holds code, so
-    the world is the exact shape of the defect: the citation was right when written and a
-    later edit emptied the line under it."""
+    Mutated, not hand-written, and the mutation is the exact shape of the defect the ruling
+    names: a citation that was anchored loses its anchor and becomes a bare line number
+    against a file that moves. Stripping the sha from a real citation also proves the
+    carve-out is doing work -- if the check ignored the sha, this world would stay green."""
     import shutil
 
     d = _tmp_repo_shaped()
-    real_train = os.path.join(d, "train.py")
-    if os.path.islink(real_train):
-        os.unlink(real_train)
-    shutil.copy(os.path.join(ROOT, "train.py"), real_train)
-    lines = open(real_train, encoding="utf-8").read().splitlines()
-    try:
-        with open(os.path.join(ROOT, _CITE_BASELINE), encoding="utf-8") as f:
-            baseline = set(json.load(f)["dead"])
-    except (OSError, ValueError, KeyError):
-        baseline = set()
     victim = None
     for p, txt in walk_tracked(ROOT, (".py", ".sh")):
         rel = os.path.relpath(p, ROOT)
+        if rel.startswith("data/"):
+            continue
         for i, line in enumerate(txt.splitlines(), 1):
-            for m in _CITE_RE.finditer(line):
-                num = int(m.group(1))
-                if not (0 < num <= len(lines)):
-                    continue
-                if _cite_hopeless(lines[num - 1]):
-                    continue
-                if f"{rel}:{i}->{num}" in baseline:
-                    continue
-                victim = num
-                break
-            if victim:
+            m = _CITE_RE.search(line)
+            if not m:
+                continue
+            # LINE-SCOPED ON PURPOSE HERE, unlike the check, which reads the following lines
+            # too. The mutation below strips the sha from the victim's OWN line, so a victim
+            # whose sha sits on the NEXT line would come out of the mutation still anchored and
+            # the world would stay green -- a broken world that is not broken. Passing no
+            # `following` selects only victims the mutation can actually disarm.
+            sha = _CITE_SHA_RE.search(_cite_sentence(line, m.start()))
+            if sha:
+                victim = (rel, i, line, sha.group(0))
                 break
         if victim:
             break
-    assert victim, "no live train.py citation left to break; the world has no subject"
-    lines[victim - 1] = ""
-    open(real_train, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    assert victim, "no sha-anchored train.py citation in the tree; the world has no subject"
+    rel, i, line, sha = victim
+    dst = os.path.join(d, rel)
+    if os.path.islink(dst) or os.path.exists(dst):
+        # The shaped world SYMLINKS scripts/ to the real tree, so the file must be replaced
+        # by a temp-local copy or the mutation would edit the repo (de, 2026-09-01).
+        parent = os.path.dirname(dst)
+        if os.path.islink(parent):
+            os.unlink(parent)
+            os.makedirs(parent, exist_ok=True)
+            for f in os.listdir(os.path.join(ROOT, os.path.dirname(rel))):
+                src = os.path.join(ROOT, os.path.dirname(rel), f)
+                if os.path.isfile(src):
+                    shutil.copy(src, os.path.join(parent, f))
+        elif os.path.islink(dst):
+            os.unlink(dst)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+    src_lines = open(os.path.join(ROOT, rel), encoding="utf-8", errors="replace").read().splitlines()
+    src_lines[i - 1] = line.replace(sha, "an earlier commit")
+    open(dst, "w", encoding="utf-8").write("\n".join(src_lines) + "\n")
     return d
+
+
+def _selftest_train_cite_abbreviated_form():
+    """The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
+
+    Registered separately because one world exercises one branch. The single world strips a
+    sha from a QUALIFIED citation, so the abbreviated reader never runs in it -- deleting
+    `_bare_cite_targets`'s body and returning [] would leave that world red for its own
+    reason and this half of 4c's 2026-09-07 ruling untested. Two branches, two worlds.
+
+    Three assertions, because the abbreviated form's whole difficulty is the false positive:
+      1. `:NNN` in a sentence naming train.py, no sha -> the probe's line is NAMED
+      2. the SAME `:NNN` in a sentence that does not name train.py -> NOT named. A bare number
+         is a column, a port or a version far more often than a citation, which is why the
+         wide form stays prose.
+      3. the same sentence with a sha -> NOT named. The anchor works abbreviated too.
+
+    Asserted on the reported COUNT with and without the probe, not by searching the evidence
+    text: the FAIL message prints only its first four findings, so a substring test passes or
+    fails on where the probe happens to sort. MEASURED while writing this -- mutating away the
+    train.py-in-sentence requirement produced 291 findings, the probe fell outside the four
+    printed, and the world then failed on the WRONG world's assertion. The count is also why
+    the baseline state does not matter: `_tmp_repo_shaped`'s git has its own object database,
+    so the real tree's sha-anchored citations are unresolvable there and the world is FAIL
+    before the probe exists. A delta is the only thing the probe controls.
+    """
+    victim_line = 3134  # a real line: the fp8 bf16 cast. Asserted below, not assumed.
+    train = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read().splitlines()
+    assert train[victim_line - 1].strip(), (
+        f"the world cites train.py line {victim_line}, which is blank -- pick a live line")
+
+    def _n_reported(state, ev):
+        if state is PASS:
+            return 0
+        m = re.match(r"(\d+) train\.py citation", ev)
+        assert m, f"the FAIL message no longer opens with its count: {ev[:120]}"
+        return int(m.group(1))
+
+    worlds = [
+        (f"# train.py's cast lives at :{victim_line} and this sentence names train.py.", 1),
+        (f"# an unrelated comment mentioning :{victim_line} and no python file at all.", 0),
+        (f"# train.py:{victim_line} AT 169da865 held the cast, and :{victim_line} names it.", 1),
+    ]
+    for text, want_delta in worlds:
+        d = _tmp_repo_shaped()
+        try:
+            probe = os.path.join(d, "scripts", "_cite_world_probe.py")
+            parent = os.path.dirname(probe)
+            if os.path.islink(parent):
+                os.unlink(parent)
+                os.makedirs(parent, exist_ok=True)
+                for f in os.listdir(os.path.join(ROOT, "scripts")):
+                    src = os.path.join(ROOT, "scripts", f)
+                    if os.path.isfile(src):
+                        os.symlink(src, os.path.join(parent, f))
+            before = _n_reported(*check_train_cite_targets(d))
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(f'"""a world probe, not a real tool."""\n{text}\n')
+            after = _n_reported(*check_train_cite_targets(d))
+            assert after - before == want_delta, (
+                f"the probe should add {want_delta} finding(s), added {after - before} "
+                f"({before} -> {after})\n  probe line: {text}")
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha "
+            "(3 worlds, asserted on the count delta)")
+
+
+def _selftest_cite_sentence_wraps():
+    """A sha on the NEXT comment line anchors the citation; four things stop the continuation.
+
+    4c's second finding, 2026-09-07. `_cite_sentence` bounded the sha search by punctuation
+    inside one line, so `# the cast at train.py:2315 AT` / `# 169da865 held the fp8 branch.`
+    found no sha and the check reported a correctly ANCHORED citation as bare debt -- the same
+    class of false red as the position-keyed baseline, and worse, it pushes an author toward
+    deleting the one spelling that cannot rot.
+
+    ONE POSITIVE AND FOUR NEGATIVES, because a continuation that never stops is the whole-file
+    search the docstring rules out:
+      1. the sha on the next comment line          -> found
+      2. a BLANK line between them                 -> not found (the block ended)
+      3. CODE on the next line                     -> not found (different kind)
+      4. the sha three lines down                  -> not found (_CITE_WRAP_LINES is 2)
+      5. the citing line ends its own sentence      -> not found (punctuation wins)
+
+    Case 5 is the one that keeps this from swallowing the next sentence: a citation whose line
+    already terminates does not reach forward at all, so an unrelated sha below it is not
+    ONE MORE PROPERTY, and it is the reason the fixtures are ASSEMBLED rather than written
+    out: a check must not be its own subject. Spelling the citation literally here made
+    check_train_cite_targets report this function's test data as three real findings on the
+    live tree -- measured, immediately after the wrap landed. The file name and the number are
+    joined at runtime, so the fixture is a citation to the predicate under test and not to the
+    scanner walking this file.
+    """
+    fname = "train" + ".py"
+    cite = f"    # the cast at {fname}:2315 AT"
+    closed = f"    # the cast at {fname}:2315 moved. Unrelated text follows"
+    cases = [
+        ("sha on the next comment line", cite, ["    # 169da865 held the fp8 branch."], True),
+        ("a blank line ends the block", cite, ["", "    # 169da865 later."], False),
+        ("code is a different kind", cite, ['    x = "169da865"'], False),
+        ("three lines is past the reach", cite,
+         ["    # more", "    # words", "    # 169da865 here."], False),
+        ("the citing line's own punctuation stops it", closed,
+         ["    # 169da865 unrelated."], False),
+    ]
+    for label, line, following, want in cases:
+        pos = line.index("train.py")
+        s = _cite_sentence(line, pos, following)
+        got = bool(_CITE_SHA_RE.search(s))
+        assert got == want, (
+            f"{label}: sha {'must' if want else 'must NOT'} be in the sentence, got "
+            f"{got}\n  sentence: {s[:120]!r}")
+    assert _CITE_RE.search(cite), "the fixture no longer holds a qualified citation at all"
+    return ("a sha on the next comment line anchors; blank line, code, distance and the citing "
+            "line's own punctuation each stop the continuation (5 cases)")
+
+
+def _selftest_train_cite_baseline_is_content_keyed():
+    """An INSERTION above a baselined citation must not turn the ratchet red; new debt must.
+
+    4c's report, 2026-09-07: the baseline keyed on `<file>:<citing line>-><target>`, so any
+    edit above a baselined citation moved its key and the check FAILed on whoever merged next
+    -- e1 hit it landing #48, 122 lines inserted, key 6174 -> 6285. Reproduced before fixing:
+    122 blank lines at the top of one victim file took this check PASS -> FAIL with nothing
+    about the citation changed.
+
+    FOUR CASES, and the last two are what keep the fix from being a disarm. A key that
+    tolerated everything would pass the first two alone:
+      1. the file as it stands                          -> PASS
+      2. 122 lines inserted above the citation          -> still PASS  (4c's defect)
+      3. a NEW bare citation of another number          -> FAIL
+      4. a SECOND citation of an ALREADY-baselined one  -> FAIL
+
+    Case 4 is why `allowed_bare` is a multiset rather than a set: 13 keys carry more than one
+    citation today, so a set would let a file grow from one bare citation to three with the
+    baseline unchanged and nothing red.
+
+    The world is a small real git repo holding only what the check reads -- train.py, the
+    baseline, and one victim file copied from the working tree. Not a `git worktree add HEAD`:
+    the fix and its regenerated baseline are uncommitted while this runs, so a HEAD world would
+    test the OLD schema and pass for the wrong reason. Measured while writing it: that is
+    exactly what the first version did, reporting `baseline 0`.
+    """
+    import shutil
+
+    with open(os.path.join(ROOT, _CITE_BASELINE), encoding="utf-8") as fh:
+        allowed = json.load(fh)["allowed_bare"]
+    assert isinstance(allowed, dict), (
+        "the baseline is not the content-keyed multiset schema -- a list means the position "
+        "key is back, which is the defect this selftest exists for")
+    victim_key = next((k for k in allowed if k.startswith("scripts/")), None)
+    if victim_key is None:
+        raise SelftestSkip("no baselined citation under scripts/ to build the world from")
+    victim = victim_key.split("->")[0]
+    target = victim_key.split("->")[1].lstrip(":")
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        for rel in ("train.py", _CITE_BASELINE, victim):
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+        g("add", "-A")
+        g("commit", "-qm", "base")
+        p = os.path.join(d, victim)
+        src = open(p, encoding="utf-8").read().splitlines(keepends=True)
+
+        st, ev = check_train_cite_targets(d)
+        assert st is PASS, f"the unedited world must PASS, got {st}: {ev[:160]}"
+
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(src[:1] + ["\n"] * 122 + src[1:])
+        st, ev = check_train_cite_targets(d)
+        assert st is PASS, (
+            f"122 inserted lines moved a baselined citation and the check went {st} -- the "
+            f"baseline is keyed on POSITION again (4c, 2026-09-07): {ev[:200]}")
+
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(src)
+            # ASSEMBLED, not spelled out: a literal here would make this function's own test
+            # data a finding on the live tree, which is a check reading itself as its subject.
+            fh.write(f"\n# a brand new claim about {'train' + '.py'}:2500 with no sha\n")
+        st, ev = check_train_cite_targets(d)
+        assert st is FAIL, f"a NEW bare citation must FAIL, got {st}: {ev[:160]}"
+
+        with open(p, "w", encoding="utf-8") as fh:
+            fh.writelines(src)
+            fh.write(f"\n# one MORE citation of train.py:{target}, already in the baseline\n")
+        st, ev = check_train_cite_targets(d)
+        assert st is FAIL, (
+            f"a SECOND citation of an already-baselined number must FAIL, got {st} -- the "
+            f"baseline is a set rather than a multiset: {ev[:200]}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("content-keyed multiset: 122 inserted lines stay PASS, a new bare citation and a "
+            "second cite of a baselined number both FAIL (4 cases)")
+
+
+def _selftest_cite_scope_covers_facts():
+    """A bare citation inside a facts/*.json string FAILs, and the same fact with a symbol PASSes.
+
+    4c's ruling 2026-09-07, (ii) enforced by (i): facts/*.json string fields are under the ban.
+    Before it the population was uncounted, and it is the largest one in the tree -- 125
+    citations, 91 in facts/efficiency.json alone, against 47 on the whole code side. So the
+    widening had to be tested in BOTH directions or a scope that silently read nothing would
+    look identical to a scope that read everything and found nothing.
+
+    THREE CASES, and the third is the control that makes the first mean something:
+      1. facts/ as it stands, baselined                       -> PASS
+      2. a NEW bare citation added to a fact's boundary       -> FAIL, naming facts/
+      3. the SAME fact carrying a symbol instead of a number  -> PASS
+
+    Case 3 is the pair de asked 58 for on the fixture-control question, applied here: the two
+    worlds differ in exactly the property under test, so a check blind to facts/ cannot produce
+    both rows. Without it, case 2 could be red because of anything at all in the file.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        # SHARED ALTERNATES, and without them case 1 is red for the wrong reason. Six facts/
+        # citations are sha-anchored, and the check verifies each by `git show <sha>:train.py`
+        # in the world -- a fresh `git init` holds one commit and resolves none of them, so the
+        # untouched world FAILed with "names sha ..., which this repo cannot resolve" and the
+        # scope question was never reached. Alternates give the world READ access to the real
+        # object store while its own index and commits stay separate, so nothing here can write
+        # to the repo (measured while writing this: 6 unresolvable shas -> 0).
+        #
+        # THE OBJECT STORE IS NOT ALWAYS AT ROOT/.git/objects. In a worktree `.git` is a FILE
+        # pointing at the common dir, so the hardcoded path silently does not exist and the
+        # alternates file vouches for nothing -- which is what the first version of this did,
+        # failing identically to having no alternates at all. `--git-common-dir` answers in
+        # both layouts, and a relative answer is resolved against root.
+        _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
+                                 capture_output=True, text=True)
+        if _common.returncode != 0:
+            raise SelftestSkip("git cannot name this tree's object store")
+        _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
+                                "objects")
+        assert os.path.isdir(_objects), f"no object store at {_objects}"
+        _alt = os.path.join(d, ".git", "objects", "info")
+        os.makedirs(_alt, exist_ok=True)
+        with open(os.path.join(_alt, "alternates"), "w", encoding="utf-8") as fh:
+            fh.write(_objects + "\n")
+        for rel in ("train.py", _CITE_BASELINE):
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+        fdir = os.path.join(d, "facts")
+        os.makedirs(fdir, exist_ok=True)
+        real_facts = os.path.join(ROOT, "facts")
+        if not os.path.isdir(real_facts):
+            raise SelftestSkip("no facts/ in this tree")
+        for fn in sorted(os.listdir(real_facts)):
+            if fn.endswith(".json"):
+                shutil.copy(os.path.join(real_facts, fn), os.path.join(fdir, fn))
+        g("add", "-A")
+        g("commit", "-qm", "base")
+
+        st, ev = check_train_cite_targets(d)
+        assert st is PASS, f"facts/ as it stands must PASS against its own baseline: {ev[:200]}"
+
+        # A REAL fact file gets one field appended, so the world is a mutated artifact rather
+        # than a hand-written one. The citation is ASSEMBLED: spelling it out would make this
+        # function's own source a finding on the live tree.
+        victim = os.path.join(fdir, "efficiency.json")
+        base_txt = open(victim, encoding="utf-8").read()
+        bare = f"the warmdown starts at {'train' + '.py'}:2500, read off the tree"
+        symbolic = "the warmdown starts at wd_steps in train's lr schedule"
+        for probe, want, why in ((bare, FAIL, "a bare citation inside a fact must FAIL"),
+                                 (symbolic, PASS, "the same fact by symbol must PASS")):
+            obj = json.loads(base_txt)
+            obj["_selftest_probe"] = probe
+            with open(victim, "w", encoding="utf-8") as fh:
+                json.dump(obj, fh, indent=2, ensure_ascii=False)
+            st, ev = check_train_cite_targets(d)
+            assert st is want, f"{why}, got {st}: {ev[:200]}"
+            if want is FAIL:
+                assert "facts/efficiency.json" in ev, (
+                    f"the FAIL must NAME the fact file, or the report cannot be acted on: "
+                    f"{ev[:200]}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("facts/ in scope: a bare citation in a fact FAILs naming the file, the same fact "
+            "by symbol PASSes, and the untouched tree PASSes (3 cases)")
+
+
+def _selftest_cite_blob_anchor():
+    """A blob-anchored citation resolves via cat-file, and a wrong line number FAILs.
+
+    The check resolves sha-anchored citations via `git show <sha>:train.py`, which only
+    answers for commit shas.  A blob sha -- the most precise pin, immutable content --
+    cannot be resolved that way, so the most precisely-pinned citation form was the one
+    form the check rejected.  The fix is a second resolution path: `git cat-file blob
+    <sha>` when `git show <sha>:train.py` fails.
+
+    Two cases, same shape as the facts/ pair:
+      1. a blob-anchored citation with an in-range line number  -> PASS
+      2. the same citation with a number past the blob's length  -> FAIL
+
+    The blob is train.py's own at HEAD, so the in-range line is real code, not a fixture.
+    Resolvability + in-range + non-blank, same as the commit path -- no content checking.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        # Shared alternates, so the world can resolve the real blob sha.  Same mechanism
+        # as _selftest_cite_scope_covers_facts: a fresh init holds one commit and
+        # resolves nothing.
+        _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
+                                 capture_output=True, text=True)
+        if _common.returncode != 0:
+            raise SelftestSkip("git cannot name this tree's object store")
+        _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
+                                "objects")
+        assert os.path.isdir(_objects), f"no object store at {_objects}"
+        _alt = os.path.join(d, ".git", "objects", "info")
+        os.makedirs(_alt, exist_ok=True)
+        with open(os.path.join(_alt, "alternates"), "w", encoding="utf-8") as fh:
+            fh.write(_objects + "\n")
+        for rel in ("train.py", _CITE_BASELINE):
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+        g("add", "-A")
+        g("commit", "-qm", "base")
+
+        # train.py's blob sha at HEAD, from the real repo.
+        blob_sha = subprocess.run(["git", "-C", ROOT, "rev-parse", "HEAD:train.py"],
+                                  capture_output=True, text=True).stdout.strip()
+        assert len(blob_sha) == 40, f"expected a full sha, got {blob_sha!r}"
+        n_lines = len(open(os.path.join(d, "train.py"), encoding="utf-8").read().splitlines())
+
+        probe = os.path.join(d, "probe_blob_anchor.py")
+        for num, want, why in (
+                (1, PASS, "an in-range blob-anchored citation must PASS"),
+                (n_lines + 1, FAIL,
+                 "a blob-anchored citation past the blob's length must FAIL")):
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(f'# see {"train" + ".py"}:{num} at blob {blob_sha}\n')
+            g("add", "-A")
+            g("commit", "-qm", f"probe {num}")
+            st, ev = check_train_cite_targets(d)
+            assert st is want, f"{why}, got {st}: {ev[:200]}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("blob-anchored citations resolve via cat-file: in-range PASS, past-length "
+            "FAIL (2 cases)")
 
 
 def check_no_conflict_markers(root):
@@ -12953,7 +13734,7 @@ def _broken_no_shared_stash():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
@@ -13819,7 +14600,8 @@ _HARDCODED_CACHE_BASELINE = 0
 def _hardcoded_cache_paths(root):
     """[(file, line, text)] for source that builds a token cache path from a literal.
 
-    THE ONE CONSTANT IS train.py:93. Every other copy stops following AUPAI_TOKEN_CACHE_DIR the
+    THE ONE CONSTANT IS train.py's `TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"`. Every other copy
+    stops following AUPAI_TOKEN_CACHE_DIR the
     moment the caches move -- which happened on 2026-09-05, when they went to /mnt/data02/tokens
     because the overlay reads at 193 MB/s against NVMe's 1.3 GB/s. A tool holding its own copy then
     reads a file that still exists, still has matching stamps, and is not the one the run is using.
@@ -14735,6 +15517,13 @@ CHECKS = [
         _broken_cache_readers_set_vocab_id,
     ),
     (
+        "executed_hook_matches_main",
+        "the pre-commit hook every worktree actually runs is main's blob for that path",
+        "the integration tree holds the file every worktree executes and is kept detached, so a merge that only WARNs instead of re-detaching leaves the executed hook frozen: measured 2026-09-06, three registrations that were on main -- test_moe_latent under model.py and train.py, test_moe_module under train.py -- executed nowhere, and reading the hook in your own worktree showed all three present",
+        check_executed_hook_matches_main,
+        _broken_executed_hook_matches_main,
+    ),
+    (
         "selftests_are_gated",
         "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
         "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
@@ -15054,6 +15843,10 @@ EVIDENCE = {
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
+    # tree's working file, neither of which is repo content. Green here says nothing about
+    # another machine, and a clone with no linked worktrees SKIPs.
+    "executed_hook_matches_main": "local",
     "selftest_worlds_reachable": "repo", "selftest_counts_computed": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
@@ -15797,7 +16590,7 @@ BRIEF_EXTRA = {
         ("verify a peer's premise before acting on it; a correct conclusion does not "
          "certify its argument", "R1, 16 shapes"),
         ("a number is a claim: compute it before printing it",
-         "58 asserted what a train.py line held without running the grep, 2026-09-05"),
+         "58 asserted train.py:1478 AT 1fd88227 without running the grep, 2026-09-05"),
     ],
     "git": [
         ("working around an un-loaded hook by reordering commits can produce an "
@@ -16255,7 +17048,7 @@ def _selftest_provenance_states_the_tree():
         def git(*a, cwd=d):
             return sp.run(["git", "-C", cwd, *a], capture_output=True, text=True)
 
-        git("init", "-q", ".")
+        git("init", "-q", "-b", "main", ".")
         git("config", "user.email", "t@t")
         git("config", "user.name", "t")
         open(os.path.join(d, "f"), "w").write("a")
@@ -16610,6 +17403,23 @@ def _selftest_milestone_pin_only():
     try:
         globals()["cmd_launch"] = lambda argv: launched.append(argv) or 0
         globals()["_run_alive"] = lambda r: True
+        # --dry FIRST, on the same world, because its property is an ABSENCE and an absence is
+        # only meaningful before the real run creates the things. Measured 2026-09-06: this
+        # branch ignored a.dry entirely, so a rehearsal on the pod hard-linked a live
+        # checkpoint and appended a row to the shared ledger while printing "pinned". The two
+        # assertions below are exactly what that defect violated.
+        _dry_ledger_before = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        rc_dry = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                                "--pin-steps", "5000", "--ledger", ms, "--dry"])
+        assert rc_dry == 0, f"--dry returned {rc_dry}"
+        assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [], \
+            f"--dry created a pin: {sorted(glob.glob(os.path.join(d, '*.milestone_*.pt')))}"
+        _dry_ledger_after = open(ms, encoding="utf-8").read() if os.path.exists(ms) else None
+        assert _dry_ledger_after == _dry_ledger_before, \
+            "--dry appended to the ledger it was asked not to touch"
+        # And it must not hang: the wait loop's exit condition is `want - done`, which --dry
+        # never shrinks unless it counts a named step as settled.
+
         rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
                             "--pin-steps", "5000", "--ledger", ms])
         assert rc == 0, f"pin-only returned {rc}"
@@ -16621,7 +17431,7 @@ def _selftest_milestone_pin_only():
         assert os.stat(pin).st_ino == src.st_ino, "pin is a copy, not a link"
         assert os.stat(pin).st_nlink >= 2, "link count says nothing else holds these weights"
 
-        # train.py:3623-3648's two globs, applied to the names actually on disk.
+        # The rolling-save pruner's two globs in train.py, applied to the names actually on disk.
         assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [pin], \
             "the pruner's pinned-inode glob does not see this name"
         assert pin not in glob.glob(os.path.join(d, f"ckpt_{run}.pt.step*")), \
@@ -17233,7 +18043,7 @@ def _selftest_merge_cherry_pick_not_a_drop():
     d = _tmp_repo()
     sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)  # noqa: E731
     try:
-        sh("init", "-q")
+        sh("init", "-q", "-b", "main")
         sh("config", "user.email", "t@t")
         sh("config", "user.name", "t")
         rel = os.path.join("scripts", "loader.py")
@@ -17417,7 +18227,7 @@ def _selftest_merge_reverted_content():
     try:
         def sh(*a):
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-        sh("init", "-q"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
+        sh("init", "-q", "-b", "main"); sh("config", "user.email", "t@t"); sh("config", "user.name", "t")
         os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
         f = os.path.join(d, "scripts", "loader.py")
         open(f, "w").write("def keep_me():\n    return 1\n\n\ndef retire_me():\n    return 2\n")
@@ -17462,6 +18272,79 @@ def _selftest_merge_reverted_content():
           "deliberate deletion not flagged")
 
 
+def _selftest_main_touched_raises_on_unreadable_main():
+    """An unreadable `main` must RAISE, not read as "main touches nothing".
+
+    Three worlds, because the failure is that an empty map is indistinguishable from a
+    legitimately empty answer, and one of them is the reason the fix cannot live in the
+    :7750 guard:
+
+      1. no `main` at all      -> RuntimeError naming the exit code
+      2. a readable `main`     -> a populated map (so the fix is not "always raise", which
+                                  would pass world 1 and disable the function)
+      3. the guard on world 1  -> `blind` is EMPTY, i.e. the guard that exists for this
+                                  function going blind cannot see total blindness. Asserted
+                                  so nobody "simplifies" the raise away and trusts :7750.
+
+    Measured 2026-09-06 on a clone with local main deleted: check_tasks_closed_by_commit
+    returned `FAIL 156 of 156 ... does not reach main`. Every closed task at once, from a
+    check whose subject is individual deliveries -- failures equal to total is the signature
+    of an absent comparison side, not of N real defects.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="mt_")
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        with open(os.path.join(d, "f.py"), "w") as fh:
+            fh.write("x = 1\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base")
+        sha = g("rev-parse", "HEAD").stdout.strip()
+
+        # World 2 FIRST: a readable main must produce a real map, and it pins the path that
+        # world 1's raise must not have broken.
+        _MAIN_TOUCHED.pop(d, None)
+        ok = _main_touched(d)
+        assert sha in ok and "f.py" in ok[sha], f"a readable main must map its commits: {ok}"
+
+        # World 1: the same repo with main gone. Detach first -- a checked-out branch
+        # cannot be deleted, and the deletion is the whole world.
+        g("checkout", "-q", "--detach")
+        g("branch", "-D", "main")
+        _MAIN_TOUCHED.pop(d, None)
+        try:
+            got = _main_touched(d)
+            raise AssertionError(
+                f"an unreadable main must raise, got {len(got)} entries: {list(got)[:3]}")
+        except RuntimeError as e:
+            assert "128" in str(e) or "main" in str(e), f"the raise must name the failure: {e}"
+
+        # World 3: the :7750 guard, driven on world 1's data. It keys on "sha present, paths
+        # empty", so an EMPTY map leaves it with nothing to count -- this is the assertion
+        # that says the raise above is load-bearing and not redundant with the guard.
+        # World 3: the :7750 guard, driven through the REAL check on world 1. Asserting
+        # against a literal `{}` here would be an assertion that cannot fail -- it would
+        # restate the guard's arithmetic rather than test the code. So: neuter the raise for
+        # one call, hand check_tasks_closed_by_commit the mainless world, and read what it
+        # says. If the guard could see total blindness it would return the "_main_touched
+        # sees no paths" FAIL; instead it reports every row, which is the finding this whole
+        # commit is about and the reason the raise cannot be replaced by that guard.
+        _MAIN_TOUCHED[d] = {}          # what the swallow used to produce
+        st_blind, ev_blind = check_tasks_closed_by_commit(d)
+        assert "_main_touched sees no paths" not in ev_blind, (
+            "the :7750 guard now fires on total blindness -- this selftest's premise is "
+            f"stale and the raise may be reconsidered: {ev_blind[:120]}")
+    finally:
+        _MAIN_TOUCHED.pop(d, None)
+        shutil.rmtree(d, ignore_errors=True)
+    print("  _main_touched: an unreadable main raises; a readable one maps; the :7750 guard "
+          "is blind to the empty map, so the raise is the only cover")
+
+
 def _selftest_scoped_index_is_read():
     """A path-scoped commit's staged diff is visible to _funcs_in_diff.
 
@@ -17485,7 +18368,7 @@ def _selftest_scoped_index_is_read():
     def g(*a):
         return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
 
-    g("init", "-q")
+    g("init", "-q", "-b", "main")
     g("config", "user.email", "t@t")
     g("config", "user.name", "t")
     src = os.path.join(d, "m.py")
@@ -18506,7 +19389,7 @@ def _selftest_id_allocation_sees_every_ref():
     d = tempfile.mkdtemp(prefix="alloc_")
     def g(*a):
         return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
-    g("init", "-q", ".")
+    g("init", "-q", "-b", "main", ".")
     g("config", "user.email", "t@example.invalid")
     g("config", "user.name", "t")
     g("checkout", "-q", "-B", "main")
@@ -19307,7 +20190,18 @@ def _demo(only=None):
     # so a stale manifest refuses before a byte is pushed.
     import tempfile
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    # -b main, NOT a bare `git init`: write_manifest's default is ref="main"
+    # (pod_drift.py:362) and scoped_paths passes check=True, so `git ls-files
+    # --with-tree=main` in a repo whose branch came from the caller's
+    # init.defaultBranch RAISES "fatal: tree-ish main not found" -- exit 128, no red
+    # check, just a traceback out of _demo. MEASURED 2026-09-06: green on every dev box
+    # (a Mac reads init.defaultBranch=main from Xcode's system gitconfig) and red in CI
+    # for everyone, because the runner leaves it unset and gets master. The default
+    # branch name is a property of the ENVIRONMENT, and this fixture was asserting it.
+    # pod_drift.py:784 already records the same trap and solved it the other way
+    # (ref="HEAD"); here the ref stays "main" so the fixture exercises the production
+    # default, and the branch is created to match.
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     os.makedirs(os.path.join(d, "scripts"))
@@ -19346,7 +20240,7 @@ def _demo(only=None):
     # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
     # allowed data file must pass; a small unallowed data file must refuse.
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
@@ -19403,7 +20297,7 @@ def _demo(only=None):
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
     d2 = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
     hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
@@ -19551,6 +20445,11 @@ def _demo(only=None):
     _direct_failures = []
     for _fn in (
         _selftest_milestone_reachable,
+        _selftest_train_cite_abbreviated_form,
+        _selftest_cite_sentence_wraps,
+        _selftest_train_cite_baseline_is_content_keyed,
+        _selftest_cite_scope_covers_facts,
+        _selftest_cite_blob_anchor,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
@@ -19583,6 +20482,7 @@ def _demo(only=None):
         _selftest_merge_reverted_content,
         _selftest_commit_delivers_fact_ref,
         _selftest_batched_git_probes,
+        _selftest_main_touched_raises_on_unreadable_main,
         _selftest_scoped_index_is_read,
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
@@ -21723,7 +22623,8 @@ def _latest_step_ckpt(name):
     """(path, step) of the newest resumable checkpoint, or (None, None).
 
     Two names are resumable: ckpt_<name>.pt.step<N> from the periodic save and
-    ckpt_<name>.pt.interrupt.step<N> from train.py's SIGTERM handler (:2479). The
+    ckpt_<name>.pt.interrupt.step<N> from train.py's SIGTERM handler, which writes
+    `ckpt_path + f".interrupt.step{_step_now[0]}"`. The
     interrupt file is by construction the newest thing on disk when a signal arrives --
     written at the step the signal hit, after the last periodic save -- so matching only
     `.pt.step*` resumes from up to save_every steps earlier and silently discards the
@@ -22568,6 +23469,26 @@ def cmd_milestone(argv):
                 ckpt = f"ckpt_{a.run}.pt.step{step}"
                 if not os.path.exists(os.path.join(a.watch, ckpt)):
                     continue
+                if a.dry:
+                    # --dry NAMES THE TWO SIDE EFFECTS AND PERFORMS NEITHER. It used to
+                    # perform both: this branch never read a.dry, so a rehearsal against a
+                    # live run hard-linked the checkpoint and appended a row to the shared
+                    # ledger, and its output said "pinned". MEASURED 2026-09-06 on the pod --
+                    # ckpt_0.2b_8b_b192.pt.step3000 carries a pin, and milestones.jsonl a row,
+                    # from a --dry meant as a no-op. Both are real and stay (the row's inode and
+                    # nlink were true when written, the ledger is append-only, and deleting the
+                    # link would make pin_nlink=2 false AND change which saves train.py's
+                    # roller may evict -- it reads pinned_inodes from this glob at :3623-3648).
+                    # The cost of the wrong default here is not a stray file: --dry is what
+                    # someone reaches for precisely to touch a shared ledger with nothing.
+                    print(f"  step {step}: WOULD pin -> "
+                          f"ckpt_{a.run}.milestone_{a.pin_token}_step{step}.pt "
+                          f"and append one row to {ms_path} (--dry, nothing written)", flush=True)
+                    # Counted as settled so the wait loop terminates. Without this, --dry
+                    # never grows `done` and spins on a condition it can never satisfy --
+                    # a rehearsal that hangs instead of reporting.
+                    done.add(step)
+                    continue
                 pinned = _pin_milestone(a.watch, a.run, ckpt, a.pin_token)
                 if not pinned:
                     print(f"  step {step}: PIN FAILED, not recording a promise "
@@ -22625,7 +23546,12 @@ def cmd_milestone(argv):
                           f"exist; nothing can pin them now.", file=sys.stderr, flush=True)
                     return 2
                 time.sleep(a.interval)
-        print(f"pin-only: all of {want} pinned and recorded", flush=True)
+        # The closing line must not claim a write that --dry did not make. It is the line
+        # people quote, and "pinned and recorded" was true of the dry run only because the
+        # dry run was not dry.
+        print(f"pin-only: all of {want} "
+              + ("named; nothing pinned and no row written (--dry)" if a.dry
+                 else "pinned and recorded"), flush=True)
         return 0
 
     if a.watch:

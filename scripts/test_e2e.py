@@ -119,7 +119,8 @@ if E2E_MOE_ON:
         "--moe_experts", "24", "--moe_top_k", str(_k), "--moe_expert_ffn", str(_w),
         "--moe_shared", str(_shared), "--moe_layers", f"0-{_SHAPE['layers'] - 1}",
         "--moe_arm", "e2e",
-        # --fp8, WHICH THIS FILE OTHERWISE NEVER PASSES. run_ddp.sh passes it (:110) and this test
+        # --fp8, WHICH THIS FILE OTHERWISE NEVER PASSES. run_ddp.sh's torchrun line passes it and
+        # this test
         # invokes train.py directly, so the walk was running the launch's flags in a precision the
         # launch never uses -- and train.py casts the model to bf16 only under `if fp8:`. The MoE
         # dispatch needs bf16 (torch._grouped_mm compiles only for it), so without this the walk
@@ -182,7 +183,7 @@ def _would_rebuild(dom, vocab_id):
     the run writes nothing), and it would pass a differently-named domain whose cache
     is stale and therefore WOULD be rewritten -- which is the actual hazard.
 
-    The conjuncts are train.py's own (train.py:1411-1419), read from that module rather
+    The conjuncts are train.py's own (the `fresh = (` test in _domain_seqs), read from that module rather
     than restated here: cache exists, shards exist, same vocab, same source fingerprint,
     same sample seed, and the cache newer than every shard. A copy of a six-part
     condition is a second thing to keep correct, and the mtime clause is the one a
@@ -533,7 +534,7 @@ def main():
             # assertion tested that my own fix had not happened -- a stale expectation that
             # reads as a failing guard.
             #
-            # Both directions, because the guard is FIELD-BASED (train.py:2229, `missing =
+            # Both directions, because the guard is FIELD-BASED (train.py's resume path, `missing =
             # [k for k in ("step", "opt") if k not in ck]`) and the point is which fields a
             # checkpoint carries, not which filename it has: the run-end save is now a valid
             # resume target, and the refusal still has to fire on a checkpoint that really
