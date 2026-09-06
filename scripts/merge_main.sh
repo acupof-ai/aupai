@@ -222,13 +222,30 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
     # namespaces, so the comparison that can actually be made is reviewer-vs-the-branch: a row
     # whose reviewer is the branch's own name is a self-review. Checked in python because
     # review.jsonl rows are JSON and a grep for the sha would match it inside any field.
-    row=$(python3 - "$sha" "$1" <<'PY'
-import json, sys
+    #
+    # READ FROM main, NOT FROM THE CWD (tilerl 2026-09-07). This used to be a bare
+    # open("runs/review.jsonl"), which resolves against whichever worktree invoked the script
+    # while every git call beside it is -C "$MAIN". The sha list came from main and the verdict
+    # came from the caller's tree, and that is wrong in BOTH directions:
+    #   caller behind main -> the row is on main but not local -> a reviewed commit is REFUSED
+    #   caller ahead of main -> a row exists locally and not on main -> an UNREVIEWED commit passes
+    # The second is the one that matters. Reproduced in a scratch repo before this change: a row
+    # written into the worktree and never committed (git status ' M runs/review.jsonl', and
+    # `git show main:runs/review.jsonl` empty) made the gate accept a model.py commit. The whole
+    # premise of this gate is that another person signed, and an uncommitted local file is not
+    # anyone's signature. Same reading as pod_push.sh:200, which compares against `main:$f` for
+    # the same reason -- what ships is main's content, not the caller's.
+    # THE LEDGER ARRIVES IN AN ENV VAR, not on stdin. `python3 - <<'PY'` already uses stdin for
+    # the program text, so `git show ... | python3 - <<'PY'` reads the ledger nowhere and every
+    # accept case refuses. Caught by the three FAILs the widened cases below produced.
+    row=$(REVIEW_LEDGER=$(git -C "$MAIN" show main:runs/review.jsonl 2>/dev/null) \
+          python3 - "$sha" "$1" <<'PY'
+import json, os, sys
 sha, branch = sys.argv[1], sys.argv[2]
 short = sha[:8]
 try:
-    rows = [json.loads(l) for l in open("runs/review.jsonl", encoding="utf-8") if l.strip()]
-except (OSError, json.JSONDecodeError):
+    rows = [json.loads(l) for l in os.environ.get("REVIEW_LEDGER", "").splitlines() if l.strip()]
+except json.JSONDecodeError:
     sys.exit(0)  # unreadable ledger: say nothing, the caller refuses for want of a row
 for r in rows:
     if not isinstance(r, dict):
@@ -246,8 +263,10 @@ PY
     if [ -z "$row" ]; then
       echo "merge_main: REFUSING -- $sha touches train.py or model.py and no second reader" >&2
       echo "  has signed it. $(git -C "$MAIN" log -1 --format='%h %s' "$sha")" >&2
-      echo "  Author: $author. Needed: a row in runs/review.jsonl whose \`artifact\` names" >&2
-      echo "  $sha (or ${sha:0:8}) with a \`reviewer\` that is not '$1'." >&2
+      echo "  Author: $author. Needed: a row in runs/review.jsonl ON MAIN whose \`artifact\` or" >&2
+      echo "  \`item\` names $sha (or ${sha:0:8}) with a \`reviewer\` that is not '$1'." >&2
+      echo "  Both fields are searched, and the ledger is read from \`main:runs/review.jsonl\` --" >&2
+      echo "  a row in your own worktree that is not merged yet does not count." >&2
       echo "  Every defect caught on 2026-09-05 was caught by a second reader, none by the" >&2
       echo "  author -- that is what this refusal is for." >&2
       echo "  Controller override: AUPAI_CONTROLLER=1 (logged to runs/friction.jsonl)." >&2
@@ -563,6 +582,13 @@ time.sleep(20)
   # reimplementation of the predicate. Both directions: a gate that only ever refuses passes
   # every negative case, and one that only ever accepts is the prose rule it replaced.
   _g=$(mktemp -d)
+  # THE CALLER'S TREE IS A SEPARATE DIRECTORY FROM MAIN, and it has to be. The earlier version
+  # of these cases ran `MAIN=$_g; cd "$_g"`, so `$MAIN/runs/review.jsonl` and
+  # `./runs/review.jsonl` were the same file and every world was indistinguishable between
+  # "reads main" and "reads the CWD" -- the six cases below all passed against the CWD read that
+  # tilerl found on 2026-09-07 and against the main read that replaced it. A fixture that
+  # collapses two variables cannot test either one. $_c is the caller; it carries its own ledger.
+  _c=$(mktemp -d); mkdir -p "$_c/runs"; : > "$_c/runs/review.jsonl"
   (
     cd "$_g" && git init -q . && git config user.email t@t && git config user.name T
     mkdir -p runs && echo x > model.py && echo y > train.py && echo z > other.txt
@@ -575,7 +601,7 @@ time.sleep(20)
   ) >/dev/null 2>&1
   _sha=$(git -C "$_g" rev-parse feat)
   _gcase() {  # $1=name $2=branch $3=want refused|accepted
-    if ( MAIN=$_g; cd "$_g"; _review_gate "$2" ) 2>/dev/null; then _got=accepted; else _got=refused; fi
+    if ( MAIN=$_g; cd "$_c"; _review_gate "$2" ) 2>/dev/null; then _got=accepted; else _got=refused; fi
     if [ "$_got" != "$3" ]; then
       echo "  FAIL review-gate $1: want $3, got $_got" >&2; _fails=$((_fails + 1))
     else
@@ -584,19 +610,42 @@ time.sleep(20)
   }
   # main is where the gate compares from, so point it at the base commit.
   git -C "$_g" branch -f main "$(git -C "$_g" rev-list --max-parents=0 HEAD | head -1)" >/dev/null 2>&1
-  : > "$_g/runs/review.jsonl"
+  # A row REACHES main only by being committed there. main advancing does not disturb `main..feat`:
+  # feat branched from the root, so it stays outside main's history whatever main adds.
+  _gmain() {  # $1 = ledger content, '' for an empty ledger
+    ( cd "$_g" && git checkout -q main && printf '%s' "$1" > runs/review.jsonl \
+      && git add runs/review.jsonl && git commit -q --allow-empty -m "review row" ) >/dev/null 2>&1
+  }
+  _row=$(printf '{"reviewer": "b0", "artifact": "model.py @ %s"}\n' "${_sha:0:8}")
+  _gmain ""
   _gcase "model.py, no row" feat refused
-  printf '{"reviewer": "b0", "artifact": "model.py @ %s"}\n' "${_sha:0:8}" > "$_g/runs/review.jsonl"
-  _gcase "model.py, row by another" feat accepted
+  _gmain "$_row"
+  _gcase "model.py, row by another on main" feat accepted
   # SELF-REVIEW IS NOT A REVIEW -- the case that decides whether this gate enforces anything.
-  printf '{"reviewer": "feat", "artifact": "model.py @ %s"}\n' "${_sha:0:8}" > "$_g/runs/review.jsonl"
+  _gmain "$(printf '{"reviewer": "feat", "artifact": "model.py @ %s"}\n' "${_sha:0:8}")"
   _gcase "model.py, self-review" feat refused
-  printf '{"reviewer": "b0", "artifact": "model.py @ deadbeef"}\n' > "$_g/runs/review.jsonl"
+  _gmain '{"reviewer": "b0", "artifact": "model.py @ deadbeef"}'
   _gcase "row names another sha" feat refused
-  : > "$_g/runs/review.jsonl"
+  # THE SHA IN `item` COUNTS TOO. The predicate concatenates artifact and item, and the refusal
+  # text said only `artifact` until 2026-09-07 -- tilerl's real row put both shas in `item`, so
+  # anyone following the text would have concluded a working row was malformed.
+  _gmain "$(printf '{"reviewer": "b0", "item": "b0-27 counter fix %s + another"}\n' "${_sha:0:8}")"
+  _gcase "sha in item, not artifact" feat accepted
+  # AN UNMERGED LOCAL ROW IS NOBODY'S SIGNATURE. This is the false-PASS direction: with the CWD
+  # read, writing this file was enough to clear a gate whose entire purpose is that someone else
+  # signed. main's ledger is empty here and the caller's names the sha.
+  _gmain ""
+  printf '%s' "$_row" > "$_c/runs/review.jsonl"
+  _gcase "row only in the caller's tree, not on main" feat refused
+  # And the false-REFUSE direction, which is what made this visible: main carries the row, the
+  # caller's tree does not, and the commit is reviewed.
+  _gmain "$_row"
+  : > "$_c/runs/review.jsonl"
+  _gcase "row on main, absent from the caller's tree" feat accepted
+  _gmain ""
   _gcase "touches neither file" docsonly accepted
   _gcase "lone revert is exempt" revonly accepted
-  rm -rf "$_g"
+  rm -rf "$_g" "$_c"
 
   # THE DEADLINE GUARD MUST NOT REFUSE THE MODES THAT NEITHER MERGE NOR COMMIT. It did:
   # `timeout 120 bash scripts/merge_main.sh --selftest` was refused minutes after the guard
