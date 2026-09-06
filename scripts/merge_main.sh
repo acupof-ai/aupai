@@ -257,6 +257,78 @@ PY
   return 0
 }
 
+# THE STAGED-INDEX CARRY (tilerl-31), as two functions so --selftest drives the REAL code in a
+# scratch repo rather than a reimplementation of it. A reimplemented predicate shares the
+# original's assumptions and its agreement is not evidence (gate_failure_shapes §231).
+#
+# _carry_stage <branch>   prints the wip ref it created, or nothing when no carry was needed.
+#                         Returns 1 and explains when it refuses.
+# _carry_restore <ref>    writes the carried paths over the merge result and drops the ref.
+_carry_stage() {
+  _cs_staged=$(git diff --cached --name-only)
+  [ -n "$_cs_staged" ] || return 0
+  # FAST-FORWARD vs TRUE MERGE is the discriminator, not path overlap. A fast-forward checks out
+  # only the changed files and tolerates a staged index; a true merge runs `ort`, which needs a
+  # clean index TREE-WIDE and refuses ANY staged path. Measured in both directions with the staged
+  # path held constant at one the incoming side never touches (de + tilerl-0a, 2026-09-06):
+  # fast-forwardable rc=0, diverged rc=2 "would be overwritten by merge: mine.txt". A version
+  # keyed on overlap would miss every real case.
+  if git merge-base --is-ancestor HEAD main; then
+    echo "merge_main: $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') staged path(s), but the merge is a fast-forward -- no carry needed" >&2
+    return 0
+  fi
+  _cs_ref="refs/wip/$1"
+  # REFUSE RATHER THAN OVERWRITE. An existing ref means a previous carry never restored, so
+  # clobbering it discards whatever that run staged, silently.
+  if git rev-parse -q --verify "$_cs_ref" >/dev/null; then
+    echo "REFUSING: $_cs_ref already exists -- a previous carry never restored." >&2
+    echo "  Inspect it, then remove it once its content is safe:" >&2
+    echo "    git show $_cs_ref" >&2
+    echo "    git update-ref -d $_cs_ref" >&2
+    return 1
+  fi
+  # A COMMIT ON A PRIVATE REF, NEVER A STASH: refs/stash is ONE stack shared by every worktree,
+  # so two sessions each pop the other's entry (AGENTS.md; e1 and b0, 2026-09-02). refs/wip/<branch>
+  # is per-branch and shows in `git log --all`, so an interrupted carry is recoverable by name
+  # rather than by position in a stack somebody else is also pushing to.
+  _cs_tree=$(git write-tree) || { echo "REFUSING: git write-tree failed" >&2; return 1; }
+  _cs_wip=$(git commit-tree "$_cs_tree" -p HEAD -m "wip: staged index carried through merge of main") \
+    || { echo "REFUSING: git commit-tree failed" >&2; return 1; }
+  git update-ref "$_cs_ref" "$_cs_wip" || { echo "REFUSING: could not write $_cs_ref" >&2; return 1; }
+  git reset -q HEAD -- . || { echo "REFUSING: could not clear the index" >&2; return 1; }
+  echo "merge_main: carried $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') staged path(s) to $_cs_ref (${_cs_wip:0:8}); restoring after the merge" >&2
+  # FIRST LINE IS THE REF, THE REST ARE THE PATHS. _carry_restore needs the names: restoring by
+  # `.` reverts the merge (see the comment there), so the list has to survive the round trip.
+  printf '%s\n' "$_cs_ref"
+  printf '%s\n' "$_cs_staged"
+  return 0
+}
+
+_carry_restore() {
+  # RESTORE ONLY THE CARRIED PATHS, NAMED. `git checkout <ref> -- .` was the first version and it
+  # is WRONG in a way nothing else here would have caught: the ref is a whole-tree commit, so `.`
+  # writes EVERY path back to its pre-merge content and silently reverts the merge. Measured
+  # (/tmp/de_w1_diag.sh, 2026-09-06): after the merge shared.txt read `other` (main's change) and
+  # mine.txt read `staged`; after `checkout <ref> -- .` shared.txt was back to `base`. The merge
+  # succeeded, the carry "worked", and main's change was gone from the working tree with nothing
+  # raising. W1 asserts the CONSEQUENCE -- both changes present -- which is the only reason this
+  # was found instead of shipped.
+  #
+  # $2 is the newline-separated path list _carry_stage recorded. Restoring by name touches nothing
+  # the merge wrote to any other path.
+  [ -n "${2:-}" ] || { echo "REFUSING: _carry_restore needs the carried path list" >&2; return 1; }
+  if ! printf '%s\n' "$2" | tr '\n' '\0' | xargs -0 git checkout "$1" --; then
+    echo "REFUSING: the merge landed but the staged index could not be restored." >&2
+    echo "  It is intact at $1. Restore the carried paths by name, then drop it:" >&2
+    printf '%s\n' "$2" | sed "s|^|    git checkout $1 -- |" >&2
+    echo "    git update-ref -d $1" >&2
+    return 1
+  fi
+  git update-ref -d "$1"
+  echo "merge_main: restored $(printf '%s\n' "$2" | wc -l | tr -d ' ') carried path(s) on top of the merge; $1 dropped" >&2
+  return 0
+}
+
 # --selftest drives the REAL _lock_is_dead against fixture locks, in BOTH directions -- a
 # predicate that only ever says "dead" passes every positive case: the live-pid and deliberate-hold
 # rows are the ones that would have prevented 2026-09-05.
@@ -443,6 +515,124 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     *) echo "  ok   deadline guard, the words in quoted text are not a deadline";;
   esac
 
+  # THE STAGED-INDEX CARRY (tilerl-31), six worlds against a REAL scratch repo, driving the real
+  # _carry_stage/_carry_restore. The whole point is that the CONSEQUENCE is asserted -- the merge
+  # succeeds and BOTH changes are present -- not that the functions ran without error.
+  _c=$(mktemp -d)
+  _ccase() {  # $1=name $2=want ok|fail  $3..=nothing; the body is inline per world
+    if [ "$_cgot" != "$2" ]; then
+      echo "  FAIL carry $1: want $2, got $_cgot${_cwhy:+ ($_cwhy)}" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   carry $1 -> $_cgot"
+    fi
+  }
+  _cworld() {  # build: main advanced on shared.txt; work diverged; mine.txt staged
+    rm -rf "$_c/w"; mkdir -p "$_c/w"
+    (
+      cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+      printf 'base\n' > shared.txt; printf 'base\n' > mine.txt
+      git add -A && git commit -qm base
+      git checkout -q -b work
+      printf 'other\n' > shared.txt
+      git checkout -q main && printf 'other\n' > shared.txt && git commit -qam "main edits shared"
+      git checkout -q work
+      if [ "${1:-diverge}" = "diverge" ]; then
+        printf 'localcommit\n' > mine.txt && git commit -qam "work commits mine"
+      fi
+      printf 'staged\n' > mine.txt && git add mine.txt
+    ) >/dev/null 2>&1
+  }
+  # W1: THE JOINT ACCEPTANCE TEST. Staged path main never touches, histories diverged. The merge
+  # must succeed and the RESULT must hold both changes -- main's shared.txt AND the staged mine.txt.
+  _cworld diverge
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _co=$(_carry_stage work) \
+           && _cr=$(printf '%s\n' "$_co" | head -1) && _cp=$(printf '%s\n' "$_co" | tail -n +2) \
+           && git merge --no-edit main >/dev/null 2>&1 \
+           && { [ -n "$_cr" ] && _carry_restore "$_cr" "$_cp" >/dev/null 2>&1; } \
+           && grep -q other shared.txt && grep -q staged mine.txt && echo BOTH ) 2>&1 || true
+  case "$_cout" in *BOTH*) _cgot=ok;; *) _cwhy="$_cout";; esac
+  _ccase "W1 staged path + diverged history: merge succeeds, BOTH changes present" ok
+  # W1-CONTROL: the same world with NO carry must FAIL, or W1 proves nothing about the carry.
+  _cworld diverge
+  _cgot=ok; _cwhy=""
+  ( cd "$_c/w" && git merge --no-edit main ) >/dev/null 2>&1 && _cwhy="the bare merge succeeded" || _cgot=fail
+  _ccase "W1-control bare merge on the same world is refused by git" fail
+  # W2: the ref already exists -- a previous carry never restored. Must refuse, not clobber.
+  _cworld diverge
+  _cgot=ok; _cwhy=""
+  ( cd "$_c/w" && git update-ref refs/wip/work HEAD && _carry_stage work ) >/dev/null 2>&1 \
+    && _cwhy="_carry_stage overwrote an existing refs/wip/work" || _cgot=fail
+  _ccase "W2 refs/wip/<branch> already exists: refuse" fail
+  # ...and the refusal must NAME the ref, or the operator cannot find their own work.
+  _cworld diverge
+  _cout=$( cd "$_c/w" && git update-ref refs/wip/work HEAD >/dev/null 2>&1; \
+           cd "$_c/w" && _carry_stage work 2>&1 >/dev/null ) 2>/dev/null || true
+  case "$_cout" in
+    *"refs/wip/work"*) echo "  ok   carry W2 refusal names the ref";;
+    *) echo "  FAIL carry W2 refusal does not name refs/wip/work: $_cout" >&2; _fails=$((_fails + 1));;
+  esac
+  # W3: FAST-FORWARD with a staged index must NOT carry. Same staged path, only history differs --
+  # this is the measured discriminator, so a version keyed on path overlap fails here or at W1.
+  _cworld ff
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _carry_stage work ) 2>/dev/null || true
+  if [ -z "$_cout" ]; then _cgot=ok; else _cwhy="carried on a fast-forward: $_cout"; fi
+  _ccase "W3 fast-forward + staged index: no carry" ok
+  # ...and the world must really be a fast-forward, or W3 passes for the wrong reason.
+  if ( cd "$_c/w" && git merge-base --is-ancestor HEAD main ); then
+    echo "  ok   carry W3 world control: HEAD really is an ancestor of main"
+  else
+    echo "  FAIL carry W3 world control: the world is not fast-forwardable, so it tests nothing" >&2
+    _fails=$((_fails + 1))
+  fi
+  # W4: an empty index is untouched -- no ref written, nothing to restore.
+  _cworld diverge
+  ( cd "$_c/w" && git reset -q HEAD -- . ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _carry_stage work ) 2>/dev/null || true
+  if [ -z "$_cout" ] && ! ( cd "$_c/w" && git rev-parse -q --verify refs/wip/work >/dev/null ); then
+    _cgot=ok
+  else
+    _cwhy="wrote a ref for an empty index"
+  fi
+  _ccase "W4 empty index: no ref, no carry" ok
+  # W5: NO STASH. The carry must never touch refs/stash -- that stack is shared with every
+  # worktree, and two sessions popping it apply diffs they never wrote (e1 and b0, 2026-09-02).
+  _cworld diverge
+  ( cd "$_c/w" && _carry_stage work ) >/dev/null 2>&1
+  if ( cd "$_c/w" && git rev-parse -q --verify refs/stash >/dev/null ); then
+    echo "  FAIL carry W5: the carry wrote refs/stash -- that stack is shared across worktrees" >&2
+    _fails=$((_fails + 1))
+  else
+    echo "  ok   carry W5 refs/stash untouched"
+  fi
+  # W6: A CONFLICTING MERGE LEAVES THE CARRY INTACT AND SAYS SO. The staged work must survive a
+  # failed merge, because the operator's next move is to resolve and restore it by name.
+  rm -rf "$_c/w"; mkdir -p "$_c/w"
+  (
+    cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'base\n' > both.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'work\n' > both.txt && git commit -qam "work edits both"
+    git checkout -q main && printf 'main\n' > both.txt && git commit -qam "main edits both"
+    git checkout -q work && printf 'staged\n' > other.txt && git add other.txt
+  ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cref=$( cd "$_c/w" && _carry_stage work ) 2>/dev/null || true
+  if [ -n "$_cref" ]; then
+    ( cd "$_c/w" && git merge --no-edit main ) >/dev/null 2>&1 || true
+    if ( cd "$_c/w" && git rev-parse -q --verify refs/wip/work >/dev/null ) \
+       && ( cd "$_c/w" && git show "refs/wip/work:other.txt" 2>/dev/null | grep -q staged ); then
+      _cgot=ok
+    else
+      _cwhy="the carry ref or its content did not survive the conflicting merge"
+    fi
+  else
+    _cwhy="no carry was made in the conflict world"
+  fi
+  _ccase "W6 conflicting merge: the carried index survives at refs/wip/work" ok
+  rm -rf "$_c"
+
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
   echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
   echo "  hold both read alive at any age; gone, zombie and unparseable read dead; a holderless"
@@ -586,12 +776,29 @@ for _ in $(seq 1 120); do
       echo "  main is unmoved at ${_old:0:8}." >&2
       exit 1
     fi
+    # THE STAGED INDEX, CARRIED THROUGH THE MERGE (tilerl-31). `_dirty` above reads
+    # `git diff --name-only` -- UNSTAGED only -- so a staged path fell straight into the merge
+    # below and aborted there, with git's own advice being `git stash`, which is forbidden here.
+    # The mechanism and the refusal cases are documented on _carry_stage; --selftest drives it.
+    # _carry_stage prints the ref on its first line and the carried paths after it.
+    _carry_out=$(_carry_stage "$1") || { echo "  main is unmoved at ${_old:0:8}." >&2; exit 1; }
+    _carry=$(printf '%s\n' "$_carry_out" | head -1)
+    _carry_paths=$(printf '%s\n' "$_carry_out" | tail -n +2)
     if ! git merge --no-edit main; then
       echo "merge_main: $1 conflicts with main. Resolve in THIS worktree, commit, retry --" >&2
+      if [ -n "$_carry" ]; then
+        echo "  YOUR STAGED INDEX IS AT $_carry -- it is NOT lost and NOT restored. After you" >&2
+        echo "  resolve, restore the carried paths BY NAME (never \`-- .\`, which reverts the" >&2
+        echo "  merge) and drop the ref:" >&2
+        printf '%s\n' "$_carry_paths" | sed "s|^|    git checkout $_carry -- |" >&2
+        echo "    git update-ref -d $_carry" >&2
+      fi
       echo "  nothing was written to the integration tree and main is unmoved at ${_old:0:8}." >&2
       exit 1
     fi
-    # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
+    if [ -n "$_carry" ]; then
+      _carry_restore "$_carry" "$_carry_paths" || exit 1
+    fi    # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
     # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
     # records the event under its own git dir (invisible to `git status`, per-worktree) and this
     # step drains it through the CLI, which owns the accepted-kind list.
