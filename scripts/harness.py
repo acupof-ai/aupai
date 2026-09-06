@@ -1960,6 +1960,98 @@ def _agents_coverage_table(root):
     return rows, None
 
 
+def check_deletion_list_no_tracked(root):
+    """No path on a deletion-candidate list is tracked in main.
+
+    §255: task 3b-16 said "delete the unclaimed web_cci3_p* dirs and loose batch_*.jsonl".
+    All 143 batch_*.jsonl on the pod are in data/corpus/sample/, which git ls-tree gives as
+    143 of 148 TRACKED files -- the 2,000-document sample a checkout ships. The deletion
+    reads as reclaiming scratch space and is a repo edit performed on the pod, where nothing
+    looks: pod_drift --check asserts the files the manifest LISTS match, never that unlisted
+    ones are absent, so a deleted tracked file leaves every gate green.
+
+    Tracked status is a property of the REPOSITORY, not of the directory a candidate sits in,
+    so a list built by looking at the filesystem cannot see it. This reads the lists.
+
+    Scope, stated because it is narrow: runs/*deletion_candidates*.md|txt and
+    runs/pod_ckpt_candidates_*.txt. A path is a candidate only if the line is a table cell or
+    a bare path -- prose that happens to name a tracked file is not a deletion target, and a
+    check that flagged it would be turned off. Globs are expanded against the index, so
+    `data/corpus/sample/batch_*.jsonl` on a list resolves to the 143 files and FAILs.
+    """
+    import fnmatch
+    import subprocess
+
+    r = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, "not a git repository"
+    tracked = set(r.stdout.split())
+    if not tracked:
+        return SKIP, "no tracked files"
+
+    lists = []
+    d = os.path.join(root, "runs")
+    if os.path.isdir(d):
+        for n in sorted(os.listdir(d)):
+            if re.search(r"(deletion_candidates|ckpt_candidates).*\.(md|txt)$", n):
+                lists.append(os.path.join("runs", n))
+    if not lists:
+        return SKIP, "no deletion-candidate lists in runs/"
+
+    hits = []
+    for rel in lists:
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, 1):
+                # A path is a candidate when it stands alone or fills a table cell. Prose
+                # naming a file is not a deletion target: the C3 list's own body explains
+                # WHY data/corpus/sample/ must not be deleted, and flagging that sentence
+                # would make the check fire on the document that prevents the incident.
+                for cell in ([c.strip().strip("`") for c in line.split("|")]
+                             if line.lstrip().startswith("|") else [line.strip().strip("`")]):
+                    if not cell or " " in cell or "/" not in cell:
+                        continue
+                    if any(fnmatch.fnmatch(t, cell) or t == cell for t in tracked):
+                        n = sum(1 for t in tracked if fnmatch.fnmatch(t, cell) or t == cell)
+                        hits.append(f"{rel}:{i} names {cell} -- {n} tracked file(s) in main")
+    if hits:
+        return FAIL, ("; ".join(hits[:6])
+                      + " -- a deletion list may not name tracked content; strike the target "
+                        "or the rm removes what a fresh checkout ships, with every gate green")
+    return PASS, f"{len(lists)} deletion list(s), no tracked path named"
+
+
+def _broken_deletion_list_no_tracked():
+    """A REAL deletion list, in a REAL git repo, naming a path that IS tracked there.
+
+    The world must be a git repository or the check SKIPs and the selftest reports it as
+    unfailable (measured 2026-09-06: _tmp_repo() is a bare mkdtemp, so the first version of
+    this world produced "not a git repository"). So: git init, commit a file at the same path
+    the incident's tracked content lives at, then append that path to a copy of the real list.
+    """
+    import shutil
+    import subprocess
+
+    d = _tmp_repo()
+    src = next((n for n in sorted(os.listdir(os.path.join(ROOT, "runs")))
+                if re.search(r"deletion_candidates.*\.md$", n)), None)
+    if src is None:
+        raise SelftestSkip("no deletion-candidate list in runs/ to mutate")
+
+    # A tracked file at the path the incident is about, so the check's own subject exists.
+    victim = os.path.join("data", "corpus", "sample", "batch_0000.jsonl")
+    os.makedirs(os.path.join(d, os.path.dirname(victim)), exist_ok=True)
+    with open(os.path.join(d, victim), "w", encoding="utf-8") as f:
+        f.write('{"text": "a tracked sample row"}\n')
+    for cmd in (["init", "-q"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
+                                                   "commit", "-qm", "sample"]):
+        subprocess.run(["git", "-C", d, *cmd], capture_output=True)
+
+    dst = os.path.join(d, "runs", src)
+    shutil.copy(os.path.join(ROOT, "runs", src), dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(f"\n{victim}\n")
+    return d
+
 def check_shapes_table_covers_doc(root):
     """Every surviving incident § in gate_failure_incidents.md (model-project) and
     infra_incidents.md (pod/infra) appears exactly once in AGENTS.md's rule table, and
@@ -6532,8 +6624,14 @@ def _broken_corpus_filters_fp():
     domain that is NOT in the baseline (new debt). Both must FAIL."""
     d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
-    with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
-        fh.write("# a filter\n")
+    # All three PIPELINE filters, copied from the real tree. fp_filters raises on a missing
+    # one rather than hashing "absent" -- a build whose filter file vanished must not carry a
+    # valid-looking fingerprint -- so a world holding only pass1 makes the check RAISE, which
+    # the selftest reports as "cannot be made to fail" rather than as a FAIL (measured
+    # 2026-09-06, when scoping fp_filters to the pipeline turned this world red that way).
+    import shutil
+    for _n in ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py"):
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "web_hq")
     os.makedirs(dom, exist_ok=True)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
@@ -14554,6 +14652,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "deletion_list_no_tracked",
+        "no path on a deletion-candidate list is tracked in main",
+        "3b-16's list named 143 batch_*.jsonl that are tracked content in data/corpus/sample/ -- deleting them on the pod removes what a fresh checkout ships and pod_drift stays green, because it asserts listed files match and never that unlisted ones are absent (§255)",
+        check_deletion_list_no_tracked,
+        _broken_deletion_list_no_tracked,
+    ),
+    (
         "shapes_table_covers_doc",
         "every incident in the incidents doc is referenced exactly once in AGENTS.md's rule table",
         "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
@@ -14819,6 +14924,7 @@ EVIDENCE = {
     "vocab_id_on_load_path": "repo",
     "coresident_cache_refusal": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "deletion_list_no_tracked": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
