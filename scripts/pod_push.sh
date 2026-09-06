@@ -21,6 +21,7 @@ set -euo pipefail
 export PODPUT_TRACKED_OK=1
 cd "$(dirname "$0")/.."
 
+
 # The sha a whole-manifest stamp may claim, or a refusal — BEFORE anything ships.
 # Same test stamp_sync used to run at the end, hoisted for the reason the rule exists:
 # a `refusing:` line printed after every file and the manifest have landed names a
@@ -57,10 +58,20 @@ resolve_stamp_sha() {
 # this machine, so it cannot ask whether main has moved -- run_ddp.sh can only read a
 # stamp somebody left. Called after --check, so a stamp means the manifest gate agreed.
 #
-# Only a whole-manifest push may claim a sha. A named-file push leaves every other file
-# at whatever it was, so it CLEARS the stamp instead: the pod is then a mix of one sha's
-# tree and one file from another, and the honest state is "unknown". The failure this
-# guards is a three-day run on code somebody pushed one file into.
+# A whole-manifest push claims its sha directly. A named-file push USED TO CLEAR the
+# stamp unconditionally, on the reasoning that the pod is then "one sha's tree plus one
+# file from another" and the honest state is unknown. That reasoning is right about the
+# risk and wrong about the evidence: the pod's own drift gate has just compared every
+# SCOPE file against the manifest, so after a partial push whether the pod is a mix is
+# a MEASURED question, not an assumed one. Cleared three times in one hour on
+# 2026-09-06 (3b, 44, the b0 resume) by pushes that left the pod exactly at main, and
+# launch_gate then refused on a stamp describing no divergence.
+#
+# So: recompute. If the drift gate says every manifest file matches, the pod IS the
+# manifest's tree and the stamp is that sha. If anything differs, clear it -- same
+# outcome as before, now for a reason that was checked. The guarded failure (a
+# three-day run on code somebody pushed one file into) is unchanged: that pod has a
+# drifted file, so the gate says so and the stamp goes.
 stamp_sync() {
   if [ "$1" = all ]; then
     local head_sha dirty
@@ -69,11 +80,60 @@ stamp_sync() {
             | grep -v '^runs/') 2>/dev/null | wc -l | tr -d ' ')
     ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $head_sha $dirty $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
     echo "pod sync stamp: $head_sha (dirty=$dirty)"
+  elif [ "$1" = partial ] && [ "${2:-}" = clean ] && [ -n "${3:-}" ]; then
+    # The drift gate above exited 0: every manifest file on the pod matches this tree's,
+    # and this tree is main (resolve_stamp_sha refused otherwise). Nothing is mixed.
+    ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $3 0 $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
+    echo "pod sync stamp: $3 (partial push, but every manifest file matches -- recomputed, not cleared)"
   else
     ~/bin/pod "cd /work/aupai && rm -f data/pod_synced_head" < /dev/null
-    echo "pod sync stamp CLEARED (partial push) -- run '$0 --all' before a training launch"
+    echo "pod sync stamp CLEARED -- the pod does not match this tree; run '$0 --all'"
   fi
 }
+
+# --selftest: drive stamp_sync's three outcomes against a FAKE pod, so the branch that
+# decides whether a launch is allowed has a check that runs on this machine. It must come
+# before the tree/refusal gates below, which talk to the real pod.
+if [ "${1:-}" = "--selftest" ]; then
+  _d=$(mktemp -d); mkdir -p "$_d/bin" "$_d/pod/data"
+  cat > "$_d/bin/pod" <<'FAKEPODEOF'
+#!/bin/bash
+cd "$FAKEPOD" || exit 1
+cmd="$1"; cmd="${cmd#cd /work/aupai && }"
+eval "$cmd"
+FAKEPODEOF
+  chmod +x "$_d/bin/pod"
+  export FAKEPOD="$_d/pod" HOME="$_d"
+  _stamp="$_d/pod/data/pod_synced_head"
+  _fails=0
+  # A: every manifest file matched and the sha resolved -- the stamp is RECOMPUTED, not
+  # cleared. This is the case that cost three cleared stamps in one hour on 2026-09-06.
+  rm -f "$_stamp"
+  stamp_sync partial clean deadbeefdeadbeefdeadbeefdeadbeefdeadbeef >/dev/null
+  if ! grep -q deadbeef "$_stamp" 2>/dev/null; then
+    echo "FAIL A: a clean partial push did not stamp; launch_gate would refuse on no divergence" >&2
+    _fails=1
+  fi
+  # B: the drift gate found something -- clear, same as before. Without this the fix would
+  # be "always stamp", which passes A and stamps a pod that really is a mix.
+  stamp_sync partial >/dev/null
+  if [ -f "$_stamp" ]; then
+    echo "FAIL B: a drifted partial push left a stamp behind" >&2
+    _fails=1
+  fi
+  # C: clean but NO sha (resolve_stamp_sha refused -- an unmerged HEAD). Must fall through
+  # to the clear, never stamp an empty sha, which run_ddp.sh cannot resolve.
+  printf 'pre-existing\n' > "$_stamp"
+  stamp_sync partial clean >/dev/null
+  if [ -f "$_stamp" ]; then
+    echo "FAIL C: stamped with no sha resolved: $(cat "$_stamp")" >&2
+    _fails=1
+  fi
+  rm -rf "$_d"
+  [ "$_fails" -eq 0 ] || { echo "pod_push selftest: FAIL"; exit 1; }
+  echo "pod_push selftest ok: a clean partial push recomputes the stamp, a drifted one clears it, and an unresolved sha clears rather than stamps"
+  exit 0
+fi
 
 ALL=0
 if [ "${1:-}" = "--all" ]; then ALL=1; shift; fi
@@ -344,5 +404,22 @@ else
   tn push "$manifest" "$EMPTYPATH/aupai/$manifest"
 fi
 
-~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null
-stamp_sync partial
+# The drift gate decides the stamp now, so its exit code has to be CAPTURED rather than
+# left to `set -e`. `_rc=0; cmd || _rc=$?` survives set -e; `cmd; _rc=$?` does not --
+# the shell exits at cmd before the assignment runs.
+#
+# A partial push may only claim a sha this tree can legitimately stamp, which is the same
+# question --all asks: HEAD must be main or reachable from it. resolve_stamp_sha prints a
+# refusal and returns nonzero otherwise, and then the stamp is cleared rather than claimed.
+_drift_rc=0
+~/bin/pod "cd /work/aupai && python3 scripts/pod_drift.py --check" < /dev/null || _drift_rc=$?
+_partial_sha=""
+if [ "$_drift_rc" -eq 0 ]; then
+  _partial_sha=$(resolve_stamp_sha 2>/dev/null) || _partial_sha=""
+fi
+if [ "$_drift_rc" -eq 0 ] && [ -n "$_partial_sha" ]; then
+  stamp_sync partial clean "$_partial_sha"
+else
+  stamp_sync partial
+fi
+exit "$_drift_rc"
