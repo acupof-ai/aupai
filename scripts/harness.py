@@ -275,6 +275,7 @@ _TASK_STOPWORDS = {"which", "there", "these", "those", "their", "would", "could"
 #: Rule bullet (prefix) -> the check that enforces it. The AGENTS.md "Rule coverage"
 #: table is the human-readable copy of this map; agents_rules_covered keeps both honest.
 _RULE_CHECKS = {
+    "Never write `refs/heads/main` by hand": "main_advances_by_ancestry",
     "The hook runs `--selftest` on staged files in its `SELFTEST_FILES` map":
         "selftests_are_gated",
     # pinned_ids + tokenizer_roundtrip catch a REBUILD after the fact (moved specials,
@@ -321,6 +322,13 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    # NO CHECK CAN ENFORCE THIS. It is about what a session does in the seconds AFTER a failed
+    # push, which no repo state records. main_advances_by_ancestry catches the DAMAGE if someone
+    # forces the ref; nothing can catch a session that reads "main X -> Y", believes it, and
+    # moves on -- the ref is correct at that moment and only a later write discards it.
+    "A failed push means your advance may already be gone":
+        "the omission is a person not running one command after a failure; the repo records "
+        "the forced ref (main_advances_by_ancestry) but never the unverified belief",
     "To hold the tree quiet, `scripts/merge_main.sh --hold`":
         "which command took the lock is not recoverable from the lock. A hand-rolled mkdir and "
         "a crash between --hold's mkdir and its holder write leave the same holderless directory, "
@@ -2314,6 +2322,118 @@ def _broken_test_integration_tree_guard():
                 pass
     open(os.path.join(d, "scripts", "integration_tree.py"), "w", encoding="utf-8").write(
         s.replace(marker, marker + "    return True\n"))
+    return d
+
+
+def check_main_advances_by_ancestry(root):
+    """main's reflog must only ever move to a commit that DESCENDS from its previous value.
+
+    MEASURED 2026-09-06: main went bc95abe8 -> 9a11b9ea where 9a11b9ea's parent is f7367fd7,
+    so the ref moved SIDEWAYS and bc95abe8 (carrying ac0ffcbc, a task close) left the history
+    entirely. tilerl-28 read `open` on main although it had been closed. The cause was a bare
+    `git update-ref refs/heads/main <new>` with no expected-old-value, run by hand after
+    GitHub's push protection refused a commit; merge_main's CAS would have refused it and was
+    simply not used.
+
+    ANCESTRY, NOT FIRST-PARENT. The obvious phrasing is "the new commit's first parent is the
+    old main", and it is wrong in a way that matters: a legal integration merges main INTO the
+    branch, so old-main is the SECOND parent of the merge commit, and a first-parent test would
+    fail every correct merge_main run. The property that actually holds for every legal advance
+    and fails for this one is that the previous value is an ancestor of the new value.
+
+    READS THE RAW REFLOG, not `git reflog show`. The porcelain prints one sha per entry; the
+    file at logs/refs/heads/main carries `<old> <new>` per line, which is the pair this needs --
+    reconstructing pairs by zipping consecutive porcelain lines would silently mis-pair across a
+    gap and report a jump that did not happen.
+
+    THE INTEGRATION TREE'S reflog, not this worktree's: refs/heads/main lives in the common git
+    dir and every session's merge_main writes it there. A per-worktree reflog would be empty.
+    """
+    r = subprocess.run(["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0 or not r.stdout.strip():
+        return SKIP, "cannot locate the common git dir, so main's reflog cannot be read"
+    log = os.path.join(r.stdout.strip(), "logs", "refs", "heads", "main")
+    if not os.path.exists(log):
+        return SKIP, f"no reflog for main at {log} (a fresh clone has none)"
+    try:
+        with open(log, encoding="utf-8", errors="replace") as fh:
+            lines = fh.read().splitlines()
+    except OSError as e:
+        return SKIP, f"cannot read main's reflog: {e}"
+    # The last N entries only. The whole file is every advance since the repo began, and a jump
+    # from months ago is not actionable -- it names a sha nobody can still recover from a branch.
+    lines = [ln for ln in lines if ln.strip()][-200:]
+    ZERO = "0" * 40
+    # THE ONE INCIDENT THAT ALREADY HAPPENED, named by its exact sha pair rather than excused by
+    # a rule. It is in the reflog forever, so without this the check FAILs every commit until the
+    # entry ages past the 200-line window -- and a check that is red for a fixed cause is one
+    # people learn to pass with --no-verify. Recorded, not suppressed: the row stays in
+    # runs/friction.jsonl, AGENTS.md names the rule, and any OTHER pair still FAILs.
+    #
+    # A PAIR, NOT A SHA. Excusing `9a11b9ea` as a destination would hide a second sideways move
+    # onto the same commit; excusing bc95abe8 as a source would hide the next thing that
+    # discards it. Only this exact transition is known.
+    _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
+                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
+    jumps = []
+    for ln in lines:
+        parts = ln.split()
+        if len(parts) < 2:
+            continue
+        old, new = parts[0], parts[1]
+        if old == ZERO or old == new or (old, new) in _RECORDED:
+            continue  # ref creation, a no-op write, or the recorded 2026-09-06 incident
+        a = subprocess.run(["git", "merge-base", "--is-ancestor", old, new],
+                           cwd=root, capture_output=True)
+        if a.returncode == 1:
+            jumps.append((old, new))
+        # returncode >1 means a sha this clone cannot resolve -- pruned or never fetched. Not a
+        # jump and not evidence of one; saying nothing is correct, since the check cannot see it.
+    if jumps:
+        detail = "; ".join(f"{o[:8]} -> {n[:8]}" for o, n in jumps[:4])
+        return FAIL, (
+            f"{len(jumps)} sideways move(s) of refs/heads/main -- the previous value is NOT an "
+            f"ancestor of the new one, so whatever was on main was discarded rather than built "
+            f"on: {detail}. A failed push is fixed by amending on your BRANCH and re-running "
+            f"merge_main, never by `git update-ref refs/heads/main`."
+        )
+    return PASS, f"main advanced by ancestry in all {len(lines)} recorded move(s)"
+
+
+def _broken_main_advances_by_ancestry():
+    """A repo whose main was moved sideways by a bare update-ref -- 44's incident, rebuilt.
+
+    A real repo with a real reflog, not a hand-written log file: the check reads git's own
+    format and resolves both shas, so a fabricated line would test the parser rather than the
+    property. The sideways move is made the same way it happened, by `update-ref` with no
+    expected-old-value, which is exactly the call the CAS would have refused.
+    """
+    d = _tmp_repo()
+    def g(*a):
+        return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    # _tmp_repo MAKES A DIRECTORY, NOT A REPOSITORY -- its name is about shape, not git. Without
+    # this init every git call below fails with "not a git repository", the fixture builds no
+    # reflog, and the check SKIPs. Measured: the broken world and a clean control both returned
+    # the same SKIP, so the world could not have failed and proved nothing.
+    g("init", "-q", ".")
+    g("config", "user.email", "t@example.invalid")
+    g("config", "user.name", "t")
+    g("checkout", "-q", "-B", "main")
+    open(os.path.join(d, "f.txt"), "w").write("base\n")
+    g("add", "-A"); g("commit", "-q", "-m", "base")
+    base = g("rev-parse", "HEAD").stdout.strip()
+    # A legal advance: a commit ON TOP of main.
+    open(os.path.join(d, "f.txt"), "w").write("legal\n")
+    g("add", "-A"); g("commit", "-q", "-m", "legal advance")
+    # The sideways move: a commit that descends from `base`, NOT from main's current value,
+    # forced onto the ref with no expected-old-value.
+    g("checkout", "-q", "-b", "side", base)
+    open(os.path.join(d, "g.txt"), "w").write("side\n")
+    g("add", "-A"); g("commit", "-q", "-m", "amended elsewhere")
+    side = g("rev-parse", "HEAD").stdout.strip()
+    g("update-ref", "refs/heads/main", side)
+    g("checkout", "-q", "main")
     return d
 
 
@@ -13706,6 +13826,13 @@ CHECKS = [
         _broken_test_integration_tree_guard,
     ),
     (
+        "main_advances_by_ancestry",
+        "refs/heads/main only ever moves to a commit that descends from its previous value",
+        "main went bc95abe8 -> 9a11b9ea sideways on 2026-09-06 and a task-close commit left the history with nothing red; the cause was a bare `git update-ref refs/heads/main` after a refused push, which bypasses merge_main's CAS entirely",
+        check_main_advances_by_ancestry,
+        _broken_main_advances_by_ancestry,
+    ),
+    (
         "refusal_precedes_push",
         "pod_push's main-reachability refusal is decided before the first file ships",
         "the rule is 'only a refusing: line means nothing shipped', and stamp_sync broke it in its own favour: it tested reachability at the END of --all, so the refusal printed after every file and the manifest had already landed, and on the partial path it was unreachable entirely (2026-09-04)",
@@ -13931,6 +14058,7 @@ EVIDENCE = {
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
+    "main_advances_by_ancestry": "repo",
     "refusal_precedes_push": "repo",
     "test_pod_wrappers": "repo",
     # repo: the suite builds its own temp git repos and reads three source files. Nothing about
@@ -17401,7 +17529,36 @@ def _demo(only=None):
                     f"the condition the check exists to catch")
         return None
 
-    world_reality = {"pod_stamp_is_main": _stamp_world_is_real}
+    # Same exemption, same reason, different artifact: this check reads git's own reflog at
+    # logs/refs/heads/main, which is inside .git and is not a tracked path, so no world built in
+    # this repository can hold a file at a repo-real path either.
+    #
+    # The substitute asserts the world was built BY GIT rather than typed: the reflog exists, and
+    # some line in it names two shas that the world's own object store resolves and that git
+    # itself reports as non-ancestor. A hand-written pair of hex strings fails `cat-file -e`; a
+    # pair that is really an ancestor fails the last clause, so a world that passes this holds
+    # the condition the check exists to catch and got it the way the incident did.
+    def _reflog_world_is_real(world):
+        log = os.path.join(world, ".git", "logs", "refs", "heads", "main")
+        if not os.path.exists(log):
+            return "the world holds no reflog for main at .git/logs/refs/heads/main"
+        zero = "0" * 40
+        for ln in open(log, encoding="utf-8", errors="replace").read().splitlines():
+            parts = ln.split()
+            if len(parts) < 2 or parts[0] == zero or parts[0] == parts[1]:
+                continue
+            old, new = parts[0], parts[1]
+            if any(subprocess.run(["git", "-C", world, "cat-file", "-e", f"{s}^{{commit}}"],
+                                  capture_output=True).returncode for s in (old, new)):
+                return f"{old[:8]} -> {new[:8]} names a sha the world cannot resolve -- invented"
+            if subprocess.run(["git", "-C", world, "merge-base", "--is-ancestor", old, new],
+                              capture_output=True).returncode == 1:
+                return None
+        return ("every move in the world's reflog advances by ancestry, so the world does not "
+                "hold the condition the check exists to catch")
+
+    world_reality = {"pod_stamp_is_main": _stamp_world_is_real,
+                     "main_advances_by_ancestry": _reflog_world_is_real}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check
     # with no FAIL tier cannot have a FAILing broken world, and demanding one would
