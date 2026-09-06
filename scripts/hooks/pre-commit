@@ -887,6 +887,16 @@ def main():
         # a case that only read the `case` pattern would pass for a version whose exemption never
         # reached the branch.
         "scripts/merge_main.sh",
+        # THIS FILE'S OWN _main_touched_staged. Registered because 06ed3b2a shipped that
+        # predicate with no test anywhere in the tree -- it appears once, here -- and because the
+        # rule it replaced is the kind someone reinstates for reading simpler: "refuse when HEAD
+        # is behind main" is an obviously safe-looking wall, and it refused b0 at 15 behind, then
+        # again at 4 behind after the merge it was told to run. W2 is what goes red if the count
+        # comes back, and W3 is the operator's real case -- the file COMMITTED on a branch behind
+        # main, with main having moved it too -- where committed-vs-dirty is not the question.
+        # Measured 2026-09-07, three mutants each killing a different world set: count-not-overlap
+        # -> W2/W3-control/W6, two-dot -> W3-control/W6, always-empty -> W1/W3.
+        "scripts/test_behind_main_overlap.py",
         # The stamp branch that decides whether the next training launch is allowed. Registered
         # because it runs entirely against a FAKE pod -- the three outcomes are decided by
         # stamp_sync's own arguments, so the one gate nobody can exercise from this machine
