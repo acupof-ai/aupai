@@ -93,7 +93,7 @@
    "config": {
     "note": "cot/ dir; filters=light"
    },
-   "uncertainty": "genuine shortfall vs 30b target 4.5B (~4.1B short); needs fetch+rebuild; one of two truly-unfetched domains",
+   "uncertainty": "SUPERSEDED IN ITS ARITHMETIC 2026-09-06: this said 'genuine shortfall vs 30b target 4.5B (~4.1B short); needs fetch+rebuild; one of two truly-unfetched domains', correct when written on 2026-09-03 and wrong by 775,972,331 tokens since data/corpus/cot_open_thoughts landed later the same day. The cot role holds 424,056,227 + 775,972,331 = 1,200,028,558, so the shortfall is 3,299,971,442, not 4,075,943,773 -- 19.0% smaller. See cs.cot_open_thoughts_landed. The value field of THIS entry is unchanged and still describes data/corpus/cot/ alone, which is what it measures.",
    "status": "measured",
    "boundary": "cot_seed/ exists separately; shortfall is vs the 30b target",
    "guard_phrases": [
@@ -385,6 +385,22 @@
    "uncertainty": "Exact frozen-tokenizer count over the rows that survive the cut, not an estimate. The dedup is exact-match on a 400-char prefix, so near-duplicates within the kept set are not removed and the true unique-token figure is at or below 2.76M. Steps 4 (MinHash against cot/cot_open_thoughts) and 5 (contamination against the eval registry) were NOT run: no MinHash path exists against those domains, and MBPP is absent from datagen/holdout.py's registry, so a contamination hit against it cannot be detected. Both are unmeasured, not zero.",
    "status": "measured",
    "boundary": "This is the TOTAL Fable CoT supply, not an increment. All 4,484 cot-schema rows in fable5_2m are present in kelexine/Fable-5-traces by uid (parquet-only 0, kelexine-only 181), so fable5_2m is a strict subset and the earlier 2.4M kelexine figure and this 2.76M are the same rows measured twice. 99.78% of fable5_2m is raw Claude Code JSONL envelopes with no thinking field. Credential redaction removed 30 secrets across 14 rows in 3 session sources (20/6/4); one of them, 68396a0d, is the source of the row 44's hand-read found the live Groq key in, so the automated pass reproduces facts/data_quality.json#dq.fable5_cot_handread_50 independently. Says nothing about the ~4B cot gap beyond covering 0.07% of it."
+  },
+  {
+   "id": "cs.cot_open_thoughts_landed",
+   "value": 775972331,
+   "unit": "tokens",
+   "measured": "2026-09-06",
+   "source": "/work/aupai/data/corpus/cot_open_thoughts/build_corpus_stats.json, read in the container (tokens_kept; docs_in 113,957 -> docs_kept 112,046, 6 shards)",
+   "config": {
+    "builder": "datagen/build_cot.py --schema openthoughts, criterion docs/standards/cot_criterion_0903.md",
+    "reject_checks": "keep 112,046, truncated 1,911 -- the only reject class that fired",
+    "tokenizer": "data/tokenizer.json, the frozen vocabulary, counted at build time by build_cot.py",
+    "why_it_was_missing": "build_cot.py's stats dict emits tokens_kept and no filters_fp/tokens key, so neither the fact store nor corpus_filters_fp ever saw this domain; the dir landed 2026-09-03 after cs.cot_landed was written and nothing joined them"
+   },
+   "uncertainty": "Exact at build time, not re-derived from the shards today: the value is build_cot.py's own count, and unlike cs.zh_web_landed there has been no independent full pass to confirm it. srcfp is None in the stamp, so the source directory it was built from is not recorded and a re-derivation cannot prove it read the same input.",
+   "status": "measured",
+   "boundary": "THIS IS THE NUMBER THAT MAKES THE COT SHORTFALL WRONG EVERYWHERE IT IS QUOTED. cs.cot_landed's uncertainty says '~4.1B short' against the 4.5B 30b target, computed as 4.5e9 - 424,056,227 = 4,075,943,773 and correct on 2026-09-03. With this domain the cot role holds 424,056,227 + 775,972,331 = 1,200,028,558 and the real shortfall is 3,299,971,442 -- the quoted figure overstates it by 775,972,331, 19.0%. It carries no filters_fp, so it is invisible to corpus_filters_fp and cannot be judged stale or current against the pipeline filters."
   }
  ]
 }
