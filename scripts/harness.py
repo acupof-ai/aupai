@@ -2895,6 +2895,63 @@ def _broken_root_durable():
     return d
 
 
+def _selftest_tasks_read_from_index():
+    """A row STAGED but absent from the working tree must be the one the check judges.
+
+    4c's world for b0's finding. The two sources only disagree while a commit is being
+    built, which is exactly when this check runs (the pre-commit hook), so a fixture that
+    commits first would have both sides agree and prove nothing -- the reason reading the
+    working tree survived this long.
+
+    The reverse direction is the control: a row in the working tree but NOT staged must be
+    invisible. Without it "read the index" could be implemented as "read both", which passes
+    the first assertion while still judging rows that are not being committed.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="tri_")
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@t"); g("config", "user.name", "t")
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "tasks.jsonl")
+        with open(p, "w") as fh:
+            fh.write(json.dumps({"id": "committed-1", "state": "open"}) + "\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base register")
+
+        # Staged, never committed: present in the index, and then REMOVED from the working
+        # tree so the two sources cannot both be right.
+        with open(p, "a") as fh:
+            fh.write(json.dumps({"id": "staged-only", "state": "open"}) + "\n")
+        g("add", "runs/tasks.jsonl")
+        with open(p, "w") as fh:
+            fh.write(json.dumps({"id": "committed-1", "state": "open"}) + "\n")
+            fh.write(json.dumps({"id": "worktree-only", "state": "open"}) + "\n")
+
+        ids = {r.get("id") for r in _read_tasks(p, index_root=d)}
+        assert "staged-only" in ids, f"the staged row must be read; got {ids}"
+        assert "worktree-only" not in ids, (
+            f"a working-tree row that is NOT staged must be invisible -- the check judges what "
+            f"the commit will contain, not what the tree happens to hold; got {ids}")
+
+        # No index entry (the path is untracked here) falls back to the file rather than
+        # returning nothing: a check run outside a repo must still read the register.
+        d2 = tempfile.mkdtemp(prefix="tri2_")
+        p2 = os.path.join(d2, "tasks.jsonl")
+        with open(p2, "w") as fh:
+            fh.write(json.dumps({"id": "file-only", "state": "open"}) + "\n")
+        got = {r.get("id") for r in _read_tasks(p2, index_root=d2)}
+        shutil.rmtree(d2, ignore_errors=True)
+        assert got == {"file-only"}, f"no index entry must fall back to the file, got {got}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  tasks: the register is read from the index, so rows and their fact citations come "
+          "from one tree; an unstaged row is invisible and a non-repo path still falls back")
+
+
 def _selftest_root_durable_backup_ack():
     """The three tiers, on one world, because only their DIFFERENCE is the change.
 
@@ -7358,8 +7415,14 @@ def check_tasks_closed_by_commit(root):
 
     Closing wrote free text, so a task closed on a path that never existed read as
     delivered and the register could not tell the difference. The rule dates from
-    TASK_COMMIT_FROM; rows closed before it keep their prose evidence."""
-    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
+    TASK_COMMIT_FROM; rows closed before it keep their prose evidence.
+
+    ONE TREE FOR BOTH SIDES. The rows come from the index, because _commit_delivers resolves
+    the fact citations they carry against the index too. Reading rows from the working tree
+    and facts from the index judges a tree that exists nowhere (b0, 2026-09-06): during a
+    merge the working tree already holds the incoming row while the index is what the commit
+    will be, and the two answer differently the moment they diverge."""
+    rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"), index_root=root)
     # THE MAP MUST SEE MERGE COMMITS. `git log --name-only` prints no paths for a merge, so this
     # check silently could not verify any delivery that landed in one -- 607 of main's 2755
     # commits (22%) read as touching nothing, and closing de-30 against c889bc2 was refused with
@@ -10393,7 +10456,7 @@ def _head_sha():
 
 
 
-def _read_tasks(path=None, raw=False):
+def _read_tasks(path=None, raw=False, index_root=None):
     """The register, folded by id: last row for an id wins.
 
     The file is an EVENT LOG, not a table. `task done`/`reopen` append a new row
@@ -10405,17 +10468,33 @@ def _read_tasks(path=None, raw=False):
     state whichever order they land in.
 
     raw=True returns every event, for the checks that must see collisions.
+
+    index_root reads the STAGED register (`git show :runs/tasks.jsonl`) instead of the
+    working tree's. For a check that also resolves fact citations against the index, the
+    two sides must come from ONE tree: reading rows from the working tree and facts from
+    the index means the check judges a tree that exists nowhere (b0, 2026-09-06). Falls
+    back to the file when the path is not in the index -- a fresh clone, a check run
+    outside a repo, or simply an unstaged register, none of which are errors here.
     """
     p = path or TASKS_PATH
-    if not os.path.exists(p):
-        return []
+    text = None
+    if index_root is not None:
+        rel = os.path.relpath(p, index_root)
+        r = subprocess.run(["git", "-C", index_root, "show", f":{rel}"],
+                           capture_output=True, text=True)
+        if r.returncode == 0:
+            text = r.stdout
+    if text is None:
+        if not os.path.exists(p):
+            return []
+        text = open(p, encoding="utf-8").read()
     # A concurrent append can be observed mid-write: the reader sees a torn line and
     # json.loads raises, so `harness check` failed inside a hook and passed 20 s later
     # by hand -- a flake that reads as a real refusal (fb, 2026-08-31). Skip a line
     # that will not parse; ledgers_one_line_per_row is what judges malformed rows, and
     # it runs when nobody is mid-write.
     rows = []
-    for line in open(p, encoding="utf-8"):
+    for line in text.splitlines():
         if not line.strip():
             continue
         try:
@@ -18771,6 +18850,7 @@ def _demo(only=None):
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_content_restored_read_failure()
+    _selftest_tasks_read_from_index()
     _selftest_root_durable_backup_ack()
     _selftest_merge_reverted_content()
     _selftest_commit_delivers_fact_ref()
