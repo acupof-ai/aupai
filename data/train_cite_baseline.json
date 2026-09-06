@@ -1,19 +1,18 @@
 {
   "why": "train.py line citations still carrying a bare number, in both forms the check reads: the qualified `train.py:NNN` and the abbreviated `:NNN` inside a sentence that names train.py and no sha. A RATCHET -- a NEW bare citation FAILs check_train_cite_targets. Ruling (aupai-4c, 2026-09-06 and the abbreviated-form narrowing 2026-09-07): cite a role or a symbol, or anchor the number to a commit sha. Every entry is DEBT, not an exception: the 2026-09-06 audit read the 198 qualified citations under scripts/ and 103 of 118 judgement cases were rotten, so assume these are mostly rotten too and read each one before believing it. 4c has ordered the audit of these, eval/ first, one commit per directory, shrinking this list each time.",
   "measured": "2026-09-07",
-  "at_commit": "ca08fe39",
+  "at_commit": "bd6055da",
   "schema": "allowed_bare maps `<citing file>-><cited number>` to HOW MANY bare citations that pair may carry. CONTENT-KEYED, NOT POSITION-KEYED, and a MULTISET rather than a set. The first schema keyed on `<file>:<citing line>-><target>` and any insertion above a baselined citation moved its key, turning the ratchet red on whoever merged next (4c, 2026-09-07; e1 hit it landing #48, 122 lines inserted, key 6174 -> 6285). A line-text hash was the other candidate and trades one false red for another: measured, it gives 87 distinct keys for 87 citations against this key's 70, but it goes red on a comment REFLOW, which happens whenever a sentence around a citation is edited. The count is what keeps the ratchet honest under a colliding key: 15 pairs carry more than one citation, so a set would let a file grow from one to three with the baseline unchanged.",
-  "qualified_bare_count": 4,
+  "qualified_bare_count": 2,
   "abbreviated_bare_count": 0,
   "sha_anchored_count": 19,
-  "total_bare_count": 4,
+  "total_bare_count": 2,
   "bare_by_directory": {
-    "facts": 4
+    "facts": 2
   },
   "allowed_bare": {
     "facts/efficiency.json->521": 1,
-    "facts/efficiency.json->746": 1,
-    "facts/moe.json->3391": 2
+    "facts/efficiency.json->746": 1
   },
-  "count_growth_reason": "4, from 125 at facts/ entry and 6 before this ratchet. facts/efficiency.json's last 41 are resolved, which closes the facts/ sweep: 72 of 72 citations judged across the five files were rotten, and the code side has been zero since this morning. THREE CLASSES SURVIVE HERE AND THEY ARE NOT INTERCHANGEABLE. (1) 14 entries already named the symbol beside the number, so the number was redundant and dropping it lost nothing. (2) eff.recompile_reason_named's two /work/aupai/train.py:N are quoted TORCH_LOGS=recompiles output, kept verbatim -- rewriting a quotation to a symbol falsifies it, and the entry says so in its own text. (3) eff.run_end_cursor_overstates_under_max_steps keeps its five numbers as recorded 2026-09-03 and names c9011022, the commit that REMOVED the defect: converting it to symbols would point a reader at code that now does the opposite, and a confidently wrong symbol is worse than a visibly stale number. A content search over every train.py commit 2026-08-28..2026-09-05 found no sha holding all five at those lines (best 2 of 5), so no anchor exists to give it. What is left is moe.json's 2, which lessons-58 wrote and is taking."
+  "count_growth_reason": "2, from 125 at facts/ entry. THE SWEEP IS CLOSED: both remaining citations are quoted tool output and neither can become a symbol without falsifying a quotation. eff.recompile_reason_named holds TORCH_LOGS=recompiles' own lines, 'Recompiling function forward in /work/aupai/train.py:521' and the muon_update one at :746 -- the tool printed those at the tree the run used, they are not pointers this repo maintains, and the entry says so in its own text. Everything else resolved: 74 of 74 citations judged across the six facts/ files were rotten, code side zero since 2026-09-07 morning, 19 sha-anchored and verified at their sha. THE THREE CLASSES, because they are not interchangeable and a future sweep will meet them again: (1) the ordinary case, 14 entries that already named the symbol beside the number, where the number was redundant and dropping it lost nothing; (2) quoted tool output, kept verbatim, the two above; (3) a citation describing a defect that has SINCE BEEN FIXED -- eff.run_end_cursor_overstates_under_max_steps, whose five numbers describe the run-end save before c9011022 gave it opt and step. A symbol there would aim a reader at code that now does the opposite, and a confidently wrong symbol is worse than a visibly stale number; a content search over every train.py commit 2026-08-28..2026-09-05 found no sha holding all five at their lines (best 2 of 5), so it carries 'lines as recorded' and names the fixing commit. Two more were JSON KEYS rather than prose (eff.layer9_mixer_o_lags' default_off_read_not_inferred maps a citation to the symbol found there) and took a sha anchor from the entry's own the_one_commit, 169da865, where both lines are verbatim -- the claim is about the tree that INTRODUCED the flag, so the pointer has to resolve against that tree. A new bare citation anywhere FAILs."
 }
