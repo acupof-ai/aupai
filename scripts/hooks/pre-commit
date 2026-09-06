@@ -1544,6 +1544,13 @@ def main():
         # every fp32 arm's arithmetic, which is the objection this program raises about the
         # fp8/bf16 confound in the first place.
         "scripts/test_bf16_flag.py",
+        # The warmdown start. Registered here AND on train.py's trigger list below, because the
+        # defect is in train.py and this test's load-bearing assertion is a SOURCE assertion: the
+        # formula appearing exactly once. Restoring the pre-fix duplication changes no behaviour
+        # at any value anyone would test -- both copies agreed at 9155 -- so a behavioural-only
+        # test cannot see the defect at all, and SELFTEST_FILES alone would run this only when
+        # someone edits the test rather than when someone edits train.py.
+        "scripts/test_warmdown_start.py",
         # The latent MoE. Registered here AND on model.py's trigger list below, because the defect
         # it guards is in model.py: the routed experts contract over d_latent, so w13's fan_in
         # changes from d to d_latent, and initialising at d is a 1.63x scale error at the
@@ -2063,6 +2070,7 @@ def main():
                      "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
+                     "scripts/test_warmdown_start.py",
                      "scripts/test_moe_latent.py",
                      # test_eta_window READS train.py -- it extracts main's step-line f-string with
                      # inspect.getsource and asserts on that template, and calls _eta_fields

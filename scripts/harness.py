@@ -13601,6 +13601,123 @@ def _selftest_cite_scope_covers_facts():
             "by symbol PASSes, and the untouched tree PASSes (3 cases)")
 
 
+def _selftest_launch_closes_its_orphaned_row():
+    """A launch that dies BEFORE the process exists closes its own row.
+
+    b0's 2026-09-06 05:33 row: harness launch calls exp.py start, then does work, then Popen. An
+    attempt that dies in between leaves status=running with NO artifact that can close it from
+    evidence -- no runs/<name>.log, no .pid, no .rc, nothing on the pod stamped for the name. That
+    row stayed open 16 hours, and no_stale_running then refused every commit in the repository, for
+    six sessions, over a job that never started. The monitor cannot cover it: the monitor watches a
+    pid, and there is no pid.
+
+    4c PROPOSED A WORLD THAT DOES NOT EXERCISE THIS, and it is worth recording why rather than
+    quietly substituting one: "a launch whose command is a nonexistent path". Measured here --
+    /no/such/binary through the `bash -c 'set -o pipefail; "$@"; ...'` wrapper does NOT raise.
+    Popen succeeds (bash exists), bash exits 127, and the process therefore EXISTS, so the row is
+    closed by the ordinary monitor path and the fix is never reached. A world built on the plausible
+    reading would have passed with the fix reverted.
+
+    So the two worlds here are raise sites read off the actual code between the row and the Popen:
+
+      (1) log_path unopenable -- `open(log_path, "w")` raises OSError when runs/ is missing or not
+          writable. This is the last statement before Popen and the closest analogue of b0's case.
+      (2) the training drift check timing out -- `subprocess.run(..., timeout=30)` raises
+          TimeoutExpired, which the surrounding `if r.returncode != 0` cannot see. That branch
+          closes the row on a drift REFUSAL and not on a drift check that never answered.
+
+    Both are asserted through _close_row's real writer against a temp ledger, so the row that ends
+    up in the file is exp.py's own, not a hand-built one.
+    """
+    import inspect
+    import shutil
+    import tempfile
+
+    src = inspect.getsource(cmd_launch)
+    row_at = src.index('"start", "--name", args.name')
+    try_at = src.index("_launch_after_row(args, cmd, cards, launcher, gate_note)")
+    assert row_at < try_at, (
+        "the guarded call must come AFTER the start row is written -- guarding a window that does "
+        "not yet contain the row protects nothing")
+    assert "except BaseException" in src[try_at:], (
+        "the guard must catch BaseException: a KeyboardInterrupt or SystemExit in this window "
+        "leaves the row open exactly as an Exception does")
+    after = inspect.getsource(_launch_after_row)
+    assert "open(log_path" in after and "Popen(" in after, (
+        "the split moved the log open or the Popen out of the guarded function")
+
+    # THE WORLDS. Both use exp.py as the writer and assert on the folded ledger.
+    d = tempfile.mkdtemp(prefix="launchorphan_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        ledger = os.path.join(d, "runs", "experiments.jsonl")
+
+        def open_rows():
+            """Folded open rows, via the ledger's OWN reduction (_exp_fold -> exp.fold).
+
+            Not a scan for status=="running": the file is an event log, so a name with a running
+            event AND a later terminal one is CLOSED, and counting raw running lines would report
+            every closed run in the world as open. That is the re-implementation mistake _exp_fold's
+            own docstring records three instances of.
+            """
+            if not os.path.exists(ledger):
+                return []
+            rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+            return [r for r in _exp_fold(rows) if r.get("status") == "running"]
+
+        # A DISTINCT NAME PER WORLD. The ledger folds on (name, started) and exp.py mints `started`
+        # at minute resolution, so two worlds run in the same minute under one name collapse to one
+        # row: the second `start` is folded away by the first world's terminal row and the sanity
+        # assertion fires on a correct fix. Caught here on the first run.
+        for label, exc in (("log path unopenable", OSError(2, "No such file or directory")),
+                           ("drift check timed out",
+                            subprocess.TimeoutExpired(cmd=["pod_drift.py"], timeout=30))):
+            name = "orphan_" + label.split()[0]
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+                 "--name", name, "--cmd", "x", "--hypothesis", "y"],
+                check=True, capture_output=True)
+            assert open_rows(), f"{label}: sanity -- exp.py start must leave an open row"
+            # What the guard does, with the real closer and the real exception text.
+            assert _close_row(name, "fail",
+                              f"launch died before the process existed: "
+                              f"{type(exc).__name__}: {exc}"[:400],
+                              "no process was ever created, so there is no log, pid or rc to close "
+                              "it from -- closed by harness launch itself",
+                              "re-run the launch after fixing the cause named above",
+                              root=d), f"{label}: _close_row itself reported failure"
+            left = open_rows()
+            assert not left, (
+                f"{label}: the row is STILL OPEN after the close ({len(left)} row(s)). This is "
+                f"b0's 05:33 shape: nothing else can close it, and no_stale_running will refuse "
+                f"every commit in the repository once it is a day old")
+            rows = [json.loads(x) for x in open(ledger, encoding="utf-8") if x.strip()]
+            term = [r for r in rows if r.get("name") == name and r.get("status") == "fail"]
+            assert term, f"{label}: no terminal row was written at all"
+            assert type(exc).__name__ in str(term[-1].get("result", "")), (
+                f"{label}: the close does not name the exception -- 'fail' with no text sends the "
+                f"next reader looking for a log that was never written: {term[-1].get('result')!r}")
+
+        # THE NEGATIVE CONTROL, and it is the one that makes the docstring's claim checkable rather
+        # than asserted: 4c's world really does leave the process existing, so it cannot distinguish
+        # the fix from its absence.
+        rc_probe = os.path.join(d, "probe.rc")
+        wrapped = ["bash", "-c", 'set -o pipefail; "$@"; rc=$?; printf %s "$rc" > "$0"; exit "$rc"',
+                   rc_probe, os.path.join(d, "no", "such", "binary")]
+        with open(os.path.join(d, "runs", "probe.log"), "w") as lf:
+            proc = subprocess.Popen(wrapped, stdout=lf, stderr=subprocess.STDOUT,
+                                    stdin=subprocess.DEVNULL)
+        rc = proc.wait()
+        assert rc == 127, (
+            f"the negative control assumes bash reports a missing command as 127, got {rc}; if this "
+            f"changes, 4c's nonexistent-path world may become a real raise and belongs above")
+        print("  launch: a death before the process exists closes its own row (2 raise sites); "
+              "a nonexistent command path is NOT such a death -- bash exits 127 with the process "
+              "alive, so that world cannot test this")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+
 def _selftest_cite_blob_anchor():
     """A blob-anchored citation resolves via cat-file, and a wrong line number FAILs.
 
@@ -20498,6 +20615,7 @@ def _demo(only=None):
         _selftest_train_cite_baseline_is_content_keyed,
         _selftest_cite_scope_covers_facts,
         _selftest_cite_blob_anchor,
+        _selftest_launch_closes_its_orphaned_row,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
@@ -22399,6 +22517,32 @@ def cmd_launch(rest):
          "--hypothesis", args.hypothesis],
         check=True,
     )
+    # FROM HERE TO THE Popen, ANY EXIT MUST CLOSE THE ROW IT JUST OPENED (4c, 2026-09-07, from
+    # b0's 05:33 row). exp.py start has already appended status=running, and the process does not
+    # exist yet -- so an exception in this window leaves a row that NOTHING can close from
+    # evidence: no runs/<name>.log, no .pid, no .rc, and nothing on the pod stamped for the name.
+    # b0's attempt died in exactly this window on 2026-09-06 and the row was still open 16 hours
+    # later, when no_stale_running turned red and refused every commit in the repository -- for
+    # six sessions, over a job that never started. The monitor covers the other side (it watches a
+    # pid), and the drift refusal below already closes its own row; the uncovered case is a raise.
+    #
+    # The close names the exception, because "fail" with no text sends the next reader looking for
+    # a log that was never written.
+    try:
+        return _launch_after_row(args, cmd, cards, launcher, gate_note)
+    except BaseException as _e:  # KeyboardInterrupt and SystemExit too: both leave the row open
+        _close_row(args.name,
+                   "fail",
+                   f"launch died before the process existed: {type(_e).__name__}: {_e}"[:400],
+                   "the row was opened by exp.py start and no process was ever created, so there "
+                   "is no log, pid or rc to close it from -- closed by harness launch itself",
+                   "re-run the launch after fixing the cause named above")
+        raise
+
+
+def _launch_after_row(args, cmd, cards, launcher, gate_note):
+    """Everything after the experiments row exists. Split out so the caller can close that row
+    on ANY exit -- see the comment at the call site."""
     # READ BACK THE started STAMP THIS RUN JUST OPENED. The monitor must match its own run and
     # nothing else: settled() compared on `name` alone, so the relaunched b0_mem_m1's monitor saw
     # the PREVIOUS run's 19:45 `fail` row, released the claim of a job at step 300 and exited --
@@ -22812,12 +22956,27 @@ def _close_row(name, status, result, finding, decision, root=None):
     """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
     override (the ledger gets no env var), so a test that cannot redirect it writes
     into the real ledger -- which is exactly what happened (four 'arts' rows,
-    2026-08-31, one pair sharing an identity that then failed the sync guard)."""
-    cmd = [sys.executable, os.path.join(HERE, "exp.py"), "done", "--name", name,
-           "--result", result, "--finding", finding, "--decision", decision, "--status", status]
+    2026-08-31, one pair sharing an identity that then failed the sync guard).
+
+    `--root` GOES BEFORE THE SUBCOMMAND, and until 2026-09-07 this function appended it after.
+    exp.py declares it on the top-level parser, so `exp.py done ... --root X` exits 2 with
+    `unrecognized arguments` -- and with capture_output=True that went nowhere. Every
+    _close_row(root=...) call wrote NOTHING and returned as if it had worked. No caller in the
+    tree passed root, so no production close was affected; it was found by the first test that
+    tried to use the parameter for the purpose the docstring gives it. The failure is now loud
+    rather than swallowed, for the reason the docstring already implies: a close that silently
+    does not happen is the defect its callers exist to prevent.
+    """
+    cmd = [sys.executable, os.path.join(HERE, "exp.py")]
     if root:
         cmd += ["--root", root]
-    subprocess.run(cmd, capture_output=True)
+    cmd += ["done", "--name", name,
+            "--result", result, "--finding", finding, "--decision", decision, "--status", status]
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"WARN: could not close the row for {name}: exp.py exited {r.returncode}: "
+              f"{(r.stderr or r.stdout).strip()[-300:]}", file=sys.stderr)
+    return r.returncode == 0
 
 
 def _env_fp_now():
