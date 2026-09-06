@@ -2,8 +2,9 @@
 """Verify a checkpoint IS the endpoint, by comparing two artifacts to each other.
 
 NO LITERAL STEP COUNT. The obvious version asserts `step == 10172`, and 10172 is itself
-derived -- train.py:3348 computes total_steps from the plan length and :3361 adds the resume
-point, so it depends on the mix and the resume, not on the token budget. A literal was wrong
+derived -- train.py computes total_steps from the plan length (`Cfg.epochs * (len(Xtr) //
+(Cfg.batch * Cfg.accum))`) and then adds resume_step back for a cursor-seeded plan, so it
+depends on the mix and the resume, not on the token budget. A literal was wrong
 once already: 8e9/786432 = 10172.526 floors to 10172 while --max_steps was 10173, so a
 `== 10173` assertion would have refused the real endpoint.
 

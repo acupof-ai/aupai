@@ -72,7 +72,8 @@ def main():
     if not a.no_fp8:
         train.convert_to_fp8_compute(model)
     if cfg.compile:
-        # Same limits train.py sets at :1632. Without them the default 8 is below AttnRes's
+        # Same limits train.py sets on torch._dynamo.config (cache_size_limit and
+        # accumulated_cache_size_limit). Without them the default 8 is below AttnRes's
         # 1 + 2*layers distinct source counts, dynamo silently falls back to eager from the 9th
         # on, and the profile describes a model 33% slower than the one training runs.
         torch._dynamo.config.cache_size_limit = 64
