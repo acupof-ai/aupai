@@ -1272,6 +1272,231 @@ def _broken_mutation_asserted_took():
 
 
 
+def _registered_selftest_files(root):
+    """The paths in the hook's SELFTEST_FILES literal, via ast.literal_eval.
+
+    The hook reads its own map this way for the same reason (pre-commit:74): two regex
+    versions were written and both wrong in opposite directions. The literal is a set here,
+    not the dict the older regex-based check parses, so this reads the value python builds
+    rather than re-deriving it.
+    """
+    hook = os.path.join(root, "scripts", "hooks", "pre-commit")
+    if not os.path.exists(hook):
+        return None
+    try:
+        tree = ast.parse(open(hook, encoding="utf-8").read())
+    except (OSError, SyntaxError):
+        return None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        for t in node.targets:
+            if isinstance(t, ast.Name) and t.id == "SELFTEST_FILES":
+                try:
+                    v = ast.literal_eval(node.value)
+                except ValueError:
+                    return None
+                return sorted(x for x in v if isinstance(x, str) and x.endswith(".py"))
+    return None
+
+
+def _unreachable_sites(src):
+    """[(owner, terminator_line, terminator_kind, dead_line)] for statements that cannot run.
+
+    A statement following an unconditional return/raise/break/continue AT THE SAME BLOCK LEVEL
+    never executes. Only the first per block is reported: everything after it is dead for the
+    same reason and listing all of it buries the cause.
+
+    Every statement list is scanned, not just function bodies -- a world can sit after a return
+    inside an `if`, a `for`, or a `try`, and those are the ones a reader skims past.
+    """
+    out = []
+    try:
+        tree = ast.parse(src)
+    except (SyntaxError, ValueError):
+        return None
+    for node in ast.walk(tree):
+        for field in ("body", "orelse", "finalbody"):
+            body = getattr(node, field, None)
+            if not (isinstance(body, list) and body):
+                continue
+            if not all(isinstance(x, ast.stmt) for x in body):
+                continue
+            for i, s in enumerate(body[:-1]):
+                if isinstance(s, (ast.Return, ast.Raise, ast.Break, ast.Continue)):
+                    out.append((getattr(node, "name", type(node).__name__), s.lineno,
+                                type(s).__name__, body[i + 1].lineno))
+                    break
+    return out
+
+
+def check_selftest_worlds_reachable(root):
+    """No registered selftest file has a statement that cannot execute.
+
+    THE DEFECT (e1, 2026-09-06, 06a47515). Editing eval/equal_token_gap.py to add two worlds, I
+    inserted them plus a `return 0` ABOVE the existing tok/step block. That block then sat after
+    a return and never ran -- and `--selftest` still printed OK, because A WORLD THAT DOES NOT
+    EXECUTE CANNOT FAIL. It survived a commit, the hook's selftest run, a full harness check, and
+    a live run against the pod.
+
+    The only tell was an ABSENCE: no "ok tok/step is read from the cfg line" among the printed
+    oks. Nothing compares that list to what should be in it, which is why this check reads the
+    source instead. Verified against the historical file: it names _selftest's Return at line 298
+    with line 302 unreachable, and finds no site on the clean tree across 198 registered files.
+
+    Scope is SELFTEST_FILES because those are the files whose green is load-bearing at commit
+    time. Dead code elsewhere is a style question; dead code in a guard is a guard that is not
+    guarding, reported as coverage.
+    """
+    files = _registered_selftest_files(root)
+    if files is None:
+        return FAIL, ("cannot read SELFTEST_FILES from scripts/hooks/pre-commit, so the set of "
+                      "files whose selftests gate a commit is unknown")
+    bad, scanned, absent = [], 0, 0
+    for rel in files:
+        p = os.path.join(root, rel)
+        if not os.path.exists(p):
+            absent += 1
+            continue
+        try:
+            src = open(p, encoding="utf-8").read()
+        except (OSError, UnicodeDecodeError):
+            continue
+        sites = _unreachable_sites(src)
+        if sites is None:
+            continue
+        scanned += 1
+        for owner, term_line, kind, dead_line in sites:
+            bad.append(f"{rel}:{dead_line} cannot run ({kind} at line {term_line}, in {owner})")
+    if bad:
+        return FAIL, (
+            f"{len(bad)} unreachable statement(s) in registered selftest file(s) -- a world "
+            f"after a return prints nothing and cannot fail, so its absence reads as a pass: "
+            f"{'; '.join(bad[:4])}")
+    return PASS, (f"{scanned} registered selftest file(s) scanned, no statement after an "
+                  f"unconditional return/raise/break/continue"
+                  + (f"; {absent} entry(ies) name no file" if absent else ""))
+
+
+def _broken_selftest_worlds_reachable():
+    """A real selftest with a `return 0` inserted above its last world.
+
+    scripts/tmpworld.py, chosen because it is short, has exactly one selftest, and ends in a
+    print-then-return that this world can step in front of -- the same edit that produced the
+    real defect. The insertion is asserted to have landed: a world whose mutation silently
+    missed would report PASS and prove nothing (mutation_asserted_took's own lesson).
+    """
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "hooks", "pre-commit"),
+                os.path.join(d, "scripts", "hooks", "pre-commit"))
+    target = os.path.join(d, "scripts", "tmpworld.py")
+    src = open(os.path.join(ROOT, "scripts", "tmpworld.py"), encoding="utf-8").read()
+    anchor = '    print("tmpworld selftest OK'
+    assert anchor in src, ("scripts/tmpworld.py no longer ends its selftest with that print; "
+                           "this world's anchor moved and it would mutate nothing")
+    mutated = src.replace(anchor, "    return 0\n" + anchor, 1)
+    assert "    return 0\n" + anchor in mutated, "the return-0 insertion did not land"
+    open(target, "w", encoding="utf-8").write(mutated)
+    # The property is source-level, so the file need not run -- but it MUST still parse, or the
+    # FAIL would come from a SyntaxError rather than from the unreachable statement.
+    assert _unreachable_sites(mutated), "the mutated file has no unreachable site to find"
+    return d
+
+
+def check_selftest_counts_computed(root):
+    """A selftest's claimed count of worlds should be computed, not written by hand.
+
+    WARN, NOT FAIL, and the reason is a measurement rather than caution. All 8 literal
+    unit-counts in the tree are ACCURATE as of 2026-09-06 -- I ran four of them and their
+    enumerations match: tmpworld "4 cases", replay_cursor "3 cases", read_lr_probe "5 cases",
+    ckpt_info "6 cases". A FAIL would therefore be permanent-red on a green tree, which AGENTS
+    forbids and which makes every other signal unreadable.
+
+    THE PREDICATE'S FALSE-POSITIVE RATE WAS MEASURED, not assumed. A first version matched any
+    number near an "ok" string and flagged 37 sites, including prose like "differ by >0.02" and
+    "step 3434". A second matched "<digits> <unit>" and flagged 11, of which "stage-2 pair",
+    "b0-23 pairs" and a refusal's "0 cases ran" were false. The version here requires a
+    non-hyphenated, non-zero integer directly before world/case/assertion/scenario and flags 8
+    with no false positive. Also note what is NOT evidence: assert count is not case count --
+    tmpworld's 4 cases carry 11 asserts -- so the claims were checked by running the files.
+
+    The real failure mode this pairs with is selftest_worlds_reachable: a hand-written count
+    stays right until a world stops running, and then it is the one number that could have said
+    so. A computed count cannot drift.
+    """
+    files = _registered_selftest_files(root)
+    if files is None:
+        return SKIP, "cannot read SELFTEST_FILES from scripts/hooks/pre-commit"
+    unit = r"(?:world|case|assertion|scenario)s?"
+    lit_re = re.compile(r"(?<![-\w.])([1-9]\d*)\s+" + unit + r"\b", re.I)
+    computed_re = re.compile(r"\x00\s*" + unit + r"\b", re.I)
+    literal, computed = [], 0
+    for rel in files:
+        p = os.path.join(root, rel)
+        if not os.path.exists(p):
+            continue
+        try:
+            tree = ast.parse(open(p, encoding="utf-8").read())
+        except (OSError, SyntaxError, UnicodeDecodeError):
+            continue
+        for fn in [x for x in ast.walk(tree) if isinstance(x, ast.FunctionDef)]:
+            if "selftest" not in fn.name and not fn.name.startswith("_test"):
+                continue
+            for call in [c for c in ast.walk(fn) if isinstance(c, ast.Call)]:
+                if not (isinstance(call.func, ast.Name) and call.func.id == "print"):
+                    continue
+                for arg in call.args:
+                    if isinstance(arg, ast.JoinedStr):
+                        # \x00 stands in for each {expr}, so "{n} worlds" is computed while
+                        # "8 worlds" inside an f-string is still a literal.
+                        joined = "".join(v.value if isinstance(v, ast.Constant) else "\x00"
+                                         for v in arg.values)
+                        if computed_re.search(joined):
+                            computed += 1
+                            continue
+                        m = lit_re.search(joined)
+                    elif isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+                        m = lit_re.search(arg.value)
+                    else:
+                        continue
+                    if m:
+                        literal.append(f"{rel}:{arg.lineno} says {m.group(0)!r}")
+    if literal:
+        return WARN, (
+            f"{len(literal)} hand-written world count(s) against {computed} computed -- each "
+            f"stays right until a world stops running, which is the one thing it could have "
+            f"reported: {'; '.join(literal[:4])}")
+    return PASS, f"{computed} selftest count(s), all computed from what executed"
+
+
+def _broken_selftest_counts_computed():
+    """A real selftest whose computed count is replaced by the literal it currently prints.
+
+    eval/equal_token_gap.py prints its ratio-1 world count from the block's own return value
+    (`{n_new} world(s) hold`). Substituting the number makes the claim a hand-written one, which
+    is exactly the state this check reports -- and the substitution is asserted to have landed.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "scripts", "hooks"), exist_ok=True)
+    os.makedirs(os.path.join(d, "eval"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "hooks", "pre-commit"),
+                os.path.join(d, "scripts", "hooks", "pre-commit"))
+    src = open(os.path.join(ROOT, "eval", "equal_token_gap.py"), encoding="utf-8").read()
+    anchor = "{n_new} world(s) hold"
+    assert anchor in src, ("eval/equal_token_gap.py no longer prints a computed world count; "
+                           "this world's anchor moved and it would mutate nothing")
+    mutated = src.replace(anchor, "18 world(s) hold", 1)
+    assert "18 world(s) hold" in mutated and anchor not in mutated, \
+        "the literal-count substitution did not land"
+    open(os.path.join(d, "eval", "equal_token_gap.py"), "w", encoding="utf-8").write(mutated)
+    return d
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -7106,8 +7331,29 @@ def check_owner_queue_depth(root):
     On 2026-09-02 the user found six sessions idle while the register showed 16 open rows:
     nine of them were blocked on the frozen training path and the rest were held by two
     owners. An idle session is a cost with no artifact, and nothing in the repo said so.
-    An empty queue is FAIL: that session is idle now. A queue of one is WARN: the
-    controller refills before it empties."""
+
+    WARN AT EVERY TIER, INCLUDING AN EMPTY QUEUE (4c's ruling, 2026-09-06). This check's
+    subject is THE CONTROLLER'S REFILL DUTY, and its FAIL tier landed on the wrong party: an
+    owner who has just delivered everything assigned has an empty queue BY DEFINITION, and the
+    FAIL then refused the very commit that proved the delivery. Measured across one session:
+    four close rows parked in sequence -- e1-41, e1-42, e1-43, e1-47 -- each held out of the
+    register until the controller sent more work, which made the register lag the truth in the
+    direction that matters most. A gate on one party's obligation must not refuse another
+    party's delivery.
+
+    The remedy is the tier and nothing else: the message still names the controller, the
+    thresholds are unchanged, and an empty queue is still reported on every run. What it no
+    longer does is block a commit. The alternative reading -- add a grace period so a
+    recently-closing owner reads WARN while a genuinely idle one still FAILs -- was considered
+    and dropped as a second mechanism for a problem the tier already answers.
+
+    A predicate treating a task blocked_on a granted card window as scheduled work was
+    specified and WITHDRAWN, measured unsafe: runs/card_assignment.json's lane_to is 170+ prose
+    tokens, and matching a row's blocked_on against it flipped BOTH open blocked rows in the
+    register -- e1-37 on the word "control", which was the row required to keep reading idle.
+    Worse, tilerl-26 matched on 1.5b-a0.2b-e48_8b, the run name it was WAITING FOR: a row
+    blocked on a run appearing and a row scheduled to follow that run name the same run, so a
+    substring cannot tell a grant from a blocker."""
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
@@ -7121,7 +7367,7 @@ def check_owner_queue_depth(root):
                 depth[t["owner"]] += 1
     empty = [m for m, n in sorted(depth.items()) if n == 0]
     if empty:
-        return FAIL, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
+        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
     short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
     if short:
         return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills"
@@ -13647,8 +13893,8 @@ CHECKS = [
     ),
     (
         "owner_queue_depth",
-        "every roster member has at least two open, unblocked tasks",
-        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02)",
+        "every roster member has at least two open, unblocked tasks (WARN at every tier)",
+        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02). WARN-only since 2026-09-06: the FAIL tier landed on the owner rather than the controller it addresses, refusing the commit that proved an owner had finished -- four close rows parked in one session",
         check_owner_queue_depth,
         _broken_owner_queue_depth,
     ),
@@ -13853,6 +14099,27 @@ CHECKS = [
         "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
         check_selftests_are_gated,
         _broken_selftests_are_gated,
+    ),
+    (
+        "selftest_worlds_reachable",
+        "no registered selftest file has a statement that cannot execute",
+        "e1 added two worlds to eval/equal_token_gap.py and put a `return 0` above the existing "
+        "tok/step block; that block never ran again and --selftest still printed OK, because a "
+        "world that does not execute cannot fail. It passed the hook, a full harness check and a "
+        "live pod run. The only tell was an absence -- one missing ok line -- and nothing "
+        "compares that list to what should be in it",
+        check_selftest_worlds_reachable,
+        _broken_selftest_worlds_reachable,
+    ),
+    (
+        "selftest_counts_computed",
+        "a selftest's claimed world count is computed from what ran, not hand-written",
+        "the companion to the dead world above: a hand-written count stays right until a world "
+        "stops running, and then it is the one number that could have said so. WARN rather than "
+        "FAIL because all 8 literal counts measured accurate on 2026-09-06 -- four were checked "
+        "by running them -- so a FAIL would be permanent red on a green tree",
+        check_selftest_counts_computed,
+        _broken_selftest_counts_computed,
     ),
     (
         "probe_numbers_unique",
@@ -14132,6 +14399,7 @@ EVIDENCE = {
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "selftest_worlds_reachable": "repo", "selftest_counts_computed": "repo",
     "snapshot_logs_say_so_at_the_tail": "pod",
     # repo: the readers and their callers are all tracked source; an AST parse needs no pod
     "cache_readers_set_vocab_id": "repo",
@@ -17526,7 +17794,19 @@ def _selftest_auto_resume():
         assert _cks == ["ckpt_arts.pt.step500"], f"one checkpoint in the argv, the new one: {_cks!r}"
         # The `=` spelling, which the old filter DID handle -- so a fix must not regress it.
         _eq = _strip_resume([sys.executable, child, f"--resume={_prev}", "--name", "arts"])
-        assert not any("resume" in c for c in _eq), f"--resume=<path> is removed whole: {_eq!r}"
+        # ASSERT ON THE FLAG, NOT ON THE SUBSTRING. `any("resume" in c for c in _eq)` was
+        # UNCONDITIONALLY TRUE: this fixture's own tempdir is mkdtemp(prefix="autoresume_"), so
+        # `child` -- which the rebuilt argv must keep -- contains the word, and the assertion
+        # fired on the very element it was meant to preserve. _strip_resume itself is correct
+        # (measured: the `=` form comes back removed whole), so this world was failing on its
+        # own fixture's naming rather than on the property, and the failure message named the
+        # right property while pointing at the wrong cause (e1, 2026-09-06; assertion from
+        # e186fc06).
+        assert not any(c == "--resume" or c.startswith("--resume=") for c in _eq), \
+            f"--resume=<path> is removed whole: {_eq!r}"
+        assert child in _eq, f"the script path was eaten with the flag: {_eq!r}"
+        # And a VALUE that merely contains the word is untouched: the filter matches the flag,
+        # not any argument mentioning resume.
         # And a VALUE that merely contains the word is untouched: the filter matches the flag,
         # not any argument mentioning resume.
         _kept = _strip_resume([sys.executable, "--name", "resume_probe"])
@@ -17795,7 +18075,16 @@ def _demo(only=None):
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
-                 "one_deliverable_per_owner", "prereg_citations_current"}
+                 "one_deliverable_per_owner", "prereg_citations_current",
+                 # WARN by measurement, not by caution: all 8 hand-written world counts in the
+                 # tree were accurate on 2026-09-06 (four verified by running them), so a FAIL
+                 # tier would be permanent red on a green tree.
+                 "selftest_counts_computed",
+                 # Demoted 2026-09-06 (4c's ruling): its subject is the CONTROLLER's refill
+                 # duty, and the FAIL tier refused the OWNER's delivery -- an empty queue is
+                 # what a finished owner has, so the gate blocked the commit that proved the
+                 # work was done. Four close rows parked in one session before this was named.
+                 "owner_queue_depth"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:

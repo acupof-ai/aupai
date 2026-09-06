@@ -7,23 +7,28 @@
 #
 # REVIEWED BY de (2026-09-06): method holds; two zeros are scans not absences. Signals added:
 #   39 of 42 basenames start with `_` (one-shot probes); 17 are under 1000 bytes.
-#   Only 3 of 42 are cited by any tracked file; 2 of those 3 only by the earlier audit inventory
-#   (runs/audit_0904/c2_untracked_pod_inventory.txt — circular, not independent evidence).
-#   cs_probe.py is the exception: facts/corpus_supply.json cites it, but the root copy is a STALE
-#   DUPLICATE of tracked scripts/cs_probe.py (3099 vs 3216 bytes; scripts/ has 2 extra header lines).
-#   The fact cites both; the tracked scripts/ copy is canonical. Root copy is deletable as a stale dup.
+# CITATION SCAN CAVEAT (de, 2026-09-06): a basename-keyed scan over a tree that has both `x.py`
+#   and `dir/x.py` answers "is this NAME cited", not "is this file cited". de's first pass overcounted
+#   (4 of 43) for exactly this reason. The trustworthy count is 3 of 42 cited, 2 of those 3 only by
+#   the earlier audit inventory (runs/audit_0904/c2_untracked_pod_inventory.txt — circular, not
+#   independent evidence). The 3rd, cs_probe.py, is a STALE DUPLICATE: facts/corpus_supply.json:344,358
+#   cites `scripts/cs_probe.py` (tracked, 3216 B), not the root copy (3099 B, 2 fewer header lines).
+#   The fact's provenance is intact; nothing needs landing. Root copy is deletable as a stale dup
+#   (pending user instruction per fb ruling below).
 # OWNER GUESSES: content-header claims, not provenance (de). The 39 `_`-prefixed one-shots are
-#   throwaways the 24h rule disposes of without anyone claiming. Owner matters only for the 3 cited.
+#   throwaways; owner matters only for the 3 cited, and is derivable from the citing artifact.
 #
 # live-proc refs: 0 (ps aux scanned; only defunct python zombies).
 # runs/*.log refs: 0 (grep -lF basename; 'harness' control matched, basenames did not).
-# DELETE NOTHING. Owners claim in runs/board.jsonl or the 24h rule applies. Reviewer: de.
+# DELETE NOTHING. Disposal (fb ruling 2026-09-06): no session deletes anything on the pod without
+# the user's explicit instruction naming the target (user order 2026-09-05). This list is the record;
+# fb puts the 42 to the user as one question when the run results go up. Reviewer: de.
 
 path                                        size mtime             owner_guess / cited_by
 ----------------------------------------------------------------------------------------------------------------------------------
 scripts/de5_classify.py                     4272 2026-09-03T07:10Z 6e/fb? — de-5 reachability (header cites 6e)  || CITED: runs/audit_0904/c2_untracked_pod_inventory.txt only (circular)
 ct_overlap.py                               4917 2026-09-03T22:49Z e1/tilerl? — code_tests overlap  || CITED: runs/audit_0904/c2_untracked_pod_inventory.txt only (earlier version of this inventory — circular, not independent)
-cs_probe.py                                 3099 2026-09-03T23:21Z STALE DUP — tracked scripts/cs_probe.py is newer; facts/corpus_supply.json cites both  || CITED: facts/corpus_supply.json + data/mix_30b.json + docs/standards/roadmap_0903.md (independent); root copy is stale dup of tracked scripts/cs_probe.py
+cs_probe.py                                 3099 2026-09-03T23:21Z STALE DUP of tracked scripts/cs_probe.py (3216B); fact cites scripts/ path, NOT this root copy  || root copy itself uncited (basename match was de's overcount error)
 _probe_sgm.py                               1425 2026-09-05T13:14Z tilerl? — _grouped_mm bf16
 _probe_sgm2.py                              1635 2026-09-05T13:14Z tilerl? — _grouped_mm fp8
 _probe_sgm3.py                              1755 2026-09-05T13:15Z tilerl? — _grouped_mm fp8
