@@ -55,6 +55,12 @@ echo "df before launch:"
 df -h /work | tail -1
 echo "cards from the caller: ${_DEVS[0]},${_DEVS[1]}"
 
+# de-60: run_ddp.sh refuses a call that did not come from `harness launch`. This script pins its
+# own two cards from the caller's grant and hands the torchrun pid to card_claim below, which is
+# what the launcher would otherwise do -- and routing through it would override those two cards
+# with the grant's whole block (§188). Named escape, with the claim step it replaces right there.
+export ALLOW_DIRECT_RUN=1
+
 nohup env CUDA_VISIBLE_DEVICES=${_DEVS[0]},${_DEVS[1]} NGPU=2 PORT=29514 ./run_ddp.sh \
   --mix data/mix_200m_8b.json --name "$NAME" \
   --dim 768 --layers 12 --heads 6 --ffn_hidden 2304 \
