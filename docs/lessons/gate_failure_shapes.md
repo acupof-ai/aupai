@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (123 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (211 = 123 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (125 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (213 = 125 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (111 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (112 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-111 incidents (34 infra, 77 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+112 incidents (34 infra, 78 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (17 incidents)
+### R2-a No broken world (18 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -78,6 +78,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §240: a fixture that cannot be the thing it tests — the hook's own selftest worlds 1-4 were a bare `git init` standalone repo (no linked worktrees, no scripts/), and world 1 asserted "commit on main is REFUSED" against a repo that was not an integration tree by any structural definition; it passed for five days under the branch-name predicate because that predicate did not care what the tree was. Fixed by building the property (`git worktree add` a sibling, copy the real module in). The mirror image: de's W5 asserted "detached does NOT refuse", correct under the old predicate and exactly backwards under the new one.
 - §242: a mutation run can be vacuous end to end — the runner built worlds with `git init` in an empty temp dir, where `git ls-files data runs scripts` is empty, so the selftest SKIPped and exited 0 for every mutant; four "survivors" measuring nothing, reported as a clean run. A SKIP exit 0 and a PASS exit 0 are indistinguishable from outside. Fixed by building worlds as a real worktree of the real repo; the discipline is one world-validity assertion before the mutants run (same as §235).
 - §243: a selftest world that passes under both the old and new predicate cannot see its own subject — the behind-main exemption widened from merge=union to any named driver, and the only covering world (5b) stages a merge=union ledger, so it passed under both; fixed by world 5d (named driver, staged alone, from behind main), mutation-verified (reverting the predicate fails 5d by name).
+- §244: a single-writer allocator in a multi-writer tree — `harness task add` computes max+1 over the rows it can see, so two sessions independently get the same next-free id; three collisions in one hour, each caught by `tasks_well_formed` at merge time (after both rows were written). The collision check is the backstop, not the allocator.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
@@ -231,13 +232,14 @@ Cannot see: whether a pod-only measurement was brought back before the pod was r
 
 ## R8. Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class
 
-5 incidents (5 infra, 0 model), ~2h each, 10h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources, and WARNs after the launch rather than refusing it.
+6 incidents (5 infra, 1 model), ~2h each (infra), ~1h (model), 11h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources, and WARNs after the launch rather than refusing it.
 
 - §15: a shared resource was used without an explicit claim; the co-residency cost was measured against a metric class, not the run's own spend.
 - §126: a resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a grant.
 - §194: a claim held by a live pid was read as evidence the job was progressing; 0% util against 76 GiB held was the signal, the claim status was not.
 - §195: a rank-0-only phase (save, 33.6 s) inside a world-2 job desynchronised the ranks; rank 1 entered the next collective with nothing to meet.
 - §214: a live job ran unclaimed on card 0 and every reader read it as an orphan; the claim-write is the only thing separating "orphan" from "unclaimed live job", so the unclaimed launch was the defect, not the reading.
+- §245: a manual `git update-ref refs/heads/main` (no expected-old-value) bypassed merge_main.sh's CAS and silently overwrote a landed commit; the CAS would have refused. Ruling: nothing but merge_main.sh writes main; a refused push is fixed on the branch and re-merged.
 
 Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-resident with a run it degrades; whether a launch that never wrote a claim is refused before it starts (§214).
 
