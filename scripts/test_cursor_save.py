@@ -15,10 +15,10 @@ row_cursor; the stage-1 checkpoint had one only because replay_cursor.py injecte
 its row_cursor_reconstructed marker records.
 
 NO LINE NUMBERS FOR IT HERE, and the failure path computes them instead of quoting them
-(_d1_present). This file used to name :1289 and :1315 in three places and print a fixed
-"D1 is open: train.py:1289 ..." on EVERY failure. When an unrelated change broke the fixture,
-that string sent a reader to two lines that are now an Adagrad append and a length assertion
-(e1, 2026-09-06). A hardcoded cause is a claim about a tree nobody re-read.
+(_d1_present). This file used to name two train.py line numbers in three places and print a
+fixed "D1 is open: train.py:<line> ..." on EVERY failure. When an unrelated change broke the
+fixture, that string sent a reader to two lines that are now an Adagrad append and a length
+assertion (e1, 2026-09-06). A hardcoded cause is a claim about a tree nobody re-read.
 
 Why this test rather than the de-7 rehearsal that already passed: the rehearsal exercised
 the RECONSTRUCTION path -- replay_cursor writes the dict, a resume reads it -- which touches
