@@ -956,7 +956,7 @@ class MoEFFN(nn.Module):
 
     @torch.no_grad()
     def _apply(self, fn, recurse=True):
-        """Cast/move the module, then RESTORE expert_bias to fp32.
+        """Cast/move the module while keeping expert_bias's fp32 VALUES, not just its dtype.
 
         `raw_model.to(torch.bfloat16)` (train.py:3134 under --fp8, :3162 under --bf16) walks every
         floating buffer, so register_buffer's `dtype=torch.float32` is overwritten before step 0 --
@@ -970,15 +970,28 @@ class MoEFFN(nn.Module):
         DIFFERENTIAL, which is the only part topk can see, had been rounded away while the
         common mode kept climbing. 2,304 values, 9 KiB.
 
+        THE ORIGINAL TENSOR IS KEPT, NOT RE-FLOATED AFTER THE FACT, and that distinction is the
+        whole point (4c, reviewing 2f95a797). `fn(eb).float()` restores the DTYPE and has already
+        destroyed the VALUES: fn rounds to bf16's grid first, so .float() returns rounded numbers
+        in an fp32 box and every dtype assertion passes. MEASURED on [0.5, 0.501, 0.502] ->
+        [0.5, 0.5, 0.50390625]: three distinct biases became two, which is exactly the
+        differential collapse this override exists to prevent. train.py loads the checkpoint at
+        :3043 and casts at :3134/:3162 -- LOAD BEFORE CAST -- so that rounding would be applied
+        once per resume to every value the previous run accumulated.
+        So: keep the pre-cast tensor and follow only the DEVICE.
+
         Hooked at _apply rather than at .to() because .to(), .cuda(), .float() and DDP's own
         movement all route through here, so a single override covers every path instead of the
-        one call site I happened to look at. Cast the DATA back, in place, so the buffer object
-        and any reference to it survive.
+        one call site I happened to look at. This REPLACES the buffer entry rather than mutating
+        in place (an earlier version of this docstring claimed in-place, wrongly); that is safe
+        because every reader reaches the buffer through _buffers/getattr, never through a
+        long-lived reference to the tensor object.
         """
+        orig = self._buffers.get("expert_bias")
         out = super()._apply(fn, recurse)
-        eb = out._buffers.get("expert_bias")
-        if eb is not None and eb.dtype != torch.float32:
-            out._buffers["expert_bias"] = eb.float()
+        if orig is not None:
+            moved = out._buffers["expert_bias"]
+            out._buffers["expert_bias"] = orig.to(device=moved.device, dtype=torch.float32)
         return out
 
     def update_bias(self, counts):

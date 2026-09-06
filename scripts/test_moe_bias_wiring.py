@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Does the wired balancer actually move expert_bias, once per optimizer step?
+"""Does the wired balancer actually move expert_bias, once per optimizer step, without windup?
 
-Three worlds, run on GPU because chunk_kda/l2norm are Triton with no CPU fallback
+Seven worlds, run on GPU because chunk_kda/l2norm are Triton with no CPU fallback
 (memory: model-cannot-forward-on-cpu). This tests the MODULE contract that the
 train.py call site depends on, not the call site itself -- the call site is proved
 by the 300-step probe, whose checkpoint must come back with a nonzero bias.
@@ -14,6 +14,24 @@ World C: the accum trap. Two forwards then ONE update, vs two forwards each with
          its own update. The first must move the bias half as far as the second.
          This is the failure the docstring names and the reason the call sits at
          the accum boundary rather than inside the micro-batch loop.
+World D: the counter the call site reads accumulates tokens x top_k per forward.
+
+E, F and G are the post-mortem of b0_moe48_8b, stopped at step ~1080 with load gini
+0.5959 (0.0935 at step 500). Cause: update_bias was an unbounded integrator whose
+runaway term could not affect routing at all, and whose windup consumed the bf16
+resolution that the routing-relevant spread needed.
+
+World E: 1000 updates under a persistent 5-of-48 asymmetry -> |mean| < 1e-6 and the
+         spread must GROW. Unprojected, the mean reaches +0.79 here and did reach
+         +0.4997 on the real run.
+World F: fp32 SURVIVING train.py's cast (.to(bfloat16) then .cuda(), both of which
+         route through _apply). A dtype assertion on a fresh module is vacuous:
+         torch.zeros is already fp32.
+World G: the cast must not ROUND THE VALUES, which F cannot see. Sub-bf16
+         differences (0.5, 0.501, 0.502) must survive .to(bfloat16) exactly; an
+         override that re-floats AFTER the cast passes F and fails G, because the
+         differences are already gone. train.py loads before it casts, so that
+         rounding would apply once per resume.
 """
 import os
 import sys
@@ -191,13 +209,43 @@ def main():
         else:
             print("   OK: a gamma step is representable at the magnitude the run reached")
 
+    # ---- G: the CAST MUST NOT ROUND THE VALUES, not merely leave the dtype fp32. World F is
+    # blind to this and that blindness is the defect it missed (4c, reviewing 2f95a797): an
+    # override that does `fn(eb).float()` restores the dtype AFTER fn has already rounded to
+    # bf16's grid, so every dtype assertion passes on numbers that have lost their differences.
+    #
+    # SUB-bf16 DIFFERENCES ARE THE SUBJECT. At magnitude 0.5 the grid step is 0.00391, so
+    # 0.5/0.501/0.502 -- three biases a gamma-0.001 loop produces routinely -- collapse to
+    # [0.5, 0.5, 0.50390625]: three distinct values become two. That is the differential collapse
+    # in miniature, and it is what would be applied ONCE PER RESUME, because train.py loads the
+    # checkpoint at :3043 and casts at :3134/:3162 -- load before cast.
+    # RED on 2f95a797, green with the keep-the-original-tensor form.
+    m6 = build(g)
+    probe = torch.tensor([0.5, 0.5 + g, 0.5 + 2 * g], dtype=torch.float32,
+                         device=m6.expert_bias.device)
+    with torch.no_grad():
+        m6.expert_bias[:3].copy_(probe)
+    kept = m6.expert_bias[:3].clone()
+    m6 = m6.to(torch.bfloat16)          # exactly what train.py:3134/:3162 do
+    got = m6.expert_bias[:3]
+    same = torch.equal(kept, got)
+    print(f"G sub-bf16 differences through .to(bfloat16): {[round(v, 6) for v in got.tolist()]}")
+    print(f"   want {[round(v, 6) for v in kept.tolist()]}  (bf16 grid at 0.5 is 0.00391, "
+          f"so a {g} difference cannot survive a round-trip)")
+    if not same:
+        fails.append(f"G: the cast ROUNDED the values -- {kept.tolist()} became {got.tolist()}. "
+                     f"The dtype is restored but the differences are gone, which is the collapse "
+                     f"this override exists to prevent, applied once per resume")
+    else:
+        print("   OK: values identical, so a resume does not re-round what the last run learned")
+
     print()
     if fails:
         print("FAIL")
         for f in fails:
             print("  -", f)
         return 1
-    print("PASS: all six worlds")
+    print("PASS: all seven worlds")
     return 0
 
 
