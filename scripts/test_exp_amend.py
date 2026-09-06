@@ -52,6 +52,7 @@ def folded(d, name):
     return [r for r in exp.rows() if r["name"] == name]
 
 bad = 0
+CASES = 9
 # 1. CLOSED ok -> the field lands and status is untouched
 d, st = world("ok")
 r = run(d, "--name", "zz_amend", "--started", st, "--reading_artifact", "runs/moe_diag.jsonl")
@@ -95,5 +96,74 @@ print(f"  {'ok  ' if ok else 'BUG '} a path that does not exist is REFUSED and n
       + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]}"))
 shutil.rmtree(d)
 
-print(f"exp amend selftest: {4 - bad}/4 pass")
+# --- de-62's second half: correcting a closed row's PROSE. Same argument as the reading -- the
+# number stands and its interpretation changed, which is not a retraction (the result is not
+# withdrawn) and not a note (`note` carries status=running forward, reopening a finished run).
+
+# 5. --finding on a closed ok row -> lands, and result/status are untouched. The result assertion
+#    is the one that matters: an amend that could move `result` would be a silent retraction with
+#    no record of the old number, which is what `retracted_result` exists to prevent.
+d, st = world("ok")
+r = run(d, "--name", "zz_amend", "--started", st, "--finding", "the 2.10 is the control arm, not e1")
+rows = folded(d, "zz_amend")
+ok = r.returncode == 0 and len(rows) == 1 and rows[0]["finding"].startswith("the 2.10 is") \
+     and rows[0]["status"] == "ok" and rows[0]["result"] == "r1"
+bad += 0 if ok else 1
+print(f"  {'ok  ' if ok else 'BUG '} --finding corrects a closed row; status and RESULT unchanged"
+      + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]} "
+                       f"row={ {k: rows[0].get(k) for k in ('status','result','finding')} }"))
+shutil.rmtree(d)
+
+# 6. --decision alone -> also lands. Separate from case 5 so a fix that wired only `finding`
+#    cannot pass: two fields sharing one code path still need one world each to say they are wired.
+d, st = world("ok")
+r = run(d, "--name", "zz_amend", "--started", st, "--decision", "rerun at world 2 before believing")
+rows = folded(d, "zz_amend")
+ok = r.returncode == 0 and rows[0]["decision"].startswith("rerun at world 2") \
+     and rows[0]["result"] == "r1"
+bad += 0 if ok else 1
+print(f"  {'ok  ' if ok else 'BUG '} --decision alone corrects a closed row"
+      + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]}"))
+shutil.rmtree(d)
+
+# 7. NO FIELD AT ALL -> refused. Before the prose fields, --reading_artifact was `required=True`
+#    and argparse enforced this; now every field is optional, so a bare `amend --name X` would
+#    append an event identical to the row and print success. That is the exact shape de-46 fixed
+#    in `done` -- a command reporting a change it did not make -- so it is refused here too.
+d, st = world("ok")
+r = run(d, "--name", "zz_amend", "--started", st)
+rows = folded(d, "zz_amend")
+ok = r.returncode != 0 and "at least one" in (r.stdout + r.stderr) and len(rows) == 1
+bad += 0 if ok else 1
+print(f"  {'ok  ' if ok else 'BUG '} amend with NO field is REFUSED, not a silent no-op"
+      + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]}"))
+shutil.rmtree(d)
+
+# 8. A VALUE THE ROW ALREADY CARRIES -> refused. The other half of case 7: the command must not
+#    report a change when the value is already there.
+d, st = world("ok")
+r = run(d, "--name", "zz_amend", "--started", st, "--finding", "f1")
+assert r.returncode == 0, f"setup amend failed: {(r.stdout + r.stderr)[:120]}"
+r = run(d, "--name", "zz_amend", "--started", st, "--finding", "f1")
+ok = r.returncode != 0 and "nothing to do" in (r.stdout + r.stderr)
+bad += 0 if ok else 1
+print(f"  {'ok  ' if ok else 'BUG '} re-amending with the SAME value is REFUSED"
+      + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]}"))
+shutil.rmtree(d)
+
+# 9. TWO FIELDS AT ONCE -> both land in one event. A per-field loop that overwrote `changes`
+#    instead of accumulating would pass cases 5 and 6 and fail only here.
+d, st = world("ok")
+r = run(d, "--name", "zz_amend", "--started", st, "--finding", "f2", "--decision", "d2",
+        "--reading_artifact", "runs/moe_diag.jsonl")
+rows = folded(d, "zz_amend")
+ok = r.returncode == 0 and rows[0]["finding"] == "f2" and rows[0]["decision"] == "d2" \
+     and rows[0]["reading_artifact"] == "runs/moe_diag.jsonl" and rows[0]["result"] == "r1"
+bad += 0 if ok else 1
+print(f"  {'ok  ' if ok else 'BUG '} three fields in one amend all land, result still unchanged"
+      + ("" if ok else f" -- rc={r.returncode} {(r.stdout+r.stderr).strip()[:110]} "
+                       f"row={ {k: rows[0].get(k) for k in ('finding','decision','reading_artifact','result')} }"))
+shutil.rmtree(d)
+
+print(f"exp amend selftest: {CASES - bad}/{CASES} pass")
 sys.exit(1 if bad else 0)

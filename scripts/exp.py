@@ -349,12 +349,29 @@ def main():
                         "cmd produces no checkpoint harness.py can score. harness.py's "
                         "score_matrix_present FAILs on a path that does not exist, so this "
                         "names a real file or it names nothing")
-    am = sub.add_parser("amend", help="add reading_artifact to a CLOSED row; does not touch status")
+    am = sub.add_parser("amend", help="correct a CLOSED row's reading_artifact, finding or "
+                                      "decision; does not touch status or result")
     am.add_argument("--name", required=True)
-    am.add_argument("--reading_artifact", required=True,
+    am.add_argument("--reading_artifact", default="",
                     help="repo-relative path to the file the row's result was READ FROM. Checked "
                          "here as `done` checks it: harness.py's score_matrix_present FAILs on a "
                          "path that does not exist, so this names a real file or it names nothing")
+    # THE PROSE FIELDS, de-62's second half. A closed row's INTERPRETATION goes stale in a way its
+    # result does not: the number stands and what it means changed, which is not a retraction (the
+    # result is not withdrawn) and not a note (`note` carries status=running forward, reopening a
+    # finished run). Before this no verb could do it, so the only reachable moves were to retract a
+    # standing result to fix prose about it, or to leave a wrong finding in the ledger.
+    #
+    # NOT --result and NOT --status. Those are the measurement and its validity: changing either is
+    # a different claim about the run, and the tool has `retract` for that -- which preserves the
+    # withdrawn value in `retracted_result` precisely so a reader can check the retraction. An
+    # amend that could rewrite `result` would be a silent retraction with no record of the old
+    # number, i.e. the defect facts/*.json's retracted_value exists to prevent.
+    am.add_argument("--finding", default="",
+                    help="corrected interpretation of a result that still stands. The number is "
+                         "not editable here -- a result that does not stand takes `retract`")
+    am.add_argument("--decision", default="",
+                    help="corrected 'what changes because of this'")
     am.add_argument("--started", default=None,
                    help="amend THIS row (its 'started' value). Required when a name has more "
                         "than one closed row")
@@ -588,38 +605,69 @@ def main():
         print(f"logged retract: {a.name} ({base.get('started')}) -- was "
               f"{str(base.get('result', ''))[:60]!r}")
     elif a.action == "amend":
-        # ADDS reading_artifact TO A CLOSED ROW WITHOUT TOUCHING status, which is the one thing
-        # neither `done` nor `note` nor `retract` can do. Three rows of mine were closed `ok`
-        # with no reading, so score_matrix_present read them as unscored training runs; the only
-        # tools available were `done` (refuses -- the row is not open, and on a RETRACTED row that
-        # refusal had to be written: until de-46 it fabricated an orphan and exited 0) and
-        # `retract` (withdraws the RESULT to satisfy a gate about its READING, which is the wrong
-        # trade). 4c's ruling 2026-09-06: add this rather than change the fold.
+        # CORRECTS A CLOSED ROW'S reading_artifact, finding OR decision WITHOUT TOUCHING status or
+        # result, which is the one thing neither `done` nor `note` nor `retract` can do. Three rows
+        # were closed `ok` with no reading, so score_matrix_present read them as unscored training
+        # runs; the only tools available were `done` (refuses -- the row is not open, and on an
+        # already-closed row that refusal had to be written: until de-46 it fabricated an orphan
+        # and exited 0) and `retract` (withdraws the RESULT to satisfy a gate about its READING,
+        # which is the wrong trade). 4c's ruling 2026-09-06: add this rather than change the fold.
+        #
+        # THE PROSE FIELDS ARE de-62's SECOND HALF, and the same argument as the reading: an
+        # interpretation goes stale in a way its number does not. The result stands, what it means
+        # changed. `note` cannot serve because it carries status=running forward, reopening a
+        # finished run, and `retract` would withdraw a result that is still correct.
+        #
+        # NOT result, NOT status: those are the measurement and its validity, and `retract` owns
+        # them precisely because it preserves the withdrawn value in `retracted_result` for a
+        # reader to check. An amend that could rewrite `result` would be a silent retraction with
+        # no record of the old number.
         #
         # NOT A PATH TO UN-RETRACT. A retracted row is refused below, because `retracted` is
         # terminal by KIND (see fold) and an amend that revived one would be a rewrite of that
-        # rule wearing a different name -- exactly what the fold's comment guards against. A
-        # retraction whose reading needs recording takes a fresh `done` under a new started.
+        # rule wearing a different name -- exactly what the fold's comment guards against.
+        if not (a.reading_artifact or a.finding or a.decision):
+            sys.exit("amend needs at least one of --reading_artifact, --finding, --decision. "
+                     "With none of them it would append an event identical to the row and report "
+                     "success -- the silent no-op this command exists to replace.")
         base = pick_closed_row(a.name, a.started, "amending")
         if base.get("status") == "retracted":
+            # THE REMEDY NAMED HERE IS NOT `done`. It said "un-retract deliberately with `done`"
+            # until de-46, which was wrong twice over: `done` on a retracted row fabricated an
+            # orphan rather than un-retracting anything, and it now refuses outright. A retraction
+            # is terminal, so the corrected reading belongs to a new run under its own name.
             sys.exit(
                 f"{a.name} ({base.get('started')}) is retracted, and amend does not revive a "
                 f"row: `retracted` is terminal by kind, so the amended event would be dropped "
                 f"by the fold and this command would report success while changing nothing. "
-                f"Record the reading on a fresh run, or un-retract deliberately with `done`."
+                f"Record it on a fresh run (`start` under its own name, then `done`)."
             )
-        # THE PATH MUST EXIST, checked here for the same reason `done` checks it: the field's
-        # whole job is to name a file a reader can open, and a path that does not exist turns a
-        # scoring exemption into an assertion nobody wrote.
-        if not os.path.exists(os.path.join(ROOT, a.reading_artifact)):
-            sys.exit(f"--reading_artifact {a.reading_artifact} does not exist under {ROOT}; "
-                     f"pull the file into the repo before amending the row")
-        prev = base.get("reading_artifact")
-        if prev == a.reading_artifact:
-            sys.exit(f"{a.name} ({base.get('started')}) already reads {prev!r}; nothing to do")
-        append(dict(base, reading_artifact=a.reading_artifact, amended_at=now()))
-        print(f"logged amend: {a.name} ({base.get('started')}) reading_artifact "
-              f"{prev!r} -> {a.reading_artifact!r} (status {base.get('status')!r} unchanged)")
+        changes = {}
+        if a.reading_artifact:
+            # THE PATH MUST EXIST, checked here for the same reason `done` checks it: the field's
+            # whole job is to name a file a reader can open, and a path that does not exist turns a
+            # scoring exemption into an assertion nobody wrote.
+            if not os.path.exists(os.path.join(ROOT, a.reading_artifact)):
+                sys.exit(f"--reading_artifact {a.reading_artifact} does not exist under {ROOT}; "
+                         f"pull the file into the repo before amending the row")
+            changes["reading_artifact"] = a.reading_artifact
+        for _f, _v in (("finding", a.finding), ("decision", a.decision)):
+            if _v:
+                changes[_f] = _v
+        # NOTHING-TO-DO IS A REFUSAL, per field. An amend whose values already match the row would
+        # append a duplicate event and print success, which is the shape that made the pre-de-46
+        # `done` dangerous: a command that reports a change it did not make.
+        unchanged = [k for k, v in changes.items() if base.get(k) == v]
+        if unchanged and len(unchanged) == len(changes):
+            sys.exit(f"{a.name} ({base.get('started')}) already carries "
+                     + ", ".join(f"{k}={str(base.get(k))[:40]!r}" for k in unchanged)
+                     + "; nothing to do")
+        prev = {k: base.get(k) for k in changes}
+        append(dict(base, **changes, amended_at=now()))
+        print(f"logged amend: {a.name} ({base.get('started')}) "
+              + "; ".join(f"{k} {str(prev[k])[:34]!r} -> {str(v)[:34]!r}"
+                          for k, v in changes.items())
+              + f" (status {base.get('status')!r} and result unchanged)")
     elif a.action == "merge":
         incoming = [json.loads(l) for l in open(a.src, encoding="utf-8") if l.strip()]
         out, idx = [], {}
