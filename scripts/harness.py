@@ -85,6 +85,18 @@ _CHECK_TIMEOUTS = {
     # consecutive runs and FAILed with "has not actually run since", blocking a commit
     # whose changes it has nothing to say about. 30s is ~4x the measured total.
     "tasks_closed_by_commit": 30,
+    # Measured 2026-09-06 on two laptops: 3.3-3.6s solo here and on de's, which fits 5s
+    # alone and does not fit inside the full set -- it banked 4 consecutive strikes on
+    # de's box and read FAIL "has not actually run since", so the signal was off exactly
+    # where it looked red. One subprocess per reflog pair at ~17ms; batching does not
+    # help (measured: rev-list per unique `new` is 3.89s, slower than the 3.25s it would
+    # replace, because every pair has a distinct new commit).
+    #
+    # The window is capped at 60 entries rather than 200, which is the real fix -- the
+    # walk grew with the reflog, so ANY fixed budget is crossed eventually. 60 covers
+    # ~a day of six sessions merging and costs 0.86s; 20s is >20x that, so the entry
+    # stops being about this machine's speed.
+    "main_advances_by_ancestry": 20,
     # Measured on this checkout under load (load avg 28, 25 users), 2026-09-03:
     # getattr_cfg_names_exist 6.5s, restartability 4.5s (291 files scanned) -- both
     # pass by hand but cross 5s when the shared machine is busy, and each banked
@@ -2586,19 +2598,34 @@ def check_main_advances_by_ancestry(root):
             lines = fh.read().splitlines()
     except OSError as e:
         return SKIP, f"cannot read main's reflog: {e}"
-    # The last N entries only. The whole file is every advance since the repo began, and a jump
-    # from months ago is not actionable -- it names a sha nobody can still recover from a branch.
-    lines = [ln for ln in lines if ln.strip()][-200:]
+    # The last N entries only. The whole file is every advance since the repo began (1561 by
+    # 2026-09-06), and a jump from months ago is not actionable -- it names a sha nobody can
+    # still recover from a branch.
+    #
+    # 60, NOT 200. The walk is one subprocess per pair at ~17ms, so the cost grew with the
+    # reflog: 3.25s at 200 against a 5s budget, which fits alone and does not fit inside the
+    # full check set -- de measured 4 consecutive timeout strikes on their laptop, where this
+    # then read FAIL "has not actually run since" rather than absent. A window that grows
+    # crosses ANY fixed budget eventually, so the window is what changes. 60 covers about a
+    # day of six sessions merging and costs 0.86s measured. A sideways move is caught on the
+    # commit after it, not weeks later, so a shorter window loses no signal anyone acts on.
+    lines = [ln for ln in lines if ln.strip()][-60:]
     ZERO = "0" * 40
     # THE ONE INCIDENT THAT ALREADY HAPPENED, named by its exact sha pair rather than excused by
     # a rule. It is in the reflog forever, so without this the check FAILs every commit until the
-    # entry ages past the 200-line window -- and a check that is red for a fixed cause is one
-    # people learn to pass with --no-verify. Recorded, not suppressed: the row stays in
-    # runs/friction.jsonl, AGENTS.md names the rule, and any OTHER pair still FAILs.
+    # entry ages past the window -- and a check that is red for a fixed cause is one people learn
+    # to pass with --no-verify. Recorded, not suppressed: the row stays in runs/friction.jsonl,
+    # AGENTS.md names the rule, and any OTHER pair still FAILs.
     #
     # A PAIR, NOT A SHA. Excusing `9a11b9ea` as a destination would hide a second sideways move
     # onto the same commit; excusing bc95abe8 as a source would hide the next thing that
     # discards it. Only this exact transition is known.
+    #
+    # KEPT THOUGH IT NO LONGER FIRES. Measured 2026-09-06 after the window went 200 -> 60: the
+    # incident is 61 entries from the end, so it has just aged out and this set matches nothing
+    # today. Deleting it would be right if the window were fixed, and it is not -- a shrinking
+    # reflog or a bigger window brings the entry back, and then the check goes red for a cause
+    # that was settled. The cost of keeping it is one tuple.
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
                   "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
     jumps = []
