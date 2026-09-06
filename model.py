@@ -913,7 +913,17 @@ class MoEFFN(nn.Module):
         # PERSISTENT, and zeros for a checkpoint that predates it (4c's ruling). Not a Parameter:
         # it is not updated by a gradient, so handing it to an optimizer would let weight decay
         # and momentum act on a control-loop variable.
-        self.register_buffer("expert_bias", torch.zeros(self.n_routed), persistent=True)
+        #
+        # fp32 EXPLICITLY, and it is load-bearing rather than tidy. This buffer inherits the
+        # module's dtype otherwise, which is bf16 under --fp8, and bf16's spacing at magnitude
+        # 0.5 is 0.00391 -- FOUR TIMES the gamma 0.001 step. MEASURED on
+        # ckpt_b0_moe48_8b.pt.step1000: 10 of 12 layers had 2-3 DISTINCT bias values left across
+        # 48 experts, i.e. the differential signal that actually routes had been rounded away.
+        # It is 48 floats x 12 layers = 2,304 values, so fp32 costs 9 KiB and buys the
+        # resolution the control loop is built on. A bf16 saved tensor casts into this buffer on
+        # load (verified: dtype stays fp32, values preserved), so old checkpoints still resume.
+        self.register_buffer("expert_bias", torch.zeros(self.n_routed, dtype=torch.float32),
+                             persistent=True)
         # READOUT 4's counters. Non-persistent: they describe a window, and a resume that restored
         # a half-finished window would report a fraction over a denominator from another run.
         self.register_buffer("tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
@@ -959,6 +969,23 @@ class MoEFFN(nn.Module):
         mean = counts.float().mean()
         err = counts.float() - mean
         self.expert_bias -= self.gamma * torch.sign(err).to(self.expert_bias.dtype)
+        # ZERO-MEAN BY CONSTRUCTION, and this is a FIX for a measured failure, not a nicety.
+        # sign() returns 0 only on an exact tie, and with 48 experts on integer counts ties are
+        # rare, so the 48 signs almost never cancel: the mean bias moves gamma*(48-2k)/48 per
+        # step for k experts above mean, and any persistent asymmetry INTEGRATES WITHOUT BOUND.
+        # There is no clamp anywhere in this update.
+        #
+        # MEASURED on b0_moe48_8b, steps 500 -> 1000: common mode +0.1067 -> +0.4997 (x4.68,
+        # a drift of 0.786 gamma/step, i.e. only ~5 of 48 experts reading below mean each step)
+        # while the per-layer SPREAD collapsed 0.0992 -> 0.0101 (x0.10). Load gini went 0.0935 ->
+        # 0.5959 and the run was stopped on its pre-registered band at step 1000.
+        #
+        # THE COMMON MODE CANNOT AFFECT ROUTING AT ALL: selection is
+        # `(affinity + expert_bias).topk(top_k)` below, and topk is INVARIANT to a constant added
+        # to every entry. So the runaway term was pure windup -- it did nothing for balance while
+        # consuming the bf16 resolution that the spread needed. Subtracting the mean therefore
+        # changes NO routing decision at the moment it is applied, and stops the integrator dead.
+        self.expert_bias -= self.expert_bias.mean()
 
     def forward(self, x):
         B, T, d = x.shape
