@@ -10342,17 +10342,25 @@ def _commit_delivers(sha, evidence, root=None, tid=None, closed=None, resolved=N
                 f"the commit does not deliver what the evidence claims "
                 f"(tokens read as paths: {tried[:5]})")
     for fname, fid in fact_refs:
-        r = subprocess.run(g + ["show", f"HEAD:facts/{fname}.json"],
+        # THE INDEX, NOT HEAD. This check runs from the pre-commit hook, where the content the
+        # commit will carry is staged and HEAD is the parent. Reading HEAD made a MERGE that
+        # brings the cited fact in fail at the exact moment it resolves the citation: de,
+        # 2026-09-06, e1-44 citing eff.moe48_dense_step_cost_ratio -- absent at HEAD, present
+        # at MERGE_HEAD and in the index, so `git merge main` could not be committed by anyone
+        # until the fact reached HEAD, which only that commit could do. `git show :<path>` is
+        # the staged blob and equals HEAD's for an unmodified file, so CI reads the same thing.
+        r = subprocess.run(g + ["show", f":facts/{fname}.json"],
                            capture_output=True, text=True)
         if r.returncode != 0:
-            return f"evidence cites facts/{fname}.json#{fid} but that file is not at HEAD"
+            return f"evidence cites facts/{fname}.json#{fid} but that file is not in the index"
         try:
             ids = {e.get("id") for e in json.loads(r.stdout).get("facts", [])}
         except ValueError:
-            return f"evidence cites facts/{fname}.json#{fid} but that file is not valid JSON at HEAD"
+            return (f"evidence cites facts/{fname}.json#{fid} but that file is not valid JSON "
+                    f"in the index")
         if fid not in ids:
             return (f"evidence cites facts/{fname}.json#{fid} but that id is not in the file "
-                    f"at HEAD -- the citation does not resolve")
+                    f"being committed -- the citation does not resolve")
     when = _main_when(root).get(full, "")
     if closed and closed >= "2026-09-02" and when and when > closed[:16] + ":59":
         return (f"{sha[:8]} was committed at {when}, after the row closed at {closed} -- "
@@ -16776,11 +16784,32 @@ def _selftest_commit_delivers_fact_ref():
         why = _commit_delivers(sha, "scripts/nonexistent_xyz.py", d)
         assert "tokens read as paths" in why and "scripts/nonexistent_xyz.py" in why, \
             f"the refusal does not name the tokens tried: {why}"
+        # THE MID-MERGE WORLD, which is the only one that separates HEAD from the index. Every
+        # world above commits first, so HEAD and the index agree and both readings pass -- the
+        # reason reading HEAD survived until it blocked a real merge (de, 2026-09-06: `git merge
+        # main` brought eff.moe48_dense_step_cost_ratio in, the check read HEAD where it was
+        # still absent, and no session could complete the merge that would have added it).
+        # Stage a NEW id without committing: at HEAD it does not exist, in the index it does.
+        fp = os.path.join(d, "facts", "efficiency.json")
+        json.dump({"facts": [{"id": "eff.real", "status": "measured"},
+                             {"id": "eff.staged_only", "status": "measured"}]}, open(fp, "w"))
+        sh("add", "facts/efficiency.json")
+        assert "eff.staged_only" not in sh("show", "HEAD:facts/efficiency.json").stdout, \
+            "world invalid: the new id must be absent at HEAD or this world tests nothing"
+        assert "eff.staged_only" in sh("show", ":facts/efficiency.json").stdout, \
+            "world invalid: the new id must be present in the index"
+        why = _commit_delivers(sha, "facts/efficiency.json#eff.staged_only", d)
+        assert why == "", f"a staged-but-uncommitted fact id was refused (reads HEAD, not the index): {why}"
+        # ...and the same world must still catch an id that is in NEITHER, or the fix above is
+        # just a disabled check.
+        why = _commit_delivers(sha, "facts/efficiency.json#eff.nowhere", d)
+        assert "eff.nowhere" in why, f"an id in neither HEAD nor the index was not caught: {why}"
     finally:
         import shutil
         shutil.rmtree(d, ignore_errors=True)
     print("  commit_delivers: fact-ref real id passes, fake id named-refused, bare path "
-          "unchanged, prose punctuation stripped (6 forms), prose still names no path")
+          "unchanged, prose punctuation stripped (6 forms), prose still names no path, "
+          "staged-not-committed id resolves and an absent one still refuses")
 
 
 def _selftest_review_present_legacy():
