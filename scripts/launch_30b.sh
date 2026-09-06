@@ -80,11 +80,13 @@ else
   EXTRA="--warmdown $WARMDOWN --anneal_frac $(python3 -c "import json;print(json.load(open('$MIX'))['anneal_frac'])") --resume $RESUME"
 fi
 
-# --seed 42, not 0. train.py:1733 applies flags with `if hasattr(Cfg,k) and v` and 0 is
-# falsy, so the --seed 0 this script used to pass was dropped and Cfg.seed kept its default
+# --seed 42, not 0. train.py's flag-apply loop USED TO read `if hasattr(Cfg,k) and v`, and 0 is
+# falsy, so the --seed 0 this script once passed was dropped and Cfg.seed kept its default
 # 42. Stage 1 ran under 42 (b0 audit 2026-08-31); stage 2 states it so the two stages share
-# one documented seed and the value in the command is the value in effect. de fixes the
-# apply after stage 1 ends; until then no flag whose valid value is 0 or "" can be trusted.
+# one documented seed and the value in the command is the value in effect. THE APPLY IS FIXED
+# as of 2026-09-07 -- the loop now reads `elif v is not None`, with store_true switches split
+# out ahead of it, so a flag whose valid value is 0 or "" IS applied today. This line stays 42
+# because stage 1 ran at 42, not because 0 would be lost.
 # The six flags on the last line are not new decisions: they are the values this script was
 # ALREADY running, spelled out. train.py made the twelve recipe knobs required (ead2d2b), and
 # every knob this line was missing was one it had been taking from Cfg silently. Read from
@@ -127,8 +129,8 @@ elif [ "$READY" = 1 ]; then
 fi
 
 # Startup gate: derived by `harness launch` from the mix's own cache bytes (de), so this
-# script names no number. build_mix (train.py:1807) runs BEFORE the fa/doc_mask gate lines
-# (train.py:1886) and train.py:1396 torch.loads every domain's FULL cache on every rank --
+# script names no number. build_mix runs BEFORE the fa/doc_mask gate lines and _domain_seqs
+# torch.loads every domain's FULL cache on every rank --
 # 149 GiB x 7 ranks for stage 1, which took 386 s on 2026-08-31 and would have been killed
 # by the 120 s default. --gate-timeout still overrides for a case the derivation cannot see.
 if [ -n "$GATE" ]; then GATE_ARG="--gate-timeout $GATE"; else GATE_ARG=""; fi

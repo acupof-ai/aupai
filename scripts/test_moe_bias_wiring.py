@@ -182,7 +182,7 @@ def main():
     # ---- F: fp32 SURVIVING train.py's CAST, which is the only version of this check that means
     # anything. A dtype assertion on a freshly-constructed module passes trivially: torch.zeros
     # defaults to fp32, so register_buffer's dtype= argument changes nothing on its own. The
-    # buffer became bf16 because train.py:3134 (--fp8) and :3162 (--bf16) both call
+    # buffer became bf16 because train.py's --fp8 branch and its --bf16 branch both call
     # `raw_model.to(torch.bfloat16)`, which walks every floating buffer -- which is why
     # ckpt_b0_moe48_8b.pt.step1000 holds bf16 despite the declaration. So this world casts the
     # way the arms cast, and asserts AFTER. On 87ef5985 (dtype= only, no _apply override) it is
@@ -233,7 +233,7 @@ def main():
     with torch.no_grad():
         m6.expert_bias[:3].copy_(probe)
     kept = m6.expert_bias[:3].clone()
-    m6 = m6.to(torch.bfloat16)          # exactly what train.py:3134/:3162 do
+    m6 = m6.to(torch.bfloat16)          # exactly what train.py's --fp8 and --bf16 branches do
     got = m6.expert_bias[:3]
     same = torch.equal(kept, got)
     print(f"G sub-bf16 differences through .to(bfloat16): {[round(v, 6) for v in got.tolist()]}")
