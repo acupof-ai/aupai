@@ -79,6 +79,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §242: a mutation run can be vacuous end to end — the runner built worlds with `git init` in an empty temp dir, where `git ls-files data runs scripts` is empty, so the selftest SKIPped and exited 0 for every mutant; four "survivors" measuring nothing, reported as a clean run. A SKIP exit 0 and a PASS exit 0 are indistinguishable from outside. Fixed by building worlds as a real worktree of the real repo; the discipline is one world-validity assertion before the mutants run (same as §235).
 - §243: a selftest world that passes under both the old and new predicate cannot see its own subject — the behind-main exemption widened from merge=union to any named driver, and the only covering world (5b) stages a merge=union ledger, so it passed under both; fixed by world 5d (named driver, staged alone, from behind main), mutation-verified (reverting the predicate fails 5d by name).
 - §244: a single-writer allocator in a multi-writer tree — `harness task add` computes max+1 over the rows it can see, so two sessions independently get the same next-free id; three collisions in one hour, each caught by `tasks_well_formed` at merge time (after both rows were written). The collision check is the backstop, not the allocator.
+- §247: a byte-diff over an append-only ledger reported 141 orphans and every one was a superseded row — a temp worktree pinned to an old commit, so byte-equality asked "is this exact historical line still present" instead of "does this row exist"; by the identity its own writer uses ((name, started), (ckpt, type, measured)) it was 0 of 289 and 1 of 58, and that 1 was re-measured a day later. A criterion that reports the whole history as missing cannot tell a lost row from an old one, which is the failure it exists to detect.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
@@ -177,12 +178,13 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-21 incidents (11 infra, 10 model), ~3h each, 63h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+22 incidents (12 infra, 10 model), ~3h each, 66h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
+- §246: a review row's basis named a sha that later stopped existing (the branch was rebuilt to drop a live-key commit) and stayed auditable only because the reviewer had happened to record a BLOB hash. A basis that is a sha describes something that can be rewritten or garbage-collected; a basis that is content survives its own subject. Same shape as §247 one rule down — the identity of a thing is not its bytes, and here the bytes are the identity that lasts.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211, §246).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 
