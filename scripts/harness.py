@@ -10400,20 +10400,25 @@ def _friction_rows(path=None):
 
 
 def check_friction_minutes_required(root):
-    """near_miss and process_failure friction rows must carry minutes_lost.
+    """near_miss, process_failure, override, and hook friction rows must carry minutes_lost.
 
-    These two kinds are the ones where the cost is the whole point: a near-miss with no
+    These kinds are the ones where the cost is the whole point: a near-miss with no
     minutes is a story, not a data point, and a process failure with no minutes cannot be
     ranked against the other causes. 2026-09-04: 3/3 rows of these kinds lacked
     minutes_lost, and the friction summary printed "minutes not reported" for the
     combined cause -- the second-largest unfixed friction item, invisible to ranking.
 
-    Baseline 3 (b0's rows, 2026-09-03/04): the check FAILs if a FOURTH row is added
-    without minutes_lost. When b0 fills in the historical minutes, lower the baseline."""
+    2026-09-06 (de review, task 44-40): override and hook added. The 85 AUPAI_BEHIND_MAIN_OK
+    override rows are the single largest friction source but were structurally exempt --
+    84 carry minutes_lost=None (key present, null value), which the old "key not in row"
+    check passed. Now checks r.get("minutes_lost") is None, catching both missing and null.
+
+    Baseline 91 (2026-09-06): 85 override + 3 hook + 2 near_miss + 1 process_failure.
+    The check FAILs if a 92nd row is added without minutes_lost."""
     p = os.path.join(root, "runs", "friction.jsonl")
     if not os.path.exists(p):
         return SKIP, "no runs/friction.jsonl"
-    BASELINE = 3
+    BASELINE = 91
     bad = []
     for i, ln in enumerate(open(p, encoding="utf-8"), 1):
         ln = ln.strip()
@@ -10423,24 +10428,24 @@ def check_friction_minutes_required(root):
             r = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if r.get("kind") in ("near_miss", "process_failure") and "minutes_lost" not in r:
+        if r.get("kind") in ("near_miss", "process_failure", "override", "hook") and r.get("minutes_lost") is None:
             who = r.get("who", "?")
             what = r.get("what", "?")[:50]
             bad.append(f"line {i} ({who}: {what})")
     if len(bad) > BASELINE:
-        return FAIL, f"{len(bad)} near_miss/process_failure rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
+        return FAIL, f"{len(bad)} near_miss/process_failure/override/hook rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
     return PASS, f"{len(bad)}/{BASELINE} baseline rows missing minutes_lost; no new violations"
 
 
 def _broken_friction_minutes_required():
-    """A temp repo whose friction.jsonl has 4 near_miss rows without minutes_lost
-    (baseline is 3, so the 4th is a new violation)."""
+    """A temp repo whose friction.jsonl has 92 near_miss rows without minutes_lost
+    (baseline is 91, so the 92nd is a new violation)."""
     d = _tmp_repo_shaped()
     fpath = os.path.join(d, "runs", "friction.jsonl")
     if os.path.islink(fpath):
         os.remove(fpath)  # symlink to the real file; replace with a temp-local copy
     with open(fpath, "w", encoding="utf-8") as fh:
-        for i in range(4):
+        for i in range(92):
             fh.write(json.dumps({"kind": "near_miss", "who": "x", "what": f"fixture {i}"}) + "\n")
     return d
 
