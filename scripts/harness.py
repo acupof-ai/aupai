@@ -6532,8 +6532,16 @@ def _broken_corpus_filters_fp():
     domain that is NOT in the baseline (new debt). Both must FAIL."""
     d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
-    with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
-        fh.write("# a filter\n")
+    # EVERY member of cfp.PIPELINE_FILTERS, imported rather than restated. fp_filters raises
+    # FileNotFoundError on a missing member (corpus_fingerprint.py:80), and a raise is not a FAIL:
+    # the broken-world runner folds it into "cannot be made to fail" and asserts, which aborted
+    # _demo before its remaining 39 _selftest_* calls. Writing only pass1_garbage.py was correct
+    # until f93f99f6 (2026-09-06 10:17Z) added the three-file tuple; that commit touched neither
+    # this file nor any check, so nothing here moved and CI went red on every push after it.
+    # Restating the names here would reintroduce the same drift in the other direction.
+    for _f in cfp.PIPELINE_FILTERS:
+        with open(os.path.join(d, "filters", _f), "w") as fh:
+            fh.write("# a filter\n")
     dom = os.path.join(d, "data", "corpus", "web_hq")
     os.makedirs(dom, exist_ok=True)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
@@ -18937,7 +18945,20 @@ def _demo(only=None):
               f"`harness check --selftest` before trusting this as coverage.")
         return 0
 
-    assert not untested, "checks that cannot be made to fail:\n  " + "\n  ".join(untested)
+    # DEFERRED, NOT ASSERTED HERE. This assertion used to fire at this point, and everything
+    # below it -- 39 _selftest_* calls, the real-tree sweep, the EVIDENCE equality, the
+    # non-vacuous-PASS sweep -- is in this same function, so ONE unbuildable broken world made
+    # all of them unreachable. MEASURED 2026-09-06: f93f99f6 (10:17Z) made fp_filters raise on a
+    # missing PIPELINE_FILTERS member; _broken_corpus_filters_fp wrote only pass1_garbage.py, so
+    # `corpus_filters_fp raised instead of reporting FAIL` landed in `untested` and aborted here.
+    # CI ran `harness.py --selftest` on every push (ci.yml:54) and was red from that commit until
+    # this one -- the red existed and named the right check, and it hid 39 selftests behind a
+    # single line nobody read as "the rest did not run".
+    #
+    # The failure is still fatal: it is re-raised at the END of this function, with everything
+    # below it having run. A broken world that cannot be built is one defect; it must not decide
+    # whether the other coverage gets measured.
+    _untested_deferred = list(untested)
 
     _selftest_repo_auth_mirror()
     _selftest_flagless_test_is_gated()
@@ -19335,6 +19356,11 @@ def _demo(only=None):
     # commit fixes: a number that reads as coverage without being it.
     _verified = len(CHECKS) - len(skipped)
     _tail = f"; {len(skipped)} SKIPPED, not verified: {', '.join(sorted(skipped))}" if skipped else ""
+    # THE DEFERRED FAILURE, RAISED LAST. Everything above has now run and reported, so an
+    # unbuildable broken world costs its own coverage and nothing else's. Raised before the OK
+    # line so a run with a deferred failure never prints one.
+    assert not _untested_deferred, ("checks that cannot be made to fail:\n  "
+                                    + "\n  ".join(_untested_deferred))
     print(f"harness self-test OK ({_verified} of {len(CHECKS)} checks each verified to FAIL on a "
           f"broken world; every PASS verified a non-zero count{_tail})")
 
