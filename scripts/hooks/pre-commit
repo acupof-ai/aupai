@@ -42,6 +42,7 @@ ALLOWED = [
     "data/PROVENANCE.md",
     "data/MANIFEST.tsv",
     "data/env_fp_baseline.json",
+    "data/train_cite_baseline.json",
     "data/raw/*_manifest.txt",
     "data/sft/*.py",
     "data/t2s_table.json",
@@ -1359,6 +1360,20 @@ def main():
         # the fingerprint (the false positive that re-failed nine already-ruled domains), and
         # an edit to a pipeline filter MUST move it (the blindness that would replace it).
         "datagen/corpus_fingerprint.py",
+        # The Fable CoT renderer. Its selftest holds keep() equal to the predicates
+        # measure_fable5_supply.py counted with: a drift makes the fold land a different row
+        # set than facts/corpus_supply.json#cs.cot_fable_supply describes, so the recorded
+        # 2.76M would describe a corpus nobody built. It also asserts the rendered text is
+        # ChatML-free, which is a property of the FIELD NAME -- build_corpus's iter_jsonl
+        # wraps a row in ChatML only when `text` is absent, and that branch is one rename away.
+        "datagen/fable5/render_fable5_cot.py",
+        # The dedup hand-read sheet builder. Registered with its fix: rp1t[0] on a
+        # pure-starcoder cluster raised IndexError on all 60 of them, so the 100-cluster
+        # sheet the acceptance asks for could not be produced by the tool written for it.
+        # The selftest asserts BOTH directions -- a pure cluster yields a row with a None
+        # excerpt, and a mixed one still carries its rp1t excerpt, which is the field the
+        # hand read actually reads and the one a careless guard would blank.
+        "datagen/code_dedup_handread.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
