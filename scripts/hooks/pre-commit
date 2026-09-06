@@ -1347,6 +1347,13 @@ def main():
         # the BIASED score passed all 8 -- the first version recomputed both candidate gates and
         # asserted they differ, which is a fact about softmax, not about the module.
         "scripts/test_moe_module.py",
+        # The MoE step profiler. In SELFTEST_FILES and NOT in NEEDS_DATA because its --selftest
+        # needs no card: it asserts the shape constants still match arm D's launch line, that the
+        # parity (top_k+shared)*expert_ffn == ffn_hidden holds -- the whole "equal active FLOPs"
+        # premise rests on that, so a drift there silently invalidates every share the tool prints
+        # -- and that each documented region is actually recorded. The GPU-only equivalence check
+        # is behind --equiv and the hook does not run it.
+        "scripts/profile_moe_step.py",
         # One Muon step on a 3-D parameter. Registered SEPARATELY from test_moe_module because
         # the gap it closes is a gap that file has by construction: test_moe_module asserts
         # which optimizer GROUP each parameter lands in and never calls .step(), so group
