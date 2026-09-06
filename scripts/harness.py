@@ -12801,6 +12801,26 @@ _CITE_RE = re.compile(r"train\.py:(\d+)")
 #: decimal number (a bare `1234567` matches [0-9a-f]{7} and is not a sha, so at least one
 #: letter is required).
 _CITE_SHA_RE = re.compile(r"\b(?=[0-9a-f]*[a-f])[0-9a-f]{7,40}\b")
+#: The ABBREVIATED form: a bare `:NNN` with no filename. Undecidable in general -- it cannot
+#: be told from a column number, a port, or a version -- so it is checked ONLY inside a
+#: sentence that already names train.py and no sha (4c ruling, 2026-09-07, narrowing the
+#: wider form which stays prose). 3+ digits: `:12` is a time or a column far more often than
+#: a line, and train.py has no interesting code below line 100.
+_CITE_BARE_RE = re.compile(r"(?<![\w.]):(\d{3,})\b")
+
+
+def _bare_cite_targets(sentence):
+    """The `:NNN` line numbers in a sentence that names train.py and no sha.
+
+    Returns [] for any sentence that does not name train.py, so a version string or a
+    column reference elsewhere in the tree is never read as a citation."""
+    if "train.py" not in sentence or _CITE_SHA_RE.search(sentence):
+        return []
+    # Everything the qualified form already covers is skipped: a filename-qualified citation
+    # matches
+    # _CITE_RE and is reported there, and reporting it twice would double every count.
+    stripped = _CITE_RE.sub("train.py", sentence)
+    return [int(m.group(1)) for m in _CITE_BARE_RE.finditer(stripped)]
 
 
 def _cite_sentence(line, pos):
@@ -12894,6 +12914,23 @@ def check_train_cite_targets(root):
                 target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
                 bad.append(f"{key} is a bare line number (now holds {target[:44]!r}) -- "
                            f"cite the symbol, or anchor it to a sha")
+            # The ABBREVIATED form, checked per line rather than per match: a sentence naming
+            # train.py and holding `:NNN` with no sha. Sentence-scoped, so `:221` in a line
+            # that never mentions train.py is not a citation and is not read as one.
+            seen_sentences = set()
+            for m in _CITE_BARE_RE.finditer(line):
+                s = _cite_sentence(line, m.start())
+                if s in seen_sentences:
+                    continue
+                seen_sentences.add(s)
+                for num in _bare_cite_targets(s):
+                    key = f"{rel}:{i}->:{num}"
+                    if key in baseline:
+                        continue
+                    n += 1
+                    target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
+                    bad.append(f"{key} names train.py and cites `:{num}` with no sha (now holds "
+                               f"{target[:40]!r}) -- write the symbol")
     if bad:
         return FAIL, (f"{len(bad)} train.py citation(s) carry a line number with no commit sha "
                       f"(baseline {len(baseline)}): {'; '.join(bad[:4])}")
@@ -12947,6 +12984,73 @@ def _broken_train_cite_targets():
     src_lines[i - 1] = line.replace(sha, "an earlier commit")
     open(dst, "w", encoding="utf-8").write("\n".join(src_lines) + "\n")
     return d
+
+
+def _selftest_train_cite_abbreviated_form():
+    """The branch _broken_train_cite_targets cannot reach: the ABBREVIATED `:NNN` citation.
+
+    Registered separately because one world exercises one branch. The single world strips a
+    sha from a QUALIFIED citation, so the abbreviated reader never runs in it -- deleting
+    `_bare_cite_targets`'s body and returning [] would leave that world red for its own
+    reason and this half of 4c's 2026-09-07 ruling untested. Two branches, two worlds.
+
+    Three assertions, because the abbreviated form's whole difficulty is the false positive:
+      1. `:NNN` in a sentence naming train.py, no sha -> the probe's line is NAMED
+      2. the SAME `:NNN` in a sentence that does not name train.py -> NOT named. A bare number
+         is a column, a port or a version far more often than a citation, which is why the
+         wide form stays prose.
+      3. the same sentence with a sha -> NOT named. The anchor works abbreviated too.
+
+    Asserted on the reported COUNT with and without the probe, not by searching the evidence
+    text: the FAIL message prints only its first four findings, so a substring test passes or
+    fails on where the probe happens to sort. MEASURED while writing this -- mutating away the
+    train.py-in-sentence requirement produced 291 findings, the probe fell outside the four
+    printed, and the world then failed on the WRONG world's assertion. The count is also why
+    the baseline state does not matter: `_tmp_repo_shaped`'s git has its own object database,
+    so the real tree's sha-anchored citations are unresolvable there and the world is FAIL
+    before the probe exists. A delta is the only thing the probe controls.
+    """
+    victim_line = 3134  # a real line: the fp8 bf16 cast. Asserted below, not assumed.
+    train = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read().splitlines()
+    assert train[victim_line - 1].strip(), (
+        f"the world cites train.py line {victim_line}, which is blank -- pick a live line")
+
+    def _n_reported(state, ev):
+        if state is PASS:
+            return 0
+        m = re.match(r"(\d+) train\.py citation", ev)
+        assert m, f"the FAIL message no longer opens with its count: {ev[:120]}"
+        return int(m.group(1))
+
+    worlds = [
+        (f"# train.py's cast lives at :{victim_line} and this sentence names train.py.", 1),
+        (f"# an unrelated comment mentioning :{victim_line} and no python file at all.", 0),
+        (f"# train.py:{victim_line} AT 169da865 held the cast, and :{victim_line} names it.", 1),
+    ]
+    for text, want_delta in worlds:
+        d = _tmp_repo_shaped()
+        try:
+            probe = os.path.join(d, "scripts", "_cite_world_probe.py")
+            parent = os.path.dirname(probe)
+            if os.path.islink(parent):
+                os.unlink(parent)
+                os.makedirs(parent, exist_ok=True)
+                for f in os.listdir(os.path.join(ROOT, "scripts")):
+                    src = os.path.join(ROOT, "scripts", f)
+                    if os.path.isfile(src):
+                        os.symlink(src, os.path.join(parent, f))
+            before = _n_reported(*check_train_cite_targets(d))
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(f'"""a world probe, not a real tool."""\n{text}\n')
+            after = _n_reported(*check_train_cite_targets(d))
+            assert after - before == want_delta, (
+                f"the probe should add {want_delta} finding(s), added {after - before} "
+                f"({before} -> {after})\n  probe line: {text}")
+        finally:
+            import shutil
+            shutil.rmtree(d, ignore_errors=True)
+    return ("abbreviated `:NNN` adds a finding only beside train.py and only without a sha "
+            "(3 worlds, asserted on the count delta)")
 
 
 def check_no_conflict_markers(root):
@@ -19760,6 +19864,7 @@ def _demo(only=None):
     _direct_failures = []
     for _fn in (
         _selftest_milestone_reachable,
+        _selftest_train_cite_abbreviated_form,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
@@ -21933,7 +22038,8 @@ def _latest_step_ckpt(name):
     """(path, step) of the newest resumable checkpoint, or (None, None).
 
     Two names are resumable: ckpt_<name>.pt.step<N> from the periodic save and
-    ckpt_<name>.pt.interrupt.step<N> from train.py's SIGTERM handler (:2479). The
+    ckpt_<name>.pt.interrupt.step<N> from train.py's SIGTERM handler, which writes
+    `ckpt_path + f".interrupt.step{_step_now[0]}"`. The
     interrupt file is by construction the newest thing on disk when a signal arrives --
     written at the step the signal hit, after the last periodic save -- so matching only
     `.pt.step*` resumes from up to save_every steps earlier and silently discards the
