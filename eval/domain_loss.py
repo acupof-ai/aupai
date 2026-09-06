@@ -235,8 +235,8 @@ def _ce(model, x, y, bs, per_row=False, cu_path="cu_none"):
     # move published conclusions.
     #
     # ONE ROW PER FORWARD when cu is on, and this is not a style choice: cu_seqlens indexes the FLAT
-    # B*T stream (train.doc_cu_seqlens), so a batch of 4 rows is one 4T-long stream whose row boundaries
-    # documents too. That is legitimate for training, but it makes the number depend on bs, and
+    # B*T stream (train.py's doc_cu_seqlens), so a batch of 4 rows is one 4T-long stream whose row
+    # boundaries are documents too. That is legitimate for training, but it makes the number depend on bs, and
     # scripts/b0_sd_cu_rescore.py:76 already scored Stage D one row at a time. Matching that exactly
     # is the point: 6e's ruling is that the repo ends with ONE cu path, not two that agree by
     # assumption, so this loop reproduces b0's construction rather than a defensible variant of it.
