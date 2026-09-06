@@ -37,6 +37,13 @@ fi
 
 rm -rf /tmp/torchinductor_root
 
+# de-60: run_ddp.sh refuses a call that did not come from `harness launch`, because a direct call
+# writes no experiments row, takes no card claim and arms no monitor. This script is a two-arm
+# probe that does its OWN card check above (the busy-card refusal) and writes its own logs, so it
+# takes the named escape rather than routing through the launcher -- which would allocate the
+# grant's whole block and override the world this A/B is pinned to.
+export ALLOW_DIRECT_RUN=1
+
 for lr in 0.85 1.2; do
   echo "=== ARM lr_scale=$lr world=$NW cards ${_DEVS[*]} $(date -u +%H:%M:%S)"
   NGPU="$NW" PORT=29551 ./run_ddp.sh \
