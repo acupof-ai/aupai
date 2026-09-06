@@ -2632,6 +2632,12 @@ def _broken_test_integration_tree_guard():
     return d
 
 
+# When merge_main started signing its CAS (`-m "merge_main: <branch>"`). Reflog entries at or
+# before this are the unsigned backlog and prove nothing about who wrote them; only later ones
+# are evidence. Module scope so the selftest world can stamp entries either side of it.
+_SIGNING_FROM = 1788696100
+
+
 def check_main_advances_by_ancestry(root):
     """main's reflog must only ever move to a commit that DESCENDS from its previous value.
 
@@ -2699,6 +2705,7 @@ def check_main_advances_by_ancestry(root):
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
                   "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
     jumps = []
+    unsigned = []
     for ln in lines:
         parts = ln.split()
         if len(parts) < 2:
@@ -2706,6 +2713,34 @@ def check_main_advances_by_ancestry(root):
         old, new = parts[0], parts[1]
         if old == ZERO or old == new or (old, new) in _RECORDED:
             continue  # ref creation, a no-op write, or the recorded 2026-09-06 incident
+        # THE FAST-FORWARD RESIDUAL (44-37). A hand `git update-ref refs/heads/main <new>`
+        # that happens to be a fast-forward passes every test above -- ancestry holds -- so
+        # the rule "only merge_main writes main" was unenforced for that shape. merge_main
+        # now signs its CAS with `-m "merge_main: <branch>"`, which is the ONLY thing that
+        # distinguishes it: measured, an unsigned CAS and a bare hand write produce identical
+        # lines with an empty message.
+        #
+        # The message is everything after the first TAB, so it is read from the raw line and
+        # not from parts[]. An entry a plain `git commit`/`git merge` wrote on main carries
+        # "commit:"/"merge:" and is legitimate -- the integration tree commits there.
+        msg = ln.split("\t", 1)[1].strip() if "\t" in ln else ""
+        # THE CUTOFF IS WHAT KEEPS THIS FROM BEING A PERMANENT WARN. Every entry written
+        # before merge_main started signing carries an empty message -- all 60 in the window,
+        # measured -- so without a boundary this WARNs from the moment it ships until the
+        # backlog ages out, which is the permanent-amber shape root_durable was just fixed for.
+        # The timestamp is the reflog's own field (unix seconds, after the two shas and the
+        # committer identity), so the boundary is read from the entry rather than assumed.
+        _when = 0
+        try:
+            _when = int(ln.split("\t", 1)[0].split()[-2])
+        except (IndexError, ValueError):
+            pass
+        if _when > _SIGNING_FROM and not (
+                msg.startswith("merge_main:") or msg.startswith("commit")
+                or msg.startswith("merge") or msg.startswith("pull")
+                or msg.startswith("rebase") or msg.startswith("reset")
+                or msg.startswith("branch") or msg.startswith("checkout")):
+            unsigned.append((old, new, msg))
         a = subprocess.run(["git", "merge-base", "--is-ancestor", old, new],
                            cwd=root, capture_output=True)
         if a.returncode == 1:
@@ -2720,7 +2755,22 @@ def check_main_advances_by_ancestry(root):
             f"on: {detail}. A failed push is fixed by amending on your BRANCH and re-running "
             f"merge_main, never by `git update-ref refs/heads/main`."
         )
-    return PASS, f"main advanced by ancestry in all {len(lines)} recorded move(s)"
+    # UNSIGNED ENTRIES ARE A WARN, NOT A FAIL, AND THE REASON IS THE BACKLOG. Every entry
+    # written before merge_main started signing is unsigned, so a FAIL would be red for a
+    # fixed cause until they age out of the window -- the shape people learn to --no-verify
+    # past. The signature only discriminates going FORWARD, and _SIGNING_FROM below is the
+    # honest boundary: entries at or before it are not evidence of anything.
+    if unsigned:
+        detail = "; ".join(f"{o[:8]} -> {n[:8]}" for o, n, _m in unsigned[:4])
+        return WARN, (
+            f"{len(unsigned)} of {len(lines)} move(s) of refs/heads/main carry no writer "
+            f"signature: {detail}. merge_main signs its CAS with `-m merge_main: <branch>`, so "
+            f"an unsigned fast-forward is a hand `git update-ref` -- which bypasses the CAS and "
+            f"can discard a peer's advance. Entries predating 2026-09-06 are the backlog, not "
+            f"a finding."
+        )
+    return PASS, (f"main advanced by ancestry in all {len(lines)} recorded move(s), each "
+                  f"written by a signed merge_main CAS or a normal git command")
 
 
 def _broken_main_advances_by_ancestry():
@@ -2990,6 +3040,61 @@ def _broken_root_durable():
     with open(os.path.join(d, ".durable_mounts"), "w") as f:
         f.write(d + "\n")
     return d
+
+
+def _selftest_unsigned_fast_forward_warns():
+    """44-37: a hand `update-ref` that IS a fast-forward. Ancestry holds, so the FAIL tier
+    cannot see it; the writer signature is the only thing that can.
+
+    THREE WORLDS, because the interesting failures are on both sides of the signature:
+      A  unsigned fast-forward, after the cutoff  -> WARN (the residual, previously invisible)
+      B  the same write, SIGNED as merge_main     -> PASS (or the check flags legitimate work)
+      C  unsigned but BEFORE the cutoff           -> PASS (the backlog is not a finding)
+
+    C is what stops this being a permanent amber: every entry written before merge_main
+    started signing carries an empty message, so without the cutoff the check WARNs from the
+    moment it ships until the backlog ages out -- the shape root_durable was just fixed for.
+    """
+    import shutil
+
+    def _world(sign, when_offset):
+        d = _tmp_repo()
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        open(os.path.join(d, "scripts", "harness.py"), "w").close()
+        def g(*a, **kw):
+            env = dict(os.environ, **kw.pop("env", {}))
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, env=env)
+        g("init", "-q", ".")
+        g("config", "user.email", "t@example.invalid"); g("config", "user.name", "t")
+        g("checkout", "-q", "-B", "main")
+        open(os.path.join(d, "f.txt"), "w").write("base\n")
+        g("add", "-A"); g("commit", "-q", "-m", "base")
+        # A commit ON TOP of main, on a branch, so moving main to it is a FAST-FORWARD --
+        # ancestry holds and the sideways-move test says nothing.
+        g("checkout", "-q", "-b", "feat")
+        open(os.path.join(d, "f.txt"), "w").write("ahead\n")
+        g("add", "-A"); g("commit", "-q", "-m", "ahead")
+        ahead = g("rev-parse", "HEAD").stdout.strip()
+        g("checkout", "-q", "main")
+        stamp = {"GIT_COMMITTER_DATE": f"{_SIGNING_FROM + when_offset} +0000"}
+        if sign:
+            g("update-ref", "-m", "merge_main: feat", "refs/heads/main", ahead, env=stamp)
+        else:
+            g("update-ref", "refs/heads/main", ahead, env=stamp)
+        return d
+
+    for label, sign, offset, want in (("A unsigned, after cutoff", False, 600, WARN),
+                                      ("B signed, after cutoff", True, 600, PASS),
+                                      ("C unsigned, before cutoff", False, -600, PASS)):
+        d = _world(sign, offset)
+        try:
+            state, ev = check_main_advances_by_ancestry(d)
+            assert state != FAIL, f"{label}: a fast-forward must never read as a sideways move: {ev}"
+            assert state == want, f"{label}: expected {want}, got {state}: {ev}"
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    print("  ancestry: an unsigned fast-forward update-ref WARNs, the same write signed by "
+          "merge_main PASSes, and the pre-signing backlog is not a finding")
 
 
 def _selftest_tasks_read_from_index():
@@ -19158,6 +19263,7 @@ def _demo(only=None):
     _selftest_merge_fix_not_deadlocked()
     _selftest_merge_cherry_pick_not_a_drop()
     _selftest_content_restored_read_failure()
+    _selftest_unsigned_fast_forward_warns()
     _selftest_tasks_read_from_index()
     _selftest_root_durable_backup_ack()
     _selftest_merge_reverted_content()
