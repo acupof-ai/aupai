@@ -121,7 +121,7 @@ def selftest():
     in-memory dict is NOT a valid fixture here: `{"tok.weight": t, "head.weight": t}`
     shares storage, so a storage-keyed dedupe passes on it and still reports
     239,748,168 on the checkpoint on disk -- which is what the first version of this fix
-    did. train.py:2418 saves `{k: v.cpu() for k, v in state_dict().items()}`, and .cpu()
+    did. train.py's interrupt save writes `{k: v.cpu() for k, v in raw_model.state_dict().items()}`, and .cpu()
     on an already-CPU tensor returns the same object while a real GPU->CPU copy does
     not: the two keys become two independent tensors, which is why the measured
     checkpoint has no sharing left to find. `.clone()` per key reproduces that.
@@ -134,7 +134,7 @@ def selftest():
     emb, blk = pv * d, d * d
 
     def roundtrip(sd):
-        # .clone() per key = train.py:2418's per-key .cpu() off GPU: sharing does not survive.
+        # .clone() per key = train.py's _save_on_interrupt per-key .cpu() off GPU: sharing does not survive.
         buf = io.BytesIO()
         torch.save({"model": {k: v.clone() if hasattr(v, "clone") else v for k, v in sd.items()}}, buf)
         buf.seek(0)

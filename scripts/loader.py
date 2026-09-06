@@ -34,9 +34,9 @@ def vocab_fingerprint(tok):
 # docstring describing a dependency structure that does not exist is worse than none, because
 # it tells the next reader that changing this line is dangerous when the danger is elsewhere.
 #
-# train.py does NOT rely on this: resolve_num_id() (train.py:1429) derives num_id from the
-# tokenizer and Cfg.num_id is set from it (train.py:1467), with scripts/test_num_id_resolve.py
-# asserting it reads the tokenizer's own id rather than a literal.
+# train.py does NOT rely on this: its resolve_num_id() derives num_id from the tokenizer and its
+# build_tokenizer sets Cfg.num_id from that call, with scripts/test_num_id_resolve.py asserting it
+# reads the tokenizer's own id rather than a literal.
 EOS_ID = 1
 NUM_ID = 32772
 

@@ -36,11 +36,11 @@ claim_my_cards("nan_probe", note="FP8 NaN probe")
 # wiki -- so "the cache is 0bce3584" is true of the stamped ones only). 5.3 MB, far under
 # eval/cache_guard's 10 GB co-residency threshold, so this does not contend with a run.
 sys.path.insert(0, os.path.join("/work/aupai", "eval"))
-from cache_guard import assert_not_co_resident  # noqa: E402
+from cache_guard import NVME_CACHE_DIR, assert_not_co_resident  # noqa: E402
 
 NSEQ = int(os.environ.get("NSEQ", "64"))
 SEQ = int(os.environ.get("SEQ", "4096"))
-_tok_path = os.environ.get("TOKENS", "/mnt/data02/tokens/tokens_sample.pt")
+_tok_path = os.environ.get("TOKENS", os.path.join(NVME_CACHE_DIR, "tokens_sample.pt"))
 # THE GUARD, NOT MY ARITHMETIC. I reasoned "5.3 MB, far under the 10 GB threshold, so this
 # cannot contend" and wrote no call -- which is the rule as prose again, and the harness
 # check caught it. The size is why it PASSES; the guard is what establishes that, and it

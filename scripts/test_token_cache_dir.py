@@ -15,8 +15,8 @@ WHAT IS TESTED:
      existing is the state during any move, and a fallback preferring whichever it finds first would
      silently read the stale copy -- today's failure with the preference reversed (lessons-62).
   3. env unset + NVMe absent returns dirname(TOKEN_CACHE). This is the load-bearing guard: an
-     unconditional return of the NVMe path hands a laptop or a fresh pod train.py:1867's
-     absent-cache refusal, where tokenizing is the correct behaviour.
+     unconditional return of the NVMe path hands a laptop or a fresh pod _domain_seqs' "refusing to
+     retokenize" absent-cache refusal, where tokenizing is the correct behaviour.
   4. All three of 1-3 hold for harness's torch-free FALLBACK too, with train unimportable. A
      fallback one step behind the accessor it stands in for is this function's own incident in a
      smaller place.

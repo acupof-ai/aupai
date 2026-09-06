@@ -85,7 +85,7 @@ FATE = {
     # still open. Closing a task is not a reason to delete its production path -- the
     # number stays published either way, and deleting the producer downgrades it from
     # recomputable to merely re-readable. Verified against the audit before recording.
-    "scripts/e1_27_read.py": "KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py:848 stores lr_scale in neither Cfg nor the checkpoint, so nothing else can recover it)",
+    "scripts/e1_27_read.py": "KEEP (sole producer of control_pythia160m_vs_ours.md:76's 0.293989 denominator evidence -- the lr_scale 0.1 bit-identical rerun plus the lr_scale 1.0 negative control; train.py's --lr_scale is a CLI-only flag passed straight to set_schedule, stored in neither Cfg nor the checkpoint, so nothing else can recover it)",
     "scripts/e1_27_score.sh": "KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)",
     "scripts/e1_28_clean_score.sh": "KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)",
     # b0/62's ruling, 2026-09-03, after running all six on the pod. TWO OF MY "same-name

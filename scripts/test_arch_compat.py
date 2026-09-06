@@ -6,7 +6,7 @@ Runs on CPU where fla is absent (a shape-preserving stand-in replaces the Triton
 kernel) and on CUDA where fla is present -- the real chunk_kda cannot take CPU
 tensors, so a fla machine without a visible GPU exits loudly instead of silently
 skipping. On CUDA the model runs under the same bf16 autocast training uses
-(train.py:755): FlashAttention refuses fp32, so the CUDA path never executed
+(train.py's train-loop autocast on amp_dtype): FlashAttention refuses fp32, so the CUDA path never executed
 before that was added. Checks: AttnRes fwd/bwd (Full, Block, grad_ckpt), zero-init == uniform
 mean, and legacy checkpoint round-trip: old-key state_dict -> load (remap) ->
 save -> load, identical key set and outputs.
@@ -705,7 +705,7 @@ assert _rm.note_row_changes() == 0, (
 # THE fp32 ACCUMULATION IS ITSELF A CLAIM, and neither a +1.0 change nor a whole-row nudge tests
 # it -- both are visible in any precision. The case has to be the SMALLEST change the table can
 # hold: one ULP in ONE element. That means the table must be bf16 HERE, as it is on the arms
-# (train.py:2435's cast), because the models built above are fp32 and one fp32 ULP is below the
+# (train.py's fp8-branch bf16 cast), because the models built above are fp32 and one fp32 ULP is below the
 # resolution of any dot product over 64 terms -- a case written on the fp32 model is red for both
 # the right and the wrong reason. Measured at this d=64: with a bf16 table, a one-element bump moves
 # the fp32 projection and leaves a bf16 one bit-identical, each bf16 partial sum being ~64x the
@@ -1345,7 +1345,7 @@ def _gpu_check(cfg, B, T, cu):
     mg = _train.GatedMLA(cfg).cuda().to(_torch.bfloat16).eval()
     cug = cu.cuda().to(_torch.int32)
     # PATCH THE MODULE THAT OWNS THE SYMBOL. This read `_train.flash_attn_varlen_func`, and
-    # train.py:135 re-exports 14 names from model -- flash_attn_varlen_func is not one of them.
+    # train.py's `from model import` block re-exports 14 names -- flash_attn_varlen_func is not one of them.
     # So this line raised AttributeError and _gpu_check NEVER RAN, taking all three asserts
     # below with it (2026-09-04, found while running this before the head-hybrid edit; the
     # symbol has never been on train, at 28ae5917 which added this or at any commit since).
@@ -1392,7 +1392,7 @@ else:
 # would catch it. This asserts the wrap by its effect on a traced function, not by looking for
 # an attribute name that a torch bump could rename.
 #
-# ON _model, NOT _train, and this site was broken the same way as _gpu_check's: train.py:135
+# ON _model, NOT _train, and this site was broken the same way as _gpu_check's: train.py's `from model import`
 # re-exports 14 names from model and flash_attn_varlen_func is not one of them, so this raised
 # AttributeError and the assert never ran (2026-09-04). Its own message pointed at "train.py's
 # flash import block", which is where the wrap is NOT -- model.py:52-60 holds it. Two sites in
