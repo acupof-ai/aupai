@@ -3966,8 +3966,25 @@ def _ckpt_names(text):
     something the check resolves away: the absent name FAILs as a dead source.
     `.pt` is required in the token so ckpt_health.py and friends never match;
     trailing doc extensions (.jsonl/.txt) are stripped so a citation of a
-    readout sidecar resolves to its checkpoint."""
-    text = re.sub(r"(ckpt_[\w.]+?)\.step\{([\d, ]+)\}",
+    readout sidecar resolves to its checkpoint.
+
+    THE CORE CLASS INCLUDES `-` (b0-30, 2026-09-06). `\w` does not, so before this
+    every hyphenated run name died at its first hyphen and was NEVER SCANNED:
+    ckpt_1.5b-a0.2b-e48_8b.pt and its milestone sibling were cited by
+    moe.equal_token_gap_vs_dense_b192_per_domain and reached neither this function nor
+    _parse_ckpt_listing's keep set -- 8 files on the pod, 2 fact citations. Both sides
+    were blind consistently, so nothing read falsely green, and that is exactly why it
+    stayed invisible: the check reported 2 of the 4 checkpoints that entry cites and a
+    KEEP line naming only the reported two would have left the other two unprotected
+    while the gate went WARN. Widened at all five sites in one commit, because either
+    half alone is worse than the bug -- the scanner alone FAILs a fact no writable claim
+    can clear, and the parser alone lets a claim cover names nothing can flag.
+    THE TAIL AFTER `.pt` IS DELIBERATELY NOT WIDENED: tails are .stepN / .ep1 /
+    .interrupt.stepN and carry no hyphen, while prose runs `ckpt_x.pt -- the source of`,
+    so a widened tail would swallow the dashes of a sentence. The lookbehind keeps its
+    original class for the same kind of reason: adding `-` there drops runs/b0-ckpt_x.pt,
+    a real citation shape, and buys nothing."""
+    text = re.sub(r"(ckpt_[\w.-]+?)\.step\{([\d, ]+)\}",
                   lambda m: " ".join(f"{m.group(1)}.step{n.strip()}"
                                      for n in m.group(2).split(",")),
                   text)
@@ -3978,7 +3995,7 @@ def _ckpt_names(text):
     # file goes red forever with no action available. The two guards were in direct
     # tension: cited_artifacts_attested REQUIRES the artifact's basename in the fact, and
     # that basename embeds a checkpoint name by naming convention (fb, 2026-09-03).
-    for tok in re.findall(r"(?<![A-Za-z0-9_.])ckpt_[\w.]+?\.pt[\w.]*", text):
+    for tok in re.findall(r"(?<![A-Za-z0-9_.])ckpt_[\w.-]+?\.pt[\w.]*", text):
         for ext in (".jsonl", ".txt", ".md"):
             if tok.endswith(ext):
                 tok = tok[: -len(ext)]
@@ -3992,7 +4009,13 @@ def _parse_ckpt_listing(path):
     KEEP lines carry series shorthand (`X.pt.step2000, .pt.step2500`); a
     continuation attaches after the bare core OR after the `.pt` boundary, and
     both readings are kept -- the wrong reading names a file that cannot exist,
-    so over-protection costs nothing and under-protection is the hazard."""
+    so over-protection costs nothing and under-protection is the hazard.
+
+    THE BARE CORE IS `pt` MINUS `.pt`, NOT A SECOND NON-GREEDY MATCH (b0-30). Both
+    readings only work if the core is the WHOLE core: a non-greedy `[\w.]+?(?=\.)`
+    stops at the first dot inside it, so a dotted run name yielded 'ckpt_0' for
+    ckpt_0.2b_8b_b192 and the "bare core" reading protected nothing. Names here also
+    admit `-`; see _ckpt_names for why the tail and the lookbehind do not."""
     keep, cands, date, section = set(), {}, None, "A"
     for line in open(path, encoding="utf-8").read().splitlines():
         if line.startswith("# "):
@@ -4002,26 +4025,51 @@ def _parse_ckpt_listing(path):
             if re.match(r"# [A-Z]\.", line):
                 section = line[2]
             if line.startswith("# KEEP"):
-                base = pt = None
+                bases, pt = set(), None
                 for item in (s.strip() for s in line.split(",")):
                     # A claim line separates claims with "; " but shorthand continuations
                     # with ",", so one item can both continue the previous claim and name
                     # the next: attach the leading continuation FIRST (old base), then let
                     # tokens rebase. "NOT kept: X" is an explicit exclusion -- cut it.
                     kept = item.split("NOT kept")[0]
-                    if item.startswith(".") and base:
-                        cont = re.match(r"[\w.]+", item).group(0)
-                        keep.add(base + cont)
-                        if pt:
-                            keep.add(pt + cont)
-                    toks = re.findall(r"ckpt_[\w.]+?\.pt[\w.]*", kept)
+                    if item.startswith(".") and bases:
+                        cont = re.match(r"[\w.-]+", item).group(0)
+                        for b in bases:
+                            keep.add(b + cont)
+                    toks = re.findall(r"ckpt_[\w.-]+?\.pt[\w.]*", kept)
                     if toks:
                         for t in toks:
                             keep.add(t.rstrip("."))
                         first = toks[0].rstrip(".")
-                        base = re.match(r"ckpt_[\w.]+?(?=\.)", first).group(0)
-                        mm = re.match(r"ckpt_[\w.]+?\.pt", first)
+                        # THE PREFIX SET, AND IT IS A UNION -- A READING IS ADDED, NEVER
+                        # REPLACED (b0-30, 2026-09-06). Three prefixes a continuation can
+                        # attach to, all kept:
+                        #   short  first dot only    ckpt_n7c_p3
+                        #   core   everything before `.pt`   ckpt_0.2b_8b_b192
+                        #   pt     through `.pt`             ckpt_0.2b_8b_b192.pt
+                        # The old code kept `short` and `pt` and computed `short` with a
+                        # non-greedy `ckpt_[\w.]+?(?=\.)`, which has TWO failure modes on
+                        # real names in this tree, both measured (de confirmed on five):
+                        # a dotted core truncates (ckpt_0.2b_8b_b192.pt.step5000 -> 'ckpt_0',
+                        # needing no hyphen and live on main), and a name whose first dot
+                        # follows a hyphen matches nothing at all
+                        # (ckpt_k3-mla_2b_step2000.pt -> None), so the unguarded .group(0)
+                        # raised AttributeError and aborted every check in the run.
+                        # ADDING `core` RATHER THAN SWAPPING IT IN IS THE WHOLE POINT: for
+                        # ckpt_n7c_p3.milestone_keep_e1_n8source.pt the SHORT base is the
+                        # reading that names a real file (ckpt_n7c_p3.pt.step250), so a fix
+                        # that replaced it would have removed live protection to fix a
+                        # different name's bug. Extra prefixes are free by this function's
+                        # own rule -- an impossible name only ever exempts nothing, while a
+                        # missing one leaves a claimed file prunable.
+                        m_short = re.match(r"ckpt_[\w.-]+?(?=\.)", first)
+                        mm = re.match(r"ckpt_[\w.-]+?\.pt", first)
                         pt = mm.group(0) if mm else None
+                        bases = {b for b in (
+                            m_short.group(0) if m_short else None,
+                            pt[: -len(".pt")] if pt else None,
+                            pt,
+                        ) if b}
             continue
         m = re.match(r"(\d{4}-\d\d-\d\d_\d\d:\d\d) [\d.]+ (\S+)", line)
         if m:
