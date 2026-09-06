@@ -1030,6 +1030,15 @@ def main():
         # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
         # pairing at matched STEPS instead of matched tokens reverses the sign.
         "eval/equal_token_gap.py",
+        # The rate printed on a val_every boundary covers the validation pass, so it is not a
+        # training rate. Registered because reading two of them as a ratio does NOT cancel:
+        # validation costs two arms different absolute amounts, and sampling steps
+        # 3000/3200/3400 of the two batch-64 comparators gave 1.457x against the true 1.283x,
+        # which was reported to the controller before being retracted. The trap is single-point
+        # sampling at ROUND step numbers, since round numbers are the val_every boundaries; a
+        # median over all intervals is unaffected, and one world asserts exactly that so the
+        # comment cannot drift from what the guard checks.
+        "scripts/val_step_rates.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
