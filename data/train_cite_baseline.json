@@ -1,11 +1,11 @@
 {
   "why": "train.py:<N> citations still carrying a bare line number. A RATCHET: this list may shrink, never grow, and a NEW bare citation FAILs check_train_cite_targets. Ruling (aupai-4c, 2026-09-06): cite a role or a symbol, or anchor the number to a commit sha. These entries are the audited-and-converted set's REMAINDER: the 2026-09-06 audit read the 198 citations under scripts/ and converted the 103 rotten ones, so every entry here lives in a file the audit never judged -- train.py itself, model.py, eval/, datagen/, probes/, and repo-root scripts. They are debt with a known shape, not exceptions: the audited population rotted at 103/118, so assume these are mostly rotten too and read them before believing any of them.",
   "measured": "2026-09-07",
-  "at_commit": "62cb628a",
+  "at_commit": "514f3874",
   "bare_by_directory": {
     "(repo root)": 17,
     "probes": 5,
-    "scripts": 30,
+    "scripts": 27,
     "eval": 24,
     "datagen": 7
   },
@@ -59,9 +59,6 @@
     "scripts/check_split_page_lines.py:63->314",
     "scripts/check_split_page_lines.py:79->701",
     "scripts/check_split_page_lines.py:97->314",
-    "scripts/harness.py:12750->2315",
-    "scripts/harness.py:13852->93",
-    "scripts/harness.py:16654->3623",
     "scripts/harness.py:6174->1963",
     "scripts/launch_30b.sh:130->1807",
     "scripts/launch_30b.sh:131->1396",
