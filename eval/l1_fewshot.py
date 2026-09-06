@@ -37,7 +37,8 @@ sys.path.insert(0, ROOT)
 
 # FLA_FLASH_KDA must stay unset: the new-arch ladder checkpoints (attn_every 4)
 # route 9/12 layers through chunk_kda, and the eval runners' "0" default makes
-# that import fail (train.py:107 -> chunk_kda=None -> forward crash). score_matrix
+# that import fail (model.py's `from fla.ops.kda import chunk_kda` falls back to
+# chunk_kda=None -> forward crash). score_matrix
 # leaves it unset and scores the same checkpoints fine.
 import fone  # noqa: E402
 from eval.gsm8k import generate_batch  # noqa: E402
@@ -572,8 +573,9 @@ def main():
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
             with torch.no_grad():
                 # THE TOKENIZER IS PASSED, WHICH IS WHAT TURNS rep_stop ON. train.generate_batch
-                # gates it on `tokenizer is not None` (train.py:944), and the original call here
-                # omitted the argument -- so OUR arm ran with NO repetition stop while the control
+                # gates it on `rep_stop = rep_stop and tokenizer is not None`, and the original
+                # call here omitted the argument -- so OUR arm ran with NO repetition stop while
+                # the control
                 # arm, whose tokenizer I passed explicitly, ran with it. The 2x2's length gap
                 # (794-851 characters against 84-86) and our 98.8% loop rate are partly that:
                 # one arm running to max_new, the other truncated. A decoder difference read as a

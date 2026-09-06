@@ -7,19 +7,19 @@ data/mix_500m.json` on card 7 printed
     mix: math_owm_stage2 cache was built by another vocabulary, retokenizing
 
 against the nine caches the live 20B run is training on. train.VOCAB_ID is set only by
-train.build_tokenizer (train.py:1462-1472); ppl.py goes through
+train.build_tokenizer; ppl.py goes through
 scripts.loader.load_checkpoint, which never touches it, so VOCAB_ID stayed None.
-train.py:1647 then reads
+_domain_seqs' freshness test then read
 
     same_vocab = os.path.exists(stamp) and open(stamp).read().strip() == (VOCAB_ID or "")
 
-which is False against any real stamp, and :1686 writes `VOCAB_ID or ""` -- a 0-byte
+which is False against any real stamp, and the stamp write used `VOCAB_ID or ""` -- a 0-byte
 stamp. So the eval would have retokenized all nine and left them stamped empty, and the
 run's next resume would have retokenized them AGAIN. Cost: 851,965 documents and five
 minutes of idle cards per domain, in the middle of a 20B run.
 
 Two properties this asserts before any eval calls _domain_seqs, and the second is the
-one a mirror of train.py:1472 alone does not buy:
+one a mirror of build_tokenizer alone does not buy:
 
 1. VOCAB_ID is set, from the CHECKPOINT's vocab_id. Setting it makes the stamp compare
    correctly; it does not make rebuilding wrong. The default action is still "rebuild".
@@ -35,10 +35,14 @@ freshness arithmetic is READ from train.py's own values -- _domain_cache_path,
 _corpus_fp, _sample_seed -- rather than restated, so a change there cannot leave this
 agreeing with a rule that no longer exists.
 
-The permanent fix belongs in build_mix, which must refuse when VOCAB_ID is None instead
-of rebuilding, and must treat an empty stamp as stale. This is what the eval side can do
-today, and it is strictly narrower -- it protects the caches from evals, not from a
-mis-launched training run. (The line here that said train.py was frozen for
+THE PERMANENT FIX HAS LANDED IN build_mix, and this paragraph used to ask for it. Read
+2026-09-07: _domain_seqs' freshness test now opens with `bool(VOCAB_ID) and`, and compares
+against VOCAB_ID rather than `(VOCAB_ID or "")` -- so an empty stamp no longer equals an
+unset VOCAB_ID -- and the stamp write raises `refusing to stamp ... with no vocabulary`
+BEFORE open(), rather than writing 0 bytes. This module is still strictly narrower and
+still worth having: it names every stale domain in one line instead of the first, and it
+carries the co-residency refusal, which build_mix has no reason to. (The line here that
+said train.py was frozen for
 p500m_20b_0902 was removed 2026-09-05: that run ended 09-03 and train.py has taken many
 commits since, so the sentence was an expired excuse for not doing the wider fix.)
 
@@ -164,8 +168,9 @@ def assert_not_co_resident(domains, root=ROOT):
     58 with /proc/<pid>/status VmRSS 101,434,380 kB and fd/8 -> tokens_zh_web.pt). The
     paragraph above is true of every EVAL and reads as though it were true of _domain_seqs
     itself; it is not. train.py calls _domain_seqs directly -- neither train.py nor
-    scripts/loader.py contains assert_caches_fresh -- and train.py:1956 is a full
-    torch.load, so a plan build over the E1 mix reads 166.2 GB unrefused. That is the same
+    scripts/loader.py contains assert_caches_fresh -- and _domain_seqs' cache reuse path is a
+    full `torch.load(cache, map_location="cpu", weights_only=True)`, so a plan build over the
+    E1 mix reads 166.2 GB unrefused. That is the same
     quantity this guard's own refusal text calls out as ppl.py's 166 GB.
 
     A training launch is the job the lane EXISTS for, so refusing it because another team
@@ -313,8 +318,11 @@ def assert_cache_dir_not_overlay(root=ROOT):
 def assert_caches_fresh(domains, root=ROOT):
     """Raise unless every domain's cache exists and _domain_seqs would reuse it as-is.
 
-    Same five conditions train.py:1652-1665 ANDs together, read from train.py's own
-    helpers. Reports every domain that fails, not the first: an eval run whose mix has
+    The same conditions _domain_seqs' `fresh` ANDs together, read from train.py's own
+    helpers. SIX, not five: cache exists, shards exist, same_vocab, same_source, same_seed,
+    and the cache's mtime is at least the newest shard's. (This said five until 2026-09-07 --
+    a count beside a line number, both of them wrong.) Reports every domain that fails, not
+    the first: an eval run whose mix has
     two stale domains should learn both in one line rather than one per rerun.
 
     Also the co-residency refusal, BEFORE the freshness loop: both answer "may this

@@ -717,6 +717,47 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
         # path below, which is where that case belongs.
         held = held_cards([c for c in live if c.get("file") != os.path.basename(mine)])
         clash = {c: held[c] for c in cards if c in held}
+        # A DESCENDANT OF THE HOLDER IS THE SAME JOB, ON THIS PATH TOO (58's repro, 2026-09-07).
+        # The ancestry exemption existed only on the same-name rebind path below, which is reached
+        # when the name AND the cards match an existing claim file -- so a CHILD asking under its
+        # OWN name never got there: this clash test returned first and had no ancestry test at
+        # all. Measured in an isolated claim dir: parent acquire("score_matrix", ["2"]) -> True,
+        # then child acquire("humaneval_bpb", ["2"]) -> False, "cards ['2'] are claimed by
+        # {'2': ['score_matrix']}. Queue", which is verbatim what 9 of 10 sub-evals produced on
+        # card 2 on 2026-09-05. THE DIFFERENTIAL is what makes it this defect and not a missing
+        # feature: the SAME descendant asking for the SAME card under the PARENT'S name is
+        # allowed, because that reaches the rebind path.
+        #
+        # NO FILE IS WRITTEN and the parent's claim is NOT unlinked -- unlike the rebind path,
+        # which hands the claim to the descendant because there the two are the same claim. Here
+        # the parent is still running and still owns the card: a second file would double-count
+        # the card in status(), and every caller registers `atexit release(name, cards)`, so the
+        # child's exit would delete a claim the parent still needs. This mirrors the `holder ==
+        # old` case below: report success, take nothing.
+        #
+        # THIS RUNS BEFORE THE ZOMBIE CLASSIFICATION and cannot shadow it, which was the one
+        # ordering worth checking: a zombie's children are reparented to init the moment it exits,
+        # so a zombie holder has ZERO descendants and no asker can match it here. Measured -- fork
+        # a child that spawns a grandchild and exits: the child reads `Z` and `_descendants` of it
+        # returns 0. The mutation that makes the test symmetric breaks the zombie cases too, which
+        # is the same fact from the other side.
+        if clash:
+            # The pid to test ancestry FOR. `pid or getppid()` is the same default the claim path
+            # below resolves, taken raw rather than shell-resolved: a shell is refused there and a
+            # descendant of the holder is the same job whether or not this process is a shell, so
+            # running the resolution twice would only move the refusal earlier and change which
+            # message the reader gets.
+            asking = pid if pid else os.getppid()
+            ancestors = {c.get("name"): c.get("pid") for c in live
+                         if any(card in clash for card in c.get("cards", []))}
+            for nm, anc in ancestors.items():
+                if not isinstance(anc, int) or anc == asking:
+                    continue
+                if asking in {p for p, _ in _descendants(anc)}:
+                    return True, (
+                        f"{name} shares {','.join(sorted(clash))} with {nm} (pid {anc}), which is "
+                        f"an ANCESTOR of pid {asking} -- the same job. No claim written and "
+                        f"{nm}'s is untouched: it owns the card and outlives this process.")
         if not clash:
             # WHOSE pid. os.getpid() is THIS process -- the card_claim.py invocation, which
             # exits the moment it has written the file. Every claim was therefore stale on
@@ -2145,6 +2186,69 @@ def _selftest():
     except Exception as e:  # noqa: BLE001
         _case(False, f"status RAISED on an int-cards row: {type(e).__name__}: {e}")
     os.unlink(_hand)
+
+    # A DESCENDANT OF THE HOLDER SHARES THE CARD; A SIBLING AND A PARENT DO NOT (58's repro,
+    # 2026-09-07). The ancestry exemption lived only on the same-name rebind path, so a CHILD
+    # asking under its OWN name was refused with "Queue -- do not spill onto a claimed card" --
+    # verbatim what 9 of 10 sub-evals produced on card 2 on 2026-09-05. The differential is what
+    # identified it: the same descendant asking under the PARENT'S name was allowed.
+    #
+    # THREE CASES, and the two negatives are the load-bearing half. The exemption's whole risk is
+    # that it leaks past descendants and takes the lane rule with it -- "small jobs never spill
+    # onto a claimed card" is what this file exists for. A parent-of-holder is the direction test:
+    # ancestry runs one way, and a version comparing the two sets symmetrically would allow it.
+    _holder = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        _ok, _why = acquire("anc_holder", ["3"], pid=_holder.pid, wait=0)
+        _case(_ok, f"the world's own holder claim took ({_why[:60]})")
+        # THIS process is the holder's PARENT, never its descendant.
+        _okp, _whyp = acquire("anc_parent", ["3"], pid=me, wait=0)
+        _case(not _okp and "claimed by" in _whyp,
+              f"a PARENT of the holder is still refused -- ancestry runs one way ({_whyp[:70]})")
+        _kid = subprocess.run(
+            [sys.executable, "-c",
+             "import os, sys; sys.path.insert(0, %r); import card_claim;"
+             "card_claim.CLAIM_DIR = %r;"
+             "ok, why = card_claim.acquire('anc_child', ['3'], pid=os.getpid(), wait=0);"
+             "print('OK=%%s' %% ok); print('WHY=%%s' %% why.replace(chr(10), ' ')[:160])"
+             % (os.path.dirname(os.path.abspath(__file__)), CLAIM_DIR)],
+            capture_output=True, text=True, timeout=120)
+        # A CHILD OF THIS PROCESS, i.e. a SIBLING of the holder: outside the holder's subtree, so
+        # it must be refused exactly as an unrelated job is.
+        _case("OK=False" in _kid.stdout,
+              f"a SIBLING of the holder is refused, so the exemption does not leak "
+              f"({_kid.stdout.strip().splitlines()[-1][:70] if _kid.stdout.strip() else _kid.stderr[:70]})")
+    finally:
+        _holder.kill()
+        _holder.wait()
+        release("anc_holder", ["3"])
+
+    # AND THE POSITIVE, in-process: a real child of THIS process asking for a card THIS process
+    # holds. Separate from the world above because there the holder is the child; here it is `me`,
+    # which is the sub-eval shape -- score_matrix claims for the run, each sub-eval asks under its
+    # own name from a descendant.
+    _okm, _whym = acquire("anc_run", ["4"], pid=me, wait=0)
+    _case(_okm, f"the parent-role claim took ({_whym[:60]})")
+    _sub = subprocess.run(
+        [sys.executable, "-c",
+         "import os, sys; sys.path.insert(0, %r); import card_claim;"
+         "card_claim.CLAIM_DIR = %r;"
+         "ok, why = card_claim.acquire('anc_subeval', ['4'], pid=os.getpid(), wait=0);"
+         "print('OK=%%s' %% ok); print('WHY=%%s' %% why.replace(chr(10), ' ')[:160])"
+         % (os.path.dirname(os.path.abspath(__file__)), CLAIM_DIR)],
+        capture_output=True, text=True, timeout=120)
+    _case("OK=True" in _sub.stdout,
+          f"a DESCENDANT asking under its own name shares the card "
+          f"({_sub.stdout.strip().splitlines()[-1][:80] if _sub.stdout.strip() else _sub.stderr[:80]})")
+    # AND IT WROTE NO FILE. The parent is still running and still owns the card: a second claim
+    # would double-count it in status(), and every caller registers `atexit release(name, cards)`,
+    # so the child's exit would delete a claim the parent still needs.
+    _live_after, _ = claims()
+    _case(not any(c.get("name") == "anc_subeval" for c in _live_after),
+          "and writes NO claim file, so the child's atexit cannot free the parent's card")
+    _case(any(c.get("name") == "anc_run" for c in _live_after),
+          "while the parent's claim is untouched")
+    release("anc_run", ["4"])
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")
