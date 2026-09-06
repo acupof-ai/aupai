@@ -3767,7 +3767,7 @@ def check_launch_line_vs_oom_facts(root):
     recorded that exact OOM (93.8/95.2 GB, ranks 3/6 first): the line had been checked
     against argparse, not against the facts. Exact match on (dim, layers, batch, accum,
     seq) only -- partial matches skip, no fuzzy matching. seq defaults to Cfg.seq
-    (train.py:187, 4096; launch lines carry no --seq flag). grad_ckpt and world are
+    (`Cfg.seq = 4096` in train.py's Cfg body; launch lines carry no --seq flag). grad_ckpt and world are
     printed in the FAIL message, never joined on: the fact store does not record them
     consistently, and a guard that silently assumes equality invents data."""
     key = ("dim", "layers", "batch", "accum", "seq")
@@ -3796,7 +3796,7 @@ def check_launch_line_vs_oom_facts(root):
         flags = {k: int(v) for k, v in flag_re.findall(line)}
         if not all(k in flags for k in ("dim", "layers", "batch", "accum")):
             return  # partial launch line: skip, no fuzzy matching
-        flags.setdefault("seq", 4096)  # Cfg.seq, train.py:187
+        flags.setdefault("seq", 4096)  # Cfg.seq in train.py's Cfg body
         for fid, cfg in oom:
             if all(flags[k] == cfg[k] for k in key):
                 grad = ("--no-grad_ckpt" if "--no-grad_ckpt" in line else
@@ -4544,7 +4544,7 @@ def _shard_classifiers(root):
 
 def check_shard_contract(root):
     """Every shard train.py would tokenize has a first line that is a JSON object with a
-    string "content" -- the field _jsonl_content reads (train.py:1327).
+    string "content" -- the field train.py's `_jsonl_content` reads.
 
     train.py already REFUSES a .jsonl it cannot classify (non_shard_jsonl_excluded). That
     covers the name and says nothing about the contents, so a file named like a shard whose
@@ -6171,7 +6171,8 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 carried
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py's --help
+    # string for the fp64 truth check carried
     # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
@@ -10083,7 +10084,8 @@ def check_mix_supply(root, mix_glob=None):
             except Exception as e:
                 bad.append(f"{os.path.basename(mp)}: {name} cache unreadable: {e}")
                 continue
-            # The builder draws from the POOL, not the raw cache: train.py:1583 carves
+            # The builder draws from the POOL, not the raw cache: train.py's build_mix
+            # carves
             # the val holdout off first, then caps at pool x epochs. Checking raw supply
             # passes a mix the builder then silently under-draws -- stage-1 cot passed at
             # 3 x 424,056,227 = 1.272B and drew 1.210B, and the run scheduled 14.938B
@@ -12643,8 +12645,9 @@ def check_getattr_cfg_names_exist(root):
     perfect evidence for the conclusion being argued, so nothing looked wrong; what gave it
     away was 14.62 sitting 0.4 under a hard ceiling of 15.0.
 
-    The benign and the fatal spelling are IDENTICAL in source -- train.py:756's
-    `getattr(cfg, "attn_res_lr", 0.01)` names a real field at :221 with a matching default
+    The benign and the fatal spelling are IDENTICAL in source -- train.py's
+    `getattr(cfg, "attn_res_lr", 0.01)` in the AttnRes optimizer group names a real Cfg
+    field with a matching default
     -- which is why a human reading the line cannot separate them and a name check can.
 
     WHICH POSITIVES THIS DELIBERATELY MISSES, asked before writing it rather than after
@@ -15788,7 +15791,7 @@ BRIEF_EXTRA = {
         ("verify a peer's premise before acting on it; a correct conclusion does not "
          "certify its argument", "R1, 16 shapes"),
         ("a number is a claim: compute it before printing it",
-         "58 asserted train.py:1478 without running the grep, 2026-09-05"),
+         "58 asserted what a train.py line held without running the grep, 2026-09-05"),
     ],
     "git": [
         ("working around an un-loaded hook by reordering commits can produce an "
@@ -20960,7 +20963,7 @@ _GATE_FLOOR_S = 600
 def _derive_gate_timeout(cmd, cache_dir=None):
     """Startup-gate seconds derived from the mix the command names, or None.
 
-    train.py:1396 loads every domain's FULL token cache on every rank before the
+    train.py's build_mix loads every domain's FULL token cache on every rank before the
     first step. On 2026-08-31 that was 149 GiB and the first step line came 6m26s
     after launch -- the 120 s default would have killed a healthy run. The gate is
     a property of the mix, not something an operator should have to measure again:
@@ -21655,7 +21658,7 @@ def cmd_launch(rest):
 
 
 #: Reserved for train.py's NaN / kill-criterion stop: a deliberate abort, never resumed.
-#: train.py does not raise it yet (it rolls back to good_state instead, train.py:2034);
+#: train.py does not raise it yet (it calls raw_model.load_state_dict(good_state) instead);
 #: the guard exists so that adding the stop does not also need a change here, and so a
 #: future exit(_KILL_CRITERION_EXIT) cannot be silently treated as a crash.
 _KILL_CRITERION_EXIT = 42
@@ -22141,7 +22144,7 @@ def _pin_milestone(watch_dir, run, ckpt, token):
     during a save window. The inode survives the pruner's os.remove of the .step name,
     since that only drops one link.
 
-    The name must sit outside the pruner's glob. train.py:2091 globs
+    The name must sit outside the pruner's glob. train.py's rolling-save pruner globs
     `ckpt_<run>.pt.step*`; `ckpt_<run>.milestone_<token>.pt` has no `.pt.step`, so the
     roller cannot see it. A name the glob matches is not a pin.
 
