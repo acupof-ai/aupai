@@ -566,6 +566,21 @@ def main():
     ap.add_argument("--mem_sparse", action=argparse.BooleanOptionalAction, default=False,
                     help="COO grads for the value table. Default FALSE, matching the arms: NCCL "
                          "raises on all_reduce of a sparse tensor (tilerl, 2026-09-05)")
+    # MoE, for the same reason the memory fields are here and with the same consequence if they
+    # are missing: without them this file builds a DENSE model and reports its peak, which for a
+    # MoE arm is an answer to a different question that looks like a comfortable fit. Arm D's
+    # measured world-2 peak is 79.79 GiB of 80 -- 0.2 GiB of headroom -- so the batch/world
+    # question for stage 3 cannot be answered by arithmetic from one point: peak(batch) has a
+    # fixed term (parameters plus optimizer state, which DDP replicates and world size does not
+    # reduce) and a term linear in the per-card batch, and one measurement is one equation in two
+    # unknowns. Two batch sizes separate them.
+    ap.add_argument("--moe_experts", type=int, default=0,
+                    help="routed experts (0 = dense FFN, the default)")
+    ap.add_argument("--moe_top_k", type=int, default=3)
+    ap.add_argument("--moe_expert_ffn", type=int, default=768)
+    ap.add_argument("--moe_shared", type=int, default=1)
+    ap.add_argument("--moe_layers", type=str, default="0-11")
+    ap.add_argument("--moe_bias_gamma", type=float, default=0.001)
     a = ap.parse_args()
     if a.selftest:
         return _selftest()
@@ -610,6 +625,29 @@ def main():
     for _f in ("mem_values", "mem_top_k", "mem_layers", "mem_sparse"):
         assert hasattr(train.Cfg, _f), f"Cfg has no {_f!r}, which --{_f} is supposed to set"
         setattr(train.Cfg, _f, getattr(a, _f))
+    # Same map, same assert, for the MoE fields. A name here is one this file PROMISES to apply,
+    # so an absent field is a bug in the map -- and the failure it prevents is the one the memory
+    # block above already records: build a dense FFN, report its peak, and the number reads as a
+    # comfortable fit for an arm that does not fit.
+    for _f in ("moe_experts", "moe_top_k", "moe_expert_ffn", "moe_shared", "moe_layers",
+               "moe_bias_gamma"):
+        assert hasattr(train.Cfg, _f), f"Cfg has no {_f!r}, which --{_f} is supposed to set"
+        setattr(train.Cfg, _f, getattr(a, _f))
+    # moe_arm is train.py's launch-time requirement and not this probe's, exactly as mem_arm is:
+    # nothing here writes a moe_diag row. Set explicitly so a reader does not take the empty
+    # string for an oversight.
+    if a.moe_experts and hasattr(train.Cfg, "moe_arm"):
+        train.Cfg.moe_arm = "probe"
+    # THE bf16 REQUIREMENT IS THE MoE PATH'S, not a preference: torch._grouped_mm's META
+    # registration rejects fp32 under compile, and train.py reaches bf16 only via --fp8
+    # (`fp8 = args.fp8 and amp`). A --peak-only of a MoE shape without --fp8 would measure an
+    # fp32 model -- every activation doubled -- and that peak is not the arm's.
+    if a.moe_experts and not a.fp8:
+        raise SystemExit(
+            "refusing: --moe_experts without --fp8 measures an fp32 MoE model. train.py reaches "
+            "bf16 only under --fp8 (args.fp8 and amp), and _grouped_mm's meta registration "
+            "rejects fp32 under compile, so this peak would belong to a model no arm runs."
+        )
     # mem_arm is train.py's launch-time requirement, not this probe's: nothing here writes a
     # memory_diag row, so there is no arm label to get wrong. Set explicitly rather than left
     # empty so a future reader does not read the empty string as an oversight.
