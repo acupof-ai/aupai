@@ -2342,6 +2342,36 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # one exception: it was merged into whatever dict Cfg already held.
     cursor_base = {}
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
+    # THE BYTES THIS CALL IS ABOUT TO READ, before the first torch.load. de ruled the training
+    # path exempt from assert_not_co_resident (1fd88227) -- a launch is the job the lane exists
+    # for -- so this is a number in the log, not a refusal. What it replaces is an offline
+    # calculation: the 166.2 GB for the E1 mix was computed by hand and appeared in no log, so
+    # the RSS that followed had to be found in /proc/<pid>/status after the fact.
+    #
+    # A MISSING CACHE IS REPORTED, NOT SKIPPED, and that is the whole reason the line is worth
+    # printing on the first run rather than only on a resume: a domain whose cache does not
+    # exist yet will be TOKENIZED, so 0 bytes read now means minutes of CPU and a cache write
+    # instead. Silently summing 0 for it would understate the read and hide the expensive case.
+    if is_main:
+        _sizes, _absent = [], []
+        for _n in names:
+            _p = _domain_cache_path(_n)
+            try:
+                _sizes.append((_n, os.path.getsize(_p)))
+            except OSError:
+                _absent.append(_n)
+        _tot = sum(b for _, b in _sizes)
+        # MiB in the header, not GiB: at `.1f` GiB a 21 MiB fixture printed "0.0 GiB over 6
+        # cache(s)", a total that reads as nothing next to a non-zero count. The per-domain
+        # lines keep GiB because the domains that matter there are tens of GiB, and a domain
+        # too small to show is one that cannot move the peak.
+        print(f"cache read: {_tot / 2**20:,.0f} MiB ({_tot / 2**30:.2f} GiB) over "
+              f"{len(_sizes)} cache(s)"
+              + (f", {len(_absent)} to tokenize ({', '.join(_absent[:3])}"
+                 f"{', ...' if len(_absent) > 3 else ''})" if _absent else "")
+              + "".join(f"\n  {b / 2**30:7.2f} GiB  {_n}"
+                        for _n, b in sorted(_sizes, key=lambda t: -t[1])),
+              flush=True)
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
         seqs, vseq = seqs if Cfg.fone else (seqs, None)
