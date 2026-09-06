@@ -64,15 +64,18 @@ SHAPE = dict(d=256, heads=2, layers=4, ffn_hidden=256, vocab=256, seq=64, attn_e
 
 
 def check_shape(overrides=None):
-    """The two constraints that only exist on the card, checked WITHOUT one.
+    """The two constraints this script must enforce itself, checked WITHOUT a card.
 
-    Both cost this script a grant. FlashKDA pins head_dim to 128 (HeadMix's raise, `head_dim is pinned to ... by the FlashKDA
-    CUTLASS kernel`); train.py's
-    main() raises on any other value, but this script builds HybridLM directly so that raise never
-    runs -- instead the KDA Triton kernel dies with `CUDA error: misaligned address` inside its
-    autotuner, a config error wearing a hardware error's clothes. MoEFFN enforces
-    (moe_top_k + moe_shared) * moe_expert_ffn == ffn_hidden so a loss delta is attributable to
-    sparsity rather than FLOPs, and refuses in its constructor otherwise.
+    Both live in code that this script bypasses. FlashKDA pins head_dim to 128 (HeadMix's raise,
+    `head_dim is pinned to ... by the FlashKDA CUTLASS kernel`) and train.py's main() raises
+    `head_dim must be 128`, but this script builds HybridLM directly so that raise never runs.
+    MoEFFN enforces (moe_top_k + moe_shared) * moe_expert_ffn == ffn_hidden so a loss delta is
+    attributable to sparsity rather than FLOPs, and refuses in its constructor otherwise -- which
+    costs a card claim to discover.
+
+    NEITHER IS THE CAUSE OF THE `misaligned address` FAULT. I blamed head_dim for it, changed the
+    shape, spent a second claim, and got the identical fault at head_dim 128. That fault is fp32;
+    see the bf16 note in build(). These checks are here to save a claim, not because they fix it.
     """
     s = dict(SHAPE)
     # A TYPO'D FIELD IS REFUSED HERE, not in build(): build imports torch, so a misspelled
@@ -87,9 +90,9 @@ def check_shape(overrides=None):
     if s["d"] % s["heads"] or s["d"] // s["heads"] != 128:
         sys.exit(f"REFUSING: d {s['d']} / heads {s['heads']} = {s['d'] / s['heads']:g}, but "
                  f"FlashKDA pins head_dim to 128. train.py's main() raises on this; building "
-                 f"HybridLM directly does not, and the kernel instead dies with `CUDA error: "
-                 f"misaligned address` from inside its autotuner -- a config error that reads as "
-                 f"a broken card. Set d = heads * 128")
+                 f"HybridLM directly does not. (This is NOT the cause of the `misaligned "
+                 f"address` fault -- that one is fp32, and it persisted unchanged at head_dim "
+                 f"128.) Set d = heads * 128")
     active = (s["moe_top_k"] + s["moe_shared"]) * s["moe_expert_ffn"]
     if active != s["ffn_hidden"]:
         sys.exit(f"REFUSING: (moe_top_k {s['moe_top_k']} + moe_shared {s['moe_shared']}) * "
@@ -122,12 +125,14 @@ def build(grad_ckpt, seed=42, shape=None):
     # attn_every stays >= 2: HybridLM REFUSES attn_every=1 ("0 KDA layers, but GatedMLA is
     # NoPE"), so a KDA layer -- hence a card -- is unavoidable. 4 blocks, 2 of them MoE.
     #
-    # HEAD_DIM MUST BE 128, so d = heads * 128 and nothing smaller. The FlashKDA CUTLASS kernel
-    # pins it, and train.py's main() raises `head_dim must be 128` -- but this
-    # script constructs HybridLM DIRECTLY, so that raise never runs and there is no refusal to
-    # read. Measured on card 7: d=128 with heads=4 gives head_dim 32 and the KDA Triton kernel
-    # died with `CUDA error: misaligned address` inside its autotuner, which is a hardware fault
-    # dressed up as a config error. 2 heads x 128 = 256 is the smallest shape that holds.
+    # HEAD_DIM MUST BE 128, so d = heads * 128. The FlashKDA CUTLASS kernel pins it and
+    # train.py's main() raises `head_dim must be 128`, which this script must enforce itself
+    # because it constructs HybridLM DIRECTLY and that raise lives in main().
+    #
+    # THIS WAS NOT THE CAUSE OF THE `misaligned address` FAULT, and I asserted that it was.
+    # I changed d=128,heads=4 -> d=256,heads=2 on that theory, spent a second card claim, and got
+    # the identical fault at head_dim 128. The cause is dtype (see the bf16 note below). The
+    # head_dim constraint is real and worth enforcing; it was simply not this bug.
     Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden = 256, 2, 4, 256
     Cfg.vocab = Cfg.vocab_real = 256
     Cfg.seq, Cfg.fone = 64, False
@@ -149,7 +154,14 @@ def build(grad_ckpt, seed=42, shape=None):
     for k, v in (shape or {}).items():
         setattr(Cfg, k, v)   # names already validated against SHAPE by check_shape()
     torch.manual_seed(seed)
-    m = HybridLM(Cfg).cuda().train()
+    # BF16, AND THIS IS THE FIX FOR THE `misaligned address` FAULT, not a performance choice.
+    # HybridLM(Cfg) builds fp32 parameters and the KDA Triton kernel faults in fp32 with
+    # `CUDA error: misaligned address` inside its autotuner. eval_heldout.py's loader carries the
+    # diagnosis and the exclusions someone already paid for: row width (64 fails as readily as
+    # 4096), cu=None vs doc_cu_seqlens, FLA_FLASH_KDA=0 before any import, grad checkpointing --
+    # all excluded, dtype was the one thing that differed from every path that works. I burned two
+    # card claims blaming head_dim before reading that comment.
+    m = HybridLM(Cfg).cuda().to(torch.bfloat16).train()
     m.grad_ckpt = grad_ckpt
     return m, Cfg
 
