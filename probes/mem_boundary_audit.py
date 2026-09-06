@@ -2,7 +2,8 @@
 
 Both answers are LISTS, not booleans. "torch.compile works" and "FP8 skips the memory"
 are the claims; a boolean hides which modules were converted and where the graph broke,
-and b0 already found that _fp8_ok sees the LEAF name (train.py:543), so the filter can
+and b0 already found that _fp8_ok sees the LEAF name (its `name` argument is
+`fqn.rsplit(".", 1)[-1]`), so the filter can
 read correct while converting the wrong modules.
 """
 import sys
