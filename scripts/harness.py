@@ -1960,6 +1960,98 @@ def _agents_coverage_table(root):
     return rows, None
 
 
+def check_deletion_list_no_tracked(root):
+    """No path on a deletion-candidate list is tracked in main.
+
+    §255: task 3b-16 said "delete the unclaimed web_cci3_p* dirs and loose batch_*.jsonl".
+    All 143 batch_*.jsonl on the pod are in data/corpus/sample/, which git ls-tree gives as
+    143 of 148 TRACKED files -- the 2,000-document sample a checkout ships. The deletion
+    reads as reclaiming scratch space and is a repo edit performed on the pod, where nothing
+    looks: pod_drift --check asserts the files the manifest LISTS match, never that unlisted
+    ones are absent, so a deleted tracked file leaves every gate green.
+
+    Tracked status is a property of the REPOSITORY, not of the directory a candidate sits in,
+    so a list built by looking at the filesystem cannot see it. This reads the lists.
+
+    Scope, stated because it is narrow: runs/*deletion_candidates*.md|txt and
+    runs/pod_ckpt_candidates_*.txt. A path is a candidate only if the line is a table cell or
+    a bare path -- prose that happens to name a tracked file is not a deletion target, and a
+    check that flagged it would be turned off. Globs are expanded against the index, so
+    `data/corpus/sample/batch_*.jsonl` on a list resolves to the 143 files and FAILs.
+    """
+    import fnmatch
+    import subprocess
+
+    r = subprocess.run(["git", "-C", root, "ls-files"], capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, "not a git repository"
+    tracked = set(r.stdout.split())
+    if not tracked:
+        return SKIP, "no tracked files"
+
+    lists = []
+    d = os.path.join(root, "runs")
+    if os.path.isdir(d):
+        for n in sorted(os.listdir(d)):
+            if re.search(r"(deletion_candidates|ckpt_candidates).*\.(md|txt)$", n):
+                lists.append(os.path.join("runs", n))
+    if not lists:
+        return SKIP, "no deletion-candidate lists in runs/"
+
+    hits = []
+    for rel in lists:
+        with open(os.path.join(root, rel), encoding="utf-8", errors="replace") as f:
+            for i, line in enumerate(f, 1):
+                # A path is a candidate when it stands alone or fills a table cell. Prose
+                # naming a file is not a deletion target: the C3 list's own body explains
+                # WHY data/corpus/sample/ must not be deleted, and flagging that sentence
+                # would make the check fire on the document that prevents the incident.
+                for cell in ([c.strip().strip("`") for c in line.split("|")]
+                             if line.lstrip().startswith("|") else [line.strip().strip("`")]):
+                    if not cell or " " in cell or "/" not in cell:
+                        continue
+                    if any(fnmatch.fnmatch(t, cell) or t == cell for t in tracked):
+                        n = sum(1 for t in tracked if fnmatch.fnmatch(t, cell) or t == cell)
+                        hits.append(f"{rel}:{i} names {cell} -- {n} tracked file(s) in main")
+    if hits:
+        return FAIL, ("; ".join(hits[:6])
+                      + " -- a deletion list may not name tracked content; strike the target "
+                        "or the rm removes what a fresh checkout ships, with every gate green")
+    return PASS, f"{len(lists)} deletion list(s), no tracked path named"
+
+
+def _broken_deletion_list_no_tracked():
+    """A REAL deletion list, in a REAL git repo, naming a path that IS tracked there.
+
+    The world must be a git repository or the check SKIPs and the selftest reports it as
+    unfailable (measured 2026-09-06: _tmp_repo() is a bare mkdtemp, so the first version of
+    this world produced "not a git repository"). So: git init, commit a file at the same path
+    the incident's tracked content lives at, then append that path to a copy of the real list.
+    """
+    import shutil
+    import subprocess
+
+    d = _tmp_repo()
+    src = next((n for n in sorted(os.listdir(os.path.join(ROOT, "runs")))
+                if re.search(r"deletion_candidates.*\.md$", n)), None)
+    if src is None:
+        raise SelftestSkip("no deletion-candidate list in runs/ to mutate")
+
+    # A tracked file at the path the incident is about, so the check's own subject exists.
+    victim = os.path.join("data", "corpus", "sample", "batch_0000.jsonl")
+    os.makedirs(os.path.join(d, os.path.dirname(victim)), exist_ok=True)
+    with open(os.path.join(d, victim), "w", encoding="utf-8") as f:
+        f.write('{"text": "a tracked sample row"}\n')
+    for cmd in (["init", "-q"], ["add", victim], ["-c", "user.email=t@t", "-c", "user.name=t",
+                                                   "commit", "-qm", "sample"]):
+        subprocess.run(["git", "-C", d, *cmd], capture_output=True)
+
+    dst = os.path.join(d, "runs", src)
+    shutil.copy(os.path.join(ROOT, "runs", src), dst)
+    with open(dst, "a", encoding="utf-8") as f:
+        f.write(f"\n{victim}\n")
+    return d
+
 def check_shapes_table_covers_doc(root):
     """Every surviving incident § in gate_failure_incidents.md (model-project) and
     infra_incidents.md (pod/infra) appears exactly once in AGENTS.md's rule table, and
@@ -3675,7 +3767,7 @@ def check_launch_line_vs_oom_facts(root):
     recorded that exact OOM (93.8/95.2 GB, ranks 3/6 first): the line had been checked
     against argparse, not against the facts. Exact match on (dim, layers, batch, accum,
     seq) only -- partial matches skip, no fuzzy matching. seq defaults to Cfg.seq
-    (train.py:187, 4096; launch lines carry no --seq flag). grad_ckpt and world are
+    (`Cfg.seq = 4096` in train.py's Cfg body; launch lines carry no --seq flag). grad_ckpt and world are
     printed in the FAIL message, never joined on: the fact store does not record them
     consistently, and a guard that silently assumes equality invents data."""
     key = ("dim", "layers", "batch", "accum", "seq")
@@ -3704,7 +3796,7 @@ def check_launch_line_vs_oom_facts(root):
         flags = {k: int(v) for k, v in flag_re.findall(line)}
         if not all(k in flags for k in ("dim", "layers", "batch", "accum")):
             return  # partial launch line: skip, no fuzzy matching
-        flags.setdefault("seq", 4096)  # Cfg.seq, train.py:187
+        flags.setdefault("seq", 4096)  # Cfg.seq in train.py's Cfg body
         for fid, cfg in oom:
             if all(flags[k] == cfg[k] for k in key):
                 grad = ("--no-grad_ckpt" if "--no-grad_ckpt" in line else
@@ -4452,7 +4544,7 @@ def _shard_classifiers(root):
 
 def check_shard_contract(root):
     """Every shard train.py would tokenize has a first line that is a JSON object with a
-    string "content" -- the field _jsonl_content reads (train.py:1327).
+    string "content" -- the field train.py's `_jsonl_content` reads.
 
     train.py already REFUSES a .jsonl it cannot classify (non_shard_jsonl_excluded). That
     covers the name and says nothing about the contents, so a file named like a shard whose
@@ -6079,7 +6171,8 @@ def check_entrypoint_help(root):
     bad = []
     # THE REPO-ROOT ENTRY POINTS WERE NOT SCANNED, WHICH IS WHERE THIS DEFECT LIVED LONGEST.
     # This loop covered five subdirectories and no root file, so train.py -- the entry point
-    # every launch goes through -- was outside it. Measured 2026-09-03: train.py:1963 carried
+    # every launch goes through -- was outside it. Measured 2026-09-03: train.py's --help
+    # string for the fp64 truth check carried
     # "weights 14% off against fp64 truth" from 169da865, so `train.py --help` had been dead
     # with the exact TypeError this check names, and the check passed the whole time. A guard
     # that skips the most-used file in the repo reports on the files that matter least.
@@ -6532,8 +6625,14 @@ def _broken_corpus_filters_fp():
     domain that is NOT in the baseline (new debt). Both must FAIL."""
     d = _tmp_repo(mix_obj={"domains": {"web_hq": 1.0, "en": 1.0}})
     os.makedirs(os.path.join(d, "filters"), exist_ok=True)
-    with open(os.path.join(d, "filters", "pass1_garbage.py"), "w") as fh:
-        fh.write("# a filter\n")
+    # All three PIPELINE filters, copied from the real tree. fp_filters raises on a missing
+    # one rather than hashing "absent" -- a build whose filter file vanished must not carry a
+    # valid-looking fingerprint -- so a world holding only pass1 makes the check RAISE, which
+    # the selftest reports as "cannot be made to fail" rather than as a FAIL (measured
+    # 2026-09-06, when scoping fp_filters to the pipeline turned this world red that way).
+    import shutil
+    for _n in ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py"):
+        shutil.copy(os.path.join(ROOT, "filters", _n), os.path.join(d, "filters", _n))
     dom = os.path.join(d, "data", "corpus", "web_hq")
     os.makedirs(dom, exist_ok=True)
     with open(os.path.join(dom, "build_corpus_stats.json"), "w") as fh:
@@ -9985,7 +10084,8 @@ def check_mix_supply(root, mix_glob=None):
             except Exception as e:
                 bad.append(f"{os.path.basename(mp)}: {name} cache unreadable: {e}")
                 continue
-            # The builder draws from the POOL, not the raw cache: train.py:1583 carves
+            # The builder draws from the POOL, not the raw cache: train.py's build_mix
+            # carves
             # the val holdout off first, then caps at pool x epochs. Checking raw supply
             # passes a mix the builder then silently under-draws -- stage-1 cot passed at
             # 3 x 424,056,227 = 1.272B and drew 1.210B, and the run scheduled 14.938B
@@ -12545,8 +12645,9 @@ def check_getattr_cfg_names_exist(root):
     perfect evidence for the conclusion being argued, so nothing looked wrong; what gave it
     away was 14.62 sitting 0.4 under a hard ceiling of 15.0.
 
-    The benign and the fatal spelling are IDENTICAL in source -- train.py:756's
-    `getattr(cfg, "attn_res_lr", 0.01)` names a real field at :221 with a matching default
+    The benign and the fatal spelling are IDENTICAL in source -- train.py's
+    `getattr(cfg, "attn_res_lr", 0.01)` in the AttnRes optimizer group names a real Cfg
+    field with a matching default
     -- which is why a human reading the line cannot separate them and a name check can.
 
     WHICH POSITIVES THIS DELIBERATELY MISSES, asked before writing it rather than after
@@ -14677,6 +14778,13 @@ CHECKS = [
         _broken_agents_rules_covered,
     ),
     (
+        "deletion_list_no_tracked",
+        "no path on a deletion-candidate list is tracked in main",
+        "3b-16's list named 143 batch_*.jsonl that are tracked content in data/corpus/sample/ -- deleting them on the pod removes what a fresh checkout ships and pod_drift stays green, because it asserts listed files match and never that unlisted ones are absent (§255)",
+        check_deletion_list_no_tracked,
+        _broken_deletion_list_no_tracked,
+    ),
+    (
         "shapes_table_covers_doc",
         "every incident in the incidents doc is referenced exactly once in AGENTS.md's rule table",
         "three sessions added shapes on 2026-09-02 and the numbering collided twice (two §62s, two §63s), each caught only by a merge conflict -- which catches a same-line collision but never a shape that reaches no rule, or a row whose count says 14 beside fifteen refs",
@@ -14949,6 +15057,7 @@ EVIDENCE = {
     "vocab_id_on_load_path": "repo",
     "coresident_cache_refusal": "repo",
     "no_duplicate_defs": "repo", "agents_rules_covered": "repo", "timestamps_are_utc": "repo",
+    "deletion_list_no_tracked": "repo",
     "shapes_table_covers_doc": "repo",
     "curl_ipv4": "repo", "tasks_well_formed": "repo", "tasks_stale": "repo",
     "running_sh_override_verified": "repo",
@@ -15682,7 +15791,7 @@ BRIEF_EXTRA = {
         ("verify a peer's premise before acting on it; a correct conclusion does not "
          "certify its argument", "R1, 16 shapes"),
         ("a number is a claim: compute it before printing it",
-         "58 asserted train.py:1478 without running the grep, 2026-09-05"),
+         "58 asserted what a train.py line held without running the grep, 2026-09-05"),
     ],
     "git": [
         ("working around an un-loaded hook by reordering commits can produce an "
@@ -20854,7 +20963,7 @@ _GATE_FLOOR_S = 600
 def _derive_gate_timeout(cmd, cache_dir=None):
     """Startup-gate seconds derived from the mix the command names, or None.
 
-    train.py:1396 loads every domain's FULL token cache on every rank before the
+    train.py's build_mix loads every domain's FULL token cache on every rank before the
     first step. On 2026-08-31 that was 149 GiB and the first step line came 6m26s
     after launch -- the 120 s default would have killed a healthy run. The gate is
     a property of the mix, not something an operator should have to measure again:
@@ -21549,7 +21658,7 @@ def cmd_launch(rest):
 
 
 #: Reserved for train.py's NaN / kill-criterion stop: a deliberate abort, never resumed.
-#: train.py does not raise it yet (it rolls back to good_state instead, train.py:2034);
+#: train.py does not raise it yet (it calls raw_model.load_state_dict(good_state) instead);
 #: the guard exists so that adding the stop does not also need a change here, and so a
 #: future exit(_KILL_CRITERION_EXIT) cannot be silently treated as a crash.
 _KILL_CRITERION_EXIT = 42
@@ -22035,7 +22144,7 @@ def _pin_milestone(watch_dir, run, ckpt, token):
     during a save window. The inode survives the pruner's os.remove of the .step name,
     since that only drops one link.
 
-    The name must sit outside the pruner's glob. train.py:2091 globs
+    The name must sit outside the pruner's glob. train.py's rolling-save pruner globs
     `ckpt_<run>.pt.step*`; `ckpt_<run>.milestone_<token>.pt` has no `.pt.step`, so the
     roller cannot see it. A name the glob matches is not a pin.
 
