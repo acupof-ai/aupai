@@ -79,14 +79,14 @@ TOK_PER_STEP = {ARM: 8 * 4 * 6 * 4096, "b0_e1p_dense": 16 * 2 * 2 * 4096,
 # 262,144 from a batch-192 cfg line and refuse for the wrong reason.
 CMP_CARDS = {"b0_e1p_dense": 2, "b0_e1p_moe48": 2, "0.2b_8b_b192": 6}
 
-# WSD warmdown fraction, identical in all three arms' cfg lines. train.py:3391 starts the
+# WSD warmdown fraction, identical in all three arms' cfg lines. train.py's WSD JOIN line starts
 # warmdown at `total - max(1, int(warmdown * total))`, so the comparators (total 3815) enter it
 # at 3434 and the arm (total 10172) at 9155 -- confirmed against the arm's own printed
 # "warmdown starts at step 9155".
 WARMDOWN_FRAC = 0.1
 
 VAL_RE = re.compile(r"^step (\d+)/(\d+) val ([\d.]+)")
-# train.py:3391 prints this on a WSD join. Reading it beats recomputing: the printed line is
+# train.py's WSD JOIN runlog prints this. Reading it beats recomputing: the printed line is
 # what the run's own scheduler used, and a recomputation silently disagrees if warmdown,
 # total_steps or the formula ever differ from what this file assumes.
 WARMDOWN_LINE_RE = re.compile(r"warmdown starts at step (\d+)")
@@ -94,7 +94,7 @@ VAL_EVERY_RE = re.compile(r"val_every (\d+)")
 
 
 def warmdown_start(total):
-    """First step of the cosine tail, by train.py:3391's formula.
+    """First step of the cosine tail, by the WSD JOIN line's own formula.
 
     The FALLBACK only. Prefer warmdown_from_log: a fresh run prints no WSD-join line (only a
     resume does), so this is what covers the arm that starts from scratch, and the two must

@@ -795,8 +795,9 @@ def main():
         print("FAIL: the memory pool exists but TableMaster matched no value table. The probe would "
               "report the non-master peak as the arm's.", file=sys.stderr)
         return 1
-    # AFTER the cast, BEFORE DDP and compile -- train.py's order (:2016 cast, :2445 DDP,
-    # :2491 compile). Building the optimizers first would hand Muon fp32 parameter references
+    # AFTER the cast, BEFORE DDP and compile -- train.py's order: the fp8 branch's
+    # `raw_model.to(torch.bfloat16)`, then the DDP wrap, then torch.compile of the step.
+    # Building the optimizers first would hand Muon fp32 parameter references
     # that the cast then replaces, so the optimizer would step tensors the model no longer uses.
     optimizers = train.build_optimizers(raw, train.Cfg,
                                         table_master.map if table_master else None)
