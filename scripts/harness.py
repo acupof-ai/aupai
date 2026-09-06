@@ -9727,6 +9727,9 @@ def cmd_friction(argv):
     a.add_argument("--commit", action="store_true",
                    help="commit the row path-scoped in this call, so the ledger never sits "
                         "dirty and cannot abort someone's merge before the drivers run")
+    a.add_argument("--defer", action="store_true",
+                   help="queue the row under the git dir instead of writing the ledger; "
+                        "merge_main drains every queued row into ONE commit after its CAS")
     # RESOLVED IS AN APPEND, NEVER AN EDIT, and that is forced by the merge semantics rather
     # than chosen. runs/friction.jsonl is `merge=union`: MEASURED 2026-09-04 on a throwaway
     # repo, when two branches edit the SAME line union keeps BOTH -- so rewriting a row's
@@ -9831,6 +9834,38 @@ def cmd_friction(argv):
         "minutes_lost": args.minutes,
         "sha": _head_sha(),
     }
+    if args.defer:
+        # QUEUE INSTEAD OF WRITING. 601 commits landed on main in 24h and 98 were single
+        # ledger rows (4c, 2026-09-06); the merge commits cannot batch -- each is one
+        # integration -- but these can, because nobody polls friction.jsonl. The row is
+        # written when it happens and lands at the writer's next merge_main, so nothing is
+        # remembered by a person and no ordering changes.
+        #
+        # UNDER THE GIT DIR, NOT THE WORKTREE: measured invisible to `git status` and
+        # per-worktree, so a queued row cannot dirty the tree -- which is the whole reason
+        # --commit exists (a dirty friction.jsonl aborts everyone's merge before the drivers
+        # run). Queuing is the stronger form of that fix: the tree is never dirtied at all.
+        #
+        # ONE JSON OBJECT PER LINE, not the bare cause string the override queue uses. That
+        # queue hardcodes kind=override and reconstructs the rest at drain time, which works
+        # for one shape and silently drops every other field. A general queue must carry the
+        # whole row or --minutes, --fix and --who are lost.
+        #
+        # msg_log DELIBERATELY NOT INCLUDED: peers read it to coordinate in real time, and a
+        # deferred row is invisible until the writer's next merge. Friction has no reader
+        # with that requirement.
+        _gd = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-dir"],
+                             capture_output=True, text=True).stdout.strip()
+        if not _gd:
+            print("cannot find the git dir to queue under; row NOT written", file=sys.stderr)
+            return 1
+        if not os.path.isabs(_gd):
+            _gd = os.path.join(ROOT, _gd)
+        with open(os.path.join(_gd, "aupai_pending_rows"), "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+        print(f"friction queued ({args.kind}): drains to one commit at your next merge_main")
+        return 0
+
     _append_task(row, path=FRICTION_PATH)
     print(f"friction <- {args.kind}: {args.cause[:70]}")
     if args.commit:
