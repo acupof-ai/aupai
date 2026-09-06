@@ -197,6 +197,36 @@ def _union_merged(paths):
     return out
 
 
+def _main_touched_staged(paths):
+    """Of `paths`, the ones main has CHANGED since this branch diverged. [] when unknowable.
+
+    THE COUNT WAS THE WRONG PREDICATE. "N commits behind" refuses whenever main moved at
+    all, and on a repo with six sessions main moves during the merge you were told to run:
+    b0 was refused at 15 behind, merged, and was refused again at 4 behind. Measured
+    2026-09-06: 80 of 174 friction rows carry AUPAI_BEHIND_MAIN_OK, 35 of 51 dated 09-06.
+
+    The refusal's own stated reason is "this commit writes on top of code main has already
+    moved past". That reason is about the FILES, not the commit count -- if main advanced
+    only on files this commit does not stage, nothing it writes lands on top of anything.
+    So the predicate is the intersection, and it goes empty on its own as soon as the merge
+    that matters is done, which is what makes the wall passable.
+
+    THREE-DOT, NOT TWO. `git diff <base> main` where base is the merge-base is what "main
+    changed since we diverged" means. Using HEAD..main's endpoints directly would also list
+    files THIS branch changed, refusing a commit because of its own edits.
+    """
+    if not paths:
+        return []
+    base = subprocess.run(["git", "merge-base", "HEAD", "main"], capture_output=True, text=True)
+    if base.returncode != 0 or not base.stdout.strip():
+        return []  # no main, or no common ancestor: a question with no answer refuses nothing
+    r = subprocess.run(["git", "diff", "--name-only", base.stdout.strip(), "main"],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        return []
+    return sorted(set(r.stdout.split("\n")) & set(paths) - {""})
+
+
 def staged(diff_filter):
     r = subprocess.run(
         ["git", "diff", "--cached", "--name-only", f"--diff-filter={diff_filter}"],
@@ -479,15 +509,23 @@ def main():
     # it cannot be widened by adding a ledger row to a code commit.
     _staged_all = staged("ACDMR")
     _ledger_only = bool(_staged_all) and set(_staged_all) <= _union_merged(_staged_all)
-    if behind and not merging and not _ledger_only and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
+    # THE OVERLAP, NOT THE COUNT (tilerl-31). See _main_touched_staged: the refusal's reason
+    # is about files, so the condition is which of them main has moved. `behind` stays in the
+    # message because it is what the reader sees in `git status`, and it still gates the
+    # cheap early-out -- an up-to-date tree needs no diff at all.
+    _clash = _main_touched_staged(_staged_all) if behind and not _ledger_only and not merging else []
+    if _clash and os.environ.get("AUPAI_BEHIND_MAIN_OK") != "1":
         print(
-            f"REFUSING: this tree is {behind} commit(s) behind main. Merge first:\n"
+            f"REFUSING: main has changed {len(_clash)} file(s) this commit stages, and this "
+            f"tree is {behind} commit(s) behind it: {', '.join(_clash[:4])}\n"
+            f"Merge first:\n"
             f"  git merge --no-edit main\n"
             f"Committing here writes on top of code main has already moved past, and "
             f"any check you ran said nothing about which version it tested.\n"
+            f"Being behind main is NOT itself a refusal: main moving on files you do not "
+            f"stage costs you nothing and this commit would be allowed.\n"
             f"A commit staging ONLY files git can merge WITHOUT a person -- merge=union or a "
-            f"named driver, per .gitattributes -- is exempt and needs no flag; this one stages "
-            f"{', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:4]) or 'nothing'}.\n"
+            f"named driver, per .gitattributes -- is exempt and needs no flag.\n"
             f"Deliberate exception (reproducing something that only fails on the older "
             f"code): AUPAI_BEHIND_MAIN_OK=1 git commit ... -- the cost is that this "
             f"commit and every check behind it describe a tree nobody else has.",
@@ -512,12 +550,12 @@ def main():
     #
     # APPEND-ONLY, drained and truncated by merge_main after its CAS: a gate killed between
     # reading and truncating leaves the rows for the next run rather than losing them.
-    if behind and not merging and not _ledger_only:
+    if _clash:
         try:
             _gd = subprocess.run(["git", "rev-parse", "--git-dir"], capture_output=True,
                                  text=True, timeout=10).stdout.strip()
             if _gd:
-                _files = ', '.join(sorted(set(_staged_all) - _union_merged(_staged_all))[:3])
+                _files = ', '.join(_clash[:3])
                 with open(os.path.join(_gd, "aupai_pending_friction"), "a",
                           encoding="utf-8") as _fh:
                     _fh.write(f"AUPAI_BEHIND_MAIN_OK=1 used to commit {behind} behind main "
@@ -1030,6 +1068,15 @@ def main():
         # asserts they stay >0.02 apart so a relabel remains detectable; another asserts that
         # pairing at matched STEPS instead of matched tokens reverses the sign.
         "eval/equal_token_gap.py",
+        # The rate printed on a val_every boundary covers the validation pass, so it is not a
+        # training rate. Registered because reading two of them as a ratio does NOT cancel:
+        # validation costs two arms different absolute amounts, and sampling steps
+        # 3000/3200/3400 of the two batch-64 comparators gave 1.457x against the true 1.283x,
+        # which was reported to the controller before being retracted. The trap is single-point
+        # sampling at ROUND step numbers, since round numbers are the val_every boundaries; a
+        # median over all intervals is unaffected, and one world asserts exactly that so the
+        # comment cannot drift from what the guard checks.
+        "scripts/val_step_rates.py",
         "probes/chatml_in_corpus.py",
         "scripts/doc_numbers_check.py", "scripts/replay_cursor.py",
         "scripts/card_claim.py",
@@ -2257,6 +2304,11 @@ def _selftest():
 
     hook = os.path.realpath(__file__)
     fails = []
+    # The refusal's first line, as the worlds match it. A CONSTANT, because the worlds below
+    # ask whether it is ABSENT as often as whether it is present, and an absent-check against a
+    # stale literal passes for the wrong reason: when the message changed from "this tree is N
+    # behind" to naming the clashing files, three worlds went green by matching nothing.
+    _REFUSAL = "REFUSING: main has changed"
     # os.environ is already GIT_*-free four lines up, so `clean` is it. Named anyway,
     # because every git call below reads as deliberate rather than as inheriting
     # whatever the caller held -- and the seven-name list this replaced was narrower
@@ -2385,7 +2437,7 @@ def _selftest():
         out = r.stdout + r.stderr
         if behind == "0":
             fails.append("world 5 precondition: worktree is not behind, proves nothing")
-        if "REFUSING: this tree is" in out:
+        if _REFUSAL in out:
             fails.append("world 5: `git merge --no-edit main` was refused in a worktree "
                          f"{behind} behind main -- the command the refusal itself prints")
 
@@ -2424,11 +2476,19 @@ def _selftest():
         r = subprocess.run(["git", "commit", "-q", "-m", "friction row"], cwd=wt,
                            capture_output=True, text=True, env=env_no_flag)
         out5b = r.stdout + r.stderr
-        if "REFUSING: this tree is" in out5b:
+        if _REFUSAL in out5b:
             fails.append(f"world 5b: a commit staging ONLY runs/friction.jsonl was refused in "
                          f"a worktree {behind2} behind main -- the friction row is the write "
                          f"that must never be refused, and it needs no flag")
 
+        # 5c stages code ALONGSIDE the ledger, and MAIN MUST HAVE TOUCHED THAT CODE FILE.
+        # Under the old count predicate any code path was enough; under the overlap predicate
+        # the refusal is about which files main moved, so a code.py main never touched is
+        # legitimately allowed and this world would assert the wrong thing.
+        with open(os.path.join(d2, "code.py"), "w") as fh:
+            fh.write("x = 0  # main's version\n")
+        git("add", "code.py")
+        git("commit", "-q", "-m", "main touches code.py")
         with open(os.path.join(wt, "runs", "friction.jsonl"), "a") as fh:
             fh.write('{"id": "y", "kind": "hook"}\n')
         with open(os.path.join(wt, "code.py"), "w") as fh:
@@ -2437,13 +2497,46 @@ def _selftest():
         r = subprocess.run(["git", "commit", "-q", "-m", "ledger plus code"], cwd=wt,
                            capture_output=True, text=True, env=env_no_flag)
         out5c = r.stdout + r.stderr
-        if "REFUSING: this tree is" not in out5c:
+        if _REFUSAL not in out5c:
             fails.append("world 5c: a commit staging code.py ALONGSIDE the ledger was NOT "
                          "refused -- the exemption must be narrow, or a ledger row becomes a "
                          "way to commit code from behind main")
         elif "code.py" not in out5c:
             fails.append(f"world 5c: refused without naming the path that is not a ledger, so "
                          f"the writer cannot see why: {out5c[-120:]}")
+
+        # WORLD 5e (must ALLOW): THE CYCLE WORLD, and the reason the predicate changed. Same
+        # shape as 5c -- code staged from behind main -- except main advanced on a DIFFERENT
+        # file. Under the count predicate this was refused, which is what made the wall
+        # unpassable: main moves during the merge you were told to run, so the count is never
+        # zero on a repo with six sessions (b0 refused at 15 behind, merged, refused at 4).
+        # Nothing this commit writes lands on top of anything main changed.
+        with open(os.path.join(d2, "unrelated.txt"), "w") as fh:
+            fh.write("main moved here\n")
+        git("add", "unrelated.txt")
+        git("commit", "-q", "-m", "main-ahead on an unrelated file")
+        behind5e = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
+        if behind5e == "0":
+            fails.append("world 5e precondition: worktree is not behind, proves nothing")
+        # 5c's commit was REFUSED, so its code.py is still staged -- and main touched that one.
+        # Without this reset 5e stages code.py too and is refused correctly, for 5c's reason,
+        # which reads as 5e failing. Measured while writing it.
+        git("reset", "-q", cwd=wt)
+        with open(os.path.join(wt, "only_mine.py"), "w") as fh:
+            fh.write("y = 2\n")
+        git("add", "only_mine.py", cwd=wt)
+        _staged5e = git("diff", "--cached", "--name-only", cwd=wt).stdout.split()
+        if _staged5e != ["only_mine.py"]:
+            fails.append(f"world 5e precondition: the index must hold only_mine.py alone, or the "
+                         f"refusal under test is another world's: {_staged5e}")
+        r = subprocess.run(["git", "commit", "-q", "-m", "code main has not touched"], cwd=wt,
+                           capture_output=True, text=True, env=env_no_flag)
+        out5e = r.stdout + r.stderr
+        if _REFUSAL in out5e:
+            fails.append(f"world 5e: a commit staging only_mine.py -- a file main has NOT "
+                         f"changed -- was refused from {behind5e} behind main. Being behind is "
+                         f"not the defect; writing on top of a file main moved is. This is the "
+                         f"livelock: the count is never zero while six sessions commit")
 
         # WORLD 5d (must ALLOW): a file with a NAMED DRIVER, not merge=union. Separate from 5b
         # because 5b passes under the old `value == "union"` test and this one does not: that is
@@ -2462,7 +2555,7 @@ def _selftest():
         r = subprocess.run(["git", "commit", "-q", "-m", "prereg row"], cwd=wt,
                            capture_output=True, text=True, env=env_no_flag)
         out5d = r.stdout + r.stderr
-        if "REFUSING: this tree is" in out5d:
+        if _REFUSAL in out5d:
             fails.append("world 5d: a commit staging ONLY runs/prereg.jsonl -- which has a named "
                          "merge driver -- was refused from behind main. That is b0's deadlock: "
                          "git refuses the merge while it is dirty, this refuses the commit that "
