@@ -12710,6 +12710,129 @@ def _broken_getattr_cfg_names():
     return d
 
 
+#: The `train.py:<N>` citations that already point at a line which cannot support any
+#: claim -- a blank line, an import, a bare comment or delimiter. A RATCHET, like
+#: _ENV_FP_BASELINE: the count may shrink, never grow, and a NEW dead citation FAILs.
+#: A file, not a literal here, because the fixes land in 10+ files owned by other
+#: sessions and each owner shrinks the list as they land theirs; a literal in this
+#: source would make every one of those a harness.py edit.
+_CITE_BASELINE = os.path.join("data", "train_cite_baseline.json")
+_CITE_RE = re.compile(r"train\.py:(\d+)")
+
+
+def _cite_hopeless(target):
+    """Why a cited line cannot support ANY claim, or None if a reader must rule.
+
+    Only the mechanical cases. Whether line 314 supports the claim beside it is a
+    judgement; whether line 314 is blank is not."""
+    t = target.strip()
+    if not t:
+        return "blank"
+    if re.match(r"^(import|from)\s", t):
+        return "an import"
+    if t in ("#", '"""', "'''"):
+        return "a bare delimiter"
+    return None
+
+
+def check_train_cite_targets(root):
+    """Every `train.py:<N>` citation points at a line that could support a claim.
+
+    train.py is ~4000 lines and every session edits it, so a line number written into a
+    comment, an assertion message or a docstring rots the moment someone inserts above it.
+    Found by hand three times on 2026-09-06 -- e1 fixed a diagnosis string with two dead
+    numbers, then three more in the same two files, then four more beside those -- and each
+    hand-count missed the next round, which is what a check is for.
+
+    Only the MECHANICAL half is enforced here: a citation pointing at a blank line, an
+    import, or a bare `#` cannot support any claim, whatever it says. Measured at
+    9851b797: 210 citations, 18 of them mechanically dead. What the class looks like,
+    written WITHOUT the citation form so this docstring is not itself a citation: two
+    sites in this file cite train.py line 2168 for "writes the run-end checkpoint" and
+    that line is blank -- the save is at line 3987; test_arch_compat.py cites line 135
+    twice, which is `from model import (`.
+
+    WHICH POSITIVES THIS DELIBERATELY MISSES, named before writing it rather than after:
+      - a citation pointing at real code that is simply the WRONG code. That is the larger
+        population -- 118 of the 148 need a reader -- and it is not decidable here. The
+        2026-09-06 audit ruled those by hand; a scan cannot.
+      - a range citation `train.py:2736-2760` is judged on its FIRST line only, because a
+        range whose start is real and whose body has shifted is the same undecidable case.
+      - citations in docs/ and in .md files, which `doc_commands_exist` and the prereg
+        checks already cover on their own terms.
+      - a citation of a line that is a comment WITH text: a comment is frequently the
+        subject being cited (a comment at line 2075 states what value save_checkpoint
+        writes), so flagging it would refuse the correct usage."""
+    train = os.path.join(root, "train.py")
+    if not os.path.exists(train):
+        return SKIP, "no train.py here"
+    lines = open(train, encoding="utf-8", errors="replace").read().splitlines()
+    try:
+        with open(os.path.join(root, _CITE_BASELINE), encoding="utf-8") as f:
+            baseline = set(json.load(f)["dead"])
+    except (OSError, ValueError, KeyError):
+        baseline = set()
+    dead, n = [], 0
+    for p, txt in walk_tracked(root, (".py", ".sh")):
+        rel = os.path.relpath(p, root)
+        for i, line in enumerate(txt.splitlines(), 1):
+            for m in _CITE_RE.finditer(line):
+                n += 1
+                num = int(m.group(1))
+                target = lines[num - 1] if 0 < num <= len(lines) else ""
+                why = "past EOF" if not (0 < num <= len(lines)) else _cite_hopeless(target)
+                if why and f"{rel}:{i}->{num}" not in baseline:
+                    dead.append(f"{rel}:{i} cites train.py:{num} which is {why}")
+    if dead:
+        return FAIL, (f"{len(dead)} citation(s) of train.py point at a line that cannot support "
+                      f"any claim (baseline {len(baseline)}): {'; '.join(dead[:4])}")
+    return PASS, (f"{n} train.py citation(s); {len(baseline)} known-dead baselined, "
+                  f"no new ones")
+
+
+def _broken_train_cite_targets():
+    """The REAL train.py with one CITED line blanked -- mutated, not hand-written.
+
+    Picks a line that some tracked file actually cites and that currently holds code, so
+    the world is the exact shape of the defect: the citation was right when written and a
+    later edit emptied the line under it."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    real_train = os.path.join(d, "train.py")
+    if os.path.islink(real_train):
+        os.unlink(real_train)
+    shutil.copy(os.path.join(ROOT, "train.py"), real_train)
+    lines = open(real_train, encoding="utf-8").read().splitlines()
+    try:
+        with open(os.path.join(ROOT, _CITE_BASELINE), encoding="utf-8") as f:
+            baseline = set(json.load(f)["dead"])
+    except (OSError, ValueError, KeyError):
+        baseline = set()
+    victim = None
+    for p, txt in walk_tracked(ROOT, (".py", ".sh")):
+        rel = os.path.relpath(p, ROOT)
+        for i, line in enumerate(txt.splitlines(), 1):
+            for m in _CITE_RE.finditer(line):
+                num = int(m.group(1))
+                if not (0 < num <= len(lines)):
+                    continue
+                if _cite_hopeless(lines[num - 1]):
+                    continue
+                if f"{rel}:{i}->{num}" in baseline:
+                    continue
+                victim = num
+                break
+            if victim:
+                break
+        if victim:
+            break
+    assert victim, "no live train.py citation left to break; the world has no subject"
+    lines[victim - 1] = ""
+    open(real_train, "w", encoding="utf-8").write("\n".join(lines) + "\n")
+    return d
+
+
 def check_no_conflict_markers(root):
     """No tracked source or doc holds a merge/stash conflict marker.
 
@@ -14824,6 +14947,13 @@ CHECKS = [
         _broken_friction_minutes_required,
     ),
     (
+        "train_cite_targets",
+        "every train.py:<N> citation points at a line that could support a claim",
+        "the same rot was found by hand three times on 2026-09-06 and each hand-count missed the next round; 17 of 208 citations point at a blank line, an import or a bare #",
+        check_train_cite_targets,
+        _broken_train_cite_targets,
+    ),
+    (
         "no_conflict_markers",
         "no tracked doc or source holds a merge/stash conflict marker",
         "a bare '>>>>>>> Stashed changes' sat committed at gate_failure_shapes.md:870 under green hooks (9420c8b)",
@@ -14937,6 +15067,7 @@ EVIDENCE = {
     "test_integration_tree_guard": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
 "no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"train_cite_targets": "repo",
     "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
@@ -15999,7 +16130,8 @@ def _selftest_milestone_reachable():
 
     Both halves of one near-miss: the 15B milestone was armed at step 16500 against a
     16281-step run, so it could never fire -- and the artifact it would have wanted,
-    ckpt_<run>.pt written by train.py:2168, carries no .step suffix and the watcher's
+    ckpt_<run>.pt written by train.py's run-end save_checkpoint(ckpt_path, ...), carries
+    no .step suffix and the watcher's
     glob cannot see it. That checkpoint is also the stage-2 resume source, so missing
     it costs the first real per-role verdict AND the resume (fb, 2026-09-01)."""
     import inspect
@@ -22474,7 +22606,8 @@ def cmd_milestone(argv):
                 m = re.search(r"\.step(\d+)$", p)
                 if m:
                     saved[int(m.group(1))] = os.path.basename(p)
-            # The run-end checkpoint has NO .step suffix (train.py:2168 writes
+            # The run-end checkpoint has NO .step suffix (train.py's run-end
+            # save_checkpoint(ckpt_path, ...) writes
             # ckpt_<run>.pt), so the glob above cannot see it and a final-step milestone
             # would never fire. It is also the stage-2 resume source, so it is the one
             # artifact that must never be missed. Register it at the run's true final
