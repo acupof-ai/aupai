@@ -1,7 +1,7 @@
 {
   "why": "train.py:<N> citations already pointing at a line that cannot support any claim, at 9851b797. A RATCHET: this list may shrink, never grow. A NEW dead citation FAILs check_train_cite_targets. Each entry is '<citing file>:<citing line>-><cited train.py line>'; the reason and the line's text at baseline time are recorded so a later reader can tell a fix from a coincidence.",
   "measured": "2026-09-06",
-  "total_citations_at_baseline": 206,
+  "total_citations_at_baseline": 196,
   "dead": [
     "scripts/e1_arm_plan_check.py:526->2251",
     "scripts/e1_arm_plan_check.py:712->2230",
