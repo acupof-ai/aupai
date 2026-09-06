@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (125 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (213 = 125 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (128 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (216 = 128 + 88); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -50,7 +50,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## Checks to write (top 5 by product)
 
-- **R2** (112 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
+- **R2** (114 incidents, 336h): a criterion must express the property asked; test it on known-answer positive and negative worlds. Split into 7 sub-rules below; each sub-rule is a check target. Owner: blank.
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
@@ -58,11 +58,11 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
-112 incidents (34 infra, 78 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
+114 incidents (34 infra, 80 model), ~4h each, 336h. `manual:` no check verifies that a criterion expresses the property asked; `--selftest` requires every CHECKS entry to carry `broken()`, but a selftest that passes on a broken world is invisible to the contract.
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (18 incidents)
+### R2-a No broken world (20 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -79,6 +79,8 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §242: a mutation run can be vacuous end to end — the runner built worlds with `git init` in an empty temp dir, where `git ls-files data runs scripts` is empty, so the selftest SKIPped and exited 0 for every mutant; four "survivors" measuring nothing, reported as a clean run. A SKIP exit 0 and a PASS exit 0 are indistinguishable from outside. Fixed by building worlds as a real worktree of the real repo; the discipline is one world-validity assertion before the mutants run (same as §235).
 - §243: a selftest world that passes under both the old and new predicate cannot see its own subject — the behind-main exemption widened from merge=union to any named driver, and the only covering world (5b) stages a merge=union ledger, so it passed under both; fixed by world 5d (named driver, staged alone, from behind main), mutation-verified (reverting the predicate fails 5d by name).
 - §244: a single-writer allocator in a multi-writer tree — `harness task add` computes max+1 over the rows it can see, so two sessions independently get the same next-free id; three collisions in one hour, each caught by `tasks_well_formed` at merge time (after both rows were written). The collision check is the backstop, not the allocator.
+- §247: a byte-diff over an append-only ledger reported 141 orphans and every one was a superseded row — a temp worktree pinned to an old commit, so byte-equality asked "is this exact historical line still present" instead of "does this row exist"; by the identity its own writer uses ((name, started), (ckpt, type, measured)) it was 0 of 289 and 1 of 58, and that 1 was re-measured a day later. A criterion that reports the whole history as missing cannot tell a lost row from an old one, which is the failure it exists to detect.
+- §248: a broken world that SKIPs has proven nothing — `_tmp_repo` makes a directory, not a git repo, so every git call failed silently, no reflog existed, the check SKIPped, and the broken world and a clean control returned the IDENTICAL SKIP string. SKIP is the shape a correct check produces on a machine that legitimately cannot answer, so a SKIP from a broken fixture is indistinguishable from a real absence. `_tmp_repo`'s name is the trap.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
@@ -177,12 +179,13 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-21 incidents (11 infra, 10 model), ~3h each, 63h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+22 incidents (12 infra, 10 model), ~3h each, 66h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
+- §246: a review row's basis named a sha that later stopped existing (the branch was rebuilt to drop a live-key commit) and stayed auditable only because the reviewer had happened to record a BLOB hash. A basis that is a sha describes something that can be rewritten or garbage-collected; a basis that is content survives its own subject. Same shape as §247 one rule down — the identity of a thing is not its bytes, and here the bytes are the identity that lasts.
 
-Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211).
+Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211, §246).
 
 ## R5. State the vision before the number; outside it, label unmeasured, not absent
 
