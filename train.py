@@ -2061,7 +2061,39 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         del data
     if ddp:
         dist.barrier()
-    data = torch.load(cache, map_location="cpu", weights_only=True)
+    # mmap, NOT a full load, and this is the read the line above measures. The full load made
+    # the cache resident in its entirety on EVERY rank before step 0: measured 2026-09-07 on a
+    # 0.92 GiB cache in a fresh process per mode, drawing 10% of the pool as a mix does, the
+    # full load's RSS delta was 1128 MiB against mmap's 368 MiB, and torch.load itself went
+    # 0.111s -> 0.012s. The drawn rows are byte-identical both ways, asserted by summing the
+    # gathered output. At the E1 mix's 166.2 GB x 7 ranks that difference is the whole reason
+    # e1_arm_plan_check reached VmRSS 101 GB and was killed (task e1-41).
+    #
+    # WHAT THE REMAINING 368 MiB IS, staged in the same measurement, because "mmap is lazy"
+    # would predict ~0 and be wrong: torch.load itself costs +1 MiB and allocating the 94 MiB
+    # output buffer another +1 (untouched pages), then the gather costs +366 -- the output
+    # buffer being written plus the mapped pages the random row indices fault in. So the
+    # resident cost scales with the rows DRAWN, not with the file, which is the property that
+    # matters: zh_web is 85 GB on disk to draw 0.08 epochs of it.
+    #
+    # SAFE BECAUSE EVERY CONSUMER ONLY READS. The two returns below slice and .view() -- both
+    # views -- and build_mix's only write is `out[m] = pools[name][mine[1][m]]`, a gather INTO
+    # a fresh tensor. A mapped tensor is writable and copy-on-write, so even a stray write
+    # would touch the page, not the file (verified: the file's bytes are unchanged after one).
+    # What it is not safe for is a caller that mutates the pool in place expecting the change
+    # to persist; nothing does, and the co-residency chokepoint is where a new one would show.
+    #
+    # NO LEGACY FALLBACK, and that is a measurement rather than an omission. mmap=True raises
+    # RuntimeError on a file saved with _use_new_zipfile_serialization=False, so the first
+    # version of this caught that and full-loaded instead. Then the mutation that widened the
+    # except to bare RuntimeError survived scripts/test_cache_mmap.py -- an untested branch --
+    # which is the point at which the question is whether it can happen at all. Checked, not
+    # assumed: the torch.save above is the ONLY writer of a tokens_*.pt in this tree, no site
+    # anywhere in it passes _use_new_zipfile_serialization, and all 27 caches on the pod's
+    # /mnt/data02/tokens open with the PK magic (checked 2026-09-07). torch.save has defaulted
+    # to zip since 1.6. If a pre-zip cache ever appears, torch's own error names the format and
+    # the file, which is a better message than a branch nobody exercises.
+    data = torch.load(cache, map_location="cpu", weights_only=True, mmap=True)
     if not Cfg.fone:
         n = len(data) // (Cfg.seq + 1)
         return data[: n * (Cfg.seq + 1)].view(-1, Cfg.seq + 1)
@@ -2344,6 +2376,42 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # one exception: it was merged into whatever dict Cfg already held.
     cursor_base = {}
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
+    # THE BYTES THIS CALL IS ABOUT TO READ, before the first torch.load. de ruled the training
+    # path exempt from assert_not_co_resident (1fd88227) -- a launch is the job the lane exists
+    # for -- so this is a number in the log, not a refusal. What it replaces is an offline
+    # calculation: the 166.2 GB for the E1 mix was computed by hand and appeared in no log, so
+    # the RSS that followed had to be found in /proc/<pid>/status after the fact.
+    #
+    # A MISSING CACHE IS REPORTED, NOT SKIPPED, and that is the whole reason the line is worth
+    # printing on the first run rather than only on a resume: a domain whose cache does not
+    # exist yet will be TOKENIZED, so 0 bytes read now means minutes of CPU and a cache write
+    # instead. Silently summing 0 for it would understate the read and hide the expensive case.
+    #
+    # THE SIDECARS ARE OUT, and the magnitude is measured rather than judged: _domain_seqs
+    # also opens cache + ".vocab", cache + ".srcfp" and cache + ".seed". .vocab holds one
+    # fingerprint string, .srcfp one fingerprint line, .seed one integer -- under 1 KiB each
+    # against per-domain caches of tens of GiB, so summing them would move the total by seven
+    # orders of magnitude less than its own rounding.
+    if is_main:
+        _sizes, _absent = [], []
+        for _n in names:
+            _p = _domain_cache_path(_n)
+            try:
+                _sizes.append((_n, os.path.getsize(_p)))
+            except OSError:
+                _absent.append(_n)
+        _tot = sum(b for _, b in _sizes)
+        # MiB in the header, not GiB: at `.1f` GiB a 21 MiB fixture printed "0.0 GiB over 6
+        # cache(s)", a total that reads as nothing next to a non-zero count. The per-domain
+        # lines keep GiB because the domains that matter there are tens of GiB, and a domain
+        # too small to show is one that cannot move the peak.
+        print(f"cache read: {_tot / 2**20:,.0f} MiB ({_tot / 2**30:.2f} GiB) over "
+              f"{len(_sizes)} cache(s)"
+              + (f", {len(_absent)} to tokenize ({', '.join(_absent[:3])}"
+                 f"{', ...' if len(_absent) > 3 else ''})" if _absent else "")
+              + "".join(f"\n  {b / 2**30:7.2f} GiB  {_n}"
+                        for _n, b in sorted(_sizes, key=lambda t: -t[1])),
+              flush=True)
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
         seqs, vseq = seqs if Cfg.fone else (seqs, None)
