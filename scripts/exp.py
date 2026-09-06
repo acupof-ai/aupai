@@ -336,6 +336,15 @@ def main():
                         "cmd produces no checkpoint harness.py can score. harness.py's "
                         "score_matrix_present FAILs on a path that does not exist, so this "
                         "names a real file or it names nothing")
+    am = sub.add_parser("amend", help="add reading_artifact to a CLOSED row; does not touch status")
+    am.add_argument("--name", required=True)
+    am.add_argument("--reading_artifact", required=True,
+                    help="repo-relative path to the file the row's result was READ FROM. Checked "
+                         "here as `done` checks it: harness.py's score_matrix_present FAILs on a "
+                         "path that does not exist, so this names a real file or it names nothing")
+    am.add_argument("--started", default=None,
+                   help="amend THIS row (its 'started' value). Required when a name has more "
+                        "than one closed row")
     n = sub.add_parser("note", help="append a line to a RUNNING row's notes; does not close it")
     n.add_argument("--name", required=True)
     n.add_argument("--text", required=True)
@@ -513,6 +522,38 @@ def main():
         ))
         print(f"logged retract: {a.name} ({base.get('started')}) -- was "
               f"{str(base.get('result', ''))[:60]!r}")
+    elif a.action == "amend":
+        # ADDS reading_artifact TO A CLOSED ROW WITHOUT TOUCHING status, which is the one thing
+        # neither `done` nor `note` nor `retract` can do. Three rows of mine were closed `ok`
+        # with no reading, so score_matrix_present read them as unscored training runs; the only
+        # tools available were `done` (refuses -- the row is not open) and `retract` (withdraws
+        # the RESULT to satisfy a gate about its READING, which is the wrong trade). 4c's ruling
+        # 2026-09-06: add this rather than change the fold.
+        #
+        # NOT A PATH TO UN-RETRACT. A retracted row is refused below, because `retracted` is
+        # terminal by KIND (see fold) and an amend that revived one would be a rewrite of that
+        # rule wearing a different name -- exactly what the fold's comment guards against. A
+        # retraction whose reading needs recording takes a fresh `done` under a new started.
+        base = pick_closed_row(a.name, a.started, "amending")
+        if base.get("status") == "retracted":
+            sys.exit(
+                f"{a.name} ({base.get('started')}) is retracted, and amend does not revive a "
+                f"row: `retracted` is terminal by kind, so the amended event would be dropped "
+                f"by the fold and this command would report success while changing nothing. "
+                f"Record the reading on a fresh run, or un-retract deliberately with `done`."
+            )
+        # THE PATH MUST EXIST, checked here for the same reason `done` checks it: the field's
+        # whole job is to name a file a reader can open, and a path that does not exist turns a
+        # scoring exemption into an assertion nobody wrote.
+        if not os.path.exists(os.path.join(ROOT, a.reading_artifact)):
+            sys.exit(f"--reading_artifact {a.reading_artifact} does not exist under {ROOT}; "
+                     f"pull the file into the repo before amending the row")
+        prev = base.get("reading_artifact")
+        if prev == a.reading_artifact:
+            sys.exit(f"{a.name} ({base.get('started')}) already reads {prev!r}; nothing to do")
+        append(dict(base, reading_artifact=a.reading_artifact, amended_at=now()))
+        print(f"logged amend: {a.name} ({base.get('started')}) reading_artifact "
+              f"{prev!r} -> {a.reading_artifact!r} (status {base.get('status')!r} unchanged)")
     elif a.action == "merge":
         incoming = [json.loads(l) for l in open(a.src, encoding="utf-8") if l.strip()]
         out, idx = [], {}
