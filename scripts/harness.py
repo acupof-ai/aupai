@@ -7331,8 +7331,29 @@ def check_owner_queue_depth(root):
     On 2026-09-02 the user found six sessions idle while the register showed 16 open rows:
     nine of them were blocked on the frozen training path and the rest were held by two
     owners. An idle session is a cost with no artifact, and nothing in the repo said so.
-    An empty queue is FAIL: that session is idle now. A queue of one is WARN: the
-    controller refills before it empties."""
+
+    WARN AT EVERY TIER, INCLUDING AN EMPTY QUEUE (4c's ruling, 2026-09-06). This check's
+    subject is THE CONTROLLER'S REFILL DUTY, and its FAIL tier landed on the wrong party: an
+    owner who has just delivered everything assigned has an empty queue BY DEFINITION, and the
+    FAIL then refused the very commit that proved the delivery. Measured across one session:
+    four close rows parked in sequence -- e1-41, e1-42, e1-43, e1-47 -- each held out of the
+    register until the controller sent more work, which made the register lag the truth in the
+    direction that matters most. A gate on one party's obligation must not refuse another
+    party's delivery.
+
+    The remedy is the tier and nothing else: the message still names the controller, the
+    thresholds are unchanged, and an empty queue is still reported on every run. What it no
+    longer does is block a commit. The alternative reading -- add a grace period so a
+    recently-closing owner reads WARN while a genuinely idle one still FAILs -- was considered
+    and dropped as a second mechanism for a problem the tier already answers.
+
+    A predicate treating a task blocked_on a granted card window as scheduled work was
+    specified and WITHDRAWN, measured unsafe: runs/card_assignment.json's lane_to is 170+ prose
+    tokens, and matching a row's blocked_on against it flipped BOTH open blocked rows in the
+    register -- e1-37 on the word "control", which was the row required to keep reading idle.
+    Worse, tilerl-26 matched on 1.5b-a0.2b-e48_8b, the run name it was WAITING FOR: a row
+    blocked on a run appearing and a row scheduled to follow that run name the same run, so a
+    substring cannot tell a grant from a blocker."""
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
@@ -7346,7 +7367,7 @@ def check_owner_queue_depth(root):
                 depth[t["owner"]] += 1
     empty = [m for m, n in sorted(depth.items()) if n == 0]
     if empty:
-        return FAIL, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
+        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
     short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
     if short:
         return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills"
@@ -13872,8 +13893,8 @@ CHECKS = [
     ),
     (
         "owner_queue_depth",
-        "every roster member has at least two open, unblocked tasks",
-        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02)",
+        "every roster member has at least two open, unblocked tasks (WARN at every tier)",
+        "six sessions sat idle under 16 open rows, nine of them frozen with the training path; the register recorded the freeze and nobody read it as idleness (user, 2026-09-02). WARN-only since 2026-09-06: the FAIL tier landed on the owner rather than the controller it addresses, refusing the commit that proved an owner had finished -- four close rows parked in one session",
         check_owner_queue_depth,
         _broken_owner_queue_depth,
     ),
@@ -18058,7 +18079,12 @@ def _demo(only=None):
                  # WARN by measurement, not by caution: all 8 hand-written world counts in the
                  # tree were accurate on 2026-09-06 (four verified by running them), so a FAIL
                  # tier would be permanent red on a green tree.
-                 "selftest_counts_computed"}
+                 "selftest_counts_computed",
+                 # Demoted 2026-09-06 (4c's ruling): its subject is the CONTROLLER's refill
+                 # duty, and the FAIL tier refused the OWNER's delivery -- an empty queue is
+                 # what a finished owner has, so the gate blocked the commit that proved the
+                 # work was done. Four close rows parked in one session before this was named.
+                 "owner_queue_depth"}
     untested = []
     skipped = []
     for name, _a, _i, fn, broken in CHECKS:
