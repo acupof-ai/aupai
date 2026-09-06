@@ -851,6 +851,16 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "scripts/corpus_snapshot.py",
+        # --selftest needs no GPU BY CONSTRUCTION, which is why it can be gated here. The
+        # replica guard reads source text only, so it runs before the CUDA check; gating a
+        # source-text check behind CUDA is how an untested guard stays untested, and this
+        # script's whole purpose is to not be an unchecked instrument. Its five checks are two
+        # mutation branches of the guard (projection deleted -> substring; projection present
+        # but no longer last -> body[-1], the branch that never executes in normal operation),
+        # the shipped source passing, and the property that p95 of |x - median| is stable
+        # across three orders of n while the half-range grows -- the half-range was this
+        # script's first verdict statistic and made the verdict a statement about --iters.
+        "scripts/time_bias_projection.py",
         # The credential gate this hook calls above. Registered because its selftest is the whole
         # argument for the patterns: 8 positives fire, 14 near-misses and prose lines do not (bare
         # `sk-` matches 34 tracked files as a substring), and the tracked tree must scan clean or
