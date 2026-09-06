@@ -1359,6 +1359,13 @@ def main():
         # the fingerprint (the false positive that re-failed nine already-ruled domains), and
         # an edit to a pipeline filter MUST move it (the blindness that would replace it).
         "datagen/corpus_fingerprint.py",
+        # The Fable CoT renderer. Its selftest holds keep() equal to the predicates
+        # measure_fable5_supply.py counted with: a drift makes the fold land a different row
+        # set than facts/corpus_supply.json#cs.cot_fable_supply describes, so the recorded
+        # 2.76M would describe a corpus nobody built. It also asserts the rendered text is
+        # ChatML-free, which is a property of the FIELD NAME -- build_corpus's iter_jsonl
+        # wraps a row in ChatML only when `text` is absent, and that branch is one rename away.
+        "datagen/fable5/render_fable5_cot.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
         "probes/t71_depth_lr_rule.py",
