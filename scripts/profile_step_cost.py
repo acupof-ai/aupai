@@ -9,13 +9,13 @@ instead of editing a file that is about to be relaunched.
 THE STEP IS train.py's, NOT A REWRITE (fb's condition, 2026-09-02). The first version of this
 file timed an index_select, a torch.save, a val pass and a bare all_reduce -- no optimizer, no
 FLCE, no FP8, no compile. Four numbers describing a different program. What is assembled here
-is the real thing, in train.py's own order (:2322 model, :2445 DDP, :2450-2491 compile):
+is the real thing, in train.py's own order (HybridLM, then DDP, then torch.compile):
 
-    HybridLM(Cfg)                     :2322, the same class
-    build_optimizers(raw, Cfg)        :1092, Muon for 2D + AdamW for the rest
+    HybridLM(Cfg)                     the same class
+    build_optimizers(raw, Cfg)        Muon for 2D + AdamW for the rest
     LigerFusedLinearCrossEntropyLoss  the same loss with the same SOFTCAP
-    DDP(bucket_cap_mb, ...)           :2445, the same wrapper and flags
-    torch.compile(dynamic=False)      :2491, when Cfg.compile and amp
+    DDP(bucket_cap_mb, ...)           the same wrapper and flags
+    torch.compile(dynamic=False)      when Cfg.compile and amp
     autocast(bfloat16) + --fp8        run_ddp.sh:44 passes --fp8; the flag is honoured here
 
 Shape flags come from the p200m launch line (e19eeb7): d1024 L12 heads 8 ffn 3072, batch 32,
