@@ -3586,7 +3586,7 @@ def _tmp_repo_shaped(mix_obj=None):
     # pod-only artifact a fact cites read as rot. git also will not follow a symlinked
     # .gitignore, so this one is copied while everything else is linked.
     shutil.copy(os.path.join(ROOT, ".gitignore"), os.path.join(d, ".gitignore"))
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     for sub in os.listdir(os.path.join(ROOT, "data")):
         src, dst = os.path.join(ROOT, "data", sub), os.path.join(d, "data", sub)
         if not os.path.exists(dst):
@@ -5580,7 +5580,7 @@ def _broken_shared_file_claim():
     import subprocess as sp
     tmp = tempfile.mkdtemp(prefix="harness_st_shared_")
     try:
-        sp.run(["git", "init", "-q"], cwd=tmp, check=True)
+        sp.run(["git", "init", "-q", "-b", "main"], cwd=tmp, check=True)
         sp.run(["git", "-C", tmp, "config", "user.email", "t@t"], check=True)
         sp.run(["git", "-C", tmp, "config", "user.name", "t"], check=True)
         # world A: stage train.py with no claim -> FAIL
@@ -5637,7 +5637,7 @@ def _broken_blob():
     with open(big, "wb") as f:
         f.write(b"x" * ((MAX_TRACKED_MB + 1) * 2**20))
     for cmd in (
-        ["git", "init", "-q"],
+        ["git", "init", "-q", "-b", "main"],
         ["git", "config", "user.email", "t@t"],
         ["git", "config", "user.name", "t"],
         ["git", "add", "-f", "big.jsonl"],
@@ -12353,7 +12353,7 @@ def _broken_untracked_aged():
     import subprocess as sp
 
     d = _tmp_repo()
-    sp.run(["git", "init"], cwd=d, capture_output=True)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True)
     # A real tracked file so the selftest's repo-real-path check passes.
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True)
@@ -12413,7 +12413,7 @@ def _broken_dirty_aged():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "commit", "-m", "init"], cwd=d, capture_output=True, env=env)
@@ -12577,7 +12577,7 @@ def _broken_frozen_paths():
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
     ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
     with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
@@ -12953,7 +12953,7 @@ def _broken_no_shared_stash():
 
     d = _tmp_repo()
     env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-    sp.run(["git", "init"], cwd=d, capture_output=True, env=env)
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
     sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init"],
@@ -19307,7 +19307,18 @@ def _demo(only=None):
     # so a stale manifest refuses before a byte is pushed.
     import tempfile
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    # -b main, NOT a bare `git init`: write_manifest's default is ref="main"
+    # (pod_drift.py:362) and scoped_paths passes check=True, so `git ls-files
+    # --with-tree=main` in a repo whose branch came from the caller's
+    # init.defaultBranch RAISES "fatal: tree-ish main not found" -- exit 128, no red
+    # check, just a traceback out of _demo. MEASURED 2026-09-06: green on every dev box
+    # (a Mac reads init.defaultBranch=main from Xcode's system gitconfig) and red in CI
+    # for everyone, because the runner leaves it unset and gets master. The default
+    # branch name is a property of the ENVIRONMENT, and this fixture was asserting it.
+    # pod_drift.py:784 already records the same trap and solved it the other way
+    # (ref="HEAD"); here the ref stays "main" so the fixture exercises the production
+    # default, and the branch is created to match.
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     os.makedirs(os.path.join(d, "scripts"))
@@ -19346,7 +19357,7 @@ def _demo(only=None):
     # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
     # allowed data file must pass; a small unallowed data file must refuse.
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
@@ -19403,7 +19414,7 @@ def _demo(only=None):
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
     d2 = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
     hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
