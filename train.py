@@ -2628,11 +2628,15 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     return out, vcat
 
 
+def warmdown_start(total, cfg):
+    return total - max(1, int(cfg.warmdown * total))
+
+
 def lr_mult(step, total, cfg):
     if step < cfg.warmup:
         return (step + 1) / cfg.warmup
-    wd_steps = max(1, int(cfg.warmdown * total))
-    wd_start = total - wd_steps
+    wd_start = warmdown_start(total, cfg)
+    wd_steps = total - wd_start
     if step < wd_start:
         return 1.0
     progress = min(1.0, (step - wd_start) / wd_steps)  # clamped past total (resume)
@@ -3459,7 +3463,7 @@ def main():
         runlog(
             f"WSD JOIN: resumed at step {step}/{total_steps} under mix {Cfg.mix or 'flat'} | "
             f"lr_mult {_jm:.4f} | warmdown {Cfg.warmdown} anneal_frac {Cfg.anneal_frac} | "
-            f"warmdown starts at step {total_steps - max(1, int(Cfg.warmdown * total_steps))}"
+            f"warmdown starts at step {warmdown_start(total_steps, Cfg)}"
         )
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
     _prof = None
