@@ -60,9 +60,10 @@ def citations(page):
 def quoted(page):
     """(line, snippet) for every `train.py:N` whose content the page quotes.
 
-    The form the page uses in §2 -- `train.py:314` `def forward(self, x, cu=None)` --
-    is the strongest citation on the page and the FIRST VERSION OF THIS SCRIPT DID
-    NOT CHECK IT. It reported "25 citations verified" while green on the exact error
+    The form the page uses in §2 -- `train.py:314` `def forward(self, x, cu=None)` at bb0c378
+    (blob ad0f6e130083) -- is the strongest citation on the page and the FIRST VERSION OF THIS
+    SCRIPT
+    DID NOT CHECK IT. It reported "25 citations verified" while green on the exact error
     fb had caught (313 for 314), because every regex above wants a bare symbol name
     and this form leads with the path. A checker that passes on the defect it was
     written for is worse than no checker: it converts an unverified number into a
@@ -76,7 +77,8 @@ def quoted(page):
 def path_citations(page):
     """Every `train.py:N` or `train.py:N-M` on the page, quoted or not.
 
-    quoted() only sees the ones that carry a code quote. `train.py:701-706` carries
+    quoted() only sees the ones that carry a code quote. `train.py:701-706` at bb0c378
+    (blob ad0f6e130083) carries
     none -- it heads a fenced block instead -- so it was unchecked, and it is the
     number I broke by inducing "every symbol is low by 1" and applying +1 to it.
     The two forms miss opposite things, so both run: this one proves every path
@@ -94,7 +96,8 @@ RANGE_OWNERS = {(701, 706): "Block"}
 # §2's KDA-state claim is the page's invalidation condition (§7): if state ever
 # crosses a block boundary, the draft-head conclusion changes. Its evidence is two
 # quoted lines, and a quote can be dropped by an edit without breaking anything
-# visible -- rewrite `train.py:314` `def forward...` as prose and coverage falls
+# visible -- rewrite `train.py:314` `def forward...` (bb0c378, blob ad0f6e130083) as prose and
+# coverage falls
 # from 2 to 1 while the script still says OK. Counting is not enough; the two
 # loads must be named. Raise this floor when §2 gains evidence, never lower it to
 # make a run pass.
