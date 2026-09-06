@@ -37,9 +37,20 @@ the failure mode this session hit five times tonight was a number whose instrume
 checked.
 """
 
+# restartable: nothing to lose on an interrupt -- this script WRITES NO ARTIFACT. It prints
+# timings and exits; the only file it opens for writing is a tempfile fixture inside
+# --selftest, which is deleted by its own TemporaryDirectory. The audit's "accumulates at
+# line 156" is `per_step.append` in the timing loop, whose list lives for one arm and is
+# reduced to a median before the next; a kill loses at most one arm's in-memory samples and
+# the rerun is the same cost as the first run. That cost is bounded: 2 arms x --iters 1000 x
+# --layers 12 = 24,000 update_bias calls, declared <=10 min in the card claim at :216, and no
+# checkpoint is written or mutated -- --ckpt is opened read-only for its bias tensor.
+# Per-shard writing does not apply: there are no shards and no output file to resume into.
+
 import argparse
 import inspect
 import os
+import re
 import statistics
 import sys
 import time
@@ -48,6 +59,37 @@ import torch
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
+
+
+def _step_seconds_from_log(path):
+    """Median s/step over the run's STEADY-STATE step lines.
+
+    Two exclusions, both measured on runs/1.5b-a0.2b-e48_8b.log at step 4200:
+
+    - lines carrying "this interval" are validation intervals. They read 3.5-5.2 s/step
+      because the interval includes the val pass, and the max over all 304 lines is 5.2438
+      -- the resume's first line, which carries compile warmup. Including them moved the mean
+      to 2.8340 while the median of the steady lines is 2.8167.
+    - step < 2000 is dropped: the first ~1000 steps after a resume still carry allocator and
+      cache warmup. Over the 210 lines with step >= 2000 the median is 2.8179.
+
+    The MEDIAN, not the mean: one 5.2 s outlier moves a mean of 300 points by 8 ms, which is
+    two orders above the delta this script measures.
+    """
+    txt = open(path, errors="replace").read()
+    vals = []
+    for ln in txt.splitlines():
+        if "this interval" in ln:
+            continue
+        m = re.match(r"^step (\d+)/\d+ .*s/step ([0-9.]+)", ln)
+        if m and int(m.group(1)) >= 2000:
+            vals.append(float(m.group(2)))
+    if len(vals) < 30:
+        raise SystemExit(
+            f"REFUSING: {path} has {len(vals)} steady-state step lines with step >= 2000; "
+            f"a median over fewer than 30 is not the run's rate. Pass --step-seconds "
+            f"explicitly if this log is genuinely that short.")
+    return statistics.median(vals)
 
 
 # The four statements of model.py:1015-1034, as shipped. Kept as source text so the runtime
@@ -132,8 +174,18 @@ def main():
     ap.add_argument("--layers", type=int, default=12, help="MoE layers per optimizer step")
     ap.add_argument("--experts", type=int, default=48)
     ap.add_argument("--gamma", type=float, default=0.001)
-    ap.add_argument("--step-seconds", type=float, default=2.8121,
-                    help="the run's measured s/step, for the ratio")
+    # NO DEFAULT: this is a DENOMINATOR, and a remembered one silently rescales the verdict.
+    # It held 2.8121 s/step, typed from a step line I had read hours earlier. Recomputed from
+    # the log at step 4200 -- median over the 210 steady-state lines with step >= 2000 --
+    # the run's value is 2.8179, so the percentage this divides into was 0.2% off for no
+    # reason other than that I had typed a number instead of reading one. Required now, and
+    # --log derives it from the artifact.
+    ap.add_argument("--step-seconds", type=float, default=None,
+                    help="the run's measured steady-state s/step, the ratio's denominator; "
+                         "omit and pass --log to derive it from the run log")
+    ap.add_argument("--log", default="",
+                    help="run log to take --step-seconds from: median s/step over the "
+                         "steady-state lines (val-interval lines carry startup and are excluded)")
     ap.add_argument("--selftest", action="store_true",
                     help="known answers, no GPU: the replica guard fires, and the verdict "
                          "statistic does not move with the sample count")
@@ -141,6 +193,18 @@ def main():
 
     if a.selftest:
         return _selftest()
+
+    # THE DENOMINATOR IS RESOLVED BEFORE ANY TIMING, so a missing one refuses while refusing
+    # still costs nothing. Deriving it from the log keeps both sides of the ratio on artifacts:
+    # the numerator is measured here, the denominator comes from the run's own step lines.
+    if a.step_seconds is None:
+        if not a.log:
+            raise SystemExit(
+                "REFUSING: --step-seconds is the ratio's denominator and has no default. "
+                "Pass --log <run log> to derive it from the artifact, or --step-seconds "
+                "with a value you have just measured. A remembered value rescales the verdict.")
+        a.step_seconds = _step_seconds_from_log(a.log)
+        print(f"step-seconds from {os.path.basename(a.log)}: {a.step_seconds:.4f} s/step")
 
     # THE REPLICA GUARD RUNS FIRST, BEFORE THE GPU CHECK. It only reads source text, so
     # gating it behind CUDA meant the guard could only be exercised on a card -- which made
@@ -216,9 +280,28 @@ def main():
     print(f"PROJECTION COST: {delta * 1e3:.4f} ms per optimizer step across {a.layers} layers")
     print(f"  against the run's measured {a.step_seconds:.4f} s/step: "
           f"{delta / a.step_seconds * 100:.4f}%")
-    print(f"  the unexplained speed gate gap was 0.0783 s/step = 2.9%, i.e. "
-          f"{0.0783 / delta:.0f}x this cost" if delta > 0 else
-          "  delta is zero or negative: the projection's cost is below this timer's resolution")
+    if delta <= 0:
+        # NOT dropped when the ternary below was removed: a non-positive delta is the outcome
+        # where the projection's cost is at or below this timer's resolution, and saying so is
+        # the result. Silence here would leave a negative percentage printed above with no
+        # reading attached, which reads as "the projection made it faster".
+        print("  delta is zero or negative: this timer cannot resolve the projection's cost. "
+              "The percentage above is noise around zero, not a speedup.")
+
+    # WHAT THIS COST IS *NOT* COMPARED AGAINST. An earlier version printed "the unexplained
+    # speed gate gap was 0.0783 s/step = 2.9%, i.e. Nx this cost". Both halves were wrong to
+    # print here:
+    #   - 0.0783 came from the speed attribution retracted in prereg amendments 19-23. The
+    #     ratio behind it divided two probabilities computed on different populations
+    #     (overstated 60x), the two-point model was withdrawn, and the dispersion statistic
+    #     was an extreme of the resample count. A number from a retracted derivation does not
+    #     become sound by being quoted in a different script.
+    #   - even a correct gap would not belong in this line. This script measures ONE cost. A
+    #     ratio against some other run's gap invites the reading "the projection explains
+    #     1/Nth of it", which needs the two to have been measured on the same arms under the
+    #     same conditions -- they were not.
+    # So the cost is reported on its own, with the run's rate as the only denominator.
+
     # THE FLOOR MUST NOT BE AN EXTREME. The first version of this line took
     # median(|min - med|, |max - med|) -- the half-range of 1000 samples, which GROWS with
     # --iters exactly as max-min grew with resample count in the bootstrap that produced
@@ -317,13 +400,63 @@ def _selftest():
         fails.append("the half-range did NOT grow with n on this fixture, so the fixture no "
                      "longer reproduces the defect this check exists for")
 
+    # 3. THE DENOMINATOR COMES FROM THE ARTIFACT. Three worlds on a synthetic log, because the
+    #    defect being guarded is that --step-seconds used to hold a value I had typed from
+    #    memory (2.8121) while the run's own lines said 2.8179. A parser that silently returns
+    #    the wrong rate is worse than the typed constant, so each exclusion gets a failing case.
+    import tempfile
+    steady = "\n".join(f"step {s}/10172 41% [main] | loss 1.9 | 2.8{s % 10}00B tok | "
+                       f"s/step 2.8{100 + (s % 3):03d}" for s in range(2000, 2400, 10))
+    # world A: the two lines that must NOT count -- a val interval (carries the val pass) and a
+    # pre-2000 line (carries resume warmup). Both are far from the steady value on purpose.
+    noise = ("step 1010/10172 10% [main] | loss 2.3 | s/step 5.2438\n"
+             "step 2200/10172 21% [main] | loss 1.9 | +16s this interval | s/step 4.5547\n")
+    with tempfile.TemporaryDirectory() as d:
+        pa = os.path.join(d, "a.log")
+        with open(pa, "w") as fh:
+            fh.write(noise + steady + "\n")
+        got = _step_seconds_from_log(pa)
+        # the steady lines are 2.8100/2.8101/2.8102 by construction, so the median must be one
+        # of those -- NOT pulled toward 4.55 or 5.24 by the two excluded lines.
+        if not (2.8099 <= got <= 2.8103):
+            fails.append(f"A: derived {got:.4f} from a log whose steady lines are 2.8100-2.8102 "
+                         f"-- an excluded line (val interval or step<2000) was counted")
+        else:
+            print(f"A' log with a 5.2438 warmup line and a 4.5547 val line -> {got:.4f}  "
+                  f"(both excluded)")
+        # world B: too few steady lines must REFUSE, not return a median of three points.
+        pb = os.path.join(d, "b.log")
+        with open(pb, "w") as fh:
+            fh.write("step 2000/10172 | s/step 2.8100\nstep 2010/10172 | s/step 2.8101\n")
+        try:
+            v = _step_seconds_from_log(pb)
+            fails.append(f"B: a 2-line log returned {v:.4f} instead of refusing")
+        except SystemExit as e:
+            if "steady-state step lines" not in str(e):
+                fails.append(f"B: refused with the wrong reason: {e}")
+            else:
+                print("B' 2 steady lines                                 -> refuses")
+        # world C: a log whose ONLY step lines are val intervals must refuse, not silently
+        # average the val cost. This is world A's exclusion taken to its limit.
+        pc = os.path.join(d, "c.log")
+        with open(pc, "w") as fh:
+            fh.write("".join(f"step {s}/10172 | +9s this interval | s/step 3.85\n"
+                             for s in range(2000, 2500, 10)))
+        try:
+            v = _step_seconds_from_log(pc)
+            fails.append(f"C: a val-interval-only log returned {v:.4f} instead of refusing")
+        except SystemExit:
+            print("C' only val-interval lines                        -> refuses")
+
     print()
     if fails:
         print("FAIL")
         for f in fails:
             print(f"  - {f}")
         return 1
-    print(f"PASS: {3 + 2} checks (guard fires on B and C, passes A; p95 stable, half-range grows)")
+    print(f"PASS: {3 + 2 + 3} checks (guard fires on B and C, passes A; p95 stable, "
+          f"half-range grows; the denominator excludes warmup and val lines and refuses "
+          f"a short log)")
     return 0
 
 
