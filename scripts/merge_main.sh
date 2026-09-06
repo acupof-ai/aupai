@@ -473,18 +473,58 @@ for _ in $(seq 1 120); do
       echo "  there now, not in the integration tree." >&2
       exit 1
     fi
-    # REFUSE WHILE THE INTEGRATION TREE STILL HOLDS main. A CAS onto a checked-out branch does
-    # NOT refuse: measured 2026-09-05, it returns 0, moves the ref, and leaves that tree's HEAD
-    # and index at the old commit so every changed file reads as staged-modified -- silent, where
-    # a refusal would be loud. Detaching is a precondition of the CAS, not a tidy-up after it.
+    # DETACH IT RATHER THAN REFUSING, WHEN IT IS SAFE TO (4c's ruling, 2026-09-05, after the
+    # third occurrence in one day). A CAS onto a checked-out branch does NOT refuse: measured,
+    # it returns 0, moves the ref, and leaves that tree's HEAD and index at the old commit so
+    # every changed file reads as staged-modified -- silent, where a refusal would be loud. So
+    # the tree must be detached before the CAS; the only question is who does it.
+    #
+    # Nobody may commit in the integration tree -- the pre-commit hook refuses there -- so a
+    # detach of a CLEAN tree loses nothing that could exist. What keeps re-attaching it is a
+    # person typing `git checkout main` to look at main, and a refusal aimed at that person
+    # blocks every OTHER session's merge until someone notices. The refusal survives for the
+    # case where something could actually be lost: a DIRTY tree, where `checkout --detach`
+    # would carry the modifications along and hide them under a detached HEAD.
     if [ "$(git -C "$MAIN" rev-parse --abbrev-ref HEAD 2>/dev/null)" = "main" ]; then
-      echo "REFUSING: the integration tree is still checked out on main. Detach it first:" >&2
-      echo "  git -C $MAIN checkout --detach main" >&2
-      echo "  A compare-and-swap onto a checked-out branch silently leaves that tree reading as" >&2
-      echo "  modified against the new ref." >&2
-      exit 1
+      if [ -n "$(git -C "$MAIN" status --porcelain 2>/dev/null)" ]; then
+        echo "REFUSING: the integration tree is on main AND dirty, so I will not detach it:" >&2
+        git -C "$MAIN" status --porcelain 2>/dev/null | sed 's/^/    /' >&2
+        echo "  A detach would carry these along and hide them under a detached HEAD. Nobody" >&2
+        echo "  commits in that tree, so this is someone's work in the wrong place or a tool" >&2
+        echo "  writing where it should not. Look before clearing it." >&2
+        echo "  main is unmoved at $(git -C "$MAIN" rev-parse --short main 2>/dev/null)." >&2
+        exit 1
+      fi
+      if ! git -C "$MAIN" checkout --detach main -q 2>/dev/null; then
+        echo "REFUSING: the integration tree is on main and could not be detached." >&2
+        echo "  git -C $MAIN checkout --detach main" >&2
+        exit 1
+      fi
+      echo "merge_main: detached the integration tree (it was on main; a CAS there is silent)"
     fi
     _old=$(git -C "$MAIN" rev-parse main)
+    # A DIRTY LEDGER ABORTS THE MERGE BEFORE IT STARTS, and git's own advice for it is `git
+    # stash`, which is forbidden here (.git/refs/stash is shared across every worktree).
+    # Naming the order costs three lines and is the whole recovery: commit the ledger row
+    # path-scoped FIRST -- git can merge those without a person (merge=union, or prereg.jsonl's
+    # key-union driver), so a row commits cleanly on its own and
+    # the pre-commit behind-main refusal exempts a union-only commit -- and merge after. Doing
+    # it the other way round means letting `friction add` commit mid-merge, which is the
+    # dirty-during-commit shape the flip exists to remove (3b, 2026-09-05).
+    # TESTED WITHOUT ATTEMPTING THE MERGE: a `git merge` in the condition would CONSUME the
+    # merge when it succeeded, and the second call would then say "Already up to date" and
+    # skip the drop check. Dirtiness alone is the test -- git aborts on it before merging.
+    _dirty=$(git diff --name-only)
+    if [ -n "$_dirty" ]; then
+      echo "merge_main: uncommitted changes will abort the merge:" >&2
+      echo "$_dirty" | sed 's/^/    /' >&2
+      echo "  If these are ledger rows (runs/*.jsonl -- union, or prereg's key-union driver)," >&2
+      echo "  commit them ALONE first, then re-run: git commit -m '<msg>' -- <the ledger file>" >&2
+      echo "  A union-only commit is exempt from the behind-main refusal, so this works from" >&2
+      echo "  a stale worktree. Do NOT git stash: .git/refs/stash is shared with every peer." >&2
+      echo "  main is unmoved at ${_old:0:8}." >&2
+      exit 1
+    fi
     if ! git merge --no-edit main; then
       echo "merge_main: $1 conflicts with main. Resolve in THIS worktree, commit, retry --" >&2
       echo "  nothing was written to the integration tree and main is unmoved at ${_old:0:8}." >&2
@@ -522,6 +562,34 @@ for _ in $(seq 1 120); do
       exit 1
     fi
     echo "merge_main: main ${_old:0:8} -> ${_new:0:8}" >&2
+    # ADVANCE THE INTEGRATION TREE'S WORKING FILES TO THE NEW main. The CAS moves a ref and
+    # touches no working tree -- which is the point -- but that tree's FILES are executed by
+    # everyone: .git/hooks/pre-commit is a symlink to ../../scripts/hooks/pre-commit, i.e. the
+    # integration tree's checked-out copy, and every worktree shares one .git. Before the flip
+    # that tree was always on main, so the executed hook was main's by coincidence. Detaching
+    # froze it: measured 2026-09-06 (b0 found it, e1 filed #48), the executing hook was md5
+    # 56e6cf2e = 4b364cac's blob while main's was f9b95b1d, 69 commits later. Any hook fix was
+    # inert everywhere until someone re-checked-out that tree by hand.
+    #
+    # `checkout --detach` rather than a branch: the tree must stay detached, or the next CAS is
+    # the silent one. Guarded on cleanliness for the same reason the detach above is -- nobody
+    # commits there, so a clean tree loses nothing, and a dirty one is somebody's misplaced work.
+    # A failure here is a WARNING, not a refusal: main has already moved and the merge succeeded,
+    # so exiting nonzero would report a landed integration as failed. It names the command
+    # instead, because a stale hook is silent and this line is the only notice anyone gets.
+    if [ -z "$(git -C "$MAIN" status --porcelain 2>/dev/null)" ]; then
+      if git -C "$MAIN" checkout --detach "$_new" -q 2>/dev/null; then
+        echo "merge_main: integration tree advanced to ${_new:0:8} (it holds the hook everyone runs)" >&2
+      else
+        echo "merge_main: WARNING -- could not advance the integration tree; the pre-commit hook" >&2
+        echo "  every worktree executes is that tree's copy and is now stale. Fix by hand:" >&2
+        echo "    git -C $MAIN checkout --detach main" >&2
+      fi
+    else
+      echo "merge_main: WARNING -- the integration tree is dirty, so its files were NOT advanced." >&2
+      echo "  Every worktree executes ITS copy of scripts/hooks/pre-commit, which is now stale:" >&2
+      git -C "$MAIN" status --porcelain 2>/dev/null | sed 's/^/    /' >&2
+    fi
     # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
     # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
     # now records the event under its own git dir (invisible to `git status`, per-worktree) and

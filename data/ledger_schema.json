@@ -154,5 +154,58 @@
         "why": "throughput at this step. OPTIONAL here, unlike in memory_diag: readout 5's 0.85 bar is read at steps 30 and 100 only, because from step 200 on the memory arms shared the machine and a same-step comparison after 100 measures co-residency rather than the architecture (facts/memory_layers.json#mem.m1_throughput_cost). Written when known, omitted rather than defaulted when not."
       }
     }
+  },
+  "novel_ops_4way": {
+    "path": "runs/novel_ops_4way.jsonl",
+    "written_by": "eval/novel_ops_4way.py:745, one row per checkpoint, appended INSIDE the scoring loop so an interrupt three arms in leaves those three on disk",
+    "read_by": "readout_1 of conversion_rate_0905 (runs/prereg.jsonl): arm minus control_arm accuracy, per program, never pooled",
+    "row_identity": [
+      "ckpt",
+      "items_sha256"
+    ],
+    "append_only": true,
+    "fields": {
+      "ckpt": {
+        "type": "str",
+        "required": true,
+        "why": "basename of the scored checkpoint, e.g. ckpt_e1_conv_n64.pt. Part of the row identity. The BASENAME rather than the path, because the same checkpoint is scored from /work/aupai on the pod and would otherwise key differently than from a local clone."
+      },
+      "readout": {
+        "type": "str",
+        "required": true,
+        "why": "constant 'novel_ops_4way'. Present so a row read out of a merged or concatenated stream still names the instrument that produced it, rather than relying on the file it was found in."
+      },
+      "items_sha256": {
+        "type": "str",
+        "required": true,
+        "why": "sha256 over every line of data/probes/novel_ops/S_test_4way.jsonl EXCEPT the header, checked against the value pinned in readout_1_instrument before any scoring happens. IN THE ROW IDENTITY and load-bearing there: an accuracy is readable only against the floor and MDE registered for the items it was taken on, and this item set has been rebuilt through four versions. One ckpt under two hashes is two measurements, not a replacement. The FILE hash is deliberately not used -- the header carries the recorded battery maximum and moves whenever a rule is added, which happened once with the items byte-identical."
+      },
+      "n": {
+        "type": "int",
+        "required": true,
+        "min": 1,
+        "why": "items scored, 1000 for the pinned set. Required because the registered MDE (0.4497/0.3755) was computed at n=1000 and a smaller denominator changes what it is compared against. The writer refuses rather than excludes an unscorable item, so this is 1000 or the run raised."
+      },
+      "summed": {
+        "type": "object",
+        "required": true,
+        "why": "THE REGISTERED READOUT: {program: accuracy} under summed-NLL option scoring, one entry per program, never a pooled number. Pooling is excluded by the prereg -- it read 0.2560 on v3 while one partition sat at z=+12.81 and the other at z=-12.19."
+      },
+      "mean": {
+        "type": "object",
+        "required": true,
+        "why": "{program: accuracy} under mean-per-token scoring, the NORMALISATION CONTROL and not a second readout. Taken from the same forward pass as `summed` (the score matrix is captured before argmax), because a control taken under a different numeric regime than the number it controls is not a control. A sign disagreement between the two on one program is evidence of a zero effect, which is how it read on 3 of 8 arm-program cells."
+      },
+      "floor": {
+        "type": "object",
+        "required": true,
+        "why": "the registered PRIOR LOWER BOUND per program (0.364 diamond_chain, 0.294 diamond_chain4), stored with every row so an accuracy is never read without it. NOT a chance floor and NOT a certificate: it is the maximum over the 29 heuristic rules in the builder's battery, i.e. what a rule-following adversary scores, and the leak family is unbounded. The prereg's OPERATIONAL floor is the control arm's own score on this file, which is why the readout is a difference."
+      },
+      "mde": {
+        "type": "object",
+        "required": true,
+        "why": "the registered minimum detectable ACCURACY per program (0.4497/0.3755), two-proportion, two-sided alpha=0.05, power=0.80, n=500 per program, null variance at p1 for both arms. Stored per row so the number a reader compares against travels with the measurement. As a required LIFT over the prior lower bound that is 8.57pt and 8.15pt."
+      }
+    }
   }
 }

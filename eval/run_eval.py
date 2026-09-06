@@ -184,8 +184,19 @@ def score_mc(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
     return (preds[keep] == labels[keep]).float().mean().item()
 
 
+@torch.no_grad()
 def score_mc_items(model, tok, items, device, batch_size=MC_BATCH, num_id=None):
     """Score multiple-choice items by continuation log-likelihood: (preds, labels).
+
+    NO_GRAD IS ON THE FUNCTION, not left to the caller. score_mc has carried the decorator
+    since it was written; this function was split out of it (:159) and the decorator did not
+    come with it, so every caller inherited the obligation silently. MEASURED 2026-09-06:
+    scoring 1000 four-way items on a 206M checkpoint allocated 94.49 GiB and died with
+    `Tried to allocate 14.00 MiB`, because the activations of 4,000 forward sequences were
+    retained for a backward pass nobody was going to run. The same shapes under no_grad peak
+    at 3.46 GiB. eval/api_cloze.py:410 is the other caller and it does not wrap the call
+    either -- it has not OOMed because its item count is smaller, which is the failure mode
+    a per-caller obligation produces: it works until the caller that stresses it arrives.
 
     Per-item tensors, so a caller can compute a standard error, a per-stratum mean, or a
     paired difference. score_mc is the mean of this.

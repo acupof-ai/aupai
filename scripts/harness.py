@@ -3715,6 +3715,134 @@ def _broken_non_shard_jsonl_excluded():
     return d
 
 
+def _shard_classifiers(root):
+    """train.py's OWN SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, read by AST.
+
+    Not a copy. A check that re-declares the patterns agrees with train.py only until one
+    side moves, and then it reports on a corpus train.py partitions differently -- the shape
+    that cost three of four mutants in de-56 one level up: a test that reimplements its
+    subject tests the copy. Returns None when any of the three is missing or is not a plain
+    literal, and the caller FAILs on that rather than falling back to a copy."""
+    src = os.path.join(root, "train.py")
+    if not os.path.exists(src):
+        return None
+    try:
+        tree = ast.parse(open(src, encoding="utf-8").read())
+    except SyntaxError:
+        return None
+    out = {}
+    for node in tree.body:
+        if not isinstance(node, ast.Assign) or not getattr(node.targets[0], "id", None):
+            continue
+        name = node.targets[0].id
+        try:
+            if name in ("SHARD_RE", "NON_SHARD_RE"):
+                out[name] = re.compile(ast.literal_eval(node.value.args[0]))
+            elif name == "NON_SHARD_JSONL":
+                out[name] = set(ast.literal_eval(node.value))
+        except Exception:
+            return None
+    return out if len(out) == 3 else None
+
+
+def check_shard_contract(root):
+    """Every shard train.py would tokenize has a first line that is a JSON object with a
+    string "content" -- the field _jsonl_content reads (train.py:1327).
+
+    train.py already REFUSES a .jsonl it cannot classify (non_shard_jsonl_excluded). That
+    covers the name and says nothing about the contents, so a file named like a shard whose
+    rows use a different key passes the whitelist and dies inside the tokenizer. Twice:
+    2026-09-01 holdout_slice_<domain>.jsonl carried a header row {phase, rule_fp, n} in four
+    domains, and 2026-09-05 e1's five injection shards used "text" plus a header row and all
+    five token caches died on KeyError: 'content'. Both were found by a run, not by a check.
+
+    FIRST LINE ONLY, said out loud rather than implied: a shard whose 900,000th row is
+    malformed still passes here. The whole file is 4 GB per domain and the two incidents were
+    both row 1 -- a header written before the rows, which is what a writer emits when it
+    thinks it is writing a table. e1 adds the write-time assertion in the generator; this is
+    the tree-wide read, and the pair is the coverage.
+
+    A domain directory that does not exist is not a finding: a dev box ships only
+    data/corpus/sample. What IS a finding is zero files anywhere, which would make this
+    check vacuous, so it SKIPs by name instead of passing."""
+    cls = _shard_classifiers(root)
+    if cls is None:
+        return FAIL, ("cannot read train.py's SHARD_RE / NON_SHARD_RE / NON_SHARD_JSONL, so "
+                      "this check cannot partition the corpus the way training does -- it "
+                      "refuses rather than re-declaring them, which would agree with train.py "
+                      "only until one side moved")
+    files = sorted(glob.glob(os.path.join(root, "data", "corpus", "*", "*.jsonl")))
+    shards = [p for p in files
+              if os.path.basename(p) not in cls["NON_SHARD_JSONL"]
+              and not cls["NON_SHARD_RE"].search(os.path.basename(p))
+              and cls["SHARD_RE"].search(os.path.basename(p))]
+    if not shards:
+        return SKIP, (f"no shard-named .jsonl under data/corpus/*/ ({len(files)} .jsonl total): "
+                      f"nothing to read, not a passing contract")
+    bad = []
+    for p in shards:
+        rel = os.path.relpath(p, root)
+        try:
+            with open(p, "rb") as f:
+                line = f.readline()
+        except OSError as e:
+            bad.append(f"{rel}: unreadable ({e.__class__.__name__})")
+            continue
+        if not line.strip():
+            bad.append(f"{rel}: first line is empty")
+            continue
+        try:
+            row = json.loads(line)
+        except Exception as e:
+            bad.append(f"{rel}: first line is not JSON ({str(e)[:40]})")
+            continue
+        if not isinstance(row, dict):
+            bad.append(f"{rel}: first line is {type(row).__name__}, not an object")
+        elif "content" not in row:
+            # The keys, because they say which writer produced it: {phase, rule_fp, n} is a
+            # header row, {text} is a generator using the other convention.
+            bad.append(f"{rel}: no 'content' key (has {sorted(row)[:4]})")
+        elif not isinstance(row["content"], str):
+            bad.append(f"{rel}: 'content' is {type(row['content']).__name__}, not str")
+    if bad:
+        return FAIL, (f"{len(bad)} of {len(shards)} shard(s) would die in _jsonl_content: "
+                      + "; ".join(bad[:4]))
+    return PASS, f"{len(shards)} shards, first line carries a string 'content'"
+
+
+def _broken_shard_contract():
+    """A REAL committed shard with a header row prepended -- the 2026-09-01 shape.
+
+    data/corpus/sample/ is copied rather than symlinked: _tmp_repo_shaped links data/*, and
+    writing through that link would write into the repository's own corpus."""
+    import shutil
+    d = _tmp_repo_shaped()
+    src = os.path.join(ROOT, "data", "corpus", "sample")
+    if not os.path.isdir(src):
+        return None
+    real = sorted(glob.glob(os.path.join(src, "*_[0-9][0-9][0-9].jsonl")))
+    if not real:
+        return None
+    link = os.path.join(d, "data", "corpus")
+    # NOT `if os.path.islink(link)`: _tmp_repo already mkdir's data/corpus, so the symlink loop
+    # in _tmp_repo_shaped skips it and the path is a real EMPTY directory. The first version
+    # guarded on islink, never copied, and died on FileNotFoundError -- a world that fails to
+    # build is not a world that fails the check, and had it merely come out empty the check
+    # would have SKIPped and the selftest read that as coverage.
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    shutil.copytree(os.path.join(ROOT, "data", "corpus"), link,
+                    ignore=shutil.ignore_patterns("__pycache__"))
+    victim = os.path.join(link, "sample", os.path.basename(real[0]))
+    rows = open(victim, "rb").read()
+    # The header the holdout-slice writer emitted, ahead of the rows that were already there.
+    with open(victim, "wb") as f:
+        f.write(b'{"phase": "s1", "rule_fp": "deadbeef", "n": 12}\n' + rows)
+    return d
+
+
 def check_mix_shards(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -8345,9 +8473,32 @@ def check_score_matrix(root):
     if os.path.exists(matrix):
         for line in open(matrix, encoding="utf-8"):
             try:
-                scored.add(json.loads(line).get("ckpt"))
+                _row = json.loads(line)
             except Exception:
-                pass
+                continue
+            # A ROW COUNTS ONLY IF IT HOLDS AT LEAST ONE REAL NUMBER. This read `scored.add(
+            # json.loads(line).get("ckpt"))` and never looked at `metrics`, so a row whose every
+            # metric is an {"error": ...} dict satisfied the gate exactly as well as a scored one.
+            # MEASURED on the live ledger 2026-09-06: 3 of 74 rows are all-errored --
+            # ckpt_e1_conv_n1.pt (10/10 errored), ckpt_e1_conv_control_arm.pt (10/10), and
+            # ckpt_e1_conv_control_arm.pt#cu (1/1). All three came from score_matrix refusing its
+            # own card read (#46), which exits 0, so the failure wrote rows and looked like success.
+            # Two arms of a live experiment read as scored while carrying no number at all.
+            #
+            # THE PREDICATE IS ABSENCE OF `error`, NOT PRESENCE OF A NUMBER, and that distinction is
+            # load-bearing: score_matrix writes SKIPPED metrics by leaving them OUT of `metrics`
+            # entirely, so "every metric is numeric" would fail a legitimately partial row. What
+            # makes a row worthless is that nothing in it succeeded.
+            #
+            # A row with NO `metrics` key is not counted either -- it asserts nothing. Rows are
+            # RETIRED by this predicate rather than deleted from the ledger (4c's ruling): the
+            # ledger is append-only and a failed attempt is a fact about what was tried.
+            _m = _row.get("metrics")
+            if not isinstance(_m, dict) or not _m:
+                continue
+            if not any(not (isinstance(v, dict) and "error" in v) for v in _m.values()):
+                continue
+            scored.add(_row.get("ckpt"))
     missing = []
     unverifiable = []
     for r in rows:
@@ -8480,10 +8631,85 @@ def _broken_score_matrix_cu_only():
         )
     # The suffix spelled by the producer, not by hand: score_matrix.py interpolates cu_path, so a
     # literal here would be a second copy of that convention to keep in step.
+    #
+    # AND A REAL METRIC, not `"metrics": {}`. This fixture used to carry an empty dict, which was
+    # fine while the check only read `ckpt` -- but an empty `metrics` is INDISTINGUISHABLE from the
+    # all-errored rows the check now retires, so the world would have asserted that a worthless row
+    # counts as a score, which is the opposite of what it exists to pin. Shaped like the live ones:
+    # every #cu row in the matrix on 2026-09-06 carries exactly one numeric `domain_loss` (10 of 74
+    # rows checked). Changing this fixture was forced by the fix, and it is recorded rather than
+    # quietly adjusted -- the empty dict was the fixture reproducing a property it should not have.
     with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
         fh.write(json.dumps({"ckpt": "ckpt_cuonly.pt#cu", "cu_path": "doc_cu", "profile": "full",
-                             "measured": "2026-09-05", "metrics": {}}) + "\n")
+                             "measured": "2026-09-05",
+                             "metrics": {"domain_loss": 2.4137}}) + "\n")
     return d
+
+
+def _score_matrix_metrics_world(kind):
+    """An ok training row plus ONE score-matrix row whose `metrics` shape is `kind`.
+
+    Three kinds, and the third is the one that decides whether the predicate is right rather than
+    merely strict:
+
+      all_error   every metric is {"error": ...}  -> must FAIL. This is the live defect: the check
+                  read only `ckpt`, so such a row satisfied the gate exactly as well as a real
+                  score. Measured on the matrix 2026-09-06, 3 of 74 rows are in this state --
+                  ckpt_e1_conv_n1.pt (10/10 errored), ckpt_e1_conv_control_arm.pt (10/10) and
+                  ckpt_e1_conv_control_arm.pt#cu (1/1) -- all three written by score_matrix
+                  refusing its own card read (#46) and exiting 0, so the failure looked like
+                  success and two arms of a live experiment read as scored with no number in them.
+
+      all_number  every metric is numeric -> must PASS. The negative control. Without it a
+                  predicate that rejected everything would look like a working fix.
+
+      mixed       some errored, some numeric -> must PASS, AND MUST PASS BEFORE THE FIX TOO. A
+                  partial score is a real score: score_matrix omits a SKIPPED metric from `metrics`
+                  entirely rather than writing an error for it, so "every metric numeric" would
+                  reject legitimately partial rows. This world is what separates "a row with no
+                  successes" from "a row with some failures", and it is the assertion I would most
+                  expect a later edit to break, because tightening the predicate to `all()` passes
+                  the other two worlds.
+    """
+    d = _tmp_repo()
+    for argv in (
+        ["start", "--name", "m", "--cmd", "./run_ddp.sh --name m"],
+        ["done", "--name", "m", "--status", "ok", "--result", "done"],
+    ):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, *argv],
+            check=True, capture_output=True,
+        )
+    err = {"error": "AssertionError: refusing to read 15.6 GB while cards 1 are live"}
+    metrics = {
+        "all_error": {"domain_loss": err, "humaneval_bpb": err},
+        "all_number": {"domain_loss": 2.4137, "humaneval_bpb": 0.8812},
+        "mixed": {"domain_loss": 2.4137, "humaneval_bpb": err},
+    }[kind]
+    with open(os.path.join(d, "runs", "score_matrix.jsonl"), "w", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_m.pt", "profile": "full",
+                             "measured": "2026-09-06", "metrics": metrics}) + "\n")
+    return d
+
+
+def _score_matrix_all_errored():
+    """Every metric errored -- must FAIL. See _score_matrix_metrics_world."""
+    return _score_matrix_metrics_world("all_error")
+
+
+def _score_matrix_all_numeric():
+    """Every metric numeric -- must PASS. The negative control for the FAIL world above."""
+    return _score_matrix_metrics_world("all_number")
+
+
+def _score_matrix_mixed_metrics():
+    """Some errored, some numeric -- must PASS, and passed BEFORE the fix as well.
+
+    The row that keeps the predicate honest: it is keyed on the ABSENCE of a success, not on the
+    presence of a failure. Tightening to "every metric numeric" turns this red while leaving both
+    siblings green.
+    """
+    return _score_matrix_metrics_world("mixed")
 
 
 def _broken_score_matrix_dangling_artifact():
@@ -10787,11 +11013,22 @@ def check_lane_respected(root):
         return SKIP, "no mix_scale_run_config.json"
     try:
         config = json.load(open(config_path, encoding="utf-8"))
-        train_cards = {c.strip() for c in config["cards"].split(",") if c.strip()}
-        world = int(config.get("world", len(train_cards)))
+        world = int(config["world"])
     except (json.JSONDecodeError, KeyError, ValueError):
-        return SKIP, "cannot read cards/world from mix_scale_run_config.json"
-    lane, src = set(), "frozen config"
+        return SKIP, "cannot read world from mix_scale_run_config.json"
+    # ONE ALLOCATION SOURCE. `cards` used to live in the frozen recipe file and be the
+    # fallback here; it is gone (de-54), because a second copy of an allocation goes stale
+    # while reading as authoritative. Its last value was "0,1,2,3,4,5,6" while the grant said
+    # cards 0 and 6 belong to the RL team -- so the fallback did not merely duplicate the
+    # grant, it contradicted it, and any path reaching the fallback would have counted two
+    # foreign cards as ours. `world` stays: it is the RECIPE (card count moves the effective
+    # batch and the gradient noise), which is the split this file's own _comment describes.
+    if config.get("cards") is not None:
+        return FAIL, ("data/mix_scale_run_config.json carries `cards` again: allocation has "
+                      "exactly one source, runs/card_assignment.json. A recipe file that also "
+                      "names cards goes stale while still reading as authoritative -- its last "
+                      "value claimed cards 0 and 6, which are the RL team's.")
+    lane, src = set(), None
     apath = os.path.join(root, "runs", "card_assignment.json")
     if os.path.isfile(apath):
         try:
@@ -10805,11 +11042,17 @@ def check_lane_respected(root):
         if block:
             train_cards, world, src = block, len(block), "card_assignment.block_cards"
         lane = {str(c) for c in _expand_cards(grant.get("lane_card"))}
-        if lane:
-            # The lane is whichever card is not in `cards` (AGENTS.md), so a lane that appears
-            # in the training set is the defect, not a conflict to resolve either way.
-            train_cards = train_cards - lane
-            world = min(world, len(train_cards)) if train_cards else 0
+    if src is None:
+        # NO GRANT IS NOT AN EMPTY GRANT. With `cards` gone there is nothing to fall back to,
+        # and inventing range(world) would name cards nobody granted -- the exact reading that
+        # made a stale 0-7 grant dangerous. SKIP says the question has no answer here.
+        return SKIP, ("runs/card_assignment.json names no block_cards, and allocation has no "
+                      "second source to fall back to -- the controller grants cards")
+    if lane:
+        # The lane is whichever card is not in the block (AGENTS.md), so a lane that appears
+        # in the training set is the defect, not a conflict to resolve either way.
+        train_cards = train_cards - lane
+        world = min(world, len(train_cards)) if train_cards else 0
     if not train_cards:
         return SKIP, f"no training card left after removing the lane {sorted(lane)}"
     busy, err = _busy_training_cards(train_cards)
@@ -10841,6 +11084,37 @@ def check_lane_respected(root):
         f"a small job is tearing the block. Small jobs go on the lane card "
         f"({sorted(lane) if lane else 'the one not in ' + str(sorted(train_cards))}).{lane_note}"
     )
+
+
+def _granted_block_cards(root):
+    """(cards, error): the block the controller granted, as strings, from ONE source.
+
+    runs/card_assignment.json is that source since de-54 removed `cards` from
+    data/mix_scale_run_config.json. Every failure returns an error rather than a default: no
+    file, no block_cards, or an unparseable file all mean nobody granted anything, and
+    inventing range(world) would name cards nobody gave -- which is precisely how a stale
+    0-7 grant nearly took two cards holding another container's work (b0 2026-09-03).
+
+    The lane is subtracted. AGENTS.md defines the lane as whichever card is not in the block,
+    so a lane inside the block is a defect in the grant, and returning the intersection would
+    hand a 7-card job the lane card."""
+    apath = os.path.join(root, "runs", "card_assignment.json")
+    if not os.path.isfile(apath):
+        return [], "runs/card_assignment.json is absent -- the controller grants cards"
+    try:
+        grant = json.load(open(apath, encoding="utf-8"))
+    except (OSError, ValueError) as e:
+        return [], f"runs/card_assignment.json is unreadable ({e.__class__.__name__})"
+    block = [str(c) for c in _expand_cards(grant.get("block_cards"))]
+    if not block:
+        return [], ("runs/card_assignment.json names no block_cards -- ask the controller for "
+                    "a grant; there is no second allocation source to fall back to")
+    lane = {str(c) for c in _expand_cards(grant.get("lane_card"))}
+    kept = [c for c in block if c not in lane]
+    if not kept:
+        return [], (f"the grant's block {','.join(block)} is entirely the lane "
+                    f"{','.join(sorted(lane))} -- nothing left to train on")
+    return kept, None
 
 
 def _broken_lane_respected():
@@ -11590,9 +11864,20 @@ def check_allocation_reads_the_grant(root):
         with open(gp, encoding="utf-8") as fh:
             grant = json.load(fh)
         with open(lp, encoding="utf-8") as fh:
-            ladder_cards = _expand_cards(json.load(fh).get("cards", ""))
+            ladder_cfg = json.load(fh)
     except (OSError, ValueError) as e:
         return FAIL, f"a card source is unreadable: {e}"
+    # THE SECOND SOURCE MUST STAY GONE (de-54). Cases 2 and 3 below used to compare the two
+    # files and require a disagreement to be announced; the fix is upstream of that -- there
+    # is one source now, so what this check asserts is that no second one has reappeared. Its
+    # last value contradicted the grant rather than duplicating it ("0,1,2,3,4,5,6" against a
+    # grant of 1,2,3,4 with 0 and 6 owned by the RL team), which is why a reappearance is a
+    # FAIL and not a warning.
+    if ladder_cfg.get("cards") is not None:
+        return FAIL, (f"data/mix_scale_run_config.json carries `cards` again "
+                      f"({ladder_cfg['cards']!r}) -- allocation has exactly one source, "
+                      f"runs/card_assignment.json. A second copy goes stale while still "
+                      f"reading as authoritative; the last one claimed cards the RL team owns")
     granted = _expand_cards(grant.get("block_cards", "")) if grant.get("launch_block_granted") else []
 
     # AN UNGRANTED BOX IS THE LEGITIMATE STATE OF AN IDLE BOX (de, on 6e's report 2026-09-04).
@@ -11611,6 +11896,10 @@ def check_allocation_reads_the_grant(root):
 
     import io
 
+    # stderr is captured for two reasons: _allocation_cards prints a `note` when it falls
+    # through to CUDA_VISIBLE_DEVICES, which would otherwise make a normal `harness check` run
+    # look like it had an allocation problem, and the no-grant branch below ASSERTS on that
+    # note -- a silent fall-through is indistinguishable from a grant that happens to agree.
     err = io.StringIO()
     _real, sys.stderr = sys.stderr, err
     try:
@@ -11619,6 +11908,8 @@ def check_allocation_reads_the_grant(root):
         lane_s = _allocation_cards(False, root=root, raise_on_false=False)
     finally:
         sys.stderr = _real
+    # The captured stderr IS evidence, not noise: the no-grant branch below asserts that the
+    # fall-through announced itself, and _allocation_cards' `note` is where it does.
     msg = err.getvalue()
 
     if granted:
@@ -11627,16 +11918,11 @@ def check_allocation_reads_the_grant(root):
             return FAIL, (f"the grant gives {_csv(granted)} and a training launch would get "
                           f"{_csv(block)} -- the launcher does not read the file that says "
                           f"who owns the cards")
-        # 2. A disagreement between the two sources must be announced, never resolved
-        #    silently: one file said 0-3, another 0-6, and nothing said they differed.
-        if set(ladder_cards) != set(granted) and "DISAGREE" not in msg:
-            return FAIL, (f"the two card sources disagree (grant {_csv(granted)} vs ladder "
-                          f"{_csv(ladder_cards)}) and nothing said so -- that silence is what "
-                          f"let a launch target cards outside the grant")
-        # 3. ...and agreement must NOT warn, or the warning is noise and gets waved past.
-        if set(ladder_cards) == set(granted) and "DISAGREE" in msg:
-            return FAIL, ("two AGREEING card sources reported a disagreement; a warning that "
-                          "fires on correct input gets ignored (§142)")
+        # 2 and 3 are GONE, and their absence is asserted above rather than here. They
+        # required a two-source disagreement to be announced and an agreement not to warn;
+        # with `cards` removed there is no second source to disagree, so the property became
+        # "no second source exists" -- checked before this branch. Keeping a comparison
+        # against a field that must not exist would be a check on an empty string.
         # 4. lane_card: null means NO lane, not "complement the block" -- with block 0-3
         #    the complement is 4-7, the cards the narrowing existed to protect.
         if "lane_card" in grant and grant["lane_card"] is None and lane_s:
@@ -11659,8 +11945,7 @@ def check_allocation_reads_the_grant(root):
                 return FAIL, (f"the grant's lane card(s) {_csv(sorted(both))} are inside its "
                               f"own block {_csv(block)} -- a non-training job would land on a "
                               f"card the training block holds, which OOMs both")
-        return PASS, (f"grant {_csv(granted)} decides the block; "
-                      f"{'disagreement announced' if set(ladder_cards) != set(granted) else 'sources agree'}; "
+        return PASS, (f"grant {_csv(granted)} decides the block, one source; "
                       f"lane {lane_s or 'none (grant says null)'}")
     # 6. An explicit launch_block_granted:false must RAISE FOR A LAUNCH and NOT for a read.
     #    "I say no" and "I have not spoken" are different answers, and on the pod they were
@@ -11697,14 +11982,19 @@ def check_allocation_reads_the_grant(root):
     finally:
         _sh.rmtree(_d, ignore_errors=True)
 
-    # No grant: the fallback is the ladder config, and it must SAY so -- a silent fallback
-    # is indistinguishable from a grant that happens to agree.
-    if set(block) != set(ladder_cards):
-        return FAIL, (f"no block grant, so the ladder config's {_csv(ladder_cards)} should "
-                      f"decide, but the allocation is {_csv(block)}")
-    if "mix_scale_run_config" not in msg:
-        return FAIL, ("the fallback to data/mix_scale_run_config.json is SILENT -- nothing "
-                      "tells a reader which of the two files decided the cards")
+    # NO GRANT AND NO SECOND SOURCE (de-54). This used to assert that the fallback was the
+    # ladder config's `cards` and that the fallback SAID so. `cards` is gone, so the property
+    # became: nothing invents a block. _allocation_cards falls through to
+    # CUDA_VISIBLE_DEVICES -- a value someone set deliberately -- and says so; what must never
+    # happen is a block derived from `world`, which would name cards nobody granted.
+    if block and not os.environ.get("CUDA_VISIBLE_DEVICES"):
+        return FAIL, (f"no block grant, no CUDA_VISIBLE_DEVICES, and the allocation still "
+                      f"produced {_csv(block)} -- a block was invented from somewhere, and "
+                      f"naming ungranted cards is how a stale grant took two of another "
+                      f"container's")
+    if not os.environ.get("CUDA_VISIBLE_DEVICES") and "no second allocation file" not in msg:
+        return FAIL, ("the fall-through to CUDA_VISIBLE_DEVICES is SILENT -- nothing tells a "
+                      "reader that no grant was found and no second file was consulted")
     # 7. NO BLOCK GRANT IS THE STATE THE LANE CASES WERE NEVER CHECKED IN, and it is the state
     #    the file is normally in when it grants individual cards. Cases 4 and 5 above live under
     #    `if granted:`, so with block_cards empty this check returned PASS on a tree where
@@ -11805,8 +12095,8 @@ def check_allocation_reads_the_grant(root):
         if _named - set(_ours):
             return WARN, (f"lane_card names {_csv(sorted(_named - set(_ours)))}, which cards[] "
                           f"does not grant us; the lane is refused, so nothing can land there")
-    return PASS, (f"no grant; fell back to the ladder's {_csv(ladder_cards)} and said so; "
-                  f"lane {lane_s or '(none)'}"
+    return PASS, (f"no grant, and no second source to fall back to (de-54); block came back "
+                  f"{_csv(block) or 'empty'} from CUDA_VISIBLE_DEVICES; lane {lane_s or '(none)'}"
                   + (f"; cards[] gives us {_csv(_ours)}, RL team {_csv(_theirs)}" if _cmap else ""))
 
 
@@ -11826,13 +12116,20 @@ def _broken_allocation_reads_the_grant():
     (done at the terminal, 2026-09-03: grant 0-3, old code returns 0-6, red), not by this
     world. A world that cannot fail the property is worse than no world, so this one fails
     a property the check actually holds.
+
+    THE LADDER CONFIG HERE CARRIES NO `cards` (de-54). It used to write "0,1,2,3" so the two
+    sources agreed and case 4 was the only thing left to fail -- but once a reappearing
+    `cards` became a FAIL in its own right, that line made this world fail at the FIRST guard
+    and case 4 stopped being exercised. The selftest stayed green throughout, because it only
+    demands the world FAIL: a world failing for the wrong reason proves nothing about the
+    mutation it was built for (de, 2026-09-02, same shape one check over).
     """
     d = _tmp_repo()
     os.makedirs(os.path.join(d, "data"), exist_ok=True)
     with open(os.path.join(d, "runs", "card_assignment.json"), "w") as f:
         json.dump({"launch_block_granted": True, "block_cards": "0-3", "lane_card": "2"}, f)
     with open(os.path.join(d, "data", "mix_scale_run_config.json"), "w") as f:
-        json.dump({"cards": "0,1,2,3", "world": 4}, f)
+        json.dump({"world": 4}, f)
     return d
 
 
@@ -12949,6 +13246,17 @@ CHECKS = [
         _broken_non_shard_jsonl_excluded,
     ),
     (
+        "shard_contract",
+        "every shard-named .jsonl under data/corpus/*/ has a first line that is a JSON object "
+        "with a string 'content' -- the field _jsonl_content reads",
+        "twice a shard passed the name whitelist and died inside the tokenizer: 2026-09-01 the "
+        "holdout slice carried a header row {phase, rule_fp, n} in four domains, and 2026-09-05 "
+        "e1's five injection shards used 'text' plus a header row and all five token caches died "
+        "on KeyError: 'content'; the name check cannot see contents",
+        check_shard_contract,
+        _broken_shard_contract,
+    ),
+    (
         "spawned_scripts_exist",
         "every script harness.py shells out to is at the path harness.py uses",
         "c3a47e8 moved pretokenize.py to datagen/ and three call sites kept pointing at scripts/; "
@@ -13529,6 +13837,11 @@ EVIDENCE = {
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
     "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
+    # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
+    # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
+    # are the population the two incidents came from. The classifiers it partitions by are
+    # tracked, so what differs between the two machines is the corpus, not the rule.
+    "shard_contract": "pod",
     # pod: `data/` is gitignored, so a laptop sees almost none of the population -- counting it
     # on the pod found 10 unregistered files where a laptop glob plus a code grep reported 8.
     "eval_registry_complete": "pod",
@@ -14654,6 +14967,56 @@ def _selftest_milestone_reachable():
     assert 16500 > total, "the armed target really was past the end"
     assert (total // save_every) * save_every == 16000, "last save_every multiple"
     print(f"  milestone: a target past step {total} refuses; ckpt_<run>.pt registers at the end")
+
+
+def _selftest_shard_contract_worlds():
+    """The two branches _broken_shard_contract cannot reach: an EMPTY population, and
+    classifiers that cannot be read.
+
+    Registered as its own selftest because a single broken world can only exercise one
+    branch, and mutation MEASURED that on 2026-09-05: mutating `if not shards: return SKIP`
+    to `return PASS`, and the `cls is None` refusal to `return PASS`, both SURVIVED -- the
+    one world always has 143 shards and always reads train.py, so neither branch ran at all.
+    Two survivors are two branches nothing tested, not two bad mutations.
+
+    Both worlds are real trees with real files, and each asserts the STATE and that the
+    reason names the cause -- a SKIP whose text does not say the population was empty is
+    indistinguishable to a reader from a SKIP for any other reason."""
+    import shutil
+
+    # (1) A corpus directory holding only NON-shards: the classifiers are readable, the
+    # population is empty, and the honest answer is SKIP-by-name. A PASS here is the vacuous
+    # shape -- "every one of zero shards is fine".
+    d = _tmp_repo_shaped()
+    link = os.path.join(d, "data", "corpus")
+    if os.path.islink(link):
+        os.unlink(link)
+    elif os.path.isdir(link):
+        shutil.rmtree(link)
+    os.makedirs(os.path.join(link, "sample"))
+    # A REAL non-shard name from train.py's own list, so the exclusion is what empties the
+    # population rather than an empty directory.
+    shutil.copy(os.path.join(ROOT, "data", "corpus", "sample", "web_labels.jsonl"),
+                os.path.join(link, "sample", "web_labels.jsonl"))
+    st, why = check_shard_contract(d)
+    assert st == SKIP, f"a corpus with no shard-named file must SKIP, not {st}: {why}"
+    assert "no shard-named" in why, f"the SKIP must say the population was empty: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+
+    # (2) train.py present but its classifiers unreadable. The check must REFUSE rather than
+    # re-declare the patterns: a copy agrees with train.py only until one side moves.
+    d = _tmp_repo_shaped()
+    body = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+    p = os.path.join(d, "train.py")
+    if os.path.islink(p):
+        os.unlink(p)
+    with open(p, "w", encoding="utf-8") as f:
+        f.write(body.replace('SHARD_RE = re.compile(r"_\\d{3,}\\.jsonl$")', ""))
+    st, why = check_shard_contract(d)
+    assert st == FAIL, f"unreadable classifiers must FAIL, not {st}: {why}"
+    assert "SHARD_RE" in why, f"the refusal must name what it could not read: {why}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  shard_contract: an empty population SKIPs by name; unreadable classifiers refuse")
 
 
 def _selftest_cold_cache_refuses():
@@ -16066,8 +16429,70 @@ def _selftest_repo_auth_mirror():
         res2 = run_checks(ROOT, quiet=True, persist_timeouts=False)
         here = [n for n, _s, e, _a, _i in res2 if "not authoritative here" in (e or "")]
         assert not here, f"the mirror fired on a real checkout, disabling repo checks: {here[:4]}"
-        print(f"  repo-auth mirror: {len(mirrored)} auth=repo FAIL(s) -> SKIP on the pod's shape, "
-              f"0 on a checkout, 0 auth=pod mirrored")
+
+        # A NAMED CHECK, because `not bad` over 71 checks is satisfied by every check that had
+        # nothing to say. The world above is a bare runs/ directory, so score_matrix_present
+        # returns SKIP there ("runs/experiments.jsonl not present") and the mirror never fires for
+        # it at all: 17 of 71 auth=repo checks are mirrored in that world and this is not one of
+        # them. The blanket assertion could not tell that apart from a mirror that works.
+        #
+        # It matters for THIS check specifically because `reading_artifact` is an escape hatch
+        # whose FAIL is a path test, and the natural place to write a reading is runs/, which
+        # pod_push excludes from the manifest by design (pod_drift._pod_written). So a row
+        # satisfiable on main can read as dangling on the pod, and the mirror is the only reason
+        # that is a SKIP rather than a NO-GO. The world existed for real: 62 filed it on
+        # 2026-09-06 with runs/b0_headmix_block_paired.json tracked on main at ea8bf6f6 and absent
+        # on the pod for ~20 minutes, and check_score_matrix named that path. They reported it as
+        # FAILing there, which it never did -- they called the check function directly instead of
+        # through run_checks, so they read the raw predicate rather than the harness's verdict.
+        # Both halves are why this world is here: the raw FAIL is real, the mirrored SKIP is real,
+        # and only the pair distinguishes them.
+        #
+        # THE TRANSPORT GAP IS REAL AND STAYS OPEN, and this world does not close it: podput
+        # refuses a tracked file, pod_push.sh:245 filters runs/ out of the manifest, and
+        # pod_pull_ledgers only carries files with a ledger_audit.KEYS identity. 62's copy reached
+        # the pod through a one-time PODPUT_TRACKED_OK=1 override. So a runs/ reading is satisfied
+        # on main and only SKIPped on the pod -- unverified there, never verified -- which is what
+        # the mirror is honest about and what this asserts stays honest.
+        d2 = tempfile.mkdtemp(prefix="authmirror_art_")
+        try:
+            os.makedirs(os.path.join(d2, "runs"), exist_ok=True)
+            _rows = [
+                {"name": "armA", "started": "2026-09-06T00:00:00Z", "status": "ok",
+                 "cmd": "./run_ddp.sh --name armA", "result": "x",
+                 "reading_artifact": "runs/paired.json"},
+                {"name": "armB", "started": "2026-09-06T00:00:01Z", "status": "ok",
+                 "cmd": "./run_ddp.sh --name armB", "result": "x",
+                 "reading_artifact": "runs/paired.json"},
+            ]
+            with open(os.path.join(d2, "runs", "experiments.jsonl"), "w", encoding="utf-8") as fh:
+                for _r in _rows:
+                    fh.write(json.dumps(_r) + "\n")
+            _raw, _rev = check_score_matrix(d2)
+            assert _raw == FAIL, (
+                f"the world does not produce the FAIL it is meant to mirror: {_raw} {_rev[:120]}. "
+                f"Without a raw FAIL here the assertions below pass vacuously, which is the "
+                f"defect this world was written for")
+            assert "runs/paired.json" in _rev, f"the raw FAIL names no artifact path: {_rev[:160]}"
+            _res3 = run_checks(d2, quiet=True, persist_timeouts=False)
+            _by3 = {n: (s, e) for n, s, e, _a, _i in _res3}
+            _st3, _ev3 = _by3["score_matrix_present"]
+            assert _st3 == SKIP, (
+                f"a dangling runs/ reading_artifact reads {_st3} on the pod's shape, not SKIP -- "
+                f"a row satisfiable on main would be NO-GO there: {(_ev3 or '')[:140]}")
+            assert "runs/paired.json" in (_ev3 or ""), (
+                f"the mirrored SKIP dropped the path, so nobody can tell which reading is "
+                f"unverified here: {(_ev3 or '')[:160]}")
+            # The negative: with the artifact present it is not a FAIL to mirror in the first
+            # place, so a mirror that fires unconditionally would be caught.
+            open(os.path.join(d2, "runs", "paired.json"), "w", encoding="utf-8").write("{}\n")
+            _raw2, _ = check_score_matrix(d2)
+            assert _raw2 != FAIL, f"an artifact that EXISTS still FAILs: {_raw2}"
+        finally:
+            shutil.rmtree(d2, ignore_errors=True)
+        print(f"  repo-auth mirror: {len(mirrored)} of {len(repo)} auth=repo checks FAIL and "
+              f"mirror to SKIP on the pod's shape, 0 on a checkout, 0 auth=pod mirrored; a "
+              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -16688,11 +17113,40 @@ def _selftest_auto_resume():
             f.write("x")
         ck, step = _latest_step_ckpt("arts")
         assert step == 900 and "interrupt" in ck, f"an interrupt save at a later step wins: {ck!r}"
+
+        # A COMMAND THAT ALREADY CARRIES --resume <path>. Every case above builds a command
+        # with no --resume in it, so the rebuild's filter was never exercised and this selftest
+        # was GREEN on the defect (e1 via 98, 2026-09-05): the old
+        # `[c for c in cmd if not c.startswith("--resume")]` dropped the flag and left the path,
+        # which reaches train.py as a positional and exits argparse 2. e1_conv_n1 and its
+        # control arm both took that path; the cost was zero only because both had finished.
+        #
+        # Asserted on _strip_resume directly rather than through another child run: the property
+        # is about argv, and a child that exits 0 on `--resume` in sys.argv cannot tell a clean
+        # rebuild from a broken one -- which is exactly how the four cases above missed it.
+        _prev = os.path.join(d, "ckpt_previous_arm.pt")
+        _cmd = [sys.executable, child, "1", d, "--mix", "data/m.json",
+                "--resume", _prev, "--name", "arts"]
+        _re = _strip_resume(_cmd) + ["--resume", "ckpt_arts.pt.step500"]
+        assert _re.count("--resume") == 1, f"exactly one --resume survives the rebuild: {_re!r}"
+        assert _prev not in _re, f"the OLD checkpoint path is gone, not left as a positional: {_re!r}"
+        # No checkpoint-shaped element other than the one just appended. Stated as "contains
+        # .pt" rather than endswith, because the step checkpoints are named `...pt.step500`.
+        _cks = [c for c in _re if ".pt" in c]
+        assert _cks == ["ckpt_arts.pt.step500"], f"one checkpoint in the argv, the new one: {_cks!r}"
+        # The `=` spelling, which the old filter DID handle -- so a fix must not regress it.
+        _eq = _strip_resume([sys.executable, child, f"--resume={_prev}", "--name", "arts"])
+        assert not any("resume" in c for c in _eq), f"--resume=<path> is removed whole: {_eq!r}"
+        # And a VALUE that merely contains the word is untouched: the filter matches the flag,
+        # not any argument mentioning resume.
+        _kept = _strip_resume([sys.executable, "--name", "resume_probe"])
+        assert _kept == [sys.executable, "--name", "resume_probe"], f"value eaten: {_kept!r}"
     finally:
         ROOT, time.sleep = real_root, real_sleep
         shutil.rmtree(d, ignore_errors=True)
     print("  auto-resume: crash resumes once, clean exit and kill criterion do not; "
-          "the scene is archived and a newer interrupt save wins")
+          "the scene is archived, a newer interrupt save wins, and a command that already "
+          "carries --resume <path> is rebuilt with exactly one")
 
 
 def _staged_index_env():
@@ -17050,6 +17504,19 @@ def _demo(only=None):
          "names no checkpoint"),
         (_broken_score_matrix_cu_only, PASS, "a run scored only under the #cu suffix",
          "score-matrix record"),
+        # THE metrics TIER, added 2026-09-06 with the fix. The check read only `ckpt` and never
+        # `metrics`, so an all-errored row counted as a score -- 3 of 74 live rows, two of them
+        # arms of a running experiment. All three worlds are needed and the third is the one that
+        # matters: a predicate tightened to "every metric numeric" passes all_error and all_number
+        # while turning mixed red, and a partial score is a real score (score_matrix omits a
+        # SKIPPED metric rather than writing an error for it). MEASURED: mixed passes both before
+        # and after the fix, which is what makes it a control rather than a fourth assertion.
+        (_score_matrix_all_errored, FAIL, "a score-matrix row whose every metric errored",
+         "score-matrix record"),
+        (_score_matrix_all_numeric, PASS, "a score-matrix row whose metrics are all numeric",
+         "score-matrix record"),
+        (_score_matrix_mixed_metrics, PASS, "a score-matrix row with some errored and some "
+                                            "numeric metrics", "score-matrix record"),
     ):
         _d = _w()
         if _d:
@@ -17480,6 +17947,7 @@ def _demo(only=None):
     shutil.rmtree(d30, ignore_errors=True)
 
     _selftest_milestone_reachable()
+    _selftest_shard_contract_worlds()
     _selftest_cold_cache_refuses()
     _selftest_refusal_writes_no_row()
     _selftest_provenance_states_the_tree()
@@ -17713,7 +18181,16 @@ _FROZEN_KEYS = (
     # MoEFFN refuses at construction -- so a silently-omitted value cannot produce a running
     # arm at the wrong compute, but it CAN produce a refused launch, and frozen is the state
     # that makes the omission visible in the launch line instead.
+    #   moe_latent and moe_shared_ffn (prereg#moe_0905 amendment 13) are the latent arm, and they
+    # CHANGE WHICH PARITY RULE APPLIES, which is why they cannot sit in the allow-list beside a
+    # throughput flag. With moe_latent set the width identity above does not hold: parity is
+    # counted in MULTIPLIES, 2*d*moe_latent + 3*moe_top_k*moe_latent*moe_expert_ffn +
+    # 3*d*moe_shared_ffn == 3*d*ffn_hidden (registered cell 384 / 2048 / 512 = 9,437,184). At the
+    # registered cell the two arms have IDENTICAL total params (800,965,704), so the launch line
+    # is the only place the difference is visible at all -- omit moe_latent from a resumed
+    # segment and it silently becomes the MoE-24 arm at the same parameter count.
     "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
+    "moe_latent", "moe_shared_ffn",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -17739,6 +18216,16 @@ _UNFROZEN_ALLOWLIST = {
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
     "fp8",                # training precision, not architecture
+    # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
+    # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
+    # equalise precision across two arms leaves fp32 masters, which torch._grouped_mm refuses; a
+    # MoE arm and its dense control could not be compared at equal precision at all (run
+    # b0_p5_e1_bf16 died at step 0, 2026-09-05, prereg moe_0905 amendment 8). NOT SILENTLY
+    # OMITTABLE the way an unfrozen architecture key would be: train.py refuses --bf16 with --fp8
+    # rather than ranking them, refuses --bf16 without amp rather than accepting a flag whose
+    # property is false, and refuses a MoE arm carrying neither flag -- so a launch that drops it
+    # stops instead of reporting a number at a precision nobody chose.
+    "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
@@ -17894,15 +18381,29 @@ def _run_point(step_args, forced):
             print(f"run point: refusing -- frozen config disagrees: {'; '.join(conflicts)}")
             print("  edit data/mix_scale_run_config.json to change the ladder recipe (reopens the ladder)")
             return 2
-        cards = [c.strip() for c in frozen["cards"].split(",") if c.strip()]
-        world = frozen.get("world", len(cards))
+        if "cards" in frozen:
+            # ONE ALLOCATION SOURCE (de-54). `cards` was removed from the frozen recipe; a
+            # copy that comes back is refused rather than preferred, because the two do go out
+            # of sync and the recipe copy reads as authoritative while being stale -- its last
+            # value was "0,1,2,3,4,5,6" against a grant that gave 0 and 6 to the RL team.
+            print("run point: refusing -- data/mix_scale_run_config.json carries `cards` "
+                  "again. Allocation lives in runs/card_assignment.json (block_cards) and "
+                  "nowhere else; the recipe file owns `world`, the card COUNT.")
+            return 2
+        world = frozen["world"]
         # `world` is the recipe (card count moves the effective batch and the gradient
-        # noise); `cards` is only which H20s. They used to be one string with NGPU split
-        # out of it, so dropping a card to dodge a busy one silently changed the recipe.
+        # noise); which H20s is allocation. They used to be one string with NGPU split out of
+        # it, so dropping a card to dodge a busy one silently changed the recipe -- and the
+        # separation is now enforced by the two fields living in two files.
+        cards, gerr = _granted_block_cards(ROOT)
+        if gerr:
+            print(f"run point: refusing -- {gerr}")
+            return 2
         if len(cards) != world:
-            print(f"run point: refusing -- cards={frozen['cards']} is {len(cards)} cards, "
-                  f"but the recipe is world={world}. Card COUNT is the ladder; card IDENTITY "
-                  f"is not. Reallocate, do not shrink.")
+            print(f"run point: refusing -- the grant names {len(cards)} card(s) "
+                  f"({','.join(cards)}) but the recipe is world={world}. Card COUNT is the "
+                  f"ladder; card IDENTITY is not. Ask the controller to regrant, do not "
+                  f"shrink the recipe to fit the cards.")
             return 2
         # 90 s: a point costs ~10 min of 7 cards, so confirming for 90 s is free, and it
         # covers the 55 s step gap that made a busy eval_all.sh look idle.
@@ -17912,7 +18413,7 @@ def _run_point(step_args, forced):
                   f"synchronous, so one contended rank slows all {world}: a launch here "
                   f"forges a regression rather than measuring one.")
             return 2
-        env = dict(os.environ, CUDA_VISIBLE_DEVICES=frozen["cards"], NGPU=str(world))
+        env = dict(os.environ, CUDA_VISIBLE_DEVICES=",".join(cards), NGPU=str(world))
         # _CFG_TO_FLAG, not f"--{k}": Cfg.d's flag is --dim, because "--d" is ambiguous
         # inside torchrun's own parser and run_ddp.sh's args pass through it.
         # Only the renames, not the negations: reversing no_attn_res->attn_res would emit
@@ -17922,7 +18423,7 @@ def _run_point(step_args, forced):
         frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
                        for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
         print(
-            f"run point: frozen config -> cards={frozen['cards']} "
+            f"run point: cards={','.join(cards)} (granted) "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
         )
     cmd = ["bash", os.path.join(ROOT, "run_ddp.sh"), "--mix", mix, "--name", name, *frozen_args, *passthrough]
@@ -18322,63 +18823,45 @@ def _grant_cards(root=None, raise_on_false=True):
 def _allocation_cards(training, root=None, raise_on_false=True):
     """Card set from the controller's allocation file, never from the caller.
 
-    Training jobs get the block: runs/card_assignment.json's block_cards when that file
-    grants one, else mix_scale_run_config.json's cards. Non-training jobs get the lane
-    (the cards not in the block).
+    ONE SOURCE: runs/card_assignment.json. Training jobs get block_cards; non-training jobs
+    get the lane the file names.
 
-    TWO FILES, ONE OF THEM AUTHORITATIVE, AND A DISAGREEMENT IS REPORTED (b0
-    2026-09-03). mix_scale_run_config.json is the ladder's FROZEN RUN CONFIG -- its
-    `cards` and `world` record what the six mix_scale_* budget points ran on, and its own
-    _comment says a change to any value reopens the ladder. `cards` and `world` are in
-    neither _FROZEN_KEYS nor _CODE_FROZEN_KEYS, so `cards` is operationally editable and
-    has been edited before (1-7 -> 0-6, 2026-08-30). `world` is NOT: the six points ran at
-    world 7 and editing that field to describe a run that has not happened would falsify
-    the record of runs that did (6e's ruling). So the grant file carries today's
-    allocation and the ladder config keeps its history.
+    THE LADDER CONFIG'S `cards` IS GONE (de-54, 4c's instruction naming the field). It used
+    to be the fallback here, and the fallback was the defect rather than a safety net: two
+    files held the same allocation, only one was maintained, and the stale one still read as
+    authoritative. Measured at removal -- data/mix_scale_run_config.json said
+    "0,1,2,3,4,5,6" while the grant gave 1,2,3,4 and cards 0 and 6 belong to the RL team. So
+    the second source did not merely duplicate the grant, it contradicted it, and a path
+    reaching the fallback would have handed a training run two foreign cards. The
+    DISAGREE-and-continue warning that used to sit here has no subject any more; the
+    disagreement it announced cannot exist with one source.
 
-    A CONFLICT PRINTS RATHER THAN RESOLVING. Silently preferring either file is how this
-    defect worked in the first place: one file said 0-3, another said 0-6, and nothing
-    said they disagreed. World size follows the cards -- cmd_launch derives NGPU from
-    len(cards) -- so a 4-card grant cannot produce a 7-rank launch through this path.
+    What that file keeps is `world`, the RECIPE half of the 2026-08-30 split: card COUNT
+    changes the effective batch and the gradient noise, card IDENTITY changes no computation.
+    The split is now enforced by the two halves living in two files.
+
+    NO GRANT IS NOT AN EMPTY GRANT. With nothing to fall back to, an absent or empty
+    block_cards falls through to CUDA_VISIBLE_DEVICES -- the caller's own environment, which
+    is at least a statement someone made deliberately -- rather than to range(world), which
+    would name cards nobody granted. That reading is how a stale 0-7 grant nearly took two
+    cards holding another container's work (b0 2026-09-03).
     """
     root = ROOT if root is None else root
-    config_path = os.path.join(root, "data", "mix_scale_run_config.json")
-    ladder = []
-    if os.path.isfile(config_path):
-        try:
-            with open(config_path, encoding="utf-8") as fh:
-                ladder = _expand_cards(json.load(fh).get("cards", ""))
-        except (OSError, ValueError):
-            ladder = []
     granted, why = _grant_cards(root, raise_on_false=raise_on_false)
     if granted is None:
-        # Fall back to the old source, SAYING SO. A silent fallback here would look
-        # identical to a grant that happens to match, and the message is the only thing
-        # that tells a reader which file decided.
-        if ladder:
-            print(f"note   cards {_csv(ladder)} from data/mix_scale_run_config.json "
-                  f"({why}); the grant file is the authority when it has one",
+        if training:
+            # NO DEFAULT CARD. This returned `"0"` when CUDA_VISIBLE_DEVICES was also unset,
+            # and card 0 belongs to the RL team -- so the least-informed path in the whole
+            # allocation named someone else's card. An empty string is the honest answer, and
+            # the caller refuses on it rather than launching somewhere arbitrary.
+            cvd = os.environ.get("CUDA_VISIBLE_DEVICES", "")
+            print(f"note   runs/card_assignment.json grants no block ({why}); falling back to "
+                  f"CUDA_VISIBLE_DEVICES={cvd or '(unset -- no cards)'}. There is no second "
+                  f"allocation file to read: the ladder config's `cards` was removed (de-54).",
                   file=sys.stderr)
-            block = ladder
-        else:
-            return os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+            return cvd
+        block = []
     else:
-        if ladder and set(ladder) != set(granted):
-            # SAY IT HERE, REFUSE AT THE LAUNCH. This function is not the place to exit from:
-            # `harness check` calls it twice (check_allocation_reads_the_grant, 8678-8679) and so
-            # does free-card (12535), so raising here took the WHOLE check run down -- measured
-            # 2026-09-04, `harness check` printed this message and zero of 58 checks. A guard that
-            # disables the instrument that would have caught it is worse than the warning it
-            # replaced.
-            #
-            # The refusal lives in cmd_launch, where the thing being refused is a launch and the
-            # blast radius is one job. The message is identical; only the exit moved.
-            print(f"WARNING: card sources DISAGREE -- runs/card_assignment.json grants "
-                  f"{_csv(granted)}, data/mix_scale_run_config.json says "
-                  f"{_csv(ladder)}. Using the grant. The ladder config's `cards` "
-                  f"records what the six mix_scale_* points ran on and is not today's "
-                  f"allocation; if today's block really changed, narrow it there too.",
-                  file=sys.stderr)
         block = granted
     if training:
         return _csv(block)
@@ -19224,66 +19707,42 @@ def cmd_launch(rest):
     else:
         cards = _allocation_cards(args.training)
 
-    # 1b. TWO ALLOCATION SOURCES THAT DISAGREE REFUSE THE LAUNCH (6e's ruling 2026-09-04).
-    # _allocation_cards resolves the disagreement correctly -- the grant wins -- and says so on
-    # stderr, which is where this stopped being enough: the params leg launched with
-    # "card sources DISAGREE -- grants 0,1,2,3, says 0,1,2,3,4,5,6. Using the grant" in its own
-    # launch output, and nobody read it until afterwards. The resolution was right and the
-    # staleness stayed, so the next launcher faced the same ambiguity.
+    # 1b. A SECOND ALLOCATION SOURCE REFUSES THE LAUNCH (de-54, superseding 6e's 2026-09-04
+    # two-source disagreement rule). `cards` is gone from data/mix_scale_run_config.json, so a
+    # disagreement between the two files is no longer possible -- and this refusal, which read
+    # that field, would have gone permanently silent while still looking like a live gate. What
+    # is refused now is the field COMING BACK, because that is the state that can hurt: its last
+    # value was 0-6 against a grant of 1,2,3,4, with cards 0 and 6 owned by the RL team.
     #
     # REFUSED HERE, not inside _allocation_cards: that function is called by `harness check`
     # itself (check_allocation_reads_the_grant) and by free-card, and raising there took the whole
     # 58-check run down with it -- measured while writing this. The blast radius of a refusal
     # belongs at the launch, where the thing refused is one job.
     #
-    # NOT A CHECK AGAINST THE FROZEN `world`: the grant is 4 cards and the ladder's world is 7,
-    # and `world` is deliberately un-editable because the six points ran at 7 (the config's own
-    # _comment). The rank-vs-card check below is the one that can be made -- two live quantities.
-    # ONLY FOR A LADDER-MIX LAUNCH (4c's ruling, option B, 2026-09-05). The two files answer
-    # different questions and the disagreement is only a contradiction for a job the ladder
-    # config governs: `cards` in data/mix_scale_run_config.json is the RECORD of what the six
-    # mix_scale_* points ran on, and it stays as it is. A memory arm on mix_200m_8b is bound by
-    # the grant alone, so comparing it against the ladder's record refuses a launch over a
-    # difference that means nothing to it.
-    #
-    # MEASURED COST OF NOT MAKING THIS DISTINCTION: M1 was refused for ~40 minutes with all
-    # eight cards idle, on a grant (1,2,4,6) that was correct and a ladder record (0-6) that was
-    # also correct. The refusal was right about the ambiguity and wrong about whose it was.
-    #
-    # The same _is_ladder_mix distinction check_ladder_config already makes, so there is one
-    # definition of "governed by the frozen recipe" rather than a second local rule.
+    # The _is_ladder_mix scoping is gone with the field. It existed because the two files
+    # answered different questions and a memory arm on mix_200m_8b was not governed by the
+    # ladder's record -- but "the recipe file must not carry an allocation" is true for every
+    # launch, ladder or not, so scoping it would leave the dangerous state live for most jobs.
+    # MEASURED COST of the old scoping's absence, kept as the reason it existed: M1 was refused
+    # for ~40 minutes with all eight cards idle, on a grant (1,2,4,6) that was correct and a
+    # ladder record (0-6) that was also correct.
     if args.training and not args.no_gpu:
-        _mix = ""
-        _cmdv = list(rest or [])
-        for _i, _a in enumerate(_cmdv):
-            if _a == "--mix" and _i + 1 < len(_cmdv):
-                _mix = _cmdv[_i + 1]
-            elif _a.startswith("--mix="):
-                _mix = _a.split("=", 1)[1]
-        # No --mix in the command means train.py's default. MEASURED, not assumed: that
-        # default is data/mix_500m.json, which is NOT a ladder point, so an absent flag leaves
-        # the gate off. Stated because the conservative reading -- "absent means the ladder" --
-        # is wrong here, and a future reader changing cfg_default("mix") to a ladder point
-        # would silently turn this gate on for every flagless launch.
-        _governed = _is_ladder_mix(_mix) if _mix else _is_ladder_mix(cfg_default("mix"))
-        _gp = os.path.join(ROOT, "runs", "card_assignment.json")
         _lp = os.path.join(ROOT, "data", "mix_scale_run_config.json")
         try:
-            with open(_gp, encoding="utf-8") as _fh:
-                _grant = json.load(_fh)
             with open(_lp, encoding="utf-8") as _fh:
-                _ladder = _expand_cards(json.load(_fh).get("cards", ""))
+                _stray = json.load(_fh).get("cards")
         except (OSError, ValueError):
-            _grant, _ladder = {}, []
-        _granted = _expand_cards(_grant.get("block_cards", "")) if _grant.get("launch_block_granted") else []
-        if _governed and _granted and _ladder and set(_granted) != set(_ladder):
-            print(f"REFUSING: {args.name} -- two allocation sources disagree, so which cards a "
-                  f"training job owns depends on which file the reader trusts.\n"
-                  f"  runs/card_assignment.json grants {_csv(_granted)}  <- the authority\n"
-                  f"  data/mix_scale_run_config.json says {_csv(_ladder)}  <- the ladder's record\n"
-                  f"This launch's mix ({_mix or cfg_default('mix')}) IS a ladder point, so the "
-                  f"ladder config governs it and the two must agree. If today's block is "
-                  f"{_csv(_granted)}, narrow `cards` there too. No ledger row written.",
+            _stray = None
+        if _stray is not None:
+            print(f"REFUSING: {args.name} -- data/mix_scale_run_config.json carries `cards` "
+                  f"({_stray!r}) again.\n"
+                  f"  Allocation has exactly one source: runs/card_assignment.json's "
+                  f"block_cards.\n"
+                  f"  That file owns `world`, the card COUNT, which is the recipe; which H20s "
+                  f"is not.\n"
+                  f"A second copy goes stale while still reading as authoritative -- the last "
+                  f"one claimed cards 0 and 6, which are the RL team's. Remove the field. "
+                  f"No ledger row written.",
                   file=sys.stderr)
             return 2
 
@@ -19648,6 +20107,37 @@ def _latest_step_ckpt(name):
     return best, best_step
 
 
+def _strip_resume(cmd):
+    """`cmd` with any --resume and ITS VALUE removed, so auto-resume can append its own.
+
+    `[c for c in cmd if not c.startswith("--resume")]` dropped the flag and LEFT THE PATH.
+    `--resume <path>` is two argv elements; only the `--resume=<path>` spelling was filtered
+    correctly, and every command harness generates or a human types uses the space form. The
+    orphaned checkpoint then reaches train.py as a positional argument and argparse exits 2.
+
+    MEASURED (e1, relayed by 98, 2026-09-05): e1_conv_n1's scoring returned rc=1, auto-resume
+    rebuilt the command with ckpt_b0_headmix_armA.pt still in it, and the relaunch died
+    immediately; the control arm took the same path (e1_conv_control_arm.log:101). The cost was
+    zero only because both arms had already finished their 4314 steps. A crash mid-training
+    would have written `=== auto-resume 1 ... ===` to the log -- which reads as a successful
+    retry -- and produced nothing.
+
+    Never `startswith("--resume")`: that also matches a hypothetical --resume_from, and the
+    value form is what the bug was. An exact match plus the `=` form is the whole rule."""
+    out, skip = [], False
+    for c in cmd:
+        if skip:
+            skip = False
+            continue
+        if c == "--resume":
+            skip = True
+            continue
+        if c.startswith("--resume="):
+            continue
+        out.append(c)
+    return out
+
+
 def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""):
     """Wait on a launched job; on a crash relaunch it with --resume, up to N times.
 
@@ -19707,7 +20197,7 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
                   file=sys.stderr, flush=True)
         time.sleep(60)
         resumes.append(step)
-        rcmd = [c for c in cmd if not c.startswith("--resume")] + ["--resume", ckpt]
+        rcmd = _strip_resume(cmd) + ["--resume", ckpt]
         env = os.environ.copy()
         env["CUDA_VISIBLE_DEVICES"] = cards
         env["PYTHONUNBUFFERED"] = "1"

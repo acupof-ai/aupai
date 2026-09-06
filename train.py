@@ -148,6 +148,40 @@ from model import (  # noqa: E402,F401
     rms_scale,
 )
 
+ETA_WINDOW = 20  # 10-step intervals averaged for the ETA; see _eta_fields
+
+
+def _eta_fields(win, dt, steps_left):
+    """Append dt to the trailing window and return (eta_seconds, overrun_field).
+
+    A MODULE-LEVEL FUNCTION rather than eight lines inline in main, so that
+    scripts/test_eta_window.py can call the arithmetic it is asserting on. It lived inline first
+    and the test reimplemented it from the source text; two mutations of the real expression then
+    SURVIVED, because a test that recomputes the quantity under test compares my algebra to my
+    algebra and moves with it. `win` is mutated in place -- it is main's own list, reset per
+    segment with the clock it measures.
+
+    WHY A WINDOW (AGENTS.md line 57). `(total_steps - step) * dt / 10` extrapolated the LAST 10
+    steps over every remaining step, so one slow interval was multiplied by the whole run: at
+    19,151 steps a 54 s interval printed 29 lost hours, and every checkpoint save -- which lands
+    inside one interval and costs seconds -- printed ~99 h. Consecutive lines then disagreed by
+    tens of hours and the field could not be used to decide anything.
+
+    WHY THE OVERRUN IS SEPARATE. The mean over a trailing window estimates "how long will the rest
+    take". A single interval answers "how long did the last ten steps take", which is a different
+    question and still worth printing -- so it goes in its own field. Folding it into the ETA is
+    the old defect; dropping it would be worse, because then a save becomes invisible. `+NNs`
+    appears only when this interval exceeded the window mean by more than 20%.
+    """
+    win.append(dt)
+    if len(win) > ETA_WINDOW:
+        win.pop(0)
+    win_mean = sum(win) / len(win)
+    over = dt - win_mean
+    overrun = (f" | +{over:.0f}s this interval"
+               if win_mean > 0 and over > 0.2 * win_mean else "")
+    return steps_left * win_mean / 10, overrun
+
 
 class Cfg:
     d = 1024
@@ -203,6 +237,16 @@ class Cfg:
     moe_top_k = 3    # routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn
     moe_shared = 1   # must equal ffn_hidden exactly or MoEFFN refuses -- equal-ACTIVE parity,
     moe_expert_ffn = 768  # which is what makes a loss delta attributable to sparsity not FLOPs
+    # THE LATENT VARIANT, off by default so every existing config keeps its shape (prereg
+    # moe_0905 amendment 13). moe_latent > 0 runs the ROUTED experts in a projected width:
+    # d -> moe_latent once per token, experts entirely at moe_latent, moe_latent -> d after the
+    # gated sum. moe_shared_ffn lets the always-on shared expert keep its own width, which is what
+    # makes an EXACT parity-and-parameter match possible -- with it pinned to moe_expert_ffn there
+    # is no integer solution at all. Registered cell: moe_latent 384, moe_expert_ffn 2048,
+    # moe_shared_ffn 512, which is exact parity (2*1024*384 + 3*3*384*2048 + 3*1024*512 =
+    # 9,437,184 = 3*d*ffn_hidden) at 1.000x the 24-expert arm's routed parameters.
+    moe_latent = 0        # 0 = off; >0 = routed-expert width after the down-projection
+    moe_shared_ffn = 0    # 0 = follow moe_expert_ffn; >0 = the shared expert's own inner width
     moe_layers = "0-11"  # block indices that are MoE; "0-11", "0,3,6" or a list (see _moe_layers)
     # THE BALANCER'S TWO CONSTANTS, pre-registered and NOT tuned after seeing a curve. Borrowed
     # from facts/moe.json (DeepSeek-V3 arXiv:2412.19437 2.1.2/4.2) at 60x our per-expert token
@@ -1466,6 +1510,8 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
     _cur = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor", None)
     _fps = None if isinstance(cfg, dict) else getattr(cfg, "_row_cursor_srcfp", None)
     _dom_idx = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains", None)
+    _dom_full = None if isinstance(cfg, dict) else getattr(cfg, "_plan_domains_full", None)
+    _plan_world = None if isinstance(cfg, dict) else getattr(cfg, "_plan_world", None)
     _names = None if isinstance(cfg, dict) else getattr(cfg, "_plan_names", None)
     _batch = None if isinstance(cfg, dict) else getattr(cfg, "batch", None)
     _accum = None if isinstance(cfg, dict) else getattr(cfg, "accum", None)
@@ -1525,6 +1571,28 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
             # below the plan length, wrong above it, which is the shape that survives
             # testing: stage 1 starts at 0, where absolute and relative are equal.
             rows_done = (step - _origin) * _batch * _accum  # this rank's share, plan order
+            # The world the PLAN was striped at, from build_mix. The prefix is rows_done *
+            # world over a vector build_mix striped, so reading a different world here slices a
+            # prefix the ranks never jointly consumed (e1, 2026-09-06).
+            #
+            # NOT `_plan_world or <env>`: a fallback restores the two-independent-sources
+            # condition this exists to remove, and silently -- e1's finding 2 measured that
+            # deleting build_mix's publish left every test green, because the reader quietly
+            # went back to the environment. `is None` rather than falsy, since a published 0
+            # is a broken publisher and must not read as absent either. The environment is
+            # consulted only to decide whether this is a single-rank save, where the stripe IS
+            # the full plan and the whole question is moot.
+            _env_world = int(os.environ.get("WORLD_SIZE", 1))
+            world = _env_world if _plan_world is None else int(_plan_world)
+            # At world 1 the stripe IS the full plan -- `plan[:, 0::1]` is the identity -- so
+            # the stripe answers the per-domain question exactly there and refusing would
+            # discard a correct count. Above world 1 it does not, and there is no fallback.
+            _full = _dom_full if _dom_full is not None else (dom_idx if world == 1 else None)
+            if _plan_world is None and _env_world > 1 and _dom_full is not None:
+                # A plan vector with no world beside it: the prefix length cannot be derived,
+                # and guessing it from the environment is what finding 2 is about. Refuse; the
+                # branch below writes the reason into the checkpoint.
+                _full = None
             if rows_done < 0 or rows_done > len(dom_idx):
                 # Refuse rather than clamp, and record WHY in the checkpoint. A wrong
                 # cursor is not recoverable by a later reader -- it looks exactly like a
@@ -1536,21 +1604,59 @@ def save_checkpoint(path, model_state, cfg, vocab_id, opt=None, step=None):
                     f"{_batch}x{_accum} = {rows_done} rows against a {len(dom_idx)}-row plan; "
                     f"the origin is wrong or the plan is not this run's. No cursor written."
                 )
+            elif _full is None:
+                # No usable full plan, for one of two reasons, and the message says which.
+                # Refuse rather than approximate: a wrong cursor is indistinguishable from a
+                # right one to every later reader, while a missing one costs a resume that
+                # repeats rows and says so in the file.
+                if _dom_full is None:
+                    _lack = (f"build_mix published no _plan_domains_full, so the per-domain "
+                             f"consumed count cannot be computed -- this rank's stripe x world "
+                             f"is wrong for any domain whose row count is not a multiple of "
+                             f"{world}")
+                else:
+                    _lack = (f"the plan vector is here but build_mix published no _plan_world, "
+                             f"so the prefix length rows_done x world cannot be derived. "
+                             f"WORLD_SIZE says {_env_world}, and taking that would put the "
+                             f"striping world and the counting world back on two independent "
+                             f"sources -- the condition 88be635a removed")
+                ck["row_cursor_refused"] = f"step {step}: {_lack}. No cursor written."
             else:
-                head = dom_idx[:rows_done]
+                # The count comes from the FULL plan, not this rank's stripe. The plan is
+                # striped by column (`plan[:, rank::world]`), so rank r holds columns
+                # r, r+world, ...; each rank consumes the first rows_done of ITS columns, so
+                # the union of all ranks' consumed rows is exactly columns
+                # 0 .. rows_done*world-1 of the full plan. A bincount over that prefix is the
+                # truth, with no collective.
+                #
+                # The old computation was this rank's bincount x world, and it is wrong for
+                # every domain whose row count is not a multiple of world: the stripes do not
+                # divide those rows evenly, so rank 0 over-represents some domains and
+                # under-represents others. The SUM stayed exact -- every rank holds exactly
+                # n/world columns -- which is why the identity below passed on two checkpoints
+                # that were wrong in OPPOSITE directions (58, 2026-09-06): ckpt_e1_conv_n8
+                # wrote s_inject_n8 212 against a 204-row pool, ckpt_e1_conv_n1 wrote
+                # s_inject_n1 20 against 25, both summing to 276,096 exactly. The over-count
+                # is the damaging one: it puts the cursor past the pool, so stage 2 skips the
+                # tail it was written to read. Both existing cursor tests use a single-domain
+                # fixture, where counts[0] x world is exact by construction.
+                head = _full[:rows_done * world]
                 counts = torch.bincount(head.to(torch.int64), minlength=len(names))
-                world = int(os.environ.get("WORLD_SIZE", 1))
-                # x world: every rank walks its own stripe of the same plan at the same
-                # rate, so the whole-run consumption of a domain is this rank's count x world.
-                # PLUS the cursor this plan started from: dom_idx holds only the current
-                # plan's rows, so counting it alone describes THIS segment and every earlier
-                # one is invisible. MEASURED on p500m_20b_0902: .interrupt.step83 summed to
-                # 13,056 = (83-32)x256 while step 83 had consumed 21,248 = 83x256, and the
-                # 8,192 difference is exactly segment one -- which every later resume then
-                # re-read (de-13).
-                ck["row_cursor"] = {n: int(counts[i]) * world + int(_base.get(n, 0))
+                # PLUS the cursor this plan started from: the plan holds only the current
+                # segment's rows, so counting it alone describes THIS segment and every
+                # earlier one is invisible. MEASURED on p500m_20b_0902: .interrupt.step83
+                # summed to 13,056 = (83-32)x256 while step 83 had consumed 21,248 = 83x256,
+                # and the 8,192 difference is exactly segment one -- which every later resume
+                # then re-read (de-13).
+                ck["row_cursor"] = {n: int(counts[i]) + int(_base.get(n, 0))
                                     for i, n in enumerate(names)}
                 ck["row_cursor_as_of_step"] = step
+                # WHICH vector the per-domain counts were taken over. A resume cannot
+                # otherwise tell a correct cursor from one computed off rank 0's stripe:
+                # the wrong values are individually plausible, `cursor > pool` is legitimate
+                # past one epoch, and the sum identity below is EXACT for the wrong
+                # computation. Absent field means the pre-58 write, and the reader says so.
+                ck["row_cursor_basis"] = "full_plan_prefix"
                 # The identity that would have caught the segment-only bug above the day it
                 # landed, and which ds.second_resume_rereads_one_segment's uncertainty named
                 # as the missing check: an ABSOLUTE cursor sums to exactly the rows the run
@@ -2107,6 +2213,89 @@ def _selftest_mix_guard():
 _selftest_mix_guard()
 
 
+def _mix_anneal_frac(mix, cfg_path, is_main):
+    """The anneal fraction this mix is built at: the mix's own key, or Cfg when it has none.
+
+    build_mix used Cfg.anneal_frac and never read the mix file, so a mix declaring
+    "anneal_frac": 0.0 silently got the 0.10 default and a two-phase schedule. MEASURED
+    across data/mix_*.json: 24 files, 14 declare the key, and 13 of those 14 declare a value
+    that differs from Cfg's 0.10 -- the fourteenth is mix_scale_run_config.json, which
+    declares 0.1 and agrees. 10 declare nothing and rely on the default. (An earlier version
+    of this line said "13 of 23"; the 13 was right and the population was one low, e1's count.)
+    The cost is not only the phase boundary -- `want = int(rows * frac * weight)` runs once
+    per phase and int(0.9x) + int(0.1x) <= int(x), so a spurious second phase loses one row
+    per domain: e1's injection arms measured n1 25->24, n8 204->203, n64 1639->1638, n256
+    6557->6556, which is ~39 document exposures in an interleaved shard on an axis whose row
+    count IS the measurement.
+
+    Precedence, and the refusal in the middle:
+      mix key absent          -> Cfg.anneal_frac. Absent is not a declaration of 0, and 10
+                                 mixes rely on the default.
+      mix key == Cfg          -> that value, silently. Nothing to reconcile.
+      mix key != Cfg          -> REFUSE. Cfg holds either the class default or an explicit
+                                 --anneal_frac, and this function cannot tell those apart --
+                                 so it cannot silently prefer either one. Both readings are
+                                 defensible and they schedule different runs, which makes it
+                                 the operator's call: change the flag or change the mix.
+    A HARNESS LAUNCH always states the flag, because --anneal_frac is in RECIPE_REQUIRED, so
+    agreement is the normal case there and the refusal fires only on a contradiction. THAT IS
+    NOT EVERY LAUNCH, and an earlier version of this line claimed it was ("every real launch
+    line states it"). e1 ran the four launchers that reach build_mix and found four refusals,
+    not one: launch_30b.sh stage 2 (mix declares 0.0, line passed --anneal_frac 0.1, fixed),
+    scripts/lr_probe.sh:46 and scripts/prove_resume.sh:60 (both pass 0.1 against mixes
+    declaring 0.0), and scripts/mem_decomp_run.sh, which passes NO --anneal_frac at all -- it
+    launches torchrun on scripts/profile_step_cost.py, which calls build_mix directly, so
+    RECIPE_REQUIRED never applies. That last one is the shape worth remembering: the refusal
+    fires with no flag anywhere to blame, and its owner reads a message telling them to pass a
+    flag their script never had. Each is a one-word edit in its own owner's file.
+
+    THE REFUSAL IS ALSO WHY THE OTHER THREE READERS NEED NO CHANGE. Cfg.anneal_frac is read
+    by the lr schedule's log line (:2992, :3165) and the per-step phase label (:3403). After
+    this function either they equal the value the plan was built at or the run never started,
+    so returning a value instead of threading it through those three sites leaves nothing
+    that can disagree. Making it a parameter would create a second source of truth for the
+    same quantity, which is the shape the refusal exists to remove.
+
+    That is a REACHABILITY claim, so it was measured rather than reasoned (58 pushed back on
+    exactly this, and reachability claims are what survive code review and fail on
+    execution). `git grep` finds six writers of Cfg.anneal_frac in the tree; five are tests
+    or tools, and the sixth is main()'s flag-application loop at :2656 -- which runs BEFORE
+    the build_mix call at :2798, with no write after it. So inside a real run the three
+    readers cannot see a value the plan was not built at.
+
+    The remaining way to produce that divergence is a TOOL that sets Cfg.anneal_frac around
+    its own build_mix call and restores it afterwards -- scripts/e1_arm_plan_check.py:379-384
+    does precisely that, in a try/finally, because reading the mix file used to tell it
+    nothing. Such a tool reading the log lines or the phase label after its finally would see
+    the pre-set value, and this refusal cannot help there because it already ran.
+
+    THAT TOOL MUST KEEP SETTING Cfg, and an earlier version of this docstring said the
+    opposite -- "declare anneal_frac in the mix and build_mix reads it, with Cfg untouched".
+    e1 RAN both readings and the advice was false: with the mix declaring 0.0 and Cfg left at
+    the class default 0.10, "untouched" is a DISAGREEMENT, so the plan check refuses instead
+    of building and every green check becomes a refusal. "Cfg untouched" does not mean Cfg is
+    not consulted; it means Cfg is 0.10 and contradicts the mix. What DID change is the
+    try/finally's job: it is no longer the source of the value the plan is built at -- the mix
+    key is -- it is now how the tool agrees with the mix instead of overriding it. Same lines,
+    different reason, and the reason is what a reader acts on."""
+    if "anneal_frac" not in mix:
+        return Cfg.anneal_frac
+    declared = float(mix["anneal_frac"])
+    if declared == float(Cfg.anneal_frac):
+        return declared
+    raise RuntimeError(
+        f"refusing to build the mix: {os.path.basename(cfg_path)} declares anneal_frac "
+        f"{declared} and Cfg.anneal_frac is {Cfg.anneal_frac}. These schedule different "
+        f"runs -- {declared} gives {1 if declared == 0 else 2} phase(s), and a spurious "
+        f"second phase floors one row off every domain (int(0.9x)+int(0.1x) <= int(x)). "
+        f"Either pass --anneal_frac {declared}, or -- if this launcher passes no "
+        f"--anneal_frac at all, which is the case for anything calling build_mix outside "
+        f"`harness launch` -- edit the mix, since there is no flag to change. "
+        f"This is not defaulted either way: Cfg carries the same value whether the flag was "
+        f"passed or not, so nothing here can tell an explicit flag from the class default."
+    )
+
+
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
               cursor_srcfp=None, cursor_seed=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
@@ -2137,7 +2326,8 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         )
     mix = json.load(open(cfg_path, encoding="utf-8"))
     rows = mix["total_tokens"] / Cfg.seq
-    phases = [(1 - Cfg.anneal_frac, "weight"), (Cfg.anneal_frac, "anneal")]
+    anneal_frac = _mix_anneal_frac(mix, cfg_path, is_main)
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
     g = torch.Generator().manual_seed(Cfg.seed)
     names = list(mix["domains"])
     pools, val, used = {}, [], {}
@@ -2147,6 +2337,10 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # so the sum falls legitimately short of as_of_step x rows_per_step. Without this the
     # assert would have to be dropped or made inexact, and an inexact identity is not one.
     discarded = []
+    # Every field build_mix publishes on Cfg is created HERE, per call, and assigned at the
+    # end -- so a second call in one process cannot see the first's. _row_cursor_base was the
+    # one exception: it was merged into whatever dict Cfg already held.
+    cursor_base = {}
     vpools, vval = {}, []  # --fone: per-position number values, shadowing pools/val exactly
     for name in names:
         seqs = _domain_seqs(name, tok, is_main, ddp)
@@ -2214,10 +2408,17 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
                 # row 0, so adding its old value back would claim rows this run never read.
                 # Cfg, not a return value, because build_mix runs BEFORE the resume block
                 # (train.py:2278 vs :2307) and already publishes _plan_* the same way.
-                base = getattr(Cfg, "_row_cursor_base", None)
-                if base is None:
-                    base = Cfg._row_cursor_base = {}
-                base[name] = used[name]
+                #
+                # PER-CALL, written into the dict this call created above. It used to be
+                # accumulated into whatever dict was already on Cfg, so a second build_mix in
+                # one process inherited the first call's domains: every other published field
+                # (_row_cursor, _cursor_seeded, _plan_domains) is a wholesale assignment and
+                # only this one merged, which is why the leak was invisible. Two calls in one
+                # process is the normal case for a tool, not a corner: scripts/test_plan_length
+                # already resets `Cfg._row_cursor_base = None` by hand before each _build for
+                # exactly this reason, and a fixture working around a defect is evidence of the
+                # defect, not a fix for it.
+                cursor_base[name] = used[name]
                 if is_main:
                     print(f"mix: {name} resuming at row {used[name]} "
                           f"({used[name] / max(len(pools[name]), 1):.2f} epochs consumed)",
@@ -2229,6 +2430,10 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # counts, which are non-zero on every run and would make the flag meaningless.
     Cfg._cursor_seeded = any(v > 0 for v in used.values())
     Cfg._cursor_discarded = list(discarded)
+    # Assigned unconditionally, so a call that applied no cursor publishes {} rather than
+    # leaving the previous call's dict standing. An empty base and a stale base read the same
+    # to save_checkpoint (`getattr(...) or {}`), which is how the leak stayed silent.
+    Cfg._row_cursor_base = cursor_base
     if discarded and not Cfg.allow_partial_cursor:
         # 44-12: the print above is the only signal a 66h log gives. Refuse, named, so the
         # operator chooses --allow_partial_cursor knowingly instead of discovering the
@@ -2303,6 +2508,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     # at stage-1 size (523,158 rows), so keeping it costs nothing next to a 959MB
     # checkpoint (fb ruling: gating for stage 2).
     Cfg._plan_domains = None  # set below, once `mine` exists
+    Cfg._plan_domains_full = None  # ditto: the WHOLE plan's domain row, not this rank's stripe
     Cfg._row_cursor = dict(used)
     # Only domains whose corpus dir is present: a mix can name a domain served from a
     # cache whose source is not on this box, and an unguarded fingerprint raises there.
@@ -2315,6 +2521,24 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
     n = (plan.shape[1] // world) * world
     mine = plan[:, :n][:, rank::world]
     Cfg._plan_domains = mine[0].to(torch.int8).clone()
+    # The FULL plan's domain row, trimmed the same way. save_checkpoint needs it because a
+    # rank's stripe cannot answer the per-domain question: the plan is striped by column, so
+    # for a domain whose row count is not a multiple of world, rank 0 holds more or fewer than
+    # 1/world of its rows, and counts x world is wrong in BOTH directions across domains while
+    # the SUM stays exact (every rank holds exactly n/world columns). The union of what all
+    # ranks have consumed after rows_done steps is exactly columns 0..rows_done*world-1, so a
+    # bincount over this vector's prefix is the truth with no collective. Same int8 cost as the
+    # stripe times world: 0.52 MB/rank at stage-1 size (523,158 rows) and 3.66 MB/rank at the
+    # 30B plan's 3,662,109, so world 8 adds 3.2 MB/rank of host memory against an 892 MB
+    # checkpoint. It is NOT saved into the .pt -- only the counts are.
+    Cfg._plan_domains_full = plan[0, :n].to(torch.int8).clone()
+    # The world the plan was STRIPED at, published beside it. save_checkpoint needs the same
+    # number to size the prefix, and it used to read os.environ["WORLD_SIZE"] -- a second,
+    # independent source (58, 2026-09-06). They agree under torchrun, which sets both, and the
+    # only non-torchrun path is world 1 where the stripe is the full plan; but the count is
+    # `rows_done * world` against a vector striped at the other world, so a launcher that set
+    # one without the other would mis-slice the prefix with nothing raising. One source.
+    Cfg._plan_world = int(world)
     Cfg._plan_names = list(names)
     out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)
     vout = torch.empty_like(out, dtype=torch.float32) if Cfg.fone else None
@@ -2407,6 +2631,14 @@ def main():
         "moe_top_k": "MoE: routed experts a token reaches; (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden exactly or MoEFFN refuses",
         "moe_shared": "MoE: always-on shared experts (1 = the charter's cell)",
         "moe_expert_ffn": "MoE: inner width of ONE expert (768 at ffn_hidden 3072 with top-3 + shared)",
+        "moe_latent": "MoE: routed-expert width after a d->latent down-projection (0 = off). The "
+                      "experts run entirely at this width and the gated sum is up-projected once; "
+                      "parity is then counted in MULTIPLIES, not widths. Registered cell: 384 with "
+                      "moe_expert_ffn 2048 and moe_shared_ffn 512",
+        "moe_shared_ffn": "MoE: the always-on shared expert's own inner width (0 = follow "
+                          "moe_expert_ffn). Exists because the latent variant spends its parity "
+                          "budget on three shapes, and a free shared width is what makes an exact "
+                          "parity-and-parameter match possible",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -2457,6 +2689,14 @@ def main():
                              "(Lample et al. 2019 3.3)")
     parser.add_argument(
         "--fp8", action="store_true", help="FP8 linears (torchao; FP8_RECIPE=legacy for old path)"
+    )
+    parser.add_argument(
+        "--bf16", action="store_true",
+        help="cast the model to bf16 WITHOUT the fp8 conversion. Exists so a MoE arm and its "
+             "dense control can be compared at EQUAL precision: --fp8 performs the bf16 cast "
+             "AND the fp8 conversion, so dropping it to equalise precision leaves fp32 masters "
+             "(and torch._grouped_mm refuses those), while this flag gives the cast alone. "
+             "Mutually exclusive with --fp8"
     )
     parser.add_argument(
         "--fp32_master",
@@ -2686,13 +2926,14 @@ def main():
     # :1929 (the model load needs the mix's vocab). Read just the two fields here rather
     # than reordering the load: torch.load of a 959MB checkpoint twice would cost a
     # minute per rank, and mmap keeps this to the header.
-    _cursor = _cursor_fp = _cursor_seed = _pre_written = None
+    _cursor = _cursor_fp = _cursor_seed = _pre_written = _cursor_basis = None
     _prev_total_steps = None
     if args.resume and os.path.exists(args.resume):
         try:
             _pre = torch.load(args.resume, map_location="cpu", weights_only=False, mmap=True)
             _cursor, _cursor_fp = _pre.get("row_cursor"), _pre.get("row_cursor_srcfp")
             _cursor_seed = _pre.get("row_cursor_seed")
+            _cursor_basis = _pre.get("row_cursor_basis")
             # The schedule the earlier segment ran under, for the comparison at :2231.
             # Read here rather than off the full load below so the check does not depend on
             # `ck` still being bound 180 lines later.
@@ -2724,6 +2965,34 @@ def main():
               "zh_web at stage-1 weights). Reconstruct it with "
               "`python3 scripts/replay_cursor.py --ckpt <ckpt> --write` before "
               "launching stage 2 if that tail matters.", flush=True)
+    if args.resume and is_main and _cursor and _cursor_basis != "full_plan_prefix":
+        # A cursor whose per-domain counts came from rank 0's stripe x world. Not refused,
+        # because a wrong count still beats restarting every domain at row 0, and because
+        # at world 1 the two computations agree -- but it is not silent either, and nothing
+        # downstream can detect it: the sum is exact by construction, and `cursor > pool` is
+        # legitimate past one epoch.
+        #
+        # The error is NOT bounded by world. It is world x rank 0's deviation from the
+        # domain's per-stripe mean, so for a domain with fewer rows than a few multiples of
+        # world it can be the whole domain: MEASURED in the fixture at
+        # scripts/test_cursor_sum.py:_check_striping, a 25-row domain reads 0 under the old
+        # computation and 25 under the new one, at world 8. On the pod's two arms it read
+        # s_inject_n8 212 against a 204-row pool and s_inject_n1 20 against 25 (58,
+        # 2026-09-06), both with an exact sum.
+        #
+        # replay_cursor is NOT offered here. It reconstructs from the MIX -- proportional
+        # within a phase (scripts/replay_cursor.py:119) -- so on a small domain its own
+        # approximation can be further from the truth than the striping error it would
+        # replace. The exact reconstruction is to rebuild this plan at the same seed and
+        # bincount its prefix, which is what the fixed writer now does at save time.
+        _worst = min(_cursor.items(), key=lambda kv: int(kv[1]))
+        print(f"resume: this checkpoint's row_cursor carries no basis field, so its "
+              f"per-domain counts came from rank 0's stripe x world -- the sum is exact and "
+              f"the split is not, by up to a whole small domain (58, 2026-09-06). This run "
+              f"seeds {len(_cursor)} domains, {sum(int(v) for v in _cursor.values())} rows in "
+              f"total, smallest {_worst[0]} at {int(_worst[1])}: a domain that small is where "
+              f"the error is largest. The aggregate token count is unaffected; a per-domain "
+              f"claim taken off this resume is not.", flush=True)
     tr, va = build_mix(mix_path, tok, is_main, ddp, rank, world,
                        row_cursor=_cursor, cursor_srcfp=_cursor_fp,
                        cursor_seed=_cursor_seed)
@@ -2802,6 +3071,29 @@ def main():
         if is_main:
             print(f"Resumed from {args.resume} (step {resume_step})", flush=True)
     fp8 = args.fp8 and amp
+    # --bf16 IS THE CAST WITHOUT THE CONVERSION, and it exists because dropping --fp8 to equalise
+    # precision does NOT give bf16. Amendment 8 of prereg moe_0905 specified a MoE-vs-dense pair
+    # "both with fp8 off" to remove the fp8/bf16 confound; run b0_p5_e1_bf16 then died at step 0 on
+    # the guard below, because `--fp8` performs TWO things -- the bf16 cast at the `if fp8:` branch
+    # AND convert_to_fp8_compute -- so without it the masters stay fp32 and only autocast is bf16.
+    # The pair as designed could not exist. This flag separates the two effects: bf16 masters, no
+    # fp8 GEMMs, so a MoE arm and its dense control can be run at genuinely equal precision.
+    #
+    # REFUSED TOGETHER rather than silently ranked. Either order of precedence is a configuration
+    # someone asked for and did not get, and the arm's numbers would carry a precision nobody
+    # chose -- the same objection this program raises about the fp8/bf16 confound itself.
+    bf16_only = args.bf16 and amp
+    if args.bf16 and args.fp8:
+        raise SystemExit(
+            "REFUSING: --bf16 and --fp8 together. --fp8 already casts the model to bf16 and then "
+            "converts the linears to fp8 compute; --bf16 is the cast WITHOUT that conversion. "
+            "Passing both asks for fp8 GEMMs and no fp8 GEMMs at once. Pick one."
+        )
+    if args.bf16 and not amp:
+        raise SystemExit(
+            "REFUSING: --bf16 on a device without amp (device is not cuda), so the cast would "
+            "change the masters with no autocast to match. Drop --bf16."
+        )
     amp_dtype = torch.bfloat16
     # A MoE ARM WITHOUT --fp8 IS REFUSED HERE, before the first step (4c's ruling (c) 2026-09-05).
     #
@@ -2826,15 +3118,17 @@ def main():
     # the arithmetic nobody asked to change, which is the objection amendments 6/7 raise about the
     # fp8/bf16 confound. A crash naming its cause costs one run; a silent precision change costs the
     # interpretation of every number the arm produces.
-    if getattr(Cfg, "moe_experts", 0) and not fp8:
-        _why = "--fp8 not passed" if not args.fp8 else "amp is off"
+    if getattr(Cfg, "moe_experts", 0) and not fp8 and not bf16_only:
+        _why = ("neither --fp8 nor --bf16 passed" if not (args.fp8 or args.bf16)
+                else "amp is off")
         raise SystemExit(
             f"REFUSING: --moe_experts {Cfg.moe_experts} needs the model in bfloat16, and {_why}, "
             f"so it would stay fp32. torch._grouped_mm compiles only for bf16 (its eager kernel "
             f"accepts fp32, its meta registration does not), so the arm dies at step 0 with "
-            f"'Expected inputs of BF16 type'. Pass --fp8 -- run_ddp.sh does -- or run without "
-            f"--moe_experts. Measured 2026-09-05 on card 1; found by scripts/test_e2e.py, which "
-            f"invokes train.py directly and passed no --fp8."
+            f"'Expected inputs of BF16 type'. Pass --fp8 -- run_ddp.sh does -- or --bf16 for the "
+            f"cast without fp8 GEMMs, or run without --moe_experts. Measured 2026-09-05 on card "
+            f"1; found by scripts/test_e2e.py, which invokes train.py directly and passed no "
+            f"--fp8."
         )
     if fp8:
         raw_model = raw_model.to(torch.bfloat16)
@@ -2860,6 +3154,14 @@ def main():
                 )
         if is_main:
             print("FP8 compute enabled", flush=True)
+    elif bf16_only:
+        # THE CAST ALONE. Same `.to(torch.bfloat16)` the fp8 branch performs, and deliberately
+        # nothing else: no convert_to_fp8_compute, no FP8_HEAD path. So a MoE arm run this way has
+        # bf16 masters and bf16 GEMMs throughout, which is the equal-precision arm readout 5'
+        # needs, and its dense control run the same way differs from it ONLY in the MoE structure.
+        raw_model = raw_model.to(torch.bfloat16)
+        if is_main:
+            print("bf16 masters, no fp8 conversion (--bf16)", flush=True)
     if is_main:
         n_params = sum(p.numel() for p in raw_model.parameters())
         # MFU'S n_params IS THE DENSE COUNT, which is not the same number. `6 * n_params * tps`
@@ -2941,6 +3243,11 @@ def main():
             "launch -- the arm would train the table in bf16 with updates rounding away."
         )
     _masters = [m for m in (master, table_master) if m is not None]
+    # THE MoE LAYERS THE BALANCER STEPS, resolved once here rather than per step. Empty on a dense
+    # run, so the training loop's balancer block costs one falsy check when there is no router.
+    # EVERY MoE layer, because each owns its own expert_bias -- see the call site after opt.step().
+    _moe_balance_layers = [raw_model.blocks[i].ffn
+                           for i in (getattr(raw_model, "moe_layers", None) or [])]
     # ONE merged map into build_optimizers, so a parameter is resolved to a master exactly once.
     # The two maps are disjoint by construction and test_arch_compat asserts it.
     _mmap = {}
@@ -3138,8 +3445,17 @@ def main():
         # which the cursor does not relieve it of (tilerl's challenge, fb's ruling).
         i0 = 0 if getattr(Cfg, "_cursor_seeded", False) else step * Cfg.batch * Cfg.accum
         t0 = time.time()
+        # Cumulative validation seconds, printed beside each pass's own. Steady-state seconds
+        # (prereg#moe_0905 amendment_12_steady_state) is stepping time, and validation runs
+        # INSIDE the tps window at :3357 from the same `now - t_log`, so it has to be subtracted
+        # rather than assumed. Reset per epoch alongside t0, which is what it is read against.
+        _val_s_total = 0.0
         last = 0.0
         t_log = time.time()
+        # Trailing window of 10-step interval durations, for the ETA. Beside t_log because it is
+        # the same clock and must be reset with it: an ETA carried across a resume would average
+        # this segment's intervals with the previous one's, at a different shape and world size.
+        _eta_win = []
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
             idx = perm[i : i + Cfg.batch]
             xb_pin, yb_pin, ev, vb_pin, wb_pin = pin[(i // Cfg.batch) % 2]
@@ -3235,6 +3551,40 @@ def main():
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
+                # THE AUX-LOSS-FREE BALANCER'S STEP (arXiv:2412.19437 section 2.1.2), once per
+                # OPTIMIZER step. Until 2026-09-06 MoEFFN.update_bias had no caller outside its
+                # unit test, so every MoE arm so far trained with expert_bias identically zero and
+                # the sequence-wise loss (model.py, alpha=1e-4) as its only balancer.
+                #
+                # PLACED AFTER opt.step() AND INSIDE THE accum-BOUNDARY BLOCK, which is what makes
+                # it once-per-step: the forward accumulates step_tokens_per_expert over both
+                # micro-batches, so a call per micro-batch would move the bias twice and the
+                # effective gamma would silently be 2x the registered one.
+                #
+                # NOT REACHED ON A SKIPPED STEP: the non-finite branch above `continue`s before
+                # opt.step(), so a step whose gradients were dropped also leaves the bias alone.
+                # Its counts are cleared here anyway on the next step that does land, because the
+                # buffer keeps accumulating -- one skipped step's load is folded into the next
+                # update rather than being counted as its own.
+                #
+                # EVERY MoE LAYER, not just moe_layers[0]. Each layer owns its own router and its
+                # own expert_bias, so balancing one and leaving eleven unbalanced would be a
+                # different intervention than the one registered. runs/moe_diag.jsonl reports
+                # layer 0 alone, which is a reporting choice and not the balancer's scope.
+                #
+                # SUMMED ACROSS RANKS, matching the diagnostics reduction below: the counts are a
+                # COUNT, so the step's true load is the sum over ranks, and DeepSeek judges overload
+                # "over the whole training-step batch". Every rank must enter the collective or the
+                # next reduction hangs, so this is outside any is_main guard, and every rank runs
+                # the identical update on the identical reduced counts -- the bias is a buffer, not
+                # a Parameter, so DDP never synchronises it and the ranks would otherwise diverge.
+                if _moe_balance_layers:
+                    for _bl in _moe_balance_layers:
+                        _c = _bl.step_tokens_per_expert
+                        if ddp:
+                            dist.all_reduce(_c, op=dist.ReduceOp.SUM)
+                        _bl.update_bias(_c)
+                        _c.zero_()
                 for _m in _masters:
                     _m.push()
                 if probe is not None and is_main:
@@ -3297,6 +3647,7 @@ def main():
                             pass
                         os.remove(p)
                 if Cfg.val_every and step % Cfg.val_every == 0:
+                    _t_val = time.time()
                     v = validate(
                         model,
                         raw_model,
@@ -3311,7 +3662,20 @@ def main():
                         Wva,
                     )
                     if is_main:
-                        runlog(f"step {step}/{total_steps} val {v:.3f}")
+                        # THE VALIDATION PASS'S OWN SECONDS, and the cumulative total, so the
+                        # wall-clock readout does not have to estimate them. prereg#moe_0905
+                        # amendment_12_steady_state: the adopt comparison is steady-state
+                        # seconds, and both terms it needs were previously unmeasurable from a
+                        # DENSE arm's log. tps at :3354 prints `{:.0f}K` (+/-0.8%, so a
+                        # 3815-step extrapolation spans ~110s), and full-precision tok/s reached
+                        # only moe_diag/memory_diag -- neither of which a dense arm writes, so
+                        # the pair had a precise clock on one side and a rounded one on the
+                        # other. `val_s` here plus `s/step` on the step line give both arms the
+                        # same estimator at ~0.1%.
+                        _val_s = time.time() - _t_val
+                        _val_s_total += _val_s
+                        runlog(f"step {step}/{total_steps} val {v:.3f} "
+                               f"val_s {_val_s:.2f} val_s_total {_val_s_total:.1f}")
                 if is_main and step % 10 == 0:
                     now = time.time()
                     dt = now - t_log
@@ -3319,7 +3683,17 @@ def main():
                     mfu = 6 * n_dense * tps / (peak_tflops * 1e12)
                     t_log = now
                     phase = " [anneal]" if step > (1 - Cfg.anneal_frac) * total_steps else " [main]"
-                    eta = (total_steps - step) * dt / 10
+                    # THE ETA IS A WINDOW MEAN and the overrun is its own field; the arithmetic and
+                    # the reasoning are in _eta_fields, at module level so its test can call it
+                    # rather than reimplement it.
+                    #
+                    # BOTH NEW FIELDS GO PAST `MFU (\d+)%`, never before it: RunLog._STEP_RE
+                    # (train.py:46) ends there and matches on ADJACENCY, so a field inserted ahead
+                    # of MFU silently stops every trackio metric on the line. `_overrun` rides on
+                    # the ETA field and `s/step` is appended after it -- measured by moving each
+                    # to the other side (62's test_step_line_parses asserts the same constraint
+                    # for s/step, and this change keeps its four line shapes intact).
+                    eta, _overrun = _eta_fields(_eta_win, dt, total_steps - step)
                     # Peak memory decides whether a batch fits at a given world, and it
                     # was not readable from a training run at all -- the 500M shape work
                     # had to read nvidia-smi, which reports the caching allocator's
@@ -3352,7 +3726,20 @@ def main():
                         f"| gnorm {grad_norm.item():.2f} "
                         f"| {step * Cfg.batch * Cfg.accum * Cfg.seq * world / 1e9:.2f}B tok "
                         f"| {tps / 1e3:.0f}K tok/s/gpu | MFU {mfu * 100:.0f}% "
-                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h"
+                        f"| peak {peak_gib:.2f}GiB | ETA {eta / 3600:.1f}h{_overrun}"
+                        # FULL PRECISION, AT THE END OF THE LINE. `{tps/1e3:.0f}K` above rounds
+                        # to +/-0.8%, which is +/-110s on a 3815-step extrapolation, and it is
+                        # the ONLY timing a dense arm's log carried -- full-precision tok/s
+                        # reached moe_diag (:3549) and memory_diag (:3466), and a dense arm
+                        # writes neither. This field is the same window's seconds-per-step
+                        # unrounded, so steady-state seconds is computable on any arm at ~0.1%.
+                        #
+                        # APPENDED, NOT INSERTED, and that is load-bearing rather than tidy:
+                        # RunLog._STEP_RE (train.py:46) ends with `([\d.]+)K tok/s/gpu \| MFU
+                        # (\d+)%` and matches on ADJACENCY, so a field placed between those two
+                        # would silently stop every trackio metric on this line while the log
+                        # looked richer. test_step_line_parses covers exactly that.
+                        f" | s/step {dt / 10:.4f}"
                     )
                 # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
                 # that placement is the whole correctness argument: the fraction the stop rule
@@ -3500,40 +3887,68 @@ def main():
                         torch.distributed.all_reduce(
                             _moe.tokens_per_expert, op=torch.distributed.ReduceOp.SUM)
                     _od = _moe.diagnostics(reset=True)
-                    # Guarded for the reason the memory write is: a diagnostics writer is a
-                    # dependency the observed run never asked for, and data/ledger_schema.json
-                    # reaching the pod late has already nearly killed a two-card run. Only the
-                    # write is wrapped -- the all_reduce above must propagate, because ranks out of
-                    # step would hang the next reduction.
-                    try:
-                        import moe_diag  # noqa: PLC0415  (scripts/ is on sys.path)
+                    # THE WRITE IS RANK 0'S, THE REDUCTION IS EVERY RANK'S. This `if is_main` was
+                    # missing while the memory block above has it, and the two consequences were
+                    # asymmetric in a way that hid the worse one:
+                    #
+                    #   1. `tps` is bound in the `if is_main and step % 10 == 0` block, so on every
+                    #      OTHER rank it is unbound. At steps 30 and 100 -- the only steps where
+                    #      `tps if step in (30, 100)` evaluates it -- rank 1 raised UnboundLocalError
+                    #      and the broad `except` below logged it as "moe_diag write FAILED".
+                    #      Measured on b0_moe_e1 2026-09-05: exactly two failures, at 30 and 100,
+                    #      and readout 5's number survived only because rank 0 wrote first.
+                    #   2. At steps 10 and 20 the conditional short-circuits to None BEFORE touching
+                    #      `tps`, so BOTH ranks wrote and runs/moe_diag.jsonl gained a DUPLICATE row.
+                    #      6 rows for 4 due steps in that run's ledger. A reader folding on
+                    #      (name, step) sees one row; a reader counting rows or averaging a field
+                    #      sees two identical samples and a confidence that is not there.
+                    #
+                    # So the log named the two steps whose numbers were fine and said nothing about
+                    # the two where the ledger gained a phantom sample.
+                    #
+                    # The all_reduce and diagnostics(reset=True) above stay OUTSIDE this guard: every
+                    # rank must enter the collective or the next reduction hangs, and reset must
+                    # happen on every rank or their windows diverge. Only the write moves.
+                    if is_main:
+                        # Guarded for the reason the memory write is: a diagnostics writer is a
+                        # dependency the observed run never asked for, and data/ledger_schema.json
+                        # reaching the pod late has already nearly killed a two-card run. Only the
+                        # write is wrapped -- the all_reduce above must propagate, because ranks out
+                        # of step would hang the next reduction.
+                        try:
+                            import moe_diag  # noqa: PLC0415  (scripts/ is on sys.path)
 
-                        moe_diag.log_diag(
-                            name=Cfg.moe_arm,
-                            step=step,
-                            usage_frac=_od["usage_frac"],
-                            entropy_norm=_od["entropy_norm"],
-                            load_gini=_od["load_gini"],
-                            tokens=_od["tokens"],
-                            window_steps=_od["window_steps"],
-                            n_routed=_od["n_routed"],
-                            top_k=_moe.top_k,
-                            # READOUT 5 IS DEFINED AT STEPS 30 AND 100 ONLY: from step 200 on,
-                            # co-resident jobs moved the control's own throughput from 82K to 46K,
-                            # so a later same-step ratio measures co-residency rather than the
-                            # architecture (facts/memory_layers.json#mem.m1_throughput_cost).
-                            # Omitted rather than written as a number outside that window.
-                            tok_s_gpu=(tps if step in (30, 100) else None),
-                        )
-                    except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
-                        runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
-                               f"continues: {type(_e).__name__}: {_e}")
+                            moe_diag.log_diag(
+                                name=Cfg.moe_arm,
+                                step=step,
+                                usage_frac=_od["usage_frac"],
+                                entropy_norm=_od["entropy_norm"],
+                                load_gini=_od["load_gini"],
+                                tokens=_od["tokens"],
+                                window_steps=_od["window_steps"],
+                                n_routed=_od["n_routed"],
+                                top_k=_moe.top_k,
+                                # READOUT 5 IS DEFINED AT STEPS 30 AND 100 ONLY: from step 200 on,
+                                # co-resident jobs moved the control's own throughput from 82K to
+                                # 46K, so a later same-step ratio measures co-residency rather than
+                                # the architecture (facts/memory_layers.json#mem.m1_throughput_cost).
+                                # Omitted rather than written as a number outside that window.
+                                tok_s_gpu=(tps if step in (30, 100) else None),
+                            )
+                        except Exception as _e:  # noqa: BLE001 -- see the memory block's reasoning
+                            runlog(f"step {step}/{total_steps} moe_diag write FAILED, run "
+                                   f"continues: {type(_e).__name__}: {_e}")
                 if step >= total_steps:
                     break
 
         for opt in optimizers:
             opt.zero_grad(set_to_none=True)
-        if fp8:
+        if fp8 or bf16_only:
+            # Widened from `if fp8:` when --bf16 was added. The condition this line is about is
+            # "the model was cast to bf16 and an optimizer may not hold every parameter", which
+            # --bf16 satisfies exactly as --fp8 does; the fp8 conversion is incidental to it. The
+            # sibling site at the non-finite-grad path is unconditional for the same reason and
+            # says so. In a plain run it is a no-op because opt.zero_grad already cleared them.
             raw_model.zero_grad(set_to_none=True)  # clear bf16 model grads too
 
         # All ranks validate to keep DDP in lockstep; only rank 0 prints. Fixed prefix: the full
