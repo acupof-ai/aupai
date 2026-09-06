@@ -16464,8 +16464,70 @@ def _selftest_repo_auth_mirror():
         res2 = run_checks(ROOT, quiet=True, persist_timeouts=False)
         here = [n for n, _s, e, _a, _i in res2 if "not authoritative here" in (e or "")]
         assert not here, f"the mirror fired on a real checkout, disabling repo checks: {here[:4]}"
-        print(f"  repo-auth mirror: {len(mirrored)} auth=repo FAIL(s) -> SKIP on the pod's shape, "
-              f"0 on a checkout, 0 auth=pod mirrored")
+
+        # A NAMED CHECK, because `not bad` over 71 checks is satisfied by every check that had
+        # nothing to say. The world above is a bare runs/ directory, so score_matrix_present
+        # returns SKIP there ("runs/experiments.jsonl not present") and the mirror never fires for
+        # it at all: 17 of 71 auth=repo checks are mirrored in that world and this is not one of
+        # them. The blanket assertion could not tell that apart from a mirror that works.
+        #
+        # It matters for THIS check specifically because `reading_artifact` is an escape hatch
+        # whose FAIL is a path test, and the natural place to write a reading is runs/, which
+        # pod_push excludes from the manifest by design (pod_drift._pod_written). So a row
+        # satisfiable on main can read as dangling on the pod, and the mirror is the only reason
+        # that is a SKIP rather than a NO-GO. The world existed for real: 62 filed it on
+        # 2026-09-06 with runs/b0_headmix_block_paired.json tracked on main at ea8bf6f6 and absent
+        # on the pod for ~20 minutes, and check_score_matrix named that path. They reported it as
+        # FAILing there, which it never did -- they called the check function directly instead of
+        # through run_checks, so they read the raw predicate rather than the harness's verdict.
+        # Both halves are why this world is here: the raw FAIL is real, the mirrored SKIP is real,
+        # and only the pair distinguishes them.
+        #
+        # THE TRANSPORT GAP IS REAL AND STAYS OPEN, and this world does not close it: podput
+        # refuses a tracked file, pod_push.sh:245 filters runs/ out of the manifest, and
+        # pod_pull_ledgers only carries files with a ledger_audit.KEYS identity. 62's copy reached
+        # the pod through a one-time PODPUT_TRACKED_OK=1 override. So a runs/ reading is satisfied
+        # on main and only SKIPped on the pod -- unverified there, never verified -- which is what
+        # the mirror is honest about and what this asserts stays honest.
+        d2 = tempfile.mkdtemp(prefix="authmirror_art_")
+        try:
+            os.makedirs(os.path.join(d2, "runs"), exist_ok=True)
+            _rows = [
+                {"name": "armA", "started": "2026-09-06T00:00:00Z", "status": "ok",
+                 "cmd": "./run_ddp.sh --name armA", "result": "x",
+                 "reading_artifact": "runs/paired.json"},
+                {"name": "armB", "started": "2026-09-06T00:00:01Z", "status": "ok",
+                 "cmd": "./run_ddp.sh --name armB", "result": "x",
+                 "reading_artifact": "runs/paired.json"},
+            ]
+            with open(os.path.join(d2, "runs", "experiments.jsonl"), "w", encoding="utf-8") as fh:
+                for _r in _rows:
+                    fh.write(json.dumps(_r) + "\n")
+            _raw, _rev = check_score_matrix(d2)
+            assert _raw == FAIL, (
+                f"the world does not produce the FAIL it is meant to mirror: {_raw} {_rev[:120]}. "
+                f"Without a raw FAIL here the assertions below pass vacuously, which is the "
+                f"defect this world was written for")
+            assert "runs/paired.json" in _rev, f"the raw FAIL names no artifact path: {_rev[:160]}"
+            _res3 = run_checks(d2, quiet=True, persist_timeouts=False)
+            _by3 = {n: (s, e) for n, s, e, _a, _i in _res3}
+            _st3, _ev3 = _by3["score_matrix_present"]
+            assert _st3 == SKIP, (
+                f"a dangling runs/ reading_artifact reads {_st3} on the pod's shape, not SKIP -- "
+                f"a row satisfiable on main would be NO-GO there: {(_ev3 or '')[:140]}")
+            assert "runs/paired.json" in (_ev3 or ""), (
+                f"the mirrored SKIP dropped the path, so nobody can tell which reading is "
+                f"unverified here: {(_ev3 or '')[:160]}")
+            # The negative: with the artifact present it is not a FAIL to mirror in the first
+            # place, so a mirror that fires unconditionally would be caught.
+            open(os.path.join(d2, "runs", "paired.json"), "w", encoding="utf-8").write("{}\n")
+            _raw2, _ = check_score_matrix(d2)
+            assert _raw2 != FAIL, f"an artifact that EXISTS still FAILs: {_raw2}"
+        finally:
+            shutil.rmtree(d2, ignore_errors=True)
+        print(f"  repo-auth mirror: {len(mirrored)} of {len(repo)} auth=repo checks FAIL and "
+              f"mirror to SKIP on the pod's shape, 0 on a checkout, 0 auth=pod mirrored; a "
+              f"dangling runs/ reading_artifact FAILs raw and mirrors with its path kept")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
