@@ -4,7 +4,7 @@
 
 For a 2-hour run, startup cost is dominated by torch.load of the token caches.
 _corpus_fp (dir fingerprint) is a separate cost, measured here by calling the real
-train._corpus_fp (train.py:1355-1376) directly, NOT a re-implementation.
+train._corpus_fp (train.py's module-level _corpus_fp def) directly, NOT a re-implementation.
 
 This measures, per domain cache: file bytes, torch.load seconds (one read), and the
 pre-load `_corpus_fp` fingerprint seconds (if the corpus dir is present). Reports
