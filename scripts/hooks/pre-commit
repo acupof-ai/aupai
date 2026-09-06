@@ -1573,6 +1573,14 @@ def main():
         # absent-cache branch, printing GiB only (21 MiB renders as "0.0 GiB"), and making the
         # block unreachable. ~2s, no card, no GPU.
         "scripts/test_cache_read_line.py",
+        # _domain_seqs maps the token cache instead of loading it resident. Registered here AND
+        # on train.py's trigger list -- the subject is _domain_seqs, not this file. The property
+        # is a RATIO against a control row that strips mmap from the same call, not a threshold:
+        # two draws of one fixture, and the resident cost must track the rows drawn. Measured
+        # 2026-09-07, the load's own delta is 1 MiB mapped against 939 MiB full on a 938 MiB
+        # cache. Two mutations run: mmap removed and mmap=False, both red on three assertions.
+        # ~40s (it writes a 0.92 GiB fixture), no card, no GPU.
+        "scripts/test_cache_mmap.py",
         # scripts/test_eta_window.py IS NOW REGISTERED, below in this map and on train.py's trigger
         # list. It is entered here where its NOT-YET note stood, because the note recorded a
         # failure worth keeping: 8a06c567 (mine) registered the file in both places BEFORE writing
@@ -2060,6 +2068,7 @@ def main():
                      "scripts/test_mix_val_frac.py",
                      "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_cache_read_line.py",
+                     "scripts/test_cache_mmap.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
                      "scripts/test_moe_latent.py",
