@@ -11,8 +11,9 @@
 # bypass was correct and it silently took auto-resume with it: the run went 40 minutes
 # with no supervisor while its own gate test had proven resume works (fb, 2026-09-02).
 #
-# ONE RESUME, NEVER MORE. train.py:2308 sets _plan_step_origin = resume_step and :1386
-# computes the row cursor as (step - origin) * batch * accum, so the cursor is
+# ONE RESUME, NEVER MORE. train.py sets `Cfg._plan_step_origin = resume_step` in main() and
+# save_checkpoint's cursor reads it back as `_origin`, computing the row cursor as
+# (step - origin) * batch * accum, so the cursor is
 # per-segment: it describes rows drawn since THIS resume, not since the start. A second
 # resume re-reads what the first one already trained on -- 10,240 rows at this shape --
 # and no test has ever covered it. Exhausted is a stop, not a third attempt.
