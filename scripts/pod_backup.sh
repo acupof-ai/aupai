@@ -83,6 +83,46 @@ backup_paths() {
   ) | grep -v '\.pt\.' | sort -u
 }
 
+# REFUSE A FILE THAT IS STILL GROWING. train.py writes the endpoint checkpoint (6 GB) after
+# its loop breaks, so a backup that starts mid-write copies a TRUNCATED checkpoint -- and it
+# lands in MANIFEST with a sha256 of the partial bytes, which reads exactly like a good
+# backup. 62 found this and it is the one failure here that is silent (a missing file is
+# obvious; a short one is not). Size stable across 3s is the same test their endpoint gate
+# uses, verified there to catch a growing file.
+#
+# Waits rather than refuses on the first observation: a save in progress finishes in
+# seconds, and failing the whole backup because one checkpoint was mid-write would just move
+# the problem to whoever re-runs it.
+_settle() {
+  local f=$1 a b i
+  # python3, not `stat -c%s`: -c is GNU-only and fails on BSD, where BOTH reads fell back to
+  # the `x`/`y` literals -- which differ, so every file read as "still growing" and the
+  # backup would refuse everything after 30s of waiting. Caught by the positive control
+  # below, same shape as the is_mounted bug two commits ago and the same lesson: a guard
+  # tested only where it does not run is untested.
+  _size() { python3 -c 'import os,sys;print(os.path.getsize(sys.argv[1]))' "$1" 2>/dev/null || echo missing; }
+  # TRIES AND SLEEP ARE OVERRIDABLE SO THE SELFTEST CAN DRIVE THE REAL FUNCTION. With the
+  # 30s production window the fixture's writer has to outlive it, and a writer that stops
+  # first makes the file genuinely settled -- which is what happened: _settle reported
+  # "growing" four times, the writer finished at 12s, and the fifth sample legitimately
+  # returned 0. The test was measuring its own writer's lifetime, not the guard.
+  # READ THE ENV EACH CALL, not the captured value. `_SETTLE_TRIES="${AUPAI_SETTLE_TRIES:-10}"`
+  # at file scope expands ONCE at load, so `AUPAI_SETTLE_TRIES=2 _settle ...` set a variable
+  # nothing read again and the guard silently ran its 30s production window -- the fixture's
+  # writer finished first and the file was genuinely settled. Measured: the override printed
+  # V=10 for a var assigned V=2 on the call line.
+  local tries="${AUPAI_SETTLE_TRIES:-10}" nap="${AUPAI_SETTLE_SLEEP:-3}"
+  for i in $(seq "$tries"); do
+    a=$(_size "$f"); sleep "$nap"
+    b=$(_size "$f")
+    [ "$a" = "$b" ] && [ "$a" != missing ] && return 0
+    echo "  waiting: $f is still growing ($a -> $b)" >&2
+  done
+  echo "refusing: $f has grown for 30s -- a checkpoint mid-write would be backed up" >&2
+  echo "  truncated, with a sha256 of the partial bytes that reads like a good backup." >&2
+  return 1
+}
+
 if [ "${1:-}" = "--selftest" ]; then
   d=$(mktemp -d); fails=0
   mkdir -p "$d/runs" "$d/facts" "$d/data"
@@ -104,6 +144,25 @@ if [ "${1:-}" = "--selftest" ]; then
   for never in ckpt_run_a.pt.step400 ckpt_run_a.pt.interrupt.step410 data/corpus/shard0.bin; do
     case " $got " in *" $never "*) echo "FAIL: $never must NOT be backed up: $got" >&2; fails=1;; esac
   done
+  # _settle, BOTH DIRECTIONS, because this is the guard whose failure is silent: a truncated
+  # 6 GB checkpoint lands in MANIFEST with a sha256 of the partial bytes and reads like a
+  # good backup (62 found it). A settled file must pass immediately, and a growing one must
+  # be seen as growing -- the second is what a "return 0 always" implementation fails.
+  settled="$d/settled.pt"; printf 'done' > "$settled"
+  if ! ( _settle "$settled" >/dev/null 2>&1 ); then
+    echo "FAIL: a file that is NOT growing was reported as growing" >&2; fails=1
+  fi
+  # The writer must outlive at least one full 3s sample interval, or _settle's two reads land
+  # after it finishes and the file legitimately looks settled -- the fixture would then be
+  # testing nothing while printing a failure. 12 appends at 1s covers four intervals.
+  growing="$d/growing.pt"; : > "$growing"
+  ( for _i in $(seq 12); do printf 'xxxx' >> "$growing"; sleep 1; done ) &
+  _writer=$!
+  if ( AUPAI_SETTLE_TRIES=2 AUPAI_SETTLE_SLEEP=1 _settle "$growing" >/dev/null 2>&1 ); then
+    echo "FAIL: a file being appended to was reported as settled -- a mid-write checkpoint" >&2
+    echo "      would be backed up truncated with a plausible sha256" >&2; fails=1
+  fi
+  kill "$_writer" 2>/dev/null; wait "$_writer" 2>/dev/null || true
   # The destination guard, driven rather than read, BOTH DIRECTIONS. The negative case alone
   # is satisfied by a guard that refuses everything -- which is exactly what the first version
   # did: it used mountpoint(1), which does not exist on this laptop, so `/` was refused too and
@@ -160,7 +219,16 @@ _pri=""
 if command -v nice >/dev/null 2>&1 && command -v ionice >/dev/null 2>&1; then
   _pri="nice -n 10 ionice -c3"
 fi
-$_pri rsync -a --files-from="$list" "$SRC/" "$DEST/"
+
+while IFS= read -r f; do
+  case "$f" in *.pt) [ -f "$SRC/$f" ] && { _settle "$SRC/$f" || exit 1; } ;; esac
+done < "$list"
+
+# -H PRESERVES HARDLINKS. Milestones are hardlinks of a rolling save (measured: the
+# step5000 milestone and .pt.step5000 share inode 84228303, links=2), and the rolling half
+# is excluded from the list -- so without -H each milestone is copied as an independent 6 GB
+# file. Correct either way, but -H keeps the backup the same shape as the source.
+$_pri rsync -aH --files-from="$list" "$SRC/" "$DEST/"
 
 # MANIFEST LAST, and only after rsync exits 0 (set -e). It is what check_root_durable reads,
 # so writing it before the copy would stamp a backup that did not finish -- the same ordering
