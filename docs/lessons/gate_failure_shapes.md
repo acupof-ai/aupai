@@ -254,12 +254,13 @@ Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-
 
 ## R9. Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed
 
-2 incidents (1 infra, 1 model), ~1h each, 2h. `ckpt_facts_sources_present` + `check_keep_claim_reasons_live` (registered CHECKS entries) enforce checkpoint KEEP claims; partial: covers checkpoints, not all deletion candidates.
+3 incidents (2 infra, 1 model), ~1h each, 3h. `ckpt_facts_sources_present` + `check_keep_claim_reasons_live` (registered CHECKS entries) enforce checkpoint KEEP claims; partial: covers checkpoints, not all deletion candidates.
 
 - §39: a deletion candidate was judged without running it; the candidate was a live process, not a stale file.
 - §41: a deletion list was broadcast and deleted within the 24h window; an unclaimed candidate was still in use.
+- §255: a deletion list named 143 tracked files; a filesystem-built list cannot see tracked status, and no pod-side gate would have flagged the removal.
 
-Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live.
+Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live, or whether a listed path is tracked in main.
 
 ## Design cause: integration happens in a shared writable working tree
 
