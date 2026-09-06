@@ -106,7 +106,7 @@ def main():
         FAILS.append(f"an empty window with dt=0 returned ({eta0}, {field0!r}), want (0.0, '')")
 
     # 6. THE TRACKIO PARSER STILL MATCHES, checked against the LINE THE CODE BUILDS. RunLog._STEP_RE
-    #    (train.py:46) ends at `MFU (\d+)%`, so a field inserted ahead of MFU breaks the parse
+    #    (RunLog._STEP_RE) ends at `MFU (\d+)%`, so a field inserted ahead of MFU breaks the parse
     #    silently -- every metric on the line stops while the log looks richer, the reason the bare
     #    `lr` field is pinned. The f-string is extracted from train.main and evaluated here, so
     #    moving {_overrun} ahead of MFU is visible; a hand-copied line made that mutant survive

@@ -140,7 +140,7 @@ def main():
     # nothing says so -- the expensive failure. The known slices must NOT be reported.
     assert "some_future_sidecar.jsonl" in unknown, (
         "an unrecognised .jsonl was skipped silently; a misnamed shard would vanish "
-        "from the training data with no message (train.py:96's reason for the blacklist)")
+        "from the training data with no message (NON_SHARD_JSONL's reason for the blacklist)")
     assert "holdout_slice_chat_qa.jsonl" not in unknown, \
         "a known non-shard would stop the run; NON_SHARD_RE is not being applied"
 
@@ -162,7 +162,7 @@ def main():
     run = _run_block(train_py, ["chat_qa_000.jsonl", "some_future_sidecar.jsonl"])
     assert run["raised"] is not None, (
         "an unrecognised .jsonl did NOT stop the run. It is being skipped silently, so a "
-        "misnamed real shard vanishes from training with no message -- train.py:96's "
+        "misnamed real shard vanishes from training with no message -- NON_SHARD_JSONL's "
         "reason for the blacklist, discarded.")
     assert "some_future_sidecar.jsonl" in run["raised"], \
         f"the refusal does not name the offending file: {run['raised']}"
