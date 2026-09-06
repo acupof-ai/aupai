@@ -23,17 +23,17 @@ arm-minus-control difference on identical data order, which the charter guarante
 reusing the control's launch line byte-for-byte. main() refuses to print SEEN without the
 paired label saying so.
 
-THE REGION BOUNDARY IS READ, NEVER DERIVED FROM A FRACTION. train.py:1783 allocates
-`idx = torch.arange(used[name], used[name] + want) % len(pool)` over `pool = seqs[n_val:]`,
-so a run consumes a CONTIGUOUS half-open range of pool indices; the shuffle at :1789
-permutes visit order within a phase, not membership. So:
+THE REGION BOUNDARY IS READ, NEVER DERIVED FROM A FRACTION. build_mix's per-domain allocation
+(`idx = torch.arange(used[name], used[name] + want) % len(pool)`) runs over `pool = seqs[n_val:]`,
+so a run consumes a CONTIGUOUS half-open range of pool indices; the per-phase `torch.randperm`
+right after it permutes visit order within a phase, not membership. So:
 
     SEEN = seqs[n_val : n_val + row_cursor]
     TAIL = seqs[n_val + row_cursor : N]
 
 `row_cursor` comes off the control checkpoint, and it is a CHECKED quantity rather than a
-recorded one: train.py:1163-1178 refuses to write a checkpoint unless
-sum(row_cursor.values()) == step x batch x accum x world. Verified on
+recorded one: save_checkpoint's cursor-sum identity refuses to write a checkpoint unless
+sum(row_cursor.values()) == as_of_step x batch x accum x world. Verified on
 ckpt_b0_headmix_armA.pt: 244,160 == 3815 x 16 x 2 x 2. An earlier version of this boundary
 used the mix file's cap_covers (542,151) and was wrong by 6.7x -- that field is the 8B
 budget's PLAN, and the control ran 1B. A fraction of a plan is not a cursor.
@@ -95,13 +95,15 @@ MIN_PREFIX_CHARS = 120   # a prefix shorter than this gives the model almost not
 MAX_PREFIX_CHARS = 800   # and a very long one costs forward time for no extra signal
 
 
-def replay_read_rows(mix_path, seed, world, steps, batch, accum, domain=DOMAIN, seq=4096):
+def replay_read_rows(mix_path, seed, world, steps, batch, accum, domain=DOMAIN, seq=4096,
+                     cursor_basis="rank0_times_world"):
     """The POOL INDICES the control actually trained on, by rebuilding its index plan.
 
     THE ONLY WAY TO GET THIS RIGHT, and the first version of this file got it wrong. The
-    allocation inside one phase is contiguous -- train.py:1783,
+    allocation inside one phase is contiguous -- build_mix's
     `idx = arange(used, used + want) % len(pool)` -- but the plan is then SHUFFLED ACROSS
-    ALL DOMAINS TOGETHER at :1789 and STRIPED BY RANK at :1833. A run that stops early
+    ALL DOMAINS TOGETHER by the per-phase `torch.randperm` and STRIPED BY RANK as
+    `plan[:, :n][:, rank::world]`. A run that stops early
     consumes a prefix of the SHUFFLED plan, so the rows it read are scattered over the
     whole allocation rather than sitting at its front. Measured on this control: a
     prefix-based SEEN region of 80,380 rows contained 10,129 read rows (12.60%) while the
@@ -167,24 +169,42 @@ def replay_read_rows(mix_path, seed, world, steps, batch, accum, domain=DOMAIN, 
     plan = torch.cat(plan, dim=1)
     n = (plan.shape[1] // world) * world
     rows_done = steps * batch * accum
-    # THE READ SET IS THE UNION OVER RANKS; THE CURSOR IS RANK 0'S COUNT x WORLD. Two
-    # different quantities, and using one formula for both is what the first run of this
-    # replay did -- summing the per-rank counts predicted all nine cursors WRONG by up to
-    # 97 rows, because train.py:1142 writes `int(counts[i]) * world` from RANK 0's stripe
-    # alone. The two agree only when every rank sees the same domain mix, which a shuffled
-    # plan does not guarantee (rank 0 drew 40,190 target rows and rank 1 drew 40,090). So
-    # the cursor is reproduced the way it is WRITTEN, and the read set the way the data was
-    # actually consumed -- every rank's rows were trained on.
+    # THE READ SET IS THE UNION OVER RANKS; THE CURSOR IS ONE OF TWO FORMULAS, AND WHICH ONE
+    # IS A PROPERTY OF THE CHECKPOINT. Two different quantities, and using one formula for
+    # both is what the first run of this replay did -- summing the per-rank counts predicted
+    # all nine cursors WRONG by up to 97 rows.
+    #
+    # THE WRITE CHANGED UNDER THIS FILE (de-58, 2026-09-06), so the replay cannot hardcode
+    # either form. Before it, save_checkpoint wrote rank 0's bincount x world; since it, a
+    # bincount over columns 0 .. rows_done*world-1 of the FULL plan, because rank 0's stripe
+    # over-represents some domains and under-represents others whenever a domain's row count
+    # is not a multiple of world (ckpt_e1_conv_n8 wrote 212 rows against a 204-row pool). The
+    # checkpoint says which it used in `row_cursor_basis`; absent means the pre-58 write, and
+    # verify_regions passes it down. Hardcoding the NEW form here would refuse every
+    # pre-58 checkpoint, which is how this was caught: ckpt_b0_headmix_armA.pt's nine
+    # recorded counts are the old formula's, and this file's own selftest pins them.
+    #
+    # THE SUM CANNOT TELL THEM APART. Measured on a 9-domain plan with odd counts, world 2:
+    # rank0-x-world gives [20,10,30,8,26,10,32,40,24] and the full prefix
+    # [21,15,33,7,19,11,25,41,28] -- different on 9 of 9 domains, both summing to 200. So the
+    # cursor-sum identity is exact for both, and agreement of sums is not agreement.
     read = set()
     for rank in range(world):
         mine = plan[:, :n][:, rank::world][:, :rows_done]
         read |= set(mine[1][mine[0] == di].tolist())
-    r0 = plan[:, :n][:, 0::world][:, :rows_done][0]
-    counts = torch.bincount(r0.to(torch.int64), minlength=len(names))
+    if cursor_basis == "full_plan_prefix":
+        counts = torch.bincount(plan[:, :n][0][: rows_done * world].to(torch.int64),
+                                minlength=len(names))
+        pred = {nm: int(counts[i]) for i, nm in enumerate(names)}
+    else:
+        r0 = plan[:, :n][:, 0::world][:, :rows_done][0]
+        counts = torch.bincount(r0.to(torch.int64), minlength=len(names))
+        pred = {nm: int(counts[i]) * world for i, nm in enumerate(names)}
     return {
         "read": read,
         "alloc": used[domain],
-        "cursor_pred": {nm: int(counts[i]) * world for i, nm in enumerate(names)},
+        "cursor_pred": pred,
+        "cursor_basis": cursor_basis,
         "anneal_frac": anneal_frac,
         "mix": os.path.basename(mix_path),
     }
@@ -223,7 +243,7 @@ def region_bounds(ckpt_path, mix_path, cache_tokens=None, seq=4096, domain=DOMAI
     world = int(cfg.get("world", 0) or 0)
     if not world:
         # world is not a Cfg field on this checkpoint, so it comes from the identity
-        # train.py:1163 enforces at save: sum(row_cursor) == step x batch x accum x world.
+        # save_checkpoint enforces: sum(row_cursor) == as_of_step x batch x accum x world.
         # Derived and then CHECKED below, never assumed to be 2.
         tot = sum(int(v) for v in rc.values())
         den = step * batch * accum
@@ -232,8 +252,11 @@ def region_bounds(ckpt_path, mix_path, cache_tokens=None, seq=4096, domain=DOMAI
                 f"cannot derive world: sum(row_cursor)={tot} is not a multiple of "
                 f"step x batch x accum = {den}")
         world = tot // den
+    # WHICH cursor formula this checkpoint used. Absent field means the pre-58 write, which is
+    # the reading train.py's own writer states for the same field.
     rep = replay_read_rows(mix_path, int(ck.get("row_cursor_seed") or cfg.get("seed", 42)),
-                           world, step, batch, accum, domain=domain, seq=seq)
+                           world, step, batch, accum, domain=domain, seq=seq,
+                           cursor_basis=ck.get("row_cursor_basis") or "rank0_times_world")
     bad = {k: (v, rc.get(k)) for k, v in rep["cursor_pred"].items() if rc.get(k) != v}
     if bad:
         raise RuntimeError(
@@ -482,8 +505,8 @@ def build(tokenizer_path, ckpt_path, mix_path, cache_path, per_region, seed, out
         raise RuntimeError(f"pool size {n_pool} from the cache but {bounds['n_pool']} from "
                            f"the recorded token count")
     bounds["n_pool"], bounds["unseen_hi"] = n_pool, n_pool
-    # POOL COORDINATES -> CACHE ROW. `pool = seqs[n_val:]` (train.py:1712), so pool index i
-    # is cache row n_val + i. Applied once, here, rather than inside the sampler: the
+    # POOL COORDINATES -> CACHE ROW. build_mix sets `pools[name] = seqs[n_val:]`, so pool
+    # index i is cache row n_val + i. Applied once, here, rather than inside the sampler: the
     # replay speaks pool coordinates and the mmap speaks cache rows, and the first build
     # conflated them in the header (it printed [5000, 85380] as if the cursor were a pool
     # interval AND a cache interval).
@@ -771,12 +794,13 @@ def _selftest():
     assert n_val == 5000, n_val
     n_pool = n_rows - n_val
     assert n_pool == 2139719, n_pool
-    # The cursor-sum identity train.py:1163 enforces at save. If this ever fails the
+    # The cursor-sum identity save_checkpoint enforces. If this ever fails the
     # checkpoint's cursor is not absolute and the region is not what it claims.
     cursor_sum = 64450 + 40082 + 19776 + 24700 + 1796 + 1714 + 7496 + 80380 + 3766
     assert cursor_sum == 3815 * 16 * 2 * 2 == 244160, cursor_sum
     # THE PHASE ALLOCATION, which is what the cursor is a fraction OF. int() of the same
-    # product train.py:1774 computes, at anneal_frac 0 (the control's launch flag).
+    # product build_mix computes from `rows = total_tokens / seq` times the phase share times
+    # the domain weight, at anneal_frac 0 (the control's launch flag).
     alloc = int((8000000000 / seq) * 1.0 * 0.3297123)
     assert alloc == 643969, alloc
     assert 8.0 < alloc / 80380 < 8.05, alloc / 80380
@@ -808,6 +832,19 @@ def _selftest():
         assert rep["cursor_pred"] == RECORDED, {
             k: (v, RECORDED.get(k)) for k, v in rep["cursor_pred"].items()
             if RECORDED.get(k) != v}
+        # BOTH BASES ARE DRIVEN, and they must DISAGREE per domain while summing alike. The
+        # control is pre-58, so RECORDED is the rank0-x-world formula's answer; hardcoding the
+        # post-58 one refused all nine domains here, which is how the two-formula problem was
+        # found at all (de, 2026-09-07). A version answering the same numbers for both bases
+        # would pass the assertion above and silently accept every checkpoint of one era.
+        rep58 = replay_read_rows(mix_real, 42, 2, 3815, 16, 2,
+                                 cursor_basis="full_plan_prefix")
+        differ = [k for k, v in rep58["cursor_pred"].items() if RECORDED[k] != v]
+        assert len(differ) == 9, f"the two cursor bases must differ per domain, differ on {differ}"
+        assert sum(rep58["cursor_pred"].values()) == sum(RECORDED.values()) == 244160, (
+            "the two bases must have the SAME sum -- that is why the cursor-sum identity "
+            "cannot tell them apart, and why this per-domain case exists")
+        assert rep58["read"] == rep["read"], "the basis changes the cursor, never the read set"
         assert rep["alloc"] == 643969, rep["alloc"]
         assert len(rep["read"]) == 80280, len(rep["read"])
         # The property the UNSEEN region rests on, asserted rather than argued.
