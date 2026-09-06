@@ -1,7 +1,7 @@
 ---
 question: What are the rules that keep gates and measurements honest, what enforces each, and what does each cost?
 status: open
-source: derived from docs/lessons/gate_failure_incidents.md (133 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (221 = 133 + 88); 33/33 confirmed machine-gated (list below)
+source: derived from docs/lessons/gate_failure_incidents.md (133 model-project incidents) and docs/lessons/infra_incidents.md (88 pod/infra incidents); 33 closed incidents removed 2026-09-04 (222 = 133 + 88 + 1); 33/33 confirmed machine-gated (list below)
 ---
 
 # Gate failure rules
@@ -54,7 +54,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 - **R6** (34 incidents, 68h): every number carries its basis. Owner: blank.
 - **R1** (21 incidents, 63h): verify premises before acting, sources before citing. Owner: blank.
 - **R5** (11 incidents, 22h): state the vision before the number. Owner: blank.
-- **R4** (13 incidents, 36h): failures must be loud. Owner: blank.
+- **R4** (14 incidents, 39h): failures must be loud. Owner: blank.
 
 ## R2. A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output
 
@@ -203,7 +203,7 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-13 incidents (8 infra, 5 model), ~3h each, 39h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+14 incidents (9 infra, 5 model), ~3h each, 42h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
