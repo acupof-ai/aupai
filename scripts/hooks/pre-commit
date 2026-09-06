@@ -159,13 +159,26 @@ def _merging(common_abs=None):
 
 
 def _union_merged(paths):
-    """Which of `paths` git resolves with merge=union, straight from git check-attr.
+    """Which of `paths` git merges WITHOUT a human -- merge=union or a named driver.
 
     THE ATTRIBUTE IS THE AUTHORITY, not a list here. .gitattributes already names the
     append-only ledgers and a second copy of that list in this file would rot against it --
     the fix would then be to add a ledger in one place and have the other silently disagree,
     which is the shape half this hook exists to catch. Reads the resolved attribute, so a
     ledger added to .gitattributes is covered the moment it is added.
+
+    ANY DRIVER COUNTS, NOT ONLY `union` (2026-09-06, b0's deadlock). The exemption asks "can
+    this file be merged without a person?", and `union` was the only answer that existed when
+    it was written. runs/prereg.jsonl is amended in place -- one row per id -- so union is
+    wrong for it and it was left unspecified, which put it outside the exemption and produced
+    a state with no legal move: `git merge` refuses while the file is dirty ("commit or stash
+    them"), this hook refuses the commit that would satisfy it, and git stash is forbidden
+    because .git/refs/stash is shared. Both rules were right and their intersection was empty.
+    prereg.jsonl now has merge=prereg-union (scripts/prereg_merge.py), which resolves it by
+    key, so it belongs in the exemption for the same reason the union ledgers do.
+
+    `unspecified` and `unset` stay excluded: those are the files where a merge needs a person,
+    which is exactly who the behind-main refusal is for.
     """
     if not paths:
         return set()
@@ -176,7 +189,7 @@ def _union_merged(paths):
         # "<path>: merge: union". Split from the RIGHT twice: a path may contain ": ", and
         # the value never does.
         rest, _, value = line.rpartition(": ")
-        if value.strip() != "union":
+        if value.strip() in ("unspecified", "unset", "set", ""):
             continue
         path, _, attr = rest.rpartition(": ")
         if attr == "merge" and path:
@@ -1246,6 +1259,10 @@ def main():
         "scripts/pod_verify_landed.py",
         # Builds a real two-branch conflict in a throwaway repo: no data, no card, ~1s.
         "scripts/merge_drivers.py",
+        # Six pure-dict worlds, no git and no I/O, ~0.1s. Registered because the mutant that
+        # matters is silent: a driver that resolved a two-valued key by rule would pass every
+        # union world and overwrite somebody's amendment without saying so.
+        "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
