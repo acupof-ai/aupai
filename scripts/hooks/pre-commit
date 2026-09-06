@@ -1631,6 +1631,24 @@ def main():
         #                           died in its own setup and read as unrunnable
         "scripts/test_resume_cursor_pod.py": "needs data/tokenizer.json and data/corpus/, "
                                              "both gitignored; run on the pod",
+        # RUN BEFORE BEING JUDGED, per this map's own rule, and the reason is what it printed
+        # rather than a guess about what it needs. On the pod, card 1, against the wired
+        # model.py: all four worlds PASS -- gamma 0.0 leaves the bias at absmax 0.000000; one
+        # update on counts [100,0,50,...] gives bias [-0.000999,+0.000999,0,...], i.e. exactly
+        # gamma with the sign opposite to the load error; two forwards with one update move the
+        # bias 0.000999 against 0.001999 for two forwards with two updates, ratio 2.00x, which
+        # is the accum trap the balancer's placement avoids; and the new step counter reads
+        # 64 then 128 for tokens x top_k over two micro-batches.
+        # It cannot run at commit time on a dev box for one reason: it asserts
+        # torch.cuda.is_available() at the top of main(). model.py's MoEFFN reaches
+        # chunk_kda/l2norm, which are Triton with no CPU fallback, so there is no CPU world for
+        # this module to be tested in -- a "CPU-side probe" of this model is not a thing that
+        # exists (b0, measured). Registered here rather than in SELFTEST_FILES so the gate stops
+        # reporting it as unguarded while the exemption states the truth.
+        "scripts/test_moe_bias_wiring.py": "asserts torch.cuda.is_available(); MoEFFN reaches "
+                                           "chunk_kda/l2norm, Triton with no CPU fallback, so "
+                                           "there is no CPU world for it -- PASSED 4/4 on the "
+                                           "pod, card 1, 2026-09-06",
         "scripts/test_domain_loss_val.py": "needs data/tokenizer.json, gitignored; SKIPs "
                                            "cleanly here and passes on the pod",
         # Kept rather than deleted in de-21, and listed here so the reason it is not run is
