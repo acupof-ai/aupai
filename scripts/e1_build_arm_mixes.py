@@ -15,7 +15,7 @@ wrong at least once:
   * The second set divided the token count by seq (4096) where a pool packs at seq+1, so
     every arm asked one row more than it held.
   * The third set -- the one this script replaces -- counted sum(len(ids)) and MISSED THE
-    <eos> train.encode appends per document (train.py:1707: np.append(p, eos)). At n8 that
+    <eos> train.encode appends per document (its np.append(p, np.int32(eos))). At n8 that
     is 8,000 tokens, so the pool holds 204 rows and the weight asked 202. Measured against
     the caches the pod built: 204/1639/6557 against 202/1623/6495.
 
@@ -53,7 +53,7 @@ def packed_rows(domain, seq, tok):
 
     THE <eos> IS THE POINT. train.encode emits one <eos>-separated stream --
     np.append(p, np.int32(eos)) per document -- so the stream is sum(len(ids)) + n_docs and
-    the cache reshapes it at seq+1 (train.py:1957, `n = len(data) // (seq+1)`). Dropping the
+    the cache reshapes it at seq+1 (train._domain_seqs, `n = len(data) // (Cfg.seq + 1)`). Dropping the
     +n_docs is the defect this script was written to end.
     """
     p = os.path.join(ROOT, "data", "corpus", domain, f"{domain}_000.jsonl")

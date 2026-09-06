@@ -18,7 +18,7 @@ and the lower the head's lr the more tok grows. A bulk number cannot say whether
 actually removed, though, so on its own that is a puzzle rather than a refutation.
 
 THE ROW CLASSES SETTLE IT. tok.weight has 32832 rows and three classes with DIFFERENT gradient
-paths (train.py:164-174):
+paths (Cfg.vocab_real and Cfg.vocab in train.py's Cfg body):
 
     [0, 32773)        vocab_real: reachable as an input id AND as a head row
     [32773, 32784)    alignment padding: NEVER an input id, NEVER a target -- reachable ONLY
@@ -62,8 +62,8 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, ROOT)
 os.environ.setdefault("FLA_FLASH_KDA", "0")
 
-# From train.py:164-174. Read from Cfg at runtime rather than trusted as literals -- a tokenizer
-# change moves both boundaries and would silently reclassify every row.
+# From train.py's Cfg.vocab_real and Cfg.vocab. Read from Cfg at runtime rather than trusted as
+# literals -- a tokenizer change moves both boundaries and would silently reclassify every row.
 INIT_STD = 0.02        # model.py:453
 D_MODEL = 1024
 

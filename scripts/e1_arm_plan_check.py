@@ -29,7 +29,7 @@ That world is attempted and SKIPS with a named reason when the caches are absent
 here is not the same claim as a green run there. It prints which level ran.
 
 THE WORLD-2 STRIPE IS WHY BOTH RANKS ARE BUILT when the plan level does run. The plan is striped
-`plan[:, rank::world]` (train.py:2316), so rank 0 alone holds about half the exposures and a
+`plan[:, rank::world]` (train.py's build_mix), so rank 0 alone holds about half the exposures and a
 per-rank count would read n/2 and look like a defect. The claim "each document appears exactly n
 times" is a claim about the UNION of the ranks, which is what the model sees.
 """
@@ -54,7 +54,7 @@ SEQ = 4096
 CURSOR_ROWS = 244160
 #: The anneal_frac the LAUNCH LINES pass (--anneal_frac 0, 4c's ruling 2026-09-05, prereg
 #: amendment 8), and therefore the value this check builds the plan at. build_mix reads
-#: Cfg.anneal_frac (0.10 by default, train.py:377) and never the mix file's own "anneal_frac"
+#: Cfg.anneal_frac (0.10 by default in the Cfg body) and never the mix file's own "anneal_frac"
 #: key, so all five arm files declare 0.0 and would silently get two phases. A check built at
 #: the default would certify a two-phase plan while the run builds a one-phase one -- and the
 #: two differ: `want = int(rows * frac * weight)` runs once per phase and int(0.9x) + int(0.1x)
@@ -65,10 +65,10 @@ ANNEAL_FRAC = 0.0
 #: --max_steps the launch lines pass, and it is an ABSOLUTE TOTAL, not a segment length.
 #:
 #: 4315 = 3815 (ckpt_b0_headmix_armA.pt's step) + 500 (the 32,000-row remainder / 64 rows per step
-#: at batch 16 x accum 2 x world 2). train.py:3094 adds the resume step to the recipe's total
-#: (`total_steps += resume_step`) and :3097 clamps it (`total_steps = min(total_steps,
-#: args.max_steps)`), so a flag holding the SEGMENT length clamps the total below the step the run
-#: resumed at and the loop exits on its first pass at :3260.
+#: at batch 16 x accum 2 x world 2). train.py's `total_steps += resume_step` adds the resume step to
+#: the recipe's total and the `total_steps = min(total_steps, args.max_steps)` line below it clamps
+#: it, so a flag holding the SEGMENT length clamps the total below the step the run resumed at and
+#: the loop exits on its first pass at the training loop's `if step >= total_steps: break`.
 #:
 #: Measured 2026-09-05: control_arm launched with --max_steps 500, printed `WSD JOIN: resumed at
 #: step 3815/500`, saved a checkpoint at step 3816 -- ONE step, 173 of 176 tensors differing from
@@ -76,13 +76,13 @@ ANNEAL_FRAC = 0.0
 #: It exited nonzero only because scoring found no free lane card; with one free it would have
 #: scored one step of armA's own mix and entered the ledger as the experiment's floor.
 MAX_STEPS = 4314
-#: Rows per optimizer step ON ONE RANK, which is what train.py:3082 divides by:
+#: Rows per optimizer step ON ONE RANK, which is what train.py's total_steps line divides by:
 #: `total_steps = Cfg.epochs * (len(Xtr) // (Cfg.batch * Cfg.accum))` and Xtr is THIS RANK's rows.
 #: So the divisor is batch x accum = 32, not batch x accum x world = 64. Getting this wrong is how
-#: the segment came out 500 instead of 499: the plan's 31,994 rows lose their odd column
-#: (train.py:2315), stripe to 15,997 per rank, and 15,997 // 32 = 499 -- the last partial batch of
-#: 32 rows is dropped, and the same 499 falls out for every arm (n64/n256 at 31,996 rows stripe to
-#: 15,998, still 499).
+#: the segment came out 500 instead of 499: the plan's 31,994 rows lose their odd column (build_mix's
+#: `n = (plan.shape[1] // world) * world`), stripe to 15,997 per rank, and 15,997 // 32 = 499 -- the
+#: last partial batch of 32 rows is dropped, and the same 499 falls out for every arm (n64/n256 at
+#: 31,996 rows stripe to 15,998, still 499).
 ROWS_PER_STEP_PER_RANK = 16 * 2
 WORLD = 2
 
@@ -224,7 +224,7 @@ def check_arm(name, n, verbose=True):
                 toks += len(tk.encode(r["content"]).ids)
                 ndocs += 1
         # PLUS ONE <eos> PER DOCUMENT. train.encode emits a single <eos>-separated stream --
-        # np.append(p, eos) per document (train.py:1707) -- so the stream is sum(len(ids)) + ndocs,
+        # np.append(p, eos) per document, in train.encode -- so the stream is sum(len(ids)) + ndocs,
         # not sum(len(ids)). Measured against the caches the pod actually built: without the eos
         # this read 202/1623/6495 rows where the caches hold 204/1639/6557, and the error was
         # INVISIBLE because `want` and `pool_rows` were both derived from the same undercount, so
@@ -274,8 +274,8 @@ def check_arm(name, n, verbose=True):
                     f"{name}: domain {d} packs to {pool_rows} rows by this script's count, but the "
                     f"token cache at {cp} holds {_n} ({_len} tokens). The cache is what the run "
                     f"reads, so the weight is a share of the wrong number. A per-document <eos> "
-                    f"(train.py:1707) is the difference this has been before: the stream is "
-                    f"sum(len(ids)) + n_docs, not sum(len(ids)).")
+                    f"(train.encode's eos append) is the difference this has been before: the "
+                    f"stream is sum(len(ids)) + n_docs, not sum(len(ids)).")
         else:
             nums[f"{d}_cache_rows"] = "absent"
     if verbose:
@@ -320,14 +320,14 @@ def check_step_budget(ckpt_step, plan_rows):
     THE ASSERTION NO OTHER GATE PERFORMS, and the one whose absence cost the first control_arm
     launch. Everything else here certifies the PLAN -- which rows, which domains, from which
     cursor -- and that plan was CORRECT: 31,994 rows, right cursor, five greens. The loop then ran
-    ONE step over it, because train.py:3094-3097 is
+    ONE step over it, because train.py's total_steps block is
 
         if _cursor_seeded and resume_step: total_steps += resume_step   # 500 -> 4315
         if args.max_steps:                total_steps = min(total_steps, args.max_steps)  # -> 500
 
-    and 500 < the resumed step 3815, so `step >= total_steps` held immediately (:3260). The run
-    saved at step 3816 and logged "training succeeded". A plan check that never reads the step
-    budget cannot see this, so it is read here.
+    and 500 < the resumed step 3815, so `step >= total_steps` held immediately in the training
+    loop. The run saved at step 3816 and logged "training succeeded". A plan check that never reads
+    the step budget cannot see this, so it is read here.
     """
     out = []
     if ckpt_step is None:
@@ -335,15 +335,17 @@ def check_step_budget(ckpt_step, plan_rows):
                 "that is a missing assertion, not a pass"]
     if ckpt_step >= MAX_STEPS:
         out.append(f"MAX_STEPS {MAX_STEPS} is not greater than the checkpoint's step {ckpt_step}. "
-                   f"train.py:3097 clamps total_steps to --max_steps AFTER :3094 adds the resume "
-                   f"step, so the loop exits on its first pass and the run saves a checkpoint one "
+                   f"train.py clamps total_steps to --max_steps AFTER the "
+                   f"`total_steps += resume_step` line adds the resume step, so the loop exits on "
+                   f"its first pass and the run saves a checkpoint one "
                    f"step past the one it resumed. --max_steps is an ABSOLUTE TOTAL: pass "
                    f"{ckpt_step} + segment, not the segment.")
         return out
     segment = MAX_STEPS - ckpt_step
     # MIRRORS train.py EXACTLY, in its order, because an off-by-one here reads as a defect in the
-    # run: :2315 drops the plan's odd last column, the stripe halves it, and :3082 floor-divides
-    # ONE RANK's rows by batch x accum -- so a final partial batch is dropped too. Computing this
+    # run: build_mix's `n = (plan.shape[1] // world) * world` drops the plan's odd last column, the
+    # stripe halves it, and train.py's total_steps line floor-divides ONE RANK's rows by batch x
+    # accum -- so a final partial batch is dropped too. Computing this
     # as plan_rows // (batch*accum*world) gives 500 where train.py gives 499.
     striped = (plan_rows // WORLD) * WORLD
     want = (striped // WORLD) // ROWS_PER_STEP_PER_RANK
@@ -378,8 +380,8 @@ def pool_rows_of(domain, mix):
     equals the full-load shape exactly, where the full load charges 156.0 / 152.8 / 1683.4 MB.
     So the co-residency call is gone from this function: there is no longer a large read for it
     to refuse, and leaving a refusal in front of a header read would refuse a cost that is not
-    paid. The caches are flat 1-D token tensors (train.py:1958 `data[: n*(seq+1)].view(-1, seq+1)`),
-    so shape[0] // (seq+1) is the row count under either load.
+    paid. The caches are flat 1-D token tensors (train._domain_seqs returns
+    `data[: n*(seq+1)].view(-1, seq+1)`), so shape[0] // (seq+1) is the row count under either load.
     """
     import train
     cp = train._domain_cache_path(domain)
@@ -406,7 +408,7 @@ def check_plan(name, n, cursor=None, cursor_seed=None, cursor_srcfp=None):
     absent -- a skip that read as a pass would be the worst outcome here, because this is the
     only assertion that would survive a change to build_mix's own arithmetic.
 
-    Both ranks, unioned: the plan is striped plan[:, rank::world] (train.py:2316), so rank 0
+    Both ranks, unioned: the plan is striped plan[:, rank::world] in build_mix, so rank 0
     holds about half the exposures and a single-rank count reads n/2.
     """
     import train
@@ -478,15 +480,15 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
     # WHAT WAS WRONG HERE (found 2026-09-05 on the pod, 10 BUG lines, all of them artifacts):
     # this read `mine, _val = train.build_mix(...)` and then `mine[0] == di` / `mine[1][sel]`.
     # build_mix does not return the plan. It returns the TOKEN tensor, shape (rows, seq+1):
-    # train.py:2319 `out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)` and
-    # train.py:2333 `return out, vcat`. So `mine[0]` was ROW ZERO'S TOKEN IDS compared against a
+    # build_mix's `out = torch.empty((mine.shape[1], Cfg.seq + 1), dtype=torch.int32)` and its
+    # `return out, vcat`. So `mine[0]` was ROW ZERO'S TOKEN IDS compared against a
     # domain index, and `mine[1][sel]` was row one's token ids read as pool indices. The counts
     # that came out summed to 9 rows across a 31,994-row plan, and eight domains reported "drew 0
     # rows" while train.py's own mix lines in the same output showed them drawing thousands.
     #
-    # The (domain, pool_index) plan is LOCAL to build_mix: train.py:2316 `mine = plan[:, :n][:,
-    # rank::world]`, consumed at :2324 `out[m] = pools[name][mine[1][m]]`, never returned. What
-    # escapes is Cfg._plan_domains (:2317, int8, one domain index per row of THIS rank's plan) --
+    # The (domain, pool_index) plan is LOCAL to build_mix: its `mine = plan[:, :n][:, rank::world]`,
+    # consumed at `out[m] = pools[name][mine[1][m]]`, never returned. What
+    # escapes is Cfg._plan_domains (int8, one domain index per row of THIS rank's plan) --
     # enough for the count, and it carries no pool index, which is why the set assertion below
     # cannot be built from it and reads bytes instead.
     plan_dom = {}
@@ -498,7 +500,7 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
         if pd is None:
             problems.append(f"{name}: build_mix published no Cfg._plan_domains, so the per-domain "
                             f"row count could not be read -- that is a missing assertion, not a "
-                            f"pass (train.py:2317 sets it)")
+                            f"pass (build_mix sets Cfg._plan_domains from `mine[0]`)")
             return problems, None
         if int(pd.shape[0]) != int(out.shape[0]):
             # The two must describe the same rows or the count is about a different plan than
@@ -523,14 +525,14 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                         f"domain index this check did not count.")
     # THE REMAINDER AND THE PHASES, hoisted: both loops below assert against them, and computing
     # them once is what keeps the injection and natural assertions talking about the same plan.
-    # build_mix subtracts the cursor from the budget ONCE, globally (train.py:2251
+    # build_mix subtracts the cursor from the budget ONCE, globally (its
     # `rows = max(0.0, rows - spent)`), and then applies each domain's weight to that remainder.
     # SUMMED OVER THE PHASES build_mix will run: `want = int(rows * frac * weight)` once per phase,
     # and int() truncates in EACH, so sum(int(rows*frac*w)) can be a row less than int(rows*w).
     # Phase by phase rather than a single int() is what makes this correct at any ANNEAL_FRAC
     # instead of only at 0 -- the single-phase form was right only because the launch passes
     # --anneal_frac 0, and a check that is right by coincidence goes wrong when the coincidence
-    # ends (train.py:2174 builds `phases` from Cfg.anneal_frac).
+    # ends (build_mix's `phases` list is built from Cfg.anneal_frac).
     rows_rem = mix["total_tokens"] / mix["seq"] - sum(cur.values() or [0])
     _phases = ([(1.0, "weight")] if not ANNEAL_FRAC
                else [(1 - ANNEAL_FRAC, "weight"), (ANNEAL_FRAC, "anneal")])
@@ -540,7 +542,7 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
 
         The cap is not decoration here: p_format's pool is 20 rows with epochs 1, so an
         uncapped expectation and the plan disagree by construction and the check reports a
-        defect in the run that is really a defect in the check. train.py:2255-2262 -- want is
+        defect in the run that is really a defect in the check. In build_mix's phase loop -- want is
         capped at int(len(pool) * epochs) - used[name], floored at 0, and `used` advances by
         the capped amount within the phase loop.
 
@@ -600,7 +602,7 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
         return None
 
     # THE WORLD-2 TRUNCATION, which costs the plan up to (world - 1) rows and is why a per-domain
-    # count cannot simply equal its want. train.py:2315 does
+    # count cannot simply equal its want. build_mix does
     # `n = (plan.shape[1] // world) * world` -- "multiple of world, or a rank left a row short gets
     # a different lr and hangs the all-reduce" -- and only then stripes. So an ODD plan loses its
     # last column, and after the per-phase shuffle (`ph[:, randperm]`) WHICH DOMAIN loses that row
@@ -610,8 +612,9 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
     # n8 31,994, n64 and n256 31,996), and at seed 42 the row it loses is an en_c4_stage2 row. That
     # is worth knowing rather than assuming, because the row could have been an s_inject_n1 row --
     # 25 of 31,995 -- and the arm's whole measurement is its 25 injection rows. `mix: s_inject_n1
-    # 25 rows` in the log does NOT rule that out: train.py:2326 prints used[] BEFORE the truncation
-    # at :2315, so the printed 25 is the pre-truncation allocation, not what the plan delivers.
+    # 25 rows` in the log does NOT rule that out: build_mix's per-domain `mix: {name} {used[name]}
+    # rows` print runs BEFORE the `n = (plan.shape[1] // world) * world` truncation, so the printed
+    # 25 is the pre-truncation allocation, not what the plan delivers.
     #
     # So the per-domain assertions below allow a shortfall of at most `deficit` rows, and a
     # SEPARATE assertion demands the shortfall land on a natural domain: an injection domain short
@@ -638,7 +641,8 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
             # the arm must not launch -- which is the whole point of amendment 8.
             why = ""
             if 0 < want - got <= max(deficit, 1):
-                why = (f"The world-2 truncation took an INJECTION row: train.py:2315 drops the "
+                why = (f"The world-2 truncation took an INJECTION row: build_mix's "
+                       f"`n = (plan.shape[1] // world) * world` drops the "
                        f"odd last column and the shuffle decided it would be this one, so the "
                        f"arm's axis is short by {want - got} row(s). ")
             problems.append(f"{name}: the built plan holds {got} rows of {d}, the weight asks "
@@ -668,7 +672,8 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
         if bad:
             problems.append(bad)
         if rows_by_dom[d] != want:
-            # A SHORTFALL OF AT MOST `deficit` IS THE WORLD-2 TRUNCATION, not a defect: train.py:2315
+            # A SHORTFALL OF AT MOST `deficit` IS THE WORLD-2 TRUNCATION, not a defect: build_mix's
+            # `n = (plan.shape[1] // world) * world`
             # drops the plan's odd last column before striping, and the shuffle decides which
             # domain owns it. Anything else -- a surplus, or a shortfall larger than the whole
             # plan's odd remainder -- is a real disagreement about the remainder or the cap.
@@ -693,14 +698,18 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                         f"{total_want - deficit - got_total} row(s) are unexplained by any "
                         f"per-domain pardon.")
     # WHAT THIS CHECK DOES NOT COVER, stated because a silent gap reads as a pass. A cursor that is
-    # DISCARDED (train.py:2201 corpus-fingerprint drift, :2190 sample_seed drift) makes a domain
+    # DISCARDED (build_mix's corpus-fingerprint `want_fp != live_fp` branch, or its sample_seed
+    # mismatch branch above it) makes a domain
     # restart at row 0, drawing the SAME COUNT from a DIFFERENT SET -- invisible to every assertion
-    # above. Asserting the set needs the pool indices, and those never leave build_mix (:2324).
+    # above. Asserting the set needs the pool indices, and those never leave build_mix (its
+    # `out[m] = pools[name][mine[1][m]]`).
     # Two things make the gap narrow rather than open:
-    #   - train.py:2236 REFUSES to start when any cursor would be discarded, unless
+    #   - build_mix's `if discarded and not Cfg.allow_partial_cursor` REFUSES to start when any
+    #     cursor would be discarded, unless
     #     --allow_partial_cursor is passed. The launch lines do not pass it, so a discarded cursor
     #     is a crash and not a silent restart.
-    #   - Cfg._cursor_discarded is published (:2231), and the assertion below reads it.
+    #   - Cfg._cursor_discarded is published beside Cfg._cursor_seeded, and the assertion below
+    #     reads it.
     # So this reads the flag build_mix sets rather than re-deriving the fact.
     disc = list(getattr(train.Cfg, "_cursor_discarded", []) or [])
     if disc:
@@ -709,7 +718,8 @@ def _check_plan_inner(name, n, mix, mix_path, tok, cur, cursor_seed, cursor_srcf
                         f"the control already trained on, at an unchanged row count.")
     if not getattr(train.Cfg, "_cursor_seeded", False):
         problems.append(f"{name}: Cfg._cursor_seeded is False, so NO domain's cursor seeded the "
-                        f"plan -- every natural domain restarted at row 0 (train.py:2230).")
+                        f"plan -- every natural domain restarted at row 0 (build_mix sets "
+                        f"Cfg._cursor_seeded from `any(v > 0 for v in used.values())`).")
     return problems, None
 
 

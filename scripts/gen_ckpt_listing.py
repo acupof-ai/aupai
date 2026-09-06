@@ -78,7 +78,7 @@ def _pod_scan():
     out = []
     for line in r.stdout.splitlines():
         # %i, THE INODE, is collected because the roller pins by inode and a deletion plan that
-        # cannot see pins would delete pinned files (train.py:2630-2645, §162). Four fields now,
+        # cannot see pins would delete pinned files (train.py's pinned_inodes test, §162). Four fields now,
         # and the name is last so a filename containing spaces still parses.
         parts = line.split(None, 3)
         if len(parts) != 4:
@@ -634,7 +634,7 @@ def deletion_plan(listing_path, scan, now=None, facts_dir=None):
       under exactly that name.
 
       *.milestone_*.pt IS NEVER TOUCHED. train.py's roller pins by INODE against those files
-      (train.py:2630-2645), so a milestone hardlink is what makes a checkpoint survive rotation.
+      (train.py's pinned_inodes stat), so a milestone hardlink is what makes a checkpoint survive rotation.
       Deleting the link unpins the file it protects, and the next save rotates the real checkpoint
       away -- the deletion would take effect minutes later, somewhere else.
 
@@ -670,7 +670,7 @@ def deletion_plan(listing_path, scan, now=None, facts_dir=None):
             [],
             [
                 "the scan carries no inode column, so pins cannot be seen -- a plan built "
-                "without them would name files the roller is protecting (train.py:2630-2645)"
+                "without them would name files the roller is protecting (train.py's pinned_inodes test)"
             ],
             [],
         )
@@ -782,7 +782,7 @@ def _fact_subjects(names, root=None, facts_dir=None):
 def _pinned_inodes(scan):
     """Names in `scan` that share an inode with a *.milestone_*.pt file, or None if unknown.
 
-    The roller's own test (train.py:2630-2645), reproduced rather than approximated: it stats every
+    The roller's own test (train.py's pinned_inodes), reproduced rather than approximated: it stats every
     *.milestone_*.pt and skips a stale file whose st_ino matches. Judging a pin by NAME would miss
     exactly the files the pin exists to protect, because a pin IS a hardlink under a different name.
 
