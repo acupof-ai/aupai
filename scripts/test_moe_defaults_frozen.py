@@ -127,7 +127,7 @@ def main():
           f"buffer{'' if ok else f' -- params {extras}, buffers {[b[0] for b in bufs]}'}")
 
     # 4. THE OPTIMIZER GROUPING. Today every FFN matrix is 2D and lands in MUON by the
-    # `p.ndim == 2` branch (train.py:1069), and NO group holds a router. --moe_router_lr must add
+    # `p.ndim == 2` branch in build_optimizers, and NO group holds a router. --moe_router_lr must add
     # an AdamW group for the router while leaving the experts in Muon exactly as the dense FFN
     # they replace (4c ruling (f)), so this records the pre-flag shape: FFN in Muon, no router
     # anywhere. Built on a REAL model because the grouping is decided by build_optimizers over
