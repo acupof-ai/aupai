@@ -112,9 +112,9 @@ class DeltaRecurrence(nn.Module):
     WHY THE ARGUMENT AND NOT x.shape. The width used to be read off the input
     (`B, T, D = x.shape`), which silently ties the working width to the residual: hand this
     module a slice and every reshape below is wrong by the ratio. `heads` comes in the same way
-    and for the same reason -- head_dim must stay 128 (train.py:2058, the FlashKDA CUTLASS
-    kernel), so a mixer at inner=768 carries 6 heads while its sibling at inner=256 carries 2,
-    and neither can be derived from cfg alone.
+    and for the same reason -- head_dim must stay 128 (train.py's `head_dim must be 128` raise in
+    main(), the FlashKDA CUTLASS kernel), so a mixer at inner=768 carries 6 heads while its sibling
+    at inner=256 carries 2, and neither can be derived from cfg alone.
     """
 
     def __init__(self, cfg, inner=None, heads=None):
@@ -168,7 +168,7 @@ class DeltaRecurrence(nn.Module):
             # isolates exactly, so this conv was the only site.
             #
             # Tap i at output position t reads input t-(K-1-i), legal only when that read lands in
-            # the same document. cu indexes the FLAT B*T stream (train.py:669) while h is
+            # the same document. cu indexes the FLAT B*T stream (train.py's doc_cu_seqlens) while h is
             # [B, D, T], so the mask is built flat and viewed as [B, 1, T] to broadcast over D.
             # A multiplier per tap keeps this pure arithmetic, so inductor still fuses it: an fla
             # ShortConvolution would isolate too, but it is a Triton kernel, opaque to inductor,
@@ -415,7 +415,8 @@ class HeadMix(nn.Module):
     max|diff| 1.43e-06 and torch.allclose True (2026-09-04). So no fusion mechanism is needed and
     no parameter is spent on one.
 
-    HEAD_DIM STAYS 128 on both halves (train.py:2058, the FlashKDA CUTLASS kernel), which is what
+    HEAD_DIM STAYS 128 on both halves (train.py's `head_dim must be 128` raise, the FlashKDA CUTLASS
+    kernel), which is what
     makes the split arithmetic rigid: inner = heads * 128, so a 3:1 split at d=1024/h=8 is
     KDA h=6 inner=768 and MLA h=2 inner=256. h must be divisible by 4 -- at d=768/h=6 it is not,
     which is why this arm runs at d=1024/h=8 and not at the Stage D shape.
@@ -428,7 +429,8 @@ class HeadMix(nn.Module):
             raise ValueError(
                 f"head_mixed ratio {ratio}:1 needs heads divisible by {ratio + 1}, got heads={h}. "
                 f"head_dim is pinned to {cfg.d // h} by the FlashKDA CUTLASS kernel "
-                f"(train.py:2058), so the split cannot be taken in fractions of a head.")
+                f"(train.py refuses any other head_dim in main()), so the split cannot be taken in "
+                f"fractions of a head.")
         hd = cfg.d // h
         self.h_mla = h // (ratio + 1)
         self.h_kda = h - self.h_mla
@@ -605,8 +607,9 @@ class ProductKeyMemory(nn.Module):
         independent of table size.
 
         BOTH OPERANDS FORCED TO fp32, not assumed from the buffer's dtype. `row_probe` is a
-        buffer, so `model.to(torch.bfloat16)` -- which train.py:2435 applies to the whole model
-        under --fp8 -- casts it along with everything else. The projection would then accumulate in
+        buffer, so `model.to(torch.bfloat16)` -- which train.py applies to the whole model
+        under --fp8 (`raw_model = raw_model.to(torch.bfloat16)`) -- casts it along with everything
+        else. The projection would then accumulate in
         bf16, where each partial sum over d terms is ~d times the size of a one-ULP change, and the
         smallest real updates would round out of the checksum: readout 6 would report a barely
         moving table as frozen, which is the failure it exists to detect. Caught by the one-ULP
@@ -958,11 +961,11 @@ class MoEFFN(nn.Module):
     def _apply(self, fn, recurse=True):
         """Cast/move the module while keeping expert_bias's fp32 VALUES, not just its dtype.
 
-        `raw_model.to(torch.bfloat16)` (train.py:3134 under --fp8, :3162 under --bf16) walks every
+        `raw_model.to(torch.bfloat16)` (train.py, under --fp8 and again under --bf16) walks every
         floating buffer, so register_buffer's `dtype=torch.float32` is overwritten before step 0 --
         the buffer was already fp32 at construction and became bf16 anyway, which is why
-        ckpt_b0_moe48_8b.pt.step1000 holds bf16. Same trap the store's checksum path records at
-        :608-632 ("THE STORE IS RE-FLOATED"); this is that pattern for the control loop.
+        ckpt_b0_moe48_8b.pt.step1000 holds bf16. Same trap the store's checksum path records under
+        "THE STORE IS RE-FLOATED"; this is that pattern for the control loop.
 
         WHY fp32 IS REQUIRED HERE, not preferred: the bias is an accumulator stepped by
         gamma 0.001, and bf16's spacing at magnitude 0.5 is 0.00391 -- four times the step. On the
@@ -1098,7 +1101,8 @@ class MoEFFN(nn.Module):
         # mat_a.dtype=torch.float32 and mat_b.dtype=torch.float32" -- measured on card 1: eager
         # fp32/fp32 returns fp32, compiled fp32/fp32 raises, both bf16 paths fine.
         #
-        # The model reaches bf16 only under --fp8 (train.py:2786-2789, `fp8 = args.fp8 and amp`).
+        # The model reaches bf16 under --fp8 (`fp8 = args.fp8 and amp` in train.py's main) and, since
+        # readout 5', under --bf16 as well -- but under neither by default.
         # run_ddp.sh passes --fp8; scripts/test_e2e.py invoked train.py without it, so the walk ran
         # a configuration the launch never runs and found this.
         #

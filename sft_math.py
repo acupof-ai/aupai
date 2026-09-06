@@ -563,7 +563,8 @@ def main():
                 if is_main:
                     # opt=good_opt, and the omission of it is why N7 Stage B's 250-step arms
                     # could not be extended: save_checkpoint has taken an `opt` argument all
-                    # along (train.py:1024, stored verbatim as ck["opt"]), this site already
+                    # along (train.py's `def save_checkpoint(path, model_state, cfg, vocab_id,
+                    # opt=None, step=None)`, stored verbatim as ck["opt"]), this site already
                     # held the snapshot on the line above, and not passing it wrote a
                     # checkpoint with `step` and no optimizer. A resume from that restarts
                     # Adam moments and the LR schedule, which is a new run wearing the word
