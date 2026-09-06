@@ -1690,6 +1690,183 @@ def _broken_executed_hook_matches_main():
     return d
 
 
+def _broken_launcher_states_anneal_frac():
+    """A REAL launcher and a REAL mix, with the flag stripped out.
+
+    Not a hand-written launch_w.sh: the first version wrote a synthetic script and mix, and
+    the selftest driver refused it -- "broken world holds no file at a repo-real path" -- for
+    the right reason. A world invented from nothing tests the regex against text I chose, so
+    it passes on a check whose predicate has drifted away from what launchers actually look
+    like. Copying scripts/lr_probe.sh means the world holds the real invocation, the real
+    quoting and the real flag ordering, and the ONLY difference from a passing tree is the one
+    thing under test: --anneal_frac is gone.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "scripts"))
+    os.makedirs(os.path.join(d, "data"))
+    src = os.path.join(ROOT, "scripts", "lr_probe.sh")
+    mix = os.path.join(ROOT, "data", "mix_probe_lr.json")
+    if not (os.path.exists(src) and os.path.exists(mix)):
+        raise SelftestSkip("scripts/lr_probe.sh or data/mix_probe_lr.json absent here")
+    shutil.copy(mix, os.path.join(d, "data", "mix_probe_lr.json"))
+    txt = open(src, encoding="utf-8").read()
+    # Strip the flag and its value wherever it appears, leaving everything else byte-identical.
+    stripped = re.sub(r"\s*--anneal_frac\s+\S+", "", txt)
+    if "--anneal_frac" in stripped:
+        raise SelftestSkip("could not strip --anneal_frac from lr_probe.sh")
+    with open(os.path.join(d, "scripts", "lr_probe.sh"), "w") as f:
+        f.write(stripped)
+    return d
+
+
+
+def _broken_launcher_outside_scripts():
+    """The SCOPE half: a real launcher under runs/, flag stripped, with scripts/ left clean.
+
+    The registered world breaks the predicate inside scripts/, so it cannot distinguish a
+    check that walks the tree from one that globs scripts/*.sh. This one is built to make
+    exactly that difference visible: scripts/lr_probe.sh is copied byte-identically (it states
+    the flag, so it PASSes), and the violation is runs/mem_probe_base.sh with --anneal_frac
+    stripped. Under the old glob this world reported PASS over one launcher -- green on the
+    wrong population, which is what de measured on 2026-09-07. It must FAIL now.
+    """
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "scripts"))
+    os.makedirs(os.path.join(d, "runs"))
+    os.makedirs(os.path.join(d, "data"))
+    clean = os.path.join(ROOT, "scripts", "lr_probe.sh")
+    clean_mix = os.path.join(ROOT, "data", "mix_probe_lr.json")
+    probe = os.path.join(ROOT, "runs", "mem_probe_base.sh")
+    probe_mix = os.path.join(ROOT, "data", "mix_200m_8b.json")
+    for p in (clean, clean_mix, probe, probe_mix):
+        if not os.path.exists(p):
+            raise SelftestSkip(f"{os.path.relpath(p, ROOT)} absent here")
+    shutil.copy(clean, os.path.join(d, "scripts", "lr_probe.sh"))
+    shutil.copy(clean_mix, os.path.join(d, "data", "mix_probe_lr.json"))
+    shutil.copy(probe_mix, os.path.join(d, "data", "mix_200m_8b.json"))
+    txt = open(probe, encoding="utf-8").read()
+    stripped = re.sub(r"\s*--anneal_frac\s+\S+", "", txt)
+    if "--anneal_frac" in stripped:
+        raise SelftestSkip("could not strip --anneal_frac from runs/mem_probe_base.sh")
+    with open(os.path.join(d, "runs", "mem_probe_base.sh"), "w") as f:
+        f.write(stripped)
+    return d
+
+
+def check_launcher_states_anneal_frac(root):
+    """A launcher that trains on a mix declaring anneal_frac must pass --anneal_frac.
+
+    train.py's _mix_anneal_frac REFUSES when the mix's declared anneal_frac differs from
+    Cfg.anneal_frac, and Cfg's default is 0.10 while 13 of the 24 data/mix_*.json declare 0.0
+    or 0. So a launcher naming one of those and passing no flag dies IN SETUP, before any
+    step, with a message about the mix -- and nothing points at the missing flag.
+
+    THE TWO PATHS THAT ARE ALREADY COVERED, which is why this check is narrow. `harness
+    launch` always states it, because anneal_frac is one of train.py's 12 RECIPE_REQUIRED
+    names and argparse makes it mandatory. scripts/profile_step_cost.py sets
+    Cfg.anneal_frac from the mix and has its own pairwise selftest for it. What neither
+    covers is a shell script that is neither of those, and that is the gap de named on
+    2026-09-07: three consecutive launches died in setup and were read as MEMORY failures,
+    because torchrun prints its summary last and the child's traceback scrolls off a tail.
+
+    THE PREDICATE IS "INVOKES A TRAINER", NOT "MENTIONS A MIX". scripts/pod_backup.sh names
+    data/mix_v3.json in a backup file list -- a path that does not even exist in the tree --
+    and a mention-based test flags it, which is a false positive on a script that trains
+    nothing. So a file counts only when it also runs torchrun, train.py, profile_step_cost.py
+    or run_ddp.sh. MEASURED on this tree: mention-based finds 7 files under scripts/,
+    trainer-based finds 6.
+
+    THE SCOPE IS EVERY .sh IN THE TREE, and stating it is half the check. The first version
+    globbed scripts/*.sh, and de measured what that left out on 2026-09-07: `git grep -l
+    'data/mix_' -- '*.sh'` returns 15 files, 7 of them runs/mem_probe_{base,bn,l2,sel2,
+    sel2_l2,sel3,TEMPLATE}.sh, all invoking torchrun against data/mix_200m_8b.json, which
+    declares anneal_frac 0.0. Every one is exactly the population this exists for, and the
+    check reported "6 launcher(s)" without them -- a number that reads as coverage. No live
+    violation then or now (all 7 state --anneal_frac 0, agreeing with the mix); the cost was
+    that the next probe copied from mem_probe_TEMPLATE.sh with the flag dropped would pass
+    here and die in setup. Both halves of a check are populations, what it tests FOR and what
+    it tests OVER, and the second is the one a docstring usually leaves out. Now 13.
+
+    EXEMPT, and named rather than pattern-matched: a launcher whose trainer entry point reads
+    the key itself. profile_step_cost.py does, so scripts/mem_decomp_run.sh legitimately
+    passes no flag. Named as a pair (launcher, entry point) so that adding the exemption to a
+    launcher which then switches entry points does not silently keep it. KNOWN AND LEFT: the
+    pair test is `base == b and e in txt`, so a launcher keeping the name mem_decomp_run.sh
+    while invoking train.py and merely MENTIONING profile_step_cost.py in a comment inherits
+    the exemption. Unreachable today -- the tree holds one mem_decomp_run.sh and it invokes
+    profile_step_cost.py for real -- and tightening it to a call-site parse buys less than it
+    costs, since the plain rename (exempt name, train.py entry point) already FAILs. Recorded
+    so the next reader stops here instead of re-deriving it.
+
+    WHAT THIS DELIBERATELY DOES NOT DO: it does not read the flag's VALUE. A launcher passing
+    --anneal_frac 0.1 against a mix declaring 0.0 still refuses at runtime, and that is
+    train.py's job to report -- it has both numbers and this check has only the argv text,
+    where `--anneal_frac "$AF"` is a variable this cannot resolve. Stating the flag is the
+    property with a static answer."""
+    import glob as _glob
+
+    # No scripts/ gate: the check walks the whole tree, so the presence of one directory
+    # says nothing about whether there is anything to check. The two real emptiness
+    # conditions are tested where they arise -- no declaring mix below, no launcher at the
+    # end -- and each SKIPs rather than returning a PASS over zero files.
+    # (launcher basename, entry point that reads the mix key itself)
+    exempt = {("mem_decomp_run.sh", "profile_step_cost.py")}
+    declaring = set()
+    for p in _glob.glob(os.path.join(root, "data", "mix_*.json")):
+        try:
+            with open(p, encoding="utf-8") as f:
+                if "anneal_frac" in json.load(f):
+                    declaring.add(os.path.basename(p))
+        except (OSError, ValueError):
+            continue
+    if not declaring:
+        return SKIP, "no data/mix_*.json declares anneal_frac, so nothing can refuse"
+    invoker = re.compile(r"torchrun|python3?\s+(?:scripts/)?(?:train|profile_step_cost)\.py"
+                         r"|run_ddp\.sh")
+    # Walked, not globbed: the directory a launcher happens to sit in is not part of the
+    # property. .git is skipped because its objects are not source.
+    launchers = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d != ".git"]
+        launchers.extend(os.path.join(dirpath, f) for f in filenames if f.endswith(".sh"))
+    bad, checked = [], 0
+    for sh in sorted(launchers):
+        try:
+            txt = open(sh, encoding="utf-8", errors="replace").read()
+        except OSError:
+            continue
+        if not invoker.search(txt):
+            continue
+        named = {os.path.basename(m) for m in re.findall(r"data/mix_[\w.]+\.json", txt)}
+        if not (named & declaring):
+            continue
+        checked += 1
+        if "--anneal_frac" in txt:
+            continue
+        base = os.path.basename(sh)
+        if any(base == b and e in txt for b, e in exempt):
+            continue
+        bad.append(f"{os.path.relpath(sh, root)} trains on {sorted(named & declaring)} "
+                   f"and states no --anneal_frac")
+    if bad:
+        return FAIL, (f"{len(bad)} launcher(s) would refuse in setup, before any step, with a "
+                      f"message about the mix and no mention of the flag: {'; '.join(bad[:3])}")
+    if not checked:
+        # A PASS over zero launchers is the vacuous shape: it reads as coverage and cannot
+        # fail. The scope is now the whole tree, so this fires only in a world that holds
+        # no launcher at all -- which is a world this check does not speak about.
+        return SKIP, (f"no .sh in this tree invokes a trainer against one of the "
+                      f"{len(declaring)} mix(es) declaring anneal_frac")
+    return PASS, (f"{checked} launcher(s) train on a mix declaring anneal_frac; each states the "
+                  f"flag or reads the key at its entry point ({len(declaring)} mix(es) declare it)")
+
+
 def check_selftests_are_gated(root):
     """Every file carrying its own --selftest is in the hook's SELFTEST_FILES map.
 
@@ -15689,6 +15866,13 @@ CHECKS = [
         _broken_executed_hook_matches_main,
     ),
     (
+        "launcher_states_anneal_frac",
+        "a launcher training on a mix that declares anneal_frac states --anneal_frac",
+        "train.py refuses when the mix's declared anneal_frac differs from Cfg's 0.10 default, and 13 of 24 mixes declare 0.0 -- so a launcher that is neither `harness launch` (argparse makes the flag mandatory) nor profile_step_cost.py (reads the key itself) dies in SETUP with a message about the mix and no pointer to the flag; three such launches were read as MEMORY failures because torchrun prints its summary last",
+        check_launcher_states_anneal_frac,
+        _broken_launcher_states_anneal_frac,
+    ),
+    (
         "selftests_are_gated",
         "every file carrying its own --selftest is in the hook's SELFTEST_FILES map",
         "a readout commit landed with its selftest RED under five green hook lines: the hook ran tree/blob/ruff/harness and none of them knew the edited file carried fifteen cases testing the guard that commit was changing -- it checked what it happened to check, not what the commit changed",
@@ -16008,6 +16192,7 @@ EVIDENCE = {
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
+    "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
     # tree's working file, neither of which is repo content. Green here says nothing about
     # another machine, and a clone with no linked worktrees SKIPs.
@@ -20095,6 +20280,22 @@ def _demo(only=None):
                                     f"({_why[:70]})")
             finally:
                 shutil.rmtree(_d, ignore_errors=True)
+
+    # launcher_states_anneal_frac has TWO population halves and CHECKS carries one world per
+    # row: the registered world breaks the PREDICATE inside scripts/, so it passes identically
+    # whether the check walks the tree or globs scripts/*.sh. This one breaks the SCOPE -- a
+    # real launcher under runs/ with the flag stripped, scripts/ left clean -- and the old
+    # scripts/*.sh version reports PASS on it, measured. Same §71 shape twice over: e1 fixed
+    # mention-vs-trainer in the predicate and left the same class in the scope (de, 2026-09-07).
+    _out = _broken_launcher_outside_scripts()
+    if _out:
+        try:
+            _st, _why = check_launcher_states_anneal_frac(_out)
+            if _st != FAIL:
+                untested.append(f"launcher_states_anneal_frac reported {_st} on a launcher "
+                                f"outside scripts/ with no flag ({_why[:70]})")
+        finally:
+            shutil.rmtree(_out, ignore_errors=True)
 
     # shapes_table_covers_doc has two halves its registered world does not exercise: an
     # incident that reaches the doc but not the table, and a heading number written twice.
