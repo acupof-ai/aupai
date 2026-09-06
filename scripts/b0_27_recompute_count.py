@@ -145,7 +145,15 @@ def build(grad_ckpt, seed=42, shape=None):
     # moe_shared 1, top_k 3 needs moe_expert_ffn 64 -- (3+1)*64 = 256.
     Cfg.moe_experts, Cfg.moe_layers, Cfg.moe_top_k = 8, "0-3", 3
     Cfg.moe_shared, Cfg.moe_expert_ffn = 1, 64
-    Cfg.grad_ckpt = False          # constructed OFF; see docstring
+    # CONSTRUCTED OFF, FLAG SET AFTERWARDS -- and this is what makes the measurement independent
+    # of whether the moe_experts + grad_ckpt guard exists. That guard only refuses in
+    # HybridLM.__init__, so setting self.grad_ckpt after construction reaches `ckpt =
+    # self.grad_ckpt and self.training` in _body either way. THE CONSEQUENCE MATTERS FOR THE
+    # ORDER OF WORK: pod_push refuses uncommitted files, so a guard deletion cannot be
+    # card-verified before it is committed. Because this test bypasses the guard, the 1.0000
+    # reading verifies THE FIX, not the deletion -- so the fix can be verified with the guard
+    # still in place, and the deletion then rests on a measurement that is already in hand.
+    Cfg.grad_ckpt = False
     # EVERY SHAPE FIELD IS OVERRIDABLE FROM THE CLI, because both of this script's failures so
     # far were config constraints that exist only on the card (MoEFFN's parity raise, then
     # FlashKDA's head_dim) and each one cost a commit, a merge and a re-claim to change one
@@ -162,7 +170,10 @@ def build(grad_ckpt, seed=42, shape=None):
     # all excluded, dtype was the one thing that differed from every path that works. I burned two
     # card claims blaming head_dim before reading that comment.
     m = HybridLM(Cfg).cuda().to(torch.bfloat16).train()
-    m.grad_ckpt = grad_ckpt
+    # Belt and braces: HybridLM copies cfg.grad_ckpt to self.grad_ckpt, and `ckpt =
+    # self.grad_ckpt and self.training` is what _body reads. Setting it again costs nothing and
+    # makes the arm's identity independent of that copy.
+    m.grad_ckpt = bool(grad_ckpt)
     return m, Cfg
 
 
@@ -176,7 +187,7 @@ def moe_layers_of(m):
     return out
 
 
-def run_arm(grad_ckpt, seed, steps, shape=None):
+def run_arm(grad_ckpt, seed, steps, shape=None, skip_commit=False):
     import torch
     m, cfg = build(grad_ckpt, seed, shape)
     layers = moe_layers_of(m)
@@ -204,8 +215,33 @@ def run_arm(grad_ckpt, seed, steps, shape=None):
         # this model with grad_ckpt off and on.
         h, _ = m(ids, ids)
         h.float().mean().backward()   # backward is what triggers recompute
+        if not skip_commit:
+            # THE MODEL-LEVEL SWEEP, the same call train.py / sft.py / sft_math.py make, and its
+            # RETURN VALUE IS ASSERTED. tilerl's requirement: "not 'the line is in the code', but
+            # 'the line executed'". A sweep that resolved zero layers would leave the surplus in
+            # place and the ratio would read 2.0 -- which is a real failure, but it would look
+            # identical to the fix not working, so the count is checked instead of assumed.
+            # Prefer the model-level sweep when it exists and assert its coverage; fall back to
+            # the per-layer call. The sweep lands in the guard-deletion commit, so this script has
+            # to verify the fix BEFORE that exists -- pod_push refuses uncommitted files, which
+            # makes "card-verify the deletion before committing it" impossible, while verifying
+            # the FIX needs no deletion at all (build() sets grad_ckpt after construction).
+            if hasattr(m, "commit_moe_token_counts"):
+                swept = m.commit_moe_token_counts()
+                if swept != len(layers):
+                    sys.exit(f"REFUSING: commit_moe_token_counts() swept {swept} layer(s) but "
+                             f"this model has {len(layers)}. A sweep that misses layers leaves "
+                             f"their surplus uncorrected and the ratio would read 2.0 for a "
+                             f"reason that is not the one under test")
+            else:
+                for _i, _n, sub in layers:
+                    sub.commit_token_counts()
         m.zero_grad(set_to_none=True)
 
+    # COMMIT ONCE PER MICRO-BATCH, exactly where train.py does it: after backward, in the loop
+    # body. Without this the ON arm keeps the recompute surplus and the test measures the bug
+    # instead of the fix -- so this call is what makes the post-fix run meaningful, and its
+    # absence is what the pre-fix run measured.
     counts = {f"{i}.{n}": sub.tokens_per_expert.detach().cpu().tolist()
               for i, n, sub in layers}
     windows = {f"{i}.{n}": int(sub.windows) for i, n, sub in layers}
@@ -217,6 +253,9 @@ def main():
     ap.add_argument("--steps", type=int, default=2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--json", help="write the result here")
+    ap.add_argument("--no-commit", action="store_true",
+                    help="skip commit_token_counts() -- reproduces the PRE-FIX behaviour, which "
+                         "is how the 2.0000 ratio was originally measured")
     ap.add_argument("--set", dest="overrides", default="",
                     help="comma-separated Cfg overrides, e.g. d=512,heads=4. Ints are parsed as "
                          "ints; everything else stays a string (moe_layers is '0-3')")
@@ -247,8 +286,8 @@ def main():
     print(f"card: {torch.cuda.get_device_name(0)}  "
           f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}")
 
-    off_c, off_w = run_arm(False, a.seed, a.steps, shape)
-    on_c, on_w = run_arm(True, a.seed, a.steps, shape)
+    off_c, off_w = run_arm(False, a.seed, a.steps, shape, a.no_commit)
+    on_c, on_w = run_arm(True, a.seed, a.steps, shape, a.no_commit)
 
     if set(off_c) != set(on_c):
         sys.exit(f"REFUSING: the two arms disagree on which layers are MoE: "
