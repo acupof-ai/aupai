@@ -1,2 +1,0 @@
-49083
-/opt/homebrew/opt/python@3.11/bin/python3.11 train.py --name 0.2b_8b_b192 --mix data/mix_200m_8b.json --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 8 --accum 4 --bf16 --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 --val_every 200 --save_every 500 --max_steps 10172 --seed 42
