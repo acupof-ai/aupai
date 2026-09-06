@@ -23,7 +23,7 @@ if the arms really differ, and the ways they can silently collapse are not hypot
     tied, one zero_() does both tensors; untied, tok's pad rows keep their std=0.02 draw and the
     untied arm trains pad rows the tied arm never touched. That is a hidden variable in an A/B
     about the head (1e caught this before the run).
-  - `_fp8_ok` excludes the head BY NAME (train.py:362), and untying must not quietly send a
+  - `_fp8_ok` excludes the head BY NAME (train.py's exclusion tuple), and untying must not quietly send a
     33.6M-parameter matmul into fp8 -- the audit table records head as fp8-excluded.
 
 Every check below was verified red on its own broken world.

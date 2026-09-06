@@ -183,7 +183,7 @@ def main():
         if not os.path.exists(cache):
             continue
         # The cache is a FLAT token stream, not [N, seq+1]: tokens_code_rp1t.pt is
-        # torch.Size([7569081553]), one dimension. train.py:1468 reshapes it with
+        # torch.Size([7569081553]), one dimension. train.py's _domain_seqs reshapes it with
         # data[: n * (seq+1)].view(-1, seq+1), so rows = len // (seq+1). Reading
         # .shape[0] as a row count gave pools ~4000x too large and every epoch figure
         # as 0.00 -- and since the pool feeds the CAP, a capped domain would have been

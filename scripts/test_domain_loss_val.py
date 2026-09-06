@@ -50,7 +50,7 @@ def main():
     os.makedirs(corpus)
     # Enough documents to pack into several sequences at a short seq length. Distinct
     # text per row so a row's identity is visible in the tokens.
-    # "content", not "text". train.py:1197 `_jsonl_content` reads ["content"] and raises
+    # "content", not "text". train.py's `_jsonl_content` reads ["content"] and raises
     # KeyError on anything else -- the same KeyError('content') that killed the 20B launch
     # at step 0. This test wrote "text" and so died in its own setup, which is why it read
     # as an unrunnable candidate for deletion (de-5, 2026-09-02): a stale fixture key, not
@@ -84,8 +84,8 @@ def main():
         # setting it redirected nothing and _domain_cache_path still returned
         # /data00/tokens_probe_domain.pt. MEASURED 2026-09-02: this test wrote a real
         # cache into the pod's shared /data00 at 05:50:42Z with a 0-byte .vocab beside
-        # it, because load_tokenizer leaves train.VOCAB_ID None and :1686 writes
-        # `VOCAB_ID or ""`. probe_domain is not in mix_500m so the live run was unharmed,
+        # it, because load_tokenizer leaves train.VOCAB_ID None and the stamp writer then
+        # wrote `VOCAB_ID or ""`. probe_domain is not in mix_500m so the live run was unharmed,
         # and that was luck: any domain name colliding with the mix would have poisoned a
         # cache the run reads. A test that writes outside its tempdir is not a CPU-only
         # test (fb, 2026-09-02).

@@ -10,15 +10,15 @@ right. So run it.
 
 Runs on the pod because data/tokenizer.json and data/corpus/ live there only. CPU and RAM
 only: build_mix tokenizes and plans, it builds no model and touches no card. One small
-domain (cot, 13 shards) is enough -- train.py:1881-1882 executes per domain independently,
-so one domain exercises the same two lines nine would.
+domain (cot, 13 shards) is enough -- build_mix's used[name] cursor seeding executes per domain
+independently, so one domain exercises the same two lines nine would.
 
 Four things are checked, and the fourth is the one the other three cannot see:
 
   1. a cursor SEEDS used[]           -- the planned ROWS move, measured by content overlap
   2. no domain silently discards it  -- "cursor discarded" must not appear (tilerl)
   3. a mismatched seed IS refused    -- the guard fires when it should, so 2 is not vacuous
-  4. Cfg._cursor_seeded becomes true  -- what the LR compensation at train.py:2230 reads
+  4. Cfg._cursor_seeded becomes true  -- what the LR compensation `total_steps += resume_step` reads
      (renamed from _plan_trimmed in 8c61642; this file reads either name)
 
 Check 1 was "the plan shrinks" on the first run and that was wrong. Row count comes from
