@@ -10400,20 +10400,26 @@ def _friction_rows(path=None):
 
 
 def check_friction_minutes_required(root):
-    """near_miss and process_failure friction rows must carry minutes_lost.
+    """near_miss, process_failure, and hook friction rows must carry minutes_lost.
 
-    These two kinds are the ones where the cost is the whole point: a near-miss with no
+    These kinds are the ones where the cost is the whole point: a near-miss with no
     minutes is a story, not a data point, and a process failure with no minutes cannot be
     ranked against the other causes. 2026-09-04: 3/3 rows of these kinds lacked
     minutes_lost, and the friction summary printed "minutes not reported" for the
     combined cause -- the second-largest unfixed friction item, invisible to ranking.
 
-    Baseline 3 (b0's rows, 2026-09-03/04): the check FAILs if a FOURTH row is added
-    without minutes_lost. When b0 fills in the historical minutes, lower the baseline."""
+    2026-09-06 (de review, task 44-40): hook added. override deliberately EXCLUDED:
+    override rows are machine-written by merge_main.sh (behind-main drain, review-gate
+    bypass) at a moment when no human is present to measure cost, so the check would
+    demand a field the writer cannot supply. The override mechanism's cost is visible by
+    count (85 rows, rank 1) which is the honest signal for a machine-written row.
+
+    Baseline 6 (2026-09-06): 3 hook + 2 near_miss + 1 process_failure.
+    The check FAILs if a 7th row is added without minutes_lost."""
     p = os.path.join(root, "runs", "friction.jsonl")
     if not os.path.exists(p):
         return SKIP, "no runs/friction.jsonl"
-    BASELINE = 3
+    BASELINE = 6
     bad = []
     for i, ln in enumerate(open(p, encoding="utf-8"), 1):
         ln = ln.strip()
@@ -10423,24 +10429,24 @@ def check_friction_minutes_required(root):
             r = json.loads(ln)
         except json.JSONDecodeError:
             continue
-        if r.get("kind") in ("near_miss", "process_failure") and "minutes_lost" not in r:
+        if r.get("kind") in ("near_miss", "process_failure", "hook") and r.get("minutes_lost") is None:
             who = r.get("who", "?")
             what = r.get("what", "?")[:50]
             bad.append(f"line {i} ({who}: {what})")
     if len(bad) > BASELINE:
-        return FAIL, f"{len(bad)} near_miss/process_failure rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
+        return FAIL, f"{len(bad)} near_miss/process_failure/hook rows missing minutes_lost (baseline {BASELINE}): " + "; ".join(bad[BASELINE:BASELINE + 3])
     return PASS, f"{len(bad)}/{BASELINE} baseline rows missing minutes_lost; no new violations"
 
 
 def _broken_friction_minutes_required():
-    """A temp repo whose friction.jsonl has 4 near_miss rows without minutes_lost
-    (baseline is 3, so the 4th is a new violation)."""
+    """A temp repo whose friction.jsonl has 7 near_miss rows without minutes_lost
+    (baseline is 6, so the 7th is a new violation)."""
     d = _tmp_repo_shaped()
     fpath = os.path.join(d, "runs", "friction.jsonl")
     if os.path.islink(fpath):
         os.remove(fpath)  # symlink to the real file; replace with a temp-local copy
     with open(fpath, "w", encoding="utf-8") as fh:
-        for i in range(4):
+        for i in range(7):
             fh.write(json.dumps({"kind": "near_miss", "who": "x", "what": f"fixture {i}"}) + "\n")
     return d
 
@@ -10541,12 +10547,26 @@ def cmd_friction(argv):
         # table for every correction and make the top cause look less frequent than it was.
         resolutions = [r for r in rows if r.get("kind") == "resolution"]
         rows = [r for r in rows if r.get("kind") != "resolution"]
+
+        def _mechanism(cause):
+            """The mechanism behind a free-text cause, stripping variable detail.
+
+            AUPAI_BEHIND_MAIN_OK=1 used to commit N behind main (files) is one
+            mechanism regardless of N or the file list. Grouping by the raw cause
+            text fragments it into one row per (N, file-list) pair, hiding that it
+            is the top toll (34 rows across 10 variants on 2026-09-06)."""
+            if cause.startswith("AUPAI_BEHIND_MAIN_OK="):
+                return "AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main)"
+            return cause
+
         by_cause = {}
         for r in rows:
             c = (r.get("cause") or "?")
-            d = by_cause.setdefault(c, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
-                                        "fixed": 0, "last": ""})
+            mech = _mechanism(c)
+            d = by_cause.setdefault(mech, {"n": 0, "min": 0, "reported": 0, "kinds": set(),
+                                           "fixed": 0, "last": "", "causes": set()})
             d["n"] += 1
+            d["causes"].add(c)
             if isinstance(r.get("minutes_lost"), int):
                 d["min"] += r["minutes_lost"]
                 d["reported"] += 1
@@ -10554,20 +10574,29 @@ def cmd_friction(argv):
             if r.get("fix_applied"):
                 d["fixed"] += 1
             d["last"] = max(d["last"], r.get("when") or "")
-        print(f"{len(rows)} row(s), {len(by_cause)} cause(s), {len(resolutions)} resolution(s) "
+        print(f"{len(rows)} row(s), {len(by_cause)} mechanism(s), {len(resolutions)} resolution(s) "
               f"-- most rows first\n")
         for c, d in sorted(by_cause.items(), key=lambda kv: (-kv[1]["n"], kv[0])):
             mins = (f"~{d['min']} min (self-reported, {d['reported']}/{d['n']} rows)"
                     if d["reported"] else "minutes not reported")
             print(f"{d['n']:>3}x  {','.join(sorted(d['kinds'])):<14} {mins}")
             print(f"      {c}")
+            if len(d["causes"]) > 1:
+                variants = sorted(v for v in d["causes"] if v != c)
+                for v in variants[:5]:
+                    print(f"        variant: {v[:100]}")
+                if len(variants) > 5:
+                    print(f"        ... and {len(variants) - 5} more variant(s)")
             print(f"      {d['fixed']}/{d['n']} row(s) carry a fix; last {d['last']}")
             # PRINT THE SUPERSESSION UNDER THE CAUSE IT CORRECTS, not in a section of its own.
             # A resolution row filed away elsewhere leaves the refuted mechanism as the first
             # and last thing a reader sees -- which is the §159 shape: the retraction was
             # written down, in a place that did not reach the site that published the number.
+            # Match against the RAW causes, not the mechanism key: a supersession names a
+            # specific variant ("16 behind main") that the normalized key does not contain.
             for r in resolutions:
-                if (r.get("supersedes_cause") or "").lower() in c.lower():
+                sc = (r.get("supersedes_cause") or "").lower()
+                if any(sc in vc.lower() for vc in d["causes"]):
                     print(f"      SUPERSEDED {r.get('when')} by {r.get('who')}: "
                           f"{r.get('now_known')}")
                     if r.get("fixed_by"):
