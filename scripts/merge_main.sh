@@ -561,6 +561,34 @@ for _ in $(seq 1 120); do
       exit 1
     fi
     echo "merge_main: main ${_old:0:8} -> ${_new:0:8}" >&2
+    # ADVANCE THE INTEGRATION TREE'S WORKING FILES TO THE NEW main. The CAS moves a ref and
+    # touches no working tree -- which is the point -- but that tree's FILES are executed by
+    # everyone: .git/hooks/pre-commit is a symlink to ../../scripts/hooks/pre-commit, i.e. the
+    # integration tree's checked-out copy, and every worktree shares one .git. Before the flip
+    # that tree was always on main, so the executed hook was main's by coincidence. Detaching
+    # froze it: measured 2026-09-06 (b0 found it, e1 filed #48), the executing hook was md5
+    # 56e6cf2e = 4b364cac's blob while main's was f9b95b1d, 69 commits later. Any hook fix was
+    # inert everywhere until someone re-checked-out that tree by hand.
+    #
+    # `checkout --detach` rather than a branch: the tree must stay detached, or the next CAS is
+    # the silent one. Guarded on cleanliness for the same reason the detach above is -- nobody
+    # commits there, so a clean tree loses nothing, and a dirty one is somebody's misplaced work.
+    # A failure here is a WARNING, not a refusal: main has already moved and the merge succeeded,
+    # so exiting nonzero would report a landed integration as failed. It names the command
+    # instead, because a stale hook is silent and this line is the only notice anyone gets.
+    if [ -z "$(git -C "$MAIN" status --porcelain 2>/dev/null)" ]; then
+      if git -C "$MAIN" checkout --detach "$_new" -q 2>/dev/null; then
+        echo "merge_main: integration tree advanced to ${_new:0:8} (it holds the hook everyone runs)" >&2
+      else
+        echo "merge_main: WARNING -- could not advance the integration tree; the pre-commit hook" >&2
+        echo "  every worktree executes is that tree's copy and is now stale. Fix by hand:" >&2
+        echo "    git -C $MAIN checkout --detach main" >&2
+      fi
+    else
+      echo "merge_main: WARNING -- the integration tree is dirty, so its files were NOT advanced." >&2
+      echo "  Every worktree executes ITS copy of scripts/hooks/pre-commit, which is now stale:" >&2
+      git -C "$MAIN" status --porcelain 2>/dev/null | sed 's/^/    /' >&2
+    fi
     # THE PENDING OVERRIDE ROWS, written here rather than by the hook. A hook that appends to a
     # ledger mid-commit dirties the tree during the commit and refused the next merge; the hook
     # now records the event under its own git dir (invisible to `git status`, per-worktree) and
