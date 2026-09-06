@@ -952,7 +952,15 @@ def check_milestone_ckpt_pinned(root):
             ok += 1
             continue
         tok = r.get("milestone")
-        pins = glob.glob(os.path.join(root, f"*milestone_{tok}*.pt")) if tok else []
+        # ANCHORED TO THE RUN, because `*milestone_{tok}*.pt` accepts any run's pin. Two runs
+        # reaching the same milestone is the normal case (every ladder point has one per stage),
+        # and the unanchored glob let one of them vouch for the other: a row for
+        # ckpt_runA.pt.step5000 read PASS while only ckpt_runB.milestone_<tok>_step5000.pt was
+        # on disk, which is the 3.24B loss this check exists to catch, wearing a sibling's name.
+        # Same class as the _MILESTONE_RE comment below (a run NAMED 30b parsed as the 30b
+        # milestone) one level up: the pin belongs to a run, not to a token.
+        run = re.sub(r"\.pt(\.step\d+)?$", "", ck)
+        pins = glob.glob(os.path.join(root, f"{run}.milestone_{tok}*.pt")) if tok else []
         if pins:
             ok += 1
         elif r.get("unrepeatable"):
@@ -988,6 +996,36 @@ def _broken_milestone_ckpt_pinned():
             f.write(json.dumps(r, ensure_ascii=False) + "\n")
     # a checkpoint must exist or the check SKIPs instead of failing
     open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    return d
+
+
+def _broken_milestone_pin_belongs_to_another_run():
+    """A row whose pin exists -- under a DIFFERENT run's name.
+
+    The unanchored glob `*milestone_{tok}*.pt` counted that as pinned, so a row could read
+    PASS while its own weights were gone. Two runs at the same milestone is the normal case,
+    which is what made this reachable rather than theoretical: the ladder has 8b pins for
+    pretrain_15b_s1 and matchedtok_step5000 for 1.5b-a0.2b-e48_8b, and any future pair
+    sharing a token would have vouched for each other.
+
+    Both halves are asserted, because an anchor that refuses everything would also make this
+    world red: run B's pin must FAIL and run A's own pin must PASS on the same row."""
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    row = {"ckpt": "ckpt_runA.pt.step5000", "milestone": "matchedtok_step5000",
+           "pinned_as": "ckpt_runA.milestone_matchedtok_step5000.pt"}
+    with open(os.path.join(d, "runs", "milestones.jsonl"), "w", encoding="utf-8") as f:
+        f.write(json.dumps(row) + "\n")
+    # a checkpoint must exist or the check SKIPs instead of failing
+    open(os.path.join(d, "ckpt_present.pt"), "w").write("x")
+    # THE NEGATIVE CONTROL, checked here rather than trusted: rename the pin to run A and the
+    # same row must go green. Without this the world stays red under an anchor so strict that
+    # no pin ever resolves, and a check that always fails is as blind as one that never does.
+    own = os.path.join(d, "ckpt_runA.milestone_matchedtok_step5000.pt")
+    open(own, "w").write("x")
+    st, msg = check_milestone_ckpt_pinned(d)
+    assert st == PASS, f"run A's own pin must resolve, got {st}: {msg}"
+    os.rename(own, os.path.join(d, "ckpt_runB.milestone_matchedtok_step5000.pt"))
     return d
 
 
@@ -16095,6 +16133,130 @@ def _selftest_milestone_selection():
     print(f"  milestone: waits for the exact save; step3000 would have been {short:.1%} short")
 
 
+def _selftest_milestone_pin_only():
+    """`harness milestone --pin-only` is driven through cmd_milestone, not read.
+
+    Four things it must do, each of which was a real failure mode somewhere in this file:
+      - pin by HARD LINK, so the roller's os.remove of the .step name cannot free the weights
+        (verified by inode equality and nlink >= 2, because a copy passes an existence test);
+      - claim no card and launch nothing -- cmd_launch is replaced by a tripwire here, since
+        the case this exists for is a pin during a run that holds every GPU;
+      - record actual_tokens as null when no geometry is given, rather than reaching for the
+        module's TOKENS_PER_STEP, which is the stage-1 ladder's 917,504 and would overstate a
+        786,432-token step by 16.7% under a matched-token pin's own name;
+      - refuse, not hang, when the run is gone and a requested step never saved.
+
+    The pruner half is asserted against train.py's real rule rather than restated: the
+    inode-collecting glob `*.milestone_*.pt` must match the pinned name, and the stale-save
+    glob `<ckpt>.pt.step*` must not."""
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    run = "pin_probe"
+    for step in (5000, 5500):
+        with open(os.path.join(d, f"ckpt_{run}.pt.step{step}"), "w") as f:
+            f.write(f"weights@{step}")
+
+    ms = os.path.join(d, "runs", "milestones.jsonl")
+    # THE PRODUCTION LEDGER IS NOT TOUCHED, and this is asserted rather than arranged. The
+    # first version of this test wrote to runs/milestones.jsonl and restored it in `finally`;
+    # a mutation run killed one variant mid-poll, the finally never ran, and
+    # ckpt_pin_probe.pt.step5000 sat in the real ledger -- where it also poisoned every later
+    # mutant, which then reported "already recorded" and read as red for the wrong reason.
+    real = os.path.join(ROOT, "runs", "milestones.jsonl")
+    real_before = open(real, encoding="utf-8").read() if os.path.exists(real) else None
+    launched = []
+    _real_launch, _real_alive = cmd_launch, _run_alive
+    try:
+        globals()["cmd_launch"] = lambda argv: launched.append(argv) or 0
+        globals()["_run_alive"] = lambda r: True
+        rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                            "--pin-steps", "5000", "--ledger", ms])
+        assert rc == 0, f"pin-only returned {rc}"
+        assert not launched, f"pin-only claimed a card: {launched}"
+
+        pin = os.path.join(d, f"ckpt_{run}.milestone_matchedtok_step5000.pt")
+        assert os.path.exists(pin), f"no pin written; dir holds {sorted(os.listdir(d))}"
+        src = os.stat(os.path.join(d, f"ckpt_{run}.pt.step5000"))
+        assert os.stat(pin).st_ino == src.st_ino, "pin is a copy, not a link"
+        assert os.stat(pin).st_nlink >= 2, "link count says nothing else holds these weights"
+
+        # train.py:3623-3648's two globs, applied to the names actually on disk.
+        assert glob.glob(os.path.join(d, "*.milestone_*.pt")) == [pin], \
+            "the pruner's pinned-inode glob does not see this name"
+        assert pin not in glob.glob(os.path.join(d, f"ckpt_{run}.pt.step*")), \
+            "the pin matches the stale-save glob: it would be a rotation candidate"
+
+        rows = [json.loads(x) for x in open(ms, encoding="utf-8") if x.strip()]
+        row = [r for r in rows if r.get("ckpt") == f"ckpt_{run}.pt.step5000"][-1]
+        assert row["actual_tokens"] is None, \
+            f"tokens invented with no geometry given: {row['actual_tokens']}"
+        assert row["pin_inode"] == src.st_ino, "the row's inode is not the pinned file's"
+        assert row["metrics_moved"] is None, "an evaluation field carries a number, not null"
+
+        # The geometry, when given, is THIS run's -- not the module constant. 5000 x 786,432
+        # is 3.932B; 5000 x TOKENS_PER_STEP would be 4.588B, 16.7% high.
+        rc = cmd_milestone(["--pin-only", "--watch", d, "--run", run, "--pin-steps", "5500",
+                            "--pin-tok-per-step", "786432", "--ledger", ms])
+        assert rc == 0, f"second pin returned {rc}"
+        r55 = [json.loads(x) for x in open(ms, encoding="utf-8") if x.strip()][-1]
+        assert r55["actual_tokens"] == 5500 * 786432, f"got {r55['actual_tokens']}"
+        assert r55["actual_tokens"] != 5500 * TOKENS_PER_STEP, \
+            "the module constant was used for a run with a different geometry"
+
+        # A second call must not append a duplicate: the ledger folds on (ckpt, milestone),
+        # so a repeat would survive as a differing row rather than being subsumed.
+        n = len(open(ms, encoding="utf-8").read().splitlines())
+        assert cmd_milestone(["--pin-only", "--watch", d, "--run", run,
+                              "--pin-steps", "5000", "--ledger", ms]) == 0
+        assert len(open(ms, encoding="utf-8").read().splitlines()) == n, "second call appended"
+
+        # A dead run with an unsaved step must REFUSE rather than poll forever.
+        globals()["_run_alive"] = lambda r: False
+        assert cmd_milestone(["--pin-only", "--watch", d, "--run", run, "--pin-steps", "9999",
+                              "--interval", "1", "--ledger", ms]) == 2, \
+            "a step that never saved on a dead run did not refuse"
+
+        real_after = open(real, encoding="utf-8").read() if os.path.exists(real) else None
+        assert real_after == real_before, \
+            "this test wrote to the PRODUCTION ledger; --ledger did not hold"
+
+        # THE COPY-IS-NOT-A-PIN BRANCH, exercised rather than trusted. _pin_milestone falls
+        # back to shutil.copy2 when os.link fails (a cross-device pin), and a copy is exactly
+        # what must NOT be recorded as a promise: the roller frees the .step name's inode and
+        # the "pinned" file holds bytes nothing keeps in sync. Nothing reached this branch
+        # until it was forced -- a mutation that deleted the whole check stayed green, because
+        # every other world pins successfully. Forced by making os.link raise.
+        globals()["_run_alive"] = lambda r: False   # so a failed pin exits instead of polling
+        d2 = tempfile.mkdtemp()
+        os.makedirs(os.path.join(d2, "runs"), exist_ok=True)
+        with open(os.path.join(d2, f"ckpt_{run}.pt.step5000"), "w") as f:
+            f.write("weights")
+        ms2 = os.path.join(d2, "runs", "milestones.jsonl")
+        _real_link = os.link
+        try:
+            os.link = lambda s, t: (_ for _ in ()).throw(OSError("EXDEV forced"))
+            rc = cmd_milestone(["--pin-only", "--watch", d2, "--run", run,
+                                "--pin-steps", "5000", "--interval", "1", "--ledger", ms2])
+        finally:
+            os.link = _real_link
+        copied = os.path.join(d2, f"ckpt_{run}.milestone_matchedtok_step5000.pt")
+        assert os.path.exists(copied), "the fallback did not even copy; world is not the one meant"
+        assert os.stat(copied).st_nlink == 1, "forced copy still shares an inode"
+        assert rc == 2, f"a copy was accepted as a pin (rc {rc})"
+        rows2 = [x for x in open(ms2, encoding="utf-8").read().splitlines() if x.strip()] \
+            if os.path.exists(ms2) else []
+        assert not rows2, f"a copy was recorded as a kept promise: {rows2}"
+        shutil.rmtree(d2, ignore_errors=True)
+    finally:
+        globals()["cmd_launch"], globals()["_run_alive"] = _real_launch, _real_alive
+        shutil.rmtree(d, ignore_errors=True)
+    print("  milestone --pin-only: hard link (inode+nlink), no card, own geometry or null "
+          "tokens, idempotent, a dead run's missing step refuses, production ledger untouched")
+
+
 def _selftest_clean_merge_claim():
     """A clean merge that has not written MERGE_HEAD must not read as a local shared-file edit.
 
@@ -18354,6 +18516,22 @@ def _demo(only=None):
         finally:
             shutil.rmtree(_unm, ignore_errors=True)
 
+    # milestone_ckpt_pinned needs a SECOND world for the same reason: its registered world
+    # breaks the EXISTENCE half (a row naming a checkpoint that is not there), and the
+    # ATTRIBUTION half -- a pin that exists under another run's name -- cannot be produced by
+    # it. That half was unguarded until 2026-09-06 and the glob accepted any run's pin, so a
+    # row could read PASS while its own weights were gone. The world asserts both directions
+    # itself (run A's pin PASSes before it is renamed to run B), so an anchor too strict to
+    # ever resolve a pin fails inside broken() rather than passing as a red here.
+    _mis = _broken_milestone_pin_belongs_to_another_run()
+    try:
+        _st, _why = check_milestone_ckpt_pinned(_mis)
+        if _st != FAIL:
+            untested.append(f"milestone_ckpt_pinned reported {_st} on a pin belonging to "
+                            f"another run ({_why[:80]})")
+    finally:
+        shutil.rmtree(_mis, ignore_errors=True)
+
     # coresident_cache_refusal has THREE halves and CHECKS carries one world per row, so the
     # two population halves were written and never run -- the §71 shape, in the commit that
     # added the check (e1, 38af3d47, caught 2026-09-05 while using it). The registered world
@@ -18860,6 +19038,7 @@ def _demo(only=None):
     _selftest_killpg_reaps_children()
     _selftest_kill_verify_ignores_zombies()
     _selftest_milestone_selection()
+    _selftest_milestone_pin_only()
     _selftest_monitor_suppression()
     _selftest_monitor_stop_rules()
     _selftest_diag_closed_arms()
@@ -21612,6 +21791,15 @@ def cmd_milestone(argv):
     domain_loss needs no launch of its own: the milestone profile scores it on the
     3.24b mix, the same heads as the ladder records, and readout_30b falls back to
     the score record when no explicit domain-loss file is given.
+
+    --pin-only takes the rotation half WITHOUT the scoring half: hard-link the step
+    saves named by --pin-steps as they land, append the ledger row, and never touch a
+    card. Scoring a milestone needs a GPU, and the case this exists for is a
+    matched-token pin during a run that is holding every card -- there the choice is
+    a pin now or weights gone in three saves. It also accepts a free-form token,
+    because the reason for the pin is not always a budget on the ladder: `matchedtok`
+    pins the step another arm will be compared against step-for-step. The scored
+    verdict is a later, separate call once a card is free.
     """
     ap = argparse.ArgumentParser(prog="harness milestone")
     ap.add_argument("ckpt", nargs="?", help="checkpoint file (single-run mode)")
@@ -21630,6 +21818,24 @@ def cmd_milestone(argv):
                          "checkpoint (ckpt_<run>.pt) at this step so a final milestone fires")
     ap.add_argument("--save-every", type=int, default=500, help="watch: max distance from the milestone step to score a save")
     ap.add_argument("--interval", type=int, default=120, help="watch poll interval in seconds")
+    ap.add_argument("--pin-only", action="store_true",
+                    help="hard-link the --pin-steps saves as they land and record the rows; "
+                         "no score_matrix, no card, no readout")
+    ap.add_argument("--pin-steps", default=None,
+                    help="pin-only: '5000,10000' -- the exact step saves to pin")
+    ap.add_argument("--pin-token", default="matchedtok",
+                    help="pin-only: the milestone label; the step is appended by _pin_milestone")
+    ap.add_argument("--pin-tok-per-step", type=int, default=None,
+                    help="pin-only: THIS run's tokens per step (batch x accum x seq x world). "
+                         "Omitted means actual_tokens is recorded as null: the module's "
+                         "TOKENS_PER_STEP is the stage-1 ladder's 16x2x4096x7 and using it for "
+                         "another geometry overstates a b192 arm by 16.7%%")
+    ap.add_argument("--ledger", default=None,
+                    help="pin-only: write the rows here instead of runs/milestones.jsonl. Exists "
+                         "so the selftest never appends to the production ledger: a test that "
+                         "has to save and restore a real file leaves a row behind the moment it "
+                         "is killed before its finally block, which is how ckpt_pin_probe "
+                         "reached runs/milestones.jsonl on 2026-09-06")
     ap.add_argument("--dry", action="store_true", help="print the commands, run nothing")
     a = ap.parse_args(argv)
 
@@ -21782,6 +21988,102 @@ def cmd_milestone(argv):
         })
         json.dump(facts, open(facts_path, "w", encoding="utf-8"), ensure_ascii=False, indent=1)
         return "ok"
+
+    if a.pin_only:
+        # THE ROTATION HALF ALONE. No cmd_launch, no card claim, no readout: a pin is a
+        # filesystem operation and the only clock it races is the roller's, which does not
+        # wait for a lane. Measured on the arm this was written for: at save_every 500 the
+        # newest-3 window is 1500 steps, and step5000 was already outside {5500,6000,6500}
+        # while still on disk -- kept only because a link shared its inode.
+        if not a.watch or not a.run or not a.pin_steps:
+            ap.error("--pin-only needs --watch <dir>, --run <name> and --pin-steps '5000,10000'")
+        want = sorted({int(s) for s in a.pin_steps.split(",") if s.strip()})
+        ms_path = a.ledger or os.path.join(ROOT, "runs", "milestones.jsonl")
+        print(f"pin-only: {a.watch}/ckpt_{a.run}.pt.step<N> for N in {want}, "
+              f"token {a.pin_token!r}; no card is claimed", flush=True)
+        print(f"  ledger: {ms_path}", flush=True)
+        done = set()
+        # Which steps ALREADY have a row, so a restart does not append a second one. Keyed on
+        # the row's own step field, since the ledger folds on (ckpt, milestone) and a duplicate
+        # would survive the fold as a differing row rather than being subsumed.
+        if os.path.exists(ms_path):
+            for line in open(ms_path, encoding="utf-8"):
+                if not line.strip():
+                    continue
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if r.get("ckpt", "").startswith(f"ckpt_{a.run}.pt.step") and r.get("step") in want:
+                    done.add(r["step"])
+        if done:
+            print(f"  already recorded: {sorted(done)}", flush=True)
+        while set(want) - done:
+            for step in want:
+                if step in done:
+                    continue
+                ckpt = f"ckpt_{a.run}.pt.step{step}"
+                if not os.path.exists(os.path.join(a.watch, ckpt)):
+                    continue
+                pinned = _pin_milestone(a.watch, a.run, ckpt, a.pin_token)
+                if not pinned:
+                    print(f"  step {step}: PIN FAILED, not recording a promise "
+                          f"nothing keeps", file=sys.stderr, flush=True)
+                    continue
+                # VERIFY BY INODE, not by existence. A copy under the pin name would pass an
+                # existence test while costing 6 GB, and a copy taken after the weights moved
+                # would hold different weights under the pinned step's name. st_nlink >= 2 is
+                # the same statement from the other side: the .step name and the pin name are
+                # two links to one file, so the roller's os.remove of the first cannot free it.
+                src_st = os.stat(os.path.join(a.watch, ckpt))
+                pin_st = os.stat(pinned)
+                if src_st.st_ino != pin_st.st_ino or pin_st.st_nlink < 2:
+                    print(f"  step {step}: {os.path.basename(pinned)} is NOT a link to {ckpt} "
+                          f"(ino {pin_st.st_ino} vs {src_st.st_ino}, nlink {pin_st.st_nlink}) -- "
+                          f"a copy is not a pin", file=sys.stderr, flush=True)
+                    continue
+                row = {
+                    "ckpt": ckpt,
+                    "pinned_as": os.path.basename(pinned),
+                    "pin_inode": pin_st.st_ino,
+                    "pin_nlink": pin_st.st_nlink,
+                    "step": step,
+                    # NOT module TOKENS_PER_STEP: that constant is 16x2x4096x7 = 917,504, the
+                    # stage-1 ladder's geometry, and this arm is 8x4x4096x6 = 786,432 -- 16.7%
+                    # apart. A wrong token count under a matched-token pin's name defeats the
+                    # pin's whole purpose, so an unsupplied geometry records null rather than
+                    # a plausible number from the wrong run.
+                    "actual_tokens": (step * a.pin_tok_per_step) if a.pin_tok_per_step else None,
+                    "tok_per_step": a.pin_tok_per_step,
+                    "milestone": f"{a.pin_token}_step{step}",
+                    "launcher": "harness milestone --pin-only",
+                    # EVERY EVALUATION FIELD IS None, not absent and not zero: a 0.0 in a
+                    # metric field reads as a measurement. This row promises weights, not a
+                    # number, and the scored row comes later from run_one.
+                    "paired": None, "tokens": None, "mix": None, "score_matrix": None,
+                    "preds": None, "readout": None, "metrics_moved": None,
+                    "measured": time.strftime("%Y-%m-%d", time.gmtime()),
+                }
+                with open(ms_path, "a", encoding="utf-8") as f:
+                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+                print(f"  step {step}: pinned -> {os.path.basename(pinned)} "
+                      f"(inode {pin_st.st_ino}, nlink {pin_st.st_nlink}"
+                      + (f", {step * a.pin_tok_per_step / 1e9:.3f}B tok"
+                         if a.pin_tok_per_step else ", tokens not recorded: no --pin-tok-per-step")
+                      + "), row appended", flush=True)
+                done.add(step)
+            if set(want) - done:
+                if not _run_alive(a.run):
+                    # The run is over and the remaining saves will never appear. Say which,
+                    # because silence here is indistinguishable from still waiting -- and a
+                    # step past the run's end is the case that produced this branch.
+                    print(f"REFUSING TO WAIT: run {a.run} has no process and steps "
+                          f"{sorted(set(want) - done)} never saved. Their weights do not "
+                          f"exist; nothing can pin them now.", file=sys.stderr, flush=True)
+                    return 2
+                time.sleep(a.interval)
+        print(f"pin-only: all of {want} pinned and recorded", flush=True)
+        return 0
 
     if a.watch:
         if not a.run or not a.milestones:
