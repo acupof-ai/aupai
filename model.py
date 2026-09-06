@@ -947,6 +947,18 @@ class MoEFFN(nn.Module):
         # bias from another run's load.
         self.register_buffer("step_tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
                              persistent=False)
+        # THE MICRO-BATCH SCRATCH SLOT AND ITS FORWARD COUNTER (b0-27). forward accumulates the
+        # cumulative counters as it always did, and additionally records this micro-batch's counts
+        # plus how many times it ran for them; commit_token_counts() subtracts the surplus once
+        # per micro-batch. Gradient checkpointing runs forward twice and nothing inside it can
+        # tell the passes apart, so the correction happens after backward instead. Non-persistent
+        # for the same reason the others are, and additionally because they hold at most one
+        # micro-batch of state -- a resume that restored them would subtract a surplus belonging
+        # to another run's micro-batch.
+        self.register_buffer("micro_tokens_per_expert",
+                             torch.zeros(self.n_routed, dtype=torch.long), persistent=False)
+        self.register_buffer("micro_forwards", torch.zeros((), dtype=torch.long),
+                             persistent=False)
         # The sequence-wise balance loss for the current forward, read by train.py and added to
         # the loss there. Kept as an attribute rather than returned so Block.forward's signature
         # and the AttnRes sublayer protocol stay unchanged.
@@ -996,6 +1008,53 @@ class MoEFFN(nn.Module):
             moved = out._buffers["expert_bias"]
             out._buffers["expert_bias"] = orig.to(device=moved.device, dtype=torch.float32)
         return out
+
+    def commit_token_counts(self):
+        """Remove the recompute surplus from this micro-batch's counts. Once per micro-batch.
+
+        Called by train.py after loss.backward() -- a site that is once-per-micro-batch BY
+        CONSTRUCTION and, critically, AFTER the recompute, which happens during backward. forward
+        has by then run either once (no checkpointing) or twice (checkpointed), and recorded which
+        in micro_forwards. This subtracts the extra copies:
+
+            surplus = micro_forwards - 1        # 0 or 1 in practice
+            tokens_per_expert      -= surplus * micro_tokens_per_expert
+            step_tokens_per_expert -= surplus * micro_tokens_per_expert
+            windows                -= surplus
+
+        WHY NOT DETECT RECOMPUTE INSIDE forward: `self.training` and `torch.is_grad_enabled()`
+        are both true in the recompute pass, and torch exposes no public recompute marker. Counting
+        the passes and correcting afterwards needs no such marker.
+
+        WHY NOT SIMPLY ASSIGN IN forward: tried and rejected. It is correct for train.py and it
+        silently zeroes every OTHER caller -- scripts/profile_moe_step.py runs a bare m(x) and
+        reads step_tokens_per_expert to pick its perturbation victim, and
+        scripts/test_moe_bias_wiring.py case D asserts 1 forward gives `want` and 2 give `2*want`.
+        Neither uses checkpointing and neither calls this method, so for them accumulate-in-forward
+        is already right. A fix that breaks the callers it does not know about is the shape where
+        a new guard lands after its callers.
+
+        Measured before this existed (b0-27, card 7): grad_ckpt on read exactly 2.0000x the
+        grad_ckpt-off counts, uniform across every expert on all four MoE layers, `windows` 2 -> 4.
+
+        WHAT THE DOUBLE COUNT DID AND DID NOT CORRUPT, since the guard this unblocks claimed
+        otherwise. NOT the balancer: update_bias steps on torch.sign(counts - mean), doubling every
+        count doubles the mean too, so err doubles and sign() is invariant to a positive scale --
+        the bias step was bit-identical, exact ties included. NOT any measured diagnostic:
+        usage_frac, used_experts, entropy_norm and load_gini are functions of the count
+        DISTRIBUTION, and load_gini is normalised by tot, so a uniform factor cancels. It corrupted
+        `tokens` and `window_steps`, the two absolute counts -- and since both doubled together,
+        even their ratio was right. A NON-uniform doubling would have moved the statistics; the
+        measurement says it was uniform. So this fix makes the bookkeeping honest and unblocks the
+        configuration; it corrects no published number, because no arm has ever run checkpointed.
+        """
+        with torch.no_grad():
+            surplus = int(self.micro_forwards) - 1
+            if surplus > 0:
+                self.tokens_per_expert -= surplus * self.micro_tokens_per_expert
+                self.step_tokens_per_expert -= surplus * self.micro_tokens_per_expert
+                self.windows -= surplus
+            self.micro_forwards.zero_()
 
     def update_bias(self, counts):
         """The aux-loss-free bias step: -gamma where overloaded, +gamma where underloaded.
@@ -1071,9 +1130,27 @@ class MoEFFN(nn.Module):
         counts = torch.bincount(e_of_row, minlength=self.n_routed)
         if self.training or torch.is_grad_enabled():
             with torch.no_grad():
+                # ACCUMULATE AS BEFORE, and additionally record what this micro-batch's counts
+                # were and how many times this forward ran for it (b0-27, 2026-09-06).
+                #
+                # Gradient checkpointing runs this forward TWICE per micro-batch -- measured on
+                # card 7: tokens_per_expert read exactly 2x, uniformly per expert on every MoE
+                # layer (84 -> 168, 98 -> 196, ...), with `windows` 2 -> 4. No condition here can
+                # tell the passes apart: `self.training` and `torch.is_grad_enabled()` are both
+                # true in the recompute, and torch publishes no recompute marker.
+                #
+                # So the surplus is CORRECTED downstream instead of prevented here.
+                # commit_token_counts() subtracts (micro_forwards - 1) copies, which is right for
+                # one pass (subtract nothing) and for two (subtract one) without either site
+                # needing to know which happened. Accumulating here rather than only assigning
+                # keeps every caller that runs a bare forward and then reads the counters --
+                # scripts/profile_moe_step.py and scripts/test_moe_bias_wiring.py both do, and
+                # neither uses checkpointing, so for them the pre-b0-27 behaviour is unchanged.
                 self.tokens_per_expert += counts
                 self.step_tokens_per_expert += counts
                 self.windows += 1
+                self.micro_tokens_per_expert.copy_(counts)
+                self.micro_forwards += 1
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)
         # ONE CAST, ONE PLACE, for every expert matmul in this module (tilerl's review,

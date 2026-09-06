@@ -176,7 +176,7 @@ def moe_layers_of(m):
     return out
 
 
-def run_arm(grad_ckpt, seed, steps, shape=None):
+def run_arm(grad_ckpt, seed, steps, shape=None, skip_commit=False):
     import torch
     m, cfg = build(grad_ckpt, seed, shape)
     layers = moe_layers_of(m)
@@ -204,8 +204,16 @@ def run_arm(grad_ckpt, seed, steps, shape=None):
         # this model with grad_ckpt off and on.
         h, _ = m(ids, ids)
         h.float().mean().backward()   # backward is what triggers recompute
+        if not skip_commit:
+            for _i, _n, sub in layers:
+                if hasattr(sub, "commit_token_counts"):
+                    sub.commit_token_counts()
         m.zero_grad(set_to_none=True)
 
+    # COMMIT ONCE PER MICRO-BATCH, exactly where train.py does it: after backward, in the loop
+    # body. Without this the ON arm keeps the recompute surplus and the test measures the bug
+    # instead of the fix -- so this call is what makes the post-fix run meaningful, and its
+    # absence is what the pre-fix run measured.
     counts = {f"{i}.{n}": sub.tokens_per_expert.detach().cpu().tolist()
               for i, n, sub in layers}
     windows = {f"{i}.{n}": int(sub.windows) for i, n, sub in layers}
@@ -217,6 +225,9 @@ def main():
     ap.add_argument("--steps", type=int, default=2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--json", help="write the result here")
+    ap.add_argument("--no-commit", action="store_true",
+                    help="skip commit_token_counts() -- reproduces the PRE-FIX behaviour, which "
+                         "is how the 2.0000 ratio was originally measured")
     ap.add_argument("--set", dest="overrides", default="",
                     help="comma-separated Cfg overrides, e.g. d=512,heads=4. Ints are parsed as "
                          "ints; everything else stays a string (moe_layers is '0-3')")
@@ -247,8 +258,8 @@ def main():
     print(f"card: {torch.cuda.get_device_name(0)}  "
           f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}")
 
-    off_c, off_w = run_arm(False, a.seed, a.steps, shape)
-    on_c, on_w = run_arm(True, a.seed, a.steps, shape)
+    off_c, off_w = run_arm(False, a.seed, a.steps, shape, a.no_commit)
+    on_c, on_w = run_arm(True, a.seed, a.steps, shape, a.no_commit)
 
     if set(off_c) != set(on_c):
         sys.exit(f"REFUSING: the two arms disagree on which layers are MoE: "
