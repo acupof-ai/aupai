@@ -25,9 +25,11 @@ That is deliberate. The guard's job is drift in WHAT IS TIMED; a wrapped project
 the statement being timed, and what would then be false is this script's stated reason for
 existing (that no flag exists), which is a claim in prose and not something a substring check
 should police. Verified at the time of writing, by two sessions independently: model.py:1034 is
-the last statement of update_bias, there is no conditional between the def and it, and
-`grep -rn 'zero_mean\|no_projection\|bias_project\|proj_off\|expert_bias_mean' model.py
-train.py` returns nothing.
+the last statement of update_bias, there is no conditional between the def and it, and grepping
+model.py and train.py for zero_mean, no_projection, bias_project, proj_off or expert_bias_mean
+returns nothing. (Spelled as a word list rather than as a regex: the alternation form made this
+docstring raise five W605 invalid-escape warnings, and a lint error in the file is exactly the
+kind of friction that gets a script bypassed.)
 
 THE TRAP THIS SCRIPT IS BUILT AROUND: a synthetic replica can drift from the method it claims
 to time, and then the number describes the replica. So the replica's source is compared
@@ -39,13 +41,17 @@ checked.
 
 # restartable: nothing to lose on an interrupt -- this script WRITES NO ARTIFACT. It prints
 # timings and exits; the only file it opens for writing is a tempfile fixture inside
-# --selftest, which is deleted by its own TemporaryDirectory. The audit's "accumulates at
-# line 156" is `per_step.append` in the timing loop, whose list lives for one arm and is
-# reduced to a median before the next; a kill loses at most one arm's in-memory samples and
-# the rerun is the same cost as the first run. That cost is bounded: 2 arms x --iters 1000 x
-# --layers 12 = 24,000 update_bias calls, declared <=10 min in the card claim at :216, and no
-# checkpoint is written or mutated -- --ckpt is opened read-only for its bias tensor.
+# --selftest, which is deleted by its own TemporaryDirectory. What the audit reads as an
+# accumulation is the per-arm sample list in `samples` (appended by _one, one entry per
+# interleaved iteration), which is reduced to a median in this process and never persisted; a
+# kill loses only in-memory samples and the rerun costs what the first run cost. Cited by
+# behaviour rather than by line number on purpose: the previous version of this note named
+# "line 156", which the interleaving rewrite moved.
+# That cost is bounded: 2 arms x --iters 1000 x --layers 12 = 24,000 update_bias calls,
+# declared <=10 min in the card claim, and no checkpoint is written or mutated -- --ckpt is
+# opened read-only for its bias tensor.
 # Per-shard writing does not apply: there are no shards and no output file to resume into.
+
 
 import argparse
 import inspect
@@ -76,7 +82,9 @@ def _step_seconds_from_log(path):
     The MEDIAN, not the mean: one 5.2 s outlier moves a mean of 300 points by 8 ms, which is
     two orders above the delta this script measures.
     """
-    txt = open(path, errors="replace").read()
+    with open(path, errors="replace") as fh:
+        txt = fh.read()
+
     vals = []
     for ln in txt.splitlines():
         if "this interval" in ln:
@@ -145,26 +153,30 @@ def _without_projection(bias, counts, gamma):
     bias -= gamma * torch.sign(err).to(bias.dtype)
 
 
-def _time(fn, bias, counts, gamma, iters, layers):
-    """Median per-STEP wall time over `iters` steps of `layers` layers each.
+# ORDER IS LOAD-BEARING: rows[0] - rows[1] is the reported delta, so "with" must come first or
+# the sign inverts and the projection reads as free. The interleaved loop iterates this tuple.
+_ARMS = (("with projection", _with_projection),
+         ("without projection", _without_projection))
 
-    CUDA is asynchronous: without the synchronize, this times kernel LAUNCH and reads ~0.
-    Warmup is separate and discarded -- the first call compiles and allocates, and this
-    session already made the mistake of reporting a first-pass cost as a steady-state one.
+
+def _warm(fn, bias, counts, gamma, layers):
+    """Discarded warmup: the first calls compile and allocate. Separate from the timed loop
+    because this session already reported a first-pass cost as a steady-state one."""
+    for _ in range(20):
+        for _ in range(layers):
+            fn(bias, counts, gamma)
+
+
+def _one(fn, bias, counts, gamma, layers):
+    """One sample: the wall time of `layers` calls, synchronized.
+
+    CUDA is asynchronous, so without the synchronize this times kernel LAUNCH and reads ~0.
     """
-    for _ in range(20):                      # warmup, discarded
-        for _ in range(layers):
-            fn(bias, counts, gamma)
+    t0 = time.perf_counter()
+    for _ in range(layers):
+        fn(bias, counts, gamma)
     torch.cuda.synchronize()
-
-    per_step = []
-    for _ in range(iters):
-        t0 = time.perf_counter()
-        for _ in range(layers):
-            fn(bias, counts, gamma)
-        torch.cuda.synchronize()
-        per_step.append(time.perf_counter() - t0)
-    return per_step
+    return time.perf_counter() - t0
 
 
 def main():
@@ -258,17 +270,36 @@ def main():
     # not have to discover it.
     counts = torch.randint(0, 4096, (n_experts,), device=dev, dtype=torch.long)
 
+    # INTERLEAVED, NOT ARM-AFTER-ARM. The earlier shape ran all 1000 samples of "with", then all
+    # 1000 of "without", so any drift over those minutes -- another process arriving on the card,
+    # a clock or power state change, cache warming -- landed entirely on the DIFFERENCE, which is
+    # the only quantity this script reports. Simulated with a true delta of 0.0800 ms and 0.02 ms
+    # per-sample noise: a 0.05 ms drift across the run pulls the sequential estimate to 0.0549,
+    # and a 0.20 ms drift FLIPS ITS SIGN to -0.0177, while the interleaved estimate holds at
+    # 0.0804 and 0.0819. A sign flip here would read as "the projection is free", so the design
+    # that admits it is not usable no matter how the samples are later summarised.
+    #
+    # Both arms keep their own bias tensor across the whole run for the reason below, and each
+    # sample alternates which arm is measured, so a monotone drift enters both medians equally.
+    biases = {}
+    for label, _ in _ARMS:
+        # FRESH TENSOR PER ARM. _time mutates bias in place, and the "without" variant IS the
+        # unbounded integrator this fix exists to stop -- sharing one tensor would leave the two
+        # arms timed on different values. sign() and mean() cost the same at any magnitude, so
+        # this changes no number; it removes a difference a reader would be right to ask about.
+        biases[label] = bias_ref.clone()
+
+    samples = {label: [] for label, _ in _ARMS}
+    for label, fn in _ARMS:                       # warmup both, outside the timed loop
+        _warm(fn, biases[label], counts, a.gamma, a.layers)
+    torch.cuda.synchronize()
+    for _ in range(a.iters):
+        for label, fn in _ARMS:
+            samples[label].append(_one(fn, biases[label], counts, a.gamma, a.layers))
+
     rows, raw = [], []
-    for label, fn in (("with projection", _with_projection),
-                      ("without projection", _without_projection)):
-        # FRESH TENSOR PER ARM. _time mutates bias in place 12,000 times, and the "without"
-        # variant is the unbounded integrator this fix exists to stop -- left to run on the
-        # first arm's output it would start from a drifted vector and, worse, the two arms
-        # would be timed on different values. sign() and mean() cost the same at any
-        # magnitude, so this changes no number here; it removes a difference between the arms
-        # that a reader would be right to ask about.
-        bias = bias_ref.clone()
-        s = _time(fn, bias, counts, a.gamma, a.iters, a.layers)
+    for label, _ in _ARMS:
+        s = samples[label]
         med = statistics.median(s)
         rows.append((label, med, statistics.mean(s), min(s), max(s)))
         raw.append(s)
@@ -448,15 +479,44 @@ def _selftest():
         except SystemExit:
             print("C' only val-interval lines                        -> refuses")
 
+    # 4. INTERLEAVING SURVIVES DRIFT, arm-after-arm does not. No GPU: the property is about which
+    #    samples each arm gets, so it is exercised on a synthetic clock. True delta 0.0800 ms,
+    #    per-sample noise 0.02 ms, and a monotone drift applied across the whole run.
+    random.seed(9)
+    def _seq(drift, n=1000):
+        A = [1.20 + random.gauss(0, 0.02) + drift * i / (2 * n) for i in range(n)]
+        B = [1.12 + random.gauss(0, 0.02) + drift * (n + i) / (2 * n) for i in range(n)]
+        return statistics.median(A) - statistics.median(B)
+    def _inter(drift, n=1000):
+        A = [1.20 + random.gauss(0, 0.02) + drift * (2 * i) / (2 * n) for i in range(n)]
+        B = [1.12 + random.gauss(0, 0.02) + drift * (2 * i + 1) / (2 * n) for i in range(n)]
+        return statistics.median(A) - statistics.median(B)
+    print("   drift(ms)   arm-after-arm   interleaved   (true 0.0800)")
+    worst_seq, worst_int = 0.0, 0.0
+    for drift in (0.0, 0.05, 0.20):
+        s, v = _seq(drift), _inter(drift)
+        print(f"   {drift:9.2f}   {s:13.4f}   {v:11.4f}")
+        worst_seq = max(worst_seq, abs(s - 0.08))
+        worst_int = max(worst_int, abs(v - 0.08))
+    # The interleaved estimate must stay near the truth at every drift...
+    if worst_int > 0.01:
+        fails.append(f"interleaved estimate moved {worst_int:.4f} ms from the true 0.0800 under "
+                     f"drift -- interleaving is supposed to cancel it")
+    # ...and the fixture must still reproduce the defect, or this check proves nothing. At 0.20 ms
+    # the sequential estimate goes NEGATIVE, which would print as "the projection is free".
+    if worst_seq < 0.05:
+        fails.append(f"arm-after-arm was only off by {worst_seq:.4f} ms on this fixture, so the "
+                     f"fixture no longer reproduces the drift confound this design avoids")
+
     print()
     if fails:
         print("FAIL")
         for f in fails:
             print(f"  - {f}")
         return 1
-    print(f"PASS: {3 + 2 + 3} checks (guard fires on B and C, passes A; p95 stable, "
+    print(f"PASS: {3 + 2 + 3 + 1} checks (guard fires on B and C, passes A; p95 stable, "
           f"half-range grows; the denominator excludes warmup and val lines and refuses "
-          f"a short log)")
+          f"a short log; interleaving cancels a drift that flips arm-after-arm's sign)")
     return 0
 
 
