@@ -204,3 +204,32 @@ The remaining 14 AUPAI_BEHIND_MAIN_OK rows in the table below are variants of th
 | runs/ reading_artifact has no sanctioned route to the pod | 1 | ~15 | fix carried (1/1 rows) |
 | AUPAI_BEHIND_MAIN_OK=1 commit 164/169 behind (.gitattributes, pre-commit, merge_drivers) | 2 | n/r | **unfixed** (0/2 rows) |
 | bypassed CAS with bare update-ref on refs/heads/main (push-protection refusal; overwrote tilerl's landed bc95abe8) | 1 | ~20 | rule: only merge_main.sh writes main; refused push fixed on branch + re-merged |
+
+## 2026-09-07 (202 rows, 103 mechanisms; ran 07:3xZ)
+
+Top two unfixed causes are unchanged from 09-06:
+
+1. **AUPAI_BEHIND_MAIN_OK=1 override (95 rows, up from 85).** tilerl-31 is open; the path-overlap predicate landed (06ed3b2a) and de's merge_main staged-tree carry is landing (72f01c32, 87b7a0d9, 0f9922c8). No new action — tracking tilerl-31.
+2. **near_miss/process_failure minutes not reported (3 rows).** Check fixed: `check_friction_minutes_required` now requires `minutes_lost` for kind tuple `("near_miss", "process_failure", "hook")` (baseline 6). The 3 existing rows predate the fix; new rows will FAIL without minutes.
+
+**Aggregated view:**
+
+| mechanism | n | min lost | resolution |
+|---|---|---|---|
+| AUPAI_BEHIND_MAIN_OK=1 override (commit from behind main) | 95 | ~3 (1/95 reported) | tilerl-31 open; predicate + carry landing |
+| pod_head_manifest regenerated per commit, merge conflicts | 4 | ~16 | superseded; fix 56fa71b5 + 89d8882 |
+| near_miss/process_failure, cause "?" | 3 | n/r | check fixed (check_friction_minutes_required) |
+| defect: tasks_well_formed omissions + selftest temp file | 1 | ~20 | fix carried (1/1 rows) |
+| defect: --save_every 100000 does not suppress epoch-end save | 1 | n/r | **unfixed** (0/1 rows) |
+| gate: --selftest green but byte-copy line never executed | 1 | ~35 | **unfixed** (0/1 rows) |
+| defect: bare update-ref bypassed CAS | 1 | ~20 | rule: only merge_main.sh writes main |
+| check: 601 commits in 24h, 98 single ledger rows | 1 | n/r | fix carried (friction --defer queue) |
+| defect: bare train.py launch (no claim, no ledger, 12 GB ckpt) | 1 | ~8 | fix carried (1/1 rows) |
+| defect: bare train.py writes no ledger row | 1 | n/r | fix carried (1/1 rows) |
+| attribution-correction: check_shared_file_claim exemption dead | 1 | n/r | **unfixed** (0/1 rows) |
+| override: runs/ reading_artifact has no transport to pod | 1 | ~15 | fix carried (1/1 rows) |
+| override: AUPAI_CONTROLLER=1 bypassed second-reader refusal | 1 | n/r | **unfixed** (0/1 rows) |
+| check: score_matrix_present FAIL on uncommitted pull | 1 | ~14 | **unfixed** (0/1 rows) |
+| launch: CUDA_VISIBLE_DEVICES in cmd not launch | 1 | ~20 | fix carried (1/1 rows) |
+| merge: EXPERIMENTS.md rendered conflicts | 1 | ~3 | fix carried (1/1 rows) |
+| gate: hand-wrote amendment_24 field | 1 | ~4 | fix carried (1/1 rows) |
