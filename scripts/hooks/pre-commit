@@ -1544,6 +1544,13 @@ def main():
         # every fp32 arm's arithmetic, which is the objection this program raises about the
         # fp8/bf16 confound in the first place.
         "scripts/test_bf16_flag.py",
+        # The warmdown start. Registered here AND on train.py's trigger list below, because the
+        # defect is in train.py and this test's load-bearing assertion is a SOURCE assertion: the
+        # formula appearing exactly once. Restoring the pre-fix duplication changes no behaviour
+        # at any value anyone would test -- both copies agreed at 9155 -- so a behavioural-only
+        # test cannot see the defect at all, and SELFTEST_FILES alone would run this only when
+        # someone edits the test rather than when someone edits train.py.
+        "scripts/test_warmdown_start.py",
         # The latent MoE. Registered here AND on model.py's trigger list below, because the defect
         # it guards is in model.py: the routed experts contract over d_latent, so w13's fan_in
         # changes from d to d_latent, and initialising at d is a 1.63x scale error at the
@@ -1777,6 +1784,16 @@ def main():
         # false positives ("blocks.1._mem_registered", "_ROW_CHECKSUM_BLOCK" must not read
         # as blocked verdicts; a bare-name misroute row must match).
         "scripts/policy_metrics.py",
+        # b0-30: the checkpoint-name extraction sites in harness.py. Registered here so
+        # editing the test runs it, AND in the companion map above so editing harness.py runs
+        # it -- the regexes are what it guards, and they do not live in this file. 0.4s, no
+        # card and no pod: it reads the real listing and facts/ plus temp-dir fixtures. Its
+        # own capacity is measured, not assumed -- 16 of 37 assertions fail on the pre-fix
+        # source, 5 on a half-applied fix that widens the token regex without the rebase (one
+        # being the AttributeError that half-fix raises on every check in the run), and 3 on a
+        # fix that swaps the short prefix out instead of unioning it in, which is the
+        # regression de caught before it shipped.
+        "scripts/test_ckpt_name_hyphen.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
@@ -2071,6 +2088,7 @@ def main():
                      "scripts/test_cache_mmap.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
+                     "scripts/test_warmdown_start.py",
                      "scripts/test_moe_latent.py",
                      # test_eta_window READS train.py -- it extracts main's step-line f-string with
                      # inspect.getsource and asserts on that template, and calls _eta_fields
@@ -2148,7 +2166,16 @@ def main():
                                # The reverse direction of the dead-world scan: harness.py IS the
                                # file whose 88 worlds it judges, so an edit that moves a marker
                                # literal is exactly what it reports. 0.9s.
-                               "runs/audit_0904/dead_worlds.py"},   # 2.0s
+                               "runs/audit_0904/dead_worlds.py",
+                               # The checkpoint-name extraction sites (b0-30). Registered
+                               # against harness.py rather than standing alone because it tests
+                               # _ckpt_names and _parse_ckpt_listing, which live there: an edit
+                               # to either regex is what must trigger it. 16 of its 37
+                               # assertions fail on the pre-fix source, 5 on a half-applied fix
+                               # that widens the token regex without the rebase, and 3 on a fix
+                               # that SWAPS the short reading instead of unioning it -- so it
+                               # separates the bug from two different wrong repairs. 0.4s.
+                               "scripts/test_ckpt_name_hyphen.py"},   # 2.4s
         "scripts/ledger_audit.py": {"scripts/test_ledger_predicates.py"},    # 0.6s
         "scripts/e1_29_floor_by_class.py": {"scripts/test_e1_29_floor_by_class.py"},
         "datagen/near_dedup_postpass.py": {"datagen/test_near_dedup_known.py"},
