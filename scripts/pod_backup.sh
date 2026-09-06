@@ -37,17 +37,22 @@ SRC="${AUPAI_ROOT:-/work/aupai}"
 # exists on the pod only), so `mountpoint -q` failed for EVERY path here -- including `/` --
 # and the selftest's refusal case passed because nothing could ever be accepted. Measured
 # 2026-09-06 while writing it. Comparing st_dev against the parent is the same question and
-# is answered by stat(1) on both platforms; -L so a symlinked mount resolves.
+# python3 answers it identically on both platforms.
+#
+# NOT stat(1) EITHER, and the reason is worth the line: `stat -Lf '%d'` is a FORMAT on BSD and
+# means "print filesystem info" on GNU, where it SUCCEEDS with a multi-line dump. So
+# `stat -Lf ... || stat -Lc ...` never reached the GNU form on the pod; both sides compared
+# equal garbage and every path read as a mount -- the exact inverse of the mountpoint(1) bug,
+# passing where it should refuse. Caught by running the selftest on the pod rather than here.
 is_mounted() {
-  local p=$1 parent
-  [ -d "$p" ] || return 1
-  # `/` is its own parent, so the st_dev comparison below says "same device" and calls the
-  # root filesystem not-a-mount. Caught by the selftest's positive control, which exists
-  # because the negative one alone is satisfied by a guard that refuses everything.
-  [ "$p" = / ] && return 0
-  parent=$(dirname "$p")
-  [ "$(stat -Lf '%d' "$p" 2>/dev/null || stat -Lc '%d' "$p" 2>/dev/null)" \
-    != "$(stat -Lf '%d' "$parent" 2>/dev/null || stat -Lc '%d' "$parent" 2>/dev/null)" ]
+  python3 - "$1" <<'PYEOF'
+import os, sys
+p = sys.argv[1]
+if not os.path.isdir(p):
+    sys.exit(1)
+# `/` is its own parent, so the st_dev comparison calls the root filesystem not-a-mount.
+sys.exit(0 if p == "/" or os.stat(p).st_dev != os.stat(os.path.dirname(p) or "/").st_dev else 1)
+PYEOF
 }
 
 require_durable() {
