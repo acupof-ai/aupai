@@ -22,6 +22,7 @@ train.py carries an inline copy (it imports nothing from scripts/); --self-check
 asserts the two agree bit-for-bit."""
 
 import argparse
+import ast
 import glob
 import hashlib
 import json
@@ -46,23 +47,77 @@ def _shard_line(name, path):
     return f"{name}:{size}:{hashlib.sha256(head).hexdigest()}:{hashlib.sha256(tail).hexdigest()}\n".encode()
 
 
+# The filters build_corpus.py actually loads, named there as a literal tuple at
+# datagen/build_corpus.py:62 and exec'd into the GARBAGE pattern. Kept in sync by
+# fp_filters' own assertion below rather than by this comment.
+PIPELINE_FILTERS = ("pass1_garbage.py", "pass2_garbage.py", "pass3_garbage.py")
+
+
 def fp_filters(root=ROOT):
     """Hash of the filter sources that produced a corpus. Content-based, not the git sha: an
     uncommitted edit to filters/ changes what a build keeps, and a commit sha would not see it.
 
     The gap this closes: PROVENANCE records the Build COMMAND, and the same command run before
     and after a filter change produces different corpora that nothing distinguishes.
-    corpus_fingerprint says the content changed; this says what produced it."""
-    h = hashlib.sha1()
+    corpus_fingerprint says the content changed; this says what produced it.
+
+    SCOPED TO THE PIPELINE, not to the directory listing. It used to hash every *.py in
+    filters/, which made the fingerprint a property of what the directory CONTAINS rather than
+    of what produced the shards: adding filters/secrets.py on 2026-09-06 -- a corpus-row
+    credential redactor that build_corpus.py does not import -- moved the fingerprint from
+    33462c13868a2194 to 9c0c1fd3160ebd27 and turned four stage-2 domains stale, though not one
+    byte of any shard would differ if they were rebuilt. A fingerprint that changes when the
+    output cannot is a false positive, and the corpus_filters_fp red it raised is a red nobody
+    can act on except by rebuilding nine domains for nothing.
+
+    The scoping is verified, not asserted: build_corpus.py:62 iterates a literal tuple of three
+    names and exec's each, so those three are the whole input, and the assertion below fails if
+    that tuple and this one drift apart."""
     d = os.path.join(root, "filters")
     if not os.path.isdir(d):
         return None
-    for name in sorted(os.listdir(d)):
-        if not name.endswith(".py"):
-            continue
-        with open(os.path.join(d, name), "rb") as f:
+    h = hashlib.sha1()
+    for name in PIPELINE_FILTERS:
+        p = os.path.join(d, name)
+        if not os.path.exists(p):
+            # build_corpus.py raises FileNotFoundError on the same condition. Hashing "absent"
+            # would let a build whose filter file vanished carry a valid-looking fingerprint.
+            raise FileNotFoundError(f"{p} missing; fp_filters cannot describe a build without it")
+        with open(p, "rb") as f:
             h.update(name.encode() + b"\0" + hashlib.sha256(f.read()).digest())
     return h.hexdigest()[:16]
+
+
+def _assert_pipeline_filters_current(root=ROOT):
+    """PIPELINE_FILTERS must equal the tuple build_corpus.py loads, read from its source.
+
+    Without this the scoping above degrades silently in the direction that matters: a fourth
+    filter added to build_corpus.py's tuple would change what the shards contain while
+    fp_filters kept reporting the old three-file hash -- a fingerprint that cannot see a real
+    change, which is worse than the false positive this scoping removed."""
+    src = os.path.join(root, "datagen", "build_corpus.py")
+    with open(src, encoding="utf-8") as f:
+        tree = ast.parse(f.read())
+    for node in ast.walk(tree):
+        if not (isinstance(node, ast.For) and isinstance(node.iter, (ast.Tuple, ast.List))):
+            continue
+        try:
+            names = ast.literal_eval(node.iter)
+        except ValueError:
+            continue
+        if not (names and all(isinstance(x, str) and x.endswith("_garbage") for x in names)):
+            continue
+        want = tuple(f"{x}.py" for x in names)
+        if want != PIPELINE_FILTERS:
+            raise AssertionError(
+                f"build_corpus.py loads {want}, PIPELINE_FILTERS says {PIPELINE_FILTERS} -- "
+                f"fp_filters would not see a change to the filters that actually run"
+            )
+        return want
+    raise AssertionError(
+        "no *_garbage loader tuple found in build_corpus.py; fp_filters' "
+        "scope can no longer be verified against the code it describes"
+    )
 
 
 def fp_dir(d):
@@ -111,7 +166,9 @@ def self_check():
             g.write(f.read())
         fp1 = fp_dir(dom)
         with open(shard, "a", encoding="utf-8") as f:
-            f.write(json.dumps({"question": "指纹自检：改一行必须变", "output": "1"}, ensure_ascii=False) + "\n")
+            f.write(
+                json.dumps({"question": "指纹自检：改一行必须变", "output": "1"}, ensure_ascii=False) + "\n"
+            )
         fp2 = fp_dir(dom)
         assert fp1 and fp2 and fp1 != fp2, f"mutation did not change fingerprint: {fp1} -> {fp2}"
         # Transfer invariance: copy/rsync/podput change mtime only -- the fp must not move.
@@ -128,7 +185,44 @@ def self_check():
         with open(real[0], "rb") as src, open(shard, "wb") as g:
             g.write(src.read())
         assert _inline_fp(dom) == fp_dir(dom), "train.py _corpus_fp diverged from canonical"
-    print(f"self-check OK (mutate {fp1} -> {fp2}, utime invariant, delete -> {fp3}, train.py parity)")
+    # fp_filters is scoped to the three filters build_corpus.py loads. Both directions are
+    # asserted, because each failure mode is the other's cure taken too far.
+    want = _assert_pipeline_filters_current()
+    base = fp_filters()
+    with tempfile.TemporaryDirectory() as d:
+        froot = os.path.join(d, "root")
+        os.makedirs(os.path.join(froot, "filters"))
+        os.makedirs(os.path.join(froot, "datagen"))
+        for name in PIPELINE_FILTERS:
+            with (
+                open(os.path.join(ROOT, "filters", name), "rb") as f,
+                open(os.path.join(froot, "filters", name), "wb") as g,
+            ):
+                g.write(f.read())
+        # 1. A NON-pipeline file in filters/ must NOT move the fingerprint. This is the false
+        #    positive that turned four stage-2 domains stale for a redactor no build imports.
+        only_pipeline = fp_filters(froot)
+        assert only_pipeline == base, (
+            f"fp_filters over the 3 pipeline files ({only_pipeline}) disagrees with the live "
+            f"tree ({base}) -- the live filters/ holds a non-pipeline file that still counts"
+        )
+        with open(os.path.join(froot, "filters", "zz_not_in_pipeline.py"), "w") as f:
+            f.write("PATTERNS = ['this file is not loaded by build_corpus']\n")
+        assert fp_filters(froot) == only_pipeline, (
+            "adding a non-pipeline .py to filters/ moved the fingerprint; the scoping is not "
+            "in effect and every corpus goes stale on an unrelated file"
+        )
+        # 2. A PIPELINE file's content MUST move it, or the fingerprint is blind to real change.
+        with open(os.path.join(froot, "filters", PIPELINE_FILTERS[0]), "a") as f:
+            f.write("\nPATTERNS.append('a real filter edit')\n")
+        assert fp_filters(froot) != only_pipeline, (
+            f"editing {PIPELINE_FILTERS[0]} did not move the fingerprint"
+        )
+    print(
+        f"self-check OK (mutate {fp1} -> {fp2}, utime invariant, delete -> {fp3}, train.py "
+        f"parity, fp_filters scoped to {len(want)} pipeline filters: non-pipeline file inert, "
+        f"pipeline edit caught)"
+    )
     return 0
 
 
@@ -142,6 +236,7 @@ def main():
     mix = args.mix
     if not mix:
         import ast
+
         src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
         for node in ast.walk(ast.parse(src)):
             if isinstance(node, ast.ClassDef) and node.name == "Cfg":
