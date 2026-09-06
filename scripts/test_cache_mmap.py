@@ -280,6 +280,28 @@ def _check_premises():
     src = subprocess.run(["git", "ls-files", "-z", "*.py"],
                          capture_output=True, text=True, cwd=ROOT)
     if src.returncode != 0:
+        # NOT A GIT REPOSITORY IS A SKIP; ANY OTHER GIT FAILURE IS A FAIL. Measured on the pod
+        # 2026-09-07: /work/aupai is a file copy with no .git, so `git ls-files` exits 128 with
+        # "not a git repository" and the first version reported FAIL there -- a red on a tree
+        # whose premise is fine, for a reason that has nothing to do with the premise.
+        #
+        # WHY THIS IS NOT THE VACUITY SHAPE, since a SKIP that hides a failure is exactly what I
+        # keep finding: the premise can only CHANGE where someone edits a file, and that is the
+        # laptop, where the pre-commit hook runs this on every train.py commit and git is present.
+        # The pod is a read-only copy of main -- nobody writes a new cache writer there -- so the
+        # population this check exists to watch is not on the pod at all. What IS on the pod is
+        # the measurement half, which needs the real caches and passes there (verified: 1 FAIL,
+        # this one, and every RSS/identity assertion green). Reporting FAIL for "cannot check"
+        # would teach a reader that the test is broken on the pod and cost the half that works.
+        #
+        # The reason is PRINTED, not swallowed: a skip nobody sees is indistinguishable from a
+        # pass. Any other returncode keeps FAIL, because a git that exists and refuses is a
+        # condition about this tree, not about the environment.
+        if "not a git repository" in src.stderr:
+            print("SKIP: no git repository here, so the deleted-fallback premise cannot be "
+                  "checked (it is checked on every commit by the hook, where git exists). "
+                  "The measurements above ran.")
+            return
         FAILS.append(f"cannot list tracked .py files, so the premise is not checked: "
                      f"{src.stderr[-200:]}")
         return
