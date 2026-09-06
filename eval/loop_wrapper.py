@@ -17,7 +17,8 @@ implements the ruled SEMANTICS rather than its wording. Reported to 6e before an
 
   1. "adds into the same `partial` accumulator" names a path this checkpoint never runs.
      ar_block_ends is {round((j+1)*n_sub/n_blocks)} at model.py:396, and attn_res_blocks defaults
-     to 0 = Full (train.py:219, and every launch in EXPERIMENTS.md passes 0 explicitly). At
+     to 0 = Full (`Cfg.attn_res_blocks = 0` in the Cfg body, and every launch in EXPERIMENTS.md
+     passes 0 explicitly). At
      layers 12 that is n_sub 24, n_blocks 24, ends {1..24} -- EVERY sublayer is a block end, so
      `partial` is flushed to `done` after every sublayer and is ALWAYS [] at the `ar()` read.
      A wrapper accumulating into `partial` would accumulate into a list that is empty by

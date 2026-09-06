@@ -958,7 +958,7 @@ def reconcile_command(cmd, prov, flags=RECIPE_FLAGS):
     both directions -- "a parameter was omitted" does not set severity, and "the
     effective value is correct" does not prove the parameter was passed.
     """
-    # `--no-X` and `--no_X` COUNT AS PRESENT (b0, 2026-09-03). train.py:1992 declares
+    # `--no-X` and `--no_X` COUNT AS PRESENT (b0, 2026-09-03). train.py's main() argparse loop declares
     # grad_ckpt, attn_res, attn_res_dyn_q and fone as BooleanOptionalAction, whose whole
     # point is that absent and False are different values: absent leaves the Cfg default,
     # `--no-grad_ckpt` writes False. The old pattern's `(?<![\w-])` lookbehind rejected
@@ -1114,7 +1114,7 @@ def gate_cloze_regions(root, mix_path, world, cmd=None):
                  unchanged -- only the ALLOCATION moves.
       alloc      the boundary itself. int(total_tokens/seq x weight) must equal the probe's
                  unseen_lo. This is a statement about the MIX, not about the run: the plan is
-                 built for the WHOLE budget (train.py:1692 rows = total_tokens/seq, :1798
+                 built for the WHOLE budget (build_mix's rows = total_tokens/seq, and its
                  want = int(rows x frac x weight) -- no step term anywhere), so stopping early
                  consumes a PREFIX of that plan. On mix_200m_8b starcoder gets 643,969 rows =
                  0.301 epochs of its 2,139,719-row pool, and pool [643969, 2139719) is never

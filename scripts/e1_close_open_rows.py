@@ -86,10 +86,12 @@ CLOSE = {
                "eff.step_roofline_p200m_4card, eff.padded_vocab_table_no_pay_200m. The row asked me "
                "to EDIT those facts; facts are 44's area and cleanup_0904 C8 is the fact-edit item, "
                "so the list goes to 44 rather than my writing 17 entries in someone else's file. "
-               "The basis itself is mfu = 6*n_params*tps/peak_tflops at train.py:2560, and the "
+               "The basis itself is mfu = 6*n_params*tps/peak_tflops at train.py's step-log "
+               "`mfu = 6 * n_dense * tps` computation, and the "
                "reason it matters is b0's VE arm reading 55% vs base 48% at identical 57K tok/s/gpu "
                "-- the move is the +16.3% params in the numerator, not throughput.",
-        evidence="the 17 ids above, enumerated over facts/*.json; train.py:2560; "
+        evidence="the 17 ids above, enumerated over facts/*.json; train.py's step-log mfu "
+                 "computation (n_dense, peak_tflops); "
                  "docs/standards/cleanup_0904.md C8 (44's fact-edit item)",
     ),
     "e1-25": dict(

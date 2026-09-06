@@ -22,7 +22,8 @@ both would have produced a confident answer to the pre-registered question:
 
   2. "Rows whose weights differ from init were trained" ALSO reads 32832 of 32832 -- and this is
      the one I was about to ship. The table sits in the AdamW `embed` group with
-     weight_decay=0.001 (train.py:779), an Embedding's gradient is a DENSE zero-filled tensor,
+     weight_decay=0.001 (train.py's build_optimizers), an Embedding's gradient is a DENSE
+     zero-filled tensor,
      and AdamW's decoupled decay therefore steps every row whether or not a token reached it.
      Measured on a toy: after one step all 10 of 10 rows moved, touched rows by 2.0e-2 and
      untouched rows by 1.3e-5.
@@ -67,7 +68,8 @@ def summarise(norms, delta, floor, counts=None, topk=(10, 100, 1000)):
     """The reading: how the movement is DISTRIBUTED across rows.
 
     `rows_moved` is deliberately NOT the headline, and the reason is measured: the VE table sits
-    in the AdamW `embed` group with weight_decay=0.001 (train.py:779), an Embedding's gradient is
+    in the AdamW `embed` group with weight_decay=0.001 (train.py's build_optimizers), an
+    Embedding's gradient is
     a DENSE zero-filled tensor, and AdamW's decoupled decay therefore steps EVERY row whether a
     token reached it or not. Verified on a toy: after one step, all 10 of 10 rows have moved --
     touched rows by 2.0e-2 and untouched rows by 1.3e-5, three orders apart. So a moved/unmoved
@@ -82,8 +84,9 @@ def summarise(norms, delta, floor, counts=None, topk=(10, 100, 1000)):
     THE ESTIMATED FLOOR WAS WRONG AND IT INVERTED THE ANSWER. An earlier version put the floor at
     10x the MEDIAN row, on the premise that most rows are untouched at 0.26B tokens. That premise
     is false: 0.26B tokens over 32832 rows is ~7900 hits per row on average, and the measured
-    floor is 0.0322 relative (empirical 0.032197, analytic 0.0323 -- embed_lr=0.1 at train.py:263,
-    embed_wd=0.001 at :265, and line 820's decay-to-zero is inside `if isinstance(opt, Muon)` so
+    floor is 0.0322 relative (empirical 0.032197, analytic 0.0323 -- Cfg.embed_lr=0.1 and
+    Cfg.embed_wd=0.001 in the Cfg body, and set_schedule's decay-to-zero is inside
+    `if isinstance(opt, Muon)` so
     it never reaches this group) while the median row moved 0.0977, i.e. 5x the floor. The floor
     was therefore set ~900x too high and reported 274 of 32832 rows trained where the truth is all
     32832 (min ratio delta/floor = 2.65 over every row). A data-estimated floor assumes the answer
@@ -347,14 +350,16 @@ def main():
     s["reading"] = (
         "READ rows_above_decay_floor, NOT rows_moved_at_all. rows_moved_at_all is expected to be "
         "the whole vocab and means nothing: the table is in the AdamW `embed` group with "
-        "weight_decay=0.001 (train.py:779) and an Embedding's grad is dense, so decoupled decay "
+        "weight_decay=0.001 (train.py's build_optimizers) and an Embedding's grad is dense, so "
+        "decoupled decay "
         "steps every row whether a token reached it or not (toy: 10/10 rows move, touched 2.0e-2 "
         "against 1.3e-5 decay-only). A norm cutoff is equally blind -- the model inits embeddings "
         "to std=0.02 (model.py:453 via self.apply(self._init) at :388), so an untouched row keeps "
         "norm 0.02*sqrt(1024) = 0.64. Only MAGNITUDE separates the two populations, hence the "
         "delta distribution against a MEASURED floor: the real optimizer is stepped through the "
         "real schedule on a row whose gradient is always zero, giving 0.0322 relative here (the "
-        "analytic value for embed_lr=0.1 at train.py:263 and embed_wd=0.001 at :265 is 0.0323). A "
+        "analytic value for Cfg.embed_lr=0.1 and Cfg.embed_wd=0.001 in train.py's Cfg body is "
+        "0.0323). A "
         "row counts as trained above 1.5x that. The floor was previously ESTIMATED at 10x the "
         "median row, on the premise that most rows stay untouched at 0.26B tokens; that premise "
         "is false (~7900 hits/row over 32832 rows) and it reported 274 rows trained where every "

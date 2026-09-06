@@ -4,8 +4,8 @@
 Cfg.num_id was the constant 32772 with a comment saying [NUM] is "always in the
 vocab". True of the frozen tokenizer, false the moment one is rebuilt. The bug is
 worth a test not because a rebuild is likely but because num_id is read at three
-sites -- fone masking (train.py:808), digit cross-entropy (:999), value
-write-back (:1229) -- and each fails SILENTLY into plausible training: a stale id
+sites -- fone masking, the digit cross-entropy, and the value
+write-back -- and each fails SILENTLY into plausible training: a stale id
 masks an ordinary BPE token as numeric with correct shapes and no error.
 
 Runs in milliseconds, no GPU, no checkpoint: the property under test is id

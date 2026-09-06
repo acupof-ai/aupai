@@ -53,13 +53,13 @@ SAME_CORPUS_AS_STAGE1 = {"cot", "code_rp1t", "zh_web", "textbook_30b", "wiki_cha
 
 # The stage-1 row cursor from ckpt_pretrain_15b_s1.pt.step16000, which seeds used[] in
 # build_mix. THE CAP MUST COVER used + want, NOT want alone: build_mix computes
-# cap = int(pool * epochs) - used[name] (train.py:1802) and then draws
-# arange(used, used+want) (:1810). Deriving epochs from want/pool alone -- which is what the
+# cap = int(pool * epochs) - used[name] (build_mix's epoch cap in train.py) and then draws
+# arange(used, used+want) in that same loop. Deriving epochs from want/pool alone -- which is what the
 # first version of this writer did -- gave cot 3 against a need of 6, so its cap left ~5K rows
 # of a 295,512-row draw and stage 2 would have trained on essentially NO cot. It killed the
 # first stage-2 launch at the JOIN line: total_steps 28,505 instead of 32,348.
 #
-# The cursor is keyed by the MIX's domain name (train.py:1774 looks up row_cursor[name]), so a
+# The cursor is keyed by the MIX's domain name (build_mix in train.py looks up row_cursor[name]), so a
 # renamed domain does not match and seeds used = 0. en_c4_stage2 and math_owm_stage2 are new
 # dirs with new names, so they legitimately start at row 0 and their epochs 1 already suffices.
 STAGE1_CURSOR = {
@@ -258,7 +258,8 @@ def build():
             "epochs after this file's 3 more, not 6: 6.00 is on the pool, 5.71 on raw supply. cot epochs",
             "stay a live lever if a math or reasoning metric reads flat at the readout (fb, 44).",
             "",
-            "KNOWN DEVIATION, pre-registered: used[] restarts at 0 on resume (train.py:1591), so stage 2",
+            "KNOWN DEVIATION, pre-registered: used[] restarts at 0 on resume (train.py's build_mix",
+            "assigns `used[name] = int(row_cursor[name])` rather than accumulating), so stage 2",
             "re-reads rows stage 1 consumed while fresh rows sit unread -- zh_web re-reads 8% with 92%",
             "never seen, code_rp1t 58% with 26% never seen. EVERY epochs figure here is a mean over a",
             "non-uniform pass, cot included: its 17 rounding rows land at 5x against 98,487 at 6x under",

@@ -4,7 +4,7 @@
 
     python3 scripts/test_step_line_parses.py
 
-WHY THIS EXISTS. train.py:2574 prints the step line; RunLog._STEP_RE (train.py:46) parses that
+WHY THIS EXISTS. train.py's step-line runlog() f-string prints the step line; RunLog._STEP_RE parses that
 same line to feed trackio. Nothing connected the two, so editing the line could stop every
 trackio metric with no error anywhere -- the log would look RICHER while the dashboard went
 flat, which is the worst shape a logging defect can take.
@@ -47,7 +47,7 @@ def _step_re():
 
 
 def _step_line(lr_field):
-    """The line train.py:2574 prints, with `lr <field>` substituted.
+    """The line train.py's step-line runlog() call prints, with `lr <field>` substituted.
 
     Field order and separators copy the f-string. A field moved or a `|` dropped there and not
     here means this test passes on a line nobody prints -- so if train.py's line changes shape,
@@ -146,8 +146,9 @@ def main():
                      "(moe_diag/memory_diag are MoE- and memory-arm only)")
     if "val_s {_val_s:.2f} val_s_total {_val_s_total:.1f}" not in src:
         fails.append("train.py's val line no longer prints val_s/val_s_total. validate() runs "
-                     "INSIDE the tps window (train.py:3340 before the tps compute at :3357 from "
-                     "the same `now - t_log`), so without these the validation term has to be "
+                     "INSIDE the tps window (train.py's Cfg.val_every validate() call precedes the "
+                     "`tps = 10 * Cfg.batch ...` compute, both off the same `now - t_log`), so "
+                     "without these the validation term has to be "
                      "ESTIMATED out of steady-state seconds instead of measured")
     if not re.search(r"_val_s_total\s*=\s*0\.0", src):
         fails.append("_val_s_total is never initialised, so the val line would raise NameError "
