@@ -919,6 +919,14 @@ class MoEFFN(nn.Module):
         self.register_buffer("tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
                              persistent=False)
         self.register_buffer("windows", torch.zeros((), dtype=torch.long), persistent=False)
+        # THE BALANCER'S OWN COUNTER, separate from readout 4's. tokens_per_expert accumulates over
+        # a 200-step window and is cleared by diagnostics(reset=True), so it cannot feed a per-step
+        # control loop: the bias would move on the window's total (and only when a diagnostics step
+        # happened to fire) rather than on this step's load. Non-persistent for the same reason
+        # tokens_per_expert is -- a resume restoring a half-finished step's counts would update the
+        # bias from another run's load.
+        self.register_buffer("step_tokens_per_expert", torch.zeros(self.n_routed, dtype=torch.long),
+                             persistent=False)
         # The sequence-wise balance loss for the current forward, read by train.py and added to
         # the loss there. Kept as an attribute rather than returned so Block.forward's signature
         # and the AttnRes sublayer protocol stay unchanged.
@@ -941,6 +949,12 @@ class MoEFFN(nn.Module):
         Called by train.py once per optimizer step with the step's summed counts, NOT per
         micro-batch: with accum 2 a per-micro-batch update would move the bias twice per step and
         the effective gamma would silently be 2x the registered one.
+
+        WIRED 2026-09-06. Before that this method existed and NOTHING in train.py called it: all
+        three E1' arms (dense has no router; moe24 and moe48) finished 3815 steps with every
+        expert_bias buffer identically zero (absmax 0.0, 12/12 on ckpt_b0_e1p_moe48.pt), so their
+        load-balance numbers are the sequence-wise loss acting alone and say nothing about this
+        balancer at any gamma.
         """
         mean = counts.float().mean()
         err = counts.float() - mean
@@ -983,6 +997,7 @@ class MoEFFN(nn.Module):
         if self.training or torch.is_grad_enabled():
             with torch.no_grad():
                 self.tokens_per_expert += counts
+                self.step_tokens_per_expert += counts
                 self.windows += 1
         # OFFSETS ARE CUMULATIVE ENDS, and int32 -- the op's convention, measured by tilerl.
         offs = torch.cumsum(counts, 0).to(torch.int32)

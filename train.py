@@ -3243,6 +3243,11 @@ def main():
             "launch -- the arm would train the table in bf16 with updates rounding away."
         )
     _masters = [m for m in (master, table_master) if m is not None]
+    # THE MoE LAYERS THE BALANCER STEPS, resolved once here rather than per step. Empty on a dense
+    # run, so the training loop's balancer block costs one falsy check when there is no router.
+    # EVERY MoE layer, because each owns its own expert_bias -- see the call site after opt.step().
+    _moe_balance_layers = [raw_model.blocks[i].ffn
+                           for i in (getattr(raw_model, "moe_layers", None) or [])]
     # ONE merged map into build_optimizers, so a parameter is resolved to a master exactly once.
     # The two maps are disjoint by construction and test_arch_compat asserts it.
     _mmap = {}
@@ -3546,6 +3551,40 @@ def main():
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
+                # THE AUX-LOSS-FREE BALANCER'S STEP (arXiv:2412.19437 section 2.1.2), once per
+                # OPTIMIZER step. Until 2026-09-06 MoEFFN.update_bias had no caller outside its
+                # unit test, so every MoE arm so far trained with expert_bias identically zero and
+                # the sequence-wise loss (model.py, alpha=1e-4) as its only balancer.
+                #
+                # PLACED AFTER opt.step() AND INSIDE THE accum-BOUNDARY BLOCK, which is what makes
+                # it once-per-step: the forward accumulates step_tokens_per_expert over both
+                # micro-batches, so a call per micro-batch would move the bias twice and the
+                # effective gamma would silently be 2x the registered one.
+                #
+                # NOT REACHED ON A SKIPPED STEP: the non-finite branch above `continue`s before
+                # opt.step(), so a step whose gradients were dropped also leaves the bias alone.
+                # Its counts are cleared here anyway on the next step that does land, because the
+                # buffer keeps accumulating -- one skipped step's load is folded into the next
+                # update rather than being counted as its own.
+                #
+                # EVERY MoE LAYER, not just moe_layers[0]. Each layer owns its own router and its
+                # own expert_bias, so balancing one and leaving eleven unbalanced would be a
+                # different intervention than the one registered. runs/moe_diag.jsonl reports
+                # layer 0 alone, which is a reporting choice and not the balancer's scope.
+                #
+                # SUMMED ACROSS RANKS, matching the diagnostics reduction below: the counts are a
+                # COUNT, so the step's true load is the sum over ranks, and DeepSeek judges overload
+                # "over the whole training-step batch". Every rank must enter the collective or the
+                # next reduction hangs, so this is outside any is_main guard, and every rank runs
+                # the identical update on the identical reduced counts -- the bias is a buffer, not
+                # a Parameter, so DDP never synchronises it and the ranks would otherwise diverge.
+                if _moe_balance_layers:
+                    for _bl in _moe_balance_layers:
+                        _c = _bl.step_tokens_per_expert
+                        if ddp:
+                            dist.all_reduce(_c, op=dist.ReduceOp.SUM)
+                        _bl.update_bias(_c)
+                        _c.zero_()
                 for _m in _masters:
                     _m.push()
                 if probe is not None and is_main:
