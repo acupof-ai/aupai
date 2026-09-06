@@ -85,7 +85,14 @@ def build(grad_ckpt, seed=42):
     Cfg.vocab = Cfg.vocab_real = 256
     Cfg.seq, Cfg.fone = 64, False
     Cfg.attn_every = 2
-    Cfg.moe_experts, Cfg.moe_layers, Cfg.moe_top_k = 8, "0-3", 2
+    # EQUAL-ACTIVE PARITY IS ENFORCED BY MoEFFN, not optional:
+    # (moe_top_k + moe_shared) * moe_expert_ffn must equal ffn_hidden EXACTLY or it refuses,
+    # so that a loss delta is attributable to sparsity rather than FLOPs. My first version set
+    # top_k and left moe_expert_ffn at train.py's default 768, and the card rejected it in the
+    # constructor: "active FFN width 2304 != dense ffn_hidden 256". With ffn_hidden 256 and
+    # moe_shared 1, top_k 3 needs moe_expert_ffn 64 -- (3+1)*64 = 256.
+    Cfg.moe_experts, Cfg.moe_layers, Cfg.moe_top_k = 8, "0-3", 3
+    Cfg.moe_shared, Cfg.moe_expert_ffn = 1, 64
     Cfg.grad_ckpt = False          # constructed OFF; see docstring
     torch.manual_seed(seed)
     m = HybridLM(Cfg).cuda().train()
