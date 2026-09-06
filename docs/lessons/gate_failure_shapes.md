@@ -62,7 +62,7 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (21 incidents)
+### R2-a No broken world (22 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
@@ -82,6 +82,7 @@ A check that was never made to fail is decoration; the broken world must be asse
 - §247: a byte-diff over an append-only ledger reported 141 orphans and every one was a superseded row — a temp worktree pinned to an old commit, so byte-equality asked "is this exact historical line still present" instead of "does this row exist"; by the identity its own writer uses ((name, started), (ckpt, type, measured)) it was 0 of 289 and 1 of 58, and that 1 was re-measured a day later. A criterion that reports the whole history as missing cannot tell a lost row from an old one, which is the failure it exists to detect.
 - §248: a broken world that SKIPs has proven nothing — `_tmp_repo` makes a directory, not a git repo, so every git call failed silently, no reflog existed, the check SKIPped, and the broken world and a clean control returned the IDENTICAL SKIP string. SKIP is the shape a correct check produces on a machine that legitimately cannot answer, so a SKIP from a broken fixture is indistinguishable from a real absence. `_tmp_repo`'s name is the trap.
 - §250: a refusal placed where its condition is unreachable proves nothing — the allocator's refuse-on-collision candidate is max+1 over the very set it tests against, so it is free by construction; a guard-shaped piece of dead code that would have read as protection in review. Same family as §248: a check whose green is structurally guaranteed, found by asking "what would have to be true for this to fire?"
+- §252: five defects in one 40-line function, each found only after the previous fix was believed to be the last, all one shape -- the rule keyed on a property ADJACENT to the one that matters. The staged-index carry: trigger on fast-forward-vs-true-merge instead of "does this merge touch a staged path"; index cleared but not the working tree; a new path not resettable from HEAD; restore by overwrite, which for a merge=union ledger is a deletion (it dropped e1-48/e1-49) and for source discards whatever main changed (517 lines of scripts/harness.py, e1's 9a382298 among them). A measurement can be correct and still be generalised past its own conditions, which no check can see. Nine worlds, four controls, each mutant dying on exactly the world that names it.
 
 Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABSENT means unstated and "" is forbidden (indistinguishable from a pre-field row; 243 historical rows stay null, no backfill); 'none' is a STATED cards answer for a CPU or corpus job. defect_caught "" is a REAL clean-review answer; absent means no review reported.
 
