@@ -1,0 +1,10 @@
+Traceback (most recent call last):
+  File "/Users/bytedance/code/aupai-e1/train.py", line 3996, in <module>
+    main()
+  File "/Users/bytedance/code/aupai-e1/train.py", line 2886, in main
+    fps = _assert_mix_domains(
+          ^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bytedance/code/aupai-e1/train.py", line 2116, in _assert_mix_domains
+    assert glob.glob(os.path.join(ddir, "*.jsonl")), (
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: mix domain 'math_owm_stage2' has no shards: /Users/bytedance/code/aupai-e1/data/corpus/math_owm_stage2/*.jsonl matches nothing. _domain_seqs would raise on this too, but only after tokenizing the domains that do exist.
