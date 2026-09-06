@@ -9,7 +9,26 @@ instruction; this file is the list that instruction would name.
 | group | count | size | verdict |
 |---|---|---|---|
 | `data/corpus/web_cci3_p*` | 24 dirs | **79.5 GiB** | DELETABLE, with three exceptions below |
+| `data/raw/fable5_2m` | 1 dir | **2.0 GiB** | DELETABLE — measured out, two encodings of a subset |
 | loose `batch_*.jsonl` | 143 files | 2.4 MiB | **NOT deletable — the task text is wrong** |
+
+## data/raw/fable5_2m: 2.0 GiB, added 2026-09-06
+
+Added on 4c's ruling after the source was measured rather than assumed. It holds
+`data/train.parquet` (981 MB) and `raw/fable5_mythos_dedup.jsonl.gz` (1.1 GB), which are the
+same 2,006,487 rows in two encodings.
+
+What the measurement found (`facts/corpus_supply.json#cs.cot_fable_supply`, run by
+`datagen/fable5/measure_fable5_supply.py`): 831 rows survive the cleaning spec, 2.76M tokens,
+and **all 4,484 of its cot-schema rows are already in `data/raw/fable5_traces` by uid** —
+parquet-only 0, kelexine-only 181. It is a strict subset, so deleting it loses no content
+that the other directory does not hold. 99.78% of the file is raw Claude Code JSONL
+envelopes with no thinking field.
+
+Unlike the `web_cci3` dirs, this one is a `data/raw/` fetch rather than a built corpus, so
+there is no `build_corpus_stats.json` to keep and no fingerprint to lose: re-fetching it from
+`Crownelius/Complete-FABLE.5-traces-2M` reproduces it. The fact records what it contained, so
+the measurement survives the directory.
 
 ## The task text names a target that must not be deleted
 
