@@ -530,6 +530,44 @@ for _ in $(seq 1 120); do
       echo "  nothing was written to the integration tree and main is unmoved at ${_old:0:8}." >&2
       exit 1
     fi
+    # THE QUEUED FRICTION ROWS, ONE COMMIT FOR ALL OF THEM (4c, 2026-09-06). 601 commits landed
+    # on main in 24 h and 98 were single ledger rows. The 105 merge commits cannot batch -- each
+    # is one integration -- but these can, because nobody reads friction.jsonl in real time.
+    # `friction add --defer` queues a whole JSON row under the git dir; this appends every queued
+    # row and commits ONCE, path-scoped.
+    #
+    # DRAINED BEFORE `_new` IS READ, NOT AFTER THE CAS, and that ordering is the whole
+    # correctness of this. Measured on its own first run (2026-09-06): draining after the CAS
+    # produced commit c12576ea carrying both rows on the BRANCH while main already pointed at
+    # 793ff59e -- one commit behind it. The rows were never lost, but they never reached main
+    # either, and the next merge would have carried them silently. The CAS advances main to
+    # `_new`, so anything that must land has to be committed before `_new` is read.
+    #
+    # The pre-existing override drain below still has this defect (008ee382, same run). It is
+    # left for its owner rather than fixed here: it is a different queue with a different
+    # writer, and changing both in one commit would make neither bisectable.
+    #
+    # TRUNCATED ONLY AFTER THE COMMIT SUCCEEDS, so a kill anywhere in between leaves the queue
+    # intact and the rows land next time. The failure this rules out is losing a row, which is
+    # the only irreversible outcome here: a row committed twice would be visible and fixable,
+    # a row dropped is gone.
+    _rows="$(git rev-parse --git-dir)/aupai_pending_rows"
+    if [ -s "$_rows" ]; then
+      _rn=$(grep -c . "$_rows" 2>/dev/null || echo 0)
+      if cat "$_rows" >> "$_wt_self/runs/friction.jsonl" \
+         && git -C "$_wt_self" commit -q -m "friction: $_rn queued row(s) from $1" \
+              -- runs/friction.jsonl >/dev/null 2>&1; then
+        : > "$_rows"
+        echo "merge_main: drained $_rn queued friction row(s) into one commit" >&2
+      else
+        # The rows are in the file but not committed, or the commit was refused. Leave the
+        # QUEUE intact -- draining again would duplicate, so say what state it is in rather
+        # than guessing. `git checkout` on the ledger reverts the append; the queue re-drains.
+        echo "merge_main: WARNING -- $_rn queued friction row(s) appended but NOT committed." >&2
+        echo "  The queue is intact, so nothing is lost. Undo the append and re-run:" >&2
+        echo "    git -C $_wt_self checkout -- runs/friction.jsonl" >&2
+      fi
+    fi
     _new=$(git rev-parse HEAD)
     # THE DROP CHECK RUNS BEFORE THE CAS, ON THE CANDIDATE, and a drop is now a REFUSAL. It used
     # to restore the dropped paths INTO the shared tree and stage them for someone else to
