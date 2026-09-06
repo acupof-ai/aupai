@@ -13041,6 +13041,29 @@ def _cite_baseline_key(rel, form):
     return f"{rel}->{form}"
 
 
+def _cite_subjects(root):
+    """Every file the citation ban covers: tracked .py/.sh, plus facts/*.json as TEXT.
+
+    ONE DEFINITION because the ratchet's rekeyer reads the same population, and a rekeyer
+    that walks a narrower set silently drops keys the check still counts. Measured 2026-09-07:
+    the rekeyer and the check disagreed once already, over the wrap lines rather than the file
+    set, and the symptom was a baseline that looked correct and was short.
+
+    facts/*.json is read as text, not json.load, because the report has to name the citing
+    line and parsing throws line numbers away. 4c's ruling 2026-09-07, (ii) enforced by (i):
+    a fact's evidence is a formula, a symbol or a log line. The class is worse than the code
+    case -- a fact IS the claim and the cited line is its evidence, so the fact's reader is
+    the person most likely to go and read it.
+    """
+    yield from walk_tracked(root, (".py", ".sh"))
+    fdir = os.path.join(root, "facts")
+    if os.path.isdir(fdir):
+        for fn in sorted(os.listdir(fdir)):
+            if fn.endswith(".json"):
+                p = os.path.join(fdir, fn)
+                yield p, open(p, encoding="utf-8", errors="replace").read()
+
+
 def check_train_cite_targets(root):
     """A `train.py:<N>` citation is anchored to a commit sha, or it does not exist.
 
@@ -13109,7 +13132,7 @@ def check_train_cite_targets(root):
     bad, n, anchored = [], 0, 0
     sha_cache = {}
     seen_counts = {}
-    for p, txt in walk_tracked(root, (".py", ".sh")):
+    for p, txt in _cite_subjects(root):
         rel = os.path.relpath(p, root)
         src_lines = txt.splitlines()
         for i, line in enumerate(src_lines, 1):
@@ -13423,6 +13446,101 @@ def _selftest_train_cite_baseline_is_content_keyed():
         shutil.rmtree(d, ignore_errors=True)
     return ("content-keyed multiset: 122 inserted lines stay PASS, a new bare citation and a "
             "second cite of a baselined number both FAIL (4 cases)")
+
+
+def _selftest_cite_scope_covers_facts():
+    """A bare citation inside a facts/*.json string FAILs, and the same fact with a symbol PASSes.
+
+    4c's ruling 2026-09-07, (ii) enforced by (i): facts/*.json string fields are under the ban.
+    Before it the population was uncounted, and it is the largest one in the tree -- 125
+    citations, 91 in facts/efficiency.json alone, against 47 on the whole code side. So the
+    widening had to be tested in BOTH directions or a scope that silently read nothing would
+    look identical to a scope that read everything and found nothing.
+
+    THREE CASES, and the third is the control that makes the first mean something:
+      1. facts/ as it stands, baselined                       -> PASS
+      2. a NEW bare citation added to a fact's boundary       -> FAIL, naming facts/
+      3. the SAME fact carrying a symbol instead of a number  -> PASS
+
+    Case 3 is the pair de asked 58 for on the fixture-control question, applied here: the two
+    worlds differ in exactly the property under test, so a check blind to facts/ cannot produce
+    both rows. Without it, case 2 could be red because of anything at all in the file.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        # SHARED ALTERNATES, and without them case 1 is red for the wrong reason. Six facts/
+        # citations are sha-anchored, and the check verifies each by `git show <sha>:train.py`
+        # in the world -- a fresh `git init` holds one commit and resolves none of them, so the
+        # untouched world FAILed with "names sha ..., which this repo cannot resolve" and the
+        # scope question was never reached. Alternates give the world READ access to the real
+        # object store while its own index and commits stay separate, so nothing here can write
+        # to the repo (measured while writing this: 6 unresolvable shas -> 0).
+        #
+        # THE OBJECT STORE IS NOT ALWAYS AT ROOT/.git/objects. In a worktree `.git` is a FILE
+        # pointing at the common dir, so the hardcoded path silently does not exist and the
+        # alternates file vouches for nothing -- which is what the first version of this did,
+        # failing identically to having no alternates at all. `--git-common-dir` answers in
+        # both layouts, and a relative answer is resolved against root.
+        _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-common-dir"],
+                                 capture_output=True, text=True)
+        if _common.returncode != 0:
+            raise SelftestSkip("git cannot name this tree's object store")
+        _objects = os.path.join(os.path.realpath(os.path.join(ROOT, _common.stdout.strip())),
+                                "objects")
+        assert os.path.isdir(_objects), f"no object store at {_objects}"
+        _alt = os.path.join(d, ".git", "objects", "info")
+        os.makedirs(_alt, exist_ok=True)
+        with open(os.path.join(_alt, "alternates"), "w", encoding="utf-8") as fh:
+            fh.write(_objects + "\n")
+        for rel in ("train.py", _CITE_BASELINE):
+            dst = os.path.join(d, rel)
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, rel), dst)
+        fdir = os.path.join(d, "facts")
+        os.makedirs(fdir, exist_ok=True)
+        real_facts = os.path.join(ROOT, "facts")
+        if not os.path.isdir(real_facts):
+            raise SelftestSkip("no facts/ in this tree")
+        for fn in sorted(os.listdir(real_facts)):
+            if fn.endswith(".json"):
+                shutil.copy(os.path.join(real_facts, fn), os.path.join(fdir, fn))
+        g("add", "-A")
+        g("commit", "-qm", "base")
+
+        st, ev = check_train_cite_targets(d)
+        assert st is PASS, f"facts/ as it stands must PASS against its own baseline: {ev[:200]}"
+
+        # A REAL fact file gets one field appended, so the world is a mutated artifact rather
+        # than a hand-written one. The citation is ASSEMBLED: spelling it out would make this
+        # function's own source a finding on the live tree.
+        victim = os.path.join(fdir, "efficiency.json")
+        base_txt = open(victim, encoding="utf-8").read()
+        bare = f"the warmdown starts at {'train' + '.py'}:2500, read off the tree"
+        symbolic = "the warmdown starts at wd_steps in train's lr schedule"
+        for probe, want, why in ((bare, FAIL, "a bare citation inside a fact must FAIL"),
+                                 (symbolic, PASS, "the same fact by symbol must PASS")):
+            obj = json.loads(base_txt)
+            obj["_selftest_probe"] = probe
+            with open(victim, "w", encoding="utf-8") as fh:
+                json.dump(obj, fh, indent=2, ensure_ascii=False)
+            st, ev = check_train_cite_targets(d)
+            assert st is want, f"{why}, got {st}: {ev[:200]}"
+            if want is FAIL:
+                assert "facts/efficiency.json" in ev, (
+                    f"the FAIL must NAME the fact file, or the report cannot be acted on: "
+                    f"{ev[:200]}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("facts/ in scope: a bare citation in a fact FAILs naming the file, the same fact "
+            "by symbol PASSes, and the untouched tree PASSes (3 cases)")
 
 
 def check_no_conflict_markers(root):
@@ -20250,6 +20368,7 @@ def _demo(only=None):
         _selftest_train_cite_abbreviated_form,
         _selftest_cite_sentence_wraps,
         _selftest_train_cite_baseline_is_content_keyed,
+        _selftest_cite_scope_covers_facts,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
