@@ -267,15 +267,35 @@ PY
 _carry_stage() {
   _cs_staged=$(git diff --cached --name-only)
   [ -n "$_cs_staged" ] || return 0
-  # FAST-FORWARD vs TRUE MERGE is the discriminator, not path overlap. A fast-forward checks out
-  # only the changed files and tolerates a staged index; a true merge runs `ort`, which needs a
-  # clean index TREE-WIDE and refuses ANY staged path. Measured in both directions with the staged
-  # path held constant at one the incoming side never touches (de + tilerl-0a, 2026-09-06):
-  # fast-forwardable rc=0, diverged rc=2 "would be overwritten by merge: mine.txt". A version
-  # keyed on overlap would miss every real case.
+  # THE TRIGGER IS "WILL THIS MERGE TOUCH A STAGED PATH", and fast-forward vs true merge only
+  # decides WHICH paths that is. My first version returned early on any fast-forward, on the
+  # measurement that a fast-forward tolerates a staged index -- and that measurement was taken
+  # with the staged path held at one the incoming side never touches, which is the single case
+  # where it is true. MEASURED AGAINST ITSELF within the hour (de, 2026-09-06): this function
+  # printed "the merge is a fast-forward -- no carry needed" and the fast-forward then aborted
+  # with "Your local changes to the following files would be overwritten by merge: runs/tasks.jsonl,
+  # scripts/harness.py" -- both staged, both changed by main. A fast-forward checks out the files
+  # the range changed, so it refuses a staged path INSIDE that set and ignores one outside it.
+  #
+  # A true merge runs `ort`, which needs a clean index TREE-WIDE and refuses ANY staged path
+  # regardless of what the merge touches (measured with the staged path held constant: fast-
+  # forwardable rc=0, diverged rc=2). So:
+  #   true merge    -> carry, always
+  #   fast-forward  -> carry only when a staged path is in the fast-forward's changed set
+  # W3 asserted the old rule and passed because its staged path was outside the set; it now
+  # asserts the same world AND the in-set case, which is the one that bit.
   if git merge-base --is-ancestor HEAD main; then
-    echo "merge_main: $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') staged path(s), but the merge is a fast-forward -- no carry needed" >&2
-    return 0
+    # Exact-line intersection without a process substitution: `comm` needs both sides sorted,
+    # and grep -Fxf on a temp file is one fewer moving part than <(...) inside `set -u`.
+    _cs_ffl=$(mktemp)
+    git diff --name-only HEAD main > "$_cs_ffl"
+    _cs_overlap=$(printf '%s\n' "$_cs_staged" | grep -Fxf "$_cs_ffl" || true)
+    rm -f "$_cs_ffl"
+    if [ -z "$_cs_overlap" ]; then
+      echo "merge_main: $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') staged path(s), fast-forward touches none of them -- no carry needed" >&2
+      return 0
+    fi
+    echo "merge_main: fast-forward, but it changes $(printf '%s\n' "$_cs_overlap" | wc -l | tr -d ' ') staged path(s) -- carrying" >&2
   fi
   _cs_ref="refs/wip/$1"
   # REFUSE RATHER THAN OVERWRITE. An existing ref means a previous carry never restored, so
@@ -295,7 +315,32 @@ _carry_stage() {
   _cs_wip=$(git commit-tree "$_cs_tree" -p HEAD -m "wip: staged index carried through merge of main") \
     || { echo "REFUSING: git commit-tree failed" >&2; return 1; }
   git update-ref "$_cs_ref" "$_cs_wip" || { echo "REFUSING: could not write $_cs_ref" >&2; return 1; }
-  git reset -q HEAD -- . || { echo "REFUSING: could not clear the index" >&2; return 1; }
+  # RESET THE INDEX **AND** THE WORKING TREE, for the carried paths only. `git reset HEAD -- .`
+  # alone unstages and leaves the file MODIFIED, and git refuses a merge on a dirty working tree
+  # exactly as it refuses one on a dirty index -- so the abort simply moved from "staged" to
+  # "local changes". Measured on the W3b world (de, 2026-09-06): after the reset, staged was empty,
+  # unstaged held f.txt, and the fast-forward still aborted with "Your local changes to the
+  # following files would be overwritten by merge: f.txt".
+  #
+  # TWO KINDS OF STAGED PATH, and W6 found the second. A path that exists in HEAD is restored with
+  # `checkout HEAD -- <path>`. A NEWLY ADDED path does not exist in HEAD at all, so that checkout
+  # errors ("pathspec did not match") and the carry reports no-carry -- which is what W6 saw when
+  # it staged a new other.txt. A new path is instead unstaged and removed from the working tree;
+  # both are safe because the content is already committed on $_cs_ref, and _carry_restore writes
+  # it back by name.
+  #
+  # Scoped to the carried paths, never `-- .`: this must not touch a path the session left dirty
+  # on purpose and did not stage. Those are the `_dirty` gate's business, above, which refuses
+  # before we get here.
+  printf '%s\n' "$_cs_staged" | while IFS= read -r _cs_p; do
+    [ -n "$_cs_p" ] || continue
+    if git cat-file -e "HEAD:$_cs_p" 2>/dev/null; then
+      git checkout HEAD -- "$_cs_p" || exit 1
+    else
+      git rm -q --cached -- "$_cs_p" || exit 1
+      rm -f -- "$_cs_p"
+    fi
+  done || { echo "REFUSING: could not clear the carried paths (they are safe at $_cs_ref)" >&2; return 1; }
   echo "merge_main: carried $(printf '%s\n' "$_cs_staged" | wc -l | tr -d ' ') staged path(s) to $_cs_ref (${_cs_wip:0:8}); restoring after the merge" >&2
   # FIRST LINE IS THE REF, THE REST ARE THE PATHS. _carry_restore needs the names: restoring by
   # `.` reverts the merge (see the comment there), so the list has to survive the round trip.
@@ -317,13 +362,91 @@ _carry_restore() {
   # $2 is the newline-separated path list _carry_stage recorded. Restoring by name touches nothing
   # the merge wrote to any other path.
   [ -n "${2:-}" ] || { echo "REFUSING: _carry_restore needs the carried path list" >&2; return 1; }
-  if ! printf '%s\n' "$2" | tr '\n' '\0' | xargs -0 git checkout "$1" --; then
+  # A UNION-MERGE LEDGER IS UNIONED BACK, NEVER OVERWRITTEN. This is the third defect in this
+  # function and the most expensive: an overwrite restore is correct for a source file, where my
+  # version supersedes the merged one, and is a DELETION for a file git merges by union, where the
+  # merged version holds rows other sessions appended. Measured (de, 2026-09-06): the carry
+  # restored runs/tasks.jsonl over the merge and dropped e1-48 and e1-49, two rows that arrived in
+  # main during that merge. The hook's ledger-append-only gate caught it -- "runs/tasks.jsonl loses
+  # 2 record(s)" -- so the loss never reached a commit, but nothing in the carry itself would have
+  # noticed, and the carry exists precisely to be used on a tree with staged ledger rows.
+  #
+  # Scope read from .gitattributes rather than a list here: a second list of union files would drift
+  # from the one git actually honours, and this whole function is a study in a rule keyed on the
+  # wrong property.
+  _cr_ok=1
+  # A MARKER FILE, not a variable: the loop below runs in a pipe subshell, so an assignment there
+  # is invisible to this shell. This is the same class as the defect the loop is fixing, and it
+  # would have made a conflict silent.
+  _cr_flag=$(mktemp)
+  printf '%s\n' "$2" | while IFS= read -r _cr_p; do
+    [ -n "$_cr_p" ] || continue
+    if git check-attr merge -- "$_cr_p" 2>/dev/null | grep -q ': merge: union$'; then
+      # Union: keep every line from the merged file AND from the carried copy, first-seen order.
+      # Duplicate LINES collapse; nothing else does. A row is an event here (230 of 283 task ids
+      # appear more than once -- an `open` row and a later `dropped` row), so folding by id would
+      # delete history, which is the same defect one level down: my first recovery attempt folded
+      # 563 rows to 286 before its own output caught it.
+      _cr_tmp=$(mktemp)
+      git show "$1:$_cr_p" > "$_cr_tmp" 2>/dev/null || : > "$_cr_tmp"
+      _cr_merged=$(mktemp)
+      cat "$_cr_p" > "$_cr_merged" 2>/dev/null || : > "$_cr_merged"
+      awk '!seen[$0]++' "$_cr_merged" "$_cr_tmp" > "$_cr_p" || exit 1
+      rm -f "$_cr_tmp" "$_cr_merged"
+      echo "merge_main:   $_cr_p unioned (merge=union), not overwritten" >&2
+    else
+      # SOURCE: A THREE-WAY MERGE, NOT A RESTORE. This is the fourth defect in this function and
+      # the largest. An overwrite restore assumes my carried version supersedes the merged one,
+      # which is true only when the merge did not touch that path -- and the carry now fires
+      # precisely BECAUSE the merge touches it. Measured (de, 2026-09-06): the carry restored
+      # scripts/harness.py from the carry ref and reverted 517 lines of other sessions' work,
+      # including e1's 9a382298; the visible symptom was owner_queue_depth reading FAIL in this
+      # tree while main returns WARN, which I mis-reported to the controller as e1 having no
+      # assigned task. Nothing raised -- the file simply went backwards.
+      #
+      # `git merge-file` on the three versions is the same operation git would have done had the
+      # path not been staged: BASE is the path as of the carry's parent (pre-merge HEAD), OURS is
+      # the merged file now in the working tree, THEIRS is my carried edit. A conflict is left in
+      # the file with markers AND reported, because a conflict here is a real disagreement between
+      # my edit and the merge, and silently picking a side is what produced this defect.
+      _cr_base=$(mktemp); _cr_ours=$(mktemp); _cr_theirs=$(mktemp)
+      git show "$1^:$_cr_p" > "$_cr_base" 2>/dev/null || : > "$_cr_base"
+      cat "$_cr_p" > "$_cr_ours" 2>/dev/null || : > "$_cr_ours"
+      git show "$1:$_cr_p" > "$_cr_theirs" 2>/dev/null || : > "$_cr_theirs"
+      if git merge-file -q -L merged -L pre-merge -L "carried" \
+           "$_cr_ours" "$_cr_base" "$_cr_theirs"; then
+        cat "$_cr_ours" > "$_cr_p"
+        echo "merge_main:   $_cr_p three-way merged (my edit onto the merge result)" >&2
+      else
+        cat "$_cr_ours" > "$_cr_p"
+        echo "merge_main:   CONFLICT in $_cr_p -- conflict markers are IN THE FILE." >&2
+        echo "merge_main:   Your carried edit and the merge disagree on the same lines. Resolve" >&2
+        echo "merge_main:   by hand; the carried version is also at $1:$_cr_p" >&2
+        printf '%s\n' "$_cr_p" >> "$_cr_flag"
+      fi
+      rm -f "$_cr_base" "$_cr_ours" "$_cr_theirs"
+    fi
+  done || _cr_ok=0
+  if [ "$_cr_ok" -ne 1 ]; then
     echo "REFUSING: the merge landed but the staged index could not be restored." >&2
     echo "  It is intact at $1. Restore the carried paths by name, then drop it:" >&2
     printf '%s\n' "$2" | sed "s|^|    git checkout $1 -- |" >&2
     echo "    git update-ref -d $1" >&2
+    rm -f "$_cr_flag"
     return 1
   fi
+  # THE REF IS KEPT ON A CONFLICT. A conflicted file holds markers, so the carried content is only
+  # recoverable from the ref -- dropping it here would leave the operator with a broken file and no
+  # clean copy of what they staged.
+  if [ -s "$_cr_flag" ]; then
+    echo "REFUSING to drop $1: $(wc -l < "$_cr_flag" | tr -d ' ') path(s) conflicted and hold" >&2
+    echo "  conflict markers. Resolve them, then drop the ref yourself:" >&2
+    sed 's/^/    /' "$_cr_flag" >&2
+    echo "    git update-ref -d $1" >&2
+    rm -f "$_cr_flag"
+    return 1
+  fi
+  rm -f "$_cr_flag"
   git update-ref -d "$1"
   echo "merge_main: restored $(printf '%s\n' "$2" | wc -l | tr -d ' ') carried path(s) on top of the merge; $1 dropped" >&2
   return 0
@@ -572,13 +695,13 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     *"refs/wip/work"*) echo "  ok   carry W2 refusal names the ref";;
     *) echo "  FAIL carry W2 refusal does not name refs/wip/work: $_cout" >&2; _fails=$((_fails + 1));;
   esac
-  # W3: FAST-FORWARD with a staged index must NOT carry. Same staged path, only history differs --
-  # this is the measured discriminator, so a version keyed on path overlap fails here or at W1.
+  # W3: FAST-FORWARD whose changed set does NOT include the staged path -- no carry. _cworld
+  # stages mine.txt and main only edits shared.txt, so the fast-forward will not touch it.
   _cworld ff
   _cgot=fail; _cwhy=""
   _cout=$( cd "$_c/w" && _carry_stage work ) 2>/dev/null || true
-  if [ -z "$_cout" ]; then _cgot=ok; else _cwhy="carried on a fast-forward: $_cout"; fi
-  _ccase "W3 fast-forward + staged index: no carry" ok
+  if [ -z "$_cout" ]; then _cgot=ok; else _cwhy="carried on a fast-forward that touches nothing staged: $_cout"; fi
+  _ccase "W3 fast-forward, staged path outside its changed set: no carry" ok
   # ...and the world must really be a fast-forward, or W3 passes for the wrong reason.
   if ( cd "$_c/w" && git merge-base --is-ancestor HEAD main ); then
     echo "  ok   carry W3 world control: HEAD really is an ancestor of main"
@@ -586,6 +709,74 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     echo "  FAIL carry W3 world control: the world is not fast-forwardable, so it tests nothing" >&2
     _fails=$((_fails + 1))
   fi
+  # W3b: FAST-FORWARD THAT DOES CHANGE THE STAGED PATH -- must carry, and the merge must then
+  # succeed. THIS IS THE CASE THAT BIT (de, 2026-09-06): the first version returned early on any
+  # fast-forward, on a measurement taken with the staged path outside the changed set, and the
+  # real merge aborted with "Your local changes to the following files would be overwritten by
+  # merge: runs/tasks.jsonl, scripts/harness.py" -- both staged, both changed by main. W3 alone
+  # passed the broken version, so the world it lacked is the whole finding.
+  rm -rf "$_c/w"; mkdir -p "$_c/w"
+  (
+    cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'top\nmiddle\nbottom\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work                       # work == main, so this is a fast-forward
+    git checkout -q main && printf 'TOP_FROM_MAIN\nmiddle\nbottom\n' > f.txt \
+      && git commit -qam "main edits the top of f.txt"
+    # SAME path main changed, DIFFERENT lines. The first version of this world had both sides
+    # rewrite the single line `base`, which is a genuine three-way conflict -- so once the restore
+    # became a merge rather than an overwrite, the world asserted "succeeds" on inputs that must
+    # conflict. The property under test is the TRIGGER (a fast-forward that touches a staged path
+    # must carry), not conflict handling; W9 covers the conflict.
+    git checkout -q work && printf 'top\nmiddle\nBOTTOM_FROM_ME\n' > f.txt && git add f.txt
+  ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _co=$(_carry_stage work) \
+           && _cr=$(printf '%s\n' "$_co" | head -1) && _cp=$(printf '%s\n' "$_co" | tail -n +2) \
+           && [ -n "$_cr" ] \
+           && git merge --no-edit main >/dev/null 2>&1 \
+           && _carry_restore "$_cr" "$_cp" >/dev/null 2>&1 \
+           && grep -q TOP_FROM_MAIN f.txt && grep -q BOTTOM_FROM_ME f.txt && echo CARRIED ) 2>&1 || true
+  case "$_cout" in *CARRIED*) _cgot=ok;; *) _cwhy="$_cout";; esac
+  _ccase "W3b fast-forward that changes the staged path: carry, both edits survive" ok
+  # W9: A REAL CONFLICT REFUSES, KEEPS THE REF, AND LEAVES MARKERS. Both sides rewrite the SAME
+  # line, so no merge can pick a side -- and the carried content is then only recoverable from the
+  # ref, which is why the ref must NOT be dropped here. Silently choosing one side is the defect
+  # the three-way restore exists to remove, so it must not reappear as a silent success.
+  rm -rf "$_c/w3"; mkdir -p "$_c/w3"
+  (
+    cd "$_c/w3" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'one\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > sentinel && git add sentinel && git commit -qm s
+    git checkout -q main && printf 'MAIN\n' > f.txt && git commit -qam "main rewrites the line"
+    git checkout -q work && printf 'MINE\n' > f.txt && git add f.txt
+  ) >/dev/null 2>&1
+  _cgot=ok; _cwhy=""
+  _cout=$( cd "$_c/w3" && _co=$(_carry_stage work) \
+           && _cr=$(printf '%s\n' "$_co" | head -1) && _cp=$(printf '%s\n' "$_co" | tail -n +2) \
+           && git merge --no-edit main >/dev/null 2>&1 \
+           && _carry_restore "$_cr" "$_cp" ) 2>&1 && _cwhy="restore reported success on a real conflict" || _cgot=fail
+  _ccase "W9 real conflict: the restore refuses" fail
+  if ( cd "$_c/w3" && git rev-parse -q --verify refs/wip/work >/dev/null ) \
+     && ( cd "$_c/w3" && grep -q '<<<<<<<' f.txt ); then
+    echo "  ok   carry W9 the ref is kept and the file holds conflict markers"
+  else
+    echo "  FAIL carry W9: a conflict must keep refs/wip/work (the only clean copy) and leave" >&2
+    echo "       markers in the file; ref present: $( cd "$_c/w3" && git rev-parse -q --verify refs/wip/work >/dev/null && echo yes || echo NO), markers: $( cd "$_c/w3" && grep -q '<<<<<<<' f.txt && echo yes || echo NO)" >&2
+    _fails=$((_fails + 1))
+  fi
+  # W3b-CONTROL: the bare merge on that world must FAIL, or W3b proves nothing.
+  rm -rf "$_c/w"; mkdir -p "$_c/w"
+  (
+    cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'base\n' > f.txt && git add -A && git commit -qm base
+    git checkout -q -b work
+    git checkout -q main && printf 'main\n' > f.txt && git commit -qam "main edits f.txt"
+    git checkout -q work && printf 'staged\n' > f.txt && git add f.txt
+  ) >/dev/null 2>&1
+  _cgot=ok; _cwhy=""
+  ( cd "$_c/w" && git merge --no-edit main ) >/dev/null 2>&1 \
+    && _cwhy="the bare fast-forward succeeded, so W3b tests nothing" || _cgot=fail
+  _ccase "W3b-control bare fast-forward on the same world is refused by git" fail
   # W4: an empty index is untouched -- no ref written, nothing to restore.
   _cworld diverge
   ( cd "$_c/w" && git reset -q HEAD -- . ) >/dev/null 2>&1
@@ -631,6 +822,88 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
     _cwhy="no carry was made in the conflict world"
   fi
   _ccase "W6 conflicting merge: the carried index survives at refs/wip/work" ok
+  # W7: A UNION-MERGE LEDGER IS UNIONED BACK, NOT OVERWRITTEN. THE CASE THAT COST REAL ROWS
+  # (de, 2026-09-06): the carry restored runs/tasks.jsonl over the merge and dropped e1-48 and
+  # e1-49, rows that had arrived in main during that same merge. Caught by the hook's
+  # ledger-append-only gate, not by anything here, and the carry is meant for exactly this tree.
+  #
+  # Both sides append a DIFFERENT row to the same ledger, and the result must hold both. A world
+  # where only one side appends passes an overwrite restore, which is why the two appends matter.
+  rm -rf "$_c/w"; mkdir -p "$_c/w"
+  (
+    cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+    mkdir -p runs
+    printf 'runs/led.jsonl merge=union\n' > .gitattributes
+    printf '{"id":"base"}\n' > runs/led.jsonl
+    git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > code.py && git commit -qm "work adds code.py" -- . 2>/dev/null \
+      || { git add code.py && git commit -qm "work adds code.py"; }
+    git checkout -q main
+    printf '{"id":"base"}\n{"id":"theirs"}\n' > runs/led.jsonl   # main appends a row
+    git commit -qam "main appends theirs"
+    git checkout -q work
+    printf '{"id":"base"}\n{"id":"mine"}\n' > runs/led.jsonl     # I append a different row
+    git add runs/led.jsonl
+  ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _co=$(_carry_stage work) \
+           && _cr=$(printf '%s\n' "$_co" | head -1) && _cp=$(printf '%s\n' "$_co" | tail -n +2) \
+           && [ -n "$_cr" ] \
+           && git merge --no-edit main >/dev/null 2>&1 \
+           && _carry_restore "$_cr" "$_cp" >/dev/null 2>&1 \
+           && grep -q '"theirs"' runs/led.jsonl && grep -q '"mine"' runs/led.jsonl && echo BOTHROWS ) 2>&1 || true
+  case "$_cout" in *BOTHROWS*) _cgot=ok;; *) _cwhy="$_cout";; esac
+  _ccase "W7 union-merge ledger: both sides' rows survive the carry" ok
+  # W8: A SOURCE FILE MAIN ALSO CHANGED KEEPS BOTH EDITS. The fourth defect and the largest
+  # (de, 2026-09-06): the restore overwrote scripts/harness.py with the carried copy and reverted
+  # 517 lines of other sessions' work, e1's 9a382298 among them. The visible symptom was a check
+  # reading FAIL in this tree while main returned WARN, and I mis-reported that to the controller
+  # as a fact about another session's queue. Nothing raised; the file went backwards.
+  #
+  # W1 does not cover it: there, main changes shared.txt and I stage mine.txt, so the merge and my
+  # edit touch different paths and an overwrite of mine.txt loses nothing. Here BOTH sides edit the
+  # SAME file in DIFFERENT places, which is the case the carry now fires on by construction.
+  rm -rf "$_c/w"; mkdir -p "$_c/w"
+  (
+    cd "$_c/w" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'top\nmiddle\nbottom\n' > src.py && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > sentinel && git add sentinel && git commit -qm "work commits sentinel"
+    git checkout -q main
+    printf 'TOP_FROM_MAIN\nmiddle\nbottom\n' > src.py && git commit -qam "main edits the top"
+    git checkout -q work
+    printf 'top\nmiddle\nBOTTOM_FROM_ME\n' > src.py && git add src.py   # my edit, far from main's
+  ) >/dev/null 2>&1
+  _cgot=fail; _cwhy=""
+  _cout=$( cd "$_c/w" && _co=$(_carry_stage work) \
+           && _cr=$(printf '%s\n' "$_co" | head -1) && _cp=$(printf '%s\n' "$_co" | tail -n +2) \
+           && [ -n "$_cr" ] \
+           && git merge --no-edit main >/dev/null 2>&1 \
+           && _carry_restore "$_cr" "$_cp" >/dev/null 2>&1 \
+           && grep -q TOP_FROM_MAIN src.py && grep -q BOTTOM_FROM_ME src.py && echo BOTHEDITS ) 2>&1 || true
+  case "$_cout" in *BOTHEDITS*) _cgot=ok;; *) _cwhy="$_cout";; esac
+  _ccase "W8 source file both sides edited: main's change AND mine survive" ok
+  # W8-CONTROL: the world must be a real divergent merge over one staged source path, or W8 could
+  # pass because no carry ran. Assert the bare merge is refused.
+  rm -rf "$_c/w2"; mkdir -p "$_c/w2"
+  (
+    cd "$_c/w2" && git init -q -b main . && git config user.email t@t && git config user.name T
+    printf 'top\nmiddle\nbottom\n' > src.py && git add -A && git commit -qm base
+    git checkout -q -b work && printf 'x\n' > sentinel && git add sentinel && git commit -qm "work commits sentinel"
+    git checkout -q main && printf 'TOP_FROM_MAIN\nmiddle\nbottom\n' > src.py && git commit -qam "main edits the top"
+    git checkout -q work && printf 'top\nmiddle\nBOTTOM_FROM_ME\n' > src.py && git add src.py
+  ) >/dev/null 2>&1
+  _cgot=ok; _cwhy=""
+  ( cd "$_c/w2" && git merge --no-edit main ) >/dev/null 2>&1 \
+    && _cwhy="the bare merge succeeded, so W8 tests nothing" || _cgot=fail
+  _ccase "W8-control bare merge on the same world is refused by git" fail
+  # W7-CONTROL: the world must really be a divergent merge that stages the ledger, or W7 could
+  # pass because no carry happened at all.
+  if ( cd "$_c/w" && git log --oneline -1 | grep -q . ); then
+    echo "  ok   carry W7 world control: the merge world was built"
+  else
+    echo "  FAIL carry W7 world control: the world was not built, so it tests nothing" >&2
+    _fails=$((_fails + 1))
+  fi
   rm -rf "$_c"
 
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
