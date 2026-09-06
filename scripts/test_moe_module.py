@@ -201,21 +201,34 @@ def main():
           f"({d_to_biased:.2e}); identical-experts sanity {d_unbiased:.2e}")
 
     # 4. THE BIAS UPDATE MOVES AGAINST LOAD, by a fixed gamma on the SIGN of the error (the
-    # paper's rule, arXiv:2412.19437 2.1.2). An overloaded expert's bias must DECREASE by exactly
-    # gamma, an underloaded one's INCREASE by exactly gamma -- not by an amount proportional to
-    # the error, which would be a different balancer than the one whose value we borrowed.
+    # paper's rule, arXiv:2412.19437 2.1.2) -- asserted on the DIFFERENCE between an overloaded
+    # and an underloaded expert, not on each absolute delta, because update_bias now subtracts the
+    # mean after stepping (4c's ruling 2026-09-06, after b0_moe48_8b died of integrator windup).
+    #
+    # THE DIFFERENTIAL IS THE CONTRACT AND THE ABSOLUTE DELTA IS NOT. Selection is
+    # `(affinity + expert_bias).topk(k)` (model.py:975), and topk is INVARIANT to a constant added
+    # to every entry -- so a common-mode shift changes no routing decision, while the gap between
+    # two experts changes every one. With counts [100,1,1,1] the raw step is [-g,+g,+g,+g], whose
+    # mean is +0.5g, so after projection it is [-1.5g,+0.5g,+0.5g,+0.5g]: each absolute delta
+    # moved, and every pairwise gap is identical to before (-2g overloaded-to-underloaded).
+    # Asserting the absolute delta would therefore fail on a change that provably cannot alter
+    # routing, which is what it did here.
+    #
+    # The zero-mean property is asserted TOO, as its own clause: without it this case would pass
+    # on the unprojected update that ran the common mode to +0.4997 over 1000 steps.
     m4 = MoEFFN(_cfg(moe_experts=4, moe_top_k=1, moe_expert_ffn=32)())
     counts = torch.tensor([100, 1, 1, 1])
     before = m4.expert_bias.clone()
     m4.update_bias(counts)
     delta = (m4.expert_bias - before)
     g = m4.gamma
-    ok = (abs(float(delta[0]) + g) < 1e-9
-          and all(abs(float(delta[i]) - g) < 1e-9 for i in (1, 2, 3)))
+    gaps = [float(delta[i] - delta[0]) for i in (1, 2, 3)]
+    mean_after = float(m4.expert_bias.mean())
+    ok = (all(abs(gap - 2 * g) < 1e-9 for gap in gaps) and abs(mean_after) < 1e-9)
     bad += 0 if ok else 1
-    print(f"  {'ok  ' if ok else 'BUG '} the bias step is +/- gamma on the sign of the load error "
-          f"(overloaded {float(delta[0]):+.4f}, underloaded {float(delta[1]):+.4f}, "
-          f"gamma {g})")
+    print(f"  {'ok  ' if ok else 'BUG '} the bias GAP moves 2*gamma against load and the mean "
+          f"stays zero (overloaded {float(delta[0]):+.4f}, underloaded {float(delta[1]):+.4f}, "
+          f"gap {gaps[0]:+.4f} want {2 * g:+.4f}, mean after {mean_after:+.2e}, gamma {g})")
 
     # 5. THE BIAS IS PERSISTENT AND A MISSING KEY LOADS ZEROS (4c's ruling: the cards can be
     # recalled mid-run, so a resume is expected and a cold balancer would make readout 4
