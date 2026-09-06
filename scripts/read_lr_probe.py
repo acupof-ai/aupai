@@ -16,7 +16,7 @@ THE RULE (runs/tasks.jsonl#fb-1, frozen 2026-09-01 15:31, before arm 2 existed):
 
 WHY THIS PRINTS A SEM. Two layers, and the name is wrong before the number is.
 
-train.py:2518 syncs the loss only on `step % 10 == 9` and logs that SINGLE step, so
+train.py's step loop syncs the loss only on `step % 10 == 9` and logs that SINGLE step, so
 "mean over the last 100 steps" is a mean of TEN samples. And each of those ten is
 rank 0's micro-batch alone: 2513-2516 all-reduces only the FINITENESS flag, never the
 loss, so at world 7 batch 32 a sample covers 32 of 224 sequences (b0's second read).
