@@ -1,15 +1,15 @@
-# pod-only code candidates, listed 2026-09-06T07:3xZ by 44 (fb task: inventory pod-only code).
-# 45 tracked-pattern .py on the pod on no branch (diff vs `git ls-files '*.py'` on main d80cd6a9,
+# pod-only code candidates, listed 2026-09-06T08:0xZ by 44 (fb task: inventory pod-only code).
+# Computed against main c15e22ce (`git ls-tree main -r --name-only | grep .py$`), 2026-09-06.
+# 43 tracked-pattern .py on the pod on no branch (diff pod find vs main-tracked .py,
 # filtered to dirs holding >=1 tracked .py; excludes __pycache__, inductor_src, vendored trees).
-# fb counted 53 via pod_push manifest; the 8-file gap is main advancing + exclusions.
+# fb counted 53 via pod_push manifest; the gap is main advancing + exclusions + 2 scripts b0
+# landed at 552428dc (07:46Z) after the first scan -- those are tracked, removed from this list.
 # For each: path, size, mtime(UTC), live-proc ref, runs/*.log ref, guessed owner from content.
 # DELETE NOTHING. Owners claim by name in runs/board.jsonl or the 24h rule applies.
 # Rule at stake: what happened only on the pod did not happen. Reviewer: de.
 #
-# live-proc refs: 0 of 45 (ps aux scanned; only defunct python zombies present).
-# runs/*.log refs: 0 of 45 (grep -lF basename across runs/*.log; 'harness' control matched, basenames did not).
-# ACTIVE-EDIT WARNING: scripts/time_bias_projection.py + scripts/verify_endpoint_ckpt.py have mtime
-#   2026-09-06T07:46Z, 15 min before this listing (08:01Z) -- someone is editing them NOW. Not deletion-safe.
+# live-proc refs: 0 of 43 (ps aux scanned; only defunct python zombies present).
+# runs/*.log refs: 0 of 43 (grep -lF basename across runs/*.log; 'harness' control matched, basenames did not).
 
 path                                             size mtime             owner_guess  evidence
 --------------------------------------------------------------------------------------------------------------------------------------------
@@ -56,5 +56,3 @@ _probe_mem.py                                    1009 2026-09-05T20:06Z e1?     
 _mem_one.py                                       598 2026-09-05T20:06Z e1?          load_checkpoint ckpt_e1_conv_control_arm mem probe
 _mem_len.py                                       763 2026-09-05T20:08Z e1?          load_checkpoint ckpt_e1_conv_control_arm mem probe
 filters/__init__.py                                 0 2026-09-06T05:47Z ?            empty file (0 bytes)
-scripts/time_bias_projection.py                 17469 2026-09-06T07:46Z de/b0?       MoEFFN.update_bias zero-mean projection cost; 1.5b-a0.2b-e48_8b speed gate
-scripts/verify_endpoint_ckpt.py                  1834 2026-09-06T07:46Z de/44?       verify ckpt is endpoint; 8e9/786432=10172 arithmetic; train.py:3348
