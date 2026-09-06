@@ -6,7 +6,7 @@ Daily summary of `harness friction` (runs/friction.jsonl), ranked by count then 
 
 `harness friction` groups rows by **mechanism**, not raw cause text. A mechanism normalizes variable detail (N behind main, file lists) into one row; up to 5 raw variants are shown under each for drill-down. Ranking is by row count (most rows first). Minutes are self-reported and shown as `~N min (self-reported, k/n rows)`; when most rows report nothing (n/r), the minutes column is inert for ranking and count is the only signal.
 
-## 2026-09-06 (141 rows, 116 causes; ran 02:5xZ)
+## 2026-09-04 (43 rows, 38 causes; ran 14:08Z)
 
 Top two unfixed causes fixed this commit: (1) 3x near_miss/process_failure rows without minutes_lost → `check_friction_minutes_required` (baseline 3, FAILs on 4th violation); (2) 1x ff merge runs no pre-commit hook → `scripts/hooks/post-merge` (runs harness check after fast-forward, warns on failure).
 
