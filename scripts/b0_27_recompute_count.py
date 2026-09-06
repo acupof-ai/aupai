@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """b0-27 known-answer test: does checkpoint recompute double tokens_per_expert?
 
-THE QUESTION THIS ANSWERS, and the one it does not. model.py:1424 refuses moe_experts with
+THE QUESTION THIS ANSWERS, and the one it does not. HybridLM.__init__ refuses moe_experts with
 grad_ckpt, and its stated reason is that MoEFFN.forward increments tokens_per_expert under
 no_grad while recompute runs that forward twice. That reasoning is plausible and has never been
 observed: the condition guarding the increment is `self.training or torch.is_grad_enabled()`,
@@ -29,7 +29,7 @@ consumers of the counter are invariant to a UNIFORM 2x:
   * The readout's measured fields are all functions of the count DISTRIBUTION: usage_frac,
     used_experts, entropy_norm, and load_gini (normalised by tot). Only `tokens` (2x) and
     `window_steps` move.
-So the refusal's specific claim -- that usage fraction, entropy and Gini would be "computed
+So that refusal's specific claim -- that usage fraction, entropy and Gini would be "computed
 over a doubled denominator, reporting a healthier load spread" -- is FALSE for a uniform double
 count. This script measures whether the doubling is in fact uniform, which is what makes that
 statement checkable rather than merely doubted: a NON-uniform double count would move the
@@ -41,7 +41,7 @@ REFUSES rather than reporting a number it cannot stand behind:
     all-zero counter, so "equal" would be indistinguishable from "nothing ran")
   * the two arms disagreeing on which layers are MoE, or on the routed-expert count -> refuse
   * grad_ckpt not actually active in the ON arm -> refuse, because the whole test is that one
-    line; `ckpt = self.grad_ckpt and self.training` at model.py:1581 needs BOTH, so an arm left
+    line; `ckpt = self.grad_ckpt and self.training` needs BOTH, so an arm left
     in eval mode would silently measure the OFF condition twice and print "equal".
 """
 import argparse
@@ -59,13 +59,53 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 
-def build(grad_ckpt, seed=42):
+SHAPE = dict(d=256, heads=2, layers=4, ffn_hidden=256, vocab=256, seq=64, attn_every=2,
+             moe_experts=8, moe_layers="0-3", moe_top_k=3, moe_shared=1, moe_expert_ffn=64)
+
+
+def check_shape(overrides=None):
+    """The two constraints that only exist on the card, checked WITHOUT one.
+
+    Both cost this script a grant. FlashKDA pins head_dim to 128 (HeadMix's raise, `head_dim is pinned to ... by the FlashKDA
+    CUTLASS kernel`); train.py's
+    main() raises on any other value, but this script builds HybridLM directly so that raise never
+    runs -- instead the KDA Triton kernel dies with `CUDA error: misaligned address` inside its
+    autotuner, a config error wearing a hardware error's clothes. MoEFFN enforces
+    (moe_top_k + moe_shared) * moe_expert_ffn == ffn_hidden so a loss delta is attributable to
+    sparsity rather than FLOPs, and refuses in its constructor otherwise.
+    """
+    s = dict(SHAPE)
+    # A TYPO'D FIELD IS REFUSED HERE, not in build(): build imports torch, so a misspelled
+    # override would only be caught on a card. SHAPE is the authority for what this script sets;
+    # anything outside it is either a typo or a field this script has no business overriding.
+    unknown = sorted(k for k in (overrides or {}) if k not in SHAPE)
+    if unknown:
+        sys.exit(f"REFUSING: --set names {', '.join(unknown)!r}, not in this script's shape "
+                 f"({', '.join(sorted(SHAPE))}). A typo would otherwise set an attribute the "
+                 f"model never reads, and the run would look like it honoured the override")
+    s.update(overrides or {})
+    if s["d"] % s["heads"] or s["d"] // s["heads"] != 128:
+        sys.exit(f"REFUSING: d {s['d']} / heads {s['heads']} = {s['d'] / s['heads']:g}, but "
+                 f"FlashKDA pins head_dim to 128. train.py's main() raises on this; building "
+                 f"HybridLM directly does not, and the kernel instead dies with `CUDA error: "
+                 f"misaligned address` from inside its autotuner -- a config error that reads as "
+                 f"a broken card. Set d = heads * 128")
+    active = (s["moe_top_k"] + s["moe_shared"]) * s["moe_expert_ffn"]
+    if active != s["ffn_hidden"]:
+        sys.exit(f"REFUSING: (moe_top_k {s['moe_top_k']} + moe_shared {s['moe_shared']}) * "
+                 f"moe_expert_ffn {s['moe_expert_ffn']} = {active} != ffn_hidden "
+                 f"{s['ffn_hidden']}; MoEFFN enforces equal-active parity and would refuse in its "
+                 f"constructor. Checked here so an override fails before a card is touched")
+    return s
+
+
+def build(grad_ckpt, seed=42, shape=None):
     """A small MoE model on the card. grad_ckpt is set AFTER __init__ deliberately.
 
-    model.py:1424 raises for moe_experts + grad_ckpt in the constructor, and that guard is the
+    HybridLM.__init__ raises for moe_experts + grad_ckpt in the constructor, and that guard is the
     thing under test -- it may only be deleted once this measurement says the counter is safe.
     Setting the attribute afterwards reaches the same code path the guard protects
-    (`ckpt = self.grad_ckpt and self.training`, model.py:1581) WITHOUT deleting the guard first,
+    (`ckpt = self.grad_ckpt and self.training` in HybridLM._body) WITHOUT deleting the guard first,
     so this script never needs an unguarded tree to run in. It also means the flag I set is the
     flag the forward reads, which is asserted below rather than assumed.
 
@@ -81,7 +121,14 @@ def build(grad_ckpt, seed=42):
 
     # attn_every stays >= 2: HybridLM REFUSES attn_every=1 ("0 KDA layers, but GatedMLA is
     # NoPE"), so a KDA layer -- hence a card -- is unavoidable. 4 blocks, 2 of them MoE.
-    Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden = 128, 4, 4, 256
+    #
+    # HEAD_DIM MUST BE 128, so d = heads * 128 and nothing smaller. The FlashKDA CUTLASS kernel
+    # pins it, and train.py's main() raises `head_dim must be 128` -- but this
+    # script constructs HybridLM DIRECTLY, so that raise never runs and there is no refusal to
+    # read. Measured on card 7: d=128 with heads=4 gives head_dim 32 and the KDA Triton kernel
+    # died with `CUDA error: misaligned address` inside its autotuner, which is a hardware fault
+    # dressed up as a config error. 2 heads x 128 = 256 is the smallest shape that holds.
+    Cfg.d, Cfg.heads, Cfg.layers, Cfg.ffn_hidden = 256, 2, 4, 256
     Cfg.vocab = Cfg.vocab_real = 256
     Cfg.seq, Cfg.fone = 64, False
     Cfg.attn_every = 2
@@ -94,6 +141,13 @@ def build(grad_ckpt, seed=42):
     Cfg.moe_experts, Cfg.moe_layers, Cfg.moe_top_k = 8, "0-3", 3
     Cfg.moe_shared, Cfg.moe_expert_ffn = 1, 64
     Cfg.grad_ckpt = False          # constructed OFF; see docstring
+    # EVERY SHAPE FIELD IS OVERRIDABLE FROM THE CLI, because both of this script's failures so
+    # far were config constraints that exist only on the card (MoEFFN's parity raise, then
+    # FlashKDA's head_dim) and each one cost a commit, a merge and a re-claim to change one
+    # integer. `--set d=512,heads=4` does not re-derive the constraints above -- they still
+    # apply -- but it makes the next one a flag instead of a merge cycle.
+    for k, v in (shape or {}).items():
+        setattr(Cfg, k, v)   # names already validated against SHAPE by check_shape()
     torch.manual_seed(seed)
     m = HybridLM(Cfg).cuda().train()
     m.grad_ckpt = grad_ckpt
@@ -110,9 +164,9 @@ def moe_layers_of(m):
     return out
 
 
-def run_arm(grad_ckpt, seed, steps):
+def run_arm(grad_ckpt, seed, steps, shape=None):
     import torch
-    m, cfg = build(grad_ckpt, seed)
+    m, cfg = build(grad_ckpt, seed, shape)
     layers = moe_layers_of(m)
     if not layers:
         sys.exit("REFUSING: no module with tokens_per_expert was found; the model shape changed "
@@ -128,7 +182,7 @@ def run_arm(grad_ckpt, seed, steps):
                  f"{grad_ckpt!r} -- the attribute name changed and this arm is not the arm")
     if not m.training:
         sys.exit("REFUSING: model is not in train() mode, so grad_ckpt is inert "
-                 "(model.py:1581 requires self.training) and both arms would measure OFF")
+                 "(`ckpt = self.grad_ckpt and self.training` requires it) and both arms would measure OFF")
 
     torch.manual_seed(seed)
     ids = torch.randint(0, cfg.vocab, (2, cfg.seq), device="cuda")
@@ -151,7 +205,24 @@ def main():
     ap.add_argument("--steps", type=int, default=2)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--json", help="write the result here")
+    ap.add_argument("--set", dest="overrides", default="",
+                    help="comma-separated Cfg overrides, e.g. d=512,heads=4. Ints are parsed as "
+                         "ints; everything else stays a string (moe_layers is '0-3')")
     a = ap.parse_args()
+
+    # OVERRIDES ARE PARSED AND SHAPE-CHECKED BEFORE THE CUDA CHECK, deliberately: a typo or an
+    # illegal shape must be catchable on a machine with no card. Otherwise the only way to find
+    # out that `--set d=128,heads=4` is invalid is to claim a card, push, and watch the kernel
+    # fault -- which is exactly the loop that cost this script two grants.
+    shape = {}
+    for item in filter(None, (t.strip() for t in a.overrides.split(","))):
+        if "=" not in item:
+            sys.exit(f"REFUSING: --set item {item!r} has no '='")
+        k, v = item.split("=", 1)
+        shape[k.strip()] = int(v) if v.strip().lstrip("-").isdigit() else v.strip()
+    if shape:
+        print(f"overrides: {shape}")
+    check_shape(shape)
 
     import torch
     if not torch.cuda.is_available():
@@ -164,8 +235,8 @@ def main():
     print(f"card: {torch.cuda.get_device_name(0)}  "
           f"CUDA_VISIBLE_DEVICES={os.environ.get('CUDA_VISIBLE_DEVICES', '<unset>')}")
 
-    off_c, off_w = run_arm(False, a.seed, a.steps)
-    on_c, on_w = run_arm(True, a.seed, a.steps)
+    off_c, off_w = run_arm(False, a.seed, a.steps, shape)
+    on_c, on_w = run_arm(True, a.seed, a.steps, shape)
 
     if set(off_c) != set(on_c):
         sys.exit(f"REFUSING: the two arms disagree on which layers are MoE: "
