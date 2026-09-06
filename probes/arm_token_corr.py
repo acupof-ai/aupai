@@ -9,7 +9,7 @@ CPU-ONLY BY CONSTRUCTION. --device defaults to cpu and the script refuses cuda u
 --allow_cuda is passed, because the cards belong to another team by user order (2026-09-05)
 and a probe that quietly takes one is the failure this repo has paid for twice.
 
-THE VAL ROWS ARE READ THE WAY TRAINING READ THEM, not resampled: train.py:1989 takes
+THE VAL ROWS ARE READ THE WAY TRAINING READ THEM, not resampled: build_mix's val holdout takes
 val = seqs[:n_val] per domain with n_val = min(max(1, int(len(seqs) * val_frac)),
 val_rows_max), a deterministic prefix. So the tokens both arms validated on are recoverable
 from the caches without rebuilding the mix -- which matters twice over: rebuilding would
@@ -481,7 +481,7 @@ def _selftest():
     )
     assert "REFUSING --device cuda" in src
 
-    # 7. val_rows TAKES A PREFIX AND CAPS IT, matching train.py:1989. Off-by-one here would
+    # 7. val_rows TAKES A PREFIX AND CAPS IT, matching build_mix's val holdout. Off-by-one here would
     #    score tokens the arms never validated on while still printing a correlation.
     class _Stream:
         def __init__(self, n_rows):
@@ -790,7 +790,8 @@ def _selftest():
         "arms give gain 1.00, the gain matches 1/sqrt(1-corr) at rho 0.5/0.9/0.99, a "
         "within-document difference is caught as deff>100 with the clustered SE equal to the "
         "row means' SE over sqrt(k), unclustered data keeps deff ~1, the val prefix matches "
-        "train.py:1989 on three domain sizes (fraction, cap, and the 1-row floor), and the "
+        "build_mix's val holdout on three domain sizes (fraction, cap, and the 1-row floor), "
+        "and the "
         "CPU-only refusal is present in main(). CLAIM: it names os.getpid() with "
         "require_device, sits AFTER the first checkpoint load (no device fd exists before it), "
         "releases in a finally, and maps torch's local index to the PHYSICAL card (CVD=7 claims "

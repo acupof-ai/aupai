@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """The master-off half of the table-master pair: what does TableMaster cost per step?
 
-train.py builds TableMaster for any mem_values > 0 (:2603), and profile_step_cost mirrors
+train.py builds TableMaster for any mem_values > 0 (`table_master = TableMaster(raw_model) if
+raw_model.memory is not None else None` in main), and profile_step_cost mirrors
 that unconditionally, so the probe as it stands IS the master-on half. This runs the same
 probe with the master absent, which is the world before amendment 8's fix.
 
