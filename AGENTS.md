@@ -192,7 +192,7 @@ Cite a fact as `facts/<file>.json#<id>`; the id must exist. Numeric conclusions 
 | set | resolution | caveat |
 |---|---|---|
 | math-hard, 1032 problems | — | v1 retired as metric of record: our own generators contaminated it; continuity only |
-| math-500 | saturated | 0.0% contamination on the pod corpus; 30% of questions have a containment hit in the math SFT corpus, so post-SFT values are inflated, base values clean (`facts/contamination.json`) |
+| math-500 | saturated | 0.0% contamination on the pod corpus; 30% of questions have a containment hit in the math SFT corpus, so post-SFT values are inflated, base values clean (`facts/contamination.json#cont.union_pod`, `facts/contamination.json#cont.split`) |
 | MC suite | low | three of five sit at chance |
 
 ## Data
