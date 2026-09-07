@@ -583,6 +583,42 @@
     "dedup costs 8% of the code supply",
     "the near-dup rate is the token loss"
    ]
+  },
+  {
+   "id": "cs.rp1t_github_b2_fetch",
+   "value": 20242060654,
+   "unit": "bytes landed in data/raw/rp1t_github_b2 (8 files), each verified equal to its upstream content-length",
+   "measured": "2026-09-07",
+   "source": "python3 datagen/fetch_rp1t_batch.py --list <file-list> --out data/raw/rp1t_github_b2, run on the pod 2026-09-07 05:33-06:02Z; per-file sizes re-verified after the run with curl -4 -sI content-length against stat -c %s, all 8 equal. The run log and the file list are pod-side only (/work/aupai/runs/fetch8b.log, /work/aupai/runs/next8.txt); the per-file bytes in config are the durable record, and each is re-checkable against upstream by name.",
+   "config": {
+    "files": 8,
+    "host": "data.together.xyz/redpajama-data-1T/v1.0.0/github",
+    "chunks_per_file": 8,
+    "elapsed_s": 1779,
+    "aggregate_MB_s": 11.4,
+    "chunk_restarts": 29,
+    "chunks_needing_a_second_restart": 6,
+    "restart_trigger_rate_KB_s_range": [
+     25,
+     390
+    ],
+    "failures": 0,
+    "floor": "500 KB/s over a 60 s window, cap 5 per chunk (datagen/fetch_corpus.py _run_chunks)",
+    "per_file_bytes": {
+     "filtered_27f05c041a1c401783f90b9415e40e4b.sampled.jsonl": 2022347763,
+     "filtered_28106e66bfd94978abbc15ec845aeddb.sampled.jsonl": 2989082439,
+     "filtered_2afd093fefad4c8da76cc539e8fb6137.sampled.jsonl": 2151014531,
+     "filtered_30d01c4edab64866bda8c609e90b4f4e.sampled.jsonl": 3502260170,
+     "filtered_34b0785b77814b7583433ddb27a61ae0.sampled.jsonl": 3381920273,
+     "filtered_34e78793c1e94eeebd92852399097596.sampled.jsonl": 2190228716,
+     "filtered_366012588bef4d749bbbea76ae701141.sampled.jsonl": 1565332841,
+     "filtered_36c2a955ddd84672bbc778aa4ad2fbaf.sampled.jsonl": 2439873921
+    },
+    "log": "/work/aupai/runs/fetch8b.log (pod-only, not in the repo)"
+   },
+   "uncertainty": "Sizes are exact (stat vs content-length, all 8 equal). The elapsed time is wall clock for the whole batch on a shared host, so the 11.4 MB/s aggregate is this run's, not a property of the link.",
+   "status": "measured",
+   "boundary": "Bytes on disk, not tokens: these are raw jsonl and nothing has been cleaned, filtered or tokenized. It says nothing about how much code survives filters or what the domain contributes to the mix. Two things it DOES pin. (1) 29 chunk restarts across 8 files, with 6 chunks throttled a second time and trigger rates spanning 25-390 KB/s, so per-connection throttling on this host is the normal case rather than the exception -- a single stream at the 40 KB/s observed on 2026-09-07 04:0xZ would have needed 137 h for these bytes. (2) File filtered_28106e66... completed with ZERO restarts because its seven surviving chunks were resumed in place after a kill that preserved them; that is the measurement of the sibling-preservation fix (gate_failure_incidents 263), and it exists only because the kill went to the parent first."
   }
  ]
 }
