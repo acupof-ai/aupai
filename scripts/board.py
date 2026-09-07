@@ -69,15 +69,22 @@ def append(row):
     # would be a second writer of one rule, which is how FRICTION_KINDS ended up rejecting a
     # kind this repo's own merge_main.sh emits.
     #
-    # Imported INSIDE the function: harness imports board (`from board import liveness`), so a
-    # module-level import here would be a cycle, and `board.py who` should not pay for harness
-    # to answer a question that does not write anything.
+    # harness_core, NOT harness: `from harness import refuse_in_integration_tree` had to be inside
+    # the function because harness imports board (`from board import liveness`) and a module-level
+    # import would be a cycle. harness_core imports neither board nor harness, so the same
+    # predicate is now reachable without the cycle -- which is what the extraction was for. The
+    # harness fallback stays: harness re-exports the name, so an older tree with no harness_core
+    # still answers (de-71, 2026-09-07).
     try:
-        from harness import refuse_in_integration_tree
-    except Exception as e:
-        print(f"board: integration-tree guard unavailable ({type(e).__name__}: {e}); "
-              f"writing anyway -- check the branch by hand", file=sys.stderr)
-    else:
+        from harness_core import refuse_in_integration_tree
+    except Exception:
+        try:
+            from harness import refuse_in_integration_tree
+        except Exception as e:
+            print(f"board: integration-tree guard unavailable ({type(e).__name__}: {e}); "
+                  f"writing anyway -- check the branch by hand", file=sys.stderr)
+            refuse_in_integration_tree = None
+    if refuse_in_integration_tree is not None:
         if refuse_in_integration_tree("posting to board.jsonl", path=BOARD):
             raise SystemExit(1)
     os.makedirs(os.path.dirname(BOARD), exist_ok=True)
@@ -187,7 +194,7 @@ def liveness(root=ROOT, now=None):
 
     newest = dict.fromkeys(members)
     open_tasks = dict.fromkeys(members, 0)
-    state = {}
+    last_state_by_id = {}
     for rel, idfields, tsfields in (
         ("runs/tasks.jsonl", ("owner",), ("closed", "opened")),
         ("runs/review.jsonl", ("reviewer",), ("ts",)),
@@ -214,10 +221,19 @@ def liveness(root=ROOT, now=None):
                         newest[who] = e if newest[who] is None else max(newest[who], e)
                         break
                 if rel.endswith("tasks.jsonl") and row.get("id"):
-                    # Last state wins: a row is appended per event, so an id's newest row is
-                    # its current state (the same fold exp.py and _read_tasks use).
-                    state[(who, row["id"])] = row.get("state")
-    for (who, _tid), st in state.items():
+                    # KEYED BY id ALONE, via harness_core.fold_by_id's rule, and the previous key
+                    # here was (who, id) under a comment claiming it was "the same fold exp.py and
+                    # _read_tasks use". It was not: those key id alone. The divergence is a task
+                    # whose owner changes between rows -- (who, id) counts it once per owner it
+                    # ever had, so a reassigned open task inflated TWO people's counts. Measured
+                    # 2026-09-07: 0 task ids in runs/tasks.jsonl carry more than one owner, so both
+                    # keys give the identical per-owner counts today (tilerl 2, b0 5, e1 2, de 2);
+                    # on a synthetic de->b0 reassignment the old key counts 2 and this counts 1
+                    # (de-71). Two rows of the same shape are folded here rather than through
+                    # fold_by_id because this loop reads three ledgers in one pass and only one of
+                    # them folds -- the RULE is imported, the traversal is local.
+                    last_state_by_id[row["id"]] = (who, row.get("state"))
+    for who, st in last_state_by_id.values():
         if st == "open" and who in open_tasks:
             open_tasks[who] += 1
 
