@@ -8,9 +8,9 @@
    "anneal": 0.33334,
    "role": "code raw (RedPajama-1T github)",
    "tokens": 10000000000,
-   "source": "RedPajama-1T github, 73.6B reachable, exact count. Carries the 2.0B that was code_tests until 2026-09-04: the impl+test pairing route was measured and dropped (runs/ct_overlap.json, runs/cs_probe.json), so the role folds back into code raw",
-   "supply": "30GB raw fetched to data/raw/rp1t_github (fetch_code_8b); build+stamp into data/corpus/code_rp1t pending (3b). Demand is now 10.0B against 73.6B reachable",
-   "status": "blocked: raw fetched, corpus build+stamp pending"
+   "source": "RedPajama-1T github. MEASURED reachable ceiling 57.0B, not the 73.6B this field claimed until 2026-09-07: 13 of the 98 files in data/raw/rp1t_github_manifest.txt produced code_rp1t's exact 7,565,334,396 tokens, so post-clean yield is 581,948,800 tok/file and 98 files extrapolate to 57.0B. That extrapolation assumes the 13 are representative and their raw sizes span 1.57-3.50 GB, so it is a basis, not a bound. Carries the 2.0B that was code_tests until 2026-09-04: the impl+test pairing route was measured and dropped (runs/ct_overlap.json, runs/cs_probe.json).",
+   "supply": "BUILT AND DEDUPED. data/corpus/code_rp1t is 7,565,334,396 tokens exact over 235 shards (cs.code_rp1t_landed); data/corpus/code_rp1t_dd09 is the near-deduped dir at 6,232,268,741 exact over 3,434,322 docs (cs.code_rp1t_dd09_landed), th0.9 MinHash-J, 8.35% of documents and 17.62% of TOKENS removed -- near-dups run 2.11x the mean length, so the doc rate is not the token loss. The stamp's near_dedup_note said 'skipped: upstream-deduped source'; that claim was refuted by measurement, 18.2% of documents were in a near-dup cluster at th0.8 (cs.code_rp1t_near_dup_rate). Demand 10.0B against 6.232B deduped: gap 3,767,731,259, ~6.5 manifest files before their own dedup. 8 more are fetching to data/raw/rp1t_github_b2/.",
+   "status": "deduped dir ready: data/corpus/code_rp1t_dd09 (6.232B). Short of the 10.0B demand by 3.768B pending the 8-file fetch; the mix should name code_rp1t_dd09, never code_rp1t"
   },
   "math_owm": {
    "weight": 0.18333,
