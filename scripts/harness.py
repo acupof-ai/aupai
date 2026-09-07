@@ -12306,9 +12306,21 @@ def check_dirty_aged(root):
             aged.append(line[3:])
     if aged:
         return WARN, f"{len(aged)} tracked file(s) dirty >{_AGE_HOURS}h: {', '.join(aged[:5])}"
-    # A CLEAN TREE IS A REAL ZERO and the count says which zero it is: 0 of 0 dirty files means
-    # nothing was uncommitted, 0 of 7 means seven are dirty and all younger than the threshold.
-    return PASS, f"{n_dirty} dirty tracked file(s), none older than {_AGE_HOURS}h"
+    # THE POPULATION IS THE TRACKED FILE SET, not the dirty count, and my first version of this
+    # line got that wrong (de-71, 2026-09-07). It read "0 dirty tracked file(s), none older than
+    # 6h" -- and on a CLEAN tree that is all-zero, which the vacuous-PASS sweep correctly flags as
+    # a PASS verifying nothing. It read green at 79e9dd8f only because the tree happened to be
+    # dirty when I ran it. The two zeros T0-2 exists to separate are "read 606 files, none dirty"
+    # (the pass condition) and "read nothing" (git failed, empty checkout); `n_dirty` distinguishes
+    # neither, because zero dirty files is the GOOD state here. `git ls-files` is the population.
+    n_tracked = 0
+    lf = subprocess.run(["git", "ls-files"], cwd=root, capture_output=True, text=True)
+    if lf.returncode == 0:
+        n_tracked = sum(1 for ln in lf.stdout.splitlines() if ln.strip())
+    if not n_tracked:
+        return SKIP, "git ls-files listed no tracked files: nothing was examined"
+    return PASS, (f"{n_tracked} tracked file(s) examined, {n_dirty} dirty, none older than "
+                  f"{_AGE_HOURS}h")
 
 
 def _broken_dirty_aged():
@@ -20297,7 +20309,7 @@ def _demo(only=None):
         "no_conflict_markers",       # tracked files scanned
         "no_stale_running",          # folded experiments rows
         "tasks_stale",               # open tasks of folded
-        "dirty_aged",                # dirty tracked files
+        "dirty_aged",                # tracked files examined
         "no_foreground_pod_training",  # ps rows read
         "curl_ipv4",                 # tracked .py/.sh with a curl call
     )
