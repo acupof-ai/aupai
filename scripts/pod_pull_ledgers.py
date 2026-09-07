@@ -1604,8 +1604,16 @@ def _selftest():
         _clean = {"name": "n", "started": "t", "status": "ok", "result": _res,
                   "finding": "monitor: process exited cleanly"}
         assert classify(_meas, _clean) == "monitor_state_only", (_res, classify(_meas, _clean))
-    # And the two sets partition what the ledgers actually hold: a value in neither is a monitor
-    # result nobody has seen, and it must reach a human rather than fall into the quiet class.
+    # And the two sets partition what the ledgers actually hold. THROUGH THE CLASSIFIER, not as
+    # set algebra: `_MONITOR_CLEAN & _MONITOR_FAILED == set()` asserts a property of two literals
+    # and would pass while the shipped line tested something else -- 84's trap, hit twice today,
+    # where the assertion checks a copy of the logic. So the claim the comment makes -- a monitor
+    # result nobody has written yet must reach a HUMAN rather than join the quiet class -- is
+    # asserted by planting such a row and reading which class the classifier actually chose.
+    for _res in ("exit 143 (SIGTERM)", "oom-killed", "node drained"):
+        _unseen = {"name": "n", "started": "t", "status": "fail", "result": _res,
+                   "finding": f"monitor: {_res}"}
+        assert classify(_meas, _unseen) == "contradicts", (_res, classify(_meas, _unseen))
     assert not (_MONITOR_CLEAN & _MONITOR_FAILED)
     assert _MONITOR_RESULTS == _MONITOR_CLEAN | _MONITOR_FAILED
 
