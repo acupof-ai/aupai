@@ -349,8 +349,29 @@ def events_pod_lacks(pod_rows, local_rows, keyfn):
 
     Reserved for a human: two CLOSES under one key with different values. That is a genuine
     disagreement about a measurement, and it stays in classify()'s `contradicts`.
+
+    A LEDGER WITH NONE OF THE THREE FIELDS HAD NO IDENTITY AT ALL (b0-29). sig() read only
+    status/result/ended, so on a ledger whose rows carry none of them -- facts-shaped rows, whose
+    content is `value` -- every row of every key collapsed to (key, "", "", "") and the second
+    event under a key was indistinguishable from the first. A value-only correction was therefore
+    skipped as already-present. Measured against this function before the fix:
+
+        pod [{id f1, value 2.8121}]  local [same, {id f1, value 2.8098}]  -> 0 to push
+        control, status differs                                          -> 1 to push
+
+    The fallback is the WHOLE ROW, and only when a row carries none of the three fields: with no
+    status, no result and no ended there is no event vocabulary to be coarser than, so the row
+    itself is the event. Rows that do carry them keep the (key, status, result, ended) identity
+    unchanged, which is what keeps the differing-close case below refused -- that pair differs in
+    `result`, a field it has, so it never reaches this branch and stays `contradicts`.
     """
+    _EVENT_FIELDS = ("status", "result", "ended")
+
     def sig(r):
+        if not any(f in r for f in _EVENT_FIELDS):
+            # Sorted so two dicts built in different key order hash the same; str() because a row
+            # may hold a list or dict and those are unhashable inside a set.
+            return (keyfn(r), tuple(sorted((k, str(v)) for k, v in r.items())))
         return (keyfn(r), str(r.get("status", "")), str(r.get("result", "")),
                 str(r.get("ended", "")))
 
@@ -992,6 +1013,80 @@ def _selftest():
     assert smuggled == [], (
         f"a differing close was offered as an append: {smuggled}. Two closes under one key "
         f"are contradicts -- a human decides which measurement is right"
+    )
+
+    # A LEDGER WITH NO status/result/ended: the whole-row fallback (b0-29). Facts-shaped rows,
+    # where the content is `value`. Before the fallback every row collapsed to (key, "", "", "")
+    # and the correction below read as already-present.
+    fk = lambda r: r.get("id", "")
+    _v1 = {"id": "f1", "value": "2.8121"}
+    _v2 = {"id": "f1", "value": "2.8098"}
+    _corr = events_pod_lacks([_v1], [_v1, _v2], fk)
+    assert _corr == [_v2], (
+        f"a value-only correction on a ledger with no status/result/ended was not offered: "
+        f"{_corr}. Without the whole-row fallback every such row shares one signature"
+    )
+    # NEGATIVE CONTROL for the same branch: identical rows must still be recognised, or the
+    # fallback would offer every row on every run. The fix must add an identity, not remove one.
+    assert events_pod_lacks([_v1], [_v1], fk) == [], "the fallback re-offered an identical row"
+    # AND THE CUT STILL APPLIES under the fallback: an event the pod already moved past is not
+    # resent. Local order is the sequence, so _v1 sits BEFORE the pod's last event here.
+    assert events_pod_lacks([_v2], [_v1, _v2], fk) == [], (
+        "an older row was resent under the whole-row fallback, which folds the row backwards"
+    )
+    # KEY ORDER MUST NOT SPLIT ONE ROW INTO TWO EVENTS: the same row built in a different dict
+    # order is the same event, which is why the fallback sorts its items. The case has to be built
+    # so SORTING ALONE decides the answer. Asserting that a reordered row is not re-offered does
+    # NOT do that -- the unsorted mutant refuses it too, for want of a cut anchor rather than for
+    # recognising it -- and that version of this case let the mutant live. Sorting only matters
+    # where the row must be RECOGNISED as the pod's last event so the cut lands and a LATER row
+    # crosses: here the pod holds the row as z,a and the local file holds it as a,z followed by a
+    # further event. Unsorted, the pod's row matches nothing local, no cut is found, and the later
+    # event is silently dropped.
+    _pod_ord = [{"id": "f4", "z": "1", "a": "2"}]
+    _loc_ord = [{"id": "f4", "a": "2", "z": "1"},
+                {"id": "f4", "a": "2", "z": "1", "v": "new"}]
+    _ord = events_pod_lacks(_pod_ord, _loc_ord, fk)
+    assert _ord == [_loc_ord[1]], (
+        f"dict key order changed a row's signature, so the pod's own last event went unrecognised "
+        f"and the event after it was dropped: {_ord}"
+    )
+    # THE FALLBACK BRANCH MUST ACTUALLY BE TAKEN by the rows above, asserted rather than assumed.
+    # Every case in this block passes if the branch is dead and the rows happen to agree by some
+    # other route, and that is not hypothetical: two of these cases were first written in a shape
+    # the over-broad and unsorted mutants both survived, because the CUT refused the rows for a
+    # reason unrelated to the signature. A case whose selection is empty is invariant under every
+    # change to what it claims to measure (tilerl, 2026-09-07: a filter matching no parameter
+    # printed 0 across four worlds, and agreement across worlds read as evidence when it was the
+    # same empty set four times). So: name the branch's own precondition and check it holds.
+    assert not any(f in _v1 for f in ("status", "result", "ended")), (
+        "the value-only rows above carry an event field, so they take the (key, status, result, "
+        "ended) path and every assertion in this block tests the branch it is not about"
+    )
+    assert any(f in close_b for f in ("status", "result", "ended")), (
+        "the differing-close row above carries no event field, so it takes the whole-row fallback "
+        "and the contradicts boundary is no longer what that case tests"
+    )
+    # A ROW HOLDING AN UNHASHABLE VALUE must not raise: ledgers carry lists and dicts.
+    _l1 = {"id": "f3", "blocks": [1, 2], "meta": {"k": "v"}}
+    assert events_pod_lacks([_l1], [_l1], fk) == [], "an unhashable field broke the fallback"
+    # THE FALLBACK MUST NOT APPLY TO ROWS THAT HAVE THE FIELDS, and this is the case that shows
+    # why -- the differing-close case above does NOT show it, because a whole-row signature
+    # refuses that pair too, for want of a cut anchor rather than for its field identity. Here
+    # the pod's start carries a `note` the local start lacks (provenance drift, the most common
+    # difference on the live ledgers). Under (key, status, result, ended) the pod's last event is
+    # recognised locally, the cut lands on it, and the close crosses. Under a whole-row signature
+    # for everything, that start matches nothing local, there is no cut, and the close is silently
+    # refused -- losing exactly the event this function exists to send.
+    _pod_noted = [{"name": "s", "started": "t", "status": "running", "note": "pod-side"}]
+    _loc_close = [{"name": "s", "started": "t", "status": "running"},
+                  {"name": "s", "started": "t", "status": "ok", "result": "1.0",
+                   "ended": "2026-09-04 01:00"}]
+    _crossed = events_pod_lacks(_pod_noted, _loc_close, ek)
+    assert _crossed == [_loc_close[1]], (
+        f"a close did not cross a pod row differing only in provenance: {_crossed}. The whole-row "
+        f"fallback must apply ONLY to rows carrying none of status/result/ended; widening it to "
+        f"every row makes any extra field on the pod side hide the close"
     )
 
     # SURVEY MUST ACTUALLY USE IT, asserted through survey(push=True) and not just on the
