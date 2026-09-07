@@ -14,7 +14,10 @@ interior optimum, and the size gap shrinks toward zero with more data.
 Use it only for decisions that HOLD SIZE FIXED. Digit splitting is one.
 
     python scripts/tokenizer_sweep.py --tokenizers data/tokenizer.json,data/tokenizer_k5.json
-    python scripts/tokenizer_sweep.py --sweep       # train and rank variants
+
+`--sweep` stood here until 2026-09-08 and the parser has never had it: this script scores
+the tokenizers named by --tokenizers and has no train-and-rank mode. doc_flags_parse caught
+it.
 """
 
 import argparse
