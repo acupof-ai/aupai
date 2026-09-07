@@ -1087,16 +1087,70 @@ def _selftest_ref():
             "in main's manifest and ABSENT from the stale HEAD's, which is how it gets skipped "
             f"instead of refused.\n  main: {at_mainref!r}\n  head: {at_head!r}")
 
-        # And the default is main, not HEAD -- the whole point of the flip. Asserted by calling
-        # write_manifest with NO ref, which is how pod_push.sh:193 and :274 call it.
+        # The default is main, not HEAD -- the 2026-09-05 flip. pod_push no longer TAKES the
+        # default (it passes --ref "$MAIN_REF" since the three-halves fix below), so this is now
+        # an assertion about the function's own contract rather than about its call sites.
         write_manifest(d)
         with open(MANIFEST, encoding="utf-8") as fh:
             default_text = fh.read()
-        assert default_text == at_mainref, (
-            "write_manifest's default ref is not main; pod_push's own call sites take the "
-            "default, so they would still read the detached HEAD")
+        assert default_text == at_mainref, "write_manifest's default ref is not main"
+
+        # ALL THREE HALVES OF --all NAME ONE REF (4c's ruling 2026-09-08, tilerl-0a's symptom).
+        # push_one gates against $MAIN_REF and resolve_stamp_sha stamps it; write_manifest
+        # defaulted to the LOCAL `main`, which since the PR flip is a stale cache of the shared
+        # branch -- `gh pr merge` advances origin/main and touches no local ref. The world is the
+        # divergence itself: a local `main` one commit BEHIND a remote-tracking origin/main, with
+        # the file differing between them.
+        #
+        # MEASURED before the fix, in this shape: push_one required blob 8c1384d8 and the stamp
+        # said 3439ccdf (both origin/main) while the manifest wrote 626799f0 (local main), so the
+        # manifest asserted the OLD blob for a file pushed at the NEW one and the pod-side --check
+        # reported drift on the file the push had just landed. tilerl-0a hand-fixed it twice by
+        # fast-forwarding local main, which worked because it collapsed the refs onto one; the
+        # ruling was explicitly NOT to do that in code, since that ref is shared by every
+        # worktree.
+        g("checkout", "-q", "main")
+        with open(os.path.join(d, "scripts", "shipped.py"), "w") as fh:
+            fh.write("x = 3  # the value only the remote ref has\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "remote-only")
+        _remote_tip = g("rev-parse", "HEAD").stdout.strip()
+        # A remote-tracking ref pointing at that commit, and local main moved BACK one: exactly
+        # what a clone looks like after someone else's PR merges.
+        g("update-ref", "refs/remotes/origin/main", _remote_tip)
+        g("update-ref", "refs/heads/main", _remote_tip + "^")
+        _local_tip = g("rev-parse", "refs/heads/main").stdout.strip()
+        assert _local_tip != _remote_tip, "the world does not diverge; nothing is being tested"
+
+        at_local = _manifest_text(d, "main")
+        at_remote = _manifest_text(d, "origin/main")
+        assert at_local != at_remote, (
+            "local main and origin/main produce the same manifest, so this world cannot show a "
+            f"ref mismatch.\n  local:  {at_local!r}\n  remote: {at_remote!r}")
+        # THE ASSERTION THAT MATTERS: the hash the manifest carries for the file must be the one
+        # push_one's ref would have required, i.e. origin/main's content -- because that is the
+        # ref pod_push resolves and passes.
+        #
+        # sha256 OF THE CONTENT, not the git blob sha. sha_head hashes `git show <ref>:<path>`'s
+        # bytes, so the manifest and `git rev-parse <ref>:<path>` live in different hash spaces --
+        # comparing them fails on a correct manifest, which is what the first version of this
+        # assertion did.
+        _want = sha_head(d, "scripts/shipped.py", "origin/main")
+        _stale = sha_head(d, "scripts/shipped.py", "main")
+        assert _want and _stale and _want != _stale, (
+            f"the two refs hash the file identically ({_want}); the world does not diverge on "
+            f"the path being asserted")
+        assert _want in at_remote, (
+            f"origin/main's manifest does not carry origin/main's content hash {_want[:12]}")
+        assert _stale not in at_remote, (
+            f"the manifest built from origin/main still carries the STALE local-main hash "
+            f"{_stale[:12]}; the ref argument did not take")
+        assert _stale in at_local and _want not in at_local, (
+            "the local-main manifest is not the stale one, so the two halves of this assertion "
+            "are not opposites and the ref could be ignored in both directions")
         return ("ref load-bearing: stale detached HEAD omits a file main has, HEAD==main "
-                "identical, default is main")
+                "identical, default is main, and a manifest built from origin/main carries "
+                "origin/main's blob rather than a behind local main's")
     finally:
         globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
         shutil.rmtree(d, ignore_errors=True)
