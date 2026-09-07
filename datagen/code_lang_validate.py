@@ -1062,6 +1062,43 @@ def _selftest():
             fails.append(f"missed-bucket case ({why}): want {want!r}, got "
                          f"{lang!r}/{reason!r} :: {src.splitlines()[0][:48]!r}")
 
+    # AND WHICH BRANCH ANSWERED, for the rules that have more than one (3b's suggestion, and
+    # the right form: it turns a discipline into a check). A case for a two-branch rule can
+    # be answered by the OTHER branch and pass -- the green is real and about the wrong
+    # thing, so narrowing the untested branch reads as safe when it means nothing reaches
+    # it. That happened twice on the typescript rule and cost two surviving mutations.
+    #
+    # Asserted on the branch SET, not on which case is which: the two typescript cases must
+    # fire exactly one branch each and between them cover both. That is checkable without
+    # reading the `why` prose, and it is the property that matters -- a branch no case fires
+    # alone is a branch no mutation can red.
+    #
+    # The branches are SPLIT OUT OF THE LIVE RULE rather than retyped here. A copy would
+    # drift: an edit to the rule would leave this check testing the old alternation and
+    # still passing, which is the same failure one level up.
+    _ts_rule = [rx for rx, n in _FOREIGN if n == "typescript"][0].pattern
+    _ts_parts = _ts_rule.split("|\\binterface")
+    if len(_ts_parts) != 2:
+        fails.append(f"the typescript rule is no longer the two branches this check splits "
+                     f"on ({_ts_rule[:60]!r}); re-derive the split before trusting it")
+        _ts_branches = {}
+    else:
+        _ts_branches = {"annotation": re.compile(_ts_parts[0]),
+                        "interface": re.compile("\\binterface" + _ts_parts[1])}
+    _ts_fired = []
+    for src, want, why in _KA_MISSED:
+        if want != "foreign:typescript" or not _ts_branches:
+            continue
+        hits = {n for n, rx in _ts_branches.items() if rx.search(src)}
+        if len(hits) != 1:
+            fails.append(f"typescript case ({why}) fires {sorted(hits) or '[]'}; a case must "
+                         f"fire exactly ONE branch or it does not test any of them")
+        _ts_fired.extend(hits)
+    if _ts_branches and set(_ts_fired) != set(_ts_branches):
+        fails.append(f"the typescript cases cover branches {sorted(set(_ts_fired))}, not "
+                     f"{sorted(_ts_branches)}; an uncovered branch can be narrowed to "
+                     f"nothing with the suite still green")
+
     # AND THE NEGATIVE CONTROLS. A widened refusal pattern fails in the direction the
     # known-answer sets cannot see: it eats real code and the accept lanes shrink silently.
     # These are the specific collisions each new pattern is one character away from.
