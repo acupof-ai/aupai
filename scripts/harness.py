@@ -23039,25 +23039,63 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
-            # The pending row is this name's claim file, so acquire would clash with itself.
-            # Remove it and let acquire write the real one -- the window it covered is over,
-            # because claim_pid is a process observed holding the card.
-            if pending_path and os.path.exists(pending_path):
-                try:
-                    os.unlink(pending_path)
-                except OSError:
-                    pass
-            # require_device only when the poll established it: on macOS the fallback picked
-            # the first non-shell descendant without proving anything, so asserting it there
-            # would refuse every laptop launch.
+            # ACQUIRE FIRST, UNLINK ONLY ON SUCCESS. The old order unlinked the pending row and
+            # then called acquire, so a REFUSED acquire left the cards declared by nobody while
+            # the job ran on them -- exactly the de-47 hole the pending row was written to close,
+            # reopened at the moment the row was needed most. It is not hypothetical: on
+            # 2026-09-07 the 30B launch was refused with "cards ['6'] are claimed by
+            # {'6': ['tilerl-gdnfloor']}" and runs/claims/ was empty a minute later with all six
+            # ranks alive; b0 had to hand-acquire.
+            #
+            # NO SELF-CLASH TO AVOID. The old comment said "the pending row is this name's claim
+            # file, so acquire would clash with itself", and that is not what acquire does:
+            # card_claim.py:833 excludes this claim's own file from the clash test, and its
+            # O_EXCL/FileExistsError path REBINDS when the new pid is a descendant of the recorded
+            # one (card_claim.py:1041) -- which is precisely pending(wrapper) -> held(job).
+            # Measured 2026-09-07 in an isolated claim dir: with the pending row present and no
+            # clash, acquire returns "claimed 2,3,4,5,6,7" and the row on disk carries the JOB's
+            # pid. The unlink bought nothing and cost the refusal case.
+            #
+            # It also masked a card_claim defect rather than avoiding one: the pending row satisfied
+            # acquire's ancestry exemption (the row names the wrapper, the asked pid is its child),
+            # so keeping the row without fixing that would have turned the refusal into a silent
+            # True with nothing written. Fixed at card_claim.py:866 in the same commit; the order
+            # here is safe only together with it.
+            #
+            # require_device only when the poll established it: on macOS the fallback picked the
+            # first non-shell descendant without proving anything, so asserting it there would
+            # refuse every laptop launch.
             ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note,
                                                  require_device=claim_dev is not None)
             if ok_claim:
+                # The window the pending row covered is over: claim_pid was observed holding the
+                # card and acquire has written the real row. Remove the pending file only if
+                # acquire did not already reuse that path -- when it rebinds in place, this IS the
+                # real claim and unlinking it would delete what we just acquired.
+                if pending_path and os.path.exists(pending_path):
+                    still_pending = False
+                    try:
+                        with open(pending_path, encoding="utf-8") as _pf:
+                            still_pending = json.load(_pf).get("state") == "pending"
+                    except (OSError, ValueError):
+                        still_pending = False
+                    if still_pending:
+                        try:
+                            os.unlink(pending_path)
+                        except OSError:
+                            pass
                 claim_name = args.name
                 held = f" ({claim_dev} device fds)" if claim_dev else ""
                 print(f"claim  cards {cards} -> pid {claim_pid}{held}")
             else:
-                print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+                # THE PENDING ROW STAYS. The cards are in use by this job whatever acquire thinks,
+                # and a row saying so is what stops the sweep calling them ORPHAN and a second
+                # launch taking them. It names the wrapper pid, so it goes stale on its own when
+                # the job ends -- no manual cleanup, and no claim on a shell being treated as real.
+                _kept = (" The PENDING row stands, so the cards are still declared and go stale "
+                         "when the wrapper exits." if pending_path and os.path.exists(pending_path)
+                         else " NO row exists for these cards -- claim them by hand.")
+                print(f"note   cards {cards} not claimed: {claim_msg}{_kept}", file=sys.stderr)
         elif _proc_readable():
             _w = _dev_wait()
             # THE JOB MAY SIMPLY HAVE BEEN FAST, and that is not the same as never holding a card.
