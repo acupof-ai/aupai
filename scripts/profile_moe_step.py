@@ -244,8 +244,18 @@ def equiv(torch, MoEFFN, a):
     m.train()
     # expert_bias off zero: with an all-zero bias the `affinity + expert_bias` term is inert
     # and a copy that dropped it entirely would still match.
+    #
+    # SCALED TO THE AFFINITY SPREAD, NOT TO 1 (tilerl 2026-09-07). This was randn*0.05, which is
+    # 208x the thing it is added to: softmax over 48 experts gives affinities whose per-expert
+    # spread (std of column means) is 2.4e-04, so a 0.05 bias does not perturb the ranking, it
+    # REPLACES it. Measured at the arm's shape, 4096 tokens, random init: with the real zeros the
+    # busiest expert takes 293 of 4096 tokens (7.2%, 0 dead); with randn*0.05 it takes 4065
+    # (99.2%, 14 dead). So the check was validating _regions against forward in a routing regime
+    # training cannot reach -- 3 live experts of 48 -- and its negative control below was
+    # perturbing an expert holding 99% of the tokens rather than a typical one. randn*2e-4 keeps
+    # the term non-inert (a copy that drops it still fails) while leaving routing realistic.
     with torch.no_grad():
-        m.expert_bias.copy_(torch.randn_like(m.expert_bias.float()).to(m.expert_bias.dtype) * 0.05)
+        m.expert_bias.copy_((torch.randn_like(m.expert_bias.float()) * 2e-4).to(m.expert_bias.dtype))
     x = torch.randn(1, ARM_D["seq"], ARM_D["d"], device="cuda", dtype=torch.bfloat16)
 
     ref = m(x)
@@ -285,6 +295,18 @@ def equiv(torch, MoEFFN, a):
     n_dead = int((counts == 0).sum())
     print(f"routing: expert {victim} is busiest with {int(counts[victim])} of "
           f"{int(counts.sum())} slots; {n_dead}/{m.n_routed} experts got none")
+    # THE FIXTURE MUST NOT COLLAPSE ROUTING, asserted rather than eyeballed (tilerl 2026-09-07).
+    # A bias large against the affinity spread sends every token to one expert, and the check
+    # then certifies _regions in a regime with 3 live experts of 48 -- which is not the code
+    # path the profile below times. 20% of tokens on the busiest expert is ~2.8x the 7.2%
+    # measured at random init, so it passes a healthy fixture and fails the randn*0.05 one
+    # (99.2%) that was here.
+    _busiest_frac = float(counts[victim]) / max(1.0, float(counts.sum()) / m.top_k)
+    assert _busiest_frac < 0.20, (
+        f"fixture routing collapsed: expert {victim} takes {_busiest_frac:.1%} of tokens and "
+        f"{n_dead}/{m.n_routed} experts are dead. The equiv check would validate a regime "
+        f"training never reaches, and the perturbation control below would pick an outlier "
+        f"rather than a typical expert. Check the expert_bias scale against the affinity spread")
     assert int(counts[victim]) > 0, "no expert received a token -- the control cannot fire"
     with torch.no_grad():
         m.w13[victim] += 1.0

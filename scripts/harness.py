@@ -3103,7 +3103,13 @@ def check_main_advances_by_ancestry(root):
     # reflog or a bigger window brings the entry back, and then the check goes red for a cause
     # that was settled. The cost of keeping it is one tuple.
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
-                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
+                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae"),
+                 # 2026-09-07 15:15 local: `reset: moving to origin/main` after the gh merge of
+                 # PR #3 -- four merge_main CASes (89b20f70..3a57ca40, runs/msg_log.jsonl only)
+                 # had landed on local main but never reached origin, and the reset
+                 # discarded them instead of pushing them. Restored by re-merging fb.
+                 ("3a57ca402291636a988a651aa983192d79b7c392",
+                  "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf")}
     jumps = []
     unsigned = []
     for ln in lines:
