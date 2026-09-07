@@ -505,6 +505,15 @@ def main():
         "acc": acc, "binomial_se": se, "ci95_halfwidth": 1.96 * se,
         "empty_generations": empty,
         "nll_per_byte_mean": (nll_sum / nll_n) if nll_n else None,
+        # THE METRIC'S OWN ROW SAYS HOW IT WAS SCORED, because the answer moved. Until
+        # 2026-09-07 the NLL ran one forward per target token, so each token of a word was
+        # scored at a different sequence length and therefore under a different chunk_kda
+        # alignment (chunk_size=32) -- the old path was not internally consistent, which is why
+        # 4c ruled one-forward the reference rather than the deviation. Values differ by up to
+        # ~1e-2 nats/byte between the two, so a row without this field cannot be compared to
+        # one with it, and nothing else in the JSON distinguishes them.
+        "method": "nll_one_forward",
+        "batch": a.batch,
         "reading": "greedy continuation to first word boundary, exact string match "
                    "(lm-eval-harness definition); tokenizer-independent",
         "boundary": "The two readings measure different things and are EXPECTED to diverge: "
