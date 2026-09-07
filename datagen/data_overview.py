@@ -1,4 +1,8 @@
 #!/usr/bin/env python3
+# restartable: the .counts.json sidecar is written after EVERY shard (flush_sidecar, atomic
+# via .tmp + os.replace), and a rerun skips any shard whose (size, mtime) still match, so an
+# interrupt costs at most the shard in flight. It also carries the token convention, so a
+# rerun after that changes recounts instead of serving stale entries.
 """Data distribution at a glance: per-domain token counts vs the mix target.
 
 Counts come from the pretokenized caches (train._domain_cache_path(domain), which follows
@@ -24,6 +28,7 @@ sys.path.insert(0, ROOT)
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 import harness  # single source of truth for the configured mix
+from count_tokens import CONVENTION, count_docs
 
 import train  # noqa: E402
 
@@ -45,7 +50,7 @@ def cache_tokens(domain):
     return os.path.getsize(p) // 4 if os.path.exists(p) else None
 
 
-def corpus_tokens(domain, corpus_dir, tok, sidecar):
+def corpus_tokens(domain, corpus_dir, tok, sidecar, flush=None):
     """Count a corpus/<domain> directory, caching per file on (size, mtime)."""
     d = os.path.join(corpus_dir, domain)
     if not os.path.isdir(d):
@@ -63,17 +68,26 @@ def corpus_tokens(domain, corpus_dir, tok, sidecar):
             total += rec[2]
             continue
         n = 0
+        texts = []
         with open(p, encoding="utf-8") as fh:
             for line in fh:
                 try:
                     r = json.loads(line)
                 except json.JSONDecodeError:
                     continue
-                text = (r.get("title") or "") + "\n" + (r.get("content") or r.get("text") or "")
-                n += len(tok.encode(text).ids)
+                texts.append((r.get("title") or "") + "\n" + (r.get("content") or r.get("text") or ""))
+                if len(texts) >= 2000:
+                    n += count_docs(texts, tok)
+                    texts = []
+        n += count_docs(texts, tok)
         sidecar[key] = [st.st_size, st.st_mtime, n]
         total += n
         dirty = True
+        # Persist per SHARD, not per run. The sidecar IS the resume mechanism, so writing it
+        # only after every domain finishes means an interrupt at 90% loses 100% of the
+        # tokenizing -- the exact shape restartability names. zh_web alone is 909 shards.
+        if flush is not None:
+            flush()
     if dirty:
         print(f"  counted {domain}: {total / 1e6:.1f}M tokens", file=sys.stderr)
     return total
@@ -106,11 +120,32 @@ def main():
         print(f"corpus domains not in mix: {extra}", file=sys.stderr)
 
     sidecar_path = os.path.join(a.corpus, ".counts.json")
+    sidecar = {}
     if os.path.exists(sidecar_path):
         with open(sidecar_path, encoding="utf-8") as f:
-            sidecar = json.load(f)
-    else:
-        sidecar = {}
+            cached = json.load(f)
+        # A cache entry is keyed on (size, mtime), which cannot see a change to what a token
+        # IS. This file counted ids with no <eos> until 2026-09-08; every entry written
+        # before that is short by one per document and its shard has not been touched, so
+        # (size, mtime) still match and the stale count would be served forever. Keep only
+        # entries stamped with the current convention.
+        if cached.get("_convention") == CONVENTION:
+            sidecar = cached
+        else:
+            print(
+                f"  .counts.json convention {cached.get('_convention')!r} != {CONVENTION!r}"
+                f" -- discarding {len([k for k in cached if not k.startswith('_')])} cached"
+                f" shard count(s) and recounting",
+                file=sys.stderr,
+            )
+    sidecar["_convention"] = CONVENTION
+
+    def flush_sidecar():
+        tmp = sidecar_path + ".tmp"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(sidecar, f)
+        os.replace(tmp, sidecar_path)
+
     tok = None
     counts = {}
     for d in domains + extra:
@@ -120,10 +155,9 @@ def main():
                 from tokenizers import Tokenizer
 
                 tok = Tokenizer.from_file(TOK_PATH)
-            n = corpus_tokens(d, a.corpus, tok, sidecar)
+            n = corpus_tokens(d, a.corpus, tok, sidecar, flush=flush_sidecar)
         counts[d] = n
-    with open(sidecar_path, "w", encoding="utf-8") as f:
-        json.dump(sidecar, f)
+    flush_sidecar()
 
     missing = [d for d in domains if counts[d] is None]
     if missing:
