@@ -348,8 +348,14 @@ FAKEPODEOF
   # 'pod_drift\.py --write' and its own FAIL message contains that string, so the total read 3
   # against 2 and the case failed on a correct file -- §267's self-matching grep, third instance
   # today. `^python3 ` at line start matches only a command, never prose or an echo.
-  _w_total=$(grep -cE '^ *python3 scripts/pod_drift\.py --write' "$0")
-  _w_ref=$(grep -cE '^ *python3 scripts/pod_drift\.py --write --ref' "$0")
+  # `|| true` IS LOAD-BEARING, not defensive noise (44, 2026-09-08). grep -c prints 0 and exits
+  # 1 when nothing matches, and line 20 sets -e, so the WORST world -- both call sites stripped,
+  # _w_ref=0 -- killed the script here and FAIL I never printed. The guard did not go green, but
+  # its diagnosis vanished in exactly the case it exists for, and rc=1 is indistinguishable from
+  # a fired assertion: my B mutant read rc=1 and was recorded as "case I fires" while it printed
+  # nothing at all.
+  _w_total=$(grep -cE '^ *python3 scripts/pod_drift\.py --write' "$0" || true)
+  _w_ref=$(grep -cE '^ *python3 scripts/pod_drift\.py --write --ref' "$0" || true)
   if [ "$_w_total" -lt 2 ] || [ "$_w_total" -ne "$_w_ref" ]; then
     echo "FAIL I: $_w_ref of $_w_total manifest-write call(s) pass --ref. All three" >&2
     echo "  halves of --all must name ONE ref: push_one gates against \$MAIN_REF, the stamp" >&2
