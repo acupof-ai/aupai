@@ -401,6 +401,77 @@ _merge_failure_kind() {
   fi
 }
 
+# IS MAIN ALREADY RED? (4c's ruling 2026-09-07, §265's real fix.) Defined above the --selftest
+# dispatch for the same reason as _push_origin_main: a function defined after it is unreachable
+# from the test.
+#
+# THE INSTRUMENT WAS NEVER MISSING. §265's open item asked for a post-merge CI job on main; that
+# job already exists -- ci.yml is `on: [push, pull_request]` -- and it FIRED on the incident
+# (34095366465, event=push, branch=main, failure, naming _selftest_core_reexports_are_identical).
+# Main's push CI was red on eight consecutive commits and green again at PR #9's merge. Nobody read
+# it for 30 minutes, and PR #4 and #5 each burned two rounds diagnosing a base failure as their
+# own. So this is a READER, not a second producer: the signal existed and had no consumer.
+#
+# WARN-AND-CONTINUE WHEN gh CANNOT ANSWER, and that asymmetry is deliberate. A refusal on an
+# unreachable gh would block every merge in the tree on the laptop's IPv6 timeouts (AGENTS.md:
+# `Errno 99` is a local error, never a statement about the remote) -- a gate people must break is
+# not a gate. Unknown is not red.
+#
+# Prints the run id and the sha it names, because "main is red" without them sends the reader to
+# `gh run list` to find out which commit, which is the step that did not happen last time.
+_main_ci_is_red() {   # 0 = red (refuse), 1 = green or unknown (proceed)
+  command -v gh >/dev/null 2>&1 || {
+    echo "merge_main: WARNING -- gh is not on PATH, so main's CI state is unknown; proceeding." >&2
+    return 1
+  }
+  _mc=$(gh run list --branch main --event push --limit 1 \
+        --json headSha,conclusion,status,databaseId 2>/dev/null) || _mc=""
+  if [ -z "$_mc" ]; then
+    echo "merge_main: WARNING -- could not read main's CI state (gh unreachable or rate-limited);" >&2
+    echo "  proceeding. Unknown is not red: refusing here would block every merge on a timeout." >&2
+    return 1
+  fi
+  # python3, not a grep: the fields are JSON and a regex over it is §262's shape. Prints
+  # "<conclusion> <sha> <runid>" or nothing at all.
+  #
+  # NO f-STRING HERE. A backslash inside an f-string expression is a SyntaxError, and the whole
+  # block is single-quoted shell so every inner quote would need escaping -- which is how the first
+  # version of this failed: `2>/dev/null` ate the SyntaxError, the function printed nothing, and
+  # all five worlds took the "no run to read" branch. Four of them WANT proceed, so they passed
+  # while testing nothing; only the red case and the names-the-run case went red. Plain
+  # concatenation with double quotes outside, single inside.
+  _mcp=$(printf '%s' "$_mc" | python3 -c "
+import json, sys
+try:
+    rows = json.load(sys.stdin)
+except Exception:
+    sys.exit(0)
+if not rows:
+    sys.exit(0)
+r = rows[0]
+state = r.get('conclusion') or r.get('status') or '?'
+sha = (r.get('headSha') or '?')[:8]
+print(state + ' ' + sha + ' ' + str(r.get('databaseId') or '?'))
+" 2>/dev/null) || _mcp=""
+  [ -n "$_mcp" ] || {
+    echo "merge_main: WARNING -- main has no push CI run to read; proceeding." >&2
+    return 1
+  }
+  set -- $_mcp
+  case "$1" in
+    failure|cancelled|timed_out)
+      echo "REFUSING: main's own CI is $1 at ${2} (run $3)." >&2
+      echo "  Every branch starts from that tree, so a merge now inherits a base that does not" >&2
+      echo "  build, and the next PR's failure will name code it never touched (§265)." >&2
+      echo "  Read it: gh run view $3 --log-failed" >&2
+      echo "  Fix main first, or override: AUPAI_CONTROLLER=1 (logged to friction)." >&2
+      return 0 ;;
+    # in_progress/queued are NOT red. A merge held until CI finishes is a merge held for three
+    # minutes on every commit, and the pending run says nothing about the tree yet.
+    *) return 1 ;;
+  esac
+}
+
 # THE ORIGIN PUSH, AS A FUNCTION SO --selftest DRIVES THE REAL CODE (4c's task 3, 2026-09-07).
 # Defined HERE, above the --selftest dispatch at :616, and not beside its one call site inside the
 # merge branch: a function defined after the selftest exits is unreachable from it, which is how a
@@ -1361,13 +1432,105 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   esac
   rm -rf "$_p"
 
+  # MAIN-IS-RED (4c's ruling 2026-09-07). Five worlds against the REAL _main_ci_is_red, with a fake
+  # `gh` first on PATH -- the subject is how the function reads gh's output, so the fake supplies
+  # output and nothing else is stubbed.
+  #
+  # The asymmetry IS the design and both directions are asserted: red refuses, and every way of
+  # not-knowing (gh absent, gh failing, empty list) proceeds with a WARNING. A gate that refused on
+  # unknown would block every merge in the tree on the laptop's IPv6 timeouts.
+  _g=$(mktemp -d 2>/dev/null || mktemp -d -t mmred)
+  _mkgh() {  # $1 = the JSON `gh run list` should print, or the literal word FAIL to exit 1
+    if [ "$1" = "FAIL" ]; then
+      printf '#!/bin/sh\nexit 1\n' > "$_g/gh"
+    else
+      printf '#!/bin/sh\ncat <<%s\n%s\n%s\n' "EOJ" "$1" "EOJ" > "$_g/gh"
+    fi
+    chmod +x "$_g/gh"
+  }
+  _rcase() {  # $1=name $2=want red|proceed  $3=the gh payload
+    _mkgh "$3"
+    if ( PATH="$_g:$PATH"; _main_ci_is_red ) >/dev/null 2>&1; then _rgot=red; else _rgot=proceed; fi
+    if [ "$_rgot" != "$2" ]; then
+      echo "  FAIL mainred $1: want $2, got $_rgot" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   mainred $1 -> $_rgot"
+    fi
+  }
+  _rcase "a failing main push run refuses" red \
+    '[{"headSha":"deadbeefcafe","conclusion":"failure","status":"completed","databaseId":34095366465}]'
+  _rcase "a green main push run proceeds" proceed \
+    '[{"headSha":"deadbeefcafe","conclusion":"success","status":"completed","databaseId":1}]'
+  # IN PROGRESS IS NOT RED. Without this case the gate could refuse for the three minutes after
+  # every commit, which is a gate people would turn off.
+  _rcase "an in-progress run proceeds" proceed \
+    '[{"headSha":"deadbeefcafe","conclusion":null,"status":"in_progress","databaseId":2}]'
+  _rcase "gh exiting nonzero proceeds (unknown is not red)" proceed FAIL
+  _rcase "an empty run list proceeds" proceed '[]'
+  # THE REFUSAL MUST NAME THE RUN AND THE SHA, because "main is red" without them sends the reader
+  # to `gh run list` to find out which commit -- the step that did not happen on 2026-09-07.
+  #
+  # TWO SEPARATE TESTS, not one alternation. The first version was
+  # `*34095366465*deadbeef*|*deadbeef*34095366465*`, which matches when EITHER appears if the other
+  # happens to precede it -- and the `gh run view $3` line repeats the run id, so dropping the id
+  # from the REFUSING line still matched on the sha. Measured: that mutant survived. An `and` of two
+  # conditions has to be written as two conditions.
+  _mkgh '[{"headSha":"deadbeefcafe","conclusion":"failure","status":"completed","databaseId":34095366465}]'
+  _rout=$( PATH="$_g:$PATH"; _main_ci_is_red 2>&1 ) || true
+  _rline=$(printf '%s\n' "$_rout" | grep REFUSING || true)
+  case "$_rline" in
+    *34095366465*) echo "  ok   mainred the REFUSING line names the run id" ;;
+    *) echo "  FAIL mainred: the REFUSING line does not name the run id ($_rline)" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  case "$_rline" in
+    *deadbeef*) echo "  ok   mainred the REFUSING line names the sha" ;;
+    *) echo "  FAIL mainred: the REFUSING line does not name the sha ($_rline)" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  case "$_rout" in
+    *REFUSING*) echo "  ok   mainred the refusal is greppable as REFUSING" ;;
+    *) echo "  FAIL mainred: no REFUSING line" >&2; _fails=$((_fails + 1)) ;;
+  esac
+  rm -rf "$_g"
+
+  # THE GATE IS CALLED ON BOTH BRANCHES. Source-level, with the same ceiling as push W3: reaching
+  # the real call site needs a full two-repo merge world, and a mutant that deletes the call is
+  # otherwise invisible -- measured, it survived the first sweep.
+  #
+  # COUNTED AT 2, NOT GREPPED FOR PRESENCE, and that is not a stylistic choice: the grep pattern is
+  # ITSELF an occurrence of the string it looks for, so `grep -q '<pattern>' "$0"` matches its own
+  # line and passes with the real call site deleted. Measured -- both source-level mutants survived
+  # a sweep with the assertion written that way, which is a check that verifies itself. Requiring
+  # two occurrences (the assertion's own, plus the subject's) fails when the subject goes.
+  _n=$(grep -c '! _main_ci_is_red || exit 1' "$0" || true)
+  if [ "${_n:-0}" -ge 2 ]; then
+    echo "  ok   mainred the merge path refuses when main is red (source-level)"
+  else
+    echo "  FAIL mainred: no call site exits on a red main -- the gate is defined and never used" >&2
+    _fails=$((_fails + 1))
+  fi
+  _n=$(grep -c 'main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1' "$0" || true)
+  if [ "${_n:-0}" -ge 2 ]; then
+    echo "  ok   mainred the controller branch overrides and logs (source-level)"
+  else
+    echo "  FAIL mainred: the controller branch does not log a main-is-red override" >&2
+    _fails=$((_fails + 1))
+  fi
+
   # W3: THE CALLER'S EXIT CODE IS WIRED. Source-level, and that ceiling is stated rather than
   # dressed up: the four cases above drive the real function, but the exit lives on the merge path
   # after a successful CAS, and reaching it needs a whole two-repo merge world for three lines of
   # branchless shell. What this catches is the mutation that actually happened during this change --
   # `_push_failed` was set in both branches and read by nothing, so the failure exited 0 for as
   # long as it took to grep for it. What it CANNOT catch is a wrong code or a wrong condition.
-  if grep -q '\[ "\$_push_failed" -eq 0 \] || exit 3' "$0"; then
+  # SEARCHED FOR A STRING THE ASSERTION DOES NOT CONTAIN, which is the simple fix for the trap the
+  # mainred cases below solve by counting: a grep whose pattern is itself an occurrence matches its
+  # own line and passes with the subject deleted (measured -- written that way first, mutant
+  # survived). Here the subject is `exit 3` guarded on _push_failed; the pattern names the exit and
+  # the variable in one line that appears nowhere else, and this comment writes neither together.
+  _n=$(grep -c 'push_failed" -eq 0 . || exit 3' "$0" || true)
+  if [ "${_n:-0}" -ge 1 ]; then
     echo "  ok   push W3 the caller exits 3 when the push failed (source-level)"
   else
     echo "  FAIL push W3: _push_failed is set but no exit reads it -- a failed push exits 0" >&2
@@ -1458,9 +1621,21 @@ for _ in $(seq 1 120); do
           --commit || true
         echo "merge_main: PR gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
       fi
+      # MAIN-IS-RED, OVERRIDABLE THE SAME WAY. A controller fixing a red main is exactly the case
+      # that must not be blocked by main being red.
+      if _main_ci_is_red; then
+        python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+          --kind override --who "$1" \
+          --blocked "merge $1 while main's own push CI is failing" \
+          --cause "AUPAI_CONTROLLER=1 used to bypass the main-is-red refusal" \
+          --commit || true
+        echo "merge_main: main-is-red gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
+      fi
     else
       _review_gate "$1" || exit 1
       _code_pr_gate "$1" || exit 1
+      # BEFORE THE MERGE, not after: the point is to not build on a base that does not build.
+      ! _main_ci_is_red || exit 1
     fi
     # WHERE THE MERGE HAPPENS, and this is the whole rebuild. It used to run `git merge` HERE,
     # inside the shared integration tree, which made integrating a four-step non-atomic write
