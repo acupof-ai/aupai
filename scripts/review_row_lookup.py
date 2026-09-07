@@ -148,6 +148,41 @@ def _selftest():
                  reviewer_for(sha, "de", load_rows(d2)), None)
         finally:
             shutil.rmtree(d2, ignore_errors=True)
+
+        # THROUGH __main__, NOT reviewer_for(). Every case above calls the functions in-process,
+        # so the argv parse, `load_rows(".")`'s cwd-dependent root and the exit-code contract
+        # merge_main.sh consumes via `$(...)` and `[ -z "$row" ]` had no coverage: a mutant that
+        # swapped the exit codes, or printed a name on the not-found path, left them all green
+        # and made the gate unconditional. The cwd root is the specific line worth pinning --
+        # tilerl and 62 each reasoned about what "." resolves to on 2026-09-07 and each got it
+        # wrong in a different direction, because the answer is at merge_main.sh:245 (`cd
+        # "$MAIN"`) and not in this file.
+        def _exec(cwd, *argv):
+            r = subprocess.run([sys.executable, os.path.abspath(__file__), *argv],
+                               cwd=cwd, capture_output=True, text=True)
+            return r.returncode, r.stdout.strip()
+
+        # A FRESH SHA, because the worlds above left rows for `sha` and `sha2` committed on main.
+        # Written as `sha`, the self-review case below passed for the wrong reason: the worktree
+        # row was skipped as a self-review and the leftover "de (self-reported)" row on main was
+        # returned instead, so rc was 0 and the assertion failed while the code was correct.
+        sha3 = "0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f0f"
+        with open(led, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps({"artifact": f"commit {sha3[:8]}", "reviewer": "44"}) + "\n")
+        case("__main__ found: rc 0 and the name on stdout", _exec(d, sha3, "de"), (0, "44"))
+        case("__main__ self-review: rc 1 and nothing on stdout", _exec(d, sha3, "44"), (1, ""))
+        case("__main__ unreviewed sha: rc 1 and nothing on stdout",
+             _exec(d, "1" * 40, "de"), (1, ""))
+        # THE ROOT IS THE CWD. Same ledger, same sha, run from a directory that has neither --
+        # the row must not be found. This is the assertion that fails if `load_rows(".")` ever
+        # becomes load_rows of anything else.
+        d3 = tempfile.mkdtemp(prefix="review_lookup_cwd_")
+        try:
+            case("__main__ reads the cwd, not the script's directory",
+                 _exec(d3, sha3, "de"), (1, ""))
+        finally:
+            shutil.rmtree(d3, ignore_errors=True)
+        case("__main__ wrong argc: rc 2", _exec(d, sha3)[0], 2)
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
