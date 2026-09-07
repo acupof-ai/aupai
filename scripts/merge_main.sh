@@ -324,7 +324,14 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
 # NOT `git diff main..$1`. That is the cumulative diff, so ONE code commit anywhere in the branch
 # would refuse every later ledger-only commit with it. The gate walks commit by commit, exactly as
 # _review_gate does, and names the offenders individually.
-_LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md)$'
+#
+# THE SET IS EXACT PATHS, NOT A WIDER PATTERN (4c's ruling 2026-09-07). runs/card_assignment.json
+# and runs/claims/*.json are grant and claim state: written under time pressure in the minutes
+# before a launch, read by the next launch, and never reviewed by anyone -- a PR cycle in front of
+# a card grant is a launch that waits on a reviewer. They join the set as the literal paths they
+# are, so `runs/anything.py` and a new runs/*.json nobody has ruled on stay code. runs/claims/ is
+# matched as a directory prefix because its filenames are `<name>.<cards>.json`, generated per job.
+_LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md|runs/card_assignment\.json|runs/claims/[A-Za-z0-9_.-]+\.json)$'
 _code_pr_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
   local shas sha when paths bad subject
   [ -n "${AUPAI_PR_FLIP_EPOCH:-}" ] || return 0   # unset means the flip has not happened
@@ -741,6 +748,22 @@ time.sleep(20)
       && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "code: first" \
       && printf '{"id":"z"}\n' >> runs/review.jsonl \
       && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "review: a row after code"
+    # GRANT AND CLAIM STATE (4c's ruling): these merge here, and the control below is that a NEW
+    # runs/*.json nobody ruled on does not. Without that control "card_assignment merges" is also
+    # satisfied by a regex that admits every json under runs/, which is the widening 4c refused.
+    mkdir -p runs/claims
+    git checkout -q -b prgrant "$_b" && printf '{"cards":"2-7"}\n' > runs/card_assignment.json \
+      && git add runs/card_assignment.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "grant: cards 2-7"
+    git checkout -q -b prclaim "$_b" && printf '{"name":"j"}\n' > runs/claims/j.2-3.json \
+      && git add runs/claims/j.2-3.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "claim: j on 2,3"
+    git checkout -q -b probjson "$_b" && printf '{"k":1}\n' > runs/some_config.json \
+      && git add runs/some_config.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "config: a new runs json"
+    git checkout -q -b probpy "$_b" && printf 'x = 1\n' > runs/helper.py \
+      && git add runs/helper.py \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "code: a py file under runs/"
     git checkout -q "$_b" 2>/dev/null
   ) >/dev/null 2>&1
   _pcase() {  # $1=name $2=branch $3=want refused|accepted $4=flip epoch ('' = unset)
@@ -758,6 +781,12 @@ time.sleep(20)
   _pcase "pre-flip code drains here (the backlog)" probacklog accepted "$_FLIP"
   _pcase "a revert of code is exempt" prrevert accepted "$_FLIP"
   _pcase "a row AND a file in one commit is code" prmixed refused "$_FLIP"
+  # GRANT AND CLAIM STATE MERGE HERE, and the two controls are what keep that from being a
+  # widening: an unruled runs/*.json and a .py under runs/ are both still code.
+  _pcase "a card_assignment-only commit merges" prgrant accepted "$_FLIP"
+  _pcase "a runs/claims/ row merges" prclaim accepted "$_FLIP"
+  _pcase "control: another runs/*.json is still code" probjson refused "$_FLIP"
+  _pcase "control: runs/*.py is still code" probpy refused "$_FLIP"
   # THE TWO CONTROLS THAT MAKE THE ABOVE MEAN ANYTHING. Without the first, "refuses code" is
   # satisfied by a gate that refuses unconditionally; without the second, the flip is not a flip.
   _pcase "no flip epoch set: nothing is refused" prcode accepted ""
