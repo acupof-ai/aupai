@@ -19848,6 +19848,118 @@ def _selftest_exp_fold():
           "survive; exp.py and harness agree")
 
 
+def _selftest_exp_reclassify_monitor_close():
+    """A monitor-closed row can be re-closed by hand WITH a reason and not without it, and
+    the monitor's event survives.
+
+    de-70, 4c's ruling (a) 2026-09-08. (1.5b-a0.2b-e48_30b, 2026-09-07 05:15) was stopped
+    deliberately at .step22500 and its monitor wrote `fail / exit 137 (signal 9)`, because a
+    monitor reports PROCESS STATE and a kill looks like a crash. No verb could restate it:
+    `amend` excludes status by design, `retract` withdraws a result rather than replacing
+    one, `note` carries running forward. fold() already preferred a human's close over a
+    monitor's in either merge order -- measured before this was written -- so the only thing
+    missing was a writer that would append the human event.
+
+    THE SUBPROCESS IS THE POINT. This drives `exp.py done` as a command, not main()
+    in-process: the refusal lives in argument handling and an in-process call would let a
+    NameError or an argparse omission pass as long as the fold agreed (§258 -- seven worlds
+    that never exec'd the entry point). The four cases are: no reason refuses; a reason
+    appends; the monitor's event is still on disk afterwards; and a row a HUMAN closed still
+    refuses, which is the narrowness of ruling (a) rather than a side effect.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="expreclass_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        MON = {"name": "m", "started": "2026-09-07 05:15", "cmd": "./run_ddp.sh --name m",
+               "hypothesis": "does the 30b arm resume", "status": "fail", "writer": "monitor",
+               "result": "exit 137 (signal 9)", "ended": "2026-09-07 09:00"}
+        HUM = {"name": "h", "started": "2026-09-07 05:15", "cmd": "./run_ddp.sh --name h",
+               "hypothesis": "control", "status": "ok", "result": "val 2.884 at step 2000",
+               "ended": "2026-09-07 09:00"}
+        with open(p, "w", encoding="utf-8") as f:
+            for r in ({**MON, "status": "running", "writer": None, "result": ""}, MON,
+                      {**HUM, "status": "running", "result": ""}, HUM):
+                f.write(json.dumps({k: v for k, v in r.items() if v is not None}) + "\n")
+        before = open(p, encoding="utf-8").read()
+
+        exp_py = os.path.join(ROOT, "scripts", "exp.py")
+
+        def run(*args):
+            # --root, NOT cwd: exp.py derives ROOT from its own __file__ and refuses an ambient
+            # env override on purpose (an AUPAI_ROOT would silently redirect a production run's
+            # ledger), so running it from the fixture directory reads the REAL runs/ and the
+            # fixture tests nothing -- measured, the first version of this world got "no open row
+            # ... Open rows: none" from the repo's own ledger.
+            return subprocess.run([sys.executable, exp_py, "--root", d, *args],
+                                  capture_output=True, text=True, cwd=d, timeout=120)
+
+        # 1. NO REASON -> refused, and the message must say what to do.
+        r = run("done", "--name", "m", "--started", "2026-09-07 05:15", "--status", "ok",
+                "--result", "stopped by hand at .step22500")
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, f"a reclassify with no --reason must be refused, got rc=0: {out}"
+        assert "--reason" in out and "MONITOR" in out, \
+            f"the refusal must name --reason and say the closer was the monitor: {out[:200]}"
+        assert open(p, encoding="utf-8").read() == before, \
+            "a refused reclassify must write nothing"
+
+        # 2. WITH A REASON -> appended, and the fold shows it.
+        r = run("done", "--name", "m", "--started", "2026-09-07 05:15", "--status", "ok",
+                "--result", "stopped by hand at .step22500",
+                "--reason", "deliberate stop at a chosen step, not a crash")
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, f"a reclassify WITH --reason must be accepted: {out}"
+        assert "RECLASSIFIED" in out, f"the caller must be told what was overridden: {out[:200]}"
+
+        evs = [json.loads(ln) for ln in open(p, encoding="utf-8") if ln.strip()]
+        mine = [e for e in evs if e["name"] == "m" and e["started"] == "2026-09-07 05:15"]
+        # 3. THE MONITOR'S EVENT IS UNTOUCHED -- the acceptance condition 4c set. Append-only
+        #    is not a claim about intent, it is checkable: the original bytes are still there.
+        assert before in open(p, encoding="utf-8").read(), \
+            "the reclassify rewrote the file instead of appending to it"
+        assert any(e.get("writer") == "monitor" and "137" in str(e.get("result")) for e in mine), \
+            "the monitor's own event must still be in the ledger"
+        new = [e for e in mine if e.get("reclassify_reason")]
+        assert len(new) == 1, f"exactly one reclassify event, got {len(new)}"
+        assert new[0].get("writer") is None, \
+            "the human's close must carry NO writer, or fold() reads it as the monitor's and drops it"
+        assert new[0]["reclassifies"]["result"] == "exit 137 (signal 9)", \
+            "the event must record WHAT it overrode, not only that it did"
+        assert new[0]["cmd"] == MON["cmd"] and new[0]["hypothesis"] == MON["hypothesis"], \
+            "the reclassify must inherit the run's cmd and hypothesis -- it is the same run"
+
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import exp as _exp
+        prev = _exp.LOG
+        try:
+            _exp.LOG = p
+            folded = {(x["name"], x["started"]): x for x in _exp.rows()}
+        finally:
+            _exp.LOG = prev
+        got = folded[("m", "2026-09-07 05:15")]
+        assert got["status"] == "ok" and got.get("reclassify_reason"), \
+            f"the fold must show the human's close with its reason, got {got.get('status')}"
+
+        # 4. A HUMAN-CLOSED ROW STILL REFUSES. Ruling (a) is narrow BY CONSTRUCTION: overriding
+        #    a human's close would need a fold rule saying which human wins, and there is none.
+        #    Without this case the branch could accept any closed row and every assertion above
+        #    would still pass.
+        r = run("done", "--name", "h", "--started", "2026-09-07 05:15", "--status", "fail",
+                "--result", "overriding a human", "--reason", "trying it anyway")
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, f"re-closing a HUMAN-closed row must still be refused: {out}"
+        assert "already closed" in out, f"and with the ordinary refusal: {out[:200]}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  exp reclassify: a monitor-closed row re-closes only with --reason, appends, keeps "
+          "the monitor's event; a human-closed row still refuses")
+
+
 def _selftest_gpu_descendants():
     """Known answer: a child whose cmdline shares nothing with its parent's is still
     found, because descent is what is walked.
@@ -21214,6 +21326,7 @@ def _demo(only=None):
         _selftest_devs_map,
         _selftest_gpu_descendants,
         _selftest_exp_fold,
+        _selftest_exp_reclassify_monitor_close,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
         _selftest_merge_fix_not_deadlocked,

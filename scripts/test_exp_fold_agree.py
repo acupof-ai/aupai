@@ -147,8 +147,17 @@ except Exception as e:
 
 # 2. harness._exp_fold -- taken from source rather than imported, because importing harness
 #    pulls its whole module scope (corpus_fingerprint, pod_drift) for one function.
+#
+#    FROM harness_core.py, NOT harness.py (de, 2026-09-08). The harness_core extraction moved this
+#    function's DEFINITION out; harness.py keeps only a re-export in its import list, which is not
+#    an ast.FunctionDef, so `take` raised "does not define _exp_fold at top level" and this test
+#    could not run at all. It was red on clean origin/main -- verified by parsing
+#    `git show origin/main:scripts/harness.py` -- so nothing in the extraction's own commit noticed;
+#    the file is not in the hook's SELFTEST_FILES for the paths that moved it. Fixed by following
+#    the definition, which is also what keeps the test honest: the subject is wherever the one fold
+#    lives, and asserting agreement against a copy that no longer exists would be worse than red.
 ns = {{"sys": sys, "os": os, "ROOT": ROOT}}
-exec(take(os.path.join({HERE!r}, "harness.py"), "_exp_fold"), ns)
+exec(take(os.path.join({HERE!r}, "harness_core.py"), "_exp_fold"), ns)
 out["harness"] = [(r.get("name"), r.get("started"), r.get("status"))
                   for r in ns["_exp_fold"](evs)]
 out["harness_finding"] = {{"%s|%s" % (r.get("name"), r.get("started")): r.get("finding")
