@@ -401,6 +401,35 @@ _merge_failure_kind() {
   fi
 }
 
+# THE ORIGIN PUSH, AS A FUNCTION SO --selftest DRIVES THE REAL CODE (4c's task 3, 2026-09-07).
+# Defined HERE, above the --selftest dispatch at :616, and not beside its one call site inside the
+# merge branch: a function defined after the selftest exits is unreachable from it, which is how a
+# test ends up asserting against a reimplementation instead of the subject (§231 -- a mirrored
+# predicate shares the original's assumptions and its agreement is not evidence).
+#
+# Echoes the push's own stderr, because that is the only place the REASON lives: GitHub push
+# protection names the file and the secret type, a non-fast-forward names the ref. The previous
+# version sent it to /dev/null and printed a generic WARNING, so §245's incident -- a Groq key in
+# the sample, refused by push protection -- reached the operator as "the push FAILED" with no
+# cause, and the recovery they picked was a bare `update-ref` that overwrote a landed commit.
+#
+# Returns 0/1. The CALLER chooses the exit code, because by the time this runs main has already
+# advanced and "the merge failed" would be false.
+_push_origin_main() {
+  _po_err=$(git -C "$MAIN" push origin main 2>&1)
+  _po_rc=$?
+  if [ "$_po_rc" -eq 0 ]; then
+    echo "merge_main: pushed origin/main" >&2
+    return 0
+  fi
+  # REFUSING on its own line, FIRST. AGENTS.md's pod_push rule is that only a refusing line means
+  # nothing shipped, and the filter people actually use is a grep for `refusing|REFUS` -- a
+  # `| tail -2` eats anything that depends on position.
+  echo "REFUSING: merge_main could not push origin/main (git exit $_po_rc)" >&2
+  printf '%s\n' "$_po_err" | sed 's/^/  git: /' >&2
+  return 1
+}
+
 # THE STAGED-INDEX CARRY (tilerl-31), as two functions so --selftest drives the REAL code in a
 # scratch repo rather than a reimplementation of it. A reimplemented predicate shares the
 # original's assumptions and its agreement is not evidence (gate_failure_shapes §231).
@@ -1278,6 +1307,73 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   fi
   rm -rf "$_c"
 
+  # THE ORIGIN PUSH (4c's task 3, 2026-09-07). Four worlds against the REAL _push_origin_main, in
+  # a scratch repo with a real bare origin -- not a stubbed `git push`, because the thing under
+  # test is what the operator READS when a push is refused, and a stub authors that text itself.
+  #
+  # W1 success, W2 refused-with-a-reason, and two CONTROLS that are the point of the exercise: the
+  # failure must carry git's own reason (§245 lost 20 minutes to "the push FAILED" with the cause
+  # discarded to /dev/null), and the success must NOT print REFUSING. Without the negative control
+  # a function that prints REFUSING unconditionally passes W2.
+  _p=$(mktemp -d 2>/dev/null || mktemp -d -t mmpush)
+  git init -q --bare "$_p/origin.git" >/dev/null 2>&1
+  (
+    cd "$_p" && git init -q -b main wt && cd wt && git config user.email t@t && git config user.name T
+    echo a > f.txt && git add f.txt && git commit -qm base
+    git remote add origin "$_p/origin.git"
+  ) >/dev/null 2>&1
+  # MAIN is set in a SUBSHELL per world, like every other case here (:733, :812, :848). Assigning
+  # it in this shell would leave the selftest pointing at a deleted temp dir for anything added
+  # after this block -- a fixture that quietly changes global state for later cases.
+  _pout=$( MAIN="$_p/wt"; _push_origin_main 2>&1 ); _prc=$?
+  if [ "$_prc" -eq 0 ]; then echo "  ok   push W1 a working origin pushes -> 0"
+  else echo "  FAIL push W1: want rc 0, got $_prc ($_pout)" >&2; _fails=$((_fails + 1)); fi
+  case "$_pout" in
+    *REFUSING*) echo "  FAIL push W1-control: a SUCCESSFUL push printed REFUSING, so W2 proves nothing" >&2
+                _fails=$((_fails + 1)) ;;
+    *) echo "  ok   push W1-control: a successful push prints no REFUSING line" ;;
+  esac
+  # W2: origin rejects the push. A pre-receive hook that exits 1 with a message is how the real
+  # refusals arrive (GitHub push protection, branch protection) -- the reason is on git's stderr
+  # and nowhere else.
+  printf '#!/bin/sh\necho "PUSH_PROTECTION: secret in data/sample.json" >&2\nexit 1\n' \
+    > "$_p/origin.git/hooks/pre-receive"
+  chmod +x "$_p/origin.git/hooks/pre-receive"
+  ( cd "$_p/wt" && echo b >> f.txt && git commit -qam second ) >/dev/null 2>&1
+  # `|| _prc=$?` IS LOAD-BEARING UNDER `set -e` (:6), for the same reason as :844: the function
+  # RETURNS 1 here and that is the expected outcome, so a bare assignment exits the whole selftest
+  # at this line. It exits 0 while doing it -- the "selftest OK" banner never prints and the run
+  # reads as a pass with two cases silently unexecuted, which is how W1 passed alone on the first
+  # run of this block. A case that cannot execute is worse than one that fails.
+  _pout=$( MAIN="$_p/wt"; _push_origin_main 2>&1 ) && _prc=0 || _prc=$?
+  if [ "$_prc" -ne 0 ]; then echo "  ok   push W2 a rejected push -> nonzero"
+  else echo "  FAIL push W2: a rejected push returned 0" >&2; _fails=$((_fails + 1)); fi
+  case "$_pout" in
+    *REFUSING*) echo "  ok   push W2 prints a REFUSING line" ;;
+    *) echo "  FAIL push W2: no REFUSING line, so a grep for refusing|REFUS sees nothing" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  # W2-CONTROL, and the reason this change exists: git's own reason must reach the reader.
+  case "$_pout" in
+    *PUSH_PROTECTION*) echo "  ok   push W2-control: git's own reason is echoed, not discarded" ;;
+    *) echo "  FAIL push W2-control: the remote's reason was swallowed -- this is §245's recovery" >&2
+       _fails=$((_fails + 1)) ;;
+  esac
+  rm -rf "$_p"
+
+  # W3: THE CALLER'S EXIT CODE IS WIRED. Source-level, and that ceiling is stated rather than
+  # dressed up: the four cases above drive the real function, but the exit lives on the merge path
+  # after a successful CAS, and reaching it needs a whole two-repo merge world for three lines of
+  # branchless shell. What this catches is the mutation that actually happened during this change --
+  # `_push_failed` was set in both branches and read by nothing, so the failure exited 0 for as
+  # long as it took to grep for it. What it CANNOT catch is a wrong code or a wrong condition.
+  if grep -q '\[ "\$_push_failed" -eq 0 \] || exit 3' "$0"; then
+    echo "  ok   push W3 the caller exits 3 when the push failed (source-level)"
+  else
+    echo "  FAIL push W3: _push_failed is set but no exit reads it -- a failed push exits 0" >&2
+    _fails=$((_fails + 1))
+  fi
+
   if [ "$_fails" -gt 0 ]; then echo "merge_main selftest: $_fails failure(s)" >&2; exit 1; fi
   echo "merge_main selftest OK: liveness decides, not age -- a live holder and a live deliberate"
   echo "  hold both read alive at any age; gone, zombie and unparseable read dead; a holderless"
@@ -1681,11 +1777,30 @@ EOF
     # peer's fetch and the pod read a stale main. A FAILING push does NOT roll the ref back: the
     # commit is durable and reachable, and undoing it to match origin would discard work to fix a
     # delivery problem.
-    if git -C "$MAIN" push -q origin main 2>/dev/null; then
-      echo "merge_main: pushed origin/main" >&2
+    #
+    # SO THE EXIT CODE IS 3, NOT 1. `1` already means "the merge did not happen" at nineteen other
+    # exits in this file, and here it DID: main is at $_new, the CAS succeeded, the integration
+    # tree is advanced. Reporting that as a failed merge would send the reader to re-run the merge,
+    # which is the wrong recovery -- the recovery is to re-run the push. A distinct code says
+    # "landed locally, not delivered", which is what happened. No script reads this exit code
+    # (measured 2026-09-07: every merge_main invocation in the tree is prose in AGENTS.md or a
+    # ledger row, none is a scripted call), so the only consumer is a human and a shell's `&&`.
+    if _push_origin_main; then
+      _push_failed=0
     else
-      echo "merge_main: WARNING -- main is at ${_new:0:8} but the push FAILED. Main stays" >&2
-      echo "  advanced; retry with: git -C $MAIN push origin main" >&2
+      _push_failed=1
+      echo "  Main stays advanced at ${_new:0:8} -- the merge LANDED and only delivery failed." >&2
+      echo "  Retry the push alone: git -C $MAIN push origin main" >&2
+      echo "  Do NOT re-run the merge, and never fix this with a bare update-ref: that is §245," >&2
+      echo "  where a hand update-ref after a refused push overwrote a landed commit." >&2
+      # The friction row is DEFERRED and drained by the next merge, not committed here. A commit
+      # at this point would write the ledger after the CAS has been read, which is exactly the
+      # ordering defect documented on the queue drain above (c12576ea landed one commit behind
+      # main and never reached it). Deferring costs a delay and loses nothing.
+      python3 "$_wt_self/scripts/harness.py" friction add --kind merge --who "$1" \
+        --blocked "origin/main push after a landed merge to ${_new:0:8}" \
+        --cause "git push origin main exited nonzero; main advanced locally and origin did not. Reason is on the REFUSING line in that run's stderr" \
+        --defer >/dev/null 2>&1 || true
     fi
     # THE POD PUSH ONLY PRINTS. pod_push.sh refuses any file differing from main and stamps
     # main's sha, but it also carries a running-.sh refusal and an emptyDir path for large files,
@@ -1694,7 +1809,17 @@ EOF
     _scoped=$(git -C "$MAIN" diff --name-only "$_old" "$_new" -- train.py model.py run_ddp.sh \
               2>/dev/null | tr '\n' ' ')
     [ -n "$_scoped" ] && echo "merge_main: POD PUSH DUE for: $_scoped" >&2
+    # THE CLAIMS ARE RELEASED EITHER WAY, and that is not an oversight. The claim exists so a
+    # shared file is not edited by two sessions at once; the merge landed, so the edit is over and
+    # holding the claim past it blocks the next session for a delivery problem it cannot fix.
     _release_claims "$1"
+    # EXIT 3, NOT 1. Nineteen other exits in this file use 1 for "the merge did not happen", and
+    # here it DID: the CAS succeeded, main is at $_new, the integration tree is advanced. Exiting 1
+    # would send the reader to re-run the merge when the recovery is to re-run the push alone.
+    # Measured 2026-09-07: no script in the tree invokes merge_main.sh -- every reference is prose
+    # in AGENTS.md or a ledger row -- so the only consumers are a human and a shell's `&&`, and
+    # both are served better by a code that distinguishes the two outcomes than by 0.
+    [ "$_push_failed" -eq 0 ] || exit 3
     exit 0
   fi
   # THE WAITER'S RULE: liveness, never age. A live holder is waited for however long it takes,
