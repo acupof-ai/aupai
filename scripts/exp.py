@@ -76,6 +76,34 @@ def fold(evs):
         # a new event a human chose to write.
         if prev is not None and prev.get("status") == "retracted" and r.get("status") != "retracted":
             continue
+        # A MONITOR'S CLOSE IS NOT A RESULT, so it loses to a human's regardless of position.
+        # Reported by 4c 2026-09-07 and reproduced on a three-event fixture: a run closed by hand
+        # with `val 2.884 at step 2000, control 2.877 / stop rule 4 tripped` and closed by its
+        # monitor with `exit 0 / monitor: process exited cleanly` folds to whichever row a union
+        # merge happened to put last. In one of the two orders the reading a human took is
+        # invisible, with nothing red -- the row still says status=ok, which is why nobody looks.
+        #
+        # THE ASYMMETRY IS THE ARGUMENT, and it is the same one the retraction rule above makes.
+        # The two events do not disagree about the same question: the monitor reports PROCESS
+        # STATE (the pid returned 0) and the human reports the RESULT (what the run measured).
+        # A process that exits cleanly having produced a stopped arm is both at once, so the
+        # monitor's row is never wrong -- it is just not an answer to the question the ledger is
+        # read for. An event that cannot answer the question cannot outvote one that does.
+        #
+        # WHY HERE AND NOT IN THE MONITOR: the monitor already skips its close when it sees a
+        # terminal row (`settled()`), and exp.py refuses a second close in one tree. Both are
+        # races -- settled() polls at 60-second resolution, and the refusal only fires when both
+        # writers share a working tree, which two sessions on two branches do not. The fold is
+        # the only place that sees both rows, so it is the only place the rule holds without a
+        # race. The monitor keeps its guard: skipping the write is cheaper than folding it away.
+        #
+        # IDENTIFIED BY `writer`, NOT BY THE TEXT. Matching on "monitor:" would be a predicate on
+        # prose that any reworded finding silently escapes, and it would misfire on a human whose
+        # finding quotes the monitor. exp.py's `done --writer monitor` sets the field; a row with
+        # no `writer` is a human's, which is the safe default for every row already in the ledger.
+        if (prev is not None and r.get("writer") == "monitor"
+                and prev.get("status") in ("ok", "fail") and prev.get("writer") != "monitor"):
+            continue
         out[key] = r
     return list(out.values())
 
@@ -349,6 +377,11 @@ def main():
                         "cmd produces no checkpoint harness.py can score. harness.py's "
                         "score_matrix_present FAILs on a path that does not exist, so this "
                         "names a real file or it names nothing")
+    d.add_argument("--writer", default="",
+                   help="who wrote this close. `monitor` marks a close that reports PROCESS STATE "
+                        "rather than a result, and fold() lets a human's close outvote it "
+                        "regardless of union-merge order. Leave empty for a human -- every row "
+                        "already in the ledger has no writer, and that is the safe default")
     am = sub.add_parser("amend", help="correct a CLOSED row's reading_artifact, finding or "
                                       "decision; does not touch status or result")
     am.add_argument("--name", required=True)
@@ -536,6 +569,11 @@ def main():
                 sys.exit(f"--reading_artifact {a.reading_artifact} does not exist under "
                          f"{ROOT}; pull the file into the repo before closing the row")
             ev["reading_artifact"] = a.reading_artifact
+        if a.writer:
+            # ONLY WHEN SET. An absent field is a human's close, so writing "human" by default
+            # would split the population into two spellings of the same thing and make fold()'s
+            # rule depend on which era a row was written in.
+            ev["writer"] = a.writer
         append(ev)
         print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "note":
