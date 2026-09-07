@@ -3034,6 +3034,20 @@ def check_main_advances_by_ancestry(root):
     fail every correct merge_main run. The property that actually holds for every legal advance
     and fails for this one is that the previous value is an ancestor of the new value.
 
+    AFTER THE PR FLIP (2026-09-07) THE SIGNATURE HALF COVERS LESS, and the docstring says so
+    rather than leaving the old reasoning standing over a changed world. Code goes through a
+    GitHub PR, so `merge_main:` is no longer the marker of a legitimate write for those commits:
+    main advances from the remote, and the local ref moves by `git fetch origin main:main`.
+    MEASURED against a real origin and a detached clone, which is the integration tree's shape:
+    that writes `fetch origin main:main: fast-forward`, ancestry holds, and the message starts
+    with none of the accepted prefixes -- so every PR merge would have WARNed, the permanent-amber
+    shape the cutoff below exists to prevent. `fetch` is accepted for the same reason `pull`
+    already is: git moved the ref by ancestry from a remote, which is not a hand `update-ref`
+    bypassing the CAS, and the sideways-move test still runs on the entry independently. It does
+    not widen the residual -- a hand `update-ref -m "merge_main: x"` forges the signature, and
+    `-m "fetch ..."` is the same forgery at the same cost. What the signature still discriminates
+    is a bare unsigned `update-ref`, which is the incident that produced this check.
+
     READS THE RAW REFLOG, not `git reflog show`. The porcelain prints one sha per entry; the
     file at logs/refs/heads/main carries `<old> <new>` per line, which is the pair this needs --
     reconstructing pairs by zipping consecutive porcelain lines would silently mis-pair across a
@@ -3118,8 +3132,9 @@ def check_main_advances_by_ancestry(root):
         if _when > _SIGNING_FROM and not (
                 msg.startswith("merge_main:") or msg.startswith("commit")
                 or msg.startswith("merge") or msg.startswith("pull")
-                or msg.startswith("rebase") or msg.startswith("reset")
-                or msg.startswith("branch") or msg.startswith("checkout")):
+                or msg.startswith("fetch") or msg.startswith("rebase")
+                or msg.startswith("reset") or msg.startswith("branch")
+                or msg.startswith("checkout")):
             unsigned.append((old, new, msg))
         a = subprocess.run(["git", "merge-base", "--is-ancestor", old, new],
                            cwd=root, capture_output=True)
@@ -3483,8 +3498,72 @@ def _selftest_unsigned_fast_forward_warns():
             assert state == want, f"{label}: expected {want}, got {state}: {ev}"
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    # WORLD D: HOW A gh PR MERGE REACHES THE LOCAL REF (4c's ruling 2026-09-07). After the flip,
+    # code lands on origin/main through a PR and the integration tree's ref advances by
+    # `git fetch origin main:main`, which writes `fetch origin main:main: fast-forward` -- a message
+    # matching none of the pre-flip prefixes. Measured before the fix: every PR merge WARNed, the
+    # permanent-amber shape world C exists to prevent, arriving through a new door.
+    #
+    # A REAL FETCH FROM A REAL ORIGIN, and the clone is DETACHED, because that is the integration
+    # tree's shape -- `main` is checked out in no worktree, which is what makes `fetch
+    # origin main:main` the way the ref moves at all. A fixture that wrote the reflog line by hand
+    # would test the string I expect rather than the one git writes.
+    #
+    # World A above is this world's control and is already in the loop: it is the same
+    # fast-forward with no message, and it must still WARN. If it stopped WARNing, "accept fetch"
+    # would have become "accept everything", which is the only way this addition can be wrong.
+    d = _tmp_repo()
+    try:
+        up = os.path.join(d, "origin")
+        cl = os.path.join(d, "clone")
+        os.makedirs(up, exist_ok=True)
+
+        def gu(*a, cwd=up, env=None):
+            return subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True,
+                                  env=dict(os.environ, **(env or {})))
+
+        gu("init", "-q", "-b", "main", ".")
+        gu("config", "user.email", "t@example.invalid")
+        gu("config", "user.name", "t")
+        open(os.path.join(up, "f.txt"), "w").write("base\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "base")
+        gu("checkout", "-q", "-b", "feat")
+        open(os.path.join(up, "f.txt"), "w").write("ahead\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "ahead")
+        gu("checkout", "-q", "main")
+        stamp = {"GIT_COMMITTER_DATE": f"{_SIGNING_FROM + 600} +0000"}
+        # `--no-ff`: 4c ruled aupai merges PRs with --merge, not --squash, so branch shas stay on
+        # main and the sha-keyed ledgers keep working. This world merges the way we will.
+        gu("merge", "--no-ff", "-m", "Merge pull request #1 from feat", "feat", env=stamp)
+        subprocess.run(["git", "clone", "-q", up, cl], capture_output=True, text=True)
+        subprocess.run(["git", "-C", cl, "checkout", "-q", "--detach", "HEAD"],
+                       capture_output=True, text=True)
+        # main advances again on the remote, then the detached clone fetches it into refs/heads/main.
+        open(os.path.join(up, "f.txt"), "w").write("further\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "further", env=stamp)
+        subprocess.run(["git", "-C", cl, "fetch", "origin", "main:main"],
+                       capture_output=True, text=True, env=dict(os.environ, **stamp))
+        os.makedirs(os.path.join(cl, "scripts"), exist_ok=True)
+        open(os.path.join(cl, "scripts", "harness.py"), "w").close()
+        log = os.path.join(cl, ".git", "logs", "refs", "heads", "main")
+        entries = [ln for ln in open(log, encoding="utf-8").read().splitlines() if ln.strip()]
+        last = entries[-1].split("\t", 1)[1].strip() if "\t" in entries[-1] else ""
+        assert last.startswith("fetch"), (
+            f"the world must produce a FETCH entry, or it is testing something else: {last!r}")
+        state, ev = check_main_advances_by_ancestry(cl)
+        assert state != FAIL, f"D: a fetch fast-forward is not a sideways move: {ev}"
+        assert state == PASS, (
+            f"D: a `git fetch origin main:main` -- how a gh PR merge reaches the local ref -- must "
+            f"not WARN, or every PR merge is permanent amber. Got {state}: {ev}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
     print("  ancestry: an unsigned fast-forward update-ref WARNs, the same write signed by "
-          "merge_main PASSes, and the pre-signing backlog is not a finding")
+          "merge_main PASSes, the pre-signing backlog is not a finding, and a real "
+          "`fetch origin main:main` (how a gh PR merge lands) PASSes")
 
 
 def _selftest_tasks_read_from_index():
