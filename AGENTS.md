@@ -326,7 +326,7 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | `data/pod_head_manifest.txt` is NOT tracked. `scripts/pod_push.sh` generates it (14) | manual: `pod_drift` gates the pod side and `.gitignore` stops the file being committed by accident, so the tracking half IS enforced -- the harness world that used to assert the hook STAGES the manifest now asserts it does not. What stays manual is the push ORDER, that the manifest ships AFTER the files: pod_drift's selftest asserts it in both directions against a pod-shaped fixture, but whether the real push ran in that order is not recoverable from any artifact it leaves behind |
 | Outbound network: `curl -4`, always | `curl_ipv4` |
 | `cd` inside a backgrounded chain stays in it | `test_pod_wrappers` |
-| Each session works in its own worktree on its own branch: gi (2) | manual: worktree topology is per-machine, not in the repo |
+| Each session works in its own worktree on its own branch: gi (2) | manual: worktree topology is per-machine, not in the repo. `main_in_no_worktree` (auth=local) covers only the clause that main is checked out nowhere -- it cannot see whether each session is in its OWN tree |
 | runs/.jsonl ledgers merge by union (.gitattributes); row ide | `no_ghost_running` |
 | scripts/pod_push.sh pushes only content reachable from main; | `pod_drift` |
 | The shared corpus, checkpoints, and GPUs on the pod are unch | `pod_drift` |
