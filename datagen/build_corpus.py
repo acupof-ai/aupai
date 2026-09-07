@@ -1557,6 +1557,49 @@ def _selftest_preflight():
             raise AssertionError("(e) empty holdout slice did not REFUSE")
         except SystemExit:
             ok += 1
+        # ...and allow_empty lifts EXACTLY that, without lifting anything else: the slice
+        # is still written and still carries the rule_fp, so a reader can tell "nothing was
+        # held out under rule X" from "no slice exists". Both halves asserted, because a
+        # flag that skipped the write would also pass a does-not-raise test. Reachability
+        # is the point of the case: :649 read allow_empty_slice through getattr and no
+        # add_argument defined it, so the escape hatch the refusal names could not be
+        # opened from the CLI, and the b2 build stopped with 152 shards and no stamp.
+        _emit_holdout_slice(hp, "empty_ok", [], allow_empty=True)
+        with open(_slice_path(hp, "empty_ok"), encoding="utf-8") as fh:
+            head = json.loads(fh.readline())
+        if head["n"] != 0:
+            raise AssertionError("(e) allow_empty wrote a non-empty slice")
+        if not head.get("rule_fp"):
+            raise AssertionError("(e) allow_empty skipped the rule_fp, so the zero is unattributable")
+        _check_holdout_slice_arg = _slice_path(hp, "empty_ok")
+        if not os.path.exists(_check_holdout_slice_arg):
+            raise AssertionError("(e) allow_empty did not write the slice at all")
+        ok += 1
+        # Reachability: an add_argument whose flag is EXACTLY "--allow_empty_slice", matched
+        # on the parsed literal rather than by substring. The first version of this case did
+        # `"--allow_empty_slice" in source`, which a mutant renaming the flag to
+        # "--allow_empty_slice_XX" satisfied -- measured 2026-09-07, the negative control was
+        # green when it should have gone red. :649 reads the option through getattr, so a flag
+        # that is absent or renamed leaves the documented escape hatch unreachable and the
+        # empty-slice refusal points at nothing; that stopped the b2 build with 152 shards
+        # written and no stamp.
+        import ast as _ast
+
+        _tree = _ast.parse(open(__file__, encoding="utf-8").read())
+        _flags = {
+            _a.value
+            for _n in _ast.walk(_tree)
+            if isinstance(_n, _ast.Call)
+            and isinstance(_n.func, _ast.Attribute)
+            and _n.func.attr == "add_argument"
+            for _a in _n.args
+            if isinstance(_a, _ast.Constant) and isinstance(_a.value, str)
+        }
+        if "--allow_empty_slice" not in _flags:
+            raise AssertionError(
+                f"(e) no add_argument defines --allow_empty_slice, so :649's getattr is "
+                f"unreachable from the CLI; flags found: {sorted(f for f in _flags if 'empty' in f)}")
+        ok += 1
         # stale slice: frozen under a DIFFERENT rule_fp -> must refuse
         with open(_slice_path(hp, "p"), "w", encoding="utf-8") as fh:
             fh.write(json.dumps({"phase": "p", "rule_fp": "0" * 16, "n": 1}) + "\n" + "ab" * 12 + "\n")
@@ -1625,6 +1668,14 @@ def main():
     )
     ap.add_argument("--limit", type=int, default=None, help="stop after N input docs (dry runs)")
     ap.add_argument("--dry", action="store_true", help="no output files, print the rejects histogram")
+    ap.add_argument(
+        "--allow_empty_slice",
+        action="store_true",
+        help="permit a phase whose holdout slice holds zero documents. The slice is still "
+        "written and still freezes the holdout rule_fp -- this only lifts the non-empty "
+        "requirement, for the case :1242 names: a fresh first-build of a genuinely "
+        "non-overlapping source. code_py_starcoder and code_py_rp1t both carry n=0 slices",
+    )
     ap.add_argument(
         "--filters",
         choices=("web", "light"),
