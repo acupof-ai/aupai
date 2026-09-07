@@ -668,9 +668,24 @@ def _main_touched(root):
     and absent from the second would read as not delivered.
     """
     if root not in _MAIN_TOUCHED:
-        r = subprocess.run(["git", "-C", root, "log", "main", "-m",
-                            "--name-only", "--format=%x00%H"],
-                           capture_output=True, text=True)
+        # WHICH REF IS `main` HERE. actions/checkout on a pull_request build fetches the PR head and
+        # the base as refs/remotes/origin/main and creates NO local main, so `git log main` exits 128
+        # with "fatal: ambiguous argument 'main'" -- which the raise below reports faithfully as an
+        # unreadable main, and every PR check job then fails on a tree that is perfectly fine
+        # (4c 2026-09-07: 3b's PR #1, jobs 34088976228 and 34089010051, blocking every session's PRs).
+        #
+        # The fallback is ordered, and the order is the point: a LOCAL main is the tree's own answer
+        # and wins wherever it exists, so nothing about a laptop or the pod changes. origin/main is
+        # the CI answer. The raise survives for the case it was written for -- a tree where no ref
+        # named main resolves at all is still unreadable, not empty (2026-09-06: a clone whose local
+        # main was deleted read as "156 of 156 do not reach main").
+        r = None
+        for ref in ("main", "origin/main", "refs/remotes/origin/main"):
+            r = subprocess.run(["git", "-C", root, "log", ref, "-m",
+                                "--name-only", "--format=%x00%H"],
+                               capture_output=True, text=True)
+            if r.returncode == 0:
+                break
         # A NONZERO rc RAISES. It used to be discarded: a tree with no readable `main` exits 128
         # with an empty stdout, the parse below yields {}, and the map says "main touches
         # nothing" rather than "main could not be read". Both consumers then report every closed
@@ -686,7 +701,8 @@ def _main_touched(root):
         # in the same structure, and it only ever described the first.
         if r.returncode != 0:
             raise RuntimeError(
-                f"git log main failed in {root} (exit {r.returncode}): {r.stderr.strip()[:200]}")
+                f"git log main failed in {root} (exit {r.returncode}): no ref named main, "
+                f"origin/main or refs/remotes/origin/main resolves: {r.stderr.strip()[:200]}")
         out = {}
         for block in r.stdout.split("\x00")[1:]:
             lines = block.split("\n")
