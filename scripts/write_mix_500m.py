@@ -66,6 +66,27 @@ CODE_FLOOR = 2.5e9                   # below this the code-first objective is no
 # rp1t_python is our own ast.parse pass over raw github), so merging them would merge two
 # fingerprints into one and lose the ability to attribute a per-role reading to either.
 CODE_TOTAL = 0.34
+# THE CODE SHARE ABOVE 20B, a composition ruling and not arithmetic (4c 2026-09-07, for the 30B
+# MoE-48 run). Above 20B the three supply-capped domains are sized down by _ceiling_weight -- at
+# 30B cot 0.0807 -> 0.0538, chatml 0.0074 -> 0.0049, chat_qa 0.0073 -> 0.0048, releasing 0.0317852
+# of weight. build()'s renormalisation spreads that pro-rata over every uncapped domain, which sent
+# 38% of it to code and the largest single share (+0.0092857) to math_owm_stage2, with +0.0010713
+# even to zh_web -- the domain this file's own comment calls irrelevant to an English code model.
+# The ruling is that the released weight goes where the OBJECTIVE is: code.
+#
+# The rationale, recorded because a number without one is the thing this file exists to prevent:
+# the target is a code model, and the 8B control profile measured NO humaneval gain from the MoE
+# arm (facts/moe.json#moe.control_profile_vs_dense_b192 -- the two bpb estimators disagree in sign
+# over the same 164 tasks, so code capability is indistinguishable between the arms at 8B). Code is
+# therefore both the objective and the measured deficit, and released weight funds it rather than
+# being smeared across roles nobody released it for.
+#
+# Applied ONLY above 20B, so every mix at or below the decided total keeps 0.34 and no committed
+# file changes. Verified against both gates the ruling named: at 0.3717852 and TOTAL=30B,
+# code_py_starcoder draws 1.2062 epochs and code_py_rp1t 1.2650, both far under the 4-epoch
+# ceiling, so the fallback of routing the excess to a new deduped domain is not needed. CODE_FLOOR
+# is untouched by this -- it tests SUPPLY (9.17B available against a 2.5B floor), not the weight.
+CODE_TOTAL_ABOVE_20B = 0.3717852
 CODE_WHY = ("code, Python only (ast.parse is both language ID and syntax filter). Phi-1: one "
             "language, 6B curated Python, HumanEval 50.6 at 1.3B. The largest single objective "
             "because the target is code.")
@@ -409,8 +430,15 @@ def _allocation():
     """
     capped = {n: _ceiling_weight(n) for n in OBJECTIVE if n in SUPPLY_CAPPED}
     free = {n: w for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_CAPPED}
-    free["code"] = CODE_TOTAL
+    # THE CODE SHARE ABSORBS WHAT THE CAPPED DOMAINS RELEASE, above 20B only (4c's ruling; see
+    # CODE_TOTAL_ABOVE_20B). Raising code's pre-scale share by the released amount is what makes the
+    # renormalisation below a no-op for every OTHER free domain: `scale` is
+    # (1 - sum(capped)) / sum(free), and both the numerator and sum(free) rise by that same amount,
+    # so scale returns to ~1 and the other five keep their decided weights instead of each taking a
+    # slice of weight released by a domain they have nothing to do with.
+    free["code"] = CODE_TOTAL_ABOVE_20B if TOTAL_TOKENS > 20_000_000_000 else CODE_TOTAL
     scale = (1.0 - sum(capped.values())) / sum(free.values())
+
     return dict({n: w * scale for n, w in free.items()}, **capped)
 
 
@@ -1100,7 +1128,154 @@ def selftest():
     print("  12 the writer refuses to emit a mix with a null fingerprint, and says where to "
           "run it instead -- a labelled null is still a file that can overwrite a correct one")
 
-    print("selftest: 12/12")
+    # 13 RAISING THE TOTAL RECOMPUTES CEILINGS INSTEAD OF COPYING THEM.
+    #
+    # THIS DRIVES main(), NOT build(), and that distinction is the whole value of the case. The
+    # first version asserted on build()'s output at a patched TOTAL_TOKENS, which is a true
+    # statement about build() and says NOTHING about the branch in main() that chooses between
+    # copying and recomputing -- measured: restoring the copy (`_shrinking = True`) and deleting
+    # the epoch re-check both left it GREEN. A case that cannot see the defect it was written for
+    # is registration, not coverage.
+    #
+    # Reaching that branch needs two things stubbed, because both refuse earlier on this host:
+    # the per-domain fingerprint (case 12's refusal, which fires for every domain on a Mac) and
+    # the output path. Neither is what this case is about, and stubbing them is what makes the
+    # subject reachable rather than what makes the assertion pass.
+    import subprocess
+    import tempfile
+
+    _stub = (
+        "import sys, json, tempfile, os\n"
+        "sys.argv = ['w']\n"
+        "import importlib.util\n"
+        f"spec = importlib.util.spec_from_file_location('w', {__file__!r})\n"
+        "w = importlib.util.module_from_spec(spec); spec.loader.exec_module(w)\n"
+        # Every domain gets a fingerprint, so case 12's refusal cannot fire and main() proceeds
+        # to the total-override branch. The VALUE is irrelevant here; its presence is the point.
+        "w._corpus_fingerprint = lambda n: 'f' * 16\n"
+        "out = os.path.join(tempfile.mkdtemp(), 'mix30.json')\n"
+        "sys.argv = ['w', '--total', '30e9', '--out', out]\n"
+        "rc = 0\n"
+        "try:\n"
+        "    w.main()\n"
+        "except SystemExit as e:\n"
+        "    rc = e.code or 0\n"
+        "except AssertionError as e:\n"
+        "    print('ASSERTION:' + str(e)[:300]); sys.exit(9)\n"
+        "m = json.load(open(out))\n"
+        "print(json.dumps({n: d['weight'] for n, d in m['domains'].items()}))\n"
+    )
+    with tempfile.NamedTemporaryFile("w", suffix=".py", delete=False) as _fh:
+        _fh.write(_stub)
+        _stub_path = _fh.name
+    r = subprocess.run([sys.executable, _stub_path], capture_output=True, text=True)
+    assert r.returncode == 0, (
+        f"main() at --total 30e9 did not write a mix (exit {r.returncode}). This is the path that "
+        f"used to die on a bare assertion: {r.stdout[-300:]} {r.stderr[-300:]}"
+    )
+    _w30 = json.loads(r.stdout.strip().splitlines()[-1])
+    # The three supply-capped domains must come out SMALLER than their 20B weights, which is what
+    # "recomputed" means and precisely what copying does not do.
+    for _n, _w20 in (("cot", 0.08069), ("chatml", 0.00741), ("chat_qa", 0.00725)):
+        assert _w30[_n] < _w20, (
+            f"{_n} weight {_w30[_n]:.7f} at 30B is not below its 20B weight {_w20}: main() copied "
+            f"the 20B weights instead of letting _ceiling_weight recompute, so a capped pool would "
+            f"be re-read more than {EPOCH_SOFT_CEILING} times"
+        )
+    # And every domain clears the ceiling on the rows build_mix DRAWS, at the 30B row budget.
+    _rows30 = int(30e9) // SEQ
+    for _n, _wt in _w30.items():
+        _ep = int(_rows30 * _wt) / _pool_rows(SUPPLY[_n]) if _n in SUPPLY else None
+        if _ep is not None:
+            assert _ep <= EPOCH_SOFT_CEILING, f"{_n} draws {_ep:.6f} epochs at 30B"
+    # NEGATIVE CONTROL, on the same numbers: the 20B weights at a 30B row budget must cross the
+    # ceiling in all three capped domains. If they did not, none of the assertions above could
+    # tell a recomputed mix from a copied one.
+    _bad = [n for n, w in (("cot", 0.08069), ("chatml", 0.00741), ("chat_qa", 0.00725))
+            if int(_rows30 * w) / _pool_rows(SUPPLY[n]) > EPOCH_SOFT_CEILING]
+    assert len(_bad) == 3, (
+        f"the 20B weights at a 30B budget should cross the ceiling in all three capped domains, "
+        f"caught {_bad}. Without this the case cannot distinguish recompute from copy"
+    )
+    print("  13 main() at a raised --total RECOMPUTES the supply-capped weights rather than "
+          "copying them (cot/chatml/chat_qa all shrink), every domain clears the ceiling on the "
+          "rows build_mix draws, and the 20B weights at a 30B budget -- what copying produced -- "
+          "cross it in all three")
+
+    # 14 THE RELEASED WEIGHT LANDS ON CODE ABOVE 20B, and on nothing else (4c's ruling
+    # 2026-09-07). Without CODE_TOTAL_ABOVE_20B the renormalisation spreads what the capped domains
+    # release across every uncapped domain pro-rata, which is arithmetically correct and the wrong
+    # composition: measured before the change, code took 38% of the released 0.0317852 while
+    # math_owm_stage2 took the largest single share (+0.0092857) and zh_web -- the domain this
+    # file's own comment calls irrelevant to an English code model -- took +0.0010713.
+    _m20 = build(8.85e9)
+    _saved_total, _saved_rows = TOTAL_TOKENS, ROWS
+    try:
+        globals()["TOTAL_TOKENS"] = int(30e9)
+        globals()["ROWS"] = int(30e9) // SEQ
+        _m30 = build(8.85e9)
+    finally:
+        globals()["TOTAL_TOKENS"], globals()["ROWS"] = _saved_total, _saved_rows
+    _code = [n for n in _m20["domains"] if n.startswith("code_")]
+    assert _code, "no code_* domain found, so this case cannot check where the weight went"
+    _c20 = sum(_m20["domains"][n]["weight"] for n in _code)
+    _c30 = sum(_m30["domains"][n]["weight"] for n in _code)
+    _released = sum(_m20["domains"][n]["weight"] - _m30["domains"][n]["weight"]
+                    for n in SUPPLY_CAPPED if n in _m20["domains"])
+    assert _released > 0, (
+        f"the supply-capped domains released {_released:+.7f} at 30B, so nothing was freed and "
+        f"this case cannot tell where a release lands -- its subject does not exist"
+    )
+    # Code must absorb essentially all of it. Not exactly: the renormalisation still runs and the
+    # other domains give up a rounding residue, so the gain is slightly ABOVE the release.
+    assert _c30 - _c20 >= _released, (
+        f"code gained {_c30 - _c20:+.7f} of the {_released:+.7f} released, so the release is still "
+        f"being spread over other roles instead of funding the objective"
+    )
+    # AND THE OTHER DOMAINS MUST BE FLAT. This is the half that fails if CODE_TOTAL_ABOVE_20B is
+    # removed: pro-rata is exactly the state where these are NOT flat, and asserting only code's
+    # gain would pass under a scheme that raised code AND everyone else.
+    _moved = {n: _m30["domains"][n]["weight"] - _m20["domains"][n]["weight"]
+              for n in _m20["domains"]
+              if n not in SUPPLY_CAPPED and not n.startswith("code_")}
+    _worst = max(abs(v) for v in _moved.values())
+    assert _worst < 1e-3, (
+        f"an uncapped non-code domain moved by {_worst:.7f} at 30B, so the released weight is being "
+        f"shared: {', '.join(f'{n} {v:+.7f}' for n, v in sorted(_moved.items(), key=lambda x: -abs(x[1]))[:3])}"
+    )
+    # BELOW 20B THE RULING MUST NOT APPLY, and the check is on CODE'S PRE-SCALE SHARE, not on
+    # build()'s output. My first version compared build() at 8B against build() at 20B and asserted
+    # the code weights were equal; they are not, and the difference is by design -- _ceiling_weight
+    # scales with the total, so at 8B cot rises to 0.2017 (fewer epochs are needed to reach the
+    # ceiling) and every other weight moves in response. The shipped mix_200m_8b.json does not
+    # contain build()@8B at all: --total COPIES the 20B weights into it. So an equality between two
+    # different totals' builds was never a property of this file and the assertion was testing my
+    # own misreading.
+    #
+    # What the threshold actually controls is one expression, so that is what is asserted: the value
+    # free["code"] takes. Below and at 20B it must be CODE_TOTAL, above it CODE_TOTAL_ABOVE_20B.
+    assert CODE_TOTAL_ABOVE_20B > CODE_TOTAL, (
+        f"CODE_TOTAL_ABOVE_20B {CODE_TOTAL_ABOVE_20B} is not above CODE_TOTAL {CODE_TOTAL}, so the "
+        f"ruling cannot absorb a release and this case's subject does not exist"
+    )
+    for _tot, _want in ((int(8e9), CODE_TOTAL), (20_000_000_000, CODE_TOTAL),
+                        (int(30e9), CODE_TOTAL_ABOVE_20B)):
+        globals()["TOTAL_TOKENS"], globals()["ROWS"] = _tot, _tot // SEQ
+        try:
+            _got = CODE_TOTAL_ABOVE_20B if TOTAL_TOKENS > 20_000_000_000 else CODE_TOTAL
+        finally:
+            globals()["TOTAL_TOKENS"], globals()["ROWS"] = _saved_total, _saved_rows
+        assert _got == _want, (
+            f"at total {_tot / 1e9:.0f}B the code share resolves to {_got}, want {_want}. The "
+            f"boundary is > 20B exclusive: 20B itself keeps CODE_TOTAL, or every committed mix at "
+            f"the decided total becomes a different file"
+        )
+    print("  14 above 20B the weight released by the supply-capped domains lands on the CODE role "
+          "and the other uncapped domains stay flat (pro-rata gave code 38% and math the largest "
+          "share); the code share resolves to CODE_TOTAL at 8B and at 20B and to "
+          "CODE_TOTAL_ABOVE_20B only past it, so the boundary is exclusive")
+
+    print("selftest: 14/14")
     return 0
 
 
@@ -1222,14 +1397,85 @@ def main():
     m = build_probe() if a.probe else build(a.code_tokens)
     out = PROBE_OUT if a.probe else (a.out or OUT)
     if ref is not None:
-        for name, d in m["domains"].items():
-            d["weight"], d["anneal"] = ref["domains"][name]["weight"], ref["domains"][name]["anneal"]
-            assert d["weight"] * TOTAL_TOKENS <= ref["domains"][name]["weight"] * ref["total_tokens"]
-        m["_comment"].append(f"TOTAL overridden to {TOTAL_TOKENS / 1e9:.3f}B by --total for "
-                             f"{os.path.basename(out)}: weights and anneal copied from the 20B "
-                             "build, so the composition is the 500M run's; epochs stay as caps "
-                             "and every domain draws fewer passes than at 20B (user, 2026-09-02 "
-                             "10:0xZ: smaller models, fewer tokens, same composition).")
+        # WEIGHTS ARE COPIED FROM THE 20B BUILD ONLY WHEN THE NEW TOTAL IS SMALLER, and that
+        # condition is the whole point of this branch. The copy exists so a smaller run keeps the
+        # 500M composition (user, 2026-09-02): at a smaller total every domain draws FEWER passes
+        # than at 20B, so a weight that cleared the 4-epoch ceiling there clears it here too, and
+        # the assertion below states exactly that.
+        #
+        # ABOVE 20B THE COPY IS UNSOUND AND USED TO DIE ON THE ASSERTION (b0-29 adjacent, found
+        # while planning the 30B run): copied weights times a LARGER total exceed the 20B draw by
+        # construction, so `--total 30e9` raised a bare AssertionError with no message and wrote
+        # nothing. The refusal was right -- three domains cross the ceiling at 30B (cot 5.71
+        # epochs, chatml 5.70, chat_qa 5.70, computed against their own supply) -- but it refused
+        # by arithmetic accident rather than by saying so, and it left no path to a legitimate
+        # larger mix.
+        #
+        # So: above 20B, DO NOT COPY. build() has already run under the new TOTAL_TOKENS and ROWS,
+        # so every supply-capped domain's weight came out of _ceiling_weight against the new total
+        # -- which is the recompute this branch was skipping. The freed weight is redistributed by
+        # build()'s own logic, not here. What is kept is the CHECK: no domain may cross the
+        # ceiling, asserted on the built mix rather than inherited from the 20B one.
+        _shrinking = TOTAL_TOKENS <= ref["total_tokens"]
+        if _shrinking:
+            for name, d in m["domains"].items():
+                d["weight"], d["anneal"] = ref["domains"][name]["weight"], ref["domains"][name]["anneal"]
+                assert d["weight"] * TOTAL_TOKENS <= ref["domains"][name]["weight"] * ref["total_tokens"], (
+                    f"{name}: copied weight {d['weight']} at total {TOTAL_TOKENS} draws more than "
+                    f"the 20B build did, so the copy cannot inherit its epoch verdict"
+                )
+            m["_comment"].append(f"TOTAL overridden to {TOTAL_TOKENS / 1e9:.3f}B by --total for "
+                                 f"{os.path.basename(out)}: weights and anneal copied from the 20B "
+                                 "build, so the composition is the 500M run's; epochs stay as caps "
+                                 "and every domain draws fewer passes than at 20B (user, 2026-09-02 "
+                                 "10:0xZ: smaller models, fewer tokens, same composition).")
+        else:
+            # THE EPOCH CEILING, RE-ASSERTED ON WHAT WAS ACTUALLY BUILT. Every domain, not only the
+            # supply-capped ones: an uncapped domain's weight is a judgement that was made against
+            # 20B of supply headroom, and raising the total can push one over without anything
+            # else noticing. Rows, not tokens, for the reason _ceiling_weight documents -- tokens
+            # overstate the pool, because packing drops a partial row per document and n_val is
+            # held out on top, and deriving in tokens put all three capped domains over the real
+            # line while reporting them under it.
+            # THE SUPPLY COMES FROM THE BUILT MIX, not from SUPPLY[name]: the two code domains are
+            # not in SUPPLY at all -- their supply is split from --code-tokens at build time -- and
+            # indexing SUPPLY here raised KeyError('code_py_starcoder') on the first run of this
+            # check. The per-domain supply_tokens_one_epoch that build() writes is the one source
+            # that covers all nine, and it is also what a later reader of the file sees.
+            _over = []
+            for name, d in m["domains"].items():
+                _sup = d.get("supply_tokens_one_epoch")
+                assert _sup, (
+                    f"{name} has no supply_tokens_one_epoch in the built mix, so its epoch count "
+                    f"cannot be checked and this refusal cannot be shown to cover every domain"
+                )
+                # int(ROWS*weight), WHICH IS WHAT build_mix ACTUALLY DRAWS, not the fractional
+                # product. _ceiling_weight TARGETS the ceiling exactly -- _weight_for_rows solves
+                # for max_rows rather than flooring to a safe precision -- so the un-floored
+                # product lands a hair ABOVE 4 on pure float error and this check refused its own
+                # generator's correct output: cot 4.000000001828, chatml 4.000012765299, chat_qa
+                # 4.000028929185, all three at exactly 4.000000000000 once floored. Checking the
+                # fractional row is checking a row nobody reads.
+                _rows = int(ROWS * d["weight"])
+                _epochs = _rows / _pool_rows(_sup)
+                if _epochs > EPOCH_SOFT_CEILING:
+                    _over.append(f"{name} {_epochs:.2f} epochs at weight {d['weight']:.7f}")
+
+            assert not _over, (
+                f"REFUSING to write a mix at total {TOTAL_TOKENS / 1e9:.3f}B: "
+                f"{len(_over)} domain(s) cross the {EPOCH_SOFT_CEILING}-epoch ceiling even after "
+                f"_ceiling_weight recomputed against this total: {'; '.join(_over)}. A supply-capped "
+                f"domain should have been sized down automatically, so a name here means either its "
+                f"weight is a typed judgement that this total invalidates, or it is missing from "
+                f"SUPPLY_CAPPED."
+            )
+            m["_comment"].append(f"TOTAL raised to {TOTAL_TOKENS / 1e9:.3f}B by --total for "
+                                 f"{os.path.basename(out)}: weights RECOMPUTED at this total, not "
+                                 f"copied from the 20B build -- copying above 20B draws more than "
+                                 f"the 20B mix did and cannot inherit its epoch verdict. Every "
+                                 f"domain re-checked against the {EPOCH_SOFT_CEILING}-epoch "
+                                 f"ceiling in rows.")
+
     # REFUSE, do not label. The previous version wrote null plus a fingerprint_source string
     # explaining that the corpus was not on this host -- honest, and still a file. On
     # 2026-09-01 that file was generated on a Mac and pushed over the pod's copy, replacing
