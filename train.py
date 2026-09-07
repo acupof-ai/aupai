@@ -559,6 +559,51 @@ def _is_mem_fqn(fqn):
     return fqn == "memory" or fqn.startswith("memory.") or ".memory." in fqn
 
 
+def _n_active_params(model, cfg):
+    """Parameters a single token actually multiplies -- the denominator `6 * N * tokens` needs.
+
+    de-71, 62's filing. Two sparse structures break the dense-FLOPs premise and only one was
+    handled: `_is_mem_fqn` excludes the memory table, and routed MoE experts were counted in full.
+    MEASURED on 1.5b-a0.2b-e48_30b at step 22500 -- total 1.4807B, routed 1.3590B, so the line
+    priced 7.2x the FLOPs a token performs and printed **276%** at 46K tok/s/gpu against bf16 peak
+    148 (the log says 278%; the gap is its rounded tok/s). Active is 0.2067B and the honest figure
+    is 38.6%.
+
+    THE PREDICATE IS THE TENSOR'S SHAPE, NOT ITS NAME, and the difference is a trap worth stating
+    because a name test looks equivalent and is not. model.FFN gives the DENSE FFN
+    parameters called `w13` and `w2`; model.MoEFFN gives its routed stacks the same two
+    names. A test on the last path component happens to separate them today -- nn.Linear appends
+    `.weight`, a bare nn.Parameter does not -- but that is a fact about nn.Linear's internals, not
+    about which parameters are routed, and it breaks the moment an expert stack becomes a module.
+    The substring spelling is worse and measured: on a mixed model (moe_layers "0-1" of 12 layers,
+    the real arm's shape) `"w13" in n` charges all 12 blocks, 344064 against the routed 98304.
+    A routed stack is (E, ..., ...) with E == cfg.moe_experts; a dense weight is 2-D. Verified
+    against both checkpoints: the dense arm excludes 0.0000B either way, the MoE arm 1.3590B.
+
+    THE DENSE ARM MUST BE BIT-IDENTICAL, which is 62's acceptance criterion and the reason this
+    subtracts rather than recomputing an active count from config. With moe_experts 0 the loop
+    matches nothing, so `n_active == n_dense` exactly -- not "within rounding". A fix that changed
+    the shared denominator would lower the MoE number and be indistinguishable from the right
+    change by reading only the MoE line.
+
+    What is NOT counted, stated rather than hidden: the router's own matmul (d x E per token, 0.03%
+    of active here), the memory's key dot products, and attention's sequence-dependent term -- all
+    already omitted by `6 * N * tokens`, whose approximation this stays inside. An MFU that
+    undercounts a small named term is honest; one that overcounts by 7x is not a fraction of peak.
+    """
+    n_total = sum(p.numel() for p in model.parameters())
+    n_mem = sum(p.numel() for n, p in model.named_parameters() if _is_mem_fqn(n))
+    e = int(getattr(cfg, "moe_experts", 0) or 0)
+    k = int(getattr(cfg, "moe_top_k", 0) or 0)
+    n_routed = 0
+    if e > 0:
+        n_routed = sum(p.numel() for p in model.parameters()
+                       if p.dim() == 3 and p.shape[0] == e)
+    # k >= e would mean every expert is reached: subtract nothing rather than add.
+    n_inactive = n_routed - n_routed * min(k, e) // e if e > 0 else 0
+    return n_total - n_mem - n_inactive
+
+
 _FP8_WSCALE = {}  # id(weight) -> scale, cleared per step; the head weight is constant within a
                   # step and reused across all 64 FLCE chunks, so recomputing its absmax 64 times
                   # is 64 reductions over 32784x1024 for one value (b0). FP8LinearFunction caches
@@ -3255,8 +3300,14 @@ def main():
         # approximated: an MFU that undercounts a known small term by a stated amount is honest,
         # while one that overcounts by 6x is not a fraction of peak at all. `params` in the line
         # below still reports the TOTAL, because that is the model's size.
-        n_dense = n_params - sum(p.numel() for n, p in raw_model.named_parameters()
-                                 if _is_mem_fqn(n))
+        #
+        # ROUTED MoE EXPERTS ARE THE SECOND INSTANCE of exactly this, and were counted in full
+        # until de-71: the paragraph above was written for the memory table and its closing
+        # sentence -- "a smaller table would have produced an inflated figure UNDER 100% and
+        # nothing would have looked wrong" -- is the reason to generalise the exclusion rather
+        # than special-case 48 experts. _n_active_params carries the arithmetic and the dense
+        # no-op; `n_dense` keeps its name because the FORMULA is still the dense approximation.
+        n_dense = _n_active_params(raw_model, Cfg)
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
         # runlog, not print: an unrecorded batch size once cost 90 minutes of regression-chasing
