@@ -1,19 +1,29 @@
 #!/bin/bash
-# Resume 1 of 1.5b-a0.2b-e48_30b, from ckpt_1.5b-a0.2b-e48_30b.pt.step22500 to step 25430.
+# Resume 1 of 1.5b-a0.2b-e48_30b, from ckpt_1.5b-a0.2b-e48_30b.pt.step22500 to step 38146.
 #
 # Launch with (the card list is the caller's, see below):
 #   CUDA_VISIBLE_DEVICES=1,2,3,4,5,7 setsid bash /work/aupai/runs/resume1_30b.sh \
 #     > /work/aupai/runs/resume1_30b.wrap.log 2>&1 &
 #
-# WHY .step22500 AND NOT A LATER SAVE. Warmdown starts at step 22887 and save_every is 500, so
-# .step23000 already carries annealed weights; resuming there would re-anneal them. .step22500 is
-# the last save before warmdown, which is why the parent run was stopped at it deliberately rather
-# than run to its end. Cost: 387 steps (0.30B tokens) for a clean lr state.
+# THE TOTAL IS 38,146 STEPS AND WARMDOWN STARTS AT 34,332. The segment is 3,004,212 rows =
+# 12.31B tokens (train.py prints it while building the mix), which at 8 x 4 x 6 = 192 rows/step is
+# 15,646 steps, and train.py:3439 adds resume_step back for a cursor-seeded plan. An earlier
+# version of this header said "to step 25430, warmdown starts at 22887" -- that is the PARENT
+# segment's schedule (9,000 + 16,430), correct for the run that stopped here and meaningless for
+# the one continuing it. Registered wrong twice in prereg amendments 6 and 7, corrected in 8.
+#
+# WHY .step22500 AND NOT A LATER SAVE, with the reason that survives the corrected total: the
+# parent run's OWN warmdown began at 22,887 under ITS total of 25,430, so .step23000 carries
+# weights that had already started annealing on the parent's schedule. Resuming those would
+# anneal twice. .step22500 is the last save before that boundary. It cost 387 steps (0.30B
+# tokens) of the parent's segment to buy a clean lr state. Under THIS run's total the resume sits
+# 11,832 steps before warmdown, so lr_mult at the join is 1.0000.
 #
 # ulimit -c 0 IS LOAD-BEARING, not hygiene. The stop's SIGKILL teardown wrote /work/aupai/core at
-# 79.5 GB (4c, 16:20Z), and /work is at 97% with 71 GB free. This run keeps three rolling saves at
-# 6.06 GB each, so one more core dump of that size fills the filesystem and takes the run with it.
-# A core file is worth nothing here anyway: the process is killed on purpose at the stop.
+# 79.5 GB (4c, 16:20Z). /work has since been freed to 154 GB, but this run keeps three rolling
+# saves at 6.06 GB each and a repeat core dump of that size is still the difference between
+# finishing and filling the filesystem. A core is worth nothing here: the process is killed on
+# purpose at the stop.
 #
 # THE MIX IS CURSOR-SPECIFIC AND NOT REUSABLE. data/mix_1.5b-a0.2b-e48_30b_resume1.json is written
 # against .step22500's row_cursor, so every `epochs` field in it is the TOTAL the model will have
