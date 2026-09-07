@@ -1033,6 +1033,25 @@
       "boundary": "Says which files the fingerprint should cover. It does not re-rule the stage-2 staleness, does not measure any corpus, and does not touch the pod's untracked filters/__init__.py, which still needs removing or committing for the pod's fp to equal a tree's."
     },
     {
+      "id": "dq.zh_web_textbook_provenance_terminates",
+      "value": "zh_web and textbook_30b carry no build-time filter provenance; their chain ends at a post-hoc stamp",
+      "unit": null,
+      "measured": "2026-09-07",
+      "source": "data/corpus/{zh_web,textbook_30b,web_hq,textbook,web_cci3_p*}/build_corpus_stats.json on the pod; hardlink sources resolved by st_ino; task t44 in runs/tasks.jsonl",
+      "config": {
+        "how_built": "task t44 (owner 3b, closed 2026-08-31) hardlinked existing cleaned directories and stamped them through corpus_fingerprint.fp_dir/fp_filters directly. build_corpus's stamper never ran, so reasons/kept/kept_chars/kept_tokens/workers/near_dedup are ABSENT, not zero -- 7 stamp keys against build_corpus's 15.",
+        "hardlink_sources_by_inode": "textbook_30b -> textbook, 79 of 79 files. zh_web -> 25 directories: web_hq (62 files) plus web_cci3_p0..p23 (20-47 each); every file links=2.",
+        "source_stamp_key_counts": "web_hq 6 keys, no reasons, its own note says 'web_hq is data/corpus/web moved wholesale... stamped 2026-08-30, post-hoc, by the controller session from the live directory' with stamped_at_build=false. textbook 3 keys (reasons {kept 920692, bad_bytes 52}, top_hosts, fingerprint), no filters, no filters_fp. web_cci3_p1..p21 3 keys each WITH a real reasons histogram. web_cci3_p0, p22, p23 have NO build_corpus_stats.json at all.",
+        "terminal_state": "filter provenance terminates at web_hq / textbook, stamped post-hoc, not at build.",
+        "filters_field_is_inherited": "the 'filters: light' on the four t44 stamps is a claim carried by the task, not a value measured at build in those directories",
+        "annotation_written": "producer and producer_note fields added to zh_web, textbook_30b, wiki_chat and math_seed stamps 2026-09-07, each verified against the live fp_dir before writing",
+        "share_of_mix": "zh_web 21,293,403,945 + textbook_30b 1,610,210,330 tokens = 55% of the 41.5B landed tokens named by data/mix_1.5b-a0.2b-e48_20b_launch.json"
+      },
+      "uncertainty": "the inode map samples every file in both target directories, so the source attribution is exact; what cannot be recovered is which filter version produced web_hq and textbook, since neither stamp records one",
+      "boundary": "says what provenance EXISTS, not whether the data is good. No quality claim about zh_web or textbook_30b follows from this entry.",
+      "status": "measured"
+    },
+    {
       "id": "dq.code_rp1t_dd09.handread_50",
       "value": 0.6,
       "unit": "fraction usable",

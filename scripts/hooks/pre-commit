@@ -1663,6 +1663,12 @@ def main():
         # these worlds are what says whether that function is the right one. Reads git history
         # only, ~20s.
         "scripts/test_ledger_predicates.py",
+        # e1-59: the C/JS/Java language ID + structural filter the code builders call. Its
+        # selftest is pure string work -- 60 known answers, 5 C++ refused-by-name cases, the
+        # stripper cases and a soft-threshold pair -- no corpus, no card, no network. Runs
+        # here because a corpus filter that silently widens is how a domain gets built from
+        # the wrong rows and nobody sees it until the retention number is quoted. ~0.1s.
+        "datagen/code_lang_validate.py",
         # de-36: the pod ledger puller. Its selftest is cardless and podless -- every case
         # is fabricated rows plus a stubbed pod reader, because the live numbers change
         # daily and an assertion against them would be red the moment someone pulls (the

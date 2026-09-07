@@ -502,13 +502,33 @@ def _build_lock(out):
 _LOCK_FD = None  # the held build-lock fd for the whole write; set by the pass entry points
 
 
+def _pid_is_zombie(pid):
+    """True if pid exists but has EXITED and not been reaped. `ps -o stat=` is the only
+    reading that answers it: os.kill(pid, 0) succeeds for a zombie, because the process
+    table entry survives until the parent waits. On the pod a build's parent is
+    `sleep infinity` (pid 1), which never reaps, so a zombie is permanent for the
+    container's life -- measured 2026-09-07, pid 2288822 sat `Zs [python3] <defunct>` for
+    4h46m and held code_rp1t_b2's build lock against every later build."""
+    import subprocess
+
+    r = subprocess.run(["ps", "-o", "stat=", "-p", str(pid)], capture_output=True, text=True)
+    return r.returncode == 0 and r.stdout.strip().startswith("Z")
+
+
 def _other_writer_pid(out):
-    """The PID of a live writer on {out}, or None if ours/free/stale. Reads the
+    """The PID of a live writer on {out}, or None if ours/free/stale/zombie. Reads the
     lock's PID and refuses to call it 'another writer' if it is THIS process or a
     dead PID (a crashed build leaves a stale PID; flock already released). This is
     the probe the settle guard and preflight share -- PID-based, not pgrep-name,
     and it does not re-flock (a re-flock by the same process would conflict with
-    its own OFD)."""
+    its own OFD).
+
+    A ZOMBIE counts as dead. os.kill(pid, 0) was the whole liveness test until
+    2026-09-07 and it cannot see one: /proc answers "has this pid been reaped", never
+    "is this job running". AGENTS.md had already named the shape -- "a killed process can
+    stay in the process table as a zombie: kill -0 returns 0 and ps -p prints a row for
+    it, so neither says whether the kill worked. Read ps -o stat=: Z is dead" -- and this
+    probe still used kill(0), so the rule was written and the code was not changed."""
     lock = os.path.join(out, ".build.lock")
     if not os.path.exists(lock):
         return None
@@ -520,10 +540,12 @@ def _other_writer_pid(out):
     if pid == os.getpid():
         return None  # our own build: it wrote this PID, it is about to stamp its own output
     try:
-        os.kill(pid, 0)  # liveness probe: raises if no such process
-        return pid
+        os.kill(pid, 0)  # necessary, not sufficient: succeeds for a zombie too
     except OSError:
         return None  # stale: the builder died, its flock is gone, the dir is free
+    if _pid_is_zombie(pid):
+        return None  # exited, unreaped, holding nothing
+    return pid
 
 
 def _settle_dir(out, domain, settle_s):
@@ -1462,6 +1484,43 @@ def _selftest_preflight():
     dead.kill()
     dead.wait()
     try:
+        # (z) a ZOMBIE pid in the lock -> NOT another writer. os.kill(pid,0) succeeds for
+        #     a zombie, so the old probe refused every later build; on the pod the parent is
+        #     `sleep infinity` and never reaps, making the zombie permanent (2026-09-07:
+        #     pid 2288822 held code_rp1t_b2 for 4h46m). Built by FORKING a child that exits
+        #     and is deliberately NOT waited on, so the world contains a real zombie rather
+        #     than a hand-written pid -- and asserted against ps, because a fixture that only
+        #     claimed to be a zombie would pass on the broken probe too.
+        zpid = os.fork()
+        if zpid == 0:
+            os._exit(0)  # the child: exits at once, never reaped by the parent below
+        import time as _t
+
+        for _ in range(200):
+            _r = _sp.run(["ps", "-o", "stat=", "-p", str(zpid)], capture_output=True, text=True)
+            if _r.stdout.strip().startswith("Z"):
+                break
+            _t.sleep(0.01)
+        else:
+            raise AssertionError("(z) the fixture never became a zombie; the world is not the world")
+        try:
+            os.kill(zpid, 0)
+        except OSError:
+            raise AssertionError("(z) kill(0) already fails on the zombie -- this platform "
+                                 "cannot exhibit the defect, so the case proves nothing") from None
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(zpid))
+        if _other_writer_pid(marker) is not None:
+            raise AssertionError(f"(z) a zombie pid {zpid} read as a live writer")
+        ok += 1
+        # (z-control) the SAME assertion against a genuinely live pid must go the other way,
+        #     or (z) would pass on a probe that always returns None.
+        with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
+            fh.write(str(sleeper.pid))
+        if _other_writer_pid(marker) != sleeper.pid:
+            raise AssertionError("(z-control) a live foreign pid was not reported as a writer")
+        ok += 1
+        os.waitpid(zpid, 0)  # reap it now that the case is done
         # (a) foreign live pid in the lock -> preflight refuses (duplicate writer)
         with open(os.path.join(marker, ".build.lock"), "w", encoding="utf-8") as fh:
             fh.write(str(sleeper.pid))
