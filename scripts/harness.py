@@ -23089,6 +23089,14 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
     # inherited; the parent process is init by the time the script runs, so a ppid walk cannot see
     # the launcher and this env var is the only signal that outlives the tree.
     env["AUPAI_LAUNCHED_BY"] = f"harness launch {args.name}"
+    # THE JOB MUST NOT ACQUIRE AGAIN. This launch claims `cards` for the descendant that opens a
+    # device, so an eval calling loader.claim_my_cards at startup would ask card_claim to tell
+    # "the same job re-asking" from "a different job on the same pid" -- which a pid cannot do,
+    # and which refused lambada_ab on the pod at 11:45Z 2026-09-07 until its wrapper died a
+    # zombie and took the claim with it. claim_my_cards reads this, VERIFIES the named claim is
+    # live and covers the cards for this process, and skips its acquire; a stale or hand-set
+    # value refuses rather than becoming a free pass (4c's ruling (b)).
+    env["AUPAI_CLAIMED_BY"] = args.name
     if args.training and cards:
         env["NGPU"] = str(len(cards.split(",")))  # run_ddp.sh defaults to 8; the block is 7
     # Token caches on NVMe, for EVERY launched job and not just training. run_ddp.sh sets this
@@ -23453,6 +23461,7 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         # the one above, so without this the auto-resume would hit run_ddp.sh's de-60 refusal and a
         # 66-hour run would die at its first crash instead of resuming.
         env["AUPAI_LAUNCHED_BY"] = f"harness launch {args.name} (auto-resume {attempt + 1})"
+        env["AUPAI_CLAIMED_BY"] = args.name   # the resume is still a launch; see above
         if args.training and cards:
             env["NGPU"] = str(len(cards.split(",")))
         with open(log_path, "a") as log_f:
