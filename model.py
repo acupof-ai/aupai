@@ -1680,13 +1680,25 @@ class HybridLM(nn.Module):
             []                     0      0      no  [0, 0, 0, 0]
             [0,0,0,0]              4      4      no  [4, 0, 0, 0]
 
-        Three of those four are caught elsewhere by construction: the `moe=(i in self.moe_layers)`
-        comprehension below builds experts from the SAME list, so a truncated list builds fewer
-        experts and trips the parameter-count assertion, and an out-of-range index raises during
-        __init__. The residue is a DUPLICATED index -- it builds, it double-commits layer 0 while
-        layers 1-3 are never swept, and nothing catches it. No code path generates one, so this is
-        recorded here rather than guarded: a check on a state with no producer reads like coverage
-        without being coverage.
+        Three of those four are caught elsewhere by construction, and this was verified by BUILDING
+        each one rather than by reading (layers=4, d=256, moe_experts=4, parity defaults):
+
+            moe_layers   len  total params   MoE-weight params
+            [0,1,2,3]      4    21,370,640           9,441,280
+            [0,1]          2    20,188,944           4,720,640
+            [0]            1    19,598,096           2,360,320
+            [0,0,0,0]      4    19,598,096           2,360,320
+
+        A truncated list builds fewer experts, so a parameter count pinned to the intended shape
+        trips; an out-of-range index raises ValueError in __init__ before any of this. The
+        DUPLICATED index builds a model parameter-identical to [0], because `i in self.moe_layers`
+        is a membership test and converts block 0 once however many times it is named -- while
+        len(moe_layers) still reads 4. So it is caught by a params check pinned to the intended
+        4-layer count, and NOT by this sweep check, which compares two derivations of the same
+        list. What is unguarded is the double commit: layer 0's counts are committed four times and
+        layers 1-3 never, with both sides of the check reading 4. No code path generates a
+        duplicated index, so this is recorded rather than guarded: a check on a state with no
+        producer reads like coverage without being coverage.
         """
         n = 0
         for i in self.moe_layers:
