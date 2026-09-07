@@ -1524,13 +1524,12 @@ bash "$0" _no_such_branch_selftest 2>&1' "$0" 2>&1 || true)
   # branchless shell. What this catches is the mutation that actually happened during this change --
   # `_push_failed` was set in both branches and read by nothing, so the failure exited 0 for as
   # long as it took to grep for it. What it CANNOT catch is a wrong code or a wrong condition.
-  # SEARCHED FOR A STRING THE ASSERTION DOES NOT CONTAIN, which is the simple fix for the trap the
-  # mainred cases below solve by counting: a grep whose pattern is itself an occurrence matches its
-  # own line and passes with the subject deleted (measured -- written that way first, mutant
-  # survived). Here the subject is `exit 3` guarded on _push_failed; the pattern names the exit and
-  # the variable in one line that appears nowhere else, and this comment writes neither together.
+  # COUNTED AT 2, NOT SEARCHED-FOR-A-STRING-THE-ASSERTION-DOES-NOT-CONTAIN: the grep pattern
+  # appears in this assertion line itself (inside the quotes), so `grep -c` finds it even with
+  # the call site deleted. Measured: `>= 1` passed with the call site removed (mutant survived).
+  # The mainred cases below use the same counting fix for the same reason.
   _n=$(grep -c 'push_failed" -eq 0 . || exit 3' "$0" || true)
-  if [ "${_n:-0}" -ge 1 ]; then
+  if [ "${_n:-0}" -ge 2 ]; then
     echo "  ok   push W3 the caller exits 3 when the push failed (source-level)"
   else
     echo "  FAIL push W3: _push_failed is set but no exit reads it -- a failed push exits 0" >&2
