@@ -24,6 +24,9 @@ import os
 import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from count_tokens import CONVENTION  # noqa: E402
+
 _TOK = None
 
 
@@ -35,7 +38,10 @@ def _init(tok_path):
 
 
 def _count_shard(shard):
+    from count_tokens import count_docs
+
     docs = tokens = nbytes = 0
+    texts = []
     with open(shard, encoding="utf-8") as f:
         for line in f:
             line = line.strip()
@@ -47,7 +53,11 @@ def _count_shard(shard):
                 continue
             docs += 1
             nbytes += len(t.encode("utf-8"))
-            tokens += len(_TOK.encode(t).ids)
+            texts.append(t)
+            if len(texts) >= 2000:
+                tokens += count_docs(texts, _TOK)
+                texts = []
+    tokens += count_docs(texts, _TOK)
     return docs, tokens, nbytes
 
 
@@ -68,17 +78,27 @@ def count(domain, root=ROOT, pool=16):
         "tokens": tokens,
         "text_bytes": nbytes,
         "tok_per_byte": round(tokens / nbytes, 5) if nbytes else None,
+        "convention": CONVENTION,
+        "counter": "datagen/count_corpus_dir.py -> scripts/count_tokens.count_docs",
     }
 
 
 def _selftest():
-    """A two-shard world with a known token count, and the sampling trap it exists to avoid.
+    """A two-shard world with a known token count, and two traps it must not fall into.
 
-    The assertion that matters is not "does it count" but "does it read EVERY shard": the
-    defect this tool answers is build_corpus.py labelling a 3-of-235-shard extrapolation
-    `measured`, so a counter that silently skipped a shard would reproduce that defect in
-    the artifact meant to correct it. Shard 1 is deliberately much larger than shard 0, so
-    a count that reads only the first shard cannot land on the right total by luck.
+    COVERAGE, NOT JUST INDEPENDENCE. The first version of this test asserted only that a
+    full-directory count equals the sum over shards, with an independent oracle and a real
+    negative control -- and it stayed green for a week while the counter omitted the
+    terminator, because both sides used "ids, no eos" as their shared definition of a token
+    and no assertion named which definition was correct. An oracle can be independent and
+    still be silent on the property that later matters (58, 2026-09-08). So the expected
+    total is written as `ids + one per document`, arithmetic the subject never performs:
+
+      trap 1  a counter that skips a shard          -> the first-shard-only control differs
+      trap 2  a counter that drops the terminator   -> want_tokens is short by exactly N
+
+    Shard 1 is deliberately much larger than shard 0, so a first-shard-only count cannot
+    land on the right total by luck.
     """
     import shutil
     import tempfile
@@ -101,19 +121,28 @@ def _selftest():
         from tokenizers import Tokenizer
 
         tok = Tokenizer.from_file(os.path.join(d, "data", "tokenizer.json"))
-        want_tokens = len(tok.encode("hello world").ids) + 9 * len(tok.encode("def f(x):\n    return x + 1\n").ids)
         want_docs = 10
+        bare = len(tok.encode("hello world").ids) + 9 * len(tok.encode("def f(x):\n    return x + 1\n").ids)
+        want_tokens = bare + want_docs
 
         got = count("tiny", root=d, pool=2)
         if got["docs"] != want_docs:
             fails.append(f"docs {got['docs']} != {want_docs}")
         if got["tokens"] != want_tokens:
-            fails.append(f"tokens {got['tokens']} != {want_tokens} (a skipped shard reads as a smaller total)")
+            fails.append(
+                f"tokens {got['tokens']} != {bare} ids + {want_docs} <eos> = {want_tokens}. "
+                f"A difference of exactly {want_docs} is the terminator; anything else is a "
+                f"skipped shard or a changed tokenizer"
+            )
         if got["shards"] != 3:
             fails.append(f"shards {got['shards']} != 3")
+        if got["convention"] != CONVENTION:
+            fails.append(f"convention {got['convention']!r} != {CONVENTION!r}")
         only_first = _first_shard_only("tiny", d)
         if only_first == want_tokens:
-            fails.append("the first-shard-only control equals the full count; the world cannot detect sampling")
+            fails.append(
+                "the first-shard-only control equals the full count; the world cannot detect sampling"
+            )
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -123,9 +152,9 @@ def _selftest():
         print(f"count_corpus_dir selftest: {len(fails)} failure(s)", file=sys.stderr)
         return 1
     print(
-        "count_corpus_dir selftest OK: 10 docs over 3 shards counted exactly, rows with no "
-        "text key and blank lines skipped, and the first-shard-only control differs from the "
-        "full count so the world can tell a sampling regression from a correct one"
+        f"count_corpus_dir selftest OK: 10 docs over 3 shards, {bare} ids + {want_docs} <eos> "
+        f"= {want_tokens} counted exactly; rows with no text key and blank lines skipped; the "
+        f"first-shard-only control differs from the full count"
     )
     return 0
 
