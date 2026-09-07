@@ -153,7 +153,7 @@ def _own_pids(card_claim):
     return out
 
 
-def assert_not_co_resident(domains, root=ROOT):
+def assert_not_co_resident(domains, root=ROOT, head_rows=None):
     """Refuse a >10 GB token-cache read while a live claim holds cards. AGENTS.md's
     "no lane card at all" rule, at the moment of the decision instead of in a table.
 
@@ -202,7 +202,7 @@ def assert_not_co_resident(domains, root=ROOT):
     and a rescore ON the run's own card is sometimes the order. It prints what it allowed.
     """
     elc = _elc()
-    want, unknown = elc.domains_cache_bytes(domains)
+    want, unknown = elc.domains_cache_bytes(domains, head_rows=head_rows)
     held = _live_run_cards()
     if not held:
         return 0
@@ -315,7 +315,7 @@ def assert_cache_dir_not_overlay(root=ROOT):
         f"and a forgotten variable, and this refusal only fires on the default.")
 
 
-def assert_caches_fresh(domains, root=ROOT):
+def assert_caches_fresh(domains, root=ROOT, head_rows=None):
     """Raise unless every domain's cache exists and _domain_seqs would reuse it as-is.
 
     The same conditions _domain_seqs' `fresh` ANDs together, read from train.py's own
@@ -336,7 +336,7 @@ def assert_caches_fresh(domains, root=ROOT):
     """
     import train
 
-    assert_not_co_resident(domains, root=root)
+    assert_not_co_resident(domains, root=root, head_rows=head_rows)
     assert_cache_dir_not_overlay(root=root)
     bad = []
     for name in domains:
