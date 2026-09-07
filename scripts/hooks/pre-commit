@@ -2215,8 +2215,20 @@ def main():
     # handled below.
     _subject_tests &= (SELFTEST_FILES | set(PARTIAL))
 
-    # Measured per selftest, not once around the loop, so the refusal can name WHICH
-    # one did it (e1-14). A single before/after pair would say "something changed".
+    # THE BASELINE IS RE-READ BEFORE EVERY SELFTEST, and this comment used to claim that while
+    # the code captured it ONCE outside the loop. The consequence is a refusal that names an
+    # innocent file: any concurrent write to the shared repo -- another session's `git push -u`
+    # adding a [branch] section, a `git config` anywhere in this checkout -- lands between two
+    # selftests and is attributed to whichever one happened to be running. MEASURED 2026-09-07:
+    # `card_claim.py --selftest` was refused for changing .git/config while that file runs ZERO
+    # git commands (grep -c '"git"' -> 0); the config's mtime was 14:34, a peer's push, and the
+    # commit was blocked for something no selftest did. b0 hit the same refusal twice with a
+    # DIFFERENT hash each time, which is the signature of a concurrent writer rather than of a
+    # selftest -- a selftest that writes the config writes the same thing every run.
+    #
+    # Re-reading per file cannot tell a concurrent writer from a guilty selftest either, but it
+    # bounds the window to one selftest's duration instead of the whole loop, and the guilty
+    # party is then the file that was actually running. The residual is named in the refusal.
     state_before = _shared_repo_state(repo_root())
     # One temp root for every selftest this hook runs, removed in the same finally as the
     # staged copies. 19 of the tracked selftests mkdtemp without rmtree, and most cannot
@@ -2274,6 +2286,11 @@ def main():
             # selftest as FAILING rather than as un-runnable. Nothing in the map was .sh until
             # scripts/merge_main.sh, so the assumption held by accident.
             _interp = ["bash"] if f.endswith(".sh") else [sys.executable]
+            # RE-READ IMMEDIATELY BEFORE THE RUN, so the window this selftest is answerable for
+            # is its own duration and not every selftest before it (see the note at the loop's
+            # baseline). A write that lands while file N-1 runs is now file N-1's problem, or
+            # nobody's if it lands between two runs -- never wrongly file N's.
+            state_before = _shared_repo_state(repo_root())
             r = subprocess.run(_interp + [dst, flag], capture_output=True,
                                text=True, cwd=repo_root(), env=_env)
             if r.returncode != 0:
@@ -2303,7 +2320,15 @@ def main():
                       "verified while every other session's git is already broken.\n"
                       "A selftest must build its world from nothing the caller is "
                       "holding -- strip GIT_* from every subprocess it spawns "
-                      "(pod_drift.py:61-66).",
+                      "(pod_drift.py:61-66).\n"
+                      "BEFORE READING THE FILE ABOVE: this cannot distinguish that selftest "
+                      "from a CONCURRENT write by another session -- a `git push -u` adding a "
+                      "[branch] section, a `git config` anywhere in this checkout -- that landed "
+                      "while it ran. Two tells: grep the named file for a git invocation at all, "
+                      "and re-run it alone. A selftest that writes the config writes the SAME "
+                      "value every run; a different value each time is a peer "
+                      "(measured 2026-09-07, card_claim.py refused while running zero git "
+                      "commands).",
                       file=sys.stderr)
                 sys.exit(1)
     finally:
@@ -2769,6 +2794,65 @@ def _selftest():
                          "selftest")
     finally:
         shutil.rmtree(d3, ignore_errors=True)
+
+    # WORLD 6b (must ATTRIBUTE, not merely detect): a write that lands while selftest A runs must
+    # be charged to A and NOT to a later innocent selftest B. World 6 above cannot see this -- it
+    # takes ONE before/after pair around a single write, which is exactly the shape that was
+    # broken: the hook captured state_before once outside the loop, so any write landing during A
+    # was still "new" when B finished and the refusal named B. MEASURED 2026-09-07:
+    # card_claim.py --selftest was refused for changing .git/config while running zero git
+    # commands, because a peer's `git push -u` landed earlier in the loop.
+    #
+    # The world is the LOOP's baseline discipline rather than the hook end-to-end: two runs, a
+    # write injected during the first, and the question is whether the second sees a difference.
+    # Driving the real hook would need two staged selftest files and a peer writing between them;
+    # this asserts the property that fix turns on, and the negative control is the old code path
+    # (one baseline for both runs), which must FAIL to attribute.
+    d6b = tempfile.mkdtemp()
+    try:
+        def g6(*a):
+            return subprocess.run(["git"] + list(a), cwd=d6b, capture_output=True, text=True,
+                                  env=clean)
+        g6("init", "-q", "-b", "main", ".")
+        g6("config", "user.email", "t@t")
+        g6("config", "user.name", "t")
+
+        def two_selftests(per_file_baseline):
+            """Replay the loop over two selftests, A guilty and B innocent.
+
+            Returns (A blamed, B blamed). `per_file_baseline` is the fix: read the baseline
+            immediately before each run instead of once for the whole loop.
+            """
+            loop_baseline = _shared_repo_state(d6b)
+
+            # --- selftest A: writes the shared config while it runs. The guilty one.
+            before_a = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
+            g6("config", "de.world6b", "written-during-A")     # A's write
+            blamed_a = _shared_repo_state(d6b) != before_a
+
+            # --- selftest B: touches nothing at all.
+            before_b = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
+            blamed_b = _shared_repo_state(d6b) != before_b
+
+            g6("config", "--unset", "de.world6b")
+            return blamed_a, blamed_b
+
+        guilty, innocent = two_selftests(per_file_baseline=True)
+        if not guilty:
+            fails.append("world 6b: the guilty selftest was NOT blamed, so the world does not "
+                         "reproduce a shared-repo write at all and proves nothing about B")
+        if innocent:
+            fails.append("world 6b: an innocent selftest was blamed for a write made during the "
+                         "PREVIOUS one -- the per-file baseline is not in effect")
+        # NEGATIVE CONTROL: one baseline for the whole loop, which is how the code stood. B must
+        # be blamed there, or this world cannot tell the fix from its absence.
+        g_old, i_old = two_selftests(per_file_baseline=False)
+        if not (g_old and i_old):
+            fails.append(f"world 6b control: with ONE baseline for the whole loop the innocent "
+                         f"selftest must ALSO be blamed (got guilty={g_old} innocent={i_old}); "
+                         f"without that this world passes with the fix reverted")
+    finally:
+        shutil.rmtree(d6b, ignore_errors=True)
 
     # WORLDS 7-10 ARE GONE, and their absence is the point (shape A, 6e ruling 2026-09-04).
     # All four tested that the hook's manifest regeneration left no residue on a refusal:
