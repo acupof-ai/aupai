@@ -190,11 +190,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-22 incidents (12 infra, 10 model), ~3h each, 66h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+23 incidents (13 infra, 10 model), ~3h each, 69h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 - §246: a review row's basis named a sha that later stopped existing (the branch was rebuilt to drop a live-key commit) and stayed auditable only because the reviewer had happened to record a BLOB hash. A basis that is a sha describes something that can be rewritten or garbage-collected; a basis that is content survives its own subject. Same shape as §247 one rule down — the identity of a thing is not its bytes, and here the bytes are the identity that lasts.
+- §263: a kill is an input to the parent, not an operation on the child. Two throttled `curl` chunks were killed by exact PID — right PIDs, right intent — and the launcher's `wait "$p" || ok=0` turned that into its whole-file failure path, `rm -f "$out".c*`, which deleted the six chunks that had already completed. Every signal an operator reads before a kill (whose process, what it holds, is it the right one) was read correctly and none of them names the consequence; the parent's response to a non-zero child is the only thing that does. Read the failure branch of whatever launched the process, or kill nothing.
 
 Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211, §246).
 
