@@ -25,6 +25,7 @@ import os
 import shutil
 import subprocess
 import sys
+import time
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 RAW = os.path.join(ROOT, "data", "raw")
@@ -347,7 +348,7 @@ def _mirror_chain(url, modelscope_url=None):
     return chain
 
 
-def _ranged_get(url, part, name, chunks=8):
+def _ranged_get(url, part, name, chunks=8, **chunk_opts):
     """Download one file as `chunks` parallel byte ranges. (True, bytes) or (False, why).
 
     The default since 2026-09-07 (§259): data.together.xyz throttles a LONG-LIVED
@@ -384,23 +385,20 @@ def _ranged_get(url, part, name, chunks=8):
         return False, f"{size}B below the 64MB chunking floor"
 
     per = size // chunks
-    procs, paths = [], []
+    spans = []
     for i in range(chunks):
         lo = i * per
         hi = size - 1 if i == chunks - 1 else lo + per - 1
-        cp = f"{part}.c{i}"
-        paths.append(cp)
-        procs.append(subprocess.Popen(
-            ["curl", "-4", "-sS", "--fail", "--retry", "4", "--retry-delay", "5",
-             "-r", f"{lo}-{hi}", "-o", cp, url],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
-    bad = [i for i, p in enumerate(procs) if p.wait() != 0]
-    if bad:
-        for cp in paths:
-            _rm(cp)
-        return False, f"chunk(s) {bad} failed"
+        spans.append((lo, hi, f"{part}.c{i}"))
+    ok, why = _run_chunks(url, spans, name, **chunk_opts)
+    if not ok:
+        # Only the chunks that never completed are removed. The sibling chunks stay:
+        # deleting them is what cost 1.8 GB of a 2.02 GB file on 2026-09-07, when killing
+        # two throttled connections took the whole-file failure branch and it swept the six
+        # that had finished. A partial download is worth more than a clean directory.
+        return False, why
     with open(part, "wb") as out:
-        for cp in paths:
+        for _lo, _hi, cp in spans:
             with open(cp, "rb") as f:
                 shutil.copyfileobj(f, out)
             _rm(cp)
@@ -410,6 +408,129 @@ def _ranged_get(url, part, name, chunks=8):
         return False, f"assembled {got}B, content-length {size}B"
     print(f"  {name}: {chunks}-way ranged, {got}B verified", file=sys.stderr, flush=True)
     return True, got
+
+
+CHUNK_FLOOR_BPS = 500 * 1024   # a chunk under this over one window is throttled, not slow
+CHUNK_WINDOW_S = 60            # long enough that a brief stall is not a restart
+CHUNK_MAX_RESTARTS = 5         # per chunk; past this the host is the problem, not the socket
+
+
+def _run_chunks(url, spans, name, floor=CHUNK_FLOOR_BPS, window=CHUNK_WINDOW_S,
+                max_restarts=CHUNK_MAX_RESTARTS, _sleep=time.sleep, _now=time.monotonic):
+    """Download every span, restarting a chunk whose rate falls under `floor`.
+
+    Parallelism buys the head, restart buys the tail (4c, 2026-09-07). Measured on
+    data.together.xyz: 8 chunks of one 2.02 GB file, six finished at 252,793,470 B while
+    two sat throttled holding 218 MB between them -- the file finishes when its SLOWEST
+    chunk does, so chunking alone converts a bandwidth problem into a tail-latency one.
+    A throttled connection stays throttled for its whole life and a fresh one is instantly
+    fast (7.1 MB/s against 40 KB/s, same host, same second), so the fix is to notice and
+    reconnect rather than wait.
+
+    A restart RESUMES: the bytes already on disk are kept and the range is re-issued from
+    where it stopped. Restarting from zero would discard exactly what the throttled chunk
+    did manage, and the slow chunks are the ones with the most to lose.
+
+    The same applies ACROSS calls. A span whose base file already holds its full length is
+    not fetched again, and a partial base is resumed -- so a run that failed on one chunk
+    costs one chunk, not the file. Without this, "the siblings are not deleted" would be
+    an empty promise: the next attempt would truncate and refetch them anyway.
+    """
+    live = {}   # i -> (Popen, bytes_at_window_start, window_start)
+    restarts = [0] * len(spans)
+    done, failed = set(), {}
+
+    def _launch(i, resume_from=None):
+        lo, hi, cp = spans[i]
+        start = lo if resume_from is None else lo + resume_from
+        p = subprocess.Popen(
+            ["curl", "-4", "-sS", "--fail", "--retry", "4", "--retry-delay", "5",
+             "-r", f"{start}-{hi}", "-o", cp if resume_from is None else f"{cp}.r{restarts[i]}", url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+        live[i] = [p, _chunk_bytes(spans[i], restarts[i]), _now()]
+
+    for i in range(len(spans)):
+        lo, hi, cp = spans[i]
+        want = hi - lo + 1
+        _consolidate(spans[i], 0)
+        have = _chunk_bytes(spans[i], 0)
+        if have == want:
+            done.add(i)
+            continue
+        if have > want:
+            _rm(cp)
+            have = 0
+        if have:
+            restarts[i] = 1
+            _launch(i, resume_from=have)
+        else:
+            _launch(i)
+
+    while live:
+        _sleep(min(5, window))
+        for i in list(live):
+            p, mark, t0 = live[i]
+            rc = p.poll()
+            if rc is not None:
+                if rc == 0:
+                    done.add(i)
+                else:
+                    failed[i] = f"rc {rc}"
+                del live[i]
+                continue
+            elapsed = _now() - t0
+            if elapsed < window:
+                continue
+            now_bytes = _chunk_bytes(spans[i], restarts[i])
+            rate = (now_bytes - mark) / elapsed
+            if rate >= floor:
+                live[i] = [p, now_bytes, _now()]
+                continue
+            if restarts[i] >= max_restarts:
+                print(f"  {name}: chunk {i} still {rate / 1024:.0f} KB/s after "
+                      f"{max_restarts} restarts; letting it run", file=sys.stderr, flush=True)
+                live[i] = [p, now_bytes, _now()]
+                continue
+            p.kill()
+            p.wait()
+            _consolidate(spans[i], restarts[i])
+            restarts[i] += 1
+            have = _chunk_bytes(spans[i], restarts[i])
+            print(f"  {name}: chunk {i} at {rate / 1024:.0f} KB/s -> restart "
+                  f"{restarts[i]} from {have}B", file=sys.stderr, flush=True)
+            _launch(i, resume_from=have)
+
+    for i in sorted(done):
+        _consolidate(spans[i], restarts[i])
+    if failed:
+        for i in failed:
+            for suffix in range(restarts[i] + 1):
+                _rm(f"{spans[i][2]}.r{suffix}")
+        return False, f"chunk(s) {sorted(failed)} failed: {failed}"
+    return True, None
+
+
+def _chunk_bytes(span, restarts):
+    """Bytes on disk for one span: the base file plus every restart fragment."""
+    _lo, _hi, cp = span
+    total = os.path.getsize(cp) if os.path.exists(cp) else 0
+    for r in range(restarts + 1):
+        f = f"{cp}.r{r}"
+        if os.path.exists(f):
+            total += os.path.getsize(f)
+    return total
+
+
+def _consolidate(span, restarts):
+    """Fold a chunk's restart fragments back into its base file, in order."""
+    _lo, _hi, cp = span
+    for r in range(restarts + 1):
+        f = f"{cp}.r{r}"
+        if not os.path.exists(f):
+            continue
+        with open(cp, "ab") as base, open(f, "rb") as frag:
+            shutil.copyfileobj(frag, base)
+        _rm(f)
 
 
 def _rm(p):
@@ -478,6 +599,14 @@ def _selftest():
     # 80MB, over _ranged_get's 64MB floor. Content varies by offset so a chunk assembled in
     # the wrong order, or a chunk served from the wrong range, does not compare equal.
     big_payload = bytes((i * 7 + (i >> 13)) & 0xFF for i in range(80 * 1024 * 1024))
+    # The slow/bad worlds address chunk 3 of 8 by its span start, so the assertions name a
+    # specific chunk rather than "one of them".
+    CH = (80 * 1024 * 1024) // 8
+    SLOW_LO = 3 * CH
+    BAD_LO = 3 * CH
+    SLOW_PREFIX = 4096          # what the throttled range delivers before it stops
+    STALL_S = 30                # >> the selftest's 1 s window, so the floor must trip
+    ranges_seen = []            # every range start the server was asked for
 
     class H(http.server.BaseHTTPRequestHandler):
         def _ok(self):
@@ -502,7 +631,8 @@ def _selftest():
                 self.end_headers()
             elif self.path == "/missing":
                 self.send_error(404)
-            elif self.path in ("/big.jsonl", "/short.jsonl", "/norange.jsonl"):
+            elif self.path in ("/big.jsonl", "/short.jsonl", "/norange.jsonl",
+                               "/slow.jsonl", "/slowcap.jsonl", "/onebad.jsonl"):
                 self._big(body)
             elif self.path == "/small.jsonl":
                 # range-capable but tiny: the only route that reaches the size floor
@@ -519,9 +649,11 @@ def _selftest():
                     self.wfile.write(payload)
 
         def _big(self, body):
-            """The three ranged-path worlds. /big serves ranges honestly; /short declares the
+            """The ranged-path worlds. /big serves ranges honestly; /short declares the
             full length and returns one byte less per range, the corruption the size check
-            exists for; /norange omits Accept-Ranges so the caller must fall back."""
+            exists for; /norange omits Accept-Ranges so the caller must fall back; /slow and
+            /slowcap stall ONE range mid-body (a throttled connection, not an error);
+            /onebad 404s one range while the others succeed."""
             n = len(big_payload)
             rng = self.headers.get("Range")
             if self.path == "/norange":
@@ -529,16 +661,37 @@ def _selftest():
             if rng and self.path != "/norange.jsonl":
                 lo, hi = rng.split("=", 1)[1].split("-")
                 lo, hi = int(lo), int(hi or n - 1)
+                ranges_seen.append(lo)
+                if self.path == "/onebad.jsonl" and lo == BAD_LO:
+                    self.send_error(404)
+                    return
                 chunk = big_payload[lo:hi + 1]
                 if self.path == "/short.jsonl":
                     chunk = chunk[:-1]  # one byte short per chunk: assembly must not verify
+                # The throttle, reproduced: a prefix arrives, then the connection delivers
+                # nothing for STALL_S. Only the ORIGINAL offset stalls, so a resumed range
+                # (lo + bytes already on disk) is served at full speed -- which is the
+                # measured behaviour the restart exists to exploit.
+                stall = lo == SLOW_LO and self.path in ("/slow.jsonl", "/slowcap.jsonl")
                 self.send_response(206)
                 self.send_header("Content-Range", f"bytes {lo}-{hi}/{n}")
                 self.send_header("Content-Length", str(len(chunk)))
                 self.send_header("Connection", "close")
                 self.end_headers()
                 if body:
-                    self.wfile.write(chunk)
+                    if stall:
+                        self.wfile.write(chunk[:SLOW_PREFIX])
+                        self.wfile.flush()
+                        time.sleep(STALL_S)
+                        try:
+                            self.wfile.write(chunk[SLOW_PREFIX:])
+                        except BrokenPipeError:
+                            # the restart killed this connection, which is the point of
+                            # the test; without the catch the server thread prints a
+                            # traceback and a green run reads as a failure
+                            pass
+                    else:
+                        self.wfile.write(chunk)
                 return
             self.send_response(200)
             self.send_header("Content-Length", str(n))
@@ -613,9 +766,59 @@ def _selftest():
         ok4, why4 = _ranged_get(f"http://127.0.0.1:{port}/small.jsonl", big_part, "smalltest")
         assert not ok4 and "floor" in why4, f"a small body must skip chunking: {why4!r}"
 
+        # (d) restart-on-slow-chunk. One range stalls after 4096 B for 30 s while its seven
+        # siblings finish; the floor must notice, kill THAT connection, re-issue the rest of
+        # its range, and assemble a byte-exact file. Window 1 s and floor 1 MB/s so the world
+        # runs in seconds; the production constants (60 s / 500 KB/s) are the same code path.
+        _rm(big_part)
+        slow_opts = dict(floor=1024 * 1024, window=1.0)
+        ok5, why5 = _ranged_get(f"http://127.0.0.1:{port}/slow.jsonl", big_part, "slowtest",
+                                **slow_opts)
+        assert ok5, f"a stalled chunk must be restarted, not waited out: {why5}"
+        with open(big_part, "rb") as fp:
+            assert fp.read() == big_payload, "a restarted chunk must reassemble byte-exact"
+        # The restart RESUMES: the stalled range delivered 4096 B before stalling, and those
+        # bytes are in the output above. A restart-from-zero would also reassemble correctly,
+        # so the byte check alone cannot tell the two apart -- assert the resumed request was
+        # actually issued at the resumed offset.
+        assert any(o >= SLOW_LO + SLOW_PREFIX for o in ranges_seen), (
+            f"no range was re-issued past the stall point {SLOW_LO + SLOW_PREFIX}; "
+            f"offsets seen: {sorted(set(ranges_seen))}")
+
+        # (e) the cap: with max_restarts=0 the stall is never restarted, so the same world
+        # must instead take ~STALL_S and still succeed. This is the negative control for (d)
+        # -- without it, a floor that never fires would pass (d) too, since the stalled chunk
+        # eventually completes on its own.
+        _rm(big_part)
+        t_cap = time.monotonic()
+        ok6, why6 = _ranged_get(f"http://127.0.0.1:{port}/slowcap.jsonl", big_part, "slowcaptest",
+                                floor=1024 * 1024, window=1.0, max_restarts=0)
+        cap_s = time.monotonic() - t_cap
+        assert ok6, f"a capped-out chunk must be left to finish, not failed: {why6}"
+        assert cap_s >= STALL_S * 0.8, (
+            f"max_restarts=0 waited {cap_s:.1f}s, less than the {STALL_S}s stall -- the stall "
+            f"world is not stalling, so (d) proved nothing")
+
+        # (f) a failed chunk must NOT delete its completed siblings. This is the 2026-09-07
+        # incident as a test: one range 404s, seven finish, and the seven stay on disk.
+        _rm(big_part)
+        ok7, why7 = _ranged_get(f"http://127.0.0.1:{port}/onebad.jsonl", big_part, "onebadtest")
+        assert not ok7, "a 404 range must fail the file"
+        survivors = [i for i in range(8) if os.path.exists(f"{big_part}.c{i}")]
+        assert len(survivors) == 7, (
+            f"a failed chunk swept its siblings: {len(survivors)} of 8 survived ({survivors})")
+        # and the next call resumes from them rather than refetching: it must succeed against
+        # the honest route while the seven survivors are already on disk.
+        ok8, why8 = _ranged_get(f"http://127.0.0.1:{port}/big.jsonl", big_part, "resumetest")
+        assert ok8, f"a resume over surviving chunks must complete: {why8}"
+        with open(big_part, "rb") as fp:
+            assert fp.read() == big_payload, "resume over survivors did not reproduce the body"
+
         print(f"fetch_corpus selftest OK: failover served {len(payload)}B on {server}; "
               f"all-closed named {got!r}; ranged path verified {len(big_payload)}B in 8 chunks "
-              f"and refused a short body, a no-range host and a sub-floor body")
+              f"and refused a short body, a no-range host and a sub-floor body; a stalled chunk "
+              f"was restarted from its resumed offset, the cap waited {cap_s:.0f}s instead, and "
+              f"a 404 chunk left 7 of 8 siblings on disk for the resume")
         return 0
     finally:
         httpd.shutdown()

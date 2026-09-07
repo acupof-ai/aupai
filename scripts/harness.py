@@ -61,6 +61,7 @@ from harness_core import (  # noqa: E402
     _ARM_RE,
     _CITE_WRAP_LINES,
     _POD_PROBE_TIMEOUT,
+    _MAIN_REF,
     _MAIN_TOUCHED,
     _arm_id,
     _aupai_cards,
@@ -81,6 +82,7 @@ from harness_core import (  # noqa: E402
     _tmp_repo_shaped,
     _write_tasks,
     cfg_default,
+    main_ref,
     pod_reachable,
     read_mix,
     refuse_in_integration_tree,
@@ -324,6 +326,7 @@ _RULE_CHECKS = {
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
     "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
     "Corpus directories named by any ladder mix": "ladder_config_frozen",
+    "Code goes through a GitHub PR; ledger-only commits keep": "merge_main.sh --selftest",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
@@ -349,6 +352,9 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "A push now happens AFTER the merge, not in the same step":
+        "the ORDER of two operator actions leaves no artifact; pod_drift --check catches the "
+        "consequence (a stamp naming a sha main does not hold), not the discipline",
     # NO CHECK CAN ENFORCE THIS. It is about what a session does in the seconds AFTER a failed
     # push, which no repo state records. main_advances_by_ancestry catches the DAMAGE if someone
     # forces the ref; nothing can catch a session that reads "main X -> Y", believes it, and
@@ -529,7 +535,7 @@ _MANUAL_RULES = {
 #: and AGENTS.md named only `merge_main.sh <name>`, so a hand-rolled mkdir was the reachable
 #: path and de's waiter cleared the controller's lock mid-commit. Manual by nature: the lock
 #: does not record which command created it.
-_MANUAL_BASELINE = 32
+_MANUAL_BASELINE = 33
 
 
 def _norm_rule(text):
@@ -2533,7 +2539,7 @@ def check_agents_rules_covered(root):
         return FAIL, err
     if not bullets:
         return FAIL, "no rule bullets found -- the sections were renamed or emptied"
-    known = {c[0] for c in CHECKS} | {"CI", "pre-commit hook", "podput", "pod_push.sh"}
+    known = {c[0] for c in CHECKS} | {"CI", "pre-commit hook", "podput", "pod_push.sh", "merge_main.sh --selftest"}
     covered = _RULE_CHECKS
     unmapped = []
     for b in bullets:
@@ -3034,6 +3040,20 @@ def check_main_advances_by_ancestry(root):
     fail every correct merge_main run. The property that actually holds for every legal advance
     and fails for this one is that the previous value is an ancestor of the new value.
 
+    AFTER THE PR FLIP (2026-09-07) THE SIGNATURE HALF COVERS LESS, and the docstring says so
+    rather than leaving the old reasoning standing over a changed world. Code goes through a
+    GitHub PR, so `merge_main:` is no longer the marker of a legitimate write for those commits:
+    main advances from the remote, and the local ref moves by `git fetch origin main:main`.
+    MEASURED against a real origin and a detached clone, which is the integration tree's shape:
+    that writes `fetch origin main:main: fast-forward`, ancestry holds, and the message starts
+    with none of the accepted prefixes -- so every PR merge would have WARNed, the permanent-amber
+    shape the cutoff below exists to prevent. `fetch` is accepted for the same reason `pull`
+    already is: git moved the ref by ancestry from a remote, which is not a hand `update-ref`
+    bypassing the CAS, and the sideways-move test still runs on the entry independently. It does
+    not widen the residual -- a hand `update-ref -m "merge_main: x"` forges the signature, and
+    `-m "fetch ..."` is the same forgery at the same cost. What the signature still discriminates
+    is a bare unsigned `update-ref`, which is the incident that produced this check.
+
     READS THE RAW REFLOG, not `git reflog show`. The porcelain prints one sha per entry; the
     file at logs/refs/heads/main carries `<old> <new>` per line, which is the pair this needs --
     reconstructing pairs by zipping consecutive porcelain lines would silently mis-pair across a
@@ -3083,7 +3103,13 @@ def check_main_advances_by_ancestry(root):
     # reflog or a bigger window brings the entry back, and then the check goes red for a cause
     # that was settled. The cost of keeping it is one tuple.
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
-                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
+                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae"),
+                 # 2026-09-07 15:15 local: `reset: moving to origin/main` after the gh merge of
+                 # PR #3 -- four merge_main CASes (89b20f70..3a57ca40, runs/msg_log.jsonl only)
+                 # had landed on local main but never reached origin, and the reset
+                 # discarded them instead of pushing them. Restored by re-merging fb.
+                 ("3a57ca402291636a988a651aa983192d79b7c392",
+                  "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -3118,8 +3144,9 @@ def check_main_advances_by_ancestry(root):
         if _when > _SIGNING_FROM and not (
                 msg.startswith("merge_main:") or msg.startswith("commit")
                 or msg.startswith("merge") or msg.startswith("pull")
-                or msg.startswith("rebase") or msg.startswith("reset")
-                or msg.startswith("branch") or msg.startswith("checkout")):
+                or msg.startswith("fetch") or msg.startswith("rebase")
+                or msg.startswith("reset") or msg.startswith("branch")
+                or msg.startswith("checkout")):
             unsigned.append((old, new, msg))
         a = subprocess.run(["git", "merge-base", "--is-ancestor", old, new],
                            cwd=root, capture_output=True)
@@ -3483,8 +3510,72 @@ def _selftest_unsigned_fast_forward_warns():
             assert state == want, f"{label}: expected {want}, got {state}: {ev}"
         finally:
             shutil.rmtree(d, ignore_errors=True)
+
+    # WORLD D: HOW A gh PR MERGE REACHES THE LOCAL REF (4c's ruling 2026-09-07). After the flip,
+    # code lands on origin/main through a PR and the integration tree's ref advances by
+    # `git fetch origin main:main`, which writes `fetch origin main:main: fast-forward` -- a message
+    # matching none of the pre-flip prefixes. Measured before the fix: every PR merge WARNed, the
+    # permanent-amber shape world C exists to prevent, arriving through a new door.
+    #
+    # A REAL FETCH FROM A REAL ORIGIN, and the clone is DETACHED, because that is the integration
+    # tree's shape -- `main` is checked out in no worktree, which is what makes `fetch
+    # origin main:main` the way the ref moves at all. A fixture that wrote the reflog line by hand
+    # would test the string I expect rather than the one git writes.
+    #
+    # World A above is this world's control and is already in the loop: it is the same
+    # fast-forward with no message, and it must still WARN. If it stopped WARNing, "accept fetch"
+    # would have become "accept everything", which is the only way this addition can be wrong.
+    d = _tmp_repo()
+    try:
+        up = os.path.join(d, "origin")
+        cl = os.path.join(d, "clone")
+        os.makedirs(up, exist_ok=True)
+
+        def gu(*a, cwd=up, env=None):
+            return subprocess.run(["git", "-C", cwd, *a], capture_output=True, text=True,
+                                  env=dict(os.environ, **(env or {})))
+
+        gu("init", "-q", "-b", "main", ".")
+        gu("config", "user.email", "t@example.invalid")
+        gu("config", "user.name", "t")
+        open(os.path.join(up, "f.txt"), "w").write("base\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "base")
+        gu("checkout", "-q", "-b", "feat")
+        open(os.path.join(up, "f.txt"), "w").write("ahead\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "ahead")
+        gu("checkout", "-q", "main")
+        stamp = {"GIT_COMMITTER_DATE": f"{_SIGNING_FROM + 600} +0000"}
+        # `--no-ff`: 4c ruled aupai merges PRs with --merge, not --squash, so branch shas stay on
+        # main and the sha-keyed ledgers keep working. This world merges the way we will.
+        gu("merge", "--no-ff", "-m", "Merge pull request #1 from feat", "feat", env=stamp)
+        subprocess.run(["git", "clone", "-q", up, cl], capture_output=True, text=True)
+        subprocess.run(["git", "-C", cl, "checkout", "-q", "--detach", "HEAD"],
+                       capture_output=True, text=True)
+        # main advances again on the remote, then the detached clone fetches it into refs/heads/main.
+        open(os.path.join(up, "f.txt"), "w").write("further\n")
+        gu("add", "-A")
+        gu("commit", "-q", "-m", "further", env=stamp)
+        subprocess.run(["git", "-C", cl, "fetch", "origin", "main:main"],
+                       capture_output=True, text=True, env=dict(os.environ, **stamp))
+        os.makedirs(os.path.join(cl, "scripts"), exist_ok=True)
+        open(os.path.join(cl, "scripts", "harness.py"), "w").close()
+        log = os.path.join(cl, ".git", "logs", "refs", "heads", "main")
+        entries = [ln for ln in open(log, encoding="utf-8").read().splitlines() if ln.strip()]
+        last = entries[-1].split("\t", 1)[1].strip() if "\t" in entries[-1] else ""
+        assert last.startswith("fetch"), (
+            f"the world must produce a FETCH entry, or it is testing something else: {last!r}")
+        state, ev = check_main_advances_by_ancestry(cl)
+        assert state != FAIL, f"D: a fetch fast-forward is not a sideways move: {ev}"
+        assert state == PASS, (
+            f"D: a `git fetch origin main:main` -- how a gh PR merge reaches the local ref -- must "
+            f"not WARN, or every PR merge is permanent amber. Got {state}: {ev}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
     print("  ancestry: an unsigned fast-forward update-ref WARNs, the same write signed by "
-          "merge_main PASSes, and the pre-signing backlog is not a finding")
+          "merge_main PASSes, the pre-signing backlog is not a finding, and a real "
+          "`fetch origin main:main` (how a gh PR merge lands) PASSes")
 
 
 def _selftest_tasks_read_from_index():
@@ -7827,8 +7918,20 @@ def _broken_tasks_closed_by_commit():
     os.makedirs(os.path.dirname(alt), exist_ok=True)
     with open(alt, "w") as fh:
         fh.write(os.path.join(common, "objects") + "\n")
-    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", "main"],
+    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", main_ref(ROOT) or "main"],
                          capture_output=True, text=True).stdout.strip()
+    # main_ref, NOT a bare "main", AND the world asserts it got a tip. On a CI pull_request
+    # build ROOT has no local main, so `rev-parse main` returned empty, `update-ref` got no
+    # value, and this built a repo with NO MAIN AT ALL -- then _main_touched raised from the
+    # FIXTURE and the selftest reported "broken world cannot be made to fail: raised instead
+    # of reporting FAIL" (PR #3, job 101648544494). That is the same defect one layer out:
+    # fixing the reader's ref resolution while the world handed it a mainless repo moved the
+    # failure without removing it. A world that cannot build its premise must say so.
+    if not tip:
+        raise RuntimeError(
+            f"cannot build the world: no ref named main resolves in {ROOT} "
+            f"(tried main, origin/main, refs/remotes/origin/main), so the fixture would hand "
+            f"the check a repository with no main and the raise would come from here")
     subprocess.run(["git", "-C", d, "update-ref", "refs/heads/main", tip], capture_output=True)
     # The facts/ tree read from the INDEX. _commit_delivers resolves a
     # facts/<f>.json#<id> citation against the index, so a world whose index is empty fails
@@ -8787,8 +8890,52 @@ def _broken_entrypoints_table():
 DOCS_SUBDIRS = ("lessons", "audits")
 FRONTMATTER_KEYS = ("question", "status", "source")
 FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
-CMD_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.S)
+CMD_BLOCK_RE = re.compile(r"```(?:\w+)?\n(.*?)```", re.S)
 CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
+#: Inline `code` spans. THE POPULATION THIS CHECK ACTUALLY WANTS, and it was never read (de-72,
+#: 2026-09-07). AGENTS.md cites 63 scripts in backticks against 2 in fenced blocks, so a
+#: fenced-only scan covers 3% of what the document names.
+#:
+#: HOW THE GAP HID FOR SO LONG: the old `(?:bash|sh|shell)?` pattern could not OPEN at the
+#: ```python fence (AGENTS.md:156), so it opened at that block's CLOSING fence and every later
+#: marker alternated the other way -- pairing 173-181, 187-249 and 251-380, which are PROSE. It was
+#: scanning most of the document by accident and finding 29 paths. 3fd80424 corrected the pairing to
+#: `(?:\w+)?`, which is right, and the reach fell 29 -> 2 while the check went on PASSing: correct
+#: fence pairing cannot reach those paths, because they are not in fenced blocks. Three candidate
+#: regexes were measured (closer-alone-on-its-line, positional pairing on markers, tag-optional) and
+#: all give 2. The accident was covering the right population by the wrong means.
+#:
+#: So the fix is to read both, and to PRINT THE COUNT: a population that falls silently is what let
+#: a 93% collapse read as PASS (§259's shape at a second site).
+CMD_INLINE_RE = re.compile(r"`([^`\n]+)`")
+#: Where a bare script name is allowed to live. AGENTS.md cites `vet_programs.py`, which is real at
+#: mathbank/, and `train.py` at the root: resolving only against `root` calls both rot. These are the
+#: directories AGENTS.md's own Layout table names, so the resolver's scope comes from the document
+#: rather than from a guess.
+CMD_PATH_DIRS = ("", "scripts", "eval", "datagen", "mathbank", "probes", "algorithms", "filters")
+
+
+def cited_script_paths(text):
+    """Every .sh/.py path a doc cites, from fenced blocks AND inline `code` spans."""
+    out = set()
+    for block in CMD_BLOCK_RE.findall(text):
+        out |= set(CMD_PATH_RE.findall(block))
+    for span in CMD_INLINE_RE.findall(text):
+        out |= set(CMD_PATH_RE.findall(span))
+    return out
+
+
+def cited_script_exists(root, tok):
+    """Whether `tok` resolves to a file, searching the directories AGENTS.md's Layout names.
+
+    A path WITH a directory component is resolved as given -- `scripts/harness.py` must be at
+    scripts/, and accepting it from anywhere would let a wrong directory pass. Only a BARE name
+    (`vet_programs.py`, `train.py`) is searched, because that is how the document cites files whose
+    directory the reader is expected to know."""
+    rel = tok.lstrip("./")
+    if "/" in rel:
+        return os.path.exists(os.path.join(root, rel))
+    return any(os.path.exists(os.path.join(root, d, rel)) for d in CMD_PATH_DIRS)
 
 
 def _frontmatter(path):
@@ -9246,11 +9393,13 @@ def check_doc_commands(root):
                       "not the repo -- doc-cited paths are checked on dev/CI, not here")
     agents = os.path.join(root, "AGENTS.md")
     missing = set()
+    n_scanned = 0
     if os.path.exists(agents):
-        for block in CMD_BLOCK_RE.findall(open(agents, encoding="utf-8").read()):
-            for tok in CMD_PATH_RE.findall(block):
-                if not os.path.exists(os.path.join(root, tok)):
-                    missing.add(tok)
+        cited = cited_script_paths(open(agents, encoding="utf-8").read())
+        n_scanned = len(cited)
+        for tok in cited:
+            if not cited_script_exists(root, tok):
+                missing.add(tok)
     for f, _ln, tok in _doc_data_paths(root):
         if not _cited_path_exists(root, tok):
             missing.add(f"{f}:{_ln} {tok}")
@@ -9258,7 +9407,11 @@ def check_doc_commands(root):
         return FAIL, f"doc(s) cite path(s) not in the repo: {sorted(missing)[:5]}"
     if not os.path.exists(agents) and not _doc_data_paths(root):
         return SKIP, "no docs present"
-    return PASS, "every doc-cited script and data path exists"
+    # THE COUNT IS IN THE EVIDENCE because this check's reach silently fell 29 -> 2 at 3fd80424 and
+    # went on PASSing. A reader can now tell "64 citations resolved" from "2 resolved" without
+    # reading the regex.
+    return PASS, (f"{n_scanned} script citation(s) in AGENTS.md (fenced blocks and inline spans) "
+                  f"plus every doc-cited data path exist")
 
 
 # Retired phrases that must not reappear in README. The objective changed 2026-08-30;
@@ -9362,6 +9515,105 @@ def _broken_readme_current():
     with open(p, "w", encoding="utf-8") as f:
         f.write("A 200M 中文推理模型.\n\n" + text)
     return d
+
+
+def _selftest_inline_citations_are_scanned():
+    """An INLINE `nonexistent.py` in AGENTS.md must FAIL, and a real one must not (de-72).
+
+    THE WORLD 3fd80424 WOULD HAVE PASSED. That commit corrected CMD_BLOCK_RE's fence pairing --
+    rightly: the old `(?:bash|sh|shell)?` could not open at the ```python fence, so it opened at
+    that block's CLOSER and paired prose as command blocks, scanning most of the document by
+    accident. The reach fell from 29 paths to 2 and the check kept PASSing, because AGENTS.md cites
+    63 scripts in inline spans against 2 in fenced blocks. Nothing here could see that: no world
+    put a bogus citation in an inline span, so both the accident and its removal read identical.
+
+    FOUR CASES, and the last two are what stop this being satisfied by a check that FAILs on
+    everything: a bogus inline citation FAILs, a real one PASSes, a bogus one in a FENCED block
+    still FAILs (the old coverage is not traded away), and a bare name that lives in a subdirectory
+    named by AGENTS.md's own Layout table (`vet_programs.py` at mathbank/) PASSes -- resolving only
+    against root would call that rot, which is the false positive a naive fix produces.
+    """
+    import shutil
+
+    def _world(insert):
+        d = _tmp_repo()
+        # A REAL GIT REPO, not a `.git` directory. The check's data half calls `_cited_path_exists`,
+        # which exempts a cited path that is GITIGNORED -- absent from a clean checkout is normal
+        # for corpus bytes and tokenizer.json -- and it decides that from `git ls-files`. With an
+        # empty `mkdir .git` the ls-files answer is an empty tracked set, so every such path reads
+        # as rot: measured, the world FAILed naming `data/pod_synced_head`, `data/mix_scale`,
+        # `data/_corpus_unsanitized` and `data/corpus/code`, none of which is the citation under
+        # test. `git init` plus one commit of AGENTS.md gives the exemption something true to read.
+        subprocess.run(["git", "init", "-q", "-b", "main", "."], cwd=d, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.invalid"], cwd=d,
+                       capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
+        shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+        # The real code directories, so the world FAILs only on the inserted citation and not on
+        # every path AGENTS.md legitimately names (the trap _broken_readme_current records).
+        for name in CMD_PATH_DIRS:
+            if name and os.path.isdir(os.path.join(ROOT, name)):
+                os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+        for f in os.listdir(ROOT):
+            if f.endswith((".py", ".sh")) and os.path.isfile(os.path.join(ROOT, f)):
+                open(os.path.join(d, f), "w").close()
+        # THE DATA PATHS TOO, or the world FAILs for a reason that has nothing to do with the
+        # citation under test. The check has two halves -- script citations and `_doc_data_paths`
+        # -- and the second resolves data/ files. Measured: without this the FAIL named
+        # `AGENTS.md:103 data/mix_scale_3.24b.json` and four more, so the bogus-inline case passed
+        # while proving nothing and the two PASS cases would have been red. The name-the-path
+        # assertion is what caught it; a bare `state == FAIL` check would not have.
+        #
+        # THE DATA HALF IS SATISFIED BY COPYING THE REAL TREE'S ANSWER, not by re-deriving it. The
+        # check has two halves -- script citations and `_doc_data_paths` -- and without the second
+        # the world FAILed on `AGENTS.md:103 data/mix_scale_3.24b.json` and four more, so the
+        # bogus-inline case passed while proving nothing and the two PASS cases would have been red.
+        # The name-the-path assertion caught that; a bare `state == FAIL` would not have.
+        #
+        # A SYMLINK TO THE REAL data/, after removing the empty one _tmp_repo makes. Creating each
+        # cited path by hand does not work: `_doc_data_paths` yields prefixes (`data/shape`) as well
+        # as files under them, so whichever comes first decides whether the next is a file colliding
+        # with a directory or the reverse -- two FileExistsErrors, in both orders. The real tree
+        # already holds exactly the set the check will accept, and the fixture is read-only here.
+        _dd = os.path.join(d, "data")
+        if os.path.islink(_dd) or os.path.isfile(_dd):
+            os.remove(_dd)
+        elif os.path.isdir(_dd):
+            shutil.rmtree(_dd)
+        os.symlink(os.path.join(ROOT, "data"), _dd)
+        with open(os.path.join(d, "AGENTS.md"), "a", encoding="utf-8") as fh:
+            fh.write(insert)
+        return d
+
+    for label, insert, want in (
+        ("an inline citation of a nonexistent script FAILs",
+         "\n- The tool is `scripts/de72_no_such_tool.py`, which does not exist.\n", FAIL),
+        ("an inline citation of a real script does not",
+         "\n- The tool is `scripts/harness.py`, which exists.\n", PASS),
+        ("a bogus citation in a FENCED block still FAILs",
+         "\n```bash\npython scripts/de72_no_such_tool.py --flag\n```\n", FAIL),
+        ("a bare name that lives in a Layout subdirectory PASSes",
+         "\n- The registry root is `vet_programs.py`, real at mathbank/.\n", PASS),
+    ):
+        d = _world(insert)
+        try:
+            state, ev = check_doc_commands(d)
+            assert state == want, f"{label}: expected {want}, got {state}: {ev}"
+            if want is FAIL:
+                assert "de72_no_such_tool.py" in ev, (
+                    f"{label}: the FAIL must name the bogus path, or it fired on something else: "
+                    f"{ev}")
+            else:
+                # THE COUNT IS THE POINT of this change: a PASS that scanned 2 citations reads the
+                # same as one that scanned 64 unless the number is there.
+                assert re.search(r"\b6[0-9] script citation", ev), (
+                    f"{label}: the PASS must state how many citations it resolved, or a collapse "
+                    f"like 3fd80424's is invisible again: {ev}")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
+    print(f"  doc citations: {n} scanned in AGENTS.md (fenced + inline); a bogus inline or fenced "
+          f"citation FAILs by name, a real one and a bare Layout-subdirectory name PASS")
 
 
 def _broken_doc_commands():
@@ -18329,9 +18581,8 @@ def _selftest_merge_reverted_content():
 def _selftest_main_touched_raises_on_unreadable_main():
     """An unreadable `main` must RAISE, not read as "main touches nothing".
 
-    Three worlds, because the failure is that an empty map is indistinguishable from a
-    legitimately empty answer, and one of them is the reason the fix cannot live in the
-    :7750 guard:
+    Four worlds, because the failure is that an empty map is indistinguishable from a
+    legitimately empty answer, and two of them exist for reasons the other two cannot show:
 
       1. no `main` at all      -> RuntimeError naming the exit code
       2. a readable `main`     -> a populated map (so the fix is not "always raise", which
@@ -18339,12 +18590,17 @@ def _selftest_main_touched_raises_on_unreadable_main():
       3. the guard on world 1  -> `blind` is EMPTY, i.e. the guard that exists for this
                                   function going blind cannot see total blindness. Asserted
                                   so nobody "simplifies" the raise away and trusts :7750.
+      4. only refs/remotes/origin/main -> a populated map. This is a CI pull_request build, and
+                                  worlds 1-3 all pass without the ref fallback, so world 4 is
+                                  the only one that holds it in place.
 
     Measured 2026-09-06 on a clone with local main deleted: check_tasks_closed_by_commit
     returned `FAIL 156 of 156 ... does not reach main`. Every closed task at once, from a
     check whose subject is individual deliveries -- failures equal to total is the signature
     of an absent comparison side, not of N real defects.
     """
+    global ROOT   # world 5 repoints it; declared after the docstring, never before it
+
     import shutil
     import tempfile
 
@@ -18361,7 +18617,11 @@ def _selftest_main_touched_raises_on_unreadable_main():
 
         # World 2 FIRST: a readable main must produce a real map, and it pins the path that
         # world 1's raise must not have broken.
+        # BOTH CACHES, and main_ref's is the one that bites: it memoises the RESOLVED ref per
+        # root, and these worlds mutate refs inside ONE directory -- world 1 deletes main, so
+        # world 4 read a cached None and raised while the fallback was in place (measured).
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         ok = _main_touched(d)
         assert sha in ok and "f.py" in ok[sha], f"a readable main must map its commits: {ok}"
 
@@ -18370,6 +18630,7 @@ def _selftest_main_touched_raises_on_unreadable_main():
         g("checkout", "-q", "--detach")
         g("branch", "-D", "main")
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         try:
             got = _main_touched(d)
             raise AssertionError(
@@ -18392,8 +18653,169 @@ def _selftest_main_touched_raises_on_unreadable_main():
         assert "_main_touched sees no paths" not in ev_blind, (
             "the :7750 guard now fires on total blindness -- this selftest's premise is "
             f"stale and the raise may be reconsidered: {ev_blind[:120]}")
+
+        # WORLD 4: THE CI SHAPE. actions/checkout on a pull_request build fetches the base as
+        # refs/remotes/origin/main and creates no local main, so world 1's raise fired on a tree
+        # that is perfectly readable and every PR check job failed (4c 2026-09-07, 3b's PR #1 jobs
+        # 34088976228 / 34089010051 -- it blocked every session's PRs on the day the flip landed).
+        # A remote-tracking main must MAP, and this world is what separates the fallback from the
+        # raise: worlds 1-3 pass with no fallback at all, and world 4 fails without one.
+        #
+        # THE REMOTE IS REAL, not a hand-written ref. `git remote add` + `git fetch` is what
+        # produces refs/remotes/origin/main, and a fixture that writes the ref file directly would
+        # share the reading it is meant to test. Local main is deleted after the fetch, which is
+        # exactly the checkout's end state.
+        remote = tempfile.mkdtemp(prefix="mt_remote_")
+        try:
+            subprocess.run(["git", "-C", remote, "init", "-q", "--bare", "-b", "main"],
+                           capture_output=True, text=True)
+            g("checkout", "-q", "-B", "main")
+            g("remote", "add", "origin", remote)
+            g("push", "-q", "origin", "main")
+            g("fetch", "-q", "origin", "main")
+            g("checkout", "-q", "--detach")
+            g("branch", "-D", "main")
+            assert g("rev-parse", "--verify", "main").returncode != 0, \
+                "world 4 control: local main must be ABSENT, or the fallback is never reached"
+            assert g("rev-parse", "--verify", "refs/remotes/origin/main").returncode == 0, \
+                "world 4 control: refs/remotes/origin/main must exist, or this is world 1 again"
+            _MAIN_TOUCHED.pop(d, None)
+            _MAIN_REF.pop(d, None)
+            # RuntimeError CAUGHT AND RENAMED. Without this the mutant that restores the
+            # single-ref `git log main` fails by propagating world 1's raise out of the selftest,
+            # which reads as a crash in the harness rather than as world 4 -- measured
+            # (/tmp/de_w4_mutant.py: "CRASH: RuntimeError git log main failed ... exit 128").
+            # The world is only useful if its failure says which world failed.
+            try:
+                ci = _main_touched(d)
+            except RuntimeError as e:
+                raise AssertionError(
+                    f"world 4: a PR-build tree with only refs/remotes/origin/main RAISED instead "
+                    f"of mapping -- the ref fallback in _main_touched is gone, and every PR check "
+                    f"job fails on a readable tree: {e}") from e
+            assert sha in ci and "f.py" in ci[sha], (
+                f"world 4: a PR-build tree with only refs/remotes/origin/main must map its "
+                f"commits, not return an empty map: {list(ci)[:3]}")
+        finally:
+            shutil.rmtree(remote, ignore_errors=True)
+
+        # WORLD 5: THE FIXTURE, NOT THE READER. Worlds 1-4 all exercise _main_touched directly, and
+        # PR #3 passed every one of them while CI still failed -- because the failure came from
+        # _broken_tasks_closed_by_commit, which built its world with `git rev-parse main` in ROOT.
+        # On a PR build that returns empty, `update-ref` gets no value, and the fixture hands the
+        # check a repo with NO main; the selftest then reports "broken world cannot be made to fail:
+        # raised instead of reporting FAIL" (job 101648544494), which names the check and not the
+        # world. Fixing a reader's ref resolution while its fixture resolves the ref its own way
+        # moves the failure instead of removing it.
+        #
+        # SO THE WORLD REPOINTS ROOT AND RUNS THE REAL PAIR -- broken() then the check -- against a
+        # clone whose local main is deleted and whose only main is refs/remotes/origin/main. The
+        # first version of this world asserted main_ref() on a PR-shaped tree instead, and the
+        # mutant that restores the bare `rev-parse main` in the fixture stayed GREEN through it
+        # (measured): asserting the helper is not asserting the caller, which is the same shape as
+        # the defect the world exists for. The assertion is that the check FAILs -- what a broken
+        # world must do -- rather than raising.
+        ci_root = tempfile.mkdtemp(prefix="mt_ciroot_")
+        try:
+            # THE REF STATE IS CONSTRUCTED, NOT DERIVED FROM A CLONE. Two measured failures got
+            # here, and both were the world inheriting the defect it tests:
+            #   `clone --depth 50` of the integration tree, of its common git dir, and of this
+            #   worktree ALL yield refs/remotes/origin/HEAD plus the SOURCE's current branch only
+            #   -- fb, fb, de -- because a shallow clone fetches the source's HEAD branch alone
+            #   (/tmp/de_clone_probe.py). An earlier version simply asserted origin/main would be
+            #   there and passed once, when the integration tree happened to sit on a
+            #   main-carrying branch: a premise that depends on a neighbouring session's checkout.
+            #   Then `fetch +refs/heads/main:` failed ON CI (run 34096313397) for the same reason
+            #   one level down -- the CI checkout has NO refs/heads/main to fetch, which is the
+            #   whole subject of this fix.
+            # So: an empty repo, its objects borrowed via `alternates`, and
+            # refs/remotes/origin/main pointed at the tip main_ref finds in ROOT -- whatever ref
+            # that is here. No local head exists because none is ever created. That is
+            # actions/checkout's end state for a pull_request build, and it is the same
+            # borrow-the-objects trick _broken_tasks_closed_by_commit itself uses.
+            _tip = subprocess.run(["git", "-C", ROOT, "rev-parse", main_ref(ROOT) or "main"],
+                                  capture_output=True, text=True).stdout.strip()
+            _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
+                                      "--git-common-dir"], capture_output=True, text=True
+                                     ).stdout.strip()
+            subprocess.run(["git", "-C", ci_root, "init", "-q", "."], capture_output=True)
+            if _common:
+                _alt = os.path.join(ci_root, ".git", "objects", "info", "alternates")
+                os.makedirs(os.path.dirname(_alt), exist_ok=True)
+                with open(_alt, "w") as fh:
+                    fh.write(os.path.join(_common, "objects") + "\n")
+            if _tip:
+                subprocess.run(["git", "-C", ci_root, "update-ref",
+                                "refs/remotes/origin/main", _tip], capture_output=True)
+                subprocess.run(["git", "-C", ci_root, "read-tree", _tip], capture_output=True)
+            for _b in subprocess.run(["git", "-C", ci_root, "for-each-ref", "--format=%(refname)",
+                                      "refs/heads/"], capture_output=True, text=True
+                                     ).stdout.split():
+                subprocess.run(["git", "-C", ci_root, "update-ref", "-d", _b], capture_output=True)
+            # The fixture reads ROOT/runs/tasks.jsonl from the FILESYSTEM, so the world needs it.
+            os.makedirs(os.path.join(ci_root, "runs"), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, "runs", "tasks.jsonl"),
+                        os.path.join(ci_root, "runs", "tasks.jsonl"))
+            _no_local = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
+                                        "main"], capture_output=True, text=True).returncode != 0
+            _has_remote = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
+                                          "refs/remotes/origin/main"],
+                                         capture_output=True, text=True).returncode == 0
+            # A SKIP THAT HIDES THE SUBJECT IS A FAILURE, not a note. The premise is buildable
+            # wherever git can init, so failing to build it means this world is not running and
+            # the mutant sweep reads its silence as a pass.
+            assert _no_local and _has_remote, (
+                f"world 5: could not build the PR-shaped ref state in {ci_root} (local main "
+                f"absent={_no_local}, origin/main present={_has_remote}); the world would SKIP, "
+                f"and a SKIP here is indistinguishable from a pass")
+            _row = next((t for t in CHECKS if t[0] == "tasks_closed_by_commit"), None)
+            assert _row, "world 5: tasks_closed_by_commit left CHECKS; repoint this world"
+            # BOTH MODULES' ROOT. The fixture reads harness.ROOT and the readers it calls read
+            # harness_core.ROOT; repointing only one leaves the other on the real tree, and the
+            # world would then be half-CI and prove nothing.
+            import harness_core as _core5
+            _saved, _saved_core = ROOT, _core5.ROOT
+            # `global ROOT`, not globals()["ROOT"]: harness.py defines its own module-level
+            # ROOT (:34), so the dict write was NOT inert -- but
+            # _selftest_core_reexports_are_identical flags any globals()[name] whose name also
+            # exists in harness_core, because from the outside an inert patch of a core object
+            # looks identical. It caught this on PR #3 (job 34094214357). The guard is right to
+            # be name-based and the fix is to use the idiom it cannot mistake.
+            ROOT = _core5.ROOT = ci_root
+            _st = _ev = None
+            _raised = None
+            try:
+                _MAIN_REF.clear()
+                _MAIN_TOUCHED.clear()
+                _w = _row[4]()
+                _st, _ev = _row[3](_w)
+            except RuntimeError as e:
+                # THE RAISE IS THE FAILURE MODE, so it is caught here rather than allowed out.
+                # Uncaught it prints as "CRASH: RuntimeError git log main failed ..." with no
+                # mention of this world -- which is exactly how CI reported it, naming the check
+                # and leaving the fixture unnamed (job 101648544494). Measured before this catch
+                # existed: the mutant produced that text and the sweep read it as uncaught.
+                _raised = e
+            finally:
+                ROOT = _saved
+                _core5.ROOT = _saved_core
+                _MAIN_REF.clear()
+                _MAIN_TOUCHED.clear()
+            assert _raised is None, (
+                f"world 5: with ROOT holding only refs/remotes/origin/main, the fixture built a "
+                f"world with no main and the check RAISED from it instead of reporting FAIL -- "
+                f"`_broken_tasks_closed_by_commit` resolves main its own way and must go through "
+                f"main_ref: {_raised}")
+            assert _st == FAIL, (
+                f"world 5: with ROOT holding only refs/remotes/origin/main, "
+                f"_broken_tasks_closed_by_commit's world must still make the check FAIL, "
+                f"got {_st}: {(_ev or '')[:140]}")
+        finally:
+            shutil.rmtree(ci_root, ignore_errors=True)
+            _MAIN_REF.pop(ci_root, None)
     finally:
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         shutil.rmtree(d, ignore_errors=True)
     print("  _main_touched: an unreadable main raises; a readable one maps; the :7750 guard "
           "is blind to the empty map, so the raise is the only cover")
@@ -20767,6 +21189,7 @@ def _demo(only=None):
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
         _selftest_review_present_legacy,
+        _selftest_inline_citations_are_scanned,
     ):
         try:
             _fn()
@@ -22760,25 +23183,63 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
-            # The pending row is this name's claim file, so acquire would clash with itself.
-            # Remove it and let acquire write the real one -- the window it covered is over,
-            # because claim_pid is a process observed holding the card.
-            if pending_path and os.path.exists(pending_path):
-                try:
-                    os.unlink(pending_path)
-                except OSError:
-                    pass
-            # require_device only when the poll established it: on macOS the fallback picked
-            # the first non-shell descendant without proving anything, so asserting it there
-            # would refuse every laptop launch.
+            # ACQUIRE FIRST, UNLINK ONLY ON SUCCESS. The old order unlinked the pending row and
+            # then called acquire, so a REFUSED acquire left the cards declared by nobody while
+            # the job ran on them -- exactly the de-47 hole the pending row was written to close,
+            # reopened at the moment the row was needed most. It is not hypothetical: on
+            # 2026-09-07 the 30B launch was refused with "cards ['6'] are claimed by
+            # {'6': ['tilerl-gdnfloor']}" and runs/claims/ was empty a minute later with all six
+            # ranks alive; b0 had to hand-acquire.
+            #
+            # NO SELF-CLASH TO AVOID. The old comment said "the pending row is this name's claim
+            # file, so acquire would clash with itself", and that is not what acquire does:
+            # card_claim.py:833 excludes this claim's own file from the clash test, and its
+            # O_EXCL/FileExistsError path REBINDS when the new pid is a descendant of the recorded
+            # one (card_claim.py:1041) -- which is precisely pending(wrapper) -> held(job).
+            # Measured 2026-09-07 in an isolated claim dir: with the pending row present and no
+            # clash, acquire returns "claimed 2,3,4,5,6,7" and the row on disk carries the JOB's
+            # pid. The unlink bought nothing and cost the refusal case.
+            #
+            # It also masked a card_claim defect rather than avoiding one: the pending row satisfied
+            # acquire's ancestry exemption (the row names the wrapper, the asked pid is its child),
+            # so keeping the row without fixing that would have turned the refusal into a silent
+            # True with nothing written. Fixed at card_claim.py:866 in the same commit; the order
+            # here is safe only together with it.
+            #
+            # require_device only when the poll established it: on macOS the fallback picked the
+            # first non-shell descendant without proving anything, so asserting it there would
+            # refuse every laptop launch.
             ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note,
                                                  require_device=claim_dev is not None)
             if ok_claim:
+                # The window the pending row covered is over: claim_pid was observed holding the
+                # card and acquire has written the real row. Remove the pending file only if
+                # acquire did not already reuse that path -- when it rebinds in place, this IS the
+                # real claim and unlinking it would delete what we just acquired.
+                if pending_path and os.path.exists(pending_path):
+                    still_pending = False
+                    try:
+                        with open(pending_path, encoding="utf-8") as _pf:
+                            still_pending = json.load(_pf).get("state") == "pending"
+                    except (OSError, ValueError):
+                        still_pending = False
+                    if still_pending:
+                        try:
+                            os.unlink(pending_path)
+                        except OSError:
+                            pass
                 claim_name = args.name
                 held = f" ({claim_dev} device fds)" if claim_dev else ""
                 print(f"claim  cards {cards} -> pid {claim_pid}{held}")
             else:
-                print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+                # THE PENDING ROW STAYS. The cards are in use by this job whatever acquire thinks,
+                # and a row saying so is what stops the sweep calling them ORPHAN and a second
+                # launch taking them. It names the wrapper pid, so it goes stale on its own when
+                # the job ends -- no manual cleanup, and no claim on a shell being treated as real.
+                _kept = (" The PENDING row stands, so the cards are still declared and go stale "
+                         "when the wrapper exits." if pending_path and os.path.exists(pending_path)
+                         else " NO row exists for these cards -- claim them by hand.")
+                print(f"note   cards {cards} not claimed: {claim_msg}{_kept}", file=sys.stderr)
         elif _proc_readable():
             _w = _dev_wait()
             # THE JOB MAY SIMPLY HAVE BEEN FAST, and that is not the same as never holding a card.
