@@ -1,0 +1,871 @@
+{
+ "code_sample_100": [
+  {
+   "i": 0,
+   "tokens": 4038,
+   "head": "/*\t$NetBSD: intr.h,v 1.12 2004/03/04 19:10:10 dbj Exp $\t*/\n\n/*-\n * Copyright (c) 1998, 2001 The NetBSD Foundation, Inc.\n * All rights reserved.\n *\n * "
+  },
+  {
+   "i": 1,
+   "tokens": 659,
+   "head": "PACKAGE=\"headphones\"\nDNAME=\"Headphones\"\n\n# Others\nINSTALL_DIR=\"/usr/local/${PACKAGE}\"\nSSS=\"/var/packages/${PACKAGE}/scripts/start-stop-status\"\nPYTHON_"
+  },
+  {
+   "i": 2,
+   "tokens": 366,
+   "head": "#ifndef COIN_SOVRMLCYLINDER_H\n#define COIN_SOVRMLCYLINDER_H\n\n#include <Inventor/nodes/SoSubNode.h>\n#include <Inventor/VRMLnodes/SoVRMLGeometry.h>\n#inc"
+  },
+  {
+   "i": 3,
+   "tokens": 304,
+   "head": "const debug = require('debug')('cygnus:api:project');\nconst express = require('express');\nconst router = express.Router();\nconst ProjectService = requ"
+  },
+  {
+   "i": 4,
+   "tokens": 522,
+   "head": "package httputil\n\nimport (\n\t\"io\"\n\t\"net/http\"\n\n\t\"github.com/vektra/cypress\"\n)\n\ntype LogHandler interface {\n\tHandleMessage(m *cypress.Message) error\n}\n\n"
+  },
+  {
+   "i": 5,
+   "tokens": 276,
+   "head": "typedef void (^JMONavCompletionBlock)();\n\ntypedef NS_ENUM(NSUInteger, JMONavigationActionType) {\n    JMONavigationActionTypePush,\n    JMONavigationAct"
+  },
+  {
+   "i": 6,
+   "tokens": 210,
+   "head": "from __future__ import unicode_literals\n\nfrom django.db import migrations, models\n\n\nclass Migration(migrations.Migration):\n\n    dependencies = [\n     "
+  },
+  {
+   "i": 7,
+   "tokens": 391,
+   "head": "package im.actor.core.modules.messaging.history.entity;\n\nimport im.actor.core.entity.Peer;\nimport im.actor.core.entity.content.AbsContent;\n\npublic cla"
+  },
+  {
+   "i": 8,
+   "tokens": 410,
+   "head": "title: Henrik Hellerøy\ntemplate: person.pug\ncurrent: knight_first_class\nrank: Ridder av første klasse\nappointed: 2013\nreason: For hans brede engasjeme"
+  },
+  {
+   "i": 9,
+   "tokens": 550,
+   "head": "// Copyright 2000-2018 JetBrains s.r.o. Use of this source code is governed by the Apache 2.0 license that can be found in the LICENSE file.\npackage c"
+  },
+  {
+   "i": 10,
+   "tokens": 3021,
+   "head": "#include \"nhr_response.h\"\n#include \"nhr_memory.h\"\n#include \"nhr_string.h\"\n#include \"nhr_gz.h\"\n#include <string.h>\n#include <ctype.h>\n\n#if defined(NHR_"
+  },
+  {
+   "i": 11,
+   "tokens": 905,
+   "head": "import _Object$getPrototypeOf from 'babel-runtime/core-js/object/get-prototype-of';\nimport _classCallCheck from 'babel-runtime/helpers/classCallCheck'"
+  },
+  {
+   "i": 12,
+   "tokens": 1903,
+   "head": "package org.s1.ws;\n\nimport org.s1.format.xml.XMLFormat;\nimport org.s1.misc.Closure;\nimport org.s1.objects.Objects;\nimport org.w3c.dom.Element;\n\nimport"
+  },
+  {
+   "i": 13,
+   "tokens": 220,
+   "head": "﻿//---------------------------------------------------------------------\r\n// <copyright file=\"CollectionMaxCountHint.cs\" company=\"Microsoft\">\r\n//     "
+  },
+  {
+   "i": 14,
+   "tokens": 404,
+   "head": "﻿using System;\nusing System.Collections.Generic;\nusing System.Linq;\nusing System.Text;\n\nnamespace OopFactory.X12.Parsing.Model.Typed\n{\n    public clas"
+  },
+  {
+   "i": 15,
+   "tokens": 1264,
+   "head": "# ember-axe\n\n[![Build Status](https://travis-ci.org/trentmwillis/ember-axe.svg?branch=master)](https://travis-ci.org/trentmwillis/ember-axe)\n[![NPM Ve"
+  },
+  {
+   "i": 16,
+   "tokens": 420,
+   "head": "//package de.pfabulist.lindwurm.niotest.test4.descriptionbuilders;\n//\n//import de.pfabulist.lindwurm.niotest.tests.FSDescription;\n//import de.pfabulis"
+  },
+  {
+   "i": 17,
+   "tokens": 9742,
+   "head": "package e2e\n\nimport (\n\t\"fmt\"\n\t\"io/ioutil\"\n\t\"path/filepath\"\n\t\"strconv\"\n\t\"strings\"\n\t\"time\"\n\n\tinf \"gopkg.in/inf.v0\"\n\n\t. \"github.com/onsi/ginkgo\"\n\t. \"gith"
+  },
+  {
+   "i": 18,
+   "tokens": 4426,
+   "head": "import mock\nfrom oslo_utils import importutils\n\nfrom ironic.common import exception\nfrom ironic.common import states\nfrom ironic.conductor import task"
+  },
+  {
+   "i": 19,
+   "tokens": 972,
+   "head": "namespace osquery {\nnamespace core {\n\n// kTestQuery is a test query that can be executed against the database\n// returned from createTestDB() to resul"
+  },
+  {
+   "i": 20,
+   "tokens": 597,
+   "head": "This directory contains *modified* exercise data intended for use with the tutorials in *\"The QGIS Training Manual\"*.\n\nBy default, the sample data pro"
+  },
+  {
+   "i": 21,
+   "tokens": 235,
+   "head": "package com.alipay.hulu.ui;\n\nimport android.content.Context;\nimport android.util.AttributeSet;\nimport android.widget.ListView;\n\n/**\n * Created by cath"
+  },
+  {
+   "i": 22,
+   "tokens": 1233,
+   "head": "<?php\n\nnamespace Traum\\Resource;\n\nuse Traum\\Entity;\nuse Traum\\Resource;\nuse Traum\\Transformer;\n\n/**\n * Class Customer\n *\n * @package Traum\\Resource\n *"
+  },
+  {
+   "i": 23,
+   "tokens": 800,
+   "head": "package com.amazonaws.services.simplesystemsmanagement.model.transform;\n\nimport java.math.*;\n\nimport javax.annotation.Generated;\n\nimport com.amazonaws"
+  },
+  {
+   "i": 24,
+   "tokens": 2770,
+   "head": "<?php\n\nnamespace OHT\\MainBundle\\Controller;\n\nuse OHT\\MainBundle\\Entity\\Instrument;\nuse OHT\\MainBundle\\Entity\\Musiciens;\nuse OHT\\MainBundle\\Form\\Musici"
+  },
+  {
+   "i": 25,
+   "tokens": 294,
+   "head": "#include \"OgreStableHeaders.h\"\n\n#include \"OgreException.h\"\n#include \"OgreLogManager.h\"\n#include \"OgreRoot.h\"\n#include \"OgreStringConverter.h\"\n\n#includ"
+  },
+  {
+   "i": 26,
+   "tokens": 2392,
+   "head": "package com.bagri.xquery.saxon;\r\n\r\nimport static com.bagri.core.Constants.cmd_get_document;\r\nimport static com.bagri.core.Constants.cmd_remove_cln_doc"
+  },
+  {
+   "i": 27,
+   "tokens": 2841,
+   "head": "\"\"\"Data utils.\"\"\"\nfrom typing import Dict, List, Sequence, Tuple\n\nfrom absl import logging\nimport numpy as np\nimport seqio\n\n# A tuple of all possible "
+  },
+  {
+   "i": 28,
+   "tokens": 616,
+   "head": "package play.core.server\n\nimport java.lang.management.ManagementFactory\nimport java.util.Properties\n\n/**\n * Abstracts a JVM process so it can be mocke"
+  },
+  {
+   "i": 29,
+   "tokens": 339,
+   "head": "from django.conf.urls import *\nfrom django.utils.translation import ugettext_lazy as _\n\n\"\"\"\nAlso used in cms.tests.ApphooksTestCase\n\"\"\"\n\nurlpatterns ="
+  },
+  {
+   "i": 30,
+   "tokens": 935,
+   "head": ".. _arch-numba-runtime:\n\n======================\nNotes on Numba Runtime\n======================\n\n\nThe *Numba Runtime (NRT)* provides the language runtim"
+  },
+  {
+   "i": 31,
+   "tokens": 819,
+   "head": "package com.intellij.uiDesigner.designSurface;\n\nimport org.jetbrains.annotations.Nullable;\n\nimport java.awt.*;\nimport java.awt.event.KeyEvent;\nimport "
+  },
+  {
+   "i": 32,
+   "tokens": 1593,
+   "head": "/*\n *  Tiled Map Editor, (c) 2004-2006\n *\n *  This program is free software; you can redistribute it and/or modify\n *  it under the terms of the GNU G"
+  },
+  {
+   "i": 33,
+   "tokens": 87,
+   "head": "/**\n * \n */\n\npackage org.opensaml.saml2.core.impl;\n\n/**\n * A thread-safe Marshaller for {@link org.opensaml.saml2.core.SubjectQuery}.\n */\npublic abstr"
+  },
+  {
+   "i": 34,
+   "tokens": 143,
+   "head": "using ParentLoad.Business;\r\n\r\nnamespace ParentLoad.Business.ERCLevel\r\n{\r\n    public partial class B05Level111Coll\r\n    {\r\n\r\n        #region Pseudo Eve"
+  },
+  {
+   "i": 35,
+   "tokens": 1425,
+   "head": "import os.path as op\n\nfrom nose.tools import eq_, ok_\n\nfrom flask_admin.contrib import fileadmin\n\nfrom . import setup\n\ntry:\n    from StringIO import S"
+  },
+  {
+   "i": 36,
+   "tokens": 207,
+   "head": "<?php\n\nnamespace HieuLe\\LaravelMenu;\n\nuse HieuLe\\Active\\ActiveServiceProvider;\nuse Illuminate\\Support\\ServiceProvider;\n\nclass LaravelMenuServiceProvid"
+  },
+  {
+   "i": 37,
+   "tokens": 1075,
+   "head": "package com.github.czyzby.autumn.mvc.stereotype;\n\nimport java.lang.annotation.ElementType;\nimport java.lang.annotation.Retention;\nimport java.lang.ann"
+  },
+  {
+   "i": 38,
+   "tokens": 4342,
+   "head": "\"\"\"Test alembic migrations of spatial columns.\"\"\"\nimport platform\n\nimport pytest\nimport sqlalchemy as sa  # noqa (This import is only used in the migr"
+  },
+  {
+   "i": 39,
+   "tokens": 4297,
+   "head": "{-# LANGUAGE ScopedTypeVariables  #-}\n{-# LANGUAGE UndecidableInstances #-}\n\nmodule Pos.Explorer.TestUtil\n    ( BlockNumber\n    , SlotsPerEpoch\n    , "
+  },
+  {
+   "i": 40,
+   "tokens": 2686,
+   "head": "// Copyright 2021 The ChromiumOS Authors\n// Use of this source code is governed by a BSD-style license that can be\n// found in the LICENSE file.\n\npack"
+  },
+  {
+   "i": 41,
+   "tokens": 58,
+   "head": "SYNONYM\n\n#### According to\nIndex Fungorum\n\n#### Published in\nnull\n\n#### Original name\nTorulopsis californicus Mrak & McClung\n\n### Remarks\nnull"
+  },
+  {
+   "i": 42,
+   "tokens": 542,
+   "head": "define([ 'util/ensureCallback', 'sprites/canvas' ], function (ensureCallback, canvas) {\n    function RenderContext(sourceData, frameData) {\n        th"
+  },
+  {
+   "i": 43,
+   "tokens": 47,
+   "head": "package org.kordamp.naum.processor.klass;\n\nimport javax.inject.Named;\n\n@Named\npublic class ClassWithAnnotation {\n}"
+  },
+  {
+   "i": 44,
+   "tokens": 1167,
+   "head": "\"use strict\";\nvar core_1 = require('@angular/core');\nvar intl_1 = require('../facade/intl');\nvar lang_1 = require('../facade/lang');\nvar invalid_pipe_"
+  },
+  {
+   "i": 45,
+   "tokens": 38440,
+   "head": "#include \"fsl_lpuart_cmsis.h\"\n\n/* Re-mapping for LPUART & UART indexing. */\n#if (FSL_FEATURE_SOC_LPUART_COUNT == 1) && FSL_FEATURE_SOC_UART_COUNT\n\n#if"
+  },
+  {
+   "i": 46,
+   "tokens": 217,
+   "head": "package com.danielasfregola.twitter4s.entities\n\nfinal case class ProfileImage(mini: String, normal: String, bigger: String, default: String)\n\nobject P"
+  },
+  {
+   "i": 47,
+   "tokens": 84,
+   "head": "package org.javers.core.examples.typeNames;\n\nimport org.javers.core.metamodel.annotation.Id;\n\n/**\n * @author bartosz.walacik\n */\npublic class EntityWi"
+  },
+  {
+   "i": 48,
+   "tokens": 115,
+   "head": "@interface AMSecondViewController ()\n\n@end\n\n@implementation AMSecondViewController\n\n- (void)viewDidLoad\n{\n    [super viewDidLoad];\n\t// Do any addition"
+  },
+  {
+   "i": 49,
+   "tokens": 567,
+   "head": "<!--\n  ~ Licensed to the Apache Software Foundation (ASF) under one\n  ~  or more contributor license agreements.  See the NOTICE file\n  ~  distributed"
+  },
+  {
+   "i": 50,
+   "tokens": 274,
+   "head": "my-caches\n=========\n\nThis code system helps to define hierarchical caches.\n\nI have only used such cache in relation to code systems. The hierarchy is "
+  },
+  {
+   "i": 51,
+   "tokens": 6056,
+   "head": "﻿\n\n/*\n * HTML5 Boilerplate\n *\n * What follows is the result of much research on cross-browser styling.\n * Credit left inline and big thanks to Nicolas"
+  },
+  {
+   "i": 52,
+   "tokens": 951,
+   "head": "﻿// -----------------------------------------------------------------------\n// <copyright file=\"Program.cs\" company=\"Asynkron AB\">\n//      Copyright ("
+  },
+  {
+   "i": 53,
+   "tokens": 4240,
+   "head": "[IPFS](//ipfs.io/) is a new hypermedia distribution protocol, addressed by content and identities, aiming to make the web faster, safer, and more open"
+  },
+  {
+   "i": 54,
+   "tokens": 4094,
+   "head": "import {\n    addClass,\n    getCaretPosition,\n    getComputedStyle,\n    getCssTransform,\n    getScrollableElement,\n    innerWidth,\n    offset,\n    rese"
+  },
+  {
+   "i": 55,
+   "tokens": 868,
+   "head": "﻿using System;\nusing System.Collections.Generic;\n\nusing Grasshopper.Kernel;\nusing Rhino.Geometry;\nusing FuncLib.Functions;\nusing FuncLib.Optimization."
+  },
+  {
+   "i": 56,
+   "tokens": 218,
+   "head": "typedef void (watch_callback)(void);\n\nenum {\n\tarbiter_all_dmas = 0x3ff,\n\tarbiter_cpu = 0xc00,\n\tarbiter_all_clients = 0x3fff\n};\n\nenum {\n\tarbiter_all_re"
+  },
+  {
+   "i": 57,
+   "tokens": 63,
+   "head": "package com.hotf.model.val;\r\n\r\npublic class ValidationException extends Exception {\r\n\r\n\tprivate static final long serialVersionUID = 1L;\r\n\r\n\tpublic Va"
+  },
+  {
+   "i": 58,
+   "tokens": 1894,
+   "head": "package monix.reactive\n\nimport cats.Eval\nimport cats.effect.{IO, SyncIO}\nimport monix.eval.{Coeval, Task, TaskLike}\nimport monix.reactive.internal.bui"
+  },
+  {
+   "i": 59,
+   "tokens": 650,
+   "head": "require 'bcrypt'\nrequire 'merb-auth-more/strategies/abstract_password'\n\nclass Merb::Authentication\n  module Mixins\n    # This mixin provides basic sal"
+  },
+  {
+   "i": 60,
+   "tokens": 222,
+   "head": "class Death < ActiveRecord::Base\n  include Interleaveable\n  self.table_name = 'death'\n  self.primary_key = 'death_id'\n\n  belongs_to :death_type_concep"
+  },
+  {
+   "i": 61,
+   "tokens": 3275,
+   "head": "/* line 2, inputs/extends.scss */\nerror, pre seriousError, span seriousError, other, hello {\n  border: 1px #f00;\n  background-color: #fdd; }\n/* line 7"
+  },
+  {
+   "i": 62,
+   "tokens": 272,
+   "head": "\"\"\"variables_numericas.py\"\"\"\n\n# Tipos de variables que podemos crear y tipos de datos que podemos manejar\n\n# Numéricos\n# Antes de concatenar números, "
+  },
+  {
+   "i": 63,
+   "tokens": 16674,
+   "head": "<?php\n\n\n\nnamespace Sonata\\AdminBundle\\Admin;\n\nuse Symfony\\Component\\Form\\Form;\nuse Symfony\\Component\\Form\\FormBuilder;\nuse Symfony\\Component\\PropertyA"
+  },
+  {
+   "i": 64,
+   "tokens": 120,
+   "head": "require 'rails_helper'\n\nfeature 'Todos created, purge run, and' do\n\n  scenario 'OVERDUE is zapped!' do\n    todo = create(:todo_overdue)\n    Todo.purge"
+  },
+  {
+   "i": 65,
+   "tokens": 2835,
+   "head": "package org.apache.zookeeper.admin;\n\nimport java.io.IOException;\nimport java.util.List;\n\nimport org.apache.yetus.audience.InterfaceAudience;\nimport or"
+  },
+  {
+   "i": 66,
+   "tokens": 12871,
+   "head": "package org.apache.flink.runtime.taskmanager;\n\nimport org.apache.flink.api.common.ExecutionConfig;\nimport org.apache.flink.configuration.Configuration"
+  },
+  {
+   "i": 67,
+   "tokens": 139,
+   "head": "<?php\n/**\n * @package StripperParser\n */\n\n// include blocks\nrequire(\"StripperParser.php\");\nrequire(\"StripperConfig/StripperConfig.php\");\n\nclass Stripp"
+  },
+  {
+   "i": 68,
+   "tokens": 1305,
+   "head": "/**\n * @author Intel, Mikhail Y. Fursov\n *\n */\n\n#ifndef _BITSET_H_\n#define _BITSET_H_\n\n#include <assert.h>\n#include \"open/types.h\"\n#include \"MemoryMan"
+  },
+  {
+   "i": 69,
+   "tokens": 238,
+   "head": "<?php\n\nnamespace Gestor\\MaterialBundle\\DependencyInjection;\n\nuse Symfony\\Component\\Config\\Definition\\Builder\\TreeBuilder;\nuse Symfony\\Component\\Config"
+  },
+  {
+   "i": 70,
+   "tokens": 386,
+   "head": "--------------------------------\n-- brief Create the action with the number of rows and the duration.<br>\n-- param duration Specify the duration of th"
+  },
+  {
+   "i": 71,
+   "tokens": 203,
+   "head": "namespace OpenThreadTalk\n{\n    [WFM::WebHostHidden]\n    public ref class StreamListenerContext sealed : public IListenerContext\n    {\n    public:\n    "
+  },
+  {
+   "i": 72,
+   "tokens": 607,
+   "head": "//\n// This file was generated by the JavaTM Architecture for XML Binding(JAXB) Reference Implementation, v2.2.4-2 \n// See <a href=\"http://java.sun.com"
+  },
+  {
+   "i": 73,
+   "tokens": 1009,
+   "head": "\"\"\"General utilities\"\"\"\n# Copyright (c) 2015-2022 Wibowo Arindrarto <contact@arindrarto.dev>\n# SPDX-License-Identifier: BSD-3-Clause\n\nimport json\nimpo"
+  },
+  {
+   "i": 74,
+   "tokens": 3799,
+   "head": "/// <reference path=\"../_definitions.ts\" />\n\n/**\n* Phaser - Vec2Utils\n*\n* A collection of methods useful for manipulating and performing operations on"
+  },
+  {
+   "i": 75,
+   "tokens": 566,
+   "head": "/**\n * \\file\n * \\brief Poll, select wrappers\n */\n#ifndef YAZ_POLL_H\n#define YAZ_POLL_H\n\n#include <stddef.h>\n#include <yaz/yconfig.h>\n\nYAZ_BEGIN_CDECL\n"
+  },
+  {
+   "i": 76,
+   "tokens": 648,
+   "head": "import {EventEmitter} from 'events';\n\n/**\n * Provides Jupyter outputs to an output area.\n *\n * This class manages the conversion of Jupyter messages t"
+  },
+  {
+   "i": 77,
+   "tokens": 4755,
+   "head": "=======================\nNeutron Callback System\n=======================\n\nIn Neutron, core and service components may need to cooperate during the\nexec"
+  },
+  {
+   "i": 78,
+   "tokens": 31,
+   "head": "package rfx.core.stream.data.metric;\n\n\npublic interface MetricStreamData {\n\n\tpublic String getData();\n}"
+  },
+  {
+   "i": 79,
+   "tokens": 278,
+   "head": "package com.csust.alarm.alert;\n\nimport android.content.Context;\nimport android.os.PowerManager;\n\npublic class StaticWakeLock {\n\t\n\tprivate static Power"
+  },
+  {
+   "i": 80,
+   "tokens": 528,
+   "head": "package org.apache.olingo.commons.core.edm.primitivetype;\n\nimport org.apache.olingo.commons.api.edm.EdmPrimitiveTypeException;\nimport org.apache.oling"
+  },
+  {
+   "i": 81,
+   "tokens": 423,
+   "head": "﻿using System;\nusing System.Collections.Generic;\nusing System.Linq;\nusing System.Text;\nusing Elasticsearch.Net;\nusing Newtonsoft.Json;\nusing Newtonsof"
+  },
+  {
+   "i": 82,
+   "tokens": 3496,
+   "head": "import numpy as np\nfrom numpy.testing import (assert_equal, assert_almost_equal,\n                           assert_raises)\nfrom skimage.transform._geo"
+  },
+  {
+   "i": 83,
+   "tokens": 47,
+   "head": "package de.hshannover.f4.trust.ironvas;\n\npublic enum ThreatLevel {\n    Unknown, Debug, Log, Low, Medium, High\n}"
+  },
+  {
+   "i": 84,
+   "tokens": 94,
+   "head": "Display the Travis CI build status of your GitHub repo. Travis badge, latest commit status and real-time updates as builds are committed and jobs are "
+  },
+  {
+   "i": 85,
+   "tokens": 2036,
+   "head": "<?php\n\nnamespace App\\Forms;\n\nuse App;\nuse Exception;\nuse Nette;\nuse App\\Model\\Repository\\IfmsaPersons;\nuse Traversable;\n\n/**\n * Class containing facto"
+  },
+  {
+   "i": 86,
+   "tokens": 5207,
+   "head": "#ifndef __ADC_0_H__\n#define __ADC_0_H__\n \n#include \"efm8_config.h\"\n#include \"SI_EFM8UB1_Register_Enums.h\"\n\n\n/*****************************************"
+  },
+  {
+   "i": 87,
+   "tokens": 119,
+   "head": "module Softlayer\n  module Billing\n    class Item\n      module Network\n        module Message\n          class Queue < Softlayer::Billing::Item\n        "
+  },
+  {
+   "i": 88,
+   "tokens": 4913,
+   "head": "from typing import Any, List, Optional\n\nfrom azure.batch import models as batch_models\n\nfrom airflow.exceptions import AirflowException\nfrom airflow.m"
+  },
+  {
+   "i": 89,
+   "tokens": 501,
+   "head": "@implementation ObservationsRootController\n\n- (id)initWithNibName:(NSString *)nibNameOrNil bundle:(NSBundle *)nibBundleOrNil\n{\n    self = [super initW"
+  },
+  {
+   "i": 90,
+   "tokens": 6886,
+   "head": "package org.elasticsearch.gateway.local.state.meta;\n\nimport com.google.common.collect.Lists;\nimport com.google.common.collect.Maps;\nimport org.apache."
+  },
+  {
+   "i": 91,
+   "tokens": 177,
+   "head": "<template name=\"home\">\n  <div class=\"container\">\n    <h1>Welcome!</h1>\n\n    <p>This is a toy app I made to become more familiar with Meteor.</p>\n    <"
+  },
+  {
+   "i": 92,
+   "tokens": 1391,
+   "head": "function dwtOnReady() {\n    let DWObject = Dynamsoft.WebTwainEnv.GetWebTwain('dwtcontrolContainer');    // Get the Dynamic Web TWAIN object that is em"
+  },
+  {
+   "i": 93,
+   "tokens": 282,
+   "head": "package net.sourceforge.plantuml.api;\n\nimport net.sourceforge.plantuml.annotation.HaxeIgnored;\nimport net.sourceforge.plantuml.awt.geom.XDimension2D;\n"
+  },
+  {
+   "i": 94,
+   "tokens": 101,
+   "head": "ACCEPTED\n\n#### According to\nThe Catalogue of Life, 3rd January 2011\n\n#### Published in\nM. L. Vilmorin & D. G. J. M. Bois, Frutic. vilmor. 1:116. 1904 "
+  },
+  {
+   "i": 95,
+   "tokens": 27372,
+   "head": "@interface MTTypesetterTest : XCTestCase\n\n@property (nonatomic) MTFont* font;\n\n@end\n\n@implementation MTTypesetterTest\n\n- (void)setUp {\n    [super setU"
+  },
+  {
+   "i": 96,
+   "tokens": 1248,
+   "head": "Helper libs for quick development. \n\n## How to add files?\n1. Create new Arduino project in Arduino IDE.\n2. Add new tab: Click arrow on the right side "
+  },
+  {
+   "i": 97,
+   "tokens": 973,
+   "head": "package org.hawkular.inventory.rest;\n\nimport static javax.ws.rs.core.MediaType.APPLICATION_JSON;\n\nimport static org.hawkular.inventory.rest.RequestUti"
+  },
+  {
+   "i": 98,
+   "tokens": 206,
+   "head": "AboutDialog::AboutDialog(QWidget *parent) :\n    QDialog(parent),\n    ui(new Ui::AboutDialog)\n{\n    ui->setupUi(this);\n\n    // Set current copyright ye"
+  },
+  {
+   "i": 99,
+   "tokens": 231,
+   "head": "<?php\n\nnamespace Kenjis\\PHPUnitVWTest;\n\nclass PHPUnitVWTestTest extends \\PHPUnit_Framework_TestCase\n{\n    /**\n     * @var PHPUnitVWTest\n     */\n    pr"
+  }
+ ],
+ "markup_all": [
+  {
+   "i": 0,
+   "tokens": 3598,
+   "why": "sniff:52tags-in-4k",
+   "head": "module( 'jquery.highlightText', QUnit.newMwEnvironment() );\n\ntest( '-- Initial check', function() {\n\texpect(1);\n\tok( $.fn.highlightText, 'jQuery.fn.hi",
+   "label": "FP-code"
+  },
+  {
+   "i": 1,
+   "tokens": 2100,
+   "why": "sniff:41tags-in-4k",
+   "head": "﻿using System;\nusing NetRuntimeSystem = System;\nusing System.ComponentModel;\nusing NetOffice.Attributes;\n\nnamespace NetOffice.ExcelApi\n{\n\t/// <summary",
+   "label": "FP-code"
+  },
+  {
+   "i": 2,
+   "tokens": 7324,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">\n<!-- NewPage -->\n<html lang=\"fr\">\n<head>\n<!-- G",
+   "label": "generated-doc"
+  },
+  {
+   "i": 3,
+   "tokens": 917,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!--\n\n    Licensed to the Apache Software Foundation (ASF) under one or more\n    contributor license agreements",
+   "label": "data-xml"
+  },
+  {
+   "i": 4,
+   "tokens": 4069,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html>\n<head>\n    <meta charset=\"utf-8\">\n    <meta http-equiv=\"X-UA-Compatible\" content=\"IE=edge,chrome=1\">\n    <meta name=\"robots\" co",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 5,
+   "tokens": 2905,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html xmlns=\"http://www.w3.org/1999/xhtml\" xml:lang=\"en\" lang=\"en\">\n<head>\n    <meta http-equiv=\"Content-Type\" content=\"text/html; cha",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 6,
+   "tokens": 920,
+   "why": "sniff:98tags-in-4k",
+   "head": "<resources>\n\n    <string name=\"app_name\">\"On és ...?\"</string>\n    <string name=\"menu_settings\">\"Ajustaments\"</string>\n    <string name=\"Save\">\"Guarda",
+   "label": "data-xml"
+  },
+  {
+   "i": 7,
+   "tokens": 9301,
+   "why": "sniff:137tags-in-4k",
+   "head": "<html><!-- Created using the cpp_pretty_printer from the dlib C++ library.  See http://dlib.net for updates. --><head><title>dlib C++ Library - thread",
+   "label": "generated-doc"
+  },
+  {
+   "i": 8,
+   "tokens": 19985,
+   "why": "sniff:112tags-in-4k",
+   "head": "#region License\n\n\n\n#endregion\n\nusing System.Globalization;\nusing System.Runtime.Serialization;\nusing System.Text;\nusing System.Text.RegularExpressions",
+   "label": "FP-code"
+  },
+  {
+   "i": 9,
+   "tokens": 374,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-stylesheet type=\"text/xsl\" href=\"configuration.xsl\"?>\n<!--\n  Licensed under the Apache License, Version 2",
+   "label": "data-xml"
+  },
+  {
+   "i": 10,
+   "tokens": 3459,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html>\n<head>\n<script src=\"../../../resources/js-test.js\"></script>\n</head>\n<body>\n<script>\n\ndescription(\"This tests the constructor f",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 11,
+   "tokens": 1070,
+   "why": "sniff:65tags-in-4k",
+   "head": "<div id=\"grove-table-wrapper\">\n    <div\n            style=\"display: inline-block;\"\n            ng-click=\"$ctrl.addGrovesToMap()\"\n            ng-hide=\"",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 12,
+   "tokens": 630,
+   "why": "sniff:53tags-in-4k",
+   "head": "namespace Camel {\n\n  export class ProfileController {\n    readonly reloadDelay = 10000;\n    reloadTask: ng.IPromise<any>;\n    profile: any[];\n\n    con",
+   "label": "FP-code"
+  },
+  {
+   "i": 13,
+   "tokens": 263,
+   "why": "sniff:22tags-in-4k",
+   "head": "<div class=\"menu-screen source\" id=\"dlna\" data-icon=\"dlna.svg\" data-menu-title=\"DLNA\">\n\t\n\t<header>\n\t\t<div class=\"back-button master\"></div>\n\t\t<h1>DLNA",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 14,
+   "tokens": 454,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?php\n\ninclude_once TOOLKIT . '/class.htmlpage.php';\n\n$Page = new HTMLPage();\n\n$Page->Html->setElementStyle('html');\n\n$Page->Html->setDTD('<!DOCTYPE h",
+   "label": "FP-code"
+  },
+  {
+   "i": 15,
+   "tokens": 2696,
+   "why": "sniff:48tags-in-4k",
+   "head": "﻿\n\n#pragma once\n#include <aws/wafv2/WAFV2_EXPORTS.h>\n#include <aws/wafv2/WAFV2Request.h>\n#include <aws/core/utils/memory/stl/AWSString.h>\n#include <ut",
+   "label": "FP-code"
+  },
+  {
+   "i": 16,
+   "tokens": 7367,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!doctype html>\n<html lang=\"en\" xmlns=\"http://www.w3.org/1999/html\">\n\n<head>\n    <meta charset=\"utf-8\">\n\n    <title>Modern Javascript Development</tit",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 17,
+   "tokens": 2466,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n\t<head>\n\t\t<title>three.js webgl - cameras</title>\n\t\t<meta charset=\"utf-8\">\n\t\t<meta name=\"viewport\" content=\"width=dev",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 18,
+   "tokens": 6387,
+   "why": "sniff:94tags-in-4k",
+   "head": "<!-- To change the layout of the detail view form, we recommend using JS code in hooks/clients-dv.js rather than editing this file -->\r\n\r\n<div id=\"det",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 19,
+   "tokens": 5308,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<feed xmlns=\"http://www.w3.org/2005/Atom\">\n\n  <title><![CDATA[分类: smokeping | 小明明s à domicile]]></title>\n  <lin",
+   "label": "data-xml"
+  },
+  {
+   "i": 20,
+   "tokens": 11461,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n    <meta charset=\"utf-8\">\n    <title>Kiwi.PluginManager - Kiwi.js</title>\n    <link rel=\"stylesheet\" href=\"ht",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 21,
+   "tokens": 7371,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">\n<!-- NewPage -->\n<html lang=\"pt\">\n<head>\n<!-- G",
+   "label": "generated-doc"
+  },
+  {
+   "i": 22,
+   "tokens": 13813,
+   "why": "sniff:34tags-in-4k",
+   "head": "' Copyright (c) Microsoft.  All Rights Reserved.  Licensed under the Apache License, Version 2.0.  See License.txt in the project root for license inf",
+   "label": "FP-code"
+  },
+  {
+   "i": 23,
+   "tokens": 45693,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html dir=\"ltr\" lang=\"en-US\">\n<head>\n\n\t<meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\" />\n\t<meta name=\"author\" cont",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 24,
+   "tokens": 68535,
+   "why": "sniff:27tags-in-4k",
+   "head": "/******************************************************************************\n *\n * Name:\tskge.c\n * Project:\tGEnesis, PCI Gigabit Ethernet Adapter\n ",
+   "label": "FP-code"
+  },
+  {
+   "i": 25,
+   "tokens": 1336,
+   "why": "sniff:26tags-in-4k",
+   "head": "<?php\n/**\n * Cleaner walker for wp_nav_menu()\n *\n * Walker_Nav_Menu (WordPress default) example output:\n *   <li id=\"menu-item-8\" class=\"menu-item men",
+   "label": "FP-code"
+  },
+  {
+   "i": 26,
+   "tokens": 371,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html xmlns:th=\"http://www.thymeleaf.org\">\n<head>\n    <meta charset=\"utf-8\"/>\n    <title>Create a new user</title>\n</head>\n<body>\n\n<di",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 27,
+   "tokens": 299,
+   "why": "sniff:34tags-in-4k",
+   "head": "<?php if(has_search_results()): ?>\n  <ul class=\"items\">\n    <?php $i = 0; while(search_results()): $i++; ?>\n      <article>\n        <header>\n         ",
+   "label": "FP-code"
+  },
+  {
+   "i": 28,
+   "tokens": 725,
+   "why": "sniff:20tags-in-4k",
+   "head": "package search.binary.rotated.minimum;\n\npublic class Solution1A\n{\n\t/**\n     * Returns index of the smallest element in the generic rotated\n     * arra",
+   "label": "FP-code"
+  },
+  {
+   "i": 29,
+   "tokens": 385,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<LinearLayout xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    xmlns:tools=\"http://schemas.androi",
+   "label": "data-xml"
+  },
+  {
+   "i": 30,
+   "tokens": 2512,
+   "why": "sniff:90tags-in-4k",
+   "head": "<!--\n Copyright (c) 1998, 2011, Oracle and/or its affiliates. All rights reserved.\n DO NOT ALTER OR REMOVE COPYRIGHT NOTICES OR THIS FILE HEADER.\n\n Th",
+   "label": "data-xml"
+  },
+  {
+   "i": 31,
+   "tokens": 447,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\"?>\n\n<!--\n  Licensed to the Apache Software Foundation (ASF) under one or more\n  contributor license agreements.  See the NOTICE fil",
+   "label": "data-xml"
+  },
+  {
+   "i": 32,
+   "tokens": 372,
+   "why": "sniff:32tags-in-4k",
+   "head": "<html>\n\n<head>\n    <meta charset=\"utf-8\">\n    <title>Mocha Tests</title>\n    <link rel=\"stylesheet\" href=\"../node_modules/mocha/mocha.css\" />\n</head>\n",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 33,
+   "tokens": 556,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<!--\nLicensed under the Apache License, Version 2.0 (the \"License\");\nyou may not use this file except in compliance with the License.\n",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 34,
+   "tokens": 3382,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"fr\">\n<head>\n  <meta http-equiv=\"Content-Type\" content=\"text/html; charset=UTF-8\"/>\n  <meta name=\"viewport\" content=\"width=",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 35,
+   "tokens": 2396,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <tit",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 36,
+   "tokens": 648,
+   "why": "sniff:31tags-in-4k",
+   "head": "<html>\n<style>\ndiv {\n    position: relative;\n    height: 100px;\n    width: 100px;\n    background: blue;\n    transform: translateZ(0);\n    -webkit-anim",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 37,
+   "tokens": 194,
+   "why": "sniff:doctype-or-generator",
+   "head": "﻿<?xml version=\"1.0\" encoding=\"utf-8\" ?>\n<App xmlns=\"http://schemas.microsoft.com/sharepoint/2012/app/manifest\"\n     Name=\"CalculatorApp\"\n     Product",
+   "label": "data-xml"
+  },
+  {
+   "i": 38,
+   "tokens": 2152,
+   "why": "sniff:43tags-in-4k",
+   "head": "/**\n * generated by Xtext 2.9.2\n */\npackage xmodelica.modelica.impl;\n\nimport java.util.Collection;\n\nimport org.eclipse.emf.common.notify.Notification;",
+   "label": "generated-doc"
+  },
+  {
+   "i": 39,
+   "tokens": 422,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"\n    package=\"info.androidhive.navigationdr",
+   "label": "data-xml"
+  },
+  {
+   "i": 40,
+   "tokens": 9913,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <tit",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 41,
+   "tokens": 1537,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<?xml-model href=\"http://www.oasis-open.org/docbook/xml/5.0/rng/docbookxi.rng\"\n            schematypens=\"http:/",
+   "label": "data-xml"
+  },
+  {
+   "i": 42,
+   "tokens": 508,
+   "why": "sniff:25tags-in-4k",
+   "head": "<html xmlns:v=\"urn:schemas-microsoft-com:vml\" xmlns:o=\"urn:schemas-microsoft-com:office:office\" >\n<head>\n<title>Testing rounded rectangle</title>\n<sty",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 43,
+   "tokens": 1524,
+   "why": "sniff:71tags-in-4k",
+   "head": "<h1>Omat kilpailut</h1>\n\n<p>Tältä sivulta näet kaikki omat kilpailusi sekä lähettämäsi tulokset. Tämän sivun kautta voit lähettää tuloksia ja poistaa ",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 44,
+   "tokens": 2479,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"utf-8\">\n    <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\n    <tit",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 45,
+   "tokens": 1332,
+   "why": "sniff:23tags-in-4k",
+   "head": "// Copyright 2012 The Chromium Authors. All rights reserved.\n// Use of this source code is governed by a BSD-style license that can be\n// found in the",
+   "label": "FP-code"
+  },
+  {
+   "i": 46,
+   "tokens": 28686,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\" \"http://www.w3.org/TR/html4/loose.dtd\">\n<!--NewPage-->\n<HTML>\n<HEAD>\n<!-- Generated by ",
+   "label": "generated-doc"
+  },
+  {
+   "i": 47,
+   "tokens": 936,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!-- You may freely edit this file. See commented blocks below for -->\n<!-- some examples of how to customize t",
+   "label": "data-xml"
+  },
+  {
+   "i": 48,
+   "tokens": 1637,
+   "why": "sniff:41tags-in-4k",
+   "head": "namespace Microsoft.Azure.Management.DataShare.Models\n{\n    using Microsoft.Rest;\n    using Microsoft.Rest.Serialization;\n    using Newtonsoft.Json;\n ",
+   "label": "FP-code"
+  },
+  {
+   "i": 49,
+   "tokens": 1099,
+   "why": "sniff:doctype-or-generator",
+   "head": "<!DOCTYPE html>\n<html lang=\"en\">\n<head>\n<title>How do I send messages to the Email Archive?</title>\n<meta http-equiv=\"Content-Type\" content=\"text/html",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 50,
+   "tokens": 755,
+   "why": "sniff:doctype-or-generator",
+   "head": "﻿<!DOCTYPE HTML PUBLIC \"-//W3C//DTD HTML 4.01 Transitional//EN\">\r\n<html>\r\n<!-- saved from url=(0029)http://www.helpandmanual.com/ -->\r\n<head>\r\n   <tit",
+   "label": "handwritten-web"
+  },
+  {
+   "i": 51,
+   "tokens": 48821,
+   "why": "sniff:doctype-or-generator",
+   "head": "<?xml version=\"1.0\" ?><!DOCTYPE TS><TS language=\"ja\" version=\"2.1\">\n<context>\n    <name>AboutDialog</name>\n    <message>\n        <location filename=\".",
+   "label": "data-xml"
+  }
+ ],
+ "label_rule": "hand read of the first 88-150 chars of each positive, 3b 2026-09-07; FP-code = source with inline XML doc-comments or resource strings that tripped the tag counter"
+}
