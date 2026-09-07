@@ -99,22 +99,44 @@ def main():
     assert SP(3, torch).every == 10, "below the log cadence, snap to it"
     assert SP(20, torch).every == 20, "an exact multiple is left alone"
     assert SP(0, torch).every == 0, "off stays off -- rounding must not switch it on"
+    # The requested value survives beside the effective one, so the caller can say it rounded
+    # rather than leaving a user who asked for 25 to work out why the log says 30.
+    assert SP(25, torch).requested == 25
+    assert SP(0, torch).requested == 0
+
+    # A PROFILED STEP CAN END WITHOUT A PRINT: the non-finite-grad path does `continue` before
+    # the logging block, so fwd/bwd sit in _acc and active stays True. The next profiled step's
+    # step_begins must clear them, or its line reports two steps of work as one.
+    leak = SP(10, FakeTorch())
+    leak._mk = mk
+    leak.step_begins(10)
+    for r in ("fwd", "bwd_nolast", "bwd_last"):
+        leak.start(r)
+        clock[0] += 9
+        leak.stop(r)
+    for s in range(11, 20):
+        leak.step_begins(s)
+    leak.step_begins(20)
+    assert leak._acc == {}, "a skipped profiled step must not carry into the next one"
+    assert leak._ev == {}, "no start() may outlive its step"
 
     # ACCUM 4: three suppressed backwards at 10 ms, one with the reduce at 25.
     # bwd_nolast prints the SUM (30) and the differential uses the MEAN (10), so 25-10 = +15.
     p = run([10.0, 10.0, 10.0], 25.0, torch)
     line = p.line(0.100)
-    assert "reduce +15.0" in line, line
+    assert "bwd_last_excess +15.0" in line, line
     assert "n=3 mean 10.0 spread 0.0" in line, line
     assert "bwd_nolast 30.0" in line, line
     assert "bwd_last 25.0" in line, line
-    assert "unresolvable" not in line, line
+    # NOT "reduce": the excess contains the reduce and is not only the reduce, and a field name
+    # is what survives into a spreadsheet. The docstring is not.
+    assert "reduce" not in line, line
     assert torch.cuda.syncs == 1, f"one sync per print, got {torch.cuda.syncs}"
 
-    # A DIFFERENTIAL INSIDE ITS OWN ARM'S SPREAD IS NOISE, and must say so -- but still print
-    # both numbers, or a reader has nothing to accumulate across steps.
+    # NO PER-STEP VERDICT, and n/mean/spread printed instead. A range grows with n on its own, so
+    # a spread-vs-excess test fires more often at accum 8 than accum 4 on identical hardware.
     noisy = run([5.0, 15.0, 10.0], 12.0).line(0.100)
-    assert "unresolvable" in noisy, noisy
+    assert "unresolvable" not in noisy, noisy
     assert "spread 10.0" in noisy, noisy
     assert "+2.0" in noisy, noisy
 
@@ -123,23 +145,26 @@ def main():
     solo = run([], 25.0).line(0.100)
     assert "no no-sync backward ran" in solo, solo
     assert "accum 1, or DDP off" in solo, solo
-    assert "reduce +" not in solo and "reduce -" not in solo, solo
+    assert "excess +" not in solo and "excess -" not in solo, solo
 
-    # --no_bucket_view MAKES THE FIELD A DIFFERENT QUANTITY (reduce + a full grad->bucket copy),
-    # so the name changes with it rather than meaning two things.
+    # --no_bucket_view MAKES THE FIELD A DIFFERENT QUANTITY (the excess plus a full grad->bucket
+    # copy), so the name changes with it rather than meaning two things.
     bv = run([10.0, 10.0, 10.0], 25.0, bucket_view=False).line(0.100)
-    assert "reduce+bucket +15.0" in bv, bv
-    assert run([10.0, 10.0, 10.0], 25.0).line(0.100).startswith("step_profile"), "default label"
+    assert "bwd_last_excess+bucket +15.0" in bv, bv
 
-    # The residual is the step minus what was attributed: 100 ms - (30 + 25).
+    # THE DENOMINATOR IS NOT THIS STEP: step_s is a ten-step wall mean carrying val passes and
+    # checkpoint writes. The name says so, and the field is signed.
     rest = run([10.0, 10.0, 10.0], 25.0)
     line3 = rest.line(0.100)
-    assert "rest 45.0" in line3, line3
+    assert "rest_vs_10step_mean 45.0" in line3, line3
+    assert "| rest " not in line3, "must not claim to be unattributed step time"
     assert rest.line(0.100) is None, "line() is one-shot per step"
+    fast = run([10.0, 10.0, 10.0], 25.0).line(0.010)
+    assert "rest_vs_10step_mean -45.0" in fast, fast
 
-    print("ok  off-by-default, arming, cadence, differential, spread verdict, missing arm,")
-    print("    bucket_view label, residual, one-shot, one sync")
-    for x in (line, noisy, solo):
+    print("ok  off-by-default, arming, cadence, excess, inputs-not-verdict, missing arm,")
+    print("    bucket_view label, signed residual, one-shot, one sync")
+    for x in (line, noisy, solo, fast):
         print("   ", x)
     return 0
 
