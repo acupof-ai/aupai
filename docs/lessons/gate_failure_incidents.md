@@ -490,6 +490,21 @@ The general form: a verdict is the least granular aggregate there is, so a world
 Evidence: `/tmp/de_world_mutants.py` (four mutants against the shared world, all SURVIVED; the same four against the dedicated selftest, each reds one), `scripts/harness.py::_selftest_facts_ephemeral_only_source`.
 open: nothing counts how many errors a broken world already reports before a new mutation is added to it. `--selftest` asserts each world FAILs; it never asserts that the world fails FOR THE MUTATION, and with 42 errors in one world that distinction is where a new check goes unguarded.
 
+### §271 (2026-09-08, R1)
+`gh pr view --json headRefOid` is not a statement about the branch, and its answer is well-formed. PR #47 was merged on the strength of it and **dropped its most recent commit**: the API reported `d6c4a7c1` while `git ls-remote origin refs/heads/de-monitor-class-2` reported `d3ef01e3`. Both answered, one was true. The merge took the API's sha, so `d3ef01e3` never reached main.
+
+Detected by reading the disagreement, not by anything failing. The confirmation after the fact is the method worth keeping, and it is 84's: **grep main for one symbol that must be present and one that must be absent.** Here that pair was `_MONITOR_CLEAN` (6 hits, so the merged content is there) and `oom-killed` (0 hits, so the later commit is not). A sha comparison says "different"; the symbol pair says *which half of the work is missing*, which decides whether a re-push suffices or something on main is broken.
+
+Same shape as `.conclusion // .status` (an in-progress check's `""` read as terminal) and `[ -d /proc/<pid> ]` (a zombie's `/proc` entry read as a live process): **the instrument answers a question adjacent to the one asked, the answer is well-formed, and no error surfaces, so the reader never re-examines their own question.** What distinguishes this one is that the adjacent question has no user-visible name — no documented lag, and the field is called `headRefOid`, which is exactly what the reader wants.
+
+Rule: if a merge, a gate, or a claim turns on a branch's current sha, read it from `git ls-remote origin refs/heads/<branch>`. The PR API's copy is for display.
+
+Cost: one re-push (PR #48) and a review cycle. Nothing was wrong on main — what landed was correct and complete as a rule; the loss was three assertions and a fact correction. 84 checked their own open PR against the mechanism within minutes and found all three sources agreeing, which is the reason to state the check rather than the incident.
+
+**A second instance of §267 landed in this same hour, in the verification of somebody else's fix.** I grepped main for the rotted flag strings to decide whether 3b's PR had fixed five docstrings or one, got a hit in four files, and read that as "still rotted". The hit was 3b's own explanatory prose: the corrected docstring says "`--exact 0.8 --shingles 5` stood here until 2026-09-08 and the parser has never had either flag". A grep for a dead flag matches the sentence recording that it is dead. Running harness's own collector over main's blobs instead — `accepted_flags` and `DOC_INVOCATION_RE`, which is what the check does — showed 0 rotted invocations in all five. Five held commits were dropped as redundant on that reading. **A fix that documents what it removed is unsearchable by the string it removed**, and the test has to be the checker, never a grep over file text.
+Evidence: `gh pr view 47 --json headRefOid` vs `git ls-remote origin refs/heads/de-monitor-class-2` at 20:42Z; `git show refs/remotes/origin/main:scripts/pod_pull_ledgers.py | grep -c oom-killed` = 0 against `_MONITOR_CLEAN` = 6; PR #47 merged as `f4cacde6`; `/tmp/de_check_main_docstrings.py` for the second half.
+open: no check reads a merge's sha from both sources and compares them, and none can retroactively — the window is between push and merge, and only the merger is in it. The machine-checkable half is narrower and real: after a merge, assert the merged commit is an ancestor of the tip `ls-remote` reports, which would have failed here.
+
 ## R3. Artifacts carry their producer identity
 
 ### §24 (2026-08-31, R3)
