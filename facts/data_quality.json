@@ -1031,6 +1031,49 @@
    "uncertainty": "The scoping removes a false positive and does not re-examine the true one: pass3_garbage.py did change at df2b7744, so the nine domains remain genuinely behind the current filter, exactly as the 2026-09-01 ruling says. That ruling's 0.25% weighted residue is unchanged by anything here. Whether a fourth filter could enter the pipeline without PIPELINE_FILTERS following is guarded by the ast assertion, which reads build_corpus.py's loader tuple -- it cannot see a filter reached by some other mechanism, such as an import added elsewhere in that file.",
    "status": "measured",
    "boundary": "Says which files the fingerprint should cover. It does not re-rule the stage-2 staleness, does not measure any corpus, and does not touch the pod's untracked filters/__init__.py, which still needs removing or committing for the pod's fp to equal a tree's."
+  },
+  {
+   "id": "dq.code_rp1t_dd09.handread_50",
+   "value": 0.6,
+   "unit": "fraction usable",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs, seed=42, stratified max 2/shard, 235 shards/3.43M docs post-dedup",
+   "config": {
+    "categories": "good code 46%, test code 12%, expository 2%, boilerplate 18%, non-code 22%",
+    "dominant_languages": "Java 20%, C++ 14%, PHP 12%, JS 12%",
+    "contamination": "0/1000 code_holdout substring hits",
+    "audit_doc": "docs/audits/code_rp1t_dd09_b2_hand_read.md"
+   },
+   "uncertainty": "+-0.14 (n=50, binomial, p=0.5)",
+   "status": "measured"
+  },
+  {
+   "id": "dq.code_rp1t_b2.handread_50",
+   "value": 0.74,
+   "unit": "fraction usable",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs, seed=42, stratified max 2/shard, 152 shards/2.42M docs pre-dedup",
+   "config": {
+    "categories": "good code 56%, test code 18%, boilerplate 12%, non-code 14%",
+    "dominant_languages": "Java 32%, Python 12%, Ruby 12%, C# 10%",
+    "contamination": "0/1000 code_holdout substring hits",
+    "audit_doc": "docs/audits/code_rp1t_dd09_b2_hand_read.md"
+   },
+   "uncertainty": "+-0.12 (n=50, binomial, p=0.74)",
+   "status": "measured"
+  },
+  {
+   "id": "dq.code_rp1t.noncode_tail",
+   "value": "dd09 22%, b2 14%",
+   "unit": "fraction non-code",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs per corpus, same sample as dq.code_rp1t_dd09 and dq.code_rp1t_b2 handread_50",
+   "config": {
+    "composition": "HTML docs (Javadoc/Doxygen/LCOV), CSS, config files (POM/Dockerfile/cask), license-only",
+    "filter_rules": "6 rules handed to e1 for C/JS/Java validators, see audit doc"
+   },
+   "uncertainty": "+-0.12 (n=50, binomial)",
+   "status": "measured"
   }
  ]
 }
