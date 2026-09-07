@@ -310,7 +310,22 @@ def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
             n = nvidia_fds(pid)
             if n:
                 return pid, n
-        if not _alive(pid) or (end is not None and time.time() >= end):
+        # A ZOMBIE HOLDER ENDS THE WAIT. `_alive` is signal-0 and its own docstring says it is
+        # True for a zombie -- "callers that mean 'is the job running' must ask both" -- and this
+        # loop meant exactly that while asking only one. So a reaped-but-unwaited holder read
+        # alive forever: measured 2026-09-07, deadline=2.0 polled the full 2.12s on a dead job,
+        # and deadline=None (which is DEVICE_WAIT_S, the value `harness launch` passes) never
+        # returned at all in a 6s window. Unbounded, on the path the launcher actually uses.
+        #
+        # e1 hit this shape from the other side on 2026-09-05 and its row records the outcome:
+        # runs/arm_corr.log carries 56 lines of `pid 994178 holds no GPU device fd:
+        # '[bash] <defunct>'`, because `JOB=$$` inside a script launched as `setsid bash script.sh
+        # &` is the launcher shell's pid, so card_claim was handed a zombie and e1_arm_token_corr
+        # ran unclaimed for its whole life (retracted). That is a WRONG pid rather than a slow one,
+        # so the b0-31 fixes above do not cover it -- this does, for the half that is card_claim's:
+        # a zombie can never open a device, so waiting on one is waiting for something that cannot
+        # happen, and the honest answer is the immediate refusal the caller already prints.
+        if not _alive(pid) or _is_zombie(pid) or (end is not None and time.time() >= end):
             return None
         time.sleep(interval)
 
@@ -2022,6 +2037,48 @@ def _selftest():
         finally:
             selfjob.kill()
             selfjob.wait()
+
+        # A ZOMBIE HOLDER MUST END THE WAIT AT ONCE, and until 2026-09-07 it polled to the
+        # deadline -- unbounded when the deadline is None, which is DEVICE_WAIT_S, the value
+        # `harness launch` passes. `_alive` is signal-0 and reads a zombie as alive; its own
+        # docstring says a caller meaning "is the job running" must ask both, and this loop asked
+        # one. Measured before the fix: deadline=2.0 took 2.12s on a dead job, deadline=None never
+        # returned in a 6s window.
+        #
+        # THE WORLD MAKES A REAL ZOMBIE, not a fake one: fork, child _exit, parent never waits.
+        # A _fake_proc entry cannot produce this -- the whole defect lives in the disagreement
+        # between signal-0 and ps's state letter, so a fixture that fakes /proc would test the
+        # wrong reader. e1 hit this shape from the other side on 2026-09-05 (`JOB=$$` under
+        # `setsid bash script.sh &` handed card_claim the launcher shell, which had become
+        # `[bash] <defunct>`; 56 refusal lines in runs/arm_corr.log, e1_arm_token_corr retracted).
+        zpar = subprocess.Popen(
+            ["python3", "-c",
+             "import os, sys, time\n"
+             "p = os.fork()\n"
+             "if p == 0: os._exit(0)\n"
+             "sys.stdout.write(str(p) + '\\n'); sys.stdout.flush()\n"
+             "time.sleep(9)\n"],
+            stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, start_new_session=True)
+        try:
+            zpid = int(zpar.stdout.readline().strip())
+            time.sleep(0.4)
+            _case(_alive(zpid) and _is_zombie(zpid),
+                  f"world: pid {zpid} is a real zombie -- signal-0 says alive, ps says Z")
+            _fake_proc(zpid, nvidia=0, other=2)
+            t0 = time.time()
+            _case(wait_for_device(zpid, deadline=3.0, interval=0.1) is None,
+                  "b0-31: a zombie holder is not claimed")
+            _case(time.time() - t0 < 1.0,
+                  f"and the wait ends AT ONCE rather than polling the deadline "
+                  f"({time.time() - t0:.2f}s of 3.0s)")
+            t1 = time.time()
+            _case(wait_for_device(zpid, deadline=None, interval=0.1) is None,
+                  "b0-31: deadline=None (DEVICE_WAIT_S, what harness launch passes) also returns")
+            _case(time.time() - t1 < 1.0,
+                  f"and it terminates, where before it polled forever ({time.time() - t1:.2f}s)")
+        finally:
+            zpar.kill()
+            zpar.wait()
 
         # THE SHELL GUARD ON THE NEW HOLDER CHECK, and it needed its own world: a mutant that
         # dropped `not _argv0_is_shell(...)` SURVIVED the three cases above, because none of them
