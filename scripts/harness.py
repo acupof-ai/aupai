@@ -3101,7 +3101,13 @@ def check_main_advances_by_ancestry(root):
     # reflog or a bigger window brings the entry back, and then the check goes red for a cause
     # that was settled. The cost of keeping it is one tuple.
     _RECORDED = {("bc95abe8277abc6726b6a27d4e1cb243f3622afd",
-                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae")}
+                  "9a11b9ea2f1589a89aaebe2cec4cefe94fcaaeae"),
+                 # 2026-09-07 15:15 local: `reset: moving to origin/main` after the gh merge of
+                 # PR #3 -- four merge_main CASes (89b20f70..3a57ca40, runs/msg_log.jsonl only)
+                 # had landed on local main but never reached origin, and the reset
+                 # discarded them instead of pushing them. Restored by re-merging fb.
+                 ("3a57ca402291636a988a651aa983192d79b7c392",
+                  "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -18561,9 +18567,8 @@ def _selftest_merge_reverted_content():
 def _selftest_main_touched_raises_on_unreadable_main():
     """An unreadable `main` must RAISE, not read as "main touches nothing".
 
-    Three worlds, because the failure is that an empty map is indistinguishable from a
-    legitimately empty answer, and one of them is the reason the fix cannot live in the
-    :7750 guard:
+    Four worlds, because the failure is that an empty map is indistinguishable from a
+    legitimately empty answer, and two of them exist for reasons the other two cannot show:
 
       1. no `main` at all      -> RuntimeError naming the exit code
       2. a readable `main`     -> a populated map (so the fix is not "always raise", which
@@ -18571,6 +18576,9 @@ def _selftest_main_touched_raises_on_unreadable_main():
       3. the guard on world 1  -> `blind` is EMPTY, i.e. the guard that exists for this
                                   function going blind cannot see total blindness. Asserted
                                   so nobody "simplifies" the raise away and trusts :7750.
+      4. only refs/remotes/origin/main -> a populated map. This is a CI pull_request build, and
+                                  worlds 1-3 all pass without the ref fallback, so world 4 is
+                                  the only one that holds it in place.
 
     Measured 2026-09-06 on a clone with local main deleted: check_tasks_closed_by_commit
     returned `FAIL 156 of 156 ... does not reach main`. Every closed task at once, from a
@@ -18624,6 +18632,50 @@ def _selftest_main_touched_raises_on_unreadable_main():
         assert "_main_touched sees no paths" not in ev_blind, (
             "the :7750 guard now fires on total blindness -- this selftest's premise is "
             f"stale and the raise may be reconsidered: {ev_blind[:120]}")
+
+        # WORLD 4: THE CI SHAPE. actions/checkout on a pull_request build fetches the base as
+        # refs/remotes/origin/main and creates no local main, so world 1's raise fired on a tree
+        # that is perfectly readable and every PR check job failed (4c 2026-09-07, 3b's PR #1 jobs
+        # 34088976228 / 34089010051 -- it blocked every session's PRs on the day the flip landed).
+        # A remote-tracking main must MAP, and this world is what separates the fallback from the
+        # raise: worlds 1-3 pass with no fallback at all, and world 4 fails without one.
+        #
+        # THE REMOTE IS REAL, not a hand-written ref. `git remote add` + `git fetch` is what
+        # produces refs/remotes/origin/main, and a fixture that writes the ref file directly would
+        # share the reading it is meant to test. Local main is deleted after the fetch, which is
+        # exactly the checkout's end state.
+        remote = tempfile.mkdtemp(prefix="mt_remote_")
+        try:
+            subprocess.run(["git", "-C", remote, "init", "-q", "--bare", "-b", "main"],
+                           capture_output=True, text=True)
+            g("checkout", "-q", "-B", "main")
+            g("remote", "add", "origin", remote)
+            g("push", "-q", "origin", "main")
+            g("fetch", "-q", "origin", "main")
+            g("checkout", "-q", "--detach")
+            g("branch", "-D", "main")
+            assert g("rev-parse", "--verify", "main").returncode != 0, \
+                "world 4 control: local main must be ABSENT, or the fallback is never reached"
+            assert g("rev-parse", "--verify", "refs/remotes/origin/main").returncode == 0, \
+                "world 4 control: refs/remotes/origin/main must exist, or this is world 1 again"
+            _MAIN_TOUCHED.pop(d, None)
+            # RuntimeError CAUGHT AND RENAMED. Without this the mutant that restores the
+            # single-ref `git log main` fails by propagating world 1's raise out of the selftest,
+            # which reads as a crash in the harness rather than as world 4 -- measured
+            # (/tmp/de_w4_mutant.py: "CRASH: RuntimeError git log main failed ... exit 128").
+            # The world is only useful if its failure says which world failed.
+            try:
+                ci = _main_touched(d)
+            except RuntimeError as e:
+                raise AssertionError(
+                    f"world 4: a PR-build tree with only refs/remotes/origin/main RAISED instead "
+                    f"of mapping -- the ref fallback in _main_touched is gone, and every PR check "
+                    f"job fails on a readable tree: {e}") from e
+            assert sha in ci and "f.py" in ci[sha], (
+                f"world 4: a PR-build tree with only refs/remotes/origin/main must map its "
+                f"commits, not return an empty map: {list(ci)[:3]}")
+        finally:
+            shutil.rmtree(remote, ignore_errors=True)
     finally:
         _MAIN_TOUCHED.pop(d, None)
         shutil.rmtree(d, ignore_errors=True)
