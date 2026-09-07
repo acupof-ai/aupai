@@ -381,7 +381,9 @@ the check began reading it.
   git push -u origin HEAD
   gh pr create --base main --head <branch>
   # CI must be green on the PR's HEAD sha
-  # your second reader approves ON THE PR, with `artifact:` or `case:` in the approval body
+  # your second reader approves ON THE PR as a COMMENT with `artifact:` or `case:` in it, plus a
+  # runs/review.jsonl row: every session shares one gh identity, so `gh pr review --approve` is
+  # refused ("Can not approve your own pull request") and review_present reads the ledger row
   # THE REVIEWER, never the author: gh pr merge --merge
   ```
 
