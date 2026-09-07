@@ -14,6 +14,5 @@
   "multilingual.json#mlm.corpus.web_hq_ordered_by_source": "same /tmp/census_web_hq.py cluster.",
   "multilingual.json#mlm.fertility.traditional": "/tmp/fertility_trad.py and its /tmp/fert_pairs.json output both gone; fertility on traditional characters is unreproducible. Owner multilingual.",
   "multilingual.json#mlm.tokenizer.wholechar_gate_check": "/tmp/wholechar_gate.py gone; the gate itself is tracked in scripts/tokenizer_eval.py, so the CHECK is reproducible and this row's particular run is not. Cite tokenizer_eval.",
-  "multilingual.json#mlm.corpus.cosmopedia_template_concentration": "/tmp/template_concentration.py gone. Owner multilingual.",
-  "corpus_supply.json#cs.en_c4_30b_landed": "THE ROW THAT PRODUCED THIS CHECK, and the shortest-lived entry here: 84's PR #36 (head ae6829c2) rewrites this source to scripts/count_tokens.py@5955b3e0 plus scripts/count_dir.py, verified PASS on a real worktree of that head with this check applied. DELETE THIS LINE when #36 merges -- it exists only so the check can land before #36 without main going red, not because the debt is accepted."
+  "multilingual.json#mlm.corpus.cosmopedia_template_concentration": "/tmp/template_concentration.py gone. Owner multilingual."
 }
