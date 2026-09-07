@@ -7737,6 +7737,51 @@ FACT_SOURCE_PATH = re.compile(
     # profile_step.py live.
     r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes)/[\w./-]+"
 )
+# A source whose ONLY evidence is a path nobody can open. /tmp is per-machine and per-boot, so
+# a fact resting solely on one names an artifact whose absence is guaranteed rather than
+# incidental, and no reader can audit the number.
+#
+# THE CASE (3b via 4c, 2026-09-08): facts/corpus_supply.json#cs.en_c4_30b_landed cited
+# `/tmp/count_30b.py` as the counter behind its token total, and nothing else. That counter
+# omitted the <eos> terminator and the value was short by 1,029,505 -- exactly the document
+# count. Nobody found it by reading the counter, because the path was unreadable. Row as it
+# stood: `git show b4095851^:facts/corpus_supply.json`.
+#
+# "ONLY" IS THE WHOLE PREDICATE, and the measurements that put it there also set the scope.
+# 84 proposed "a source must yield at least one path the tree can resolve"; applied to facts/:
+#   475 rows carry a source
+#   205 name no path at all -- arXiv ids, hand-reads, controller rulings. Honest, and the
+#       unconditional form reds every one: 221 of 475, 46.5%, the override-not-fix outcome
+#       84 named as the reason to count first
+#   240 name a path that resolves
+#    30 name a path where none resolves -- four shapes, of which one is a defect
+# Two candidate scopes were then measured and REJECTED:
+#   - THE POD-ABSOLUTE FORM, 84's second form: refuted on the whole population, not a sample.
+#     `/work/aupai/[\w./-]+` over every source field gives 48 (id, path) pairs, 36 distinct
+#     paths, 40 distinct fact ids; read on the pod, 36 of 36 EXIST, zero absent. (My first
+#     pass said ten, because it took the first extension-bearing match per row -- 84 corrected
+#     the count and I re-derived it; the conclusion holds on 3.6x the paths.) They cite live
+#     artifacts a laptop checkout structurally cannot hold -- run logs, corpus directories,
+#     bench_eff/ddp_trace_rank0.json -- which is the same reason the tracked-path half already
+#     skips on the pod.
+#   - `~/`: rejected as a prefix. Every `~/` in facts/ is `~/bin/pod`, the TRANSPORT a pod
+#     artifact was read through rather than the artifact, and it is tracked as scripts/pod
+#     since 2026-09-04. Including it reds six moe/efficiency rows for naming their tooling.
+#     An EPHEMERAL_EXEMPT regex for `~/bin/pod` was written first and then DELETED: with `~/`
+#     out of the prefix set it guarded a pattern that cannot match, and two mutants proved it
+#     -- removing the exemption and re-adding `~/` both left the failing row set identical
+#     (/tmp/de_eph_mutants2.py). A rule with no subject reads as protection and is not.
+# The remaining scope is /tmp, where of six paths checked four are already gone from this
+# laptop and three of four from the pod: unreadable by construction, not by circumstance.
+#
+# The character class does NOT include braces, also by mutation. `/tmp/ka_{math,lzh}.json`
+# looked like it needed them, but dropping them left the failing row set identical: the row
+# that names such a path (be.known_answer_panel_3_4) passes on the two tracked eval scripts
+# beside it, so how far the match extends never reaches a decision. Matching more than is
+# used is a claim about the predicate that the world cannot check.
+EPHEMERAL_SOURCE_PREFIX = re.compile(r"(?<![\w/])(?:/tmp/|/var/tmp/|\$HOME/)[\w./-]+")
+
+
 # Debt register for tracked-missing sources: each entry carries a reason. Can only
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
 FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
@@ -8497,6 +8542,9 @@ def check_facts_well_formed(root):
     errors, ids, entries = [], {}, []
     baselined = []
     pending = []  # (tag, path, rev-or-None) for every source path absent from the tree
+    # Per ROW, not per path: "is anything else in this source openable" is a property of the
+    # whole source string, so it cannot ride on `pending`.
+    eph_pending = []  # (fn, id, [ephemeral paths], [tracked-looking paths], [(path, rev)])
     for p in files:
         fn = os.path.basename(p)
         try:
@@ -8552,6 +8600,21 @@ def check_facts_well_formed(root):
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
+            # EPHEMERAL-ONLY SOURCES RUN EVERYWHERE, including the pod, and that is the one
+            # difference from the tracked-path half below. The pod skip exists because a
+            # partial checkout legitimately lacks tracked files; /tmp is not readable on ANY
+            # machine, so the reason for the skip does not apply and skipping there would
+            # leave the pod -- where these counters are written -- unchecked.
+            #
+            # The condition is that NOTHING ELSE in the source is openable. Deciding that
+            # needs the same resolution the tracked half does, so the row is queued here and
+            # adjudicated after the batched git calls below; `pending` cannot serve, since it
+            # holds one entry per PATH and this question is per ROW.
+            _src = str(e["source"])
+            _eph = EPHEMERAL_SOURCE_PREFIX.findall(_src)
+            if _eph:
+                eph_pending.append((fn, e["id"], _eph, FACT_SOURCE_PATH.findall(_src),
+                                    re.findall(r"([\w./-]+)@([0-9a-f]{7,40})", _src)))
             # Source-path half: a full-checkout check. The pod is a partial checkout (the
             # manifest's executing files, not the repo), so a path missing there is not rot
             # -- it was never there. CI and dev run this fully; the pod skips it. The config
@@ -8592,6 +8655,31 @@ def check_facts_well_formed(root):
                 baselined.append(m)
                 continue  # registered debt; gaps reports it
             errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
+    # EPHEMERAL-ONLY, adjudicated here because it needs the resolutions above. A row FAILs only
+    # when every openable thing in its source is ephemeral: an /tmp output beside a tracked
+    # script is auditable (be.known_answer_panel_3_4), an /tmp script alone is not
+    # (cs.en_c4_30b_landed). Resolution is checked against the WORKING TREE and against
+    # path@rev, the same two ways the half above accepts a citation.
+    for fn, fid, eph, tracked_like, revs in eph_pending:
+        openable = [m for m in tracked_like if os.path.exists(os.path.join(root, m))]
+        openable += [f"{p}@{r}" for p, r in revs if _rev_has_path(root, r, p)]
+        if openable:
+            continue
+        # KEYED BY ROW, not by path, and that is why it is a separate lookup from the one
+        # above: one row can name two /tmp paths and the debt is the row's, not each path's.
+        # Same contract as the tracked-path register -- shrink-only, a new row is a FAIL.
+        if f"{fn}#{fid}" in source_baseline:
+            baselined.append(f"{fn}#{fid}")
+            continue
+        errors.append(
+            f"{fn}#{fid}: the only artifact this source names is {', '.join(eph)}, which no "
+            f"reader can open -- /tmp is per-machine and per-boot, so the evidence behind this "
+            f"number is unauditable by construction. cs.en_c4_30b_landed cited "
+            f"/tmp/count_30b.py and nothing else, and was short by exactly its 1,029,505 "
+            f"document count for days because nobody could read the counter. Commit the script "
+            f"(scripts/ or probes/), cite path@rev if it is already deleted, or name a tracked "
+            f"artifact it wrote beside the /tmp path."
+        )
     agents = os.path.join(root, "AGENTS.md")
     prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
     for fn, e in entries:
@@ -8668,6 +8756,13 @@ def _broken_facts():
     hit[0].pop("retracted_value", None)
     hit[1]["retracted_value"] = ["1234.5678 no such number in this entry"]
     json.dump(obj2, open(cf, "w"))
+    # NO EPHEMERAL-SOURCE MUTATION HERE, deliberately. Three were written into this world
+    # first and all four mutants of that predicate SURVIVED: the world already reports 42
+    # errors from the four mutations above, the evidence string shows five, and the verdict is
+    # FAIL either way -- so nothing the ephemeral rows did could change it
+    # (/tmp/de_world_mutants.py, 2026-09-08). _selftest_facts_ephemeral_only_source isolates
+    # that predicate in four one-fact worlds instead, where each mutant reds exactly one.
+    # A shared world is only a world for a check whose verdict its mutation can move.
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -19848,6 +19943,112 @@ def _selftest_exp_fold():
           "survive; exp.py and harness agree")
 
 
+def _selftest_facts_ephemeral_only_source():
+    """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
+    does not.
+
+    3b's case via 4c, 2026-09-08. Its own selftest rather than three more mutations in
+    _broken_facts, and that is measured rather than stylistic: the shared world already
+    carries four mutations and reports 42 errors, of which the evidence string shows five, so
+    all four mutants of this predicate SURVIVED there -- FAIL either way, and no ephemeral row
+    named in the visible slice (/tmp/de_world_mutants.py). A world whose verdict cannot change
+    when the subject is removed measures nothing about the subject. The clean tree cannot serve
+    either: its 13 ephemeral-only rows are baselined, so dropping the openable-beside check
+    leaves its failing set identical.
+
+    Four worlds, one fact file each, built by MUTATING the real facts/data_scaling.json so the
+    entries carry real config/measured/status fields:
+      1 /tmp only                   -> FAIL, naming the row
+      2 /tmp beside a tracked script -> PASS. THE CONTROL THAT DECIDES THE PREDICATE: a flat
+        "any /tmp path fails" reds 18 honest rows, among them be.known_answer_panel_3_4, which
+        cites two tracked eval scripts plus the /tmp outputs they wrote.
+      3 /tmp beside path@rev         -> PASS. The retirement form has to satisfy this half as
+        it does the tracked-path half; the rev is verified to hold the file, since one that
+        resolves to nothing would make the case pass for the wrong reason.
+      4 /tmp only, but baselined     -> PASS. Shrink-only debt, the same contract the
+        tracked-path register has.
+    """
+    import shutil
+
+    real = json.load(open(os.path.join(FACTS_DIR, "data_scaling.json"), encoding="utf-8"))
+    if len(real["facts"]) < 1:
+        raise SelftestSkip("facts/data_scaling.json is empty")
+    rev = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "HEAD"],
+                         capture_output=True, text=True).stdout.strip()
+    # World 3 needs a path that is ONLY reachable at a rev: if the same path also resolves in
+    # the working tree, openable-beside passes the case and the rev half is never reached --
+    # measured, dropping the rev half left this selftest green when world 3 cited
+    # `scripts/exp.py@<rev>` (/tmp/de_world_mutants.py, M_rev SURVIVED). So: a probe deleted in
+    # a real commit, verified present at the parent and absent from the tree.
+    dead_path, dead_rev = "probes/t69_copy_rate.py", None
+    if not os.path.exists(os.path.join(ROOT, dead_path)):
+        cand = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "HEAD", "--", dead_path],
+                              capture_output=True, text=True).stdout.strip()
+        if cand and _rev_has_path(ROOT, f"{cand}^", dead_path):
+            dead_rev = subprocess.run(["git", "-C", ROOT, "rev-parse", f"{cand}^"],
+                                      capture_output=True, text=True).stdout.strip()
+    if not rev or not dead_rev:
+        raise SelftestSkip(f"no rev holds a deleted {dead_path} for world 3 "
+                           f"(rev={rev[:8]!r}, dead_rev={dead_rev})")
+
+    cases = [
+        ("1 /tmp only", "/tmp/de_only_ephemeral.py, full pass, no sampling", None, FAIL),
+        ("2 /tmp beside a tracked script",
+         "scripts/exp.py wrote the row; detail in /tmp/de_beside_tracked.py", None, PASS),
+        ("3 /tmp beside path@rev",
+         f"{dead_path}@{dead_rev} retired; run log in /tmp/de_beside_rev.log", None, PASS),
+        ("4 /tmp only, baselined", "/tmp/de_only_ephemeral.py, full pass",
+         "data_scaling.json#{id}", PASS),
+    ]
+    bad = 0
+    for label, source, baseline_key, want in cases:
+        d = _tmp_repo_shaped()
+        try:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+            # THE WORLD MUST BE ABLE TO RESOLVE THE REAL REPO'S REVS. _tmp_repo_shaped runs a
+            # real `git init`, which gives an EMPTY object store, so `<rev>:<path>` answers
+            # nothing and world 3 fails twice over -- once on the tracked-path half calling the
+            # retired probe absent, once on this half seeing no openable evidence. Measured
+            # before this line existed. `objects/info/alternates` borrows the real store
+            # read-only, which is the narrowest thing that makes a rev resolvable; the world
+            # still has its own HEAD, index and refs, so nothing it does reaches the repo.
+            _alt = os.path.join(d, ".git", "objects", "info")
+            os.makedirs(_alt, exist_ok=True)
+            _real_git = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
+                                        "--git-common-dir"],
+                                       capture_output=True, text=True).stdout.strip()
+            if _real_git:
+                with open(os.path.join(_alt, "alternates"), "w") as fh:
+                    fh.write(os.path.join(_real_git, "objects") + "\n")
+            if os.path.islink(os.path.join(d, "facts")):
+                os.remove(os.path.join(d, "facts"))
+            os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+            obj = {"facts": [dict(real["facts"][0])]}
+            fid = obj["facts"][0]["id"]
+            obj["facts"][0]["source"] = source
+            obj["facts"][0].pop("guard_phrases", None)
+            json.dump(obj, open(os.path.join(d, "facts", "data_scaling.json"), "w"))
+            key = baseline_key.format(id=fid) if baseline_key else None
+            json.dump({key: "selftest world 4"} if key else {},
+                      open(os.path.join(d, "facts", "source_baseline.json"), "w"))
+            # AGENTS.md must mention the one fact file, or the orphan-file error fires and the
+            # world FAILs for a reason that is not the subject -- which is how the shared
+            # world hid this predicate in the first place.
+            with open(os.path.join(d, "AGENTS.md"), "w") as fh:
+                fh.write("facts/data_scaling.json is the scaling fact file.\n")
+            got, ev = check_facts_well_formed(d)
+            named = fid in ev and "no reader can open" in ev
+            ok = got == want and (named if want == FAIL else not named)
+            bad += 0 if ok else 1
+            print(f"  {'ok  ' if ok else 'BUG '} {label}: {got}"
+                  + ("" if ok else f" (wanted {want}) -- {ev[:220]}"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    assert bad == 0, f"{bad} of {len(cases)} ephemeral-source worlds wrong"
+    print("  facts ephemeral source: /tmp alone FAILs; /tmp beside a tracked script, beside "
+          "path@rev, or baselined does not")
+
+
 def _selftest_exp_reclassify_monitor_close():
     """A monitor-closed row can be re-closed by hand WITH a reason and not without it, and
     the monitor's event survives.
@@ -21327,6 +21528,7 @@ def _demo(only=None):
         _selftest_gpu_descendants,
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
+        _selftest_facts_ephemeral_only_source,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
         _selftest_merge_fix_not_deadlocked,
