@@ -8,7 +8,10 @@ source each duplicates, so the mix/training path skips them. The manifest is the
 lazy option (shards stay untouched) -- the mix consults it.
 
     python datagen/dedup_corpus.py --domains web_hq,cci3,en
-    python datagen/dedup_corpus.py --domains web_hq,cci3 --exact 0.8 --shingles 5
+
+`--exact 0.8 --shingles 5` stood here until 2026-09-08 and the parser has never had either
+flag: this pass is exact content-hash only, with no threshold and no shingling. Caught by
+harness check doc_flags_parse, which compares a documented flag against add_argument.
 
 Contract: data/dedup/dedup_manifest.json (duplicate ids + which source) +
 dedup_stats.json with dedup_fp = hash(algorithm + params: exact threshold,
