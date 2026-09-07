@@ -272,6 +272,13 @@ def main():
         if os.path.exists(sig_path) and os.path.exists(loc_path):
             S = np.load(sig_path)
             L = json.load(open(loc_path))
+            if S.shape[0] == 0:
+                raise SystemExit(
+                    f"REFUSE: the cache for {dom!r} at {sig_path} holds 0 signatures. An empty "
+                    f"cache is what a misspelled domain leaves behind, and reading it makes the "
+                    f"typo permanent -- every later run reports 'cached 0 sigs' and looks fine. "
+                    f"Delete it and re-sign, or fix the domain name."
+                )
             print(f"{dom}: cached {S.shape[0]} sigs", flush=True)
         else:
             # replicate near_dedup_scale's signing block
@@ -279,6 +286,18 @@ def main():
             from multiprocessing import Pool
 
             shards = sorted(glob.glob(os.path.join(a.root, dom, "*.jsonl")))
+            # A misspelled --domains entry globs zero shards, and without this the run prints
+            # "signing 0 shards", writes an EMPTY sig cache, and continues: the domain
+            # contributes nothing to the clustering while every later line looks healthy. The
+            # cached zero is the worse half -- the next run reads "cached 0 sigs" and a typo is
+            # then indistinguishable from a genuinely empty domain, permanently. --domains is
+            # nargs="+" so any string reaches here (3b, 2026-09-08, while #70 was blocked).
+            if not shards:
+                raise SystemExit(
+                    f"REFUSE: domain {dom!r} has no *.jsonl under {os.path.join(a.root, dom)}. "
+                    f"Signing it would write an empty cache and every later count would be "
+                    f"silently short by this domain. Check the spelling against --root."
+                )
             parts, done = [], 0
             print(f"{dom}: signing {len(shards)} shards", flush=True)
             with Pool(16) as pool:
