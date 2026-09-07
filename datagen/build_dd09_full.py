@@ -44,7 +44,39 @@ EXPECT_DOCS = 3434322 + 2103485
 
 
 def shards(d):
-    return sorted(f for f in os.listdir(d) if f.endswith(".jsonl") and not f.startswith("."))
+    """The .jsonl shards in d, REFUSING a case variant rather than filtering it away.
+
+    b0's review of 3b-17 (2026-09-08) found the hole this closes, and it is not the obvious
+    one. The file-set comparison in build() cannot catch a `.JSONL` shard, because BOTH sides
+    of that comparison come from this function: `want` is built from the plan, which came from
+    shards(), and `got` is set(shards(out)). A file this filter cannot see is absent from both
+    sets, so the sets agree about a plan that never contained it. Measured on a source holding
+    src_a_000.jsonl + src_a_001.JSONL: the build printed "file set == plan, 2 shards" and
+    passed, having silently dropped one shard's documents from the supply.
+
+    Refusing beats lowercasing the test. Every other reader is case-sensitive too --
+    count_dir.py globs *.jsonl and train.py's shard scan globs *.jsonl, 719 such sites across
+    190 files measured 2026-09-08 -- so accepting a variant here would put a shard into a
+    union that the trainer still cannot read. The name has to be fixed on disk, once, and a
+    refusal says so where a filter says nothing.
+
+    NOT live today: zero case variants exist under data/corpus or data/raw on the pod, and the
+    RedPajama manifest names are all lowercase. The reachable entry point is
+    fetch_rp1t_batch.py:39, `dst = os.path.join(a.out, f)`, which takes the filename verbatim
+    from the manifest list -- so a remote name's casing lands on disk unchanged.
+    """
+    names = sorted(f for f in os.listdir(d) if not f.startswith("."))
+    variants = [f for f in names if f.lower().endswith(".jsonl") and not f.endswith(".jsonl")]
+    if variants:
+        raise SystemExit(
+            f"REFUSE: {d} holds {len(variants)} shard(s) whose extension is not lowercase "
+            f".jsonl: {variants[:5]}. Every reader here is case-sensitive (count_dir globs "
+            f"*.jsonl, train.py's shard scan globs *.jsonl), so such a file is counted by "
+            f"nobody and its documents are silent under-supply. The file-set check below "
+            f"cannot catch it either: both sides of that comparison come from this function, "
+            f"so a name it cannot see is missing from both. Rename it on disk."
+        )
+    return [f for f in names if f.endswith(".jsonl")]
 
 
 def build(corpus, sources=SOURCES, out_name=OUT, expect_tokens=None, expect_docs=None, nw=32):
@@ -299,6 +331,32 @@ def _selftest():
 
         assert _cd(u5, nw=2, quiet=True)["docs"] == 7, "the stray must be counted, else no defect"
 
+        # REFUSAL 6: a case-variant extension. b0's review found this and it is the one world
+        # where the file-set check is structurally blind rather than merely silent: `want` and
+        # `got` are BOTH derived from shards(), so a name shards() cannot see is absent from both
+        # and the sets agree about a plan that never held it. The control below is the whole
+        # point -- with the old filtering shards(), this world PASSED at "file set == plan,
+        # 2 shards" while one shard's documents were dropped from the supply.
+        u7src = os.path.join(corpus, "src_case")
+        os.makedirs(u7src)
+        for nm, body in (("src_case_000.jsonl", "lower"), ("src_case_001.JSONL", "upper")):
+            with open(os.path.join(u7src, nm), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"content": body}) + "\n")
+        with open(os.path.join(u7src, "build_corpus_stats.json"), "w") as f:
+            json.dump({"domain": "src_case", "tokens": 0}, f)
+        try:
+            build(corpus, ("src_case",), "u7", None, None, nw=2)
+        except SystemExit as e:
+            assert "not lowercase" in str(e), e
+            assert "src_case_001.JSONL" in str(e), e
+        else:
+            raise AssertionError("a case-variant shard must refuse, it did not")
+        # the control: the variant holds a real document, so what was dropped was supply. Read it
+        # directly rather than through shards(), which is the function under test.
+        assert sum(1 for _ in open(os.path.join(u7src, "src_case_001.JSONL"))) == 1, (
+            "the case-variant shard must hold a document, else nothing was under-counted"
+        )
+
         # REFUSAL 5: two sources that are already hardlinks of each other. The world for the
         # distinct-inode check, and the only one it can have: every planned name is present,
         # every link is st_ino-verified against its source, the file set equals the plan -- and
@@ -336,7 +394,8 @@ def _selftest():
         f"the union (not summed), every shard verified st_ino-identical to its source, file "
         f"set asserted equal to the plan and every source inode distinct, idempotent on "
         f"re-run; refuses a name collision, a copy, a short count, a stray shard a count "
-        f"alone would accept, and two sources that are already links of each other"
+        f"alone would accept, two sources that are already links of each other, and a "
+        f"case-variant extension that both sides of the file-set check are blind to"
     )
     return 0
 
