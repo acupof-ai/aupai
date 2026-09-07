@@ -256,6 +256,27 @@ def render():
     return MD
 
 
+def _closed_only_by_monitor(name, started):
+    """True when this run has terminal events and EVERY one of them was written by the monitor.
+
+    One predicate, two call sites (de-70): pick_open_row's --started path and `done`'s bare-call
+    path both need it, and they are frames apart. A second copy would drift -- exactly the reason
+    pick_open_row is shared by `done` and `note` rather than duplicated.
+
+    rows(raw=True), NOT rows(): the fold collapses a key to ONE row, so the folded view cannot
+    answer "was every terminal event the monitor's" -- it shows only the winner, and after this
+    verb runs once the winner is the human's. The question is about the population, not the winner.
+
+    ALL, not any: one human close already present means a human has read this run, and overriding
+    that would need a fold rule saying which human wins. There is none, which is why ruling (a)
+    is narrow.
+    """
+    terminal = [r for r in rows(raw=True)
+                if r.get("name") == name and r.get("started") == started
+                and r.get("status") not in (None, "", "running")]
+    return bool(terminal) and all(r.get("writer") == "monitor" for r in terminal)
+
+
 def pick_open_row(name, started, verb):
     """The open row a command acts on, or None when the name has none.
 
@@ -278,6 +299,20 @@ def pick_open_row(name, started, verb):
             closed = [r for r in rows() if r["name"] == name and r.get("started") == started
                       and r["status"] != "running"]
             if closed:
+                # THE MONITOR EXCEPTION REACHES THIS PATH TOO (de-70, 4c's ruling (a)). `done`'s
+                # own closed-row branch handles the BARE call; passing --started exits here first,
+                # several frames earlier, so implementing the exception only there left it
+                # unreachable for exactly the invocation the case needs -- b0 has the `started`
+                # value in hand, copied off the row. Measured: the world got this refusal, not the
+                # reclassify one, and the branch below had never run.
+                #
+                # RETURNING None IS WRONG HERE, which is why this returns the row instead: `done`
+                # fabricates a base from None (the de-46 orphan), and a fabricated row loses the
+                # cmd and hypothesis this close must inherit. The caller re-derives whether the
+                # exception applies -- it owns the --reason check and the refusal text.
+                if (verb == "closing" and closed[-1]["status"] != "retracted"
+                        and _closed_only_by_monitor(name, started)):
+                    return closed[-1]
                 sys.exit(f"{name} ({started}) is not open -- it is already closed as "
                          f"{closed[-1]['status']!r}, result "
                          f"{str(closed[-1].get('result', ''))[:60]!r}. {verb.capitalize()} it "
@@ -382,6 +417,15 @@ def main():
                         "rather than a result, and fold() lets a human's close outvote it "
                         "regardless of union-merge order. Leave empty for a human -- every row "
                         "already in the ledger has no writer, and that is the safe default")
+    # ONLY MEANINGFUL WHEN RE-CLOSING A MONITOR-CLOSED ROW, and mandatory there (de-70, 4c's
+    # ruling (a), 2026-09-08). Not required for an ordinary close: a first close needs no
+    # justification for existing. It is required when the ledger will end up holding two terminal
+    # events for one run, because that pair is otherwise indistinguishable from a double-close bug.
+    d.add_argument("--reason", default="",
+                   help="why the monitor's close is not the result. REQUIRED when re-closing a row "
+                        "the monitor already closed (a deliberate stop lands there as exit 137); "
+                        "ignored on a first close. The monitor's event is never rewritten -- this "
+                        "appends a human one, which fold() prefers in either merge order")
     am = sub.add_parser("amend", help="correct a CLOSED row's reading_artifact, finding or "
                                       "decision; does not touch status or result")
     am.add_argument("--name", required=True)
@@ -499,6 +543,27 @@ def main():
         # run and written the OOM as its result. Fixing the count does not make picking one
         # of two live runs a decision this tool can make.
         base = pick_open_row(a.name, a.started, "closing")
+        # None on every ordinary close. Set only by the monitor-reclassify path, and read after the
+        # event is built -- so it must exist before that path can be skipped, which is every
+        # normal `done`.
+        _reclassifies = None
+        # TWO PATHS REACH A MONITOR-CLOSED ROW and both must demand --reason (de-70). With
+        # --started, pick_open_row returns the closed row itself, so `base` is non-None and the
+        # closed-row branch below never runs; without it, `base` is None and that branch does the
+        # work. Checking here covers the first: `base` is a row whose status is terminal, which an
+        # open row's never is, so the condition cannot fire on an ordinary close.
+        if base is not None and base.get("status") not in (None, "", "running"):
+            _reclassifies = dict(base)
+            if not a.reason:
+                sys.exit(
+                    f"{a.name} ({base.get('started')}) is closed as {base['status']!r} by the "
+                    f"MONITOR, result {str(base.get('result', ''))[:60]!r}. A monitor reports "
+                    f"process state, so a deliberate stop lands here as a failure and this is "
+                    f"re-closable by hand -- but it needs --reason, because the ledger will then "
+                    f"hold two terminal events for one run and a reader cannot tell a correction "
+                    f"from a double-close bug without one. Re-run with --reason '<why the "
+                    f"monitor's reading is not the result>'."
+                )
         if base is None:
             # A CLOSED ROW IS NOT AN ABSENT ROW, and this branch could not tell them apart.
             # pick_open_row's subject is rows whose last event is `running`, so it returns None
@@ -537,20 +602,60 @@ def main():
                        and (a.started is None or r.get("started") == a.started)]
             if _closed:
                 _r = _closed[-1]
-                _how = ("A retraction is terminal by kind -- record the corrected result as a NEW "
-                        "run (`start` under its own name, then `done`), and if only the reading is "
-                        "missing use `amend`."
-                        if _r["status"] == "retracted" else
-                        "Re-close it explicitly with --started "
-                        f"{_r.get('started')!r}, or `start` a new run if this is a new attempt.")
-                sys.exit(
-                    f"{a.name} ({_r.get('started')}) is already closed as {_r['status']!r}"
-                    + (f": {str(_r.get('retracted_reason', ''))[:80]!r}"
-                       if _r["status"] == "retracted" else
-                       f", result {str(_r.get('result', ''))[:60]!r}")
-                    + f". Closing it again would append a row with no cmd, or an event the fold "
-                      f"discards. {_how}"
-                )
+                # THE ONE EXCEPTION: A MONITOR'S CLOSE IS NOT A RESULT (de-70, 4c's ruling (a),
+                # 2026-09-08). A row whose only terminal event was written by the monitor reports
+                # PROCESS STATE -- the pid returned 137 -- and a deliberate stop produces exactly
+                # that, so the row reads `fail / exit 137 (signal 9)` for a run someone ended on
+                # purpose at a chosen step. b0 hit this on (1.5b-a0.2b-e48_30b, 2026-09-07 05:15)
+                # and no verb could reclassify it: `amend` excludes status by design, `retract`
+                # withdraws a RESULT rather than restating one, `note` carries running forward.
+                #
+                # THE FOLD ALREADY RESOLVES THIS and is not touched. Its 2026-09-07 rule -- a
+                # monitor's close loses to a human's, keyed on `writer` and not on the text -- makes
+                # a human event win in EITHER file order, measured on a three-event fixture before
+                # this was written (monitor-only -> fail/137; human after -> the human's; human
+                # before, which a union merge can produce -> the human's). So the only thing
+                # missing was a writer that would append the event; the semantics were in place.
+                #
+                # A --reason IS MANDATORY HERE and nowhere else in `done`. Overriding a close that
+                # already exists is the one case where the ledger holds two terminal events for one
+                # run and a reader has to know why the second one is there; without it the pair is
+                # indistinguishable from a double-close bug. Same argument as `retract --reason`.
+                #
+                # NARROW BY CONSTRUCTION, and deliberately not generalised to (b), a `reclassify`
+                # that could override any terminal event: overriding a HUMAN's close would need a
+                # fold rule saying which human wins, and there is no principled answer. The
+                # condition is every terminal event for this key being the monitor's, so one human
+                # close already present makes this refuse again.
+                _all_monitor = _closed_only_by_monitor(a.name, _r.get("started"))
+                if _all_monitor and _r["status"] != "retracted":
+                    if not a.reason:
+                        sys.exit(
+                            f"{a.name} ({_r.get('started')}) is closed as {_r['status']!r} by the "
+                            f"MONITOR, result {str(_r.get('result', ''))[:60]!r}. A monitor reports "
+                            f"process state, so a deliberate stop lands here as a failure and this "
+                            f"is re-closable by hand -- but it needs --reason, because the ledger "
+                            f"will then hold two terminal events for one run and a reader cannot "
+                            f"tell a correction from a double-close bug without one. Re-run with "
+                            f"--reason '<why the monitor's reading is not the result>'."
+                        )
+                    base = dict(_r)      # inherit cmd, hypothesis, started: this is the SAME run
+                    _reclassifies = _r   # printed below, so the caller sees what was overridden
+                else:
+                    _how = ("A retraction is terminal by kind -- record the corrected result as a "
+                            "NEW run (`start` under its own name, then `done`), and if only the "
+                            "reading is missing use `amend`."
+                            if _r["status"] == "retracted" else
+                            "Re-close it explicitly with --started "
+                            f"{_r.get('started')!r}, or `start` a new run if this is a new attempt.")
+                    sys.exit(
+                        f"{a.name} ({_r.get('started')}) is already closed as {_r['status']!r}"
+                        + (f": {str(_r.get('retracted_reason', ''))[:80]!r}"
+                           if _r["status"] == "retracted" else
+                           f", result {str(_r.get('result', ''))[:60]!r}")
+                        + f". Closing it again would append a row with no cmd, or an event the fold "
+                          f"discards. {_how}"
+                    )
         ev = dict(
             base
             or {
@@ -574,8 +679,29 @@ def main():
             # would split the population into two spellings of the same thing and make fold()'s
             # rule depend on which era a row was written in.
             ev["writer"] = a.writer
+        # THE REASON AND WHAT IT OVERRODE, on the event (de-70). Recorded as two fields rather than
+        # folded into `result`, because `result` is the measurement and this is a statement ABOUT
+        # another event -- the same separation `retract` keeps with retracted_result. A reader who
+        # sees two terminal events for one run can then ask the ledger why, instead of inferring it
+        # from the pair's existence. `writer` is deliberately NOT set: this close is a human's, and
+        # setting it would make fold() treat it as the monitor's and discard it.
+        if _reclassifies is not None:
+            ev["reclassify_reason"] = a.reason
+            ev["reclassifies"] = {
+                "status": _reclassifies.get("status"),
+                "result": _reclassifies.get("result"),
+                "writer": _reclassifies.get("writer"),
+            }
+            ev.pop("writer", None)
         append(ev)
-        print(f"logged done: {a.name} -> {a.result}")
+        if _reclassifies is not None:
+            print(f"logged done: {a.name} -> {a.result}\n"
+                  f"  RECLASSIFIED the monitor's close "
+                  f"({_reclassifies.get('status')} / "
+                  f"{str(_reclassifies.get('result'))[:50]}) -- its event is untouched; the fold "
+                  f"now shows this one. Reason: {a.reason}")
+        else:
+            print(f"logged done: {a.name} -> {a.result}")
     elif a.action == "note":
         # STILL RUNNING. `note` appends an event that carries status="running" forward, so
         # fold() keeps it as the row's latest state and a later `done` folds onto the same
