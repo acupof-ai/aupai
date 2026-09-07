@@ -165,10 +165,41 @@ _OPEN_FIELDS = ("status", "state")
 # repairs, which is de-36's 161-vs-14 shape again in a different field.
 _PROVENANCE = {"commit", "notes", "ended", "cmd", "socket", "reviewer"}
 
+# Every `result` a monitor has ever written, ENUMERATED FROM THE LEDGERS rather than guessed: 162
+# monitor-written rows across the pod's 466 and the local 452 carry exactly these seven values
+# (measured 2026-09-08). None is a measurement, because a monitor reports process state.
+#
+# BUT PROCESS STATE IS NOT ONE THING, and splitting it is the difference between a criterion and a
+# heuristic with a name (84's test, 2026-09-08, which found this in my own first version):
+#
+#   CLEAN   the monitor saw the process end normally. Against a local measurement there is
+#           nothing to decide -- the run finished and somebody read it. 27 pod rows.
+#   FAILED  the monitor saw a KILL, a nonzero exit, a vanished process, or a silent log. Against
+#           a local row reporting a result, these DO disagree, and about something that matters:
+#           whether the run that produced the number completed at all. 56 pod rows -- 67% of the
+#           population, so the first version swallowed the majority case, not an edge.
+#
+# So `monitor_state_only` requires a CLEAN end. A failure state falls through to `contradicts`,
+# which asks a human, and that is the safe direction: the alternative silently endorses a local
+# measurement whose run the monitor says was killed.
+_MONITOR_CLEAN = {"exit 0", "process exited"}
+_MONITOR_FAILED = {"log silent", "exit 1", "vanished", "exit 127", "exit 137 (signal 9)"}
+_MONITOR_RESULTS = _MONITOR_CLEAN | _MONITOR_FAILED
+
+
+def difference_label(why, stale_ruling):
+    """The report's reason for one differing key: the difference CLASS, plus what happened to any
+    ruling about it. Two answers to two questions, and the call site used to keep only one --
+    `stale or why` let a stale-ruling string REPLACE the class, so a key classified
+    monitor_state_only reported as a ruling note with the reason for the difference absent
+    (measured 2026-09-08). A function rather than an inline expression so the selftest exercises
+    what the caller runs; asserted inline, the test passes while the caller reverts."""
+    return f"{why} [{stale_ruling}]" if stale_ruling else why
+
 
 def classify(local_row, pod_row, local_events=None, pod_events=None):
     """Why a key present on BOTH sides differs. Returns 'stale' | 'result_only_on_pod' |
-    'provenance_only' | 'contradicts'.
+    'provenance_only' | 'monitor_state_only' | 'contradicts'.
 
     "The content differs" is not actionable and was the first version's whole predicate:
     it reported 155 collisions on the real ledgers, which is not 155 conflicts, it is two
@@ -239,6 +270,35 @@ def classify(local_row, pod_row, local_events=None, pod_events=None):
                   and pod_row.get(f) != local_row.get(f)]
     if _content and not _contested:
         return "result_only_on_pod"
+    # A MONITOR'S CLOSE IS NOT A MEASUREMENT, so it cannot contradict one (4c, 2026-09-08). This
+    # is exp.fold's monitor rule one layer up: the fold applies it BETWEEN two events in one
+    # ledger, and nothing applied it BETWEEN two copies of a ledger. b0_p5_ctrl_bf16 @ 2026-09-05
+    # 12:35 read `contradicts` on that gap -- the pod row carries result "exit 0" / finding
+    # "monitor: process exited cleanly", later retracted, against a local row holding 62K
+    # tok/s/gpu at steps 30 and 100, val 5.094, 432s. The two are not answers to the same
+    # question: the monitor reports PROCESS STATE, the human reports the RESULT. `contradicts`
+    # means "a human decides which is right", and there is nothing to decide here.
+    #
+    # BOTH HALVES, because each alone is wrong in a measured way:
+    #   writer=monitor      is the honest provenance test and covers 6 of 83 monitor rows on the
+    #                       pod (measured 2026-09-08) -- exp.py's `done --writer monitor` is
+    #                       recent, so 77 predate the field, INCLUDING the row above. A
+    #                       writer-only predicate would not fire on the case it was written for.
+    #   finding "monitor: " is a predicate on prose, which exp.fold's own comment argues against
+    #                       because a reworded finding escapes it and a human quoting the monitor
+    #                       trips it. Measured: 0 local rows mention the monitor in `finding`
+    #                       without starting with it, so the second risk is currently empty --
+    #                       stated as a measurement, not as a guarantee.
+    # So provenance OR the marker, AND the pod's content must be a CLEAN end -- see
+    # _MONITOR_CLEAN. Requiring merely "process state" was this rule's first version and it
+    # swallowed 56 of 83 monitor rows that report a KILL against a local measurement, which is a
+    # real disagreement about whether the run finished.
+    _pod_monitor = (pod_row.get("writer") == "monitor"
+                    or str(pod_row.get("finding") or "").startswith("monitor:"))
+    _local_monitor = (local_row.get("writer") == "monitor"
+                      or str(local_row.get("finding") or "").startswith("monitor:"))
+    if _pod_monitor and not _local_monitor and str(pod_row.get("result") or "") in _MONITOR_CLEAN:
+        return "monitor_state_only"
     return "contradicts"
 
 
@@ -614,7 +674,7 @@ def verify_pod_append(rel, rows, pod_root=POD_ROOT, reader=read_pod):
     return bad
 
 
-def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
+def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False, rulings=None):
     """[(rel, n_pod, n_local, missing, collisions, error)] for every ledger.
 
     `push` swaps which side is authoritative for `missing`: by default missing is pod rows
@@ -630,7 +690,11 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
     from ledger_resolutions import index, settled
 
     keys = _keys()
-    idx = index()
+    # `rulings` is for the selftest ONLY, and it exists because index() reads an absolute module
+    # path: survey(root=_tmp) redirects the ledgers but not the rulings, so a survey-level world
+    # could not carry a stale ruling and the one wiring that matters here was untestable. Default
+    # None keeps production reading the real file.
+    idx = index() if rulings is None else rulings
     out = []
     for rel in _ledgers():
         text, err = reader(rel, pod_root)
@@ -689,7 +753,16 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
             ok, stale = settled(rel, k, lrow, prow, idx)
             if ok:
                 continue
-            kept.append((k, stale or why, lrow, prow))
+            # BOTH, not one or the other. settled()'s second value is why a RULING no longer
+            # applies -- "ruled 09-06 about a different POD row, re-read it" -- which is not a
+            # difference class, and `stale or why` used it as one: it REPLACED the class, so
+            # b0_p5_ctrl_bf16 classified monitor_state_only and reported as the ruling text, with
+            # the reason for the difference nowhere in the output (measured 2026-09-08 while
+            # adding that class -- the summary line read `stale 3` and the fourth key showed only
+            # a ruling note). The two answer different questions: `why` is what makes the rows
+            # differ, `stale` is what happened to the ruling about them. A reader deciding what to
+            # do needs the first, and the second is why the earlier decision does not settle it.
+            kept.append((k, difference_label(why, stale), lrow, prow))
         note = f"{bad} unparseable pod line(s)" if bad else None
         n_ruled = len(coll) - len(kept)
         if n_ruled:
@@ -784,6 +857,14 @@ def main(argv=None):
                 print(f"      {f}: loc {str(lrow.get(f))[:64]!r}")
     print()
     n_res = by_class.get("result_only_on_pod", 0)
+    if by_class.get("monitor_state_only"):
+        print(
+            f"{by_class['monitor_state_only']} row(s) where the POD row is a MONITOR'S CLOSE and "
+            f"the local row is a measurement. Not a disagreement: the monitor reports process "
+            f"state and the human reports the result, so they answer different questions and the "
+            f"local row stands. Nothing to decide and nothing to apply -- this used to read as "
+            f"`contradicts`, which asks a human to pick between a throughput number and `exit 0`."
+        )
     if n_res:
         print(
             f"{n_res} row(s) where THE POD HOLDS A RESULT AND THE REPOSITORY DOES NOT. This "
@@ -1477,10 +1558,107 @@ def _selftest():
     )
     assert classify({**base, "status": "ok"}, {**base, "status": "fail"}) == "contradicts"
 
+    # MONITOR_STATE_ONLY, from the real pair that motivated it: b0_p5_ctrl_bf16 @ 2026-09-05
+    # 12:35. The pod row is its monitor's close, the local row is the measurement, and the class
+    # exists because `contradicts` asked a human to choose between 62K tok/s/gpu and `exit 0`.
+    _meas = {"name": "n", "started": "t", "status": "ok",
+             "result": "62K tok/s/gpu at step 30 and at step 100", "finding": "val 5.094, 432s"}
+    _mon = {"name": "n", "started": "t", "status": "retracted", "result": "exit 0",
+            "finding": "monitor: process exited cleanly"}
+    assert classify(_meas, _mon) == "monitor_state_only", classify(_meas, _mon)
+    # The marker half alone must carry it, because the real row has NO `writer` field -- measured
+    # 2026-09-08, `done --writer monitor` postdates 77 of the pod's 83 monitor rows, so a
+    # writer-only predicate would miss the case this was written for.
+    assert "writer" not in _mon
+    # And the writer half alone must carry it too, for a monitor row whose finding was reworded.
+    assert classify(_meas, {**_mon, "finding": "the process ended", "writer": "monitor"}) \
+        == "monitor_state_only"
+    # NEGATIVE 1, the mutant 4c asked for: a real value-vs-value disagreement is STILL a
+    # contradiction. Same monitor provenance, but the pod carries a number rather than process
+    # state, so the content half refuses and the pair goes to a human.
+    assert classify(_meas, {**_mon, "result": "48K tok/s/gpu at step 30"}) == "contradicts", \
+        classify(_meas, {**_mon, "result": "48K tok/s/gpu at step 30"})
+    # NEGATIVE 2: direction matters. A monitor row LOCALLY against a measurement on the pod is
+    # not this class -- that is the pod holding a result the repository lacks, and collapsing the
+    # two would hide an R10 row behind a label that says "nothing to do".
+    assert classify(_mon, _meas) != "monitor_state_only", classify(_mon, _meas)
+    # NEGATIVE 3: two monitor rows are `stale` or `provenance_only`, never this class, which
+    # requires a human measurement on exactly one side to be the thing being protected.
+    assert classify(_mon, {**_mon, "ended": "03:55"}) != "monitor_state_only"
+
+    # NEGATIVE 4, and the one that makes this a criterion rather than a heuristic with a name
+    # (84's separability test, 2026-09-08, applied to my own first version and it failed). Two
+    # worlds exist where "the monitor reports process state" and "the local measurement stands"
+    # are both true, and they need OPPOSITE verdicts:
+    #   clean end  -> nothing to decide, the run finished and somebody read it
+    #   killed     -> the monitor says the job died; the local row reports a result as if it did
+    #                 not. Those disagree about whether the run that produced the number
+    #                 completed, which is a human's call.
+    # Requiring merely "process state" swallowed every failure form -- 56 of the pod's 83 monitor
+    # rows, so the majority case, not an edge.
+    for _res in ("exit 1", "exit 127", "exit 137 (signal 9)", "vanished", "log silent"):
+        _killed = {"name": "n", "started": "t", "status": "fail", "result": _res,
+                   "finding": f"monitor: {_res}"}
+        assert classify(_meas, _killed) == "contradicts", (_res, classify(_meas, _killed))
+    for _res in ("exit 0", "process exited"):
+        _clean = {"name": "n", "started": "t", "status": "ok", "result": _res,
+                  "finding": "monitor: process exited cleanly"}
+        assert classify(_meas, _clean) == "monitor_state_only", (_res, classify(_meas, _clean))
+    # And the two sets partition what the ledgers actually hold: a value in neither is a monitor
+    # result nobody has seen, and it must reach a human rather than fall into the quiet class.
+    assert not (_MONITOR_CLEAN & _MONITOR_FAILED)
+    assert _MONITOR_RESULTS == _MONITOR_CLEAN | _MONITOR_FAILED
+
+    # THE CLASS MUST SURVIVE A STALE RULING, ASSERTED THROUGH survey() (44, 2026-09-08). My first
+    # version tested a LAMBDA COPY of difference_label, and even calling the real function was not
+    # enough: reverting the call site to `stale or why` left the whole selftest GREEN, measured.
+    # That is line 1267's own principle -- "SURVEY MUST ACTUALLY USE IT, asserted through survey()
+    # and not just on the function" -- which I applied to events_pod_lacks and not to this. A
+    # helper that works and is not called is the shape this file exists against, and 44 caught me
+    # writing the rule in one place and breaking it in another.
+    #
+    # The world needs BOTH halves or the mutation is invisible: a monitor pair so classify returns
+    # monitor_state_only, AND a ruling registered for that key whose fingerprints no longer match,
+    # so settled() returns a stale-ruling string for the label to lose.
+    assert difference_label("monitor_state_only", None) == "monitor_state_only"
+    _lbl_meas = {"name": "lbl", "started": "L1", "status": "ok",
+                 "result": "62K tok/s/gpu at step 30", "finding": "val 5.094"}
+    _lbl_mon = {"name": "lbl", "started": "L1", "status": "ok", "result": "exit 0",
+                "finding": "monitor: process exited cleanly"}
+
+    def _lbl_pair(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return json.dumps(_lbl_mon, ensure_ascii=False) + "\n", None
+
+    _lt = __import__("tempfile").mkdtemp(prefix="ledger_label_")
+    os.makedirs(os.path.join(_lt, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_lt, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                _f.write(json.dumps(_lbl_meas, ensure_ascii=False) + "\n")
+    # A ruling about OTHER rows: the fingerprints are deliberately wrong, which is what makes
+    # settled() report "ruled ... about a different LOCAL row -- re-read it" instead of settling.
+    _lbl_rulings = {("runs/experiments.jsonl", ("lbl", "L1")): {
+        "date": "2026-09-06", "ruled_by": "b0", "local_fp": "0" * 16, "pod_fp": "0" * 16}}
+    _lbl_rows = {r[0]: r for r in survey(root=_lt, reader=_lbl_pair, rulings=_lbl_rulings)}
+    _lbl_coll = _lbl_rows["runs/experiments.jsonl"][4]
+    assert len(_lbl_coll) == 1, f"expected one collision, got {_lbl_coll}"
+    _why = _lbl_coll[0][1]
+    assert _why.startswith("monitor_state_only"), (
+        f"survey() reported {_why!r}. The difference CLASS must lead: a stale ruling says what "
+        f"happened to an earlier decision, not why the rows differ, and `stale or why` at the "
+        f"call site drops the class entirely -- the defect this case exists to catch."
+    )
+    assert "ruled 2026-09-06" in _why, (
+        f"survey() reported {_why!r}, losing the stale ruling. Both belong: the class is what "
+        f"makes the rows differ, the ruling note is why the earlier decision no longer settles it."
+    )
+
     print(
         f"pod_pull_ledgers selftest OK: {len(_ledgers())} ledgers keyed from ledger_audit.KEYS; "
         "missing/duplicate-key/identical on known answers; all three difference classes "
-        "(stale, result_only_on_pod, contradicts) plus provenance_only on its three real shapes -- corrected sha, sha-to-placeholder with the reason in notes, two monitors closing at different times -- with the negative that a differing result or status stays a contradiction; BOTH sides fold to their last row, "
+        "(stale, result_only_on_pod, contradicts) plus provenance_only on its three real shapes -- corrected sha, sha-to-placeholder with the reason in notes, two monitors closing at different times -- with the negative that a differing result or status stays a contradiction; monitor_state_only on the real b0_p5_ctrl_bf16 pair, carried by the writer field and by the finding marker independently (the field postdates 77 of the pod's 83 monitor rows), with five negatives -- a monitor row carrying a NUMBER stays a contradiction, a monitor row reporting a KILL (exit 1/127/137, vanished, log silent -- 56 of the pod's 83) stays a contradiction because it disagrees with a local measurement about whether the run finished, the reverse direction stays result_only_on_pod, two monitor rows are never this class, and the class survives a stale ruling rather than being replaced by it; BOTH sides fold to their last row, "
         "asserted on the case that produced 161 differences where the answer is 14 -- an "
         "earlier pod row under a key whose last row matches locally; a missing pod file "
         "reports an error instead of zero; and a pod file with FEWER rows correctly "

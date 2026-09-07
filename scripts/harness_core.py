@@ -62,11 +62,68 @@ _CITE_WRAP_LINES = 2
 # Anchored on an arm SUFFIX or an explicit mem_ marker, never on a leading m1: see the note
 # in check_memory_diag_fresh. Module-level so the check and _arm_id share one definition.
 _ARM_RE = re.compile(r"(^|_)mem_m[123]([_-]|$)|(^|_)m[123]([_-]|$)", re.I)
-# A cards[] value that marks the card as belonging to the RL team rather than to us. The map's
-# keys are specs ("1-4", "5") and its values are prose, so this is the only machine-readable
-# signal in it. Matched case-insensitively on the phrase, not on an exact string, because the
-# entries are written by hand ("RL TEAM (tileRL) -- not ours").
-_RL_TEAM_RE = re.compile(r"\bRL[ _-]?TEAM\b", re.I)
+# OWNERSHIP IS CLASSIFIED FROM PROSE, AND AN UNRECOGNISED NOTE IS A REFUSAL RATHER THAN A GRANT.
+#
+# THE HOLE THIS CLOSES (b0, 2026-09-07, found while checking whether the harness would let a lane
+# job near a lent card; reported by tilerl-27, addendum from v100, ruling from 4c via e1). The
+# predicate was `\bRL[ _-]?TEAM\b` and the live notes for cards 0 and 6 read
+# "tileRL (user order 2026-09-06, '0,6 tileRL')". That misses for TWO independent reasons:
+#
+#   1. no "TEAM" token in the note at all, and
+#   2. `\bRL` cannot match inside "tileRL" -- `e` and `R` are both word characters, so there is
+#      no boundary between them. Measured: the pattern is False even on "tileRL TEAM".
+#
+# Reason 2 is why "just add the product name to the alternation" was not enough and why the
+# leading `\b` is gone below: a fix that reads right and still matches nothing is the failure
+# mode that produced the hole.
+#
+# Consequence while it was live: _aupai_cards returned theirs=[] and ours=[0..7], so
+# `harness launch --cards 0` and `--cards 6` were both ACCEPTED against a file whose own prose
+# gives those cards to tileRL.
+#
+# WHY THE GUARD'S TEST STAYED GREEN: harness.py's fixture wrote the note as
+# "RL TEAM (tileRL) -- not ours" -- the one phrasing the regex matches. The fixture supplied the
+# wording the check needed, so the check passed there and was dead on the live file. The fixture
+# now reads the LIVE runs/card_assignment.json, so the next pattern change cannot re-hide this
+# way; asserting against typed-out prose is what made a dead check look delivered.
+#
+# THREE STATES, NOT TWO. "theirs" and "ours" are not a partition of the notes: a note that
+# matches neither vocabulary is UNCLASSIFIED, and the caller must be able to tell "found nothing
+# to protect" from "aupai may use this". Silence is not a grant, and neither is prose the parser
+# cannot read. Broadening the pattern alone would leave that distinction unavailable at the call
+# site, which is 4c's ruling and the reason this is a classifier rather than one regex.
+#
+# The durable fix is a structured owner field in card_assignment.json; this keeps the prose as the
+# source because the file is hand-written today, and refuses rather than guesses when it cannot
+# read it.
+# CLASSIFY BY THE NOTE'S SUBJECT -- ITS LEADING TOKEN -- NOT BY A SUBSTRING ANYWHERE IN IT.
+# My own first version of this fix used an unanchored `tile[ _-]?rl` and it reported cards 1 and 2
+# as tileRL's. Both are aupai's and card 1 was running resume 1 at the time. The notes read
+# "GRANTED ... -> fb: lambada_en A/B for tilerl's PR" and "1,2 -> MoE arm E1 (world 2, b0+tilerl)":
+# a peer's NAME appears in a note about aupai's own work, and matching it anywhere turns a
+# collaborator's mention into a change of ownership. Fixing an over-permissive predicate by making
+# it over-restrictive is not a fix; it hands aupai's own running cards away instead.
+_NOT_OURS_RE = re.compile(r"^\s*(tile[ _-]?rl|rl[ _-]?team)\b", re.I)
+# An aupai note: the controller writes "GRANTED <when> -> <who>", and some older entries lead
+# with a bare timestamp and an arrow. Both are recognised; anything else is unclassified.
+_OURS_RE = re.compile(r"^\s*(granted\b|\d{4}-\d{2}-\d{2})", re.I)
+
+
+def _classify_card_note(note):
+    """'theirs' | 'ours' | 'unclassified' for one cards[] note.
+
+    NOT-OURS IS TESTED FIRST and that order is load-bearing: card 0's note reads
+    "tileRL ...; short aupai lane jobs only by explicit grant while tileRL is not using it",
+    which names a conditional aupai use inside a note whose subject is tileRL's ownership. A
+    rule that looked for our vocabulary first would read that card as ours on the strength of a
+    sentence saying the opposite.
+    """
+    s = str(note or "")
+    if _NOT_OURS_RE.search(s):
+        return "theirs"
+    if _OURS_RE.search(s):
+        return "ours"
+    return "unclassified"
 
 
 def pod_reachable():
@@ -972,16 +1029,34 @@ def _card_map(root=None):
     return out
 
 def _aupai_cards(root=None):
-    """(ours, theirs, unlisted_is_unknown) from the grant file's cards[] map.
+    """(ours, theirs, cards_map) from the grant file's cards[] map.
 
-    ours = every listed card whose note does NOT mark it RL TEAM. theirs = the RL-team ones.
-    A card absent from the map is in NEITHER set: the map is the only statement of ownership
-    there is, and "not mentioned" is not a grant (idle is not a grant, and neither is silence).
+    ours = every listed card whose note reads as an aupai grant. theirs = every card the note
+    gives to tileRL. A card whose note matches NEITHER vocabulary is in neither set -- see
+    _unclassified_cards, and see _classify_card_note for why an unreadable note must not fall
+    into `ours` by default.
+
+    A card absent from the map is in neither set either: the map is the only statement of
+    ownership there is, and "not mentioned" is not a grant (idle is not a grant, silence is not
+    a grant, and prose the parser cannot read is not a grant).
     """
     m = _card_map(root)
-    ours = sorted(c for c, note in m.items() if not _RL_TEAM_RE.search(str(note)))
-    theirs = sorted(c for c, note in m.items() if _RL_TEAM_RE.search(str(note)))
+    cls = {c: _classify_card_note(note) for c, note in m.items()}
+    ours = sorted(c for c, k in cls.items() if k == "ours")
+    theirs = sorted(c for c, k in cls.items() if k == "theirs")
     return ours, theirs, m
+
+
+def _unclassified_cards(root=None):
+    """{card: note} for every listed card whose owner the parser cannot determine.
+
+    Separate from _aupai_cards so a caller can REFUSE on it rather than infer. Returning these
+    inside `ours` is the defect this exists to prevent: a note nobody can parse is the state the
+    file lands in whenever the wording drifts, which is exactly when a wrong answer is most
+    likely and least visible.
+    """
+    return {c: note for c, note in _card_map(root).items()
+            if _classify_card_note(note) == "unclassified"}
 
 def _close_row(name, status, result, finding, decision, root=None, writer=""):
     """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
