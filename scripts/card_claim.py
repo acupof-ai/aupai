@@ -863,8 +863,23 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
             # running the resolution twice would only move the refusal earlier and change which
             # message the reader gets.
             asking = pid if pid else os.getppid()
+            # EXCLUDE THIS CLAIM'S OWN FILE HERE TOO, for the reason line 833 already excludes it
+            # from `held` -- and this omission is worse than that one was, because it waives a
+            # FOREIGN clash rather than a self-clash. harness launch writes a PENDING row naming the
+            # wrapper pid and then acquires the job's pid, which is that wrapper's descendant: so
+            # the asker's own pending row satisfies this ancestry test, acquire returns True, and
+            # the "No claim written" branch writes nothing. The launcher then believes it holds
+            # cards that another owner is still on -- a spill onto a claimed card, which is the one
+            # outcome the clash check exists to prevent.
+            #
+            # MEASURED 2026-09-07 (/tmp/de_probe_self_exempt.py), foreign claim on card 6 plus a
+            # pending row for the asker: live -> True, "j shares 6 with j (pid W), which is an
+            # ANCESTOR of pid J", nothing written; with this line -> refused, "cards ['6'] are
+            # claimed by {'6': ['tilerl-gdnfloor']}". The cross-name exemption 58's repro added is
+            # unaffected in both runs, which is what makes this the exclusion and not a rollback.
             ancestors = {c.get("name"): c.get("pid") for c in live
-                         if any(card in clash for card in c.get("cards", []))}
+                         if c.get("file") != os.path.basename(mine)
+                         and any(card in clash for card in c.get("cards", []))}
             for nm, anc in ancestors.items():
                 if not isinstance(anc, int) or anc == asking:
                     continue
@@ -2937,6 +2952,91 @@ def _selftest():
     _case(any(c.get("name") == "anc_run" for c in _live_after),
           "while the parent's claim is untouched")
     release("anc_run", ["4"])
+
+    # THE ASKER'S OWN ROW MUST NOT SUPPLY THE ANCESTOR (2026-09-07, the 30B launch). The exemption
+    # above reads `live` for a claim holding a clashing card and waives the clash when the asker is
+    # its descendant. harness launch's PENDING row is such a claim under the asker's OWN name: it
+    # records the wrapper pid, and the pid being acquired is that wrapper's child. So the row let
+    # acquire waive a FOREIGN clash and return True on the "no claim written" branch -- the
+    # launcher believes it holds cards another owner is on, which is the spill this file exists to
+    # prevent. Line 833 already excludes this claim's own file from `held` for the same reason.
+    #
+    # THE FOREIGN CLAIM IS THE SUBJECT. Without it the case is vacuous: with no clash at all
+    # acquire succeeds anyway, so a mutant that drops the exclusion would pass. The world is
+    # foreign-holder-on-6 + our pending row + our descendant asking, and the assertion is that the
+    # refusal NAMES the foreign holder rather than exempting itself.
+    # ITS OWN CLAIM DIR, and that is not tidiness. `runC` above holds cards 5,6 with pid `me`, the
+    # selftest process, which is an ancestor of every subprocess this world spawns -- so its
+    # exemption fires legitimately and first, and the case read "selfx_job shares 5,6 with runC"
+    # while proving nothing. It swallowed the world's own foreign holder too: that acquire returned
+    # True by the same exemption and wrote no file, so there was no foreign claim to clash with.
+    # Measured before this dir existed: 141/142 with this case BUG for the world's reason, not the
+    # subject's. Hence the file-exists control below -- a world whose holder wrote nothing cannot
+    # test a clash.
+    _selfx_dir = tempfile.mkdtemp(prefix="cc_selfx_")
+    _saved_dir = CLAIM_DIR
+    CLAIM_DIR = _selfx_dir
+    _fgn = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    _wrap = subprocess.Popen(
+        [sys.executable, "-c",
+         "import subprocess, sys, time;"
+         "k = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)']);"
+         "print(k.pid, flush=True); time.sleep(60)"],
+        stdout=subprocess.PIPE, text=True)
+    try:
+        _jobpid = int(_wrap.stdout.readline().strip())
+        _okf, _whyf = acquire("selfx_foreign", ["6"], pid=_fgn.pid, wait=0)
+        _fgn_file = os.path.join(CLAIM_DIR, claim_file("selfx_foreign", ["6"]))
+        _case(_okf and os.path.exists(_fgn_file),
+              f"world control: the foreign holder WROTE a claim on card 6, so there is something "
+              f"to clash with ({_whyf[:60]})")
+        _case(_jobpid in {p for p, _ in _descendants(_wrap.pid)},
+              f"world control: the job pid {_jobpid} IS a descendant of the wrapper {_wrap.pid}, "
+              f"so the ancestry test can fire at all")
+        _pend = os.path.join(CLAIM_DIR, claim_file("selfx_job", ["5", "6"]))
+        with open(_pend, "w", encoding="utf-8") as fh:
+            json.dump({"name": "selfx_job", "cards": ["5", "6"], "pid": _wrap.pid,
+                       "cmdline": _cmdline(_wrap.pid), "acquired": _now(),
+                       "note": "pending", "state": "pending"}, fh)
+        _oks, _whys = acquire("selfx_job", ["5", "6"], pid=_jobpid, wait=0)
+        _case(not _oks and "selfx_foreign" in _whys,
+              f"a job's OWN pending row does not waive a FOREIGN clash; the refusal names the "
+              f"holder ({_whys[:80]})")
+        _case(os.path.exists(_pend),
+              "and the pending row survives the refusal, so the cards stay declared")
+        # BY FILE, NOT BY NAME, and this is the case that separates them -- without it, excluding
+        # `c.get("name") != name` passes everything above (measured: mutant 2 GREEN on all four).
+        # The two differ exactly when one name holds a DIFFERENT card set, which is 58's legitimate
+        # shape: a parent job's claim under name "j" on card 4, its descendant asking for 4,5 under
+        # the same name. By file that row stays in `ancestors`, the wrapper IS the asker's ancestor,
+        # and the ask is exempted as the same job. By name it is excluded, the clash stands, and the
+        # descendant is refused for sharing a card with its own parent -- the defect 58 fixed,
+        # reintroduced by a stricter-looking exclusion (measured /tmp/de_pick_exclusion.py:
+        # by-file True "j shares 4 with j ... ANCESTOR", by-name False "Queue").
+        #
+        # NO INTERMEDIATE SAME-CARDS ASK in this world: that one rebinds the row to the descendant
+        # (card_claim.py:1041), after which the wrapper is no longer the recorded holder and the
+        # overlap ask cannot tell the two exclusions apart. The first version of this world had one
+        # and both readings printed identically.
+        #
+        # AND THE PENDING ROW GOES FIRST. It holds cards 5,6 under a DIFFERENT name, so it supplies
+        # the ancestor for an ask on 4,5 legitimately under both exclusions -- with it present,
+        # by-name passed too (measured: mutant 2 GREEN at 144/144). Only selfx_same's own row may be
+        # in a position to answer, or the case is about the wrong row.
+        os.unlink(_pend)
+        _okp, _whyp = acquire("selfx_same", ["4"], pid=_wrap.pid, wait=0)
+        _case(_okp, f"world control: the parent-role claim on card 4 took ({_whyp[:50]})")
+        _oko, _whyo = acquire("selfx_same", ["4", "5"], pid=_jobpid, wait=0)
+        _case(_oko and "ANCESTOR" in _whyo,
+              f"a DESCENDANT asking for an OVERLAPPING card set under the same name is still "
+              f"exempt -- the exclusion is by file, not by name ({_whyo[:80]})")
+    finally:
+        _fgn.kill()
+        _fgn.wait()
+        _wrap.kill()
+        _wrap.wait()
+        CLAIM_DIR = _saved_dir
+        shutil.rmtree(_selfx_dir, ignore_errors=True)
 
     shutil.rmtree(d, ignore_errors=True)
     print(f"card_claim selftest: {n - bad}/{n} pass")
