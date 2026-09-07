@@ -368,6 +368,22 @@ _FOREIGN = [
 #: syntactically valid code in the target languages, 44's note says they are "lower-value but
 #: not harmful", and refusing them needs a real parse to do correctly -- exactly what this
 #: module does not have. Refusing them by regex would drop real classes with short bodies.
+#: The selector and declaration halves of the two CSS rules below, named once so both rules
+#: use the SAME text. They were two hand-written copies, and the copies drifted exactly the
+#: way copies do: the block form was fixed twice (newline-bounded, then element-allowlisted)
+#: while the one-line form kept the pre-fix pattern verbatim. A shared name makes the next
+#: fix reach both.
+_CSS_SELECTOR = (r"^[ \t]*(?:[.#\[:][\w\[\]\"'=~^$*|-]+"
+                 r"|(?:html|body|head|div|span|p|a|ul|ol|li|table|tr|td|th|thead|tbody|tfoot"
+                 r"|form|input|button|select|option|textarea|label|img|h1|h2|h3|h4|h5|h6"
+                 r"|header|footer|nav|main|section|article|aside|figure|figcaption"
+                 r"|blockquote|pre|code|em|strong|small|hr|br|iframe|canvas|video|audio"
+                 r"|source|svg|path|circle|rect|g|text|fieldset|legend|dl|dt|dd|caption"
+                 r"|colgroup|col|abbr|cite|q|sub|sup|mark|time|progress|meter|details"
+                 r"|summary|dialog|template|slot|picture|track|map|area|object|embed|param"
+                 r"|ins|del)\b)[^\n{}]*")
+_CSS_DECL = r"[-\w]+[ \t]*:[ \t]*[^;{}\n:=]+;[ \t]*$"
+
 _NONCODE = [
     (re.compile(r"^\s*<!DOCTYPE\s+html|^\s*<html[\s>]|<(?:div|span|body|head|table)\b", re.I),
      "noncode:html"),
@@ -408,20 +424,31 @@ _NONCODE = [
     # seconds, against 0.002s for this form. A corpus filter that hangs on one document in
     # 4000 is worse than the misclassification it was fixing, and no known-answer case is
     # large enough to show it -- only running the corpus does.
-    # A CSS TYPE SELECTOR IS AN ELEMENT NAME, NEVER A LANGUAGE KEYWORD. `interface X {`
-    # followed by `clientId: string;` is exactly the CSS block shape, so 13 of the 43 docs
-    # this rule claimed were TypeScript and JS modules -- found because a TypeScript
-    # known-answer case I added for the rule below was answered `noncode:css` instead. Same
-    # for `class A {` with a labelled statement. The keyword list is the discriminator; a
-    # bare word that opens a block in C-family or TS is not an HTML element.
-    (re.compile(r"^[ \t]*(?:[.#][\w-]+|(?!(?:interface|namespace|class|struct|union|enum|if"
-                r"|for|while|switch|try|do|else|catch|function|return|typedef|template"
-                r"|public|private|protected|static|const|export|import|package|module|def)"
-                r"\b)[\w-]+)[^\n{}]*\{[ \t]*$"
+    # A CSS TYPE SELECTOR IS AN ELEMENT NAME, AND THE ELEMENT NAMES ARE A CLOSED SET. This
+    # was first written as a DENYLIST of block-opening keywords, which is the wrong shape: I
+    # measured my own list and all 25 keywords I had not thought of still tripped the rule --
+    # `impl`, `trait`, `record`, `message`, `service`, `data class`, every one of them. A
+    # denylist of "words that open a block" is open-ended across languages; the allowlist is
+    # finite and does not grow.
+    #
+    # `interface X {` followed by `clientId: string;` is exactly the CSS block shape, which
+    # is how 13 of the 43 docs this rule claimed were TypeScript and JS modules. Found when
+    # a TypeScript known-answer case came back `noncode:css`.
+    #
+    # The allowlist also RECOVERS two real CSS documents the denylist version missed
+    # (`ul li a {`, `input[type="text"] {`), because it is written around what a selector
+    # is rather than around what it is not.
+    (re.compile(_CSS_SELECTOR + r"\{[ \t]*$"
                 r"\n(?:[ \t]*(?://.*|/\*.*?\*/)?[ \t]*\n)*"
-                r"^[ \t]*[-\w]+[ \t]*:[ \t]*[^;{}\n:=]+;[ \t]*$", re.M), "noncode:css"),
-    (re.compile(r"^[ \t]*(?:[.#][\w-]+|[\w-]+)[\w\s.#,-]*\{[ \t]*[-\w]+[ \t]*:[ \t]*"
-                r"[^;{}\n:=]+;", re.M), "noncode:css"),
+                r"^[ \t]*" + _CSS_DECL, re.M), "noncode:css"),
+    # The one-line form, `selector { prop: value; }`. It shares `_CSS_SELECTOR` with the block
+    # form above rather than carrying its own copy: the copy it used to carry still had BOTH
+    # defects the block form was fixed for -- `[\w\s.#,-]` crosses newlines, and there was no
+    # guard at all, so `impl Foo { name: String;` matched it directly. Measured by 3b on the
+    # real corpus: of 31 noncode:css docs, 6 were matched only here and 1 of those crossed a
+    # newline (an Artsy GraphQL loader, real TypeScript).
+    (re.compile(_CSS_SELECTOR + r"\{[ \t]*" + _CSS_DECL.replace(r"[ \t]*$", ""),
+                re.M), "noncode:css"),
     (re.compile(r"@media\b|@import\s+url\(|!important\s*;"), "noncode:css"),
     (re.compile(r"^\s*<\?xml|^\s*<(?:project|configuration|beans|manifest|RelativeLayout)\b"
                 r"|xmlns(?::\w+)?\s*=", re.I | re.M), "noncode:config"),
@@ -785,6 +812,51 @@ _KA_NOT_EATEN = [
     # inside `std::map<std::string, std::string>`, so 16 of 43 typescript-labelled docs
     # across 4000 were C++. The discriminator is that a C++ colon here follows another
     # colon; a TypeScript annotation's never does.
+    # THE SELECTOR ALLOWLIST, tested with a keyword NO denylist of mine contained. The first
+    # version of the css guard listed block-opening keywords; measured, all 25 I had not
+    # thought of still tripped it. `record` is a Java one, `message` a protobuf one, and
+    # neither is an HTML element -- which is the property the allowlist checks and the
+    # denylist could not.
+    ("package com.example;\nimport java.util.List;\n\nrecord Point(int x, int y) {\n"
+     "    width: 10;\n}\nclass Use { List<Point> ps; }\n", "java",
+     "a Java record: a block-opening keyword no denylist of mine listed"),
+    # THE `\b` AFTER THE ELEMENT LIST IS LOAD-BEARING: without it every element name is a
+    # PREFIX, and the list contains short ones -- `map`, `a`, `col`, `pre`, `param`. So
+    # `mapping_t *f() {` opens a "css block" and any `label:` line under it closes it. A goto
+    # label is the natural shape; nothing in 4000 docs happened to have one, so the mutation
+    # dropping `\b` survived until this case. Note the brace must be on the selector line:
+    # with it on the next line the rule does not reach, so that variant proves nothing.
+    ("#include <unistd.h>\n#include <stdio.h>\n"
+     "mapping_t *table_open(const char *path, int fd) {\n"
+     "retry: reconnect(fd);\n"
+     "    if (fd < 0) goto retry;\n"
+     "    return load(path);\n}\n", "c",
+     "an element name is a PREFIX without `\\b`: `map` inside `mapping_t`, closed by a goto label"),
+    # THE `:=` EXCLUSION IN THE DECLARATION VALUE, on the BLOCK branch. A CSS value contains
+    # neither `::` nor `=`; a C++ scoped initialiser contains both. `map` is a real element
+    # name, so `map<int,int> f() {` passes the allowlist honestly and only the value test
+    # separates the two. The inline branch has its own case above; this is the block one, and
+    # they are not the same pattern text even though they now share `_CSS_DECL`.
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> build_index() {\n"
+     "    base::Registry::Handle h = base::Registry::Get();\n"
+     "    return {};\n}\n"
+     "void run() { build_index(); }\n", "cpp",
+     "a scoped initialiser under an element-named function: only `:=` in the value separates it"),
+    # THE OTHER TWO EXCLUSIONS IN THE SAME VALUE CLASS, `{}` and `\n`, each with the one line
+    # that separates it. All three cases need an element-named function (`map<...>`) so the
+    # selector half passes honestly and only the value test is under test; with any other
+    # name the allowlist answers first and the case proves nothing about the value class.
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> table_reset(int fd) {\n"
+     "retry: reset(fd, Cfg{0});\n"
+     "    if (fd < 0) goto retry;\n    return {};\n}\n", "cpp",
+     "a brace-initialised argument: a CSS declaration value never contains `{}`"),
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> table_load(int fd) {\n"
+     "retry: reconnect(fd,\n                 kDefaultPath);\n"
+     "    if (fd < 0) goto retry;\n    return {};\n}\n", "cpp",
+     "a call wrapped across two lines: a CSS declaration value never contains a newline"),
     ("#include <map>\n#include <string>\n"
      "std::map<std::string, std::string> mapValue;\n"
      "typedef std::map<std::string, int> Acc;\n"
