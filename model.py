@@ -1667,6 +1667,49 @@ class HybridLM(nn.Module):
 
         `self.moe_layers` holds block INDICES, not modules, so the layers are reached as
         self.blocks[i].ffn -- the same shape train.py uses for its balancer sweep.
+
+        WHAT THE COUNT CANNOT CATCH, because both sides read this same attribute (tilerl): the
+        caller's check is `swept != len(_moe_balance_layers)`, and train.py builds that list as
+        `[raw_model.blocks[i].ffn for i in (getattr(raw_model, "moe_layers", None) or [])]` -- from
+        this same attribute. Anything that corrupts the LIST moves both sides equally, so the check
+        sees only a broken SWEEP. Measured against these two functions:
+
+            moe_layers      balancer  sweep  fires?  per-block commits
+            [0,1,2,3]              4      4      no  [1, 1, 1, 1]
+            [0,1]                  2      2      no  [1, 1, 0, 0]
+            []                     0      0      no  [0, 0, 0, 0]
+            [0,0,0,0]              4      4      no  [4, 0, 0, 0]
+
+        Three of those four are caught elsewhere by construction, and this was verified by BUILDING
+        each one rather than by reading (layers=4, d=256, moe_experts=4, parity defaults):
+
+            moe_layers   len  total params   MoE-weight params
+            [0,1,2,3]      4    21,370,640           9,441,280
+            [0,1]          2    20,188,944           4,720,640
+            [0]            1    19,598,096           2,360,320
+            [0,0,0,0]      4    19,598,096           2,360,320
+
+        A truncated list builds fewer experts and an out-of-range index raises ValueError in
+        __init__ before the blocks are built. The DUPLICATED index builds a model
+        parameter-identical to [0], because `i in self.moe_layers` is a membership test and converts
+        block 0 once however many times it is named -- while len(moe_layers) still reads 4.
+
+        NOTHING EXECUTABLE CATCHES THE DUPLICATE, and an earlier version of this docstring said a
+        parameter count did. It does not: train.py computes `n_params = sum(p.numel() ...)` and only
+        formats it into the runlog's `params {n_params/1e6:.1f}M` line -- no comparison, no assert.
+        Three places NAME a params gate and none runs one: that print, a comment in scripts/harness.py
+        citing "prereg#moe_0905: 9,437,184 active / 800,965,704 total", and prereg#moe_0905's own
+        `active_params_equal_control` field, which asserts that a gate checks four integers. The
+        integers are RECORDED AT LAUNCH BY A PERSON, not enforced by code. So any check comparing
+        total params against the INTENDED shape would catch a duplicate, and no such check runs
+        today. Found by tilerl, who went looking for the gate this docstring claimed and could not
+        find an executable one; the overstatement was the worse error, because a reader who believes
+        a case is covered stops looking.
+
+        No guard added: no code path generates a duplicated index, and a check on a state with no
+        producer reads like coverage without being coverage. What is unguarded is the double commit
+        -- layer 0's counts committed four times and layers 1-3 never, with both sides of the sweep
+        check reading 4.
         """
         n = 0
         for i in self.moe_layers:
