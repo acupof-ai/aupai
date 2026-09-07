@@ -81,6 +81,11 @@
    "when": "2026-09-07 09:2xZ",
    "who": "fb",
    "what": "card 1 -> fb score_matrix on 30b step14000, user request; 30B run live on 2-7"
+  },
+  {
+   "when": "2026-09-07 12:0xZ",
+   "who": "fb",
+   "what": "card 0 -> tilerl-48 prof_backward_ops (retroactive grant; claim preceded it; card 1 tilerl-row64r2 11:04Z owner unknown, ended)"
   }
  ],
  "granted": "2026-09-03",
@@ -97,7 +102,7 @@
   "granted": "2026-09-06T07:2xZ fb: GRANTED. e1 launches via harness launch --training the moment b0 reports the score_matrix done; world 6, b8 a4, 10,172 steps; ETA is an estimate (ratio measured at world 2), re-cost if the first 100 steps exceed 2.5 s/step"
  },
  "cards": {
-  "0": "ours (tileRL reservation released 2026-08-30; entry corrected 2026-09-07 by fb)",
+  "0": "GRANTED 2026-09-07T12:0xZ (retroactive, claim acquired 11:26:46Z) -> tilerl-48: scripts/prof_backward_ops.py --gdn-chunk 128 --steps 2 (fp8 frozen dX backward per-op profile, tileRL row 67), one run, released on exit. Ask-then-claim from now; card 0 otherwise idle, lane for short jobs while 2-7 hold the 30B run",
   "6": "ours (tileRL reservation released 2026-08-30; entry corrected 2026-09-07 by fb)",
   "1-4": "2026-09-05T05:54Z: 1,2 -> MoE arm E1 (world 2, b0+tilerl) when (c)+(d) merge. 3 -> see key \"3\"; 4 -> see key \"4\": SFT p04/p16 cancelled, ladder checkpoints unrecoverable; experiment 2 rides on the MoE round's step checkpoints.",
   "5": "GRANTED 2026-09-05T08:11Z -> e1: experiment 1 (runs/prereg.jsonl#conversion_rate_0905 @amended_4, 44 review 11:05Z): five world-2 arms SEQUENTIAL on cards 5+7 (n1, n8, n64, n256, control_arm), 500 steps each, via harness launch --training --cards 5,7 --class incremental; one arm at a time",
