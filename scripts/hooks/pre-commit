@@ -1403,6 +1403,7 @@ def main():
         "datagen/code_dedup_handread.py",
         "datagen/build_corpus.py", "datagen/clean_web.py", "datagen/distil_traces.py",
         "datagen/fetch_corpus.py", "datagen/score_web_27b.py",
+        "datagen/near_dedup_scale.py",
         "probes/t71_depth_lr_rule.py",
         "probes/a2a_bandwidth.py",
         # The key-usage probe for the readout-4 collapse. 40s, the slowest entry in this map, and

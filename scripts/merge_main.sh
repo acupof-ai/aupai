@@ -16,6 +16,19 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # reimplementation of it. Nothing else sets these.
 LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
 HOLDER=$LOCK/holder
+# THE PR FLIP IS ON (4c's trigger fired 2026-09-07: the 30B run printed step 9010/25430 at 05:18Z).
+# 1788759138 is THIS commit's own committer date, not the date of the commit that finished the
+# transition -- read with `git log -1 --format=%ct` AFTER committing, and amended back in, so the
+# number is a fact in the history rather than one somebody typed. It has to be this commit: the gate
+# refuses `when > epoch`, so an earlier boundary would refuse every commit written between it and
+# this one, this commit included. Work written before the flip existed drains through merge_main;
+# code written after it goes through a PR.
+#
+# A DEFAULT rather than something each session exports, so every session gets the flip by merging
+# main -- there is no per-session step to forget. An assignment still wins, which is how the nine
+# selftest worlds drive both sides of the boundary: each case assigns the variable inside its own
+# subshell, after this line has already run.
+AUPAI_PR_FLIP_EPOCH=${AUPAI_PR_FLIP_EPOCH:-1788759138}
 [ $# -eq 1 ] || { echo "usage: scripts/merge_main.sh <branch>|--hold|--release|--selftest" >&2; exit 2; }
 
 # REFUSE A DEADLINE SHORTER THAN A HOOK RUN. A merge commit runs the full pre-commit hook -- ~50-60 s
@@ -258,7 +271,17 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
     # stderr, while an absent or crashing one prints a traceback or a shell error. Both are
     # captured, and the verdict reads stderr rather than the code.
     _lk_err=$(mktemp)
-    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" "$sha" "$1" 2>"$_lk_err")
+    # `--pr` ADDS THE PR-APPROVAL SOURCE (4c's split ruling 2026-09-07): a code commit reviewed on
+    # its PR has no ledger row, and a ruling reviewed in the ledger has no PR, so either source
+    # satisfies the gate and requiring both would refuse every real case. The approval must carry
+    # `artifact:` or `case:` in its body -- approval is necessary, not sufficient -- because bare
+    # approval is a click while a review row names what the reviewer opened.
+    #
+    # EXIT 3 IS THE NEW ONE and `-gt 1` below already covers it: the lookup exits 3 when the PR
+    # source could not answer (gh absent, timed out, non-JSON), with the reason on stderr, so an
+    # unreachable GitHub reads as a BROKEN GATE rather than as an unreviewed commit. Verified
+    # against this branch rather than assumed.
+    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" --pr "$sha" "$1" 2>"$_lk_err")
     _lk_rc=$?
     _lk_msg=$(cat "$_lk_err"); rm -f "$_lk_err"
     if [ -n "$_lk_msg" ] || [ "$_lk_rc" -gt 1 ]; then
@@ -281,6 +304,75 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
     fi
   done
   return 0
+}
+
+# CODE GOES THROUGH A PR; LEDGERS KEEP THIS PATH (user order 2026-09-07, 4c's split ruling).
+#
+# THE SPLIT IS THE RULING, not a simplification of it: a commit touching anything outside
+# runs/*.jsonl and EXPERIMENTS.md is code and goes branch -> push -> `gh pr create` -> CI on the
+# head sha -> the second reader approves on the PR -> the REVIEWER merges. Ledger-only commits keep
+# merge_main, because the union merge driver and the CAS are what make an append-only ledger
+# mergeable without a person, and routing those through PRs would put a review cycle in front of
+# every experiment row.
+#
+# THE DATE IS READ FROM THE COMMITS, NOT FROM `date`. A flip enforced by wall-clock refuses
+# commits written before the rule existed -- there are branches here carrying days-old code work --
+# and the refusal would name a rule the author could not have followed. Each commit is judged by
+# its own committer date, so the backlog drains through merge_main and only new code work is
+# redirected. That is also what makes this testable: a world can set a committer date.
+#
+# NOT `git diff main..$1`. That is the cumulative diff, so ONE code commit anywhere in the branch
+# would refuse every later ledger-only commit with it. The gate walks commit by commit, exactly as
+# _review_gate does, and names the offenders individually.
+#
+# THE SET IS EXACT PATHS, NOT A WIDER PATTERN (4c's ruling 2026-09-07). runs/card_assignment.json
+# and runs/claims/*.json are grant and claim state: written under time pressure in the minutes
+# before a launch, read by the next launch, and never reviewed by anyone -- a PR cycle in front of
+# a card grant is a launch that waits on a reviewer. They join the set as the literal paths they
+# are, so `runs/anything.py` and a new runs/*.json nobody has ruled on stay code. runs/claims/ is
+# matched as a directory prefix because its filenames are `<name>.<cards>.json`, generated per job.
+_LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md|runs/card_assignment\.json|runs/claims/[A-Za-z0-9_.-]+\.json)$'
+_code_pr_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
+  local shas sha when paths bad subject
+  [ -n "${AUPAI_PR_FLIP_EPOCH:-}" ] || return 0   # unset means the flip has not happened
+  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" 2>/dev/null) || return 0
+  [ -n "$shas" ] || return 0
+  bad=""
+  for sha in $shas; do
+    when=$(git -C "$MAIN" log -1 --format=%ct "$sha" 2>/dev/null)
+    case "$when" in ''|*[!0-9]*) continue ;; esac
+    [ "$when" -gt "$AUPAI_PR_FLIP_EPOCH" ] || continue   # written before the flip: drains here
+    # A REVERT IS EXEMPT, same reason as _review_gate's: it restores a reviewed state, and making
+    # the fastest correction the slowest commit to land is backwards when a bad commit is on main.
+    subject=$(git -C "$MAIN" log -1 --format=%s "$sha")
+    case "$subject" in Revert*|revert*) continue ;; esac
+    paths=$(git -C "$MAIN" show --stat --format= --name-only "$sha" 2>/dev/null)
+    # A commit that touches NOTHING is not code. `--name-only` on an empty commit prints nothing,
+    # and an empty path list must not read as "no non-ledger paths" by accident -- it reads as
+    # nothing to route, the same answer for a different reason, so it is stated rather than relied on.
+    [ -n "$paths" ] || continue
+    if printf '%s\n' "$paths" | grep -qvE "$_LEDGER_ONLY_RE"; then
+      bad="$bad $sha"
+    fi
+  done
+  [ -n "$bad" ] || return 0
+  echo "merge_main: REFUSING -- code changes go through a GitHub PR since the flip" >&2
+  echo "  (user order 2026-09-07). These commits touch paths outside runs/*.jsonl and" >&2
+  echo "  EXPERIMENTS.md:" >&2
+  for sha in $bad; do
+    echo "    $(git -C "$MAIN" log -1 --format='%h %s' "$sha")" >&2
+    git -C "$MAIN" show --stat --format= --name-only "$sha" 2>/dev/null \
+      | grep -vE "$_LEDGER_ONLY_RE" | sed 's/^/      /' >&2
+  done
+  echo "  Ship them this way instead:" >&2
+  echo "    git push -u origin $1" >&2
+  echo "    gh pr create --base main --head $1" >&2
+  echo "    # CI must be green on the HEAD sha; then your second reader approves on the PR," >&2
+  echo "    # with 'artifact:' or 'case:' in the approval body naming what they opened" >&2
+  echo "    # THE REVIEWER, not you: gh pr merge --merge" >&2
+  echo "  Ledger-only commits (runs/*.jsonl, EXPERIMENTS.md) still merge here." >&2
+  echo "  Controller override: AUPAI_CONTROLLER=1 (logged to runs/friction.jsonl)." >&2
+  return 1
 }
 
 # WHY `git merge` RETURNED NONZERO, as a function so --selftest drives it against both worlds.
@@ -622,6 +714,112 @@ time.sleep(20)
   : > "$_g/runs/review.jsonl"
   _gcase "touches neither file" docsonly accepted
   _gcase "lone revert is exempt" revonly accepted
+  # THE PR GATE, seven worlds in the same scratch repo. The refusal must fire on code and NOT on
+  # ledgers, and the date boundary must be readable in both directions -- a gate that refuses
+  # everything passes every positive case, and one that refuses nothing passes every negative.
+  #
+  # THE FLIP EPOCH IS SET PER CASE, not once: the whole point of reading each commit's own
+  # committer date is that a pre-flip code commit still drains through merge_main, and that
+  # property is invisible unless a world puts a commit on each side of the boundary.
+  (
+    cd "$_g" || exit
+    _b=$(git rev-list --max-parents=0 HEAD | head -1)
+    # A code commit dated AFTER the flip, and a ledger-only one likewise.
+    git checkout -q -b prcode "$_b" && echo c >> other.txt \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "code: after the flip"
+    git checkout -q -b prledger "$_b" && printf '{"id":"x"}\n' >> runs/review.jsonl \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "review: a row"
+    # A code commit dated BEFORE it: the backlog, which must still merge here.
+    git checkout -q -b probacklog "$_b" && echo d >> other.txt \
+      && GIT_COMMITTER_DATE="@1000000000 +0000" git commit -qam "code: before the flip"
+    # A revert of code after the flip: exempt, same as the review gate.
+    git checkout -q -b prrevert "$_b" && echo e >> other.txt \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam 'Revert "code: something"'
+    # A branch mixing a ledger row and a code file in ONE commit: code wins, it is not ledger-only.
+    git checkout -q -b prmixed "$_b" && printf '{"id":"y"}\n' >> runs/review.jsonl \
+      && echo f >> other.txt \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "mixed: a row and a file"
+    # TWO COMMITS, code THEN ledger -- the only world that separates per-commit from cumulative.
+    # Every other case here is a single-commit branch, where `show <sha>` and `diff main..$branch`
+    # return the same paths, so a mutant using the cumulative diff SURVIVED all seven of them
+    # (measured, /tmp/de_prgate_mutants.py). The distinction matters in practice: it decides
+    # whether one code commit early in a branch refuses every ledger commit after it.
+    git checkout -q -b prseq "$_b" && echo g >> other.txt \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "code: first" \
+      && printf '{"id":"z"}\n' >> runs/review.jsonl \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "review: a row after code"
+    # GRANT AND CLAIM STATE (4c's ruling): these merge here, and the control below is that a NEW
+    # runs/*.json nobody ruled on does not. Without that control "card_assignment merges" is also
+    # satisfied by a regex that admits every json under runs/, which is the widening 4c refused.
+    mkdir -p runs/claims
+    git checkout -q -b prgrant "$_b" && printf '{"cards":"2-7"}\n' > runs/card_assignment.json \
+      && git add runs/card_assignment.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "grant: cards 2-7"
+    git checkout -q -b prclaim "$_b" && printf '{"name":"j"}\n' > runs/claims/j.2-3.json \
+      && git add runs/claims/j.2-3.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "claim: j on 2,3"
+    git checkout -q -b probjson "$_b" && printf '{"k":1}\n' > runs/some_config.json \
+      && git add runs/some_config.json \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "config: a new runs json"
+    git checkout -q -b probpy "$_b" && printf 'x = 1\n' > runs/helper.py \
+      && git add runs/helper.py \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "code: a py file under runs/"
+    git checkout -q "$_b" 2>/dev/null
+  ) >/dev/null 2>&1
+  _pcase() {  # $1=name $2=branch $3=want refused|accepted $4=flip epoch ('' = unset)
+    if ( MAIN=$_g; cd "$_g"; AUPAI_PR_FLIP_EPOCH="$4"; export AUPAI_PR_FLIP_EPOCH
+         _code_pr_gate "$2" ) 2>/dev/null; then _got=accepted; else _got=refused; fi
+    if [ "$_got" != "$3" ]; then
+      echo "  FAIL pr-gate $1: want $3, got $_got" >&2; _fails=$((_fails + 1))
+    else
+      echo "  ok   pr-gate $1: $_got"
+    fi
+  }
+  _FLIP=1500000000   # between the two committer dates above
+  _pcase "code after the flip is refused" prcode refused "$_FLIP"
+  _pcase "a ledger-only commit still merges" prledger accepted "$_FLIP"
+  _pcase "pre-flip code drains here (the backlog)" probacklog accepted "$_FLIP"
+  _pcase "a revert of code is exempt" prrevert accepted "$_FLIP"
+  _pcase "a row AND a file in one commit is code" prmixed refused "$_FLIP"
+  # GRANT AND CLAIM STATE MERGE HERE, and the two controls are what keep that from being a
+  # widening: an unruled runs/*.json and a .py under runs/ are both still code.
+  _pcase "a card_assignment-only commit merges" prgrant accepted "$_FLIP"
+  _pcase "a runs/claims/ row merges" prclaim accepted "$_FLIP"
+  _pcase "control: another runs/*.json is still code" probjson refused "$_FLIP"
+  _pcase "control: runs/*.py is still code" probpy refused "$_FLIP"
+  # THE TWO CONTROLS THAT MAKE THE ABOVE MEAN ANYTHING. Without the first, "refuses code" is
+  # satisfied by a gate that refuses unconditionally; without the second, the flip is not a flip.
+  _pcase "no flip epoch set: nothing is refused" prcode accepted ""
+  _pcase "flip in the future: nothing is refused yet" prcode accepted 2100000000
+  # PER-COMMIT vs CUMULATIVE, and the verdict cannot tell them apart -- prseq is refused either
+  # way, because its FIRST commit is code. What differs is WHICH commits the refusal names, so
+  # this case reads the message. Under `git diff main..$branch` every commit in the branch inherits
+  # every path the branch touched, so the ledger commit is named as code; under `show <sha>` it is
+  # not. A mutant using the cumulative diff survived all seven cases above (measured) because they
+  # are single-commit branches, where the two readings are identical by construction.
+  #
+  # `|| true` IS LOAD-BEARING UNDER `set -e`: the gate RETURNS 1 here, that is the expected
+  # outcome, and without it the shell exits at this line -- measured, the selftest stopped dead
+  # after the seventh pr-gate case and exited 1 with no failure message, which reads as a crash in
+  # whatever ran next rather than as this line.
+  _pr_out=$( ( MAIN=$_g; cd "$_g"; AUPAI_PR_FLIP_EPOCH=$_FLIP; export AUPAI_PR_FLIP_EPOCH
+               _code_pr_gate prseq ) 2>&1 || true )
+  _pr_ledger_sha=$(git -C "$_g" rev-parse --short prseq)
+  _pr_code_sha=$(git -C "$_g" rev-parse --short 'prseq^')
+  if printf '%s' "$_pr_out" | grep -q "$_pr_ledger_sha"; then
+    echo "  FAIL pr-gate names the ledger commit as code (cumulative diff, not per-commit):" >&2
+    echo "       $_pr_ledger_sha is 'review: a row after code' and touches only runs/review.jsonl" >&2
+    _fails=$((_fails + 1))
+  else
+    echo "  ok   pr-gate a ledger commit after a code commit is NOT named as code"
+  fi
+  if printf '%s' "$_pr_out" | grep -q "$_pr_code_sha"; then
+    echo "  ok   pr-gate world control: the code commit before it IS named"
+  else
+    echo "  FAIL pr-gate world control: the code commit was not named, so the case above passes" >&2
+    echo "       vacuously -- nothing was refused at all" >&2
+    _fails=$((_fails + 1))
+  fi
   rm -rf "$_g"
 
   # THE DEADLINE GUARD MUST NOT REFUSE THE MODES THAT NEITHER MERGE NOR COMMIT. It did:
@@ -1139,8 +1337,20 @@ for _ in $(seq 1 120); do
           --commit || true
         echo "merge_main: second-reader gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
       fi
+      # THE PR GATE IS OVERRIDABLE THE SAME WAY, and it must be: a controller shipping an urgent
+      # fix cannot be blocked on a PR round trip. Logged, like the review override, because an
+      # override nobody records is a rule with an untracked exception.
+      if ! _code_pr_gate "$1" 2>/dev/null; then
+        python3 "$MAIN/scripts/harness.py" friction add \
+          --kind override --who tilerl \
+          --blocked "merge $1 with post-flip code commits that never went through a PR" \
+          --cause "AUPAI_CONTROLLER=1 used to bypass the code-goes-through-a-PR refusal" \
+          --commit || true
+        echo "merge_main: PR gate OVERRIDDEN by AUPAI_CONTROLLER=1; logged to friction." >&2
+      fi
     else
       _review_gate "$1" || exit 1
+      _code_pr_gate "$1" || exit 1
     fi
     # WHERE THE MERGE HAPPENS, and this is the whole rebuild. It used to run `git merge` HERE,
     # inside the shared integration tree, which made integrating a four-step non-atomic write
