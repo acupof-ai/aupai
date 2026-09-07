@@ -865,6 +865,15 @@ def main():
         # were short by exactly their document counts. Registration gates the file, not the
         # property; the convention assertion added 2026-09-08 is what gates this one.
         "datagen/count_corpus_dir.py",
+        # The dd09+b2v2_dd hardlink union (3b-17). Registered because its whole job is to
+        # produce a directory whose stamp another session will read as a supply, and the two
+        # ways it can be wrong are silent: a shard name in both sources drops one, and a copy
+        # instead of a link costs 30 GB on a filesystem at 93%. Its selftest builds two real
+        # source dirs and asserts the union's token count as a KNOWN ANSWER over the text --
+        # never as the sum of the source stamps, which cannot see a dropped shard. Four
+        # mutants: collision check off, copy-not-link, count gate off, existing-copy check
+        # off; all four red.
+        "datagen/build_dd09_full.py",
         # The multiprocess batch counter for a whole directory, and the second reader that
         # confirmed en_c4_30b. Same convention as count_tokens.py by calling it; its own
         # selftest asserts ids + one <eos> per document plus the two exclusions
