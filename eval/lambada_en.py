@@ -59,6 +59,58 @@ DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "lambada_en", "lambada_test_en
 WORD_BOUNDARY = set(" \t\n\r-.,;:!?\"()[]{}<>/\\|`~@#$%^&*+=—–…")
 MAX_NEW_TOKENS = 8  # a word is at most a few tokens; 8 bounds the worst case cheaply
 
+# THE NOISE FLOOR, MEASURED, and the history of this number because it has been wrong twice.
+#
+# 1e-4, asserted from "the paths differ only in batch shape, so this is bf16 accumulation
+# order" -- the premise named the wrong varying quantity. Pod measured 1e-3 to 8e-3.
+# 2e-2, fitted to that sample -- the next run hit 2.20e-02. A tolerance set from the failures
+# so far becomes whatever the data needs, which is not a gate.
+#
+# MEASURED (4c, pod card 1, step17000, 2026-09-07, runs/lambada_ab.log): with BOTH arms scoring
+# in one forward at one sequence length, 38 of 64 items still exceed 1e-3, worst 2.12e-2. So it
+# is not sequence length and not the chunked recurrence: it is BATCH SHAPE through bf16 kernels.
+# The MoE grouped GEMM's M differs per expert with batch composition, and cuBLAS/Triton pick
+# different tilings and split-K per M, so accumulation order changes per token even under
+# identical routing. A causal dense toy model cannot reproduce it -- mine showed 0.0e+00 and was
+# measuring the wrong thing.
+#
+# 3e-2 IS A MAX OVER n=64 AND THEREFORE GROWS WITH THE SAMPLE. A max is not a fixed property of
+# the distribution; drawing more items finds a larger one. Against the full pass's own
+# distribution (136 of 5153 rows beyond 2e-2), the expected max scales like sqrt(2 ln n):
+#
+#     n=64   2.12e-2 (measured)     3e-2 is 1.42x it
+#     n=512  2.60e-2 (projected)    3e-2 is 1.16x it
+#     n=5153 3.04e-2 (projected)    3e-2 is BELOW it -- this gate fails on a full-size sample
+#
+# So this constant is correct for --equiv-sample in the low hundreds and no larger. Do not raise
+# it when a bigger sample goes red: that is the third time this number would have been fitted to
+# its own failures. Either keep the sample small or compute a quantile instead of a max.
+# It is still 80x below the off-by-one it exists to catch (2.55 nats, measured in _selftest).
+NLL_TOL = 3e-2
+NLL_TOL_N = 64  # the sample the figure above was measured on; see the scaling note
+EQUIV_BATCH = 32  # the batch composition NLL_TOL was measured under; the gate pins it
+
+
+def first_word_span(text):
+    """(word, index just past it). The stop rule needs the END, not just the word.
+
+    greedy_word used to reconstruct the leading offset with `len(text) - len(text.lstrip())`,
+    i.e. WHITESPACE only, while this skip loop consumes every WORD_BOUNDARY character
+    including punctuation. On a generation opening with punctuation the two disagree: at
+    text='.L' the word is 'L' (len 1) and lstrip's offset is 0, so `len(text) > len(w) + 0`
+    fired and the decode stopped one character into the word. Every LAMBADA generation
+    beginning with punctuation was truncated to its first letter -- 'L' where the model had
+    produced 'Lucien'. Returning the span removes the second derivation rather than fixing it
+    twice.
+    """
+    i = 0
+    while i < len(text) and text[i] in WORD_BOUNDARY:
+        i += 1
+    j = i
+    while j < len(text) and text[j] not in WORD_BOUNDARY:
+        j += 1
+    return text[i:j], j
+
 
 def first_word(text):
     """The generated word: leading boundary chars skipped, then up to the next boundary.
@@ -67,13 +119,7 @@ def first_word(text):
     a real outcome (the model emitted punctuation or a newline), scored as a miss, never
     silently skipped. _selftest covers it.
     """
-    i = 0
-    while i < len(text) and text[i] in WORD_BOUNDARY:
-        i += 1
-    j = i
-    while j < len(text) and text[j] not in WORD_BOUNDARY:
-        j += 1
-    return text[i:j]
+    return first_word_span(text)[0]
 
 
 def split_item(raw):
@@ -134,6 +180,43 @@ class OursModel:
             out = self.model(x)
         return (out[0] if isinstance(out, tuple) else out)[0].float()
 
+    def greedy_batch(self, prompts, max_new=MAX_NEW_TOKENS):
+        """train.generate_batch, not a fourth copy of this loop.
+
+        It already right-pads, tracks a write position per row, and passes no_head=True --
+        which model.forward documents as existing for exactly this transient (at B=64 the
+        fp32 logits alone are 4.7 GB, 99.8% of it discarded). eval/l1_fewshot.py carries its
+        own decoder only because a transformers model has none of our interface, and says so
+        in its docstring; the --ckpt arm here does have it.
+
+        rep_stop=False: its check fires at `step % 32 == 31` and max_new is 8, so it can
+        never run either way. Set explicitly because inert-but-on is how a later max_new
+        increase silently changes this metric's decoder.
+        """
+        import train  # noqa: PLC0415
+
+        with torch.no_grad():
+            return train.generate_batch(self.model, prompts, max_new, self.device,
+                                        temperature=0.0, rep_stop=False)
+
+    def nll_batch(self, ctxs, targets):
+        """One forward per row, not one per target token.
+
+        The old loop appended a target token and re-ran the whole prefix for each. Scoring is
+        teacher-forced, so the causal mask already makes every target position readable from a
+        single pass over ctx+target -- every forward after the first was recomputing a prefix
+        whose logits it had just discarded.
+        """
+        rows = [list(c) + list(t) for c, t in zip(ctxs, targets, strict=True)]
+        width = max(len(r) for r in rows)
+        x = torch.full((len(rows), width), self.eos, dtype=torch.long, device=self.device)
+        for i, r in enumerate(rows):
+            x[i, : len(r)] = torch.tensor(r, device=self.device)
+        with torch.no_grad():
+            out = self.model(x)
+        lg = (out[0] if isinstance(out, tuple) else out).float()
+        return _gather_nll(lg, ctxs, targets)
+
 
 class HFModel:
     """The control arm: an HF-format causal LM with its OWN tokenizer."""
@@ -171,6 +254,43 @@ class HFModel:
         with torch.no_grad():
             return self.model(x).logits[0].float()
 
+    def greedy_batch(self, prompts, max_new=MAX_NEW_TOKENS):
+        """LEFT-padded, unlike the --ckpt arm's right-padded generate_batch.
+
+        A decoder-only model reads the next token from the last position, so right padding
+        would have it continue from a pad token. transformers takes an attention_mask and
+        handles this; our HybridLM has no padding mask, which is why generate_batch tracks a
+        per-row write position instead. Same contract either way: generated ids, prompt
+        stripped.
+        """
+        B = len(prompts)
+        lengths = [len(p) for p in prompts]
+        width = max(lengths)
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else self.eos
+        x = torch.full((B, width), pad, dtype=torch.long, device=self.device)
+        attn = torch.zeros((B, width), dtype=torch.long, device=self.device)
+        for i, p in enumerate(prompts):
+            x[i, width - lengths[i]:] = torch.tensor(p, device=self.device)
+            attn[i, width - lengths[i]:] = 1
+        with torch.no_grad():
+            out = self.model.generate(x, attention_mask=attn, max_new_tokens=max_new,
+                                      do_sample=False, pad_token_id=pad)
+        return [out[i, width:].tolist() for i in range(B)]
+
+    def nll_batch(self, ctxs, targets):
+        """One teacher-forced forward per row; see OursModel.nll_batch."""
+        rows = [list(c) + list(t) for c, t in zip(ctxs, targets, strict=True)]
+        width = max(len(r) for r in rows)
+        pad = self.tok.pad_token_id if self.tok.pad_token_id is not None else self.eos
+        x = torch.full((len(rows), width), pad, dtype=torch.long, device=self.device)
+        attn = torch.zeros((len(rows), width), dtype=torch.long, device=self.device)
+        for i, r in enumerate(rows):
+            x[i, : len(r)] = torch.tensor(r, device=self.device)
+            attn[i, : len(r)] = 1
+        with torch.no_grad():
+            lg = self.model(x, attention_mask=attn).logits.float()
+        return _gather_nll(lg, ctxs, targets)
+
 
 def greedy_word(m, ctx_ids, max_new=MAX_NEW_TOKENS):
     """Greedy-decode up to max_new tokens, stop as soon as a word boundary is produced."""
@@ -186,10 +306,46 @@ def greedy_word(m, ctx_ids, max_new=MAX_NEW_TOKENS):
         # Stop at the FIRST boundary after a word has begun. Checking the decoded string
         # rather than the token id is what makes this tokenizer-independent: a boundary may
         # arrive inside a merged token (" cat." is one token in some vocabularies).
-        w = first_word(text)
-        if w and len(text) > len(w) + (len(text) - len(text.lstrip())):
+        #
+        # `end` comes from first_word_span, so the offset is the one the word was actually
+        # cut at. The old form recomputed it as len(text)-len(text.lstrip()) -- whitespace
+        # only -- and truncated every punctuation-opening generation to one letter.
+        w, end = first_word_span(text)
+        if w and len(text) > end:
             break
     return first_word(m.decode(made)), made
+
+
+def _gather_nll(lg, ctxs, targets):
+    """Per-byte NLL for each row, read off one batched forward's logits.
+
+    Position ctx+j-1 predicts target token j, so the slice is [len(ctx)-1 : len(ctx)+len(tgt)-1].
+    Per BYTE and not per token because the two arms have different tokenizers; the leading
+    space is scored but is not in the byte count, so the unit means the same on both sides.
+    """
+    out = []
+    for i, (c, t) in enumerate(zip(ctxs, targets, strict=True)):
+        if not t:
+            out.append(None)
+            continue
+        span = lg[i, len(c) - 1 : len(c) + len(t) - 1]
+        tgt = torch.tensor(t, device=lg.device)
+        total = -float(torch.log_softmax(span, -1).gather(1, tgt[:, None]).sum())
+        out.append(total)
+    return out
+
+
+def greedy_words_batched(m, ctxs, max_new=MAX_NEW_TOKENS):
+    """first_word applied AFTER a full max_new decode, which is what batching costs.
+
+    greedy_word stops the moment the decoded string shows a boundary. A batch cannot do that
+    per row without decoding every row at every step, so every row runs all max_new tokens and
+    first_word truncates afterwards. The answer is identical -- first_word already cuts at the
+    boundary, so tokens generated past it cannot change it -- and rows that would have stopped
+    at 2 tokens now cost 8, which is repaid many times over by running B rows per forward.
+    Asserted rather than argued: --equiv-sample diffs this against greedy_word.
+    """
+    return [first_word(m.decode(ids)) for ids in m.greedy_batch(ctxs, max_new)]
 
 
 def target_nll_per_byte(m, ctx_ids, target):
@@ -212,6 +368,67 @@ def target_nll_per_byte(m, ctx_ids, target):
     return total / max(1, len(target.encode("utf-8")))
 
 
+def _assert_batch_equivalence(m, items, batch=EQUIV_BATCH):
+    """The batched path must reproduce the per-item path exactly, on real rows.
+
+    The claim being checked is that running all max_new tokens and truncating with first_word
+    afterwards gives what stopping at the boundary gave. That is an argument about first_word,
+    and an argument is not a measurement -- 4c made zero changed predictions the acceptance
+    gate for this change, so the same equality is asserted here on a sample before the run
+    rather than discovered in the diff afterwards.
+
+    BATCH IS PINNED, not taken from --batch. acc is not bit-reproducible across batch sizes on
+    this model (177 of 5,153 predictions differ between B=1 and B=32, measured), so a gate that
+    inherited the run's batch would compare against a different composition each time and could
+    not be replayed. EQUIV_BATCH is the composition NLL_TOL was measured under.
+    """
+    ctxs = [m.encode(it["context"]) for it in items]
+    batched = []
+    for lo in range(0, len(ctxs), batch):
+        batched += greedy_words_batched(m, ctxs[lo : lo + batch])
+    tgts = [m.encode(" " + it["target"]) for it in items]
+    nll_b = []
+    for lo in range(0, len(ctxs), batch):
+        nll_b += m.nll_batch(ctxs[lo : lo + batch], tgts[lo : lo + batch])
+    # THE PER-ITEM ARM SCORES IN ONE FORWARD TOO, at batch size 1. The old arm appended a
+    # target token and re-ran, so it scored at ctx, ctx+1, ... -- different lengths, therefore
+    # different chunk_kda alignments (chunk_size=32), therefore a different summation order.
+    # That put 2.2e-2 nats/byte between the arms and the tolerance was being widened to absorb
+    # it. Comparing at ONE length removes the cause instead, and what is left is batch shape
+    # alone, which is what this gate is supposed to be about.
+    nll_1 = [m.nll_batch([c], [t])[0] for c, t in zip(ctxs, tgts, strict=True)]
+    bad_pred, bad_nll, worst = [], [], 0.0
+    for it, c, w, nb, n1 in zip(items, ctxs, batched, nll_b, nll_1, strict=True):
+        w1, _ = greedy_word(m, c)
+        byts = max(1, len(it["target"].encode("utf-8")))
+        nb = None if nb is None else nb / byts
+        n1 = None if n1 is None else n1 / byts
+        # PRED AND NLL REPORTED SEPARATELY, never as if/elif. The first version chained them,
+        # so an nll line meant "pred matched" and a pred line hid the nll entirely -- 4c ran it
+        # on the pod and could not tell from the output whether the predictions agreed, which
+        # is the acceptance gate. A report that cannot distinguish its two claims is one claim.
+        if w != w1:
+            bad_pred.append(f"{it['id']}: pred {w!r} batched vs {w1!r} per-item")
+        if (n1 is None) != (nb is None):
+            bad_nll.append(f"{it['id']}: nll {nb} batched vs {n1} per-item")
+        elif n1 is not None:
+            worst = max(worst, abs(n1 - nb))
+            if abs(n1 - nb) > NLL_TOL:
+                bad_nll.append(f"{it['id']}: nll {nb:.6f} batched vs {n1:.6f} per-item "
+                               f"(delta {abs(n1 - nb):.2e})")
+    print(f"equivalence on {len(items)} items: {len(bad_pred)} pred mismatch(es), "
+          f"{len(bad_nll)} nll beyond {NLL_TOL:g}, worst nll delta {worst:.2e}", flush=True)
+    if len(items) > 4 * NLL_TOL_N:
+        # A max grows with the sample, so a big --equiv-sample goes red on noise alone. Said
+        # here rather than left for whoever hits it, because the response to a red gate has
+        # twice been to raise the tolerance.
+        print(f"NOTE: NLL_TOL was measured at n={NLL_TOL_N}; at n={len(items)} the expected "
+              f"max is larger and an nll failure may be sampling, not a defect", flush=True)
+    if bad_pred or bad_nll:
+        raise SystemExit("batched path does not reproduce the per-item path:\n  "
+                         + "\n  ".join((bad_pred + bad_nll)[:8]))
+
+
 def _selftest():
     # The stop rule, which is the criterion this file turns on. Every case is a real
     # generation shape, including the degenerate one.
@@ -221,6 +438,14 @@ def _selftest():
     assert first_word(" well-known") == "well", "a hyphen ends the word"
     assert first_word(" door.") == "door"
     assert first_word("\n\ndoor") == "door"
+    # THE SPAN, which is what the stop rule reads. `end` is past the word, NOT len(word) --
+    # the difference is the leading boundary run, and conflating them is the defect that
+    # truncated every punctuation-opening generation to one letter.
+    assert first_word_span(".Lucien") == ("Lucien", 7), first_word_span(".Lucien")
+    assert first_word_span(" Lucien") == ("Lucien", 7)
+    assert first_word_span("Lucien") == ("Lucien", 6)
+    assert first_word_span(".L") == ("L", 2), "a word not yet finished must not read as ended"
+    assert first_word_span(".Lucien ") == ("Lucien", 7), "a real boundary ends it"
     # DEGENERATE: nothing but boundary characters. Must be "" (scored as a miss), not a
     # crash and not a silent skip -- the model really does emit bare punctuation at 200M.
     assert first_word("") == ""
@@ -238,6 +463,41 @@ def _selftest():
     assert len("table".encode()) == 5
     assert len(" table".encode()) == 6, "the leading space must not enter the byte count"
 
+    # THE SLICE OFFSET, which is the only arithmetic the batched path introduces. Position
+    # ctx+j-1 predicts target token j, so an off-by-one here scores the wrong positions and
+    # still returns a plausible NLL -- no crash, no shape error, just a wrong number. Checked
+    # against hand-computed log-softmax rather than against the function's own output.
+    _lg = torch.log_softmax(torch.randn(2, 5, 32, generator=torch.Generator().manual_seed(0)), -1)
+    _got = _gather_nll(_lg, [[1, 2, 3], [4, 5]], [[7, 8], [9]])
+    assert abs(_got[0] - -(_lg[0, 2, 7] + _lg[0, 3, 8]).item()) < 1e-5, _got
+    assert abs(_got[1] - -_lg[1, 1, 9].item()) < 1e-5, _got
+    assert _gather_nll(_lg, [[1, 2]], [[]]) == [None], "an empty target scores None, not 0.0"
+
+    # THE CLAIM BATCHING RESTS ON, checked by ENUMERATION rather than by the cases I thought
+    # of. greedy_words_batched runs all max_new tokens and truncates afterwards, which is only
+    # equivalent to stopping early if a stopped word equals first_word of the full decode. I
+    # asserted that in a docstring and it was FALSE: over all 1110 decode sequences of length
+    # 1-3 on this alphabet, 48 disagreed under the old lstrip-based offset -- every one a
+    # generation opening with punctuation, which is exactly the 'Lucien' -> 'L' the pod found.
+    # With the span-based offset the count is 0. A keyword search for the cases I imagined
+    # would not have found them; enumerating what must be empty did.
+    import itertools  # noqa: PLC0415
+    _alpha = ["a", "L", "u", ".", " ", "-", "", '"', "\n", "ab"]
+    _bad = []
+    for _n in (1, 2, 3):
+        for _combo in itertools.product(_alpha, repeat=_n):
+            _text, _stopped = "", None
+            for _piece in _combo:
+                _text += _piece
+                _w, _end = first_word_span(_text)
+                if _w and len(_text) > _end:
+                    _stopped = _w
+                    break
+            if _stopped is not None and _stopped != first_word("".join(_combo)):
+                _bad.append(_combo)
+    assert not _bad, (f"{len(_bad)} decode sequence(s) where stopping early differs from the "
+                      f"full decode, e.g. {_bad[:3]} -- batching is not equivalent")
+
     print(f"lambada_en self-test OK: {len(WORD_BOUNDARY)} boundary chars, stop rule covers "
           f"apostrophe/hyphen/newline and the empty-generation case")
 
@@ -253,6 +513,15 @@ def main():
     ap.add_argument("--device", default="cuda:0")
     ap.add_argument("--limit", type=int, help="first N items (smoke test)")
     ap.add_argument("--preds", help="jsonl, appended per item; rerun resumes from it")
+    ap.add_argument("--batch", type=int, default=32,
+                    help="items per forward. Was effectively 1: greedy decoding ran one full "
+                         "forward per generated token per item, and the NLL one per target "
+                         "token, giving 25 min for 5,153 items at 31%% card util")
+    ap.add_argument("--equiv-sample", type=int, default=0, metavar="N",
+                    help=f"assert the batched path reproduces the per-item path on the first N "
+                         f"items, then exit non-zero if it does not. Use when changing the "
+                         f"decoder or the batch shape. NLL_TOL was measured at n={NLL_TOL_N}; a "
+                         f"much larger N draws a larger max and goes red on noise")
     ap.add_argument("--out", help="summary json")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -283,15 +552,27 @@ def main():
     hits = n = 0
     nll_sum = nll_n = 0.0
     empty = 0
-    for it in items:
-        r = done.get(it["id"])
-        if r is None:
-            word, _ = greedy_word(m, m.encode(it["context"]))
-            nll = target_nll_per_byte(m, m.encode(it["context"]), it["target"])
-            r = {"id": it["id"], "target": it["target"], "pred": word, "nll_per_byte": nll}
+    todo = [it for it in items if it["id"] not in done]
+    if a.equiv_sample and todo:
+        _assert_batch_equivalence(m, todo[: a.equiv_sample])
+    for lo in range(0, len(todo), a.batch):
+        chunk = todo[lo : lo + a.batch]
+        ctxs = [m.encode(it["context"]) for it in chunk]
+        words = greedy_words_batched(m, ctxs)
+        # " " + target, matching the old per-item call: the leading space is part of the
+        # string scored and not of the byte count the result is divided by.
+        tgts = [m.encode(" " + it["target"]) for it in chunk]
+        nlls = m.nll_batch(ctxs, tgts)
+        for it, word, tot in zip(chunk, words, nlls, strict=True):
+            r = {"id": it["id"], "target": it["target"], "pred": word,
+                 "nll_per_byte": None if tot is None
+                 else tot / max(1, len(it["target"].encode("utf-8")))}
+            done[it["id"]] = r
             if a.preds:
                 with open(a.preds, "a", encoding="utf-8") as f:
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
+    for it in items:
+        r = done[it["id"]]
         n += 1
         hits += r["pred"] == r["target"]
         empty += r["pred"] == ""
@@ -308,6 +589,16 @@ def main():
         "acc": acc, "binomial_se": se, "ci95_halfwidth": 1.96 * se,
         "empty_generations": empty,
         "nll_per_byte_mean": (nll_sum / nll_n) if nll_n else None,
+        # THE METRIC'S OWN ROW SAYS HOW IT WAS SCORED, because the answer moved. Until
+        # 2026-09-07 the NLL ran one forward per target token, so each token of a word was
+        # scored at a different sequence length and therefore under a different chunk_kda
+        # alignment (chunk_size=32) -- the old path was not internally consistent, which is why
+        # 4c ruled one-forward the reference rather than the deviation. Values differ by up to
+        # ~1e-2 nats/byte between the two, so a row without this field cannot be compared to
+        # one with it, and nothing else in the JSON distinguishes them.
+        "method": "nll_one_forward",
+        "decoder": "first_word_v2",
+        "batch": a.batch,
         "reading": "greedy continuation to first word boundary, exact string match "
                    "(lm-eval-harness definition); tokenizer-independent",
         "boundary": "The two readings measure different things and are EXPECTED to diverge: "
@@ -316,6 +607,15 @@ def main():
                     "fact, measured on this file's 5,111 eligible rows: 15.7% of last words "
                     "are single-token under our tokenizer, 70.1% under Pythia's -- which is "
                     "why this metric does not use a single-token reading.",
+        "reproducibility": "acc is NOT bit-reproducible across --batch values on this model. "
+                           "Measured 2026-09-07 (card 1, step17000, 5,153 items): 177 "
+                           "predictions differ between B=1 and B=32 while the decoder is "
+                           "identical -- bf16 argmax flips on near-ties, because the MoE grouped "
+                           "GEMM's M varies with batch composition and the kernel picks a "
+                           "different tiling per M. Net effect on the score was one item "
+                           "(26.489% -> 26.509%). So a rerun reproduces this row only at the "
+                           "same `batch`, and two rows at different `batch` are within noise "
+                           "of each other, not equal.",
     }
     if a.out:
         os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
