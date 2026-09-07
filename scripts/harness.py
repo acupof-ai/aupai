@@ -10352,6 +10352,29 @@ def _token_cache_dir():
     forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
         return forced
+    # THE TORCH-FREE PATH IS TRIED FIRST, and it is not a second implementation -- it is train's
+    # own three steps (env, NVMe-if-it-exists, dirname(TOKEN_CACHE)) with TOKEN_CACHE read from
+    # train.py's source instead of from an imported module. `import train` reaches model.py and then
+    # fla, which costs 9.8 s of a 36.4 s `harness check` (profiled 2026-09-07, de) to produce one
+    # string, and on this laptop both paths return '/data00' -- measured, they AGREE.
+    #
+    # Correctness rests on the constant being a literal: if train.py ever computes TOKEN_CACHE, the
+    # regex misses and this FALLS THROUGH to the import rather than guessing, so the expensive path
+    # remains the authority and the cheap one is only allowed to answer when it can read the same
+    # inputs. That is the opposite order from the version before this change, which imported first
+    # and used the scrape only when torch was absent; the reason for THAT order was that the scrape
+    # then ignored AUPAI_TOKEN_CACHE_DIR, which the `forced` branch above now handles for both.
+    try:
+        src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+        m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
+        if m:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+            if os.path.isdir(cache_guard.NVME_CACHE_DIR):
+                return cache_guard.NVME_CACHE_DIR
+            return os.path.dirname(m.group(1))
+    except Exception:
+        pass   # fall through to the import, which is the authority
     try:
         sys.path.insert(0, ROOT)
         import train
