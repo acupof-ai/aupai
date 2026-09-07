@@ -210,12 +210,21 @@ RP1T_PYTHON_TOKENS_FALLBACK = 420_646_182
 # name rather than edited in three call sites because _code_split, _rp1t_tokens and the floor
 # message all need the same one, and a swap that changes two of three is silent.
 #
-# NOT SWITCHED YET, deliberately: dd09's build_corpus_stats.json currently carries only
-# {domain, filters, n_shards} -- no `tokens` and no `fingerprint` (b0 measured it on the pod,
-# 2026-09-07). _rp1t_tokens refuses a non-default domain with no stamped tokens, and
-# launch_gate.gate_corpora:184 already NOGOs a domain whose stamp has no fingerprint, so
-# flipping this line before 3b's pass writes those fields cannot ship a mix -- it fails, which
-# is the correct state, not a silent fallback to another corpus's count.
+# NOT SWITCHED YET, and the remaining blocker is a DECISION, not a measurement: dd09's stamp is
+# now complete -- tokens 6,235,703,063 (tokens_status measured, full count over all 235 shards,
+# no sampling), packed_rows 1,522,016, fingerprint 5244d92ea157379f, docs 3,434,322 = the dedup
+# pass's docs_kept exactly (3b, read off the pod stamp 2026-09-07, not transcribed from a relay:
+# an earlier figure of 6,233,805,634 was 1,897,429 tokens low because the counter used
+# splitlines(), which breaks on the U+2028/U+2029 that occur inside rp1t's content values).
+#
+# So flipping this string now WOULD produce a launchable mix, which is why it is a ruling and not
+# a cleanup. dd09 is 14.80x code_py_rp1t's supply, and _code_split divides the code objective in
+# proportion to supply, so the swap moves the split hard: starcoder 95.40% -> 58.37% of the code
+# rows (1,609,923 -> 985,056), rp1t 4.60% -> 41.63% (77,550 -> 702,417), and both corpora's draw
+# falls from 0.7543 to 0.4615 epochs because the same pinned row budget now spans 14.8x more
+# supply. The code objective's TOTAL is unchanged and no other domain moves (selftest case 1
+# pins it), so this is a re-decision of the code mix's composition, not of the whole mix --
+# resume 2 with its own prereg row.
 CODE_RP1T_DOMAIN = "code_py_rp1t"
 
 
