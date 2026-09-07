@@ -18593,6 +18593,8 @@ def _selftest_main_touched_raises_on_unreadable_main():
     check whose subject is individual deliveries -- failures equal to total is the signature
     of an absent comparison side, not of N real defects.
     """
+    global ROOT   # world 5 repoints it; declared after the docstring, never before it
+
     import shutil
     import tempfile
 
@@ -18709,19 +18711,31 @@ def _selftest_main_touched_raises_on_unreadable_main():
         # world must do -- rather than raising.
         ci_root = tempfile.mkdtemp(prefix="mt_ciroot_")
         try:
-            # CLONE THE COMMON GIT DIR, not ROOT. ROOT here is a linked WORKTREE, and cloning a
-            # worktree path gives a repo with a local main and NO refs/remotes/origin/main -- the
-            # world then SKIPped, and a SKIP is indistinguishable from a pass in the mutant sweep:
-            # measured, the fixture mutant stayed GREEN through a world that never ran. The clone
-            # source must be the repository, and `--depth 50` keeps it cheap while still carrying
-            # the shas the ledger cites near the tip.
+            # THE REMOTE-TRACKING REF IS FETCHED EXPLICITLY, not left to clone's defaults.
+            # Measured 2026-09-07 (/tmp/de_clone_probe.py): `clone --depth 50` of the integration
+            # tree, of its common git dir, and of this worktree ALL produce exactly
+            # refs/remotes/origin/HEAD plus the source's current branch -- fb, fb, de. None has
+            # refs/remotes/origin/main, because a shallow clone fetches the source's HEAD branch
+            # only, and the source is a worktree parked on somebody's branch. An earlier version
+            # asserted the clone would carry origin/main and it worked once, when the integration
+            # tree happened to sit on a main-carrying branch; that is a world whose premise depends
+            # on which branch a neighbouring session left checked out.
+            #
+            # So: clone the common git dir for its objects, then `fetch origin main:` into the
+            # remote-tracking namespace and delete any local main. That is actions/checkout's end
+            # state for a pull_request build, built rather than hoped for.
             _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
                                       "--git-common-dir"], capture_output=True, text=True
                                      ).stdout.strip() or ROOT
             subprocess.run(["git", "clone", "-q", "--no-checkout", "--depth", "50",
                             _common, ci_root], capture_output=True, text=True)
             subprocess.run(["git", "-C", ci_root, "checkout", "-q", "--detach"], capture_output=True)
-            subprocess.run(["git", "-C", ci_root, "branch", "-D", "main"], capture_output=True)
+            subprocess.run(["git", "-C", ci_root, "fetch", "-q", "--depth", "50", "origin",
+                            "+refs/heads/main:refs/remotes/origin/main"], capture_output=True)
+            for _b in subprocess.run(["git", "-C", ci_root, "for-each-ref", "--format=%(refname)",
+                                      "refs/heads/"], capture_output=True, text=True
+                                     ).stdout.split():
+                subprocess.run(["git", "-C", ci_root, "update-ref", "-d", _b], capture_output=True)
             _no_local = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
                                         "main"], capture_output=True, text=True).returncode != 0
             _has_remote = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
@@ -18741,7 +18755,13 @@ def _selftest_main_touched_raises_on_unreadable_main():
             # world would then be half-CI and prove nothing.
             import harness_core as _core5
             _saved, _saved_core = ROOT, _core5.ROOT
-            globals()["ROOT"] = _core5.ROOT = ci_root
+            # `global ROOT`, not globals()["ROOT"]: harness.py defines its own module-level
+            # ROOT (:34), so the dict write was NOT inert -- but
+            # _selftest_core_reexports_are_identical flags any globals()[name] whose name also
+            # exists in harness_core, because from the outside an inert patch of a core object
+            # looks identical. It caught this on PR #3 (job 34094214357). The guard is right to
+            # be name-based and the fix is to use the idiom it cannot mistake.
+            ROOT = _core5.ROOT = ci_root
             _st = _ev = None
             _raised = None
             try:
@@ -18757,7 +18777,7 @@ def _selftest_main_touched_raises_on_unreadable_main():
                 # existed: the mutant produced that text and the sweep read it as uncaught.
                 _raised = e
             finally:
-                globals()["ROOT"] = _saved
+                ROOT = _saved
                 _core5.ROOT = _saved_core
                 _MAIN_REF.clear()
                 _MAIN_TOUCHED.clear()
