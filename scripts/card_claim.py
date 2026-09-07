@@ -261,12 +261,55 @@ def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
         return None  # no /proc anywhere here: this predicate has no opinion, decided once
     end = None if deadline is None else time.time() + deadline
     while True:
+        # THE HOLDER ITSELF IS A CANDIDATE, and until 2026-09-07 it was not. _descendants seeds
+        # `seen = {pid}`, so the holder can never appear in _job_descendants(pid) -- the poll
+        # searched only for a CHILD on a card. That is right for the launcher shape this was
+        # written for (a wrapper shell spawns torchrun, the ranks open the devices) and wrong for
+        # a job that opens its own card: it has no descendant, so the poll could only time out or
+        # outlive the job, and either way nothing was claimed.
+        #
+        # MEASURED, not reasoned (b0-31, card 7, three durations x two claim timings, with the
+        # claim directory sampled every 100ms during each run):
+        #     claim AFTER the job is on the card:   3s ok   20s ok   120s ok
+        #     claim BEFORE it opens the device:     3s FAIL 20s FAIL 120s FAIL, ledger NEVER
+        # Duration is not the variable -- claim TIMING is. The 3s and 120s arms fail identically,
+        # which is what rules out "the poll is too slow for a short job".
+        #
+        # THE FAILURE IS SILENT IN THE DIRECTION THAT MATTERS: acquire prints its refusal and the
+        # JOB keeps running on the card it was granted, so the measurement completes with correct
+        # numbers and an empty ledger. `idle is not a grant` is enforced by reading claims, so an
+        # unclaimed run makes a card look free while it is in use. That is how the b0-27
+        # verification ran on card 7 with nothing claimed.
+        #
+        # DESCENDANTS FIRST, THE HOLDER AS FALLBACK -- the DEEPEST holder wins (de, 2026-09-07).
+        # The first version of this fix checked the holder first, on the argument that "a non-shell
+        # launcher holding a device fd is itself on the card". THAT ARGUMENT IS FALSE, and this
+        # file's own docstring is where the counterexample is written down: measured on the pod,
+        # `torchrun itself holds 36` device fds while `a rank holds 52`. So a non-shell launcher
+        # both holds devices and is not the job. de built that world -- non-shell python holder
+        # with 36 fds, rank beneath it with 52 -- and holder-first returned the LAUNCHER where the
+        # pre-fix code returned the rank.
+        #
+        # It reached no caller: _resolve_to_device_holder builds its on_card list from
+        # _job_descendants FIRST and calls this function only when that list is empty, and harness
+        # launch's holder is a `bash -c` wrapper that the shell guard skips. So holder-first was a
+        # latent ordering hazard rather than a live defect -- and NOTHING ASSERTED the ordering
+        # that kept it safe, which is the reason to fix it here rather than rely on the caller.
+        # Deepest-holder closes the launcher case by construction and still fixes b0-31, because a
+        # self-claiming job has no descendant and the fallback is what fires for it.
         for p, _a in _job_descendants(pid):
             n = nvidia_fds(p)
             if n:
                 return p, n
             # n == 0: alive, not on a card yet. n is None: the pid vanished between the ps
             # snapshot and this read -- skip it, never end the wait on another process's exit.
+        # The holder is the fallback, and only when it is not a shell: a shell holding a device fd
+        # is a wrapper that inherited one, and claiming a shell is what the caller's own refusal
+        # at the acquire site exists to prevent.
+        if not _argv0_is_shell(_cmdline(pid)):
+            n = nvidia_fds(pid)
+            if n:
+                return pid, n
         if not _alive(pid) or (end is not None and time.time() >= end):
             return None
         time.sleep(interval)
@@ -1947,6 +1990,167 @@ def _selftest():
                     pass
             idle.kill()
             idle.wait()
+
+        # b0-31: THE HOLDER ITSELF OPENS THE CARD, so there is no descendant to follow. Every
+        # earlier world here gives the holder a CHILD that opens a device, which is the launcher
+        # shape; a self-claiming job (score_matrix, a micro-timing, a known-answer test) opens its
+        # own card and the poll used to search past it, because _descendants seeds seen={pid}.
+        # Measured on card 7 before this fix, three durations x two claim timings: claiming after
+        # the job was on the card landed at 3s/20s/120s, claiming before it opened the device
+        # failed at all three with the ledger NEVER holding a row. Duration was not the variable.
+        #
+        # A NEGATIVE CONTROL IS PART OF THIS CASE, not a separate one: the same world with the
+        # holder's fds set to 0 must still return None. Without it, "the holder is a candidate"
+        # would pass for a poll that returns the holder unconditionally, which would bind a claim
+        # to a process that is not on a card -- the b0_mem_m1 defect this whole mechanism exists
+        # to prevent.
+        selfjob = subprocess.Popen(["python3", "-c", "import time; time.sleep(9)"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(0.4)
+            _case(not _job_descendants(selfjob.pid),
+                  "world: the self-claiming job has NO python descendant, so only the holder "
+                  f"can be on a card ({len(_job_descendants(selfjob.pid))} found)")
+            _fake_proc(selfjob.pid, nvidia=0, other=4)
+            _case(wait_for_device(selfjob.pid, deadline=0.8, interval=0.1) is None,
+                  "b0-31 control: a holder with 0 device fds and no descendant is NOT claimed")
+            _fake_proc(selfjob.pid, nvidia=17, other=4)
+            got_self = wait_for_device(selfjob.pid, deadline=2.0, interval=0.1)
+            _case(got_self is not None and got_self[0] == selfjob.pid,
+                  f"b0-31: the holder itself is claimed when IT holds the device (got {got_self})")
+        finally:
+            selfjob.kill()
+            selfjob.wait()
+
+        # THE SHELL GUARD ON THE NEW HOLDER CHECK, and it needed its own world: a mutant that
+        # dropped `not _argv0_is_shell(...)` SURVIVED the three cases above, because none of them
+        # gives a SHELL a device fd. A shell can hold one by inheritance, and claiming a shell is
+        # what the caller's refusal at the acquire site exists to prevent -- the claim then dies
+        # with the wrapper (card reads ORPHAN) or outlives the job (card reads held after it is
+        # gone), both observed 2026-09-03. Verified reachable before writing the case: a bash
+        # holder with an nvidia fd reads _argv0_is_shell True and nvidia_fds 1.
+        shjob = subprocess.Popen(["bash", "-c", "while :; do sleep 0.2; done"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(0.4)
+            _fake_proc(shjob.pid, nvidia=1, other=2)
+            _case(_argv0_is_shell(_cmdline(shjob.pid)) and nvidia_fds(shjob.pid) == 1,
+                  "world: the holder IS a shell and holds a device fd "
+                  f"({_cmdline(shjob.pid)[:40]!r})")
+            _case(wait_for_device(shjob.pid, deadline=0.7, interval=0.1) is None,
+                  "b0-31: a SHELL holding a device fd is still not claimed as the job")
+        finally:
+            for q, _a in _descendants(shjob.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            shjob.kill()
+            shjob.wait()
+
+        # THE DEEPEST HOLDER WINS, and this world is why (de, 2026-09-07). It is the launcher shape
+        # with a NON-SHELL holder: torchrun itself holds device fds -- 36, per this file's own
+        # measurement at the nvidia_fds docstring -- while a rank beneath it holds 52. So the
+        # argument that carried the first version of the b0-31 fix ("a non-shell launcher holding a
+        # device fd is itself on the card") is false, and this file already contained its
+        # counterexample. Holder-first returned the LAUNCHER here where the pre-fix code returned
+        # the rank; descendants-first returns the rank and still falls back to the holder for a
+        # self-claiming job, which has no descendant at all.
+        #
+        # It reached no caller -- _resolve_to_device_holder checks _job_descendants before ever
+        # calling wait_for_device -- so this asserts an ORDERING that nothing else asserts. That is
+        # the whole point: the safety was a property of one caller's sequence, and a latent hazard
+        # with no test is one refactor away from being live.
+        lnch = subprocess.Popen(
+            ["python3", "-c",
+             "import subprocess, sys, time; "
+             "k = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(9)']); "
+             "time.sleep(9)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True)
+        try:
+            time.sleep(0.8)
+            rank_kids = _job_descendants(lnch.pid)
+            _case(len(rank_kids) == 1,
+                  f"world: the non-shell launcher has exactly one python rank ({len(rank_kids)})")
+            if rank_kids:
+                rank = rank_kids[0][0]
+                _fake_proc(lnch.pid, nvidia=36, other=9)   # torchrun's measured count
+                _fake_proc(rank, nvidia=52, other=9)       # a rank's measured count
+                _case(not _argv0_is_shell(_cmdline(lnch.pid)),
+                      "world: the launcher is NOT a shell, so the shell guard cannot save this")
+                got_deep = wait_for_device(lnch.pid, deadline=2.0, interval=0.1)
+                _case(got_deep is not None and got_deep[0] == rank,
+                      f"b0-31: the RANK is claimed, not the launcher that also holds devices "
+                      f"(got {got_deep}, rank {rank}, launcher {lnch.pid})")
+        finally:
+            for q, _a in _descendants(lnch.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            lnch.kill()
+            lnch.wait()
+
+        # THE TWO CASES WHERE THE FALLBACK IS THE RIGHT ANSWER, so its reachability is asserted
+        # rather than inferred (de, 2026-09-07). The three worlds above prove the fallback fires
+        # when there is NO descendant; these prove it fires correctly when there is one that
+        # cannot be claimed. Both behaved this way before the reorder too -- they are not
+        # regressions, they are the untested half of the branch.
+        #
+        # (a) A SHELL DESCENDANT ON THE CARD. _job_descendants excludes it and the holder is
+        # claimed. This is the one shape where "deepest" and "correct" diverge: the deepest
+        # process on a card IS the shell, and claiming it is what the acquire site's own refusal
+        # exists to prevent (the claim dies with the wrapper -> ORPHAN, or outlives the job ->
+        # card reads held).
+        #
+        # THE SHELL'S COMMAND MENTIONS python DELIBERATELY, and a plainer `bash -c 'while :; do
+        # sleep'` would not test what this claims. _job_descendants applies TWO independent
+        # filters -- `_argv0_is_shell` skips it, and the python/torchrun NAME filter rejects it --
+        # and a sleep loop fails both, so a mutant disabling the shell skip survived that version
+        # of this case (measured: 129/129 green with `if False: continue`). The command here
+        # defines a shell function named python3_marker and never runs python, so its argv passes
+        # the name filter while the process is genuinely a shell with no python descendant: the
+        # shell skip is then the only thing excluding it. `bash -c python3 train.py` does NOT work
+        # for this -- it spawns a real python grandchild that holds the card and is correctly
+        # claimed, which turned the case red for a reason unrelated to the branch under test.
+        # The real shape is harness launch's wrapper: a shell whose command line names python.
+        #
+        # (b) A LIVE NON-SHELL RANK HOLDING ZERO fds while the holder holds 36 -- b0_mem_m1
+        # inverted. There the claim bound a launcher with 0 fds while a rank held 52; here the
+        # only process demonstrably on a card is the holder, and claiming it is right for the same
+        # reason claiming the rank was right there. `>0 fds` is the predicate, not depth.
+        for label, child_cmd, holder_fds, child_fds, want_holder in (
+            ("a SHELL descendant holds the card",
+             "subprocess.Popen(['bash', '-c', "
+             "'python3_marker() { :; }; while :; do sleep 0.2; done'])", 36, 52, True),
+            ("a live non-shell rank holds ZERO device fds",
+             "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(9)'])", 36, 0, True),
+        ):
+            fb = subprocess.Popen(
+                ["python3", "-c",
+                 f"import subprocess, sys, time; {child_cmd}; time.sleep(9)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                start_new_session=True)
+            try:
+                time.sleep(0.9)
+                _fake_proc(fb.pid, nvidia=holder_fds, other=9)
+                for q, _a in _descendants(fb.pid):
+                    _fake_proc(q, nvidia=child_fds, other=3)
+                got_fb = wait_for_device(fb.pid, deadline=1.2, interval=0.1)
+                _case(got_fb is not None and (got_fb[0] == fb.pid) == want_holder,
+                      f"b0-31 fallback: {label} -> the holder is claimed "
+                      f"(got {got_fb}, holder {fb.pid})")
+            finally:
+                for q, _a in _descendants(fb.pid):
+                    try:
+                        os.kill(q, 9)
+                    except OSError:
+                        pass
+                fb.kill()
+                fb.wait()
 
         # THE LIVE M1 DEFECT, 2026-09-05, and it was NOT the deadline the message blamed. The
         # launcher printed "no descendant of 915701 opened a GPU device within 90s" while the ranks
