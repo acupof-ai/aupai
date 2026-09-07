@@ -597,6 +597,21 @@ CANONICAL_STATS_KEYS = (
 )
 
 
+def _tokens_status(n_sample, n_shards):
+    """"measured" only when every shard was counted; otherwise name the extrapolation.
+
+    Both stamp writers sample min(3, len(shards)) and then wrote "measured"
+    unconditionally, so code_rp1t's 7.57B -- 3 of 235 shards, extrapolated by bytes --
+    was labelled measured in the artifact a mix budget is read against. tokens_config
+    said "sample extrapolated by bytes" right beside it, so the stamp contradicted
+    itself and the wrong half is the one a budget reader greps. This is the
+    85.7B->73.6B class: a bytes-ratio number presented as a count.
+    """
+    if n_sample >= n_shards:
+        return "measured"
+    return f"extrapolated: {n_sample}/{n_shards}-shard sample, by bytes"
+
+
 def _assert_canonical_stats(stats, where):
     missing = [k for k in CANONICAL_STATS_KEYS if k not in stats]
     assert not missing, f"{where} stats missing canonical keys: {missing}"
@@ -676,7 +691,7 @@ def _write_stats(out, domain, a, reasons, kept, kept_chars, nshards, held_out_ke
                 n_sample = min(3, len(shards))
                 tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
                 stats["tokens"] = tokens
-                stats["tokens_status"] = "measured"
+                stats["tokens_status"] = _tokens_status(n_sample, len(shards))
                 stats["tokens_config"] = (
                     f"data/tokenizer.json, {n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
                 )
@@ -968,7 +983,7 @@ def _near_write_stats(out, domain, reasons, kept, kept_chars, nshards, removed_n
                 n_sample = min(3, len(shards))
                 tokens, _ = count_shards(shards, Tokenizer.from_file(tok_path), sample=n_sample)
                 stats["tokens"] = tokens
-                stats["tokens_status"] = "measured"
+                stats["tokens_status"] = _tokens_status(n_sample, len(shards))
                 stats["tokens_config"] = f"{n_sample}/{len(shards)}-shard sample extrapolated by bytes; {CONVENTION}"
         except Exception as e:
             stats["tokens_status"] = f"unmeasured: {type(e).__name__}: {str(e)[:80]}"
@@ -1573,6 +1588,21 @@ def _selftest_preflight():
         import shutil
 
         shutil.rmtree(hp, ignore_errors=True)
+    # (f) tokens_status must not claim "measured" over a sample (2026-09-07). Both stamp
+    #     writers wrote it unconditionally beside a tokens_config that said "sample
+    #     extrapolated by bytes", so the stamp contradicted itself and code_rp1t's
+    #     7.57B (3 of 235 shards) read as a count. Both directions, because a helper
+    #     that returned the extrapolated string always would also pass a one-sided test.
+    if _tokens_status(3, 235) == "measured":
+        raise AssertionError("(f) a 3/235 sample was labelled measured")
+    if "3/235" not in _tokens_status(3, 235):
+        raise AssertionError("(f) the extrapolated label does not name the sample")
+    if _tokens_status(235, 235) != "measured":
+        raise AssertionError("(f) a full count was NOT labelled measured")
+    if _tokens_status(1, 1) != "measured":
+        raise AssertionError("(f) a single-shard domain counted whole was not measured")
+    ok += 4
+
     # (the settle cases 1-4 + foreign-live-pid refuse live with gate (a) above)
     print(f"build_corpus selftest OK: {ok} gates refuse on their failing world (incl. T7-2 settle + holdout-slice gate)")
     return 0
