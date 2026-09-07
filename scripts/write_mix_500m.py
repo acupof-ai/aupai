@@ -472,23 +472,60 @@ def _cache_pool(name):
     path = train._domain_cache_path(name)
     if not os.path.exists(path):
         return None
-    # OUTSIDE THE try, deliberately. The `except Exception` below turns any failure into
-    # "no cache here", so a refusal raised inside it would be swallowed and this function
-    # would fall back to the recorded file while the read it was refusing still looked
-    # optional. A guard inside a broad except is not a guard.
-    sys.path.insert(0, os.path.join(ROOT, "eval"))
-    from cache_guard import assert_not_co_resident
+    # THE SIDECAR FIRST, because it answers without reading the tensor. train.py writes
+    # <cache>.counts at build time with the exact row and token count, so a pool can be sized
+    # beside a running job -- the torch.load below goes through assert_not_co_resident and is
+    # refused for any domain over 10 GB, which is every large one.
+    #
+    # A MODE MISMATCH REFUSES rather than falling back. _domain_cache_path owns the _fone
+    # suffix and a hand-spelled name drops it silently (de, 2026-09-05), so a .counts whose
+    # `fone` disagrees with Cfg means this call has the wrong file, and a wrong-mode count is
+    # worse than no count. Same for `seq`: rows is derived from it, so a cache built under a
+    # different seq carries a row count that is not this run's.
+    side, n, source, c = path + ".counts", None, "cache", None
+    if os.path.exists(side):
+        try:
+            with open(side, encoding="utf-8") as f:
+                c = json.load(f)
+            n, source = int(c["tokens"]), "counts"
+        except (OSError, ValueError, KeyError, TypeError) as e:
+            # LOUD, because a silent fallback here becomes a co-residency refusal further down
+            # that reaches the caller as "no cache". `source` in the returned dict says which
+            # path answered; this line says why the cheap one did not.
+            print(f"  {name}: .counts unreadable ({e}); falling back to the cache read",
+                  flush=True)
+            c = None
+    if c is not None and (int(c["seq"]) != SEQ or bool(c["fone"]) != bool(train.Cfg.fone)):
+        # RAISES, and deliberately NOT inside the try above -- a mismatch is not a damaged
+        # file to route around. _domain_cache_path owns the _fone suffix, so a .counts whose
+        # mode disagrees with Cfg means this call is looking at a cache built for a different
+        # run, and the fallback would then answer the same wrong question the expensive way.
+        # The mix would come out sized against a tensor no run reads (de, 2026-09-05).
+        raise ValueError(
+            f"{side} was built at seq={c['seq']} fone={c['fone']} but this run is seq={SEQ} "
+            f"fone={bool(train.Cfg.fone)}; its counts do not describe the cache this run reads")
+    if n is None:
+        # OUTSIDE the try below, deliberately. The `except Exception` turns any failure into
+        # "no cache here", so a refusal raised inside it would be swallowed and this function
+        # would fall back to the recorded file while the read it was refusing still looked
+        # optional. A guard inside a broad except is not a guard.
+        sys.path.insert(0, os.path.join(ROOT, "eval"))
+        from cache_guard import assert_not_co_resident
 
-    assert_not_co_resident([name])
-    try:
-        import torch
+        assert_not_co_resident([name])
+        try:
+            import torch
 
-        n = int(torch.load(path, map_location="cpu", mmap=True).numel())
-    except Exception:
-        return None
+            n = int(torch.load(path, map_location="cpu", mmap=True).numel())
+        except Exception:
+            return None
+    # ROWS AND pool_rows ARE DERIVED HERE FOR BOTH PATHS, from tokens alone, so the two paths
+    # cannot disagree by arithmetic -- only by the token count itself, which is the thing under
+    # test. The holdout subtraction stays here rather than being mirrored into train.py's
+    # sidecar (b0's ruling, 2026-09-07).
     rows = n // (SEQ + 1)
     return {"tokens": n, "rows": rows, "pool_rows": rows - min(int(rows * 0.05), 5000),
-            "source": "cache"}
+            "source": source}
 
 
 def _measured_pools():

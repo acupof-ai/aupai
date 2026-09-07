@@ -1606,6 +1606,14 @@ def main():
         # cache. Two mutations run: mmap removed and mmap=False, both red on three assertions.
         # ~40s (it writes a 0.92 GiB fixture), no card, no GPU.
         "scripts/test_cache_mmap.py",
+        # .counts vs the cache read: both arms of _cache_pool must produce the same pool_rows.
+        # Registered here AND on train.py's and write_mix_500m.py's trigger lists -- the subject
+        # is the agreement between a writer in train.py and a reader in the mix writer, so an
+        # edit to either half can break it and neither is this file. Six mutations run, all red
+        # on an assertion (no sidecar, rows written where tokens belong, a wrong seq stamp, the
+        # holdout skipped on one path, the mode mismatch ignored, a silent fallback). ~11.5s
+        # median of 5 at load 3.8-6.2 -- it builds a real cache through _domain_seqs. No card.
+        "scripts/test_cache_counts.py",
         # scripts/test_eta_window.py IS NOW REGISTERED, below in this map and on train.py's trigger
         # list. It is entered here where its NOT-YET note stood, because the note recorded a
         # failure worth keeping: 8a06c567 (mine) registered the file in both places BEFORE writing
@@ -2091,6 +2099,11 @@ def main():
         # the readout that scores them or the pinned hash goes stale silently.
         "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
+        # _cache_pool is the reader half of the .counts sidecar train.py writes. Its own
+        # selftest does not build a cache, so the two-arm agreement is only asserted by this
+        # file -- and an edit here (dropping the mismatch raise, deriving pool_rows twice) is
+        # exactly what makes the two paths disagree.
+        "scripts/write_mix_500m.py": {"scripts/test_cache_counts.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
         # behaviour is split across them: the selection lives in model.ProductKeyMemory.forward
@@ -2110,6 +2123,11 @@ def main():
                      "scripts/test_mix_anneal_and_cursor.py",
                      "scripts/test_cache_read_line.py",
                      "scripts/test_cache_mmap.py",
+                     # train.py writes the .counts sidecar that write_mix_500m._cache_pool
+                     # reads. An edit to the writer -- a dropped field, a different unit, a move
+                     # relative to torch.save -- breaks the reader, and the reader is in another
+                     # file, so nothing else here would ask.
+                     "scripts/test_cache_counts.py",
                      "scripts/test_moe_diag_rank.py",
                      "scripts/test_bf16_flag.py",
                      "scripts/test_warmdown_start.py",

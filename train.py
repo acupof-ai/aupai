@@ -2057,6 +2057,30 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         with open(seedfp, "w") as f:
             f.write(str(_sample_seed()))
         n_tok = len(data[0] if Cfg.fone else data)
+        # A FOURTH SIDECAR, beside .vocab/.srcfp/.seed: the exact counts, written by the code
+        # that produced the tensor. scripts/write_mix_500m.py sizes pools by torch.load(mmap)
+        # of the whole cache, which the co-residency guard refuses beside a run -- and the
+        # corpus stamp cannot stand in for it: its `tokens` is a 3-shard byte extrapolation
+        # (421,239,303 against this cache's 420,855,850 for code_py_rp1t, b0 2026-09-07) and
+        # it carries no row count at all.
+        #
+        # AFTER torch.save, so a crash between the two leaves a cache with no .counts, which
+        # the reader treats as absent and falls back. The other order would leave a file
+        # describing a tensor that does not exist -- the same argument as the 0-byte stamp
+        # note above. And after the VOCAB_ID raise, which it inherits without claiming to be
+        # identity: a count is true of the bytes whatever vocabulary produced them, but a
+        # counts file beside a cache that then failed to stamp would outlive the retokenize.
+        #
+        # RAW COUNTS ONLY -- tokens, and the two fields that say what tensor they describe.
+        # NOT `rows`: it is n_tok // (seq+1), and `seq` is right here, so writing it too would
+        # put a second source of truth for one quantity in a file the reader can already derive
+        # it from. The reader derives rows AND pool_rows, so the validation holdout stays in one
+        # place rather than being mirrored here (b0's ruling, 2026-09-07).
+        # `seq` and `fone` are stored because rows is derived from seq, and because
+        # _domain_cache_path owns the _fone suffix -- a reader that hand-spelled the path
+        # drops it silently, and the field is how that reader finds out.
+        with open(cache + ".counts", "w") as f:
+            json.dump({"tokens": int(n_tok), "seq": int(Cfg.seq), "fone": bool(Cfg.fone)}, f)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
     if ddp:
