@@ -59,27 +59,36 @@ DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "lambada_en", "lambada_test_en
 WORD_BOUNDARY = set(" \t\n\r-.,;:!?\"()[]{}<>/\\|`~@#$%^&*+=—–…")
 MAX_NEW_TOKENS = 8  # a word is at most a few tokens; 8 bounds the worst case cheaply
 
-# WHAT THE TWO ARMS MAY DIFFER BY, and the history of this number, because it has been wrong
-# twice in opposite directions.
+# THE NOISE FLOOR, MEASURED, and the history of this number because it has been wrong twice.
 #
-# 1e-4, asserted: "the paths differ only in batch shape, so this is bf16 accumulation order".
-# The premise was wrong about WHICH thing varied. The pod measured 1e-3 to 8e-3.
-# 2e-2, fitted to that sample: the next run hit 2.20e-02 on 1 of 64. A tolerance set from the
-# failures so far becomes whatever the data needs, which is not a gate.
+# 1e-4, asserted from "the paths differ only in batch shape, so this is bf16 accumulation
+# order" -- the premise named the wrong varying quantity. Pod measured 1e-3 to 8e-3.
+# 2e-2, fitted to that sample -- the next run hit 2.20e-02. A tolerance set from the failures
+# so far becomes whatever the data needs, which is not a gate.
 #
-# The cause was never batch shape. The per-item arm scored at ctx, ctx+1, ... because it
-# appended one target token per forward, and DeltaRecurrence is a chunked recurrence
-# (chunk_size=32, model.py:128 -> chunk_kda at :222), so each length aligned the chunks
-# differently. Both arms now score in ONE forward at ONE length, so that source is gone and
-# what remains is genuine batch-shape noise: the same rows in a (B, T) tensor rather than a
-# (1, T) one.
+# MEASURED (4c, pod card 1, step17000, 2026-09-07, runs/lambada_ab.log): with BOTH arms scoring
+# in one forward at one sequence length, 38 of 64 items still exceed 1e-3, worst 2.12e-2. So it
+# is not sequence length and not the chunked recurrence: it is BATCH SHAPE through bf16 kernels.
+# The MoE grouped GEMM's M differs per expert with batch composition, and cuBLAS/Triton pick
+# different tilings and split-K per M, so accumulation order changes per token even under
+# identical routing. A causal dense toy model cannot reproduce it -- mine showed 0.0e+00 and was
+# measuring the wrong thing.
 #
-# 1e-3 is a CEILING TO BE REPLACED BY MEASUREMENT, not a measurement. I have no card, so I
-# cannot observe bf16 batch-shape noise on this model and will not print a number I did not
-# take. It is loose enough not to fail on plausible noise and 3 orders tighter than the
-# off-by-one it must catch (2.55 nats, measured in _selftest). The pod run reports the worst
-# observed delta on success; set this from that figure.
-NLL_TOL = 1e-3
+# 3e-2 IS A MAX OVER n=64 AND THEREFORE GROWS WITH THE SAMPLE. A max is not a fixed property of
+# the distribution; drawing more items finds a larger one. Against the full pass's own
+# distribution (136 of 5153 rows beyond 2e-2), the expected max scales like sqrt(2 ln n):
+#
+#     n=64   2.12e-2 (measured)     3e-2 is 1.42x it
+#     n=512  2.60e-2 (projected)    3e-2 is 1.16x it
+#     n=5153 3.04e-2 (projected)    3e-2 is BELOW it -- this gate fails on a full-size sample
+#
+# So this constant is correct for --equiv-sample in the low hundreds and no larger. Do not raise
+# it when a bigger sample goes red: that is the third time this number would have been fitted to
+# its own failures. Either keep the sample small or compute a quantile instead of a max.
+# It is still 80x below the off-by-one it exists to catch (2.55 nats, measured in _selftest).
+NLL_TOL = 3e-2
+NLL_TOL_N = 64  # the sample the figure above was measured on; see the scaling note
+EQUIV_BATCH = 32  # the batch composition NLL_TOL was measured under; the gate pins it
 
 
 def first_word_span(text):
@@ -359,7 +368,7 @@ def target_nll_per_byte(m, ctx_ids, target):
     return total / max(1, len(target.encode("utf-8")))
 
 
-def _assert_batch_equivalence(m, items):
+def _assert_batch_equivalence(m, items, batch=EQUIV_BATCH):
     """The batched path must reproduce the per-item path exactly, on real rows.
 
     The claim being checked is that running all max_new tokens and truncating with first_word
@@ -367,11 +376,20 @@ def _assert_batch_equivalence(m, items):
     and an argument is not a measurement -- 4c made zero changed predictions the acceptance
     gate for this change, so the same equality is asserted here on a sample before the run
     rather than discovered in the diff afterwards.
+
+    BATCH IS PINNED, not taken from --batch. acc is not bit-reproducible across batch sizes on
+    this model (177 of 5,153 predictions differ between B=1 and B=32, measured), so a gate that
+    inherited the run's batch would compare against a different composition each time and could
+    not be replayed. EQUIV_BATCH is the composition NLL_TOL was measured under.
     """
     ctxs = [m.encode(it["context"]) for it in items]
-    batched = greedy_words_batched(m, ctxs)
+    batched = []
+    for lo in range(0, len(ctxs), batch):
+        batched += greedy_words_batched(m, ctxs[lo : lo + batch])
     tgts = [m.encode(" " + it["target"]) for it in items]
-    nll_b = m.nll_batch(ctxs, tgts)
+    nll_b = []
+    for lo in range(0, len(ctxs), batch):
+        nll_b += m.nll_batch(ctxs[lo : lo + batch], tgts[lo : lo + batch])
     # THE PER-ITEM ARM SCORES IN ONE FORWARD TOO, at batch size 1. The old arm appended a
     # target token and re-ran, so it scored at ctx, ctx+1, ... -- different lengths, therefore
     # different chunk_kda alignments (chunk_size=32), therefore a different summation order.
@@ -400,6 +418,12 @@ def _assert_batch_equivalence(m, items):
                                f"(delta {abs(n1 - nb):.2e})")
     print(f"equivalence on {len(items)} items: {len(bad_pred)} pred mismatch(es), "
           f"{len(bad_nll)} nll beyond {NLL_TOL:g}, worst nll delta {worst:.2e}", flush=True)
+    if len(items) > 4 * NLL_TOL_N:
+        # A max grows with the sample, so a big --equiv-sample goes red on noise alone. Said
+        # here rather than left for whoever hits it, because the response to a red gate has
+        # twice been to raise the tolerance.
+        print(f"NOTE: NLL_TOL was measured at n={NLL_TOL_N}; at n={len(items)} the expected "
+              f"max is larger and an nll failure may be sampling, not a defect", flush=True)
     if bad_pred or bad_nll:
         raise SystemExit("batched path does not reproduce the per-item path:\n  "
                          + "\n  ".join((bad_pred + bad_nll)[:8]))
@@ -494,9 +518,10 @@ def main():
                          "forward per generated token per item, and the NLL one per target "
                          "token, giving 25 min for 5,153 items at 31%% card util")
     ap.add_argument("--equiv-sample", type=int, default=0, metavar="N",
-                    help="assert the batched path reproduces the per-item path on the first N "
-                         "items, then exit non-zero if it does not. Use when changing the "
-                         "decoder or the batch shape")
+                    help=f"assert the batched path reproduces the per-item path on the first N "
+                         f"items, then exit non-zero if it does not. Use when changing the "
+                         f"decoder or the batch shape. NLL_TOL was measured at n={NLL_TOL_N}; a "
+                         f"much larger N draws a larger max and goes red on noise")
     ap.add_argument("--out", help="summary json")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -582,6 +607,15 @@ def main():
                     "fact, measured on this file's 5,111 eligible rows: 15.7% of last words "
                     "are single-token under our tokenizer, 70.1% under Pythia's -- which is "
                     "why this metric does not use a single-token reading.",
+        "reproducibility": "acc is NOT bit-reproducible across --batch values on this model. "
+                           "Measured 2026-09-07 (card 1, step17000, 5,153 items): 177 "
+                           "predictions differ between B=1 and B=32 while the decoder is "
+                           "identical -- bf16 argmax flips on near-ties, because the MoE grouped "
+                           "GEMM's M varies with batch composition and the kernel picks a "
+                           "different tiling per M. Net effect on the score was one item "
+                           "(26.489% -> 26.509%). So a rerun reproduces this row only at the "
+                           "same `batch`, and two rows at different `batch` are within noise "
+                           "of each other, not equal.",
     }
     if a.out:
         os.makedirs(os.path.dirname(a.out) or ".", exist_ok=True)
