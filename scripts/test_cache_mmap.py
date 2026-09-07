@@ -228,6 +228,7 @@ def main():
               f"in rows. A full load gives ~1 -- the file is resident either way")
 
         _check_premises()
+        _check_git_failure_worlds()
     finally:
         import shutil
 
@@ -297,6 +298,14 @@ def _check_premises():
         # The reason is PRINTED, not swallowed: a skip nobody sees is indistinguishable from a
         # pass. Any other returncode keeps FAIL, because a git that exists and refuses is a
         # condition about this tree, not about the environment.
+        #
+        # KEYED ON THE MESSAGE, NOT ON EXIT 128, and de named the hole this closes (2026-09-07):
+        # 128 is ALSO how git exits for a locked index (`Unable to create .git/index.lock`), a
+        # corrupt index, and a dubious-ownership refusal -- and the last two happen on the LAPTOP,
+        # the one machine where the population this check watches actually lives. Keying on the
+        # code would make a stale index.lock read as SKIP and silence the check exactly there,
+        # which is the vacuity shape again: population present, predicate blind. Driven, all three
+        # FAIL: dubious ownership (128), index.lock (128), index corrupt (4).
         if "not a git repository" in src.stderr:
             print("SKIP: no git repository here, so the deleted-fallback premise cannot be "
                   "checked (it is checked on every commit by the hook, where git exists). "
@@ -358,6 +367,73 @@ def _check_premises():
             f"PREMISE 2: {elsewhere} pass _use_new_zipfile_serialization. No cache write does it "
             f"today, so nothing is broken yet -- but the tree now holds the pattern next to the "
             f"caches, and _domain_seqs has no fallback. Confirm no cache reaches it")
+
+
+def _check_git_failure_worlds():
+    """The SKIP above must key on git's MESSAGE, never on exit 128 (de, 2026-09-07).
+
+    git exits 128 for a repository that IS one: a locked index, a corrupt index, a
+    dubious-ownership refusal. Two of those happen on the LAPTOP, which is the only machine where
+    the population _check_premises watches actually lives -- so a narrowing keyed on the code
+    would make a stale .git/index.lock read as SKIP and silence the check exactly where it is
+    load-bearing. Population present, predicate blind: the same vacuity shape as everything else
+    found tonight.
+
+    RUN AS A WORLD RATHER THAN LEFT AS A COMMENT, because a comment recording this cannot fail
+    when someone simplifies the condition to `returncode == 128`. Each world stubs git on PATH,
+    calls the real _check_premises, and asserts on the outcome:
+
+      not a git repository (128)          SKIP   the pod's shape, the one exemption
+      dubious ownership (128)             FAIL   de's case, laptop- and CI-shaped
+      Unable to create index.lock (128)   FAIL   de's case, laptop-shaped
+      index file corrupt (4)              FAIL   a non-128 refusal
+    """
+    import contextlib
+    import io
+    import shutil
+    import tempfile
+
+    worlds = [
+        ("not a git repository", 128, "fatal: not a git repository (or any of the parent "
+                                      "directories): .git", False),
+        ("dubious ownership", 128, "fatal: detected dubious ownership in repository at '/x'", True),
+        ("index.lock", 128, "fatal: Unable to create '/x/.git/index.lock': File exists.", True),
+        ("index corrupt", 4, "fatal: index file corrupt", True),
+    ]
+    d = tempfile.mkdtemp(prefix="gitstub_")
+    saved_path, saved_fails = os.environ.get("PATH", ""), list(FAILS)
+    try:
+        for label, code, msg, want_fail in worlds:
+            bindir = os.path.join(d, label.replace(" ", "_").replace(".", "_"))
+            os.makedirs(bindir, exist_ok=True)
+            stub = os.path.join(bindir, "git")
+            with open(stub, "w") as f:
+                f.write(f'#!/bin/sh\necho "{msg}" >&2\nexit {code}\n')
+            os.chmod(stub, 0o755)
+            os.environ["PATH"] = bindir + os.pathsep + saved_path
+            FAILS.clear()
+            # The no-git world PRINTS its skip line, and on a real laptop run that line would
+            # otherwise read as the premise check itself having skipped -- the opposite of what
+            # happened. Captured here so the only skip a reader sees on stdout is a real one.
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                _check_premises()
+            got_fail = bool(FAILS)
+            FAILS.clear()
+            if got_fail != want_fail:
+                FAILS.append(
+                    f"the git-failure narrowing is wrong for {label!r} (exit {code}): it "
+                    f"{'FAILED' if got_fail else 'SKIPped'} and must "
+                    f"{'FAIL' if want_fail else 'SKIP'}. Only 'not a git repository' is an "
+                    f"environment fact; every other refusal is a condition about this tree, and "
+                    f"keying the exemption on exit 128 silences the check on a laptop with a "
+                    f"stale index.lock -- where the population it watches actually lives")
+                saved_fails.append(FAILS[-1])
+    finally:
+        os.environ["PATH"] = saved_path
+        FAILS.clear()
+        FAILS.extend(saved_fails)
+        shutil.rmtree(d, ignore_errors=True)
 
 
 def _skip(why):
