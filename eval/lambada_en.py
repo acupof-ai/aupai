@@ -59,6 +59,29 @@ DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "lambada_en", "lambada_test_en
 WORD_BOUNDARY = set(" \t\n\r-.,;:!?\"()[]{}<>/\\|`~@#$%^&*+=—–…")
 MAX_NEW_TOKENS = 8  # a word is at most a few tokens; 8 bounds the worst case cheaply
 
+# WHAT THE TWO PATHS MAY DIFFER BY, and why it is not 1e-4.
+#
+# I first set this to 1e-4 on the reasoning that the paths "differ only in batch shape, so this
+# is bf16 accumulation order". Measured on the pod (4c, card 1, step17000): deltas of 1e-3 to
+# 8e-3, e.g. item 0 at 1.56926 vs 1.57485. So the premise was wrong, and it was wrong about
+# WHICH thing varies -- padding is innocent (verified cardless on a causal toy model in fp32
+# and bf16: batched and per-item agree to 0.0e+00), and the batch is not what changed.
+#
+# THE OLD PATH'S FORWARDS HAVE DIFFERENT LENGTHS. target_nll_per_byte appended one target token
+# and re-ran, so it scored at lengths ctx, ctx+1, ... ctx+len(t)-1; the new path runs one
+# forward at ctx+len(t). DeltaRecurrence is a CHUNKED recurrence (chunk_size=32, model.py:128,
+# passed to chunk_kda at :222), so a different sequence length puts the chunk boundaries in
+# different places and the state is accumulated in a different order. Same function, different
+# summation order, at bf16 -- which is exactly the size of effect measured.
+#
+# So the tolerance is a property of the recurrence, not of the arithmetic, and 1e-4 was a number
+# I asserted rather than measured. 2e-2 is set to pass the observed 8e-3 with room and still
+# catch a real defect: the off-by-one this file's selftest mutates gives whole nats, not
+# hundredths. The right long-term fix is a per-item path that also scores in one forward, so
+# both arms see one length -- filed rather than done, because it changes the reference the
+# existing preds file was written under.
+NLL_TOL = 2e-2
+
 
 def first_word(text):
     """The generated word: leading boundary chars skipped, then up to the next boundary.
@@ -331,22 +354,29 @@ def _assert_batch_equivalence(m, items):
     batched = greedy_words_batched(m, ctxs)
     tgts = [m.encode(" " + it["target"]) for it in items]
     nll_b = m.nll_batch(ctxs, tgts)
-    bad = []
+    bad_pred, bad_nll, worst = [], [], 0.0
     for it, c, w, nb in zip(items, ctxs, batched, nll_b, strict=True):
         w1, _ = greedy_word(m, c)
         n1 = target_nll_per_byte(m, c, it["target"])
         nb = None if nb is None else nb / max(1, len(it["target"].encode("utf-8")))
+        # PRED AND NLL REPORTED SEPARATELY, never as if/elif. The first version chained them,
+        # so an nll line meant "pred matched" and a pred line hid the nll entirely -- 4c ran it
+        # on the pod and could not tell from the output whether the predictions agreed, which
+        # is the acceptance gate. A report that cannot distinguish its two claims is one claim.
         if w != w1:
-            bad.append(f"{it['id']}: pred {w!r} batched vs {w1!r} per-item")
-        # 1e-4 nats/byte: the two paths differ only in batch shape, so this is bf16
-        # accumulation order, not a different computation.
-        elif (n1 is None) != (nb is None) or (n1 is not None and abs(n1 - nb) > 1e-4):
-            bad.append(f"{it['id']}: nll {nb} batched vs {n1} per-item")
-    if bad:
+            bad_pred.append(f"{it['id']}: pred {w!r} batched vs {w1!r} per-item")
+        if (n1 is None) != (nb is None):
+            bad_nll.append(f"{it['id']}: nll {nb} batched vs {n1} per-item")
+        elif n1 is not None:
+            worst = max(worst, abs(n1 - nb))
+            if abs(n1 - nb) > NLL_TOL:
+                bad_nll.append(f"{it['id']}: nll {nb:.6f} batched vs {n1:.6f} per-item "
+                               f"(delta {abs(n1 - nb):.2e})")
+    print(f"equivalence on {len(items)} items: {len(bad_pred)} pred mismatch(es), "
+          f"{len(bad_nll)} nll beyond {NLL_TOL:g}, worst nll delta {worst:.2e}", flush=True)
+    if bad_pred or bad_nll:
         raise SystemExit("batched path does not reproduce the per-item path:\n  "
-                         + "\n  ".join(bad[:8]))
-    print(f"equivalence OK on {len(items)} items: batched == per-item for pred and nll",
-          flush=True)
+                         + "\n  ".join((bad_pred + bad_nll)[:8]))
 
 
 def _selftest():
