@@ -2,7 +2,11 @@
 # restartable: pure arithmetic over two JSONL score records; writes only its --json output.
 """b0-23: paired delta and paired SE over BLOCKS, not over domains.
 
-    python3 eval/block_paired.py --from runs/x.jsonl --arms A B [C] [--weight token|row]
+    python3 eval/block_paired.py --from runs/x.jsonl --arms A B [C]
+
+`--weight token|row` stood here until 2026-09-08 and does not exist: both weightings are
+computed unconditionally and reported side by side (row_weighted_mean beside the token one),
+which is the point -- a caller does not choose one. doc_flags_parse caught it.
     python3 eval/block_paired.py --selftest
 
 WHY THIS IS NOT paired_stats. eval/domain_loss.py:267 pairs by DOMAIN: n=9, and its own
@@ -38,6 +42,7 @@ symptom -- a domain-set mismatch shows up as nine names against eight, a block-s
 two integers nobody compares. So a symmetric difference refuses and reports both counts
 (controller's ruling, 2026-09-03).
 """
+
 import argparse
 import json
 import math
@@ -65,7 +70,7 @@ def _domains(rec):
     """
     if rec.get("domains"):
         return rec["domains"]
-    return ((rec.get("metrics") or {}).get("domain_loss") or {})
+    return (rec.get("metrics") or {}).get("domain_loss") or {}
 
 
 def _blocks(rec):
@@ -105,7 +110,8 @@ def block_paired(rec_by_name, a_name, b_name, c_name=None):
         raise ValueError(
             f"no per-block data in {empty}. A record scored before --per-block existed carries "
             f"only the domain mean, and pairing on it would give n=9 while reporting an SE that "
-            f"reads as n=hundreds. Re-score those checkpoints with per-block output.")
+            f"reads as n=hundreds. Re-score those checkpoints with per-block output."
+        )
 
     ref = per[names[0]]
     for n in names[1:]:
@@ -117,7 +123,8 @@ def block_paired(rec_by_name, a_name, b_name, c_name=None):
                 f"block sets differ: {names[0]} has {len(ref)} block(s), {n} has {len(per[n])}; "
                 f"{len(only_ref)} only in {names[0]}, {len(only_n)} only in {n}. e.g. {sample}. "
                 f"REFUSING rather than intersecting: the intersection would change which blocks "
-                f"the mean is over, and at block granularity that has no visible symptom.")
+                f"the mean is over, and at block granularity that has no visible symptom."
+            )
         # Same block id must also be the same LENGTH, or it is not the same block. A rebuilt
         # cache can keep the ordering and change the packing.
         bad = [k for k in ref if ref[k][1] != per[n][k][1]]
@@ -126,7 +133,8 @@ def block_paired(rec_by_name, a_name, b_name, c_name=None):
             raise ValueError(
                 f"{len(bad)} block(s) have the same id but different token counts between "
                 f"{names[0]} and {n}, e.g. {k}: {ref[k][1]} vs {per[n][k][1]}. The rows are not "
-                f"the same rows, so these are not paired measurements.")
+                f"the same rows, so these are not paired measurements."
+            )
 
     ids = sorted(ref)
 
@@ -135,10 +143,13 @@ def block_paired(rec_by_name, a_name, b_name, c_name=None):
         return ce / ntok
 
     if c_name:
-        row_d = {k: (mean_ce(b_name, k) - mean_ce(a_name, k))
-                    - (mean_ce(c_name, k) - mean_ce(a_name, k)) for k in ids}
-        sum_d = {k: (per[b_name][k][0] - per[a_name][k][0])
-                    - (per[c_name][k][0] - per[a_name][k][0]) for k in ids}
+        row_d = {
+            k: (mean_ce(b_name, k) - mean_ce(a_name, k)) - (mean_ce(c_name, k) - mean_ce(a_name, k))
+            for k in ids
+        }
+        sum_d = {
+            k: (per[b_name][k][0] - per[a_name][k][0]) - (per[c_name][k][0] - per[a_name][k][0]) for k in ids
+        }
         stat = f"(B-A)-(C-A) per block with B={b_name}, C={c_name}, A={a_name}"
     else:
         row_d = {k: mean_ce(b_name, k) - mean_ce(a_name, k) for k in ids}
@@ -161,27 +172,35 @@ def block_paired(rec_by_name, a_name, b_name, c_name=None):
     # Sign test over the blocks that MOVED. Ties carry no direction, and counting them in the
     # denominator makes a real effect look weaker the more exact zeros the fixture has.
     moved = pos + neg
-    p = (sum(math.comb(moved, i) for i in range(k_maj, moved + 1)) / (2 ** moved)
-         if moved else 1.0)
-    return {"statistic": stat, "n_blocks": n, "block_ids": ids,
-            "row_weighted_mean": row_mean, "sd": sd, "se": se,
-            "t": row_mean / se if se else None,
-            "token_weighted_mean": tok_mean, "n_tokens": tok_total,
-            "positive": pos, "negative": neg, "ties": n - moved,
-            "sign_test_p_one_sided": p,
-            "domains": sorted({d for d, _ in ids})}
+    p = sum(math.comb(moved, i) for i in range(k_maj, moved + 1)) / (2**moved) if moved else 1.0
+    return {
+        "statistic": stat,
+        "n_blocks": n,
+        "block_ids": ids,
+        "row_weighted_mean": row_mean,
+        "sd": sd,
+        "se": se,
+        "t": row_mean / se if se else None,
+        "token_weighted_mean": tok_mean,
+        "n_tokens": tok_total,
+        "positive": pos,
+        "negative": neg,
+        "ties": n - moved,
+        "sign_test_p_one_sided": p,
+        "domains": sorted({d for d, _ in ids}),
+    }
 
 
 def print_block_paired(bp):
     print(f"\n=== paired per-block: {bp['statistic']} ===")
-    print(f"  n = {bp['n_blocks']} blocks over {len(bp['domains'])} domain(s), "
-          f"{bp['n_tokens']:,} tokens")
-    print(f"  row-weighted   mean {bp['row_weighted_mean']:+.6f}  sd {bp['sd']:.6f}  "
-          f"SE {bp['se']:.6f}" + (f"  t {bp['t']:+.2f}" if bp["t"] is not None else "  t n/a"))
+    print(f"  n = {bp['n_blocks']} blocks over {len(bp['domains'])} domain(s), {bp['n_tokens']:,} tokens")
+    print(
+        f"  row-weighted   mean {bp['row_weighted_mean']:+.6f}  sd {bp['sd']:.6f}  "
+        f"SE {bp['se']:.6f}" + (f"  t {bp['t']:+.2f}" if bp["t"] is not None else "  t n/a")
+    )
     print(f"  token-weighted mean {bp['token_weighted_mean']:+.6f}")
     if abs(bp["row_weighted_mean"] - bp["token_weighted_mean"]) > 1e-9:
-        print("    the two differ, so the blocks are NOT equal-length; say which one a "
-              "reported number is.")
+        print("    the two differ, so the blocks are NOT equal-length; say which one a reported number is.")
     else:
         # SILENCE HERE READS AS AGREEMENT, WHICH IS THE ONE THING IT IS NOT. On equal-length
         # blocks the two weightings are the same arithmetic, so a match is an identity and
@@ -189,14 +208,20 @@ def print_block_paired(bp):
         # 2026-09-03 on the real val cache: every block is 4096 tokens, distinct n_tokens =
         # [4096], so this branch is what production always takes. The only evidence that the
         # weightings are implemented correctly is --selftest, whose fixture is 10/90/400.
-        print("    IDENTITY, not a check: every block has the same token count, so the two "
-              "weightings are the same arithmetic here and agreeing tells you nothing about "
-              "either. Correctness of the weighting lives in --selftest (10/90/400 fixture).")
-    print(f"  sign: {bp['positive']} up, {bp['negative']} down, {bp['ties']} tie; "
-          f"one-sided p {bp['sign_test_p_one_sided']:.2e}")
-    print("  THE SE IS THE SAMPLING ERROR OF THIS DELTA over blocks. It is not seed spread: "
-          "reseeding the run is a different experiment and 0.24 nat "
-          "(ds.seed_variance_0p2b) measures that one.")
+        print(
+            "    IDENTITY, not a check: every block has the same token count, so the two "
+            "weightings are the same arithmetic here and agreeing tells you nothing about "
+            "either. Correctness of the weighting lives in --selftest (10/90/400 fixture)."
+        )
+    print(
+        f"  sign: {bp['positive']} up, {bp['negative']} down, {bp['ties']} tie; "
+        f"one-sided p {bp['sign_test_p_one_sided']:.2e}"
+    )
+    print(
+        "  THE SE IS THE SAMPLING ERROR OF THIS DELTA over blocks. It is not seed spread: "
+        "reseeding the run is a different experiment and 0.24 nat "
+        "(ds.seed_variance_0p2b) measures that one."
+    )
 
 
 def _rec_by_name(paths):
@@ -237,17 +262,21 @@ def _selftest():
     fails = []
 
     def mk(name, per_dom):
-        return {"ckpt": name, "domains": {d: {"blocks": [{"ce_sum": c, "n_tokens": t}
-                                                         for c, t in rows]}
-                                          for d, rows in per_dom.items()}}
+        return {
+            "ckpt": name,
+            "domains": {
+                d: {"blocks": [{"ce_sum": c, "n_tokens": t} for c, t in rows]} for d, rows in per_dom.items()
+            },
+        }
 
     def mk_sm(name, per_dom):
         """The OTHER producer's shape: score_matrix.py nests it under metrics.domain_loss and
         writes no top-level "domains". b0-23 pairs one of each, so a reader that knows only
         mk()'s shape returns {} here and the failure surfaces as "no per-block data" -- which
         names the record and not the shape, sending the reader after a truncated file."""
-        inner = {d: {"blocks": [{"ce_sum": c, "n_tokens": t} for c, t in rows]}
-                 for d, rows in per_dom.items()}
+        inner = {
+            d: {"blocks": [{"ce_sum": c, "n_tokens": t} for c, t in rows]} for d, rows in per_dom.items()
+        }
         # the real file carries these three non-domain entries beside the domains
         inner.update({"_split": "val", "_wall_s": 124.8, "unweighted_mean": 1.9443})
         return {"ckpt": name, "metrics": {"domain_loss": inner}, "type": "base"}
@@ -262,18 +291,22 @@ def _selftest():
     _sm = mk_sm("SM", {"cot": [(3.0, 10), (5.0, 10)], "zh_web": [(7.0, 10)]})
     _sm_doms = _domains(_sm)
     if not _sm_doms:
-        print("block_paired selftest FAILED: _domains returns {} for a score_matrix-shaped "
-              "record (no top-level 'domains', nested under metrics.domain_loss). b0-23 pairs "
-              "one record of each shape, so this reader sees no blocks in the params leg and "
-              "block_paired raises its 'no per-block data' error -- which names the record, "
-              "not the shape, and sends the reader looking for a truncated file.")
+        print(
+            "block_paired selftest FAILED: _domains returns {} for a score_matrix-shaped "
+            "record (no top-level 'domains', nested under metrics.domain_loss). b0-23 pairs "
+            "one record of each shape, so this reader sees no blocks in the params leg and "
+            "block_paired raises its 'no per-block data' error -- which names the record, "
+            "not the shape, and sends the reader looking for a truncated file."
+        )
         return 1
     _nondict = sorted(k for k, v in _sm_doms.items() if not isinstance(v, dict))
     if _nondict != ["_split", "_wall_s", "unweighted_mean"]:
-        print(f"block_paired selftest FAILED: fixture's non-domain keys are {_nondict}; the "
-              f"real metrics.domain_loss carries _split (str), _wall_s and unweighted_mean "
-              f"(float) beside the domains, and the fixture must carry them too or the "
-              f"isinstance guard in _blocks is never exercised.")
+        print(
+            f"block_paired selftest FAILED: fixture's non-domain keys are {_nondict}; the "
+            f"real metrics.domain_loss carries _split (str), _wall_s and unweighted_mean "
+            f"(float) beside the domains, and the fixture must carry them too or the "
+            f"isinstance guard in _blocks is never exercised."
+        )
         return 1
     _sm_blocks = None
     try:
@@ -282,20 +315,25 @@ def _selftest():
         # _blocks iterated a non-domain entry: metrics.domain_loss holds _split (str) and
         # _wall_s/unweighted_mean (float) beside the domains. Caught and NAMED here because a
         # traceback from `d.get("blocks")` tells the reader nothing about which key did it.
-        print(f"block_paired selftest FAILED: _blocks treats every metrics.domain_loss key as "
-              f"a domain and crashed on a non-dict entry ({e}). The real record carries "
-              f"_split, _wall_s and unweighted_mean beside the nine domains; skip anything "
-              f"that is not a dict.")
+        print(
+            f"block_paired selftest FAILED: _blocks treats every metrics.domain_loss key as "
+            f"a domain and crashed on a non-dict entry ({e}). The real record carries "
+            f"_split, _wall_s and unweighted_mean beside the nine domains; skip anything "
+            f"that is not a dict."
+        )
         return 1
     if set(_sm_blocks) != {("cot", 0), ("cot", 1), ("zh_web", 0)}:
-        fails.append(f"score_matrix-shaped record read as {sorted(_sm_blocks)}; the "
-                     f"metrics.domain_loss nesting is not handled, or _split/_wall_s/"
-                     f"unweighted_mean leaked in as domains")
+        fails.append(
+            f"score_matrix-shaped record read as {sorted(_sm_blocks)}; the "
+            f"metrics.domain_loss nesting is not handled, or _split/_wall_s/"
+            f"unweighted_mean leaked in as domains"
+        )
     # A BLOCKLESS ROW MUST NOT DISPLACE ONE WITH BLOCKS, even though it comes later. Both real
     # files key ckpt_data_leg_206m_8b.pt: b0_23_blocks.jsonl with 576 blocks, score_matrix.jsonl
     # with 0 (scored before per_row existed). Literal last-row-wins left the blockless one and
     # block_paired refused with "no per-block data" for a checkpoint whose blocks were in hand.
     import tempfile as _tf
+
     with _tf.TemporaryDirectory() as _td:
         _good = os.path.join(_td, "good.jsonl")
         _bare = os.path.join(_td, "bare.jsonl")
@@ -303,27 +341,33 @@ def _selftest():
             _f.write(json.dumps(mk("K", {"cot": [(3.0, 10)]})) + "\n")
         with open(_bare, "w", encoding="utf-8") as _f:
             _f.write(json.dumps({"ckpt": "K", "metrics": {"domain_loss": {"cot": {"loss": 1.0}}}}) + "\n")
-        _folded = _rec_by_name([_good, _bare])          # blockless comes LAST
+        _folded = _rec_by_name([_good, _bare])  # blockless comes LAST
         if not _blocks(_folded["K"]):
-            print("block_paired selftest FAILED: a blockless row loaded after a row with "
-                  "blocks displaced it. Both real files key ckpt_data_leg_206m_8b.pt -- "
-                  "b0_23_blocks.jsonl with 576 blocks, score_matrix.jsonl with 0 -- so literal "
-                  "last-row-wins reports the checkpoint as unscored while its blocks are in "
-                  "hand. Fold by payload, not by position.")
+            print(
+                "block_paired selftest FAILED: a blockless row loaded after a row with "
+                "blocks displaced it. Both real files key ckpt_data_leg_206m_8b.pt -- "
+                "b0_23_blocks.jsonl with 576 blocks, score_matrix.jsonl with 0 -- so literal "
+                "last-row-wins reports the checkpoint as unscored while its blocks are in "
+                "hand. Fold by payload, not by position."
+            )
             return 1
-        _folded2 = _rec_by_name([_bare, _good])          # and the other order still works
+        _folded2 = _rec_by_name([_bare, _good])  # and the other order still works
         if not _blocks(_folded2["K"]):
-            print("block_paired selftest FAILED: a row with blocks did not win over an "
-                  "earlier blockless row.")
+            print(
+                "block_paired selftest FAILED: a row with blocks did not win over an earlier blockless row."
+            )
             return 1
 
     # and pairing ACROSS the two shapes must work, since that is exactly b0-23's case
-    _mixed = block_paired({"A": mk("A", {"cot": [(3.0, 10), (5.0, 10)], "zh_web": [(7.0, 10)]}),
-                           "SM": _sm}, "A", "SM")
+    _mixed = block_paired(
+        {"A": mk("A", {"cot": [(3.0, 10), (5.0, 10)], "zh_web": [(7.0, 10)]}), "SM": _sm}, "A", "SM"
+    )
     if _mixed["n_blocks"] != 3 or abs(_mixed["row_weighted_mean"]) > 1e-12:
-        fails.append(f"pairing a domain_loss-shaped record against a score_matrix-shaped one "
-                     f"gave n={_mixed['n_blocks']} mean={_mixed['row_weighted_mean']}, want "
-                     f"n=3 mean=0 (identical values in both shapes)")
+        fails.append(
+            f"pairing a domain_loss-shaped record against a score_matrix-shaped one "
+            f"gave n={_mixed['n_blocks']} mean={_mixed['row_weighted_mean']}, want "
+            f"n=3 mean=0 (identical values in both shapes)"
+        )
 
     # BLOCK IDS ARE (domain, index), CHECKED FIRST. A bare index collapses two domains' block 0
     # onto one key and every domain but the last vanishes -- with a clean-looking n. This sits
@@ -332,8 +376,10 @@ def _selftest():
     # traceback instead of through this named assertion, which tells a reader far less.
     two = mk("T", {"d1": [(10.0, 10)], "d2": [(20.0, 10)]})
     if len(_blocks(two)) != 2:
-        fails.append(f"_blocks collapsed two domains' block 0 into {len(_blocks(two))} key(s); "
-                     "the id must carry the domain, or every domain but the last vanishes")
+        fails.append(
+            f"_blocks collapsed two domains' block 0 into {len(_blocks(two))} key(s); "
+            "the id must carry the domain, or every domain but the last vanishes"
+        )
         for f in fails:
             print(f"  FAIL {f}")
         print("\n1 failure(s) -- stopping here: every check below unpacks a (domain, index) id")
@@ -350,13 +396,15 @@ def _selftest():
         fails.append(f"n_blocks {bp['n_blocks']}, want 3 -- blocks, not domains")
     # row-weighted: (0.1 + 0 + 0)/3
     if abs(bp["row_weighted_mean"] - 0.1 / 3) > 1e-12:
-        fails.append(f"row-weighted mean {bp['row_weighted_mean']} want {0.1/3}")
+        fails.append(f"row-weighted mean {bp['row_weighted_mean']} want {0.1 / 3}")
     # token-weighted: 1.0 nat of CE over 500 tokens
     if abs(bp["token_weighted_mean"] - 1.0 / 500) > 1e-12:
-        fails.append(f"token-weighted mean {bp['token_weighted_mean']} want {1/500}")
+        fails.append(f"token-weighted mean {bp['token_weighted_mean']} want {1 / 500}")
     if abs(bp["row_weighted_mean"] - bp["token_weighted_mean"]) < 1e-6:
-        fails.append("the two weightings agree on the non-uniform fixture, so this fixture "
-                     "cannot distinguish them and neither can any test built on it")
+        fails.append(
+            "the two weightings agree on the non-uniform fixture, so this fixture "
+            "cannot distinguish them and neither can any test built on it"
+        )
     if bp["se"] <= 0 or bp["t"] is None:
         fails.append(f"SE must be positive with a real spread, got {bp['se']}")
     # SE is over n BLOCKS: sd/sqrt(3), not sd/sqrt(1 domain).
@@ -372,8 +420,10 @@ def _selftest():
     # 7/8 = 0.875 -- not a weaker version of the same number, the p-value of a different
     # hypothesis. Without this assertion the fixture leaves both formulas passing.
     if abs(bp["sign_test_p_one_sided"] - 0.5) > 1e-12:
-        fails.append(f"sign-test p {bp['sign_test_p_one_sided']} over 1 moved block should be "
-                     f"0.5; 0.875 means the 2 ties are in the denominator")
+        fails.append(
+            f"sign-test p {bp['sign_test_p_one_sided']} over 1 moved block should be "
+            f"0.5; 0.875 means the 2 ties are in the denominator"
+        )
 
     # A CONTROL ARM IS SUBTRACTED. Same reason as b0-16's correction one granularity up: if C
     # moves the same way, (B-A)-(C-A) must cancel it. Without this the check would pass an
@@ -381,8 +431,10 @@ def _selftest():
     C = mk("C", {"d1": [(11.0, 10), (90.0, 90), (400.0, 400)]})
     bpc = block_paired({"A": A, "B": B, "C": C}, "A", "B", "C")
     if abs(bpc["row_weighted_mean"]) > 1e-12 or bpc["sd"] > 1e-12:
-        fails.append(f"(B-A)-(C-A) with B==C must be exactly 0, got "
-                     f"{bpc['row_weighted_mean']} sd {bpc['sd']} -- the control is being ignored")
+        fails.append(
+            f"(B-A)-(C-A) with B==C must be exactly 0, got "
+            f"{bpc['row_weighted_mean']} sd {bpc['sd']} -- the control is being ignored"
+        )
     if bpc["statistic"] == bp["statistic"]:
         fails.append("the controlled and uncontrolled statistics carry the same label")
 
@@ -392,20 +444,26 @@ def _selftest():
     short = mk("S", {"d1": [(10.0, 10), (90.0, 90)]})
     try:
         block_paired({"A": A, "S": short}, "A", "S")
-        fails.append("a 3-block record paired against a 2-block record was ACCEPTED; the "
-                     "intersection would silently change what the mean is over")
+        fails.append(
+            "a 3-block record paired against a 2-block record was ACCEPTED; the "
+            "intersection would silently change what the mean is over"
+        )
     except ValueError as e:
         if "3" not in str(e) or "2" not in str(e):
             fails.append(f"the block-set refusal does not report both counts: {e}")
     except KeyError:
-        fails.append("block-set mismatch raised KeyError, not ValueError -- that is a crash "
-                     "downstream of a missing guard, not a refusal")
+        fails.append(
+            "block-set mismatch raised KeyError, not ValueError -- that is a crash "
+            "downstream of a missing guard, not a refusal"
+        )
 
     relen = mk("R", {"d1": [(10.0, 10), (90.0, 91), (400.0, 400)]})
     try:
         block_paired({"A": A, "R": relen}, "A", "R")
-        fails.append("same block id with a different token count was accepted; a repacked "
-                     "cache keeps the ordering and changes the rows")
+        fails.append(
+            "same block id with a different token count was accepted; a repacked "
+            "cache keeps the ordering and changes the rows"
+        )
     except ValueError as e:
         if "90" not in str(e) or "91" not in str(e):
             fails.append(f"the length refusal does not name the two counts: {e}")
@@ -433,32 +491,42 @@ def _selftest():
     if fails:
         print(f"\n{len(fails)} failure(s)")
         return 1
-    print("block_paired selftest OK: pairs on BLOCKS not domains (n=3 from one domain), SE is "
-          "sd/sqrt(n_blocks), and the two weightings DISAGREE on the deliberately non-uniform "
-          "10/90/400 fixture (row 0.033333 vs token 0.002000) so a test built on it can tell "
-          "them apart. A control arm identical to the test arm cancels to exactly 0, which is "
-          "what fails an implementation that ignores C. Four refusals checked by exception "
-          "TYPE, not by 'something raised': a differing block set (reporting BOTH counts, never "
-          "intersecting), a same-id block whose token count moved, a record carrying no "
-          "per-block data, and block ids that must be (domain, index) or two domains collapse "
-          "onto one key with a clean-looking n. A-vs-A is exactly 0 and is an identity, not "
-          "evidence of determinism.")
+    print(
+        "block_paired selftest OK: pairs on BLOCKS not domains (n=3 from one domain), SE is "
+        "sd/sqrt(n_blocks), and the two weightings DISAGREE on the deliberately non-uniform "
+        "10/90/400 fixture (row 0.033333 vs token 0.002000) so a test built on it can tell "
+        "them apart. A control arm identical to the test arm cancels to exactly 0, which is "
+        "what fails an implementation that ignores C. Four refusals checked by exception "
+        "TYPE, not by 'something raised': a differing block set (reporting BOTH counts, never "
+        "intersecting), a same-id block whose token count moved, a record carrying no "
+        "per-block data, and block ids that must be (domain, index) or two domains collapse "
+        "onto one key with a clean-looking n. A-vs-A is exactly 0 and is an identity, not "
+        "evidence of determinism."
+    )
     return 0
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--from", dest="src", nargs="+", metavar="JSONL",
-                    help="one or more JSONL files of score records (one record per "
-                         "checkpoint). MORE THAN ONE IS THE NORMAL CASE for b0-23: the two "
-                         "legs are scored by different producers into different files -- the "
-                         "data leg's blocks are in runs/b0_23_blocks.jsonl (domain_loss.py, "
-                         "lane card) and the params leg's in runs/score_matrix.jsonl "
-                         "(score_matrix.py, end of run). Later files win on a repeated ckpt, "
-                         "matching the ledger convention.")
-    ap.add_argument("--arms", nargs="+", metavar="CKPT",
-                    help="A B [C]: baseline, test, optional control. With C the statistic is "
-                         "(B-A)-(C-A).")
+    ap.add_argument(
+        "--from",
+        dest="src",
+        nargs="+",
+        metavar="JSONL",
+        help="one or more JSONL files of score records (one record per "
+        "checkpoint). MORE THAN ONE IS THE NORMAL CASE for b0-23: the two "
+        "legs are scored by different producers into different files -- the "
+        "data leg's blocks are in runs/b0_23_blocks.jsonl (domain_loss.py, "
+        "lane card) and the params leg's in runs/score_matrix.jsonl "
+        "(score_matrix.py, end of run). Later files win on a repeated ckpt, "
+        "matching the ledger convention.",
+    )
+    ap.add_argument(
+        "--arms",
+        nargs="+",
+        metavar="CKPT",
+        help="A B [C]: baseline, test, optional control. With C the statistic is (B-A)-(C-A).",
+    )
     ap.add_argument("--json", help="write the result object here")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
@@ -471,8 +539,7 @@ def main():
     print_block_paired(bp)
     if a.json:
         with open(a.json, "w", encoding="utf-8") as f:
-            json.dump({k: v for k, v in bp.items() if k != "block_ids"}, f,
-                      ensure_ascii=False, indent=1)
+            json.dump({k: v for k, v in bp.items() if k != "block_ids"}, f, ensure_ascii=False, indent=1)
         print(f"wrote {a.json}")
     return 0
 

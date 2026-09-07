@@ -8,7 +8,13 @@ supersedes this. Do not raise the threshold past what the printed AUC supports.
 
     python datagen/quality_clf.py fit    --labels data/web_labels.jsonl
     python datagen/quality_clf.py score  --glob 'data/corpus/web/*.jsonl' --out data/web_scores.npy
-    python datagen/quality_clf.py filter --keep 0.25 --out data/corpus/web_hq
+    python datagen/quality_clf.py selftest
+
+`filter --keep 0.25 --out data/corpus/web_hq` stood here until 2026-09-08 and there is no
+`filter` subcommand: the parser has fit/score/selftest, and `--keep` exists nowhere. Filtering
+by a score threshold is the caller's step, not this script's. Found by de in the doc_flags_parse
+census; the check itself SKIPS this file, because add_subparsers makes the flag set statically
+unknowable and it refuses to guess rather than report a number it cannot support.
 """
 
 import argparse
