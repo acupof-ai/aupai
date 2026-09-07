@@ -1340,6 +1340,116 @@ def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
                 g["weight_decay"] = g["initial_wd"] * max(0.0, 1.0 - step / total)
 
 
+class StepProfiler:
+    """Step-time breakdown from cuda events. Off unless --profile_step_every N is passed.
+
+    WHY THE DDP REDUCE IS A DIFFERENCE AND NOT A TIMED REGION (tilerl 2026-09-07, tilerl-33).
+    There is no reduce call to wrap: DDP launches the all-reduce from backward hooks as buckets
+    fill, so it is fused into the LAST micro-batch's loss.backward() and overlaps the backward
+    compute by design, while the other accum-1 micro-batches suppress it under model.no_sync().
+    A timer around that region would price the overlapped part too and report more than the
+    reduce actually costs. What the accum structure gives instead is a differential on identical
+    work: accum-1 backwards without the reduce, one with it, so
+
+        reduce_cost = backward_last - backward_nolast
+
+    is the reduce's NON-OVERLAPPED remainder -- the part that actually lengthens the step. Both
+    terms are printed, so a reader sees the subtraction rather than trusting a single figure.
+
+    THE MEAN IS OVER accum-1 SAMPLES, so at accum 4 it is three, and n and the spread are printed
+    beside it. A differential smaller than the spread of the arm it subtracts is not resolvable at
+    that step and the line says so. At accum 1, or with DDP off, no no-sync arm runs at all and
+    there is no differential to take; the line names which arm was missing rather than printing a
+    zero, because a zero here would read as "the reduce is free".
+
+    ONE SYNC PER PRINT, not per region: cuda events are recorded on the stream and read once, at
+    the end of a profiled step. Synchronising per region would serialise the very overlap this
+    is trying to measure. The cost of that one sync is what the on/off control measures.
+    """
+
+    REGIONS = ("fwd", "bwd_nolast", "bwd_last", "opt", "balance")
+
+    def __init__(self, every, torch_mod, bucket_view=True):
+        # ROUNDED UP TO A MULTIPLE OF 10, because line() is only reached inside
+        # `if is_main and step % 10 == 0` -- the step-time denominator dt/10 comes from that same
+        # block. `--profile_step_every 25` would arm on 25, 50, 75 and print on none of them: the
+        # events get recorded, the sync is paid, and nothing is ever emitted. Silently profiling
+        # into a void is worse than refusing, so the cadence is snapped to one that can print.
+        every = int(every or 0)
+        self.every = every and max(10, -(-every // 10) * 10)
+        self.torch = torch_mod
+        # WHAT THE DIFFERENTIAL ACTUALLY CONTAINS depends on a flag no log reader can see.
+        # Under gradient_as_bucket_view (the default) grads ARE the bucket storage, so the last
+        # backward's extra work is essentially the reduce. With --no_bucket_view it also copies
+        # 1.48B params grad->bucket, and the same field would silently mean a different quantity.
+        # The label carries the difference rather than the number changing meaning underneath it.
+        self.reduce_label = "reduce" if bucket_view else "reduce+bucket"
+        self._ev = {}
+        self._acc = {}
+        self._nolast_ms = []
+        self.active = False
+
+    def step_begins(self, step):
+        self.active = self.every > 0 and step % self.every == 0
+        if self.active:
+            self._acc = {}
+            self._nolast_ms = []
+
+    def _mk(self):
+        return self.torch.cuda.Event(enable_timing=True)
+
+    def start(self, name):
+        if not self.active:
+            return
+        e = self._mk()
+        e.record()
+        self._ev[name] = e
+
+    def stop(self, name):
+        if not self.active or name not in self._ev:
+            return
+        e = self._mk()
+        e.record()
+        self._acc.setdefault(name, []).append((self._ev.pop(name), e))
+
+    def line(self, step_s):
+        """Read the events (one sync) and format the breakdown. None when not profiling."""
+        if not self.active or not self._acc:
+            return None
+        self.torch.cuda.synchronize()
+        ms = {}
+        for name, pairs in self._acc.items():
+            ms[name] = sum(a.elapsed_time(b) for a, b in pairs)
+        nolast = sorted(a.elapsed_time(b) for a, b in self._acc.get("bwd_nolast", ()))
+        self._acc = {}
+        self.active = False
+        parts = [f"{k} {ms[k]:.1f}" for k in self.REGIONS if k in ms]
+        parts.append(self._reduce_field(ms, nolast))
+        total_ms = sum(ms.values())
+        parts.append(f"rest {step_s * 1000.0 - total_ms:.1f}")
+        return "step_profile ms | " + " | ".join(parts)
+
+    def _reduce_field(self, ms, nolast):
+        """The differential, or the reason there isn't one. Never a number it cannot support."""
+        # NAMES THE ARM THAT IS MISSING, not a value of accum it never read. The no-sync arm is
+        # entered on `ddp and Cfg.accum > 1`, so at accum 4 without DDP it is also empty -- and
+        # the first version of this line said "unmeasurable at accum 1", asserting a fact about
+        # accum that was false. Skipping the differential was right; the stated cause was wrong,
+        # and every behavioural test passed because only the label was defective.
+        if not nolast or "bwd_last" not in ms:
+            return "reduce unmeasurable — no no-sync backward ran (accum 1, or DDP off)"
+        mean = sum(nolast) / len(nolast)
+        diff = ms["bwd_last"] - mean
+        spread = nolast[-1] - nolast[0]
+        # A DIFFERENTIAL SMALLER THAN THE SPREAD OF THE ARM IT SUBTRACTS IS NOISE. Both numbers
+        # are printed either way: a bare "unresolvable" gives the next reader nothing to
+        # accumulate across steps, and the per-step spread is exactly what decides whether
+        # averaging over N printed steps would resolve it.
+        verdict = "unresolvable " if spread >= abs(diff) else ""
+        return (f"{self.reduce_label} {verdict}{diff:+.1f} "
+                f"(n={len(nolast)} mean {mean:.1f} spread {spread:.1f})")
+
+
 def opt_snapshot(optimizers):
     """Real CPU copies of optimizer state: state_dict() values are dicts, so a top-level clone
     aliases the live CUDA moments."""
@@ -2827,6 +2937,14 @@ def main():
     parser.add_argument("--profile", action="store_true", help="export a chrome trace of N steps (measurement only, no behavior change)")
     parser.add_argument("--profile_warmup", type=int, default=15)
     parser.add_argument("--profile_steps", type=int, default=20)
+    # NOT --profile. That one exports a chrome trace once (torch.profiler, repeat=1) and prints
+    # no timings; this prints a line every N steps for the whole run and costs one sync per
+    # print. The two answer different questions and neither replaces the other.
+    parser.add_argument("--profile_step_every", type=int, default=0,
+                        help="print a step-time breakdown every N steps (0 = off; rounded up to "
+                             "a multiple of 10, the log cadence). Measurement only: forward, "
+                             "backward with and without the DDP reduce, optimizer.step, the MoE "
+                             "balance block, and the unattributed rest")
     parser.add_argument(
         "--allow_corpus_drift", action="store_true",
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
@@ -3469,6 +3587,8 @@ def main():
             f"warmdown starts at step {warmdown_start(total_steps, Cfg)}"
         )
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
+    _sp = StepProfiler(getattr(args, "profile_step_every", 0), torch,
+                       bucket_view=not args.no_bucket_view)
     _prof = None
     if getattr(args, "profile", False):
         import torch.profiler as _tp
@@ -3535,6 +3655,11 @@ def main():
         # this segment's intervals with the previous one's, at a different shape and world size.
         _eta_win = []
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
+            # ARMED ON THE FIRST MICRO-BATCH OF THE WINDOW, so a profiled step captures all
+            # accum micro-batches. `step` has not been incremented yet inside the window -- the
+            # line printed at the boundary belongs to step+1, which is what step_begins is told.
+            if (i // Cfg.batch) % Cfg.accum == 0:
+                _sp.step_begins(step + 1)
             idx = perm[i : i + Cfg.batch]
             xb_pin, yb_pin, ev, vb_pin, wb_pin = pin[(i // Cfg.batch) % 2]
             if ev is not None:
@@ -3552,6 +3677,7 @@ def main():
             if ev is not None:
                 ev.record()
             cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
+            _sp.start("fwd")
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                 hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
             B, T, D = hidden.shape
@@ -3568,11 +3694,17 @@ def main():
                     ntgt = fone.digit_targets(wb[nmask])
                     loss = loss + Cfg.fone_loss_w * F.cross_entropy(nlog.reshape(-1, 10), ntgt.reshape(-1))
             loss = loss / Cfg.accum
+            _sp.stop("fwd")
             if ddp and Cfg.accum > 1 and (i // Cfg.batch + 1) % Cfg.accum != 0:
+                _sp.start("bwd_nolast")
                 with model.no_sync():
                     loss.backward()
+                _sp.stop("bwd_nolast")
             else:
+                # The reduce rides this one: DDP's bucket hooks fire during it.
+                _sp.start("bwd_last")
                 loss.backward()
+                _sp.stop("bwd_last")
 
             # THE MoE TOKEN COUNTERS ADVANCE HERE, once per micro-batch (b0-27, 2026-09-06).
             # MoEFFN.forward only ASSIGNS its counts to a scratch buffer, because gradient
@@ -3657,9 +3789,11 @@ def main():
                              [(m, m.detach().clone()) for _, m in master.pairs] if master else None)
                 for _m in _masters:
                     _m.pull_grads()
+                _sp.start("opt")
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
+                _sp.stop("opt")
                 # THE AUX-LOSS-FREE BALANCER'S STEP (arXiv:2412.19437 section 2.1.2), once per
                 # OPTIMIZER step. Until 2026-09-06 MoEFFN.update_bias had no caller outside its
                 # unit test, so every MoE arm so far trained with expert_bias identically zero and
@@ -3688,12 +3822,17 @@ def main():
                 # the identical update on the identical reduced counts -- the bias is a buffer, not
                 # a Parameter, so DDP never synchronises it and the ranks would otherwise diverge.
                 if _moe_balance_layers:
+                    # The BLOCK, not the collective: update_bias and zero_ are inside the timed
+                    # region because the balancer's cost is what a step-time reader is after, and
+                    # the field is named "balance" rather than "reduce" to say so.
+                    _sp.start("balance")
                     for _bl in _moe_balance_layers:
                         _c = _bl.step_tokens_per_expert
                         if ddp:
                             dist.all_reduce(_c, op=dist.ReduceOp.SUM)
                         _bl.update_bias(_c)
                         _c.zero_()
+                    _sp.stop("balance")
                 for _m in _masters:
                     _m.push()
                 if probe is not None and is_main:
@@ -3850,6 +3989,13 @@ def main():
                         # looked richer. test_step_line_parses covers exactly that.
                         f" | s/step {dt / 10:.4f}"
                     )
+                    # A SEPARATE LINE, never appended to the one above. RunLog._STEP_RE ends at
+                    # `MFU (\d+)%` and matches on ADJACENCY, so a field added to that line can
+                    # silently stop every trackio metric on it; and this one appears only every
+                    # N steps, so a parser keyed to the step line would see it come and go.
+                    _pl = _sp.line(dt / 10)
+                    if _pl:
+                        runlog(f"step {step}/{total_steps} | {_pl}")
                 # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
                 # that placement is the whole correctness argument: the fraction the stop rule
                 # reads must be the GLOBAL one, each rank's `touched` counts only the rows its own
