@@ -347,11 +347,88 @@ def _mirror_chain(url, modelscope_url=None):
     return chain
 
 
+def _ranged_get(url, part, name, chunks=8):
+    """Download one file as `chunks` parallel byte ranges. (True, bytes) or (False, why).
+
+    The default since 2026-09-07 (§259): data.together.xyz throttles a LONG-LIVED
+    connection to ~40 KB/s while answering a fresh one at 7.1 MB/s -- measured 177x
+    apart on the same host in the same second, and confirmed by one fetch whose second
+    file reached 651 MB while its first sat at 29 MB. Nothing errors, nothing retries,
+    the .part grows monotonically; the rate is the only symptom, so a probe taken at the
+    start of a transfer measures the fast case by construction and says nothing about
+    the regime a minute later. 20.2 GB went from 137 h to 0.7 h.
+
+    The assembled size is checked against content-length because concatenating N chunk
+    files turns a silently short chunk into a complete-looking download, and a truncated
+    jsonl still parses for most of its rows -- the failure would land in the corpus, not
+    in this function. A server that ignores Range (200 instead of 206) or hides its length
+    gets (False, why) and the caller falls back to the single stream.
+    """
+    head = subprocess.run(["curl", "-4", "-sI", "-m", "30", url], capture_output=True, text=True)
+    size = None
+    accepts_ranges = False
+    for line in head.stdout.splitlines():
+        low = line.lower()
+        if low.startswith("content-length:"):
+            try:
+                size = int(line.split(":", 1)[1].strip())
+            except ValueError:
+                size = None
+        elif low.startswith("accept-ranges:") and "bytes" in low:
+            accepts_ranges = True
+    if not size:
+        return False, "no content-length"
+    if not accepts_ranges:
+        return False, "no accept-ranges: bytes"
+    if size < 64 * 1024 * 1024:
+        return False, f"{size}B below the 64MB chunking floor"
+
+    per = size // chunks
+    procs, paths = [], []
+    for i in range(chunks):
+        lo = i * per
+        hi = size - 1 if i == chunks - 1 else lo + per - 1
+        cp = f"{part}.c{i}"
+        paths.append(cp)
+        procs.append(subprocess.Popen(
+            ["curl", "-4", "-sS", "--fail", "--retry", "4", "--retry-delay", "5",
+             "-r", f"{lo}-{hi}", "-o", cp, url],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL))
+    bad = [i for i, p in enumerate(procs) if p.wait() != 0]
+    if bad:
+        for cp in paths:
+            _rm(cp)
+        return False, f"chunk(s) {bad} failed"
+    with open(part, "wb") as out:
+        for cp in paths:
+            with open(cp, "rb") as f:
+                shutil.copyfileobj(f, out)
+            _rm(cp)
+    got = os.path.getsize(part)
+    if got != size:
+        _rm(part)
+        return False, f"assembled {got}B, content-length {size}B"
+    print(f"  {name}: {chunks}-way ranged, {got}B verified", file=sys.stderr, flush=True)
+    return True, got
+
+
+def _rm(p):
+    try:
+        os.remove(p)
+    except OSError:
+        pass
+
+
 def _fetch_one(url_chain, part, name, prev_host):
     """Probe + download one shard across the host chain; continue the SAME .part
     on the next host. Returns (subprocess.CompletedProcess|None, serving_host).
     A host that does not answer a 10 s IPv4 HEAD is abandoned in ~10 s and the
-    next serves; ModelScope (the no-resume LFS) is downloaded whole, no -C -."""
+    next serves; ModelScope (the no-resume LFS) is downloaded whole, no -C -.
+
+    Each host is tried with an 8-way ranged download FIRST (§259) and falls back to the
+    single stream when the server will not serve ranges or the assembly does not verify.
+    The fallback is not a formality: ModelScope's LFS aborts on a range request, which is
+    the same reason `-C -` is already skipped for it below."""
     server = None
     for u in url_chain:
         probe = subprocess.run(
@@ -361,10 +438,15 @@ def _fetch_one(url_chain, part, name, prev_host):
         if probe.returncode != 0 or not probe.stdout.startswith(("HTTP/", "HTTP/")):
             print(f"  {name}: host {_host(u)} unreachable (rc {probe.returncode}) -> next", file=sys.stderr, flush=True)
             continue
+        server = _host(u)
+        if "modelscope" not in u and not os.path.exists(part):
+            ok, why = _ranged_get(u, part, name)
+            if ok:
+                return subprocess.CompletedProcess([], 0), server
+            print(f"  {name}: ranged fetch unavailable ({why}) -> single stream", file=sys.stderr, flush=True)
         args = ["curl", "-4", "-sL", "-o", part, "--retry", "6", "--retry-delay", "3", u]
         if "modelscope" not in u:
             args[3:3] = ["-C", "-"]  # resume only off ModelScope (its LFS aborts on range)
-        server = _host(u)
         r = subprocess.run(args, stdout=subprocess.DEVNULL)
         if r.returncode == 0:
             return r, server
@@ -393,6 +475,9 @@ def _selftest():
     import threading
 
     payload = b"hello t37 mirror chain\n" * 3
+    # 80MB, over _ranged_get's 64MB floor. Content varies by offset so a chunk assembled in
+    # the wrong order, or a chunk served from the wrong range, does not compare equal.
+    big_payload = bytes((i * 7 + (i >> 13)) & 0xFF for i in range(80 * 1024 * 1024))
 
     class H(http.server.BaseHTTPRequestHandler):
         def _ok(self):
@@ -417,10 +502,52 @@ def _selftest():
                 self.end_headers()
             elif self.path == "/missing":
                 self.send_error(404)
+            elif self.path in ("/big.jsonl", "/short.jsonl", "/norange.jsonl"):
+                self._big(body)
+            elif self.path == "/small.jsonl":
+                # range-capable but tiny: the only route that reaches the size floor
+                self.send_response(200)
+                self.send_header("Content-Length", str(len(payload)))
+                self.send_header("Accept-Ranges", "bytes")
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if body:
+                    self.wfile.write(payload)
             else:
                 self._ok()
                 if body:
                     self.wfile.write(payload)
+
+        def _big(self, body):
+            """The three ranged-path worlds. /big serves ranges honestly; /short declares the
+            full length and returns one byte less per range, the corruption the size check
+            exists for; /norange omits Accept-Ranges so the caller must fall back."""
+            n = len(big_payload)
+            rng = self.headers.get("Range")
+            if self.path == "/norange":
+                rng = None
+            if rng and self.path != "/norange.jsonl":
+                lo, hi = rng.split("=", 1)[1].split("-")
+                lo, hi = int(lo), int(hi or n - 1)
+                chunk = big_payload[lo:hi + 1]
+                if self.path == "/short.jsonl":
+                    chunk = chunk[:-1]  # one byte short per chunk: assembly must not verify
+                self.send_response(206)
+                self.send_header("Content-Range", f"bytes {lo}-{hi}/{n}")
+                self.send_header("Content-Length", str(len(chunk)))
+                self.send_header("Connection", "close")
+                self.end_headers()
+                if body:
+                    self.wfile.write(chunk)
+                return
+            self.send_response(200)
+            self.send_header("Content-Length", str(n))
+            if self.path != "/norange.jsonl":
+                self.send_header("Accept-Ranges", "bytes")
+            self.send_header("Connection", "close")
+            self.end_headers()
+            if body:
+                self.wfile.write(big_payload)
 
         def do_HEAD(self):
             self._route(body=False)  # probe uses curl -I; the 302/404 must answer on HEAD
@@ -459,8 +586,36 @@ def _selftest():
         assert server2 is None, f"no host should serve an all-closed chain, got {server2}"
         got = _chain_hosts([closed_a, closed_b])
         assert "127.0.0.1:9" in got and "127.0.0.1:8" in got, f"chain not named: {got!r}"
+
+        # (c) the ranged path (§259). Its decision logic is what a wrong answer costs a
+        # corpus, so each refusal reason is asserted separately rather than "it fell back".
+        big_part = os.path.join(d, "big.part")
+        ok, why = _ranged_get(f"http://127.0.0.1:{port}/big.jsonl", big_part, "rangetest")
+        assert ok, f"a range-serving host with a large body must use the ranged path: {why}"
+        with open(big_part, "rb") as fp:
+            assert fp.read() == big_payload, "ranged assembly did not reproduce the body"
+        # THE ASSERTION THAT MATTERS: a server that lies about length must NOT yield a file.
+        # Concatenating N chunks turns a short chunk into a complete-looking download, and a
+        # truncated jsonl parses for most of its rows, so this failure would land in the
+        # corpus rather than here.
+        _rm(big_part)
+        ok2, why2 = _ranged_get(f"http://127.0.0.1:{port}/short.jsonl", big_part, "shorttest")
+        assert not ok2, "a body shorter than its content-length must be refused"
+        assert "assembled" in why2, f"the refusal must name the size mismatch, got {why2!r}"
+        assert not os.path.exists(big_part), "a mismatched assembly must leave no file behind"
+        # no Accept-Ranges -> fall back rather than issue ranges the server ignores
+        ok3, why3 = _ranged_get(f"http://127.0.0.1:{port}/norange.jsonl", big_part, "norangetest")
+        assert not ok3 and "accept-ranges" in why3, f"no-range host must fall back: {why3!r}"
+        # below the floor -> single stream; chunking a small file costs 8 connections for
+        # nothing. Served through /small.jsonl, which DOES advertise ranges: the plain /x.jsonl
+        # route sends no Accept-Ranges, so it refuses one step earlier and would have made this
+        # assertion pass without ever reaching the floor -- a test green for the wrong reason.
+        ok4, why4 = _ranged_get(f"http://127.0.0.1:{port}/small.jsonl", big_part, "smalltest")
+        assert not ok4 and "floor" in why4, f"a small body must skip chunking: {why4!r}"
+
         print(f"fetch_corpus selftest OK: failover served {len(payload)}B on {server}; "
-              f"all-closed named {got!r}")
+              f"all-closed named {got!r}; ranged path verified {len(big_payload)}B in 8 chunks "
+              f"and refused a short body, a no-range host and a sub-floor body")
         return 0
     finally:
         httpd.shutdown()
