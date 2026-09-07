@@ -61,6 +61,7 @@ from harness_core import (  # noqa: E402
     _ARM_RE,
     _CITE_WRAP_LINES,
     _POD_PROBE_TIMEOUT,
+    _MAIN_REF,
     _MAIN_TOUCHED,
     _arm_id,
     _aupai_cards,
@@ -81,6 +82,7 @@ from harness_core import (  # noqa: E402
     _tmp_repo_shaped,
     _write_tasks,
     cfg_default,
+    main_ref,
     pod_reachable,
     read_mix,
     refuse_in_integration_tree,
@@ -7910,8 +7912,20 @@ def _broken_tasks_closed_by_commit():
     os.makedirs(os.path.dirname(alt), exist_ok=True)
     with open(alt, "w") as fh:
         fh.write(os.path.join(common, "objects") + "\n")
-    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", "main"],
+    tip = subprocess.run(["git", "-C", ROOT, "rev-parse", main_ref(ROOT) or "main"],
                          capture_output=True, text=True).stdout.strip()
+    # main_ref, NOT a bare "main", AND the world asserts it got a tip. On a CI pull_request
+    # build ROOT has no local main, so `rev-parse main` returned empty, `update-ref` got no
+    # value, and this built a repo with NO MAIN AT ALL -- then _main_touched raised from the
+    # FIXTURE and the selftest reported "broken world cannot be made to fail: raised instead
+    # of reporting FAIL" (PR #3, job 101648544494). That is the same defect one layer out:
+    # fixing the reader's ref resolution while the world handed it a mainless repo moved the
+    # failure without removing it. A world that cannot build its premise must say so.
+    if not tip:
+        raise RuntimeError(
+            f"cannot build the world: no ref named main resolves in {ROOT} "
+            f"(tried main, origin/main, refs/remotes/origin/main), so the fixture would hand "
+            f"the check a repository with no main and the raise would come from here")
     subprocess.run(["git", "-C", d, "update-ref", "refs/heads/main", tip], capture_output=True)
     # The facts/ tree read from the INDEX. _commit_delivers resolves a
     # facts/<f>.json#<id> citation against the index, so a world whose index is empty fails
@@ -18595,7 +18609,11 @@ def _selftest_main_touched_raises_on_unreadable_main():
 
         # World 2 FIRST: a readable main must produce a real map, and it pins the path that
         # world 1's raise must not have broken.
+        # BOTH CACHES, and main_ref's is the one that bites: it memoises the RESOLVED ref per
+        # root, and these worlds mutate refs inside ONE directory -- world 1 deletes main, so
+        # world 4 read a cached None and raised while the fallback was in place (measured).
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         ok = _main_touched(d)
         assert sha in ok and "f.py" in ok[sha], f"a readable main must map its commits: {ok}"
 
@@ -18604,6 +18622,7 @@ def _selftest_main_touched_raises_on_unreadable_main():
         g("checkout", "-q", "--detach")
         g("branch", "-D", "main")
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         try:
             got = _main_touched(d)
             raise AssertionError(
@@ -18653,6 +18672,7 @@ def _selftest_main_touched_raises_on_unreadable_main():
             assert g("rev-parse", "--verify", "refs/remotes/origin/main").returncode == 0, \
                 "world 4 control: refs/remotes/origin/main must exist, or this is world 1 again"
             _MAIN_TOUCHED.pop(d, None)
+            _MAIN_REF.pop(d, None)
             # RuntimeError CAUGHT AND RENAMED. Without this the mutant that restores the
             # single-ref `git log main` fails by propagating world 1's raise out of the selftest,
             # which reads as a crash in the harness rather than as world 4 -- measured
@@ -18670,8 +18690,92 @@ def _selftest_main_touched_raises_on_unreadable_main():
                 f"commits, not return an empty map: {list(ci)[:3]}")
         finally:
             shutil.rmtree(remote, ignore_errors=True)
+
+        # WORLD 5: THE FIXTURE, NOT THE READER. Worlds 1-4 all exercise _main_touched directly, and
+        # PR #3 passed every one of them while CI still failed -- because the failure came from
+        # _broken_tasks_closed_by_commit, which built its world with `git rev-parse main` in ROOT.
+        # On a PR build that returns empty, `update-ref` gets no value, and the fixture hands the
+        # check a repo with NO main; the selftest then reports "broken world cannot be made to fail:
+        # raised instead of reporting FAIL" (job 101648544494), which names the check and not the
+        # world. Fixing a reader's ref resolution while its fixture resolves the ref its own way
+        # moves the failure instead of removing it.
+        #
+        # SO THE WORLD REPOINTS ROOT AND RUNS THE REAL PAIR -- broken() then the check -- against a
+        # clone whose local main is deleted and whose only main is refs/remotes/origin/main. The
+        # first version of this world asserted main_ref() on a PR-shaped tree instead, and the
+        # mutant that restores the bare `rev-parse main` in the fixture stayed GREEN through it
+        # (measured): asserting the helper is not asserting the caller, which is the same shape as
+        # the defect the world exists for. The assertion is that the check FAILs -- what a broken
+        # world must do -- rather than raising.
+        ci_root = tempfile.mkdtemp(prefix="mt_ciroot_")
+        try:
+            # CLONE THE COMMON GIT DIR, not ROOT. ROOT here is a linked WORKTREE, and cloning a
+            # worktree path gives a repo with a local main and NO refs/remotes/origin/main -- the
+            # world then SKIPped, and a SKIP is indistinguishable from a pass in the mutant sweep:
+            # measured, the fixture mutant stayed GREEN through a world that never ran. The clone
+            # source must be the repository, and `--depth 50` keeps it cheap while still carrying
+            # the shas the ledger cites near the tip.
+            _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
+                                      "--git-common-dir"], capture_output=True, text=True
+                                     ).stdout.strip() or ROOT
+            subprocess.run(["git", "clone", "-q", "--no-checkout", "--depth", "50",
+                            _common, ci_root], capture_output=True, text=True)
+            subprocess.run(["git", "-C", ci_root, "checkout", "-q", "--detach"], capture_output=True)
+            subprocess.run(["git", "-C", ci_root, "branch", "-D", "main"], capture_output=True)
+            _no_local = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
+                                        "main"], capture_output=True, text=True).returncode != 0
+            _has_remote = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
+                                          "refs/remotes/origin/main"],
+                                         capture_output=True, text=True).returncode == 0
+            # A SKIP THAT HIDES THE SUBJECT IS A FAILURE, not a note. The premise is buildable
+            # wherever git can clone, so failing to build it means this world is not running and
+            # the mutant sweep reads its silence as a pass.
+            assert _no_local and _has_remote, (
+                f"world 5: could not build a PR-shaped clone of {_common} (local main "
+                f"absent={_no_local}, origin/main present={_has_remote}); the world would SKIP, "
+                f"and a SKIP here is indistinguishable from a pass")
+            _row = next((t for t in CHECKS if t[0] == "tasks_closed_by_commit"), None)
+            assert _row, "world 5: tasks_closed_by_commit left CHECKS; repoint this world"
+            # BOTH MODULES' ROOT. The fixture reads harness.ROOT and the readers it calls read
+            # harness_core.ROOT; repointing only one leaves the other on the real tree, and the
+            # world would then be half-CI and prove nothing.
+            import harness_core as _core5
+            _saved, _saved_core = ROOT, _core5.ROOT
+            globals()["ROOT"] = _core5.ROOT = ci_root
+            _st = _ev = None
+            _raised = None
+            try:
+                _MAIN_REF.clear()
+                _MAIN_TOUCHED.clear()
+                _w = _row[4]()
+                _st, _ev = _row[3](_w)
+            except RuntimeError as e:
+                # THE RAISE IS THE FAILURE MODE, so it is caught here rather than allowed out.
+                # Uncaught it prints as "CRASH: RuntimeError git log main failed ..." with no
+                # mention of this world -- which is exactly how CI reported it, naming the check
+                # and leaving the fixture unnamed (job 101648544494). Measured before this catch
+                # existed: the mutant produced that text and the sweep read it as uncaught.
+                _raised = e
+            finally:
+                globals()["ROOT"] = _saved
+                _core5.ROOT = _saved_core
+                _MAIN_REF.clear()
+                _MAIN_TOUCHED.clear()
+            assert _raised is None, (
+                f"world 5: with ROOT holding only refs/remotes/origin/main, the fixture built a "
+                f"world with no main and the check RAISED from it instead of reporting FAIL -- "
+                f"`_broken_tasks_closed_by_commit` resolves main its own way and must go through "
+                f"main_ref: {_raised}")
+            assert _st == FAIL, (
+                f"world 5: with ROOT holding only refs/remotes/origin/main, "
+                f"_broken_tasks_closed_by_commit's world must still make the check FAIL, "
+                f"got {_st}: {(_ev or '')[:140]}")
+        finally:
+            shutil.rmtree(ci_root, ignore_errors=True)
+            _MAIN_REF.pop(ci_root, None)
     finally:
         _MAIN_TOUCHED.pop(d, None)
+        _MAIN_REF.pop(d, None)
         shutil.rmtree(d, ignore_errors=True)
     print("  _main_touched: an unreadable main raises; a readable one maps; the :7750 guard "
           "is blind to the empty map, so the raise is the only cover")
