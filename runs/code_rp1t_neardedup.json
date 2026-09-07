@@ -1,0 +1,115 @@
+{
+ "domains": [
+  "code_rp1t"
+ ],
+ "docs_total": 3747157,
+ "sample": "FULL (all shards)",
+ "method": "MinHash-J estimate + top-pair exact verify (n_perm=96, bands=12(8/band), char 5-gram; est and exact use the same shingle, so J is J of that shingle)",
+ "candidate_pairs": 271834915,
+ "near_threshold_band": {
+  "range": [
+   0.6,
+   0.85
+  ],
+  "pairs": 201008428
+ },
+ "thresholds": {
+  "0.7": {
+   "near_dup_rate": 0.225725,
+   "rate_ci95": [
+    0.225302,
+    0.226149
+   ],
+   "docs_in_clustered_pairs": 845827,
+   "edges": 140366800,
+   "clusters": 184477,
+   "cross_domain_pairs": 0,
+   "cross_domain_share": 0.0,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:122",
+     "b": "data/corpus/code_rp1t/code_rp1t_187.jsonl:4046",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_021.jsonl:8478",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_044.jsonl:16097",
+     "est": 1.0
+    }
+   ]
+  },
+  "0.8": {
+   "near_dup_rate": 0.18235,
+   "rate_ci95": [
+    0.18196,
+    0.182742
+   ],
+   "docs_in_clustered_pairs": 683295,
+   "edges": 66945658,
+   "clusters": 164364,
+   "cross_domain_pairs": 0,
+   "cross_domain_share": 0.0,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:122",
+     "b": "data/corpus/code_rp1t/code_rp1t_187.jsonl:4046",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_021.jsonl:8478",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_044.jsonl:16097",
+     "est": 1.0
+    }
+   ]
+  },
+  "0.9": {
+   "near_dup_rate": 0.114146,
+   "rate_ci95": [
+    0.113824,
+    0.114468
+   ],
+   "docs_in_clustered_pairs": 427723,
+   "edges": 10970754,
+   "clusters": 114888,
+   "cross_domain_pairs": 0,
+   "cross_domain_share": 0.0,
+   "sample_pairs": [
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:122",
+     "b": "data/corpus/code_rp1t/code_rp1t_187.jsonl:4046",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_021.jsonl:8478",
+     "est": 1.0
+    },
+    {
+     "a": "data/corpus/code_rp1t/code_rp1t_006.jsonl:128",
+     "b": "data/corpus/code_rp1t/code_rp1t_044.jsonl:16097",
+     "est": 1.0
+    }
+   ]
+  }
+ },
+ "exact_verify": {
+  "sample_n": 200,
+  "sample_of": 29209727,
+  "mean_est": 0.89890625,
+  "mean_exact": 0.8758206697927516,
+  "mean_diff_exact_minus_est": -0.0231,
+  "mae": 0.0296,
+  "diff_sd": 0.0284,
+  "est_approx_exact": true
+ }
+}
