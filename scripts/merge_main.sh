@@ -219,7 +219,11 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
   # against its first parent shows the other side's files, which the other side already
   # answered for. --no-merges also exempts reverts of merges; a plain revert is exempted by
   # its subject below.
-  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" 2>/dev/null) || return 0
+  # A commit already on origin/main went through a PR (the only route onto origin since the flip),
+  # so a local main lagging a gh merge must not read it as unrouted code: 2026-09-07 08:0xZ a ledger
+  # merge of fb was refused for de's 588a024d, merged on origin by PR #9 minutes earlier.
+  _ex=""; git -C "$MAIN" rev-parse -q --verify origin/main >/dev/null 2>&1 && _ex="^origin/main"
+  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" $_ex 2>/dev/null) || return 0
   [ -n "$shas" ] || return 0
   found=""
   for sha in $shas; do
@@ -335,7 +339,11 @@ _LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md|runs/card_assignm
 _code_pr_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
   local shas sha when paths bad subject
   [ -n "${AUPAI_PR_FLIP_EPOCH:-}" ] || return 0   # unset means the flip has not happened
-  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" 2>/dev/null) || return 0
+  # A commit already on origin/main went through a PR (the only route onto origin since the flip),
+  # so a local main lagging a gh merge must not read it as unrouted code: 2026-09-07 08:0xZ a ledger
+  # merge of fb was refused for de's 588a024d, merged on origin by PR #9 minutes earlier.
+  _ex=""; git -C "$MAIN" rev-parse -q --verify origin/main >/dev/null 2>&1 && _ex="^origin/main"
+  shas=$(git -C "$MAIN" rev-list --no-merges "main..$1" $_ex 2>/dev/null) || return 0
   [ -n "$shas" ] || return 0
   bad=""
   for sha in $shas; do
@@ -761,6 +769,11 @@ time.sleep(20)
     git checkout -q -b probjson "$_b" && printf '{"k":1}\n' > runs/some_config.json \
       && git add runs/some_config.json \
       && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "config: a new runs json"
+    # ON ORIGIN ALREADY: a post-flip code commit that a gh merge put on origin/main before local
+    # main caught up. Refusing it blocks every ledger merge until someone repairs main by hand.
+    git checkout -q -b pronorigin "$_b" && echo h >> other.txt \
+      && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qam "code: merged on origin" \
+      && git update-ref refs/remotes/origin/main pronorigin
     git checkout -q -b probpy "$_b" && printf 'x = 1\n' > runs/helper.py \
       && git add runs/helper.py \
       && GIT_COMMITTER_DATE="@2000000000 +0000" git commit -qm "code: a py file under runs/"
@@ -787,6 +800,7 @@ time.sleep(20)
   _pcase "a runs/claims/ row merges" prclaim accepted "$_FLIP"
   _pcase "control: another runs/*.json is still code" probjson refused "$_FLIP"
   _pcase "control: runs/*.py is still code" probpy refused "$_FLIP"
+  _pcase "code already on origin/main is not unrouted" pronorigin accepted "$_FLIP"
   # THE TWO CONTROLS THAT MAKE THE ABOVE MEAN ANYTHING. Without the first, "refuses code" is
   # satisfied by a gate that refuses unconditionally; without the second, the flip is not a flip.
   _pcase "no flip epoch set: nothing is refused" prcode accepted ""
@@ -1330,8 +1344,8 @@ for _ in $(seq 1 120); do
         #
         # `|| true` because a failed ledger write must not abort a merge the controller has already
         # authorised; the CLI prints its own refusal, so a rejected kind is loud rather than silent.
-        python3 "$MAIN/scripts/harness.py" friction add \
-          --kind override --who tilerl \
+        python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+          --kind override --who "$1" \
           --blocked "merge $1 with unreviewed train.py/model.py commits" \
           --cause "AUPAI_CONTROLLER=1 used to bypass the second-reader refusal" \
           --commit || true
@@ -1341,8 +1355,8 @@ for _ in $(seq 1 120); do
       # fix cannot be blocked on a PR round trip. Logged, like the review override, because an
       # override nobody records is a rule with an untracked exception.
       if ! _code_pr_gate "$1" 2>/dev/null; then
-        python3 "$MAIN/scripts/harness.py" friction add \
-          --kind override --who tilerl \
+        python3 "$(git rev-parse --show-toplevel)/scripts/harness.py" friction add \
+          --kind override --who "$1" \
           --blocked "merge $1 with post-flip code commits that never went through a PR" \
           --cause "AUPAI_CONTROLLER=1 used to bypass the code-goes-through-a-PR refusal" \
           --commit || true
