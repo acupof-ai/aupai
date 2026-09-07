@@ -330,11 +330,19 @@ def _weight_for_rows(rows, total_rows):
     denomination -- tokens and rows are views of it. Stating rows without the weight that
     produces them is how stage 1 under-drew cot by 61,593,088 tokens.
     """
-    for places in range(5, 13):
+    # 5..16, not 5..13. The reachable row counts are NOT monotonic in `places`: for 271,881 rows
+    # of 7,324,218, 12dp gives 271,880 and 13dp gives 271,881 exactly, while 14dp and 15dp fall
+    # back to 271,880 -- float64 spacing near 0.0371 is coarser than the last decimal asks for.
+    # Hit while routing the ceiling through the measured pools: the clamp asks for whatever row
+    # count the pool implies, and an arbitrary row count is exactly the case a 12dp ceiling cannot
+    # always encode. The assertion below still fires if no precision works, so a genuinely
+    # unrepresentable count is still loud rather than silently rounded.
+    for places in range(5, 17):
         w = round(rows / total_rows, places)
         if int(total_rows * w) == rows:
             return w, places
-    raise AssertionError(f"no weight up to 12dp yields {rows} rows")
+    raise AssertionError(f"no weight at 5..16 decimal places yields exactly {rows} rows of "
+                         f"{total_rows}; float64 cannot encode this draw")
 
 
 # The 16B readout's per-role nat/B figures. Present here ONLY so the refusal below can
@@ -495,7 +503,7 @@ def _ceiling_overshoot(weights, cursor, code_tokens):
         key = "code" if is_sc else name
         if key not in weights:
             continue
-        pool = _pool_rows(code_tokens if is_sc else SUPPLY[name])
+        pool = _domain_pool_rows(name, code_tokens if is_sc else SUPPLY[name])
         drawn = int(ROWS * weights[key])
         if is_sc:
             drawn = int(drawn * sc_share)
@@ -511,7 +519,7 @@ def _ceiling_overshoot(weights, cursor, code_tokens):
 def _ceil_pool(name):
     """The pool row count _ceiling_weight sizes against, for tests that need to construct a
     cursor relative to the ceiling. Same expression, not a copy of the number."""
-    return _pool_rows(SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0)))
+    return _domain_pool_rows(name, SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0)))
 
 
 FREED_RECIPIENTS = {"math_owm_stage2": 0.2643, "code_py_starcoder": 0.3297}
@@ -698,6 +706,30 @@ def _pool_rows(pool_tok):
     return rows - min(int(rows * 0.05), 5000)
 
 
+def _domain_pool_rows(name, pool_tok):
+    """ONE answer to "how many rows is this domain's pool", for the ceiling, the epochs field and
+    the run. A measured pool WINS over the stamp-derived one, because the cache is what train.py
+    draws from.
+
+    THE POOL SOURCE WAS THE THIRD INSTANCE OF THIS PR'S OWN DEFECT (tilerl, 2026-09-07). The unit
+    was already shared -- _pool_rows' docstring says "the ceiling and the epochs field must
+    agree" -- but the SOURCE was not: build() reported epochs off the measured cache while
+    _ceiling_overshoot and _ceiling_weight priced the same quantity off the stamp. Measured on the
+    .step22500 mix, that leaves a band of ceilings where the guard passes a domain the file then
+    reports as over the line:
+
+        math_owm_stage2    stamp 2.0558 vs cache 2.0509   band (2.0509, 2.0558), gap 0.0048
+        code_py_starcoder  stamp 1.9909 vs cache 2.0052   band (1.9909, 2.0052), gap 0.0143
+
+    Nothing lands in either band at FREED_CEILING 2.10, which is why it was invisible and why the
+    launched run is unaffected. It is fixed anyway: "a bound computed in one denominator and
+    applied in another" is the sentence this PR was written to remove, and leaving the third
+    instance in the tree because today's ceiling misses the band is how the first two survived.
+    """
+    meas = _measured_pools().get(name)
+    return meas["pool_rows"] if meas else _pool_rows(pool_tok)
+
+
 def _ceiling_weight(name, cursor=None, ceiling=EPOCH_SOFT_CEILING):
     """The largest weight for a supply-capped domain whose WHOLE error band clears the ceiling.
 
@@ -726,7 +758,7 @@ def _ceiling_weight(name, cursor=None, ceiling=EPOCH_SOFT_CEILING):
     # pool is packed rows -- tokens overstate it, because packing drops a partial row per
     # document and n_val rows are held out on top. Deriving in tokens put all three capped
     # domains over the real line while reporting them under it.
-    pool_rows = _pool_rows(SUPPLY[name] * (1 - rel))
+    pool_rows = _domain_pool_rows(name, SUPPLY[name] * (1 - rel))
     max_rows = ceiling * pool_rows - int((cursor or {}).get(name, 0))
     # NEVER NEGATIVE. A domain already past the ceiling on the cursor alone has no room, and a
     # negative weight would be allocated as one -- silently taking rows from the other domains.
@@ -854,7 +886,7 @@ def build(code_tokens, cursor=None):
         # A measured pool WINS over the stamp-derived one. Not "if they disagree, warn": the
         # cache is the thing build_mix actually draws from, so where it exists there is
         # nothing to reconcile.
-        pool_rows_est = meas["pool_rows"] if meas else _pool_rows(pool_tok)
+        pool_rows_est = _domain_pool_rows(name, pool_tok)
         # ROWS THIS DOMAIN HAS ALREADY DRAWN, from the resume cursor. Was `used = 0` with the
         # comment "fresh run, new names; asserted rather than assumed" -- which was true when
         # every mix started from scratch and became the defect the moment one did not. Nothing
@@ -1216,7 +1248,7 @@ def selftest():
     # the ceiling would never produce. A test written in the wrong unit fails for the right
     # reason and points at the wrong place.
     for name in SUPPLY_CAPPED:
-        pool = _pool_rows(SUPPLY[name])
+        pool = _domain_pool_rows(name, SUPPLY[name])
         rows = int(ROWS * _ceiling_weight(name))
         assert rows / pool <= EPOCH_SOFT_CEILING, (
             f"{name}: {rows / pool:.6f} epochs overshoots the ceiling"
@@ -1371,14 +1403,15 @@ def selftest():
     # And every domain clears the ceiling on the rows build_mix DRAWS, at the 30B row budget.
     _rows30 = int(30e9) // SEQ
     for _n, _wt in _w30.items():
-        _ep = int(_rows30 * _wt) / _pool_rows(SUPPLY[_n]) if _n in SUPPLY else None
+        _ep = (int(_rows30 * _wt) / _domain_pool_rows(_n, SUPPLY[_n])
+               if _n in SUPPLY else None)
         if _ep is not None:
             assert _ep <= EPOCH_SOFT_CEILING, f"{_n} draws {_ep:.6f} epochs at 30B"
     # NEGATIVE CONTROL, on the same numbers: the 20B weights at a 30B row budget must cross the
     # ceiling in all three capped domains. If they did not, none of the assertions above could
     # tell a recomputed mix from a copied one.
     _bad = [n for n, w in (("cot", 0.08069), ("chatml", 0.00741), ("chat_qa", 0.00725))
-            if int(_rows30 * w) / _pool_rows(SUPPLY[n]) > EPOCH_SOFT_CEILING]
+            if int(_rows30 * w) / _domain_pool_rows(n, SUPPLY[n]) > EPOCH_SOFT_CEILING]
     assert len(_bad) == 3, (
         f"the 20B weights at a 30B budget should cross the ceiling in all three capped domains, "
         f"caught {_bad}. Without this the case cannot distinguish recompute from copy"
@@ -1603,7 +1636,8 @@ def selftest():
         _unpinned = build(8.85e9, _live_cur)
 
         def _ep_of(m, n):
-            _pool = _pool_rows(8.85e9 if n == "code_py_starcoder" else SUPPLY[n])
+            _pool = _domain_pool_rows(
+                n, 8.85e9 if n == "code_py_starcoder" else SUPPLY[n])
             return (m["domains"][n]["rows_from_weight_at_runtime"]
                     + int(_live_cur.get(n, 0))) / _pool
         # THE SHIPPED CEILING BINDS NOTHING -- asserted, not quoted. This is the claim the whole
@@ -1879,7 +1913,7 @@ def main():
                 # 4.000028929185, all three at exactly 4.000000000000 once floored. Checking the
                 # fractional row is checking a row nobody reads.
                 _rows = int(ROWS * d["weight"])
-                _epochs = _rows / _pool_rows(_sup)
+                _epochs = _rows / _domain_pool_rows(name, _sup)
                 if _epochs > EPOCH_SOFT_CEILING:
                     _over.append(f"{name} {_epochs:.2f} epochs at weight {d['weight']:.7f}")
 

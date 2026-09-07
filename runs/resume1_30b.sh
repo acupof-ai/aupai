@@ -50,11 +50,21 @@ if [ ! -s "$MIX" ]; then
 fi
 export NGPU=6
 export PORT=29628
+# torchrun DIRECTLY, NOT ./run_ddp.sh, and this is the arm's precision rather than a style choice.
+# run_ddp.sh:136 injects --fp8 into every command it wraps, and train.py REFUSES --bf16 with --fp8
+# ("--fp8 already casts the model to bf16 and then converts the linears to fp8 compute; --bf16 is
+# the cast WITHOUT that conversion"). The parent 30B run launched torchrun directly with --bf16 and
+# no --fp8 -- read from its own ledger cmd, not remembered -- so wrapping this resume in run_ddp.sh
+# does two wrong things at once: it fails outright on the conflict, and had train.py merely
+# preferred one flag it would have silently continued the arm in a different numeric format at
+# step 22500. Measured: all six ranks refused at 18:00Z, exit 1, no checkpoint, no orphan.
+# A RESUME INHERITS ITS PARENT'S LAUNCH SHAPE, not the repo's default wrapper.
 exec python3 scripts/harness.py launch 1.5b-a0.2b-e48_30b_resume1 --training \
   --class incremental \
   --gate-timeout 900 \
-  --hypothesis "Resume 1 of the MoE-48 30B leg from .step22500 (17.70B tokens read) to step 25430, under a cursor-derived mix: cot/chatml/chat_qa held at 4.000 TOTAL epochs rather than 4.000 per segment, and the share they release placed on math_owm_stage2 and code_py_starcoder under a 2.10 total-epoch ceiling. Does the val descent measured at -0.00981/1k (t=-26.17 over steps 12400-20600) continue through the warmdown, and does the HumanEval tie break at the endpoint (prereg runs/prereg.jsonl#moe48_30b_0907, amendment pending)" \
-  -- ./run_ddp.sh --mix "$MIX" --name 1.5b-a0.2b-e48_30b \
+  --hypothesis "Resume 1 of the MoE-48 30B leg from .step22500 (17.70B tokens read) to step 38146, under a cursor-derived mix: cot/chatml/chat_qa held at 4.000 TOTAL epochs rather than 4.000 per segment, and the share they release placed on math_owm_stage2 and code_py_starcoder under a 2.10 total-epoch ceiling. Does the val descent measured at -0.00981/1k (t=-26.17 over steps 12400-20600) continue through the warmdown, and does the HumanEval tie break at the endpoint (prereg runs/prereg.jsonl#moe48_30b_0907@amended_7)" \
+  -- torchrun --nproc_per_node=6 --master_port=29628 train.py \
+     --mix "$MIX" --name 1.5b-a0.2b-e48_30b \
      --resume ckpt_1.5b-a0.2b-e48_30b.pt.step22500 \
      --dim 1024 --layers 12 --heads 8 --ffn_hidden 3072 --batch 8 --accum 4 --bf16 \
      --no-grad_ckpt --lr_scale 1.0 --warmdown 0.1 --anneal_frac 0 --warmup 300 \
