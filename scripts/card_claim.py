@@ -280,19 +280,35 @@ def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
         # unclaimed run makes a card look free while it is in use. That is how the b0-27
         # verification ran on card 7 with nothing claimed.
         #
-        # The holder is checked FIRST and only when it is not a shell: a shell holding a device fd
-        # would be a wrapper that inherited one, and claiming a shell is what the caller's own
-        # refusal at :790 exists to prevent.
-        if not _argv0_is_shell(_cmdline(pid)):
-            n = nvidia_fds(pid)
-            if n:
-                return pid, n
+        # DESCENDANTS FIRST, THE HOLDER AS FALLBACK -- the DEEPEST holder wins (de, 2026-09-07).
+        # The first version of this fix checked the holder first, on the argument that "a non-shell
+        # launcher holding a device fd is itself on the card". THAT ARGUMENT IS FALSE, and this
+        # file's own docstring is where the counterexample is written down: measured on the pod,
+        # `torchrun itself holds 36` device fds while `a rank holds 52`. So a non-shell launcher
+        # both holds devices and is not the job. de built that world -- non-shell python holder
+        # with 36 fds, rank beneath it with 52 -- and holder-first returned the LAUNCHER where the
+        # pre-fix code returned the rank.
+        #
+        # It reached no caller: _resolve_to_device_holder builds its on_card list from
+        # _job_descendants FIRST and calls this function only when that list is empty, and harness
+        # launch's holder is a `bash -c` wrapper that the shell guard skips. So holder-first was a
+        # latent ordering hazard rather than a live defect -- and NOTHING ASSERTED the ordering
+        # that kept it safe, which is the reason to fix it here rather than rely on the caller.
+        # Deepest-holder closes the launcher case by construction and still fixes b0-31, because a
+        # self-claiming job has no descendant and the fallback is what fires for it.
         for p, _a in _job_descendants(pid):
             n = nvidia_fds(p)
             if n:
                 return p, n
             # n == 0: alive, not on a card yet. n is None: the pid vanished between the ps
             # snapshot and this read -- skip it, never end the wait on another process's exit.
+        # The holder is the fallback, and only when it is not a shell: a shell holding a device fd
+        # is a wrapper that inherited one, and claiming a shell is what the caller's own refusal
+        # at the acquire site exists to prevent.
+        if not _argv0_is_shell(_cmdline(pid)):
+            n = nvidia_fds(pid)
+            if n:
+                return pid, n
         if not _alive(pid) or (end is not None and time.time() >= end):
             return None
         time.sleep(interval)
@@ -1753,6 +1769,50 @@ def _selftest():
                     pass
             shjob.kill()
             shjob.wait()
+
+        # THE DEEPEST HOLDER WINS, and this world is why (de, 2026-09-07). It is the launcher shape
+        # with a NON-SHELL holder: torchrun itself holds device fds -- 36, per this file's own
+        # measurement at the nvidia_fds docstring -- while a rank beneath it holds 52. So the
+        # argument that carried the first version of the b0-31 fix ("a non-shell launcher holding a
+        # device fd is itself on the card") is false, and this file already contained its
+        # counterexample. Holder-first returned the LAUNCHER here where the pre-fix code returned
+        # the rank; descendants-first returns the rank and still falls back to the holder for a
+        # self-claiming job, which has no descendant at all.
+        #
+        # It reached no caller -- _resolve_to_device_holder checks _job_descendants before ever
+        # calling wait_for_device -- so this asserts an ORDERING that nothing else asserts. That is
+        # the whole point: the safety was a property of one caller's sequence, and a latent hazard
+        # with no test is one refactor away from being live.
+        lnch = subprocess.Popen(
+            ["python3", "-c",
+             "import subprocess, sys, time; "
+             "k = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(9)']); "
+             "time.sleep(9)"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+            start_new_session=True)
+        try:
+            time.sleep(0.8)
+            rank_kids = _job_descendants(lnch.pid)
+            _case(len(rank_kids) == 1,
+                  f"world: the non-shell launcher has exactly one python rank ({len(rank_kids)})")
+            if rank_kids:
+                rank = rank_kids[0][0]
+                _fake_proc(lnch.pid, nvidia=36, other=9)   # torchrun's measured count
+                _fake_proc(rank, nvidia=52, other=9)       # a rank's measured count
+                _case(not _argv0_is_shell(_cmdline(lnch.pid)),
+                      "world: the launcher is NOT a shell, so the shell guard cannot save this")
+                got_deep = wait_for_device(lnch.pid, deadline=2.0, interval=0.1)
+                _case(got_deep is not None and got_deep[0] == rank,
+                      f"b0-31: the RANK is claimed, not the launcher that also holds devices "
+                      f"(got {got_deep}, rank {rank}, launcher {lnch.pid})")
+        finally:
+            for q, _a in _descendants(lnch.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            lnch.kill()
+            lnch.wait()
 
         # THE LIVE M1 DEFECT, 2026-09-05, and it was NOT the deadline the message blamed. The
         # launcher printed "no descendant of 915701 opened a GPU device within 90s" while the ranks
