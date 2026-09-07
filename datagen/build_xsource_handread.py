@@ -64,7 +64,11 @@ def main():
     ap.add_argument("--th", type=float, default=0.8)
     ap.add_argument("--n", type=int, default=100)
     ap.add_argument("--bands_sample", type=int, default=0,
-                    help="if >0, hash only this many global ordinals (a cheap smoke run)")
+                    help="if >0, hash about this many ordinals drawn PROPORTIONALLY from each "
+                         "domain. Never a prefix: ordinals run in domain order, so the first N "
+                         "of a two-domain concatenation are one domain and cross-domain is 0 by "
+                         "construction -- measured 2026-09-07, the first version of this flag "
+                         "printed 0 cross of 178 pairs and the 0 meant nothing")
     ap.add_argument("--out", required=True)
     ap.add_argument("--seed", type=int, default=70)
     a = ap.parse_args()
@@ -78,16 +82,31 @@ def main():
         print(f"{dom}: {S.shape[0]} sigs", flush=True)
     dom_bound = np.cumsum([S.shape[0] for S in sigs])
     n = int(dom_bound[-1])
-    take = min(n, a.bands_sample) if a.bands_sample else n
+
+    if a.bands_sample and a.bands_sample < n:
+        # Proportional per domain, not a prefix. dom_bound is cumulative, so ordinals
+        # [0, dom_bound[0]) are all domain 0: a prefix of a two-domain concatenation
+        # contains one domain and reports 0 cross-domain pairs for arithmetic reasons.
+        rng0 = random.Random(a.seed)
+        pool = []
+        lo = 0
+        for d, hi in enumerate(dom_bound):
+            share = max(1, int(a.bands_sample * (int(hi) - lo) / n))
+            pool.extend(rng0.sample(range(lo, int(hi)), min(share, int(hi) - lo)))
+            lo = int(hi)
+        ordinals = sorted(pool)
+        print(f"  sampling {len(ordinals)} of {n} ordinals, proportional per domain", flush=True)
+    else:
+        ordinals = range(n)
 
     buckets = defaultdict(list)
-    for g in range(take):
+    for count, g in enumerate(ordinals):
         d, local = dom_loc_of(g, dom_bound)
         sig = np.asarray(sigs[d][local])
         for b in range(BANDS):
             buckets[(b, tuple(sig[b * BAND_ROWS:(b + 1) * BAND_ROWS].tolist()))].append(g)
-        if g and g % 500000 == 0:
-            print(f"  banded {g}/{take}", flush=True)
+        if count and count % 500000 == 0:
+            print(f"  banded {count}", flush=True)
 
     pairs = set()
     for _key, ords in buckets.items():
@@ -116,8 +135,17 @@ def main():
     print(f"est>={a.th}: {len(scored)} pairs, {len(cross)} cross-domain, {len(within)} within",
           flush=True)
     if not cross:
-        print("no cross-domain pairs at this threshold -- report that, do not fill the sheet",
-              file=sys.stderr)
+        # A 0 here is only a measurement if both domains were actually sampled. Say which,
+        # because 0-by-construction and 0-by-measurement print the same digit.
+        seen = {a.domains[dom_loc_of(g, dom_bound)[0]] for g in ordinals} if a.bands_sample \
+            else set(a.domains)
+        if len(seen) < 2:
+            print(f"REFUSING: only {sorted(seen)} was sampled, so 0 cross-domain pairs is "
+                  f"arithmetic, not a measurement. Raise --bands_sample or drop it.",
+                  file=sys.stderr)
+            return 2
+        print(f"no cross-domain pairs at est>={a.th} over {sorted(seen)} -- that is a "
+              f"measurement; report it, do not fill the sheet", file=sys.stderr)
 
     # stratify the cross-domain pairs over the est band so the sheet is not all est=1.0
     bands = defaultdict(list)
