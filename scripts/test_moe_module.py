@@ -312,7 +312,8 @@ def main():
         ok = not wiring
         bad += 0 if ok else 1
         print(f"  {'ok  ' if ok else 'BUG '} ruling (f) holds end to end: experts in Muon, router "
-              f"in AdamW at the dense lr, and grad_ckpt + out-of-range moe_layers both refused"
+              f"in AdamW at the dense lr, an out-of-range moe_layers refused, and grad_ckpt "
+              f"allowed with every MoE layer swept by commit_moe_token_counts"
               f"{'' if ok else ' -- ' + '; '.join(wiring)}")
     except Exception as e:  # noqa: BLE001 -- an import failure here is a finding, not a skip
         bad += 1
@@ -550,14 +551,29 @@ def _wiring_shape(train):
     # router routes trains at.
     if router_lr != {float(train.Cfg.muon_lr)}:
         out.append(f"router lr {router_lr} is not the dense lr {float(train.Cfg.muon_lr)}")
-    # grad_ckpt: the counter is written under no_grad inside forward, and recomputation runs the
-    # forward twice, so readout 4 would divide by a doubled denominator and report a healthier
-    # spread than the arm has -- the direction that makes a stop rule fail to fire.
+    # grad_ckpt IS NOW ALLOWED (b0-27, 2026-09-07), and this case flipped from "must refuse" to
+    # "must build and must sweep". The refusal's premise held -- recompute really does double
+    # tokens_per_expert, measured 2.0000 on card 7 -- and its conclusion did not: a uniform 2x
+    # leaves update_bias bit-identical (sign(counts - mean) is scale-invariant) and leaves
+    # usage_frac/used_experts/entropy_norm/load_gini bit-identical, so no stop rule ever read a
+    # doubled denominator. MoEFFN.commit_token_counts now removes the surplus outright.
+    #
+    # ASSERTING ON THE SWEEP COUNT, not merely that construction stopped raising. A model that
+    # builds but whose sweep reaches zero layers keeps the surplus, and that is the failure this
+    # change could actually introduce -- it looks identical to the correction not working.
     try:
-        train.HybridLM(mk(grad_ckpt=True)())
-        out.append("grad_ckpt with moe_experts was NOT refused")
-    except ValueError:
-        pass
+        _m = train.HybridLM(mk(grad_ckpt=True)())
+    except ValueError as e:
+        out.append(f"grad_ckpt with moe_experts was REFUSED, but b0-27 allows it: {e}")
+    else:
+        _want = len(getattr(_m, "moe_layers", None) or [])
+        _swept = _m.commit_moe_token_counts()
+        if _want == 0:
+            out.append("the grad_ckpt fixture built no MoE layers, so the sweep count proves "
+                       "nothing -- 0 == 0 would pass for a sweep that does nothing")
+        elif _swept != _want:
+            out.append(f"commit_moe_token_counts() swept {_swept} layer(s), not the {_want} MoE "
+                       f"layer(s) this model has; an unswept layer keeps its recompute surplus")
     # An out-of-range layer index would convert fewer layers than the launch line says.
     try:
         train.HybridLM(mk(moe_layers="0,9")())

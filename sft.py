@@ -160,6 +160,25 @@ def main():
             D = hidden.shape[-1]
             loss = flce(weight, hidden.to(weight.dtype).reshape(-1, D), yb.reshape(-1))
             loss.backward()
+            # MoE COUNTER CORRECTION. grad_ckpt is forced on above (:64, FP8 backward goes NaN
+            # without it), so every MoE forward runs twice and tokens_per_expert counts each
+            # routed token twice.
+            #
+            # NOTHING IN THIS SCRIPT CONSUMES THAT COUNTER TODAY, and the honest reason to call
+            # this is not the one I first wrote here. I wrote "the counts persist into the
+            # checkpoint this script writes"; they do not. tokens_per_expert,
+            # step_tokens_per_expert, windows, micro_tokens_per_expert and micro_forwards are all
+            # registered persistent=False (model.py, MoEFFN.__init__), so state_dict() omits them
+            # -- verified by constructing an MoEFFN and listing its state_dict: only expert_bias
+            # is there. And a repo-wide census of update_bias/diagnostics callers finds train.py,
+            # the tests, and two probes; the single hit in this file was that comment.
+            #
+            # So this call is exact-by-construction rather than a fix for an observed corruption:
+            # any later reader of these counters in an SFT run -- a diagnostics call, a balancer,
+            # a readout -- gets true per-token counts instead of 2x, without having to know that
+            # this script checkpoints. A no-op on a dense checkpoint, where the sweep commits zero
+            # layers, and a no-op on any layer whose forward did not run.
+            raw_model.commit_moe_token_counts()
             last = loss.item()
             grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
 

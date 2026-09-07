@@ -528,6 +528,17 @@ def main():
                         fone.digit_targets(wb[nmask]).reshape(-1),
                     )
             loss.backward()
+            # MoE COUNTER CORRECTION, as in train.py and sft.py. grad_ckpt defaults on here (:212
+            # from --grad_ckpt, and the comment at :207 records why: FP8 e4m3 backward goes NaN
+            # without it), so an MoE forward runs twice per micro-batch.
+            #
+            # No consumer in this script today, and the counters do NOT reach the checkpoint --
+            # they are persistent=False in MoEFFN.__init__, so state_dict() omits them. See the
+            # longer note at the matching call in sft.py, which records the wrong reason I first
+            # wrote there and the census that corrected it. This call keeps the counters exact for
+            # any later reader; it is a no-op on a dense checkpoint and on a layer that did not
+            # forward.
+            raw_model.commit_moe_token_counts()
             last = loss.item()
             grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
 
