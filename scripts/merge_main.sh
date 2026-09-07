@@ -242,7 +242,33 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
     # `dirname "$0"` at this point is wrong too: _gcase cd's into the fixture first. The lookup
     # reads the LEDGER from the cwd ($MAIN) and its own SOURCE from where merge_main.sh lives; those
     # are two different roots and conflating them is what made the gate unconditional.
-    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" "$sha" "$1" 2>/dev/null)
+    # A MISSING OR CRASHING LOOKUP CRASHES THE GATE. It used to end in `2>/dev/null`, so when
+    # scripts/review_row_lookup.py was absent from the tree -- which happened for nine minutes on
+    # 2026-09-07, after a merge dropped it -- python's traceback went to /dev/null, `row` came back
+    # empty, and every train.py/model.py commit was told "no second reader has signed it". The
+    # refusal was indistinguishable from a real one and named the author, so the gate answered on
+    # the author's behalf using an error it had hidden (b0, via 4c).
+    #
+    # THE EXIT CODES ARE NOT INTERCHANGEABLE and this is the part that makes the fix non-obvious:
+    # review_row_lookup.py exits 1 for "nobody has reviewed this sha", which is a real answer and
+    # the refusal below is the correct response to it. It exits 2 for a usage error, and python
+    # itself exits 1 on a traceback and 2 on `No such file or directory`. So `|| broken` would
+    # call every genuine missing review a broken gate, and `[ -z "$row" ]` alone cannot see the
+    # difference. What separates them is that a working lookup with no answer prints NOTHING to
+    # stderr, while an absent or crashing one prints a traceback or a shell error. Both are
+    # captured, and the verdict reads stderr rather than the code.
+    _lk_err=$(mktemp)
+    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" "$sha" "$1" 2>"$_lk_err")
+    _lk_rc=$?
+    _lk_msg=$(cat "$_lk_err"); rm -f "$_lk_err"
+    if [ -n "$_lk_msg" ] || [ "$_lk_rc" -gt 1 ]; then
+      echo "merge_main: REFUSING -- the review-row lookup did not run, so whether $sha has a" >&2
+      echo "  second reader is UNKNOWN. This is not a missing review; it is a broken gate." >&2
+      echo "  $SCRIPT_DIR/review_row_lookup.py exited $_lk_rc:" >&2
+      echo "  ${_lk_msg:-(no stderr; exit code alone)}" >&2
+      echo "  Restore or fix that script -- AUPAI_CONTROLLER=1 does not cover an unreadable gate." >&2
+      return 1
+    fi
     if [ -z "$row" ]; then
       echo "merge_main: REFUSING -- $sha touches train.py or model.py and no second reader" >&2
       echo "  has signed it. $(git -C "$MAIN" log -1 --format='%h %s' "$sha")" >&2
@@ -1306,20 +1332,78 @@ for _ in $(seq 1 120); do
     # on the integrator's own side. --rev is required: merge_drops defaults to HEAD, and against
     # a detached integration tree that would check the wrong commit and print nothing, which
     # reads identically to clean (the failure its own docstring names).
+    #
+    # EVERY MERGE THE CAS IS ABOUT TO PUBLISH, not just $_new (de, 2026-09-07, measured).
+    # scripts/review_row_lookup.py was dropped by f7d1cf48 and stayed dropped through three more
+    # merges; main went red on selftests_are_gated and the file was restored by hand. The guard
+    # was not wrong about any of them -- `--merge-drops --rev` exits 1 and names the path at all
+    # four. It never saw them. What landed was e7751e60, "friction: 4 queued row(s) from 3b", a
+    # SINGLE-PARENT commit whose parent was the merge: merge_drops returns [] for a non-merge, so
+    # the candidate read clean while the drop sat one commit back as an inherited absence.
+    #
+    # And the commit that hid it is written directly above this line -- the friction drain commits
+    # on top of the merge before `_new` is read. Any commit between the merge and the CAS moves the
+    # merge out of a candidate-only guard's reach, so the population has to be the RANGE.
+    #
+    # `rev-list --merges $_old..$_new` is exactly what the CAS publishes that a merge could have
+    # dropped a path in. A fast-forward with no merges in the range checks nothing, which is
+    # correct -- there is no merge to lose a path.
+    #
+    # AND THE PATH MUST STILL BE ABSENT FROM $_new. This is not belt-and-braces; without it the
+    # range guard refuses a CORRECT state, forever. MEASURED on the real repository: the range
+    # 2df3af6c..origin/main holds 22 merges, four of which merge_drops flags for
+    # scripts/review_row_lookup.py -- and the published tree HOLDS that file, because it was
+    # restored at 4e465162. The drop stays in history permanently, so a range-only guard would
+    # refuse every future merge spanning it and the only escape would be never checking the range
+    # again. What the guard is actually about is the tree the CAS publishes, so the range finds
+    # candidates and `cat-file -e $_new:<path>` decides (de, 2026-09-07).
     rc=0
-    drops=$(python3 "$_wt_self/scripts/harness.py" --merge-drops --rev "$_new" 2>/dev/null) || rc=$?
+    # `$_new` IS ALREADY IN `rev-list --merges $_old..$_new` WHEN IT IS A MERGE, and appending it
+    # unconditionally reported the same drop twice (caught in the W1 fixture, 2026-09-07). It is
+    # appended only when the range did not name it, which is the fast-forward-plus-commits case
+    # where $_new is not a merge: merge_drops returns [] for a non-merge, so that costs one cheap
+    # call and keeps the candidate covered no matter what the range walk found.
+    _merges=$(git rev-list --merges "$_old..$_new" 2>/dev/null)
+    case "
+$_merges
+" in
+      *"
+$_new
+"*) _revs="$_merges" ;;
+      *) _revs="$_merges $_new" ;;
+    esac
+    drops=""
+    for _m in $_revs; do
+      _d=$(python3 "$_wt_self/scripts/harness.py" --merge-drops --rev "$_m" 2>/dev/null) || rc=$?
+      if [ "$rc" -gt 1 ]; then break; fi
+      [ -n "$_d" ] || continue
+      while IFS=$'\t' read -r _p _held; do
+        [ -n "$_p" ] || continue
+        # Restored by a later commit in the range: the published tree has it, nothing was lost.
+        git cat-file -e "$_new:$_p" 2>/dev/null && continue
+        # The sha is carried so the refusal names WHICH merge dropped it -- with a range, "this
+        # merge" is no longer unambiguous, and the restore command needs that commit.
+        drops="${drops}${drops:+
+}${_p}	${_held}	${_m}"
+      done <<EOF
+$_d
+EOF
+    done
     if [ "$rc" -gt 1 ]; then
       echo "merge_main: WARNING -- the merge-drop guard did not run (exit $rc). Main is unmoved." >&2
       exit 1
     fi
     if [ -n "$drops" ]; then
       echo "merge_main: this merge drops path(s) a parent held, with nobody deleting them:" >&2
-      printf '%s\n' "$drops" | while IFS=$'\t' read -r path parent; do
+      printf '%s\n' "$drops" | while IFS=$'\t' read -r path parent at; do
         [ -n "$path" ] || continue
-        echo "  $path (held by ${parent:0:8})" >&2
+        echo "  $path (held by ${parent:0:8}, dropped by ${at:0:8})" >&2
       done
-      echo "merge_main: REFUSED before main moved. Restore them here and amend:" >&2
-      echo "  git checkout <parent> -- <path> && git commit --amend --no-edit" >&2
+      echo "merge_main: REFUSED before main moved. Restore each path on THIS side:" >&2
+      echo "  git checkout <parent> -- <path>" >&2
+      echo "  then commit it. --amend only works when the drop is in HEAD itself; a drop named" >&2
+      echo "  by an earlier merge in this range needs a fresh commit restoring the file, which" >&2
+      echo "  is what the guard wants -- the tree the CAS publishes must hold the path." >&2
       exit 1
     fi
     # THE ATOMIC STEP. On mismatch someone else landed first: re-merge and re-run, which is a

@@ -2719,8 +2719,14 @@ def judge_pod_ps(allrows):
         return FAIL, (f"{len(fg)} training process(es) in the crictl exec session "
                       f"(leader {fg[0][1]} is a bash -lc without setsid): pid {fg[0][0]}")
     if not rows:
-        return PASS, "no training process on the pod"
-    return PASS, f"{len(rows)} training process(es), none in a crictl exec session"
+        # EMPTY IS A LEGITIMATE ANSWER HERE, unlike no_hardcoded_cache_path, where an empty file
+        # list means the reader failed. A pod with nothing running has no ps rows matching
+        # train.py|run_ddp and that is the state this check wants; scripts/test_pod_ps_judge.py's
+        # "an idle pod" case pins it, and it caught me returning FAIL for it (de, 2026-09-07).
+        # So the count goes in the evidence and the verdict does not change: a reader can now tell
+        # "8 rows read, none training" from "0 rows read", which is the only thing that was missing.
+        return PASS, f"{len(allrows)} process row(s) read, none a training process"
+    return PASS, f"{len(rows)} training process(es) of {len(allrows)} row(s), none in a crictl exec session"
 
 
 def check_no_foreground_pod_training(root):
@@ -6771,7 +6777,7 @@ def check_no_stale_running(root):
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
         return FAIL, f"{len(rows)} killed mid-run and never closed: {', '.join(rows[:6])}"
-    return PASS, "no run has been 'running' for over a day"
+    return PASS, f"{len(evs)} folded row(s) read, none 'running' for over a day"
 
 
 def check_no_ghost_running(root):
@@ -9137,10 +9143,11 @@ def check_docs_root_clean(root):
     docs = os.path.join(root, "docs")
     if not os.path.isdir(docs):
         return FAIL, "docs/ missing"
-    stray = sorted(f for f in os.listdir(docs) if f.endswith(".md") and os.path.isfile(os.path.join(docs, f)))
+    entries = sorted(os.listdir(docs))
+    stray = sorted(f for f in entries if f.endswith(".md") and os.path.isfile(os.path.join(docs, f)))
     if stray:
         return FAIL, f"docs/ root holds .md files: {stray[:5]} -- classify into lessons/, audits/, standards/"
-    return PASS, "docs/ root holds no .md files"
+    return PASS, f"{len(entries)} entr(ies) in docs/ root, none a .md file"
 
 
 def check_lessons_frontmatter(root):
@@ -12084,10 +12091,11 @@ def check_tasks_stale(root):
     if not rows:
         return SKIP, "no task register"
     done_ids = {r["id"] for r in rows if r.get("state") == "done"}
-    stale = []
+    stale, n_open = [], 0
     for r in rows:
         if r.get("state") != "open":
             continue
+        n_open += 1
         tid = r.get("id", "?")
         blocked = r.get("blocked_on")
         if blocked and blocked in done_ids:
@@ -12107,7 +12115,7 @@ def check_tasks_stale(root):
                 except (ValueError, OverflowError):
                     pass
     if not stale:
-        return PASS, "no stale open tasks"
+        return PASS, f"{n_open} open task(s) of {len(rows)} folded, none stale"
     worst = FAIL if any(s == FAIL for s, _ in stale) else WARN
     return worst, "; ".join(ev for _, ev in stale[:5])
 
@@ -12922,7 +12930,7 @@ def check_dirty_aged(root):
     if r.returncode != 0:
         return SKIP, f"git status failed: {r.stderr.strip()}"
     cutoff = time.time() - _AGE_HOURS * 3600
-    aged = []
+    aged, n_dirty = [], 0
     for line in r.stdout.splitlines():
         # XY porcelain: X = index status, Y = worktree status. A file staged and then
         # further modified reads "AM" -- `line[:2].strip() not in ("M","A")` filtered
@@ -12931,12 +12939,15 @@ def check_dirty_aged(root):
         # 2026-08-31). Any M or A in either column is uncommitted work.
         if len(line) < 4 or not (set(line[:2]) & {"M", "A"}):
             continue  # untracked (??) is untracked_aged's job; deletes have no mtime
+        n_dirty += 1
         p = os.path.join(root, line[3:])
         if os.path.isfile(p) and os.path.getmtime(p) < cutoff:
             aged.append(line[3:])
     if aged:
         return WARN, f"{len(aged)} tracked file(s) dirty >{_AGE_HOURS}h: {', '.join(aged[:5])}"
-    return PASS, "no aged dirty files"
+    # A CLEAN TREE IS A REAL ZERO and the count says which zero it is: 0 of 0 dirty files means
+    # nothing was uncommitted, 0 of 7 means seven are dirty and all younger than the threshold.
+    return PASS, f"{n_dirty} dirty tracked file(s), none older than {_AGE_HOURS}h"
 
 
 def _broken_dirty_aged():
@@ -14354,13 +14365,14 @@ def check_no_conflict_markers(root):
     Markdown setext heading underline is a row of `=`, and so is a table rule in some
     docs, which would make this check fire on well-formed prose."""
     needles = ("<<<<<<< ", ">>>>>>> ", "|||||||  ")
-    hits = []
+    hits, scanned = [], 0
     for p, txt in walk_tracked(root, (".md", ".py", ".json", ".jsonl", ".sh", ".txt", ".yml", ".yaml")):
         rel = os.path.relpath(p, root)
         # This file names the markers in its own docstring and needle list, so it would
         # match itself -- the §61 shape, a criterion whose needle sits in its own data.
         if rel == os.path.join("scripts", "harness.py"):
             continue
+        scanned += 1
         for i, line in enumerate(txt.splitlines(), 1):
             if line.startswith(needles):
                 hits.append(f"{rel}:{i} {line[:34]}")
@@ -14368,7 +14380,7 @@ def check_no_conflict_markers(root):
     if hits:
         return FAIL, (f"{len(hits)} file(s) hold a conflict marker -- a resolution was committed "
                       f"half-done: {'; '.join(hits[:4])}")
-    return PASS, "no tracked file holds a conflict marker"
+    return PASS, f"{scanned} tracked file(s) scanned, none holds a conflict marker"
 
 
 def _broken_no_conflict_markers():
@@ -15307,7 +15319,14 @@ _HARDCODED_CACHE_BASELINE = 0
 
 
 def _hardcoded_cache_paths(root):
-    """[(file, line, text)] for source that builds a token cache path from a literal.
+    """([(file, line, text)], n_scanned) for source that builds a token cache path from a literal.
+
+    `n_scanned` IS PART OF THE ANSWER, not a statistic. Zero hits over 400 files and zero hits over
+    zero files are the same return value otherwise, and the second is the vacuous case this
+    function has already produced once: a broken world is a temp dir with no git index, so
+    `git ls-files` there returns nothing and the check PASSes having read no source at all. That is
+    the reason the file list comes from ROOT below. The count makes the difference visible in the
+    evidence line rather than only in the comment (de, 2026-09-07).
 
     THE ONE CONSTANT IS train.py's `TOKEN_CACHE = "/data00/pretrain_1b_tokens.pt"`. Every other copy
     stops following AUPAI_TOKEN_CACHE_DIR the
@@ -15340,10 +15359,10 @@ def _hardcoded_cache_paths(root):
     # test, and only the second comes from the world.
     r = sp.run(["git", "-C", ROOT, "ls-files"], capture_output=True, text=True)
     if r.returncode != 0:
-        return None
+        return None, 0
     lit = re.compile(r"/data00/tokens_|/data00/pretrain|pretrain_1b_tokens")  # cache-path-ok: this IS the pattern
     marker = re.compile(r"#\s*cache-path-ok")
-    out = []
+    out, scanned = [], 0
     for f in sorted(r.stdout.split()):
         if not f.endswith((".py", ".sh")):
             continue
@@ -15359,6 +15378,7 @@ def _hardcoded_cache_paths(root):
                 text = fh.read()
         except OSError:
             continue
+        scanned += 1
         doc_lines = set()
         if f.endswith(".py"):
             try:
@@ -15385,7 +15405,7 @@ def _hardcoded_cache_paths(root):
                 continue
             if lit.search(line):
                 out.append((f, i, line.strip()[:100]))
-    return out
+    return out, scanned
 
 
 def check_no_hardcoded_cache_path(root):
@@ -15401,11 +15421,15 @@ def check_no_hardcoded_cache_path(root):
     real cache into the pod's shared /data00 beside a live run) reproduced inside the tool meant to
     catch it. This check exists so the third copy is refused instead of found later.
     """
-    hits = _hardcoded_cache_paths(root)
+    hits, scanned = _hardcoded_cache_paths(root)
     if hits is None:
         return SKIP, "git ls-files unavailable"
+    if not scanned:
+        # ZERO SCANNED IS NOT ZERO HITS. ls-files answered and named no .py/.sh, so there was
+        # nothing to read and a PASS here would assert the property over an empty set.
+        return FAIL, "no .py or .sh in the tracked file list -- this check read no source at all"
     if not hits:
-        return PASS, "no source outside train.py builds a token cache path from a literal"
+        return PASS, f"{scanned} tracked .py/.sh read, none builds a token cache path from a literal"
     msg = (
         f"{len(hits)} line(s) build a token cache path from a literal instead of calling "
         f"train._token_cache_dir()/_domain_cache_path(), so they stop following "
@@ -20882,12 +20906,38 @@ def _demo(only=None):
     # passes because not every count is zero.) A check with nothing to examine on this machine
     # must SKIP, not PASS.
     #
-    # Ceiling: this only covers checks whose evidence happens to contain "digit space letter".
-    # A check that degrades to `return PASS, "ok"` -- no digits at all -- is invisible here, and
-    # so is a zero written as a fraction ("0/36 hits", sft_pack_uncontaminated's format) or with
-    # "=" ("checked=0"). The lower-entropy fix is structured counts (a check returns n_examined
-    # alongside evidence), not a smarter regex -- that is an arms race with string formats. Not
-    # done; the next person should know this green does not cover a no-digit PASS.
+    # TWO DIFFERENT ZEROS, AND THE REGEX CANNOT TELL THEM APART (de, 2026-09-07, measured).
+    # Zero HITS -- "I read 606 files and none holds a conflict marker" -- IS the pass condition.
+    # Zero SCANNED -- "I read nothing" -- is vacuous. Both used to print as prose with no number
+    # in it at all, so they were the same string to any reader, human or regex.
+    #
+    # MEASURED OVER ALL 106 LIVE CHECKS before writing this: 18 PASSes carried no digit, and the
+    # two other ceilings this comment used to claim -- a zero written as a fraction ("0/36") or
+    # with "=" ("checked=0") -- have ZERO live instances. So the arms race the old note predicted
+    # was against string formats nobody writes; the real gap was bucket A, and only for the
+    # checks that enumerate something. Of the 18, eight do (below); the other ten assert a single
+    # fact -- tokenizer_roundtrip decodes four strings, root_durable reads one path -- where a
+    # count would be noise.
+    #
+    # AND NO EXTERNAL SCAN CAN MAKE THIS DISTINCTION, which is why the fix is in the checks and
+    # this is a registry rather than a cleverer predicate. I wrote two mechanical classifiers to
+    # find the population-enumerating checks and BOTH had the defect they were hunting: the first
+    # used `os.walk|glob|listdir` as the tell and was blind to a population read through
+    # `git ls-files`; the second matched reader names and was blind to `_exp_events`, so
+    # no_stale_running -- which folds the whole experiments ledger -- read as count-free. Only the
+    # check knows what it examined. So the eight report their size in the evidence, and this
+    # asserts the size is there and non-zero on the real tree. Adding a check here is a commit
+    # that says a ninth check enumerates a population.
+    POPULATION_CHECKS = (
+        "no_hardcoded_cache_path",   # tracked .py/.sh read
+        "docs_root_clean",           # entries in docs/ root
+        "no_conflict_markers",       # tracked files scanned
+        "no_stale_running",          # folded experiments rows
+        "tasks_stale",               # open tasks of folded
+        "dirty_aged",                # dirty tracked files
+        "no_foreground_pod_training",  # ps rows read
+        "curl_ipv4",                 # tracked .py/.sh with a curl call
+    )
     #
     # The leading boundary is load-bearing, not tidiness: without it the regex reads a count out
     # of a PATH. In a worktree named aupai-b0, root_durable's "root /.../aupai-b0 is not on a
@@ -20905,7 +20955,7 @@ def _demo(only=None):
     def _pass_with_digit_in_a_path(_root):
         return PASS, "root /Users/x/code/aupai-b0 is not on a known-ephemeral mount"
 
-    vacuous = []
+    vacuous, sized = [], {}
     for name, _a, _i, fn, _b in list(CHECKS) + [
         ("fake_vacuous_pass", "", "", _vacuous_pass, None),
         ("fake_digit_in_a_path", "", "", _pass_with_digit_in_a_path, None),
@@ -20919,6 +20969,8 @@ def _demo(only=None):
         counts = [int(m.group(1)) for m in re.finditer(r"(?:^|\s)(\d+)\s+[a-zA-Z]", str(evidence))]
         if counts and all(c == 0 for c in counts):
             vacuous.append(f"{name}: PASS with all-zero counts ({evidence})")
+        if name in POPULATION_CHECKS:
+            sized[name] = (counts, str(evidence))
     assert any(v.startswith("fake_vacuous_pass") for v in vacuous), (
         "meta-check did not catch its own deliberately-vacuous PASS -- the regex or loop regressed"
     )
@@ -20928,6 +20980,58 @@ def _demo(only=None):
     real = [v for v in vacuous
             if not v.startswith("fake_vacuous_pass") and not v.startswith("fake_digit_in_a_path")]
     assert not real, "PASS with nothing verified:\n  " + "\n  ".join(real)
+
+    # THE POPULATION HALF. Each registered check must print a non-zero size, so a reader can tell
+    # "read 606 files, none bad" from "read nothing". A check that SKIPs or FAILs on this machine
+    # is not in `sized` and is not asserted -- the size claim is about a PASS, and a pod-only check
+    # SKIPping on a laptop is correct behaviour, not a missing count. Named-but-absent is a
+    # failure, though: it means the check was renamed or its verdict changed and this registry
+    # silently stopped covering it, which is the drift the whole item exists to stop.
+    #
+    # THIS ASSERTION IS DELIBERATELY NOT A GENERIC PREDICATE. It reads the count out of the
+    # evidence with the same regex as above, so it inherits the same ceiling -- and that is
+    # acceptable HERE only because membership is a hand-written list rather than a scan: the two
+    # scans I wrote to derive that list both missed a real population (see the note above), so a
+    # registry that must be edited by hand is the honest form.
+    # ONE PREDICATE, used by the real loop AND by its failing cases below. Written as a function
+    # rather than inline because my first version inlined it and then RE-IMPLEMENTED it in the
+    # meta-cases, with a comment claiming they shared it -- a second copy of a predicate asserted
+    # against the first, which is the defect the funnel's T0-1 is about, committed inside the fix
+    # for T0-2 (de, 2026-09-07).
+    def _size_defect(nm, ev):
+        c = [int(m.group(1)) for m in re.finditer(r"(?:^|\s)(\d+)\s+[a-zA-Z]", str(ev))]
+        if not c:
+            return f"{nm}: PASS carries no count at all ({ev})"
+        if max(c) == 0:
+            return f"{nm}: PASS reports a zero population ({ev})"
+        return ""
+
+    missing_size = []
+    for nm in POPULATION_CHECKS:
+        if nm not in sized:
+            continue  # SKIP/FAIL/WARN on this machine; nothing to assert about a size
+        bad = _size_defect(nm, sized[nm][1])
+        if bad:
+            missing_size.append(bad)
+    assert not missing_size, (
+        "a population-enumerating check must print its size:\n  " + "\n  ".join(missing_size))
+    # ITS OWN FAILING CASES, both directions, because an assertion over a registry of eight names
+    # that all currently pass proves only that they pass -- not that a regression would be caught.
+    # Same reason _vacuous_pass exists above.
+    for _bad_ev, _want in (
+        ("no source builds a bad path", "no count at all"),
+        ("0 tracked file(s) scanned, none bad", "a zero population"),
+    ):
+        _hit = _size_defect("fake", _bad_ev)
+        assert _want in _hit, (
+            f"the population assertion does not catch {_want!r}: {_bad_ev!r} produced {_hit!r}")
+    # ...and its false-positive direction: a real sized evidence line must produce NO defect.
+    assert not _size_defect("fake", "606 tracked file(s) scanned, none holds a conflict marker"), (
+        "the population assertion fires on a correctly-sized PASS")
+    _absent = [nm for nm in POPULATION_CHECKS if nm not in {c[0] for c in CHECKS}]
+    assert not _absent, (
+        f"POPULATION_CHECKS names {_absent}, which are not in CHECKS -- renamed or removed, and "
+        f"the registry stopped covering them silently")
 
     # sync selftest: a merge that loses a row must FAIL. The incident: a hand-merge
     # keyed by name dropped 9 rows (p02_s0 x4, p03 x5 share a name; identity is
