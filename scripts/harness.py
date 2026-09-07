@@ -14354,6 +14354,94 @@ def _broken_no_conflict_markers():
     return d
 
 
+def check_main_in_no_worktree(root):
+    """`refs/heads/main` is checked out in NO worktree.
+
+    This is what makes merge_main's compare-and-swap legal. It advances main with an atomic
+    `update-ref`, touching no working tree -- which is safe precisely because no tree has main
+    checked out. A worktree holding main has an index and a HEAD that update-ref does not
+    update, so the branch moves under a checkout that still believes it is at the old commit:
+    the next `git status` there reports every intervening change as a local deletion or
+    modification, and a `git checkout .` in that state discards main's own commits.
+
+    AGENTS.md states the invariant as a property of the integration tree -- "/Users/bytedance/
+    code/aupai is the integration tree and is DETACHED; main is checked out in no worktree at
+    all, which is what makes the compare-and-swap below legal". Nothing enforced it, and it
+    stopped being true tonight: aupai-b0 holds refs/heads/main at 47148ae3, and 44
+    fast-forwarded main there by hand. Measured 2026-09-08, reported by 4c.
+
+    WARN, not FAIL, and the reason is the failure mode rather than caution: nothing is
+    corrupted while the branch merely sits checked out, and a session that hits a FAIL on
+    another session's worktree cannot fix it -- `git worktree` operations on somebody else's
+    tree are exactly what the one-worktree-per-session rule exists to prevent. The owner
+    detaches it (`git checkout --detach`) or moves to a branch; a hard failure would block
+    every commit in every tree until they did.
+
+    The predicate reads `git worktree list --porcelain`, whose `branch refs/heads/<name>` line
+    appears only for an attached worktree -- a detached one prints `detached` and no branch
+    line. So the check needs no path knowledge and works the same on the pod, in CI and on any
+    laptop, where a path test would hardcode one machine's layout (the same reasoning as
+    integration_tree.py's).
+    """
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, f"git worktree list failed: {r.stderr.strip()[:80]}"
+    wt, holders, n = None, [], 0
+    for ln in r.stdout.splitlines():
+        if ln.startswith("worktree "):
+            wt = ln.split(" ", 1)[1].strip()
+            n += 1
+        elif ln.strip() == "branch refs/heads/main" and wt:
+            holders.append(wt)
+    if holders:
+        return WARN, (
+            f"refs/heads/main is checked out in {len(holders)} worktree(s): {holders[:3]}. "
+            f"merge_main advances main by an atomic update-ref that touches no working tree, "
+            f"which is only safe while no tree holds it -- the holder's index and HEAD are not "
+            f"updated, so main moves under a checkout that still believes it is at the old "
+            f"commit. The owner detaches (git checkout --detach) or moves to a branch"
+        )
+    return PASS, f"main checked out in no worktree ({n} worktree(s) listed)"
+
+
+def _broken_main_in_no_worktree():
+    """A REAL second worktree with main checked out, made by `git worktree add`.
+
+    Not a hand-written porcelain fixture: the thing under test is what git reports about a real
+    attached worktree, and a fabricated `branch refs/heads/main` line would share the check's
+    own assumption about the output format. The world builds a repo, commits, detaches its
+    original tree so main is free, then adds a second worktree holding main -- which is the
+    live shape exactly (an integration tree detached, another tree on main).
+    """
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
+    sp.run(git + ["commit", "-m", "init"], cwd=d, capture_output=True, env=env)
+    # Detach the original tree first: git refuses to check main out twice, so without this the
+    # `worktree add` fails and the world goes green with no holder at all.
+    sp.run(git + ["checkout", "--detach"], cwd=d, capture_output=True, env=env)
+    sp.run(git + ["worktree", "add", os.path.join(d, "held"), "main"],
+           cwd=d, capture_output=True, env=env)
+    # A THIRD WORKTREE ON A NON-MAIN BRANCH, so the world can tell "main is checked out" from
+    # "a branch is checked out". Without it a predicate matching `branch refs/heads/` at all --
+    # every session's own worktree -- passed the selftest, because nothing here held any branch
+    # but main (measured: mutant M2 SURVIVED, 2026-09-08). This is the world's discriminating
+    # power, not decoration: the live tree has ten attached worktrees and exactly one of them is
+    # the violation.
+    sp.run(git + ["worktree", "add", "-b", "sidebranch", os.path.join(d, "side")],
+           cwd=d, capture_output=True, env=env)
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -16589,6 +16677,13 @@ CHECKS = [
         _broken_frozen_paths,
     ),
     (
+        "main_in_no_worktree",
+        "refs/heads/main is checked out in no worktree; that is what makes merge_main's CAS legal",
+        "AGENTS.md asserted it as a property and nothing checked it: aupai-b0 held main at 47148ae3 and main was fast-forwarded there by hand (4c, 2026-09-08)",
+        check_main_in_no_worktree,
+        _broken_main_in_no_worktree,
+    ),
+    (
         "no_shared_stash",
         "the stash stack is empty; it is shared by every worktree in this repo",
         "e1 and b0 each stashed, merged main and popped in the same window -- and each popped the other's entry",
@@ -16731,7 +16826,7 @@ EVIDENCE = {
     # the shapes a runner and a fixture land in.
     "test_integration_tree_guard": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-"no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"no_shared_stash": "repo", "main_in_no_worktree": "local", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
 "train_cite_targets": "repo",
     "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
@@ -20342,6 +20437,41 @@ def _selftest_exp_fold():
           "survive; exp.py and harness agree")
 
 
+def _selftest_main_in_no_worktree_discriminates():
+    """The broken world must WARN because of the HOLDER, and go green when it detaches.
+
+    `--selftest` asserts each world reaches its check's failing tier, never that it reached it
+    for the mutation -- §268's ceiling. Here the world has two worktrees and the check counts
+    them, so a version that WARNed on "more than one worktree" would pass that assertion while
+    measuring something else entirely. Detaching the holder changes exactly one bit of the world
+    and must flip the verdict; if it does not, the check is reading worktree count rather than
+    main's checkout.
+    """
+    import subprocess as sp
+
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    d = _broken_main_in_no_worktree()
+    held = os.path.join(d, "held")
+    state, ev = check_main_in_no_worktree(d)
+    assert state == WARN, f"holder attached: expected WARN, got {state}: {ev[:120]}"
+    assert "held" in ev, f"the evidence must name the holding worktree, got {ev[:120]}"
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "checkout", "--detach"],
+           cwd=held, capture_output=True, env=env)
+    state2, ev2 = check_main_in_no_worktree(d)
+    assert state2 == PASS, (
+        f"after detaching the holder: expected PASS, got {state2}: {ev2[:120]}. The world still "
+        f"has three worktrees and one of them still holds `sidebranch`, so a check reading "
+        f"worktree COUNT, or matching `branch refs/heads/` at all, fails here -- which is the "
+        f"whole point of these two controls"
+    )
+    assert "side" not in ev, (
+        f"the WARN named the sidebranch worktree: {ev[:150]}. The subject is main's checkout, "
+        f"not any branch's -- every session's own worktree holds a branch"
+    )
+    return ("main_in_no_worktree discriminates: WARN naming ONLY the main-holding worktree while a "
+            "third tree holds sidebranch, PASS on the same three-worktree world once main detaches")
+
+
 def _selftest_facts_ephemeral_only_source():
     """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
     does not.
@@ -21163,6 +21293,11 @@ def _demo(only=None):
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
+                 # main_in_no_worktree: WARN because the fix is another session's `git worktree`
+                 # operation on their own tree, and a FAIL would block every commit everywhere
+                 # until they ran it. Nothing is corrupted while the branch merely sits checked
+                 # out; the damage needs main to MOVE under it.
+                 "main_in_no_worktree",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
                  "one_deliverable_per_owner", "prereg_citations_current",
@@ -21927,6 +22062,7 @@ def _demo(only=None):
         _selftest_gpu_descendants,
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
+        _selftest_main_in_no_worktree_discriminates,
         _selftest_facts_ephemeral_only_source,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
