@@ -455,6 +455,23 @@ The general form: a property true of every pair is not true of the transitive cl
 Evidence: `runs/dedup_b2v2.py` and `runs/why_refuse.py` on the pod, `runs/dedup_b2v2.log` (`REFUSE: 8355 code_rp1t_dd09 document(s) would be deleted`), `runs/why_refuse.log` (`dd09-dd09 0 ... TRANSITIVE 8355 ... MISSED it 0`).
 open: nothing asserts that a keep-whole or hold-out set is enforced as a predicate rather than inferred from ordering. The class is one grep — a dedup or partition that relies on `min()`/sort position to protect a subset — and it would have fired here before the run.
 
+### §268 (2026-09-08, R2)
+A shared broken world cannot test a check whose verdict its mutation cannot move. `_broken_facts` is the world for `facts_well_formed`, and it is a good one: real files, four mutations, each a copy-then-break of a real artifact. Adding a fifth predicate to that check, three mutations were added to the same world — a source naming only `/tmp`, one naming `/tmp` beside a tracked script, one naming `/tmp` beside `path@rev` — and all four mutants of the new predicate SURVIVED.
+
+The arithmetic is the whole shape. That world already reports **42 errors** from its existing four mutations; the check returns `FAIL` plus the first five in its evidence string. So removing the new predicate entirely leaves the verdict `FAIL` and the visible slice unchanged, and `--selftest`, which asserts the state, cannot see the difference. Measured: `state=FAIL, ephemeral rows named: none` for the control and for every one of `drop the openable-beside check`, `drop the path@rev half`, `drop the check entirely`, `stop consulting the baseline`.
+
+The clean tree could not serve either, for the opposite reason: its 13 ephemeral-only rows are registered debt, so dropping the exemption logic leaves its failing set identical too. A world that is already saturated and a world that is already exempted fail the same way.
+
+The fix is a dedicated world per predicate — four one-fact trees, each built by mutating the real `facts/data_scaling.json` — where each mutant reds exactly one: openable-beside → world 2, `path@rev` → world 3, the check itself → world 1, the baseline lookup → world 4. Four mutants, four distinct single-world failures.
+
+Two world defects that sweep caught, both green-on-the-wrong-branch:
+- **World 3's rev must name a path that resolves ONLY at that rev.** The first version cited `scripts/exp.py@<rev>`; that path also exists in the working tree, so the openable-beside clause answered first and the `path@rev` branch was never reached — dropping it left the world green. Re-pointed at a probe deleted in a real commit, verified present at the parent and absent from the tree.
+- **A `git init` world has an empty object store, so no rev resolves at all.** World 3 then failed twice for one cause: the tracked-path half called the retired probe absent, and this half saw no openable evidence. Fixed with `objects/info/alternates` pointing at the real store — the narrowest thing that makes a rev resolvable while the world keeps its own HEAD, index and refs.
+
+The general form: a verdict is the least granular aggregate there is, so a world already failing for other reasons cannot certify a new check. Before adding a mutation to an existing world, ask what that world's verdict and visible evidence are WITHOUT it — if the answer is the same, the world is not a world for this check.
+Evidence: `/tmp/de_world_mutants.py` (four mutants against the shared world, all SURVIVED; the same four against the dedicated selftest, each reds one), `scripts/harness.py::_selftest_facts_ephemeral_only_source`.
+open: nothing counts how many errors a broken world already reports before a new mutation is added to it. `--selftest` asserts each world FAILs; it never asserts that the world fails FOR THE MUTATION, and with 42 errors in one world that distinction is where a new check goes unguarded.
+
 ## R3. Artifacts carry their producer identity
 
 ### §24 (2026-08-31, R3)
@@ -624,6 +641,21 @@ open: a check that a share or ratio quoted in a doc names its denominator; none 
 ### §230 (2026-09-05, R6)
 A review reported five checks as MEASURED that had only been READ. e1 sent b0 a five-point review of 18f3adf7 (a selftest count, two mutant reverts, a symlink probe, a python one-liner) having run none of them — only read the diff. b0 repeated one figure back as if checked, having read only the message: the figure then had two independent-looking sources and zero executions, and b0 was about to file two of the findings in docs/lessons. e1 retracted in full and re-ran all five; all five confirmed, which makes the first message lucky rather than acceptable. The remedy is not mutual checking, which cannot see a shared source: ask "when did this command run" of your OWN claim. Sub-case from the same thread: a claim flagged unverified in one sentence was used as a premise one clause later — flagging a claim unverified governs that sentence, not the next one. Second instance the same day, same author: amendment 6's natural-share ratio 0.796713701057 was a leftover from a token-derived build, carried across a rebuild that changed the digits; the true quantity (1-wS-wP)/(1-wP) = 0.796904315197 reproduces, and a reviewer's proposed alternative (0.79640625) turned out to be the numerator — three numbers within 0.05%, none the same quantity. A derived number carried across a rebuild of its inputs is the same shape as amendment 2's floor quoted as a measurement. Evidence: runs/friction.jsonl (e1's kind=check row), runs/review.jsonl's provenance_of_these_numbers field for 18f3adf7, runs/prereg.jsonl#conversion_rate_0905 amendment 6.
 open: a check that a review's "measured" claims name a command that ran — the provenance field is the machine side; and that a number in a decision document names what produced it; none exists.
+
+### §269 (2026-09-08, R6)
+A summary grouped by SIZE cannot fail on a difference of KIND. Ten byte-extrapolated corpus stamps were recounted exactly, and the five non-zero deltas were reported as one group: "small, both directions, consistent with sampling noise." Four of the five were exactly that. The fifth was not sampling noise at all.
+
+`en_c4_30b` at **+1,029,505 equalled the domain's document count to the unit** — its counter omitted the `<eos>` terminator — and its own `tokens_config` said "full pass, no sampling/extrapolation", so the group's stated basis was false for that row. A definitional error and four sampling errors, merged on the one axis where they are alike: **+0.159% sits unremarkably among -0.106%, -0.091%, +0.234%, +0.481%.** e1 named it first.
+
+What made it recoverable was not a better grouping but a **per-row identity the grouping discarded**: `delta == docs` is true or false of one row, and no summary of five rows can express it. That is the general lesson — when a group is reported, the thing that would have caught the outlier is usually a predicate that only exists at row scale.
+
+Cost: the corrected value reached the controller ~25 minutes late, and had the group been believed, four more counters carrying the same defect would not have been looked for (they were: five sites in total, `build_cot.py:82` found last, by 44).
+
+R6 rather than R2, and the distinction is worth keeping because it decides where the fix goes: there is no world, no mutation, and nothing executable here. §268 is a world that cannot certify a check; this is a REPORT that cannot certify its own rows. The basis was stated as one thing when one of five was another, which is R6's subject exactly.
+Evidence: `runs/delta.py` output at cutoff, `runs/count_en_c4_30b.json`, and the row's pre-correction `tokens_config` in `facts/corpus_supply.json` at `b4095851^`. Reported by 84, whose own account of it is the source of this entry.
+
+**§268 and §269 share one line, and it is the one to carry away: an aggregate is CHOSEN, so it cannot report what the choice discarded.** A verdict discards which mutation failed; a magnitude discards which kind of error it was. In both cases the discarded thing was the finding, and in both cases nothing in the artifact records that anything was discarded — which is why neither is detectable by reading the artifact and both are detectable by asking what the aggregate cannot represent.
+open: no check reads a grouped report and asks whether a per-row predicate would separate its members. The machine-checkable half here is narrow and real — a recount delta equal to the domain's document count is an `<eos>` defect, not noise — and `facts_well_formed` could assert it wherever both numbers are in the fact store.
 
 ## R7. Retractions travel as wide as the ruling
 

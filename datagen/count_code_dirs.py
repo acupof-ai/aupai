@@ -51,7 +51,7 @@ if __name__ == "__main__":
             # green for a week while every count it vouched for was short by one per
             # document (cs.code_py_starcoder_landed, cs.en_c4_landed, cs.en_c4_stage2_landed,
             # each corrected by exactly its doc count).
-            bare = sum(len(C.TOK.encode(r["content"]).ids) for r in rows)
+            bare = sum(len(C.tok().encode(r["content"]).ids) for r in rows)
             expect = bare + len(rows)
             assert tok == expect and tok > 100, (
                 f"{tok} != {bare} ids + {len(rows)} <eos> = {expect}; a gap of exactly "
