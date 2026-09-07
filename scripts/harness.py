@@ -7091,6 +7091,10 @@ _NON_EVAL_PREFIXES = {
     # code_rp1t_handread50.jsonl is 50 rows of {content, lang} -- a hand-read corpus QUALITY
     # sample, read only by scripts/test_shard_glob.py, with no question and no answer.
     "code_rp1t_handread50": "50-row hand-read corpus quality sample ({content, lang}), not an eval",
+    # 44's dd09/b2 hand-read audit samples: 50 rows each of {src, source, url, content_len, content},
+    # the 500-char truncations that were actually read. Not evals.
+    "code_rp1t_dd09_handread50": "50-row hand-read audit sample for code_rp1t_dd09, not an eval",
+    "code_rp1t_b2_handread50": "50-row hand-read audit sample for code_rp1t_b2, not an eval",
     # lambada_zh_ids.jsonl is 523 rows of {id} alone -- the id list of lambada_zh_src, which IS
     # registered. Bare ids leak nothing; the passages they name are the surface, and those are
     # covered by the lambada_zh_src entry.
