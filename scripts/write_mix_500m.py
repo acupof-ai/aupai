@@ -639,8 +639,19 @@ def _code_split(starcoder_tokens, code_rows):
     }
 
 
-def build(code_tokens):
-    """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it."""
+def build(code_tokens, cursor=None):
+    """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it.
+
+    cursor is the resume checkpoint's row_cursor: {domain: rows already drawn} or None for a
+    fresh start. IT CHANGES WHAT `epochs` MEANS. build_mix caps a domain at
+    int(pool*epochs) - used[name] with used[] seeded from that same cursor, but compares
+    `epochs` against THIS PLAN'S draw only -- so on a resume the ceiling is per-segment and
+    every resume grants a fresh 4 epochs on top of whatever the cursor already spent. Measured
+    on the live 30B resume: cot's plan drew 3.999 epochs and read as a PASS while the cursor had
+    already spent 1.416, for 5.415 total; chat_qa and chatml reached 5.4 the same way, and the
+    30B plan would take all three to ~6.0. Passing the cursor makes `epochs` a TOTAL and the
+    ceiling enforceable; omitting it keeps the fresh-start behaviour byte for byte.
+    """
     code_supply = code_tokens + _rp1t_tokens()
     if code_supply < CODE_FLOOR:
         raise SystemExit(
@@ -675,6 +686,7 @@ def build(code_tokens):
     )
 
     domains, warnings = {}, []
+    over_ceiling = {}
     total_rows_used = 0
     for name, (rows, why) in spec.items():
         _refuse_cross_role_rate(name, why)
@@ -700,7 +712,11 @@ def build(code_tokens):
         # cache is the thing build_mix actually draws from, so where it exists there is
         # nothing to reconcile.
         pool_rows_est = meas["pool_rows"] if meas else _pool_rows(pool_tok)
-        used = 0  # fresh run, new names; asserted rather than assumed
+        # ROWS THIS DOMAIN HAS ALREADY DRAWN, from the resume cursor. Was `used = 0` with the
+        # comment "fresh run, new names; asserted rather than assumed" -- which was true when
+        # every mix started from scratch and became the defect the moment one did not. Nothing
+        # asserted it; the zero was the assumption.
+        used = int((cursor or {}).get(name, 0))
         epochs = math.ceil((used + runtime) / pool_rows_est)
         assert pool_rows_est * epochs >= used + runtime, (
             f"{name}: pool {pool_rows_est} x epochs {epochs} < used {used} + want {runtime}; "
@@ -716,7 +732,25 @@ def build(code_tokens):
         # The token version was the guard for a day and read UNDER the ceiling the whole time.
         # It was not measuring re-reads; it was measuring a quantity that correlates with them
         # (b0, 2026-09-01, found by reading the real caches for the launch gate's epochs item).
-        drawn_epochs = runtime / pool_rows_est
+        # TOTAL, NOT THIS SEGMENT. (used + runtime) is what the model will have read by the
+        # end of the plan, and re-reads are re-reads whether an earlier segment or this one
+        # bought them. On a fresh start used is 0 and this is the old expression exactly.
+        drawn_epochs = (used + runtime) / pool_rows_est
+        if drawn_epochs > EPOCH_SOFT_CEILING and used:
+            # BLOCKS, DOES NOT WARN, and only under a cursor (4c's ruling 2026-09-07). The cap is
+            # already decided, so a resume mix over it is a WRONG mix, not a mix with a note --
+            # and _warnings is print-and-continue: nothing reads it, no gate refuses on it, and a
+            # 6.0-epoch mix would have shipped carrying an accurate warning nobody had to read.
+            # `and used` scopes it to the resume case: on a fresh start the ceiling keeps warning
+            # exactly as it did, because a fresh over-ceiling draw is a weight decision somebody
+            # is making deliberately and every committed mix was written under that behaviour.
+            over_ceiling[name] = (
+                f"{drawn_epochs:.3f} total epochs exceeds the {EPOCH_SOFT_CEILING}-epoch line "
+                f"once the resume cursor is counted: {used:,} rows already drawn plus {runtime:,} "
+                f"this plan, over a {pool_rows_est:,}-row pool. The segment alone is "
+                f"{runtime / pool_rows_est:.3f} epochs, which is why a per-segment ceiling read "
+                f"this as a PASS. Cut this domain's weight until the TOTAL clears 4."
+            )
         if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
                 f"{name}: {drawn_epochs:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
@@ -807,8 +841,14 @@ def build(code_tokens):
         "_budget_rationale": "docs/lessons/mix_500m_rationale.md",
         "_code_supply_tokens_at_generation": code_tokens,
         "_warnings": warnings,
-        "_untrusted_supply": {n: why for n, why in UNTRUSTED_SUPPLY.items() if n in domains},
-        "_launch_blocked": sorted(n for n in UNTRUSTED_SUPPLY if n in domains),
+        # ONE REASON DICT FOR BOTH BLOCK SOURCES, because main() prints
+        # _untrusted_supply[n] for every n in _launch_blocked -- a name in the list with no
+        # entry here is a KeyError at the moment the tool is trying to explain a refusal.
+        "_untrusted_supply": dict(
+            {n: why for n, why in UNTRUSTED_SUPPLY.items() if n in domains},
+            **over_ceiling),
+        "_launch_blocked": sorted(
+            set(n for n in UNTRUSTED_SUPPLY if n in domains) | set(over_ceiling)),
         "domains": domains,
     }
 
@@ -1275,7 +1315,89 @@ def selftest():
           "share); the code share resolves to CODE_TOTAL at 8B and at 20B and to "
           "CODE_TOTAL_ABOVE_20B only past it, so the boundary is exclusive")
 
-    print("selftest: 14/14")
+    # 15. THE CURSOR MAKES `epochs` A TOTAL, and the case is built so it FAILS without the fix
+    #     rather than merely passing with it. The live 30B resume is the world: cot's cursor is
+    #     139,492 rows on a 98,529-row pool and its plan draws 393,xxx more, so the segment alone
+    #     is 3.999 epochs -- a PASS under the old expression -- while the total is 5.415.
+    #
+    #     ASSERTED ON THE WARNING, not on the epochs field, because the warning is what a person
+    #     reads and what a launch gate can refuse on. The epochs INTEGER moves too (ceil of the
+    #     total), but an integer going 4 -> 6 is also what a legitimately bigger draw does; only
+    #     the warning names the ceiling being crossed.
+    _cur = {"cot": 139_492, "chatml": 12_726, "chat_qa": 12_555}
+    _fresh = build(8.85e9)
+    _resumed = build(8.85e9, _cur)
+    _fw = " ".join(_fresh["_warnings"])
+    _rw = " ".join(_resumed["_warnings"])
+    for _n in _cur:
+        assert f"{_n}: " not in _fw or "exceeds" not in _fw.split(f"{_n}: ")[1][:80], (
+            f"{_n} must NOT trip the ceiling on a fresh start -- if it does, this case cannot "
+            f"tell the fix from a pre-existing violation")
+        assert any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
+            f"{_n} draws past {EPOCH_SOFT_CEILING} epochs once the cursor is counted "
+            f"(cursor {_cur[_n]:,}) and no warning names it. The ceiling is measuring one "
+            f"segment, which is the defect this argument exists to fix.")
+    # AND THE FRESH-START PATH IS BYTE-IDENTICAL. A cursor-aware ceiling that changed the
+    # no-cursor answer would silently rewrite every committed mix.
+    assert build(8.85e9, None)["domains"] == _fresh["domains"], (
+        "build(..., None) must equal build(...): the cursor path must not touch a fresh start")
+    assert build(8.85e9, {})["domains"] == _fresh["domains"], (
+        "an EMPTY cursor must also equal a fresh start -- {} means 'nothing drawn yet'")
+    print("  15 the epoch ceiling counts cursor + this plan, so a resume cannot be granted a "
+          "fresh 4 epochs: cot/chatml/chat_qa pass fresh and trip the ceiling under the live "
+          "30B cursor, while build(..., None) and build(..., {}) stay byte-identical to fresh")
+
+    # 16. AND IT BLOCKS THE LAUNCH, not merely warns (4c's ruling 2026-09-07). Case 15 proves the
+    #     ceiling COUNTS right; this proves it BINDS. The distinction is not academic -- I shipped
+    #     case 15 believing the job was done, and _warnings is print-and-continue: no gate reads
+    #     it, so a 6.0-epoch resume mix would have been written with an accurate warning nobody
+    #     was required to read. That is the shape where the code is defensible and the contract
+    #     is false.
+    assert set(_resumed["_launch_blocked"]) == set(_cur), (
+        f"every over-ceiling domain must block the launch, got "
+        f"{_resumed['_launch_blocked']} for a cursor over {sorted(_cur)}")
+    for _n in _cur:
+        # A NAME WITH NO REASON IS A KeyError IN main()'s REFUSAL PRINT, which reads
+        # _untrusted_supply[n] for every n in _launch_blocked. The two fields are one mechanism.
+        assert _n in _resumed["_untrusted_supply"], (
+            f"{_n} blocks with no entry in _untrusted_supply; main() prints that dict per blocked "
+            f"name and would raise KeyError while explaining the refusal")
+        assert "total epochs" in _resumed["_untrusted_supply"][_n], (
+            f"{_n}'s block reason must name the TOTAL, since the segment figure is what read as "
+            f"a pass: {_resumed['_untrusted_supply'][_n][:80]}")
+    # THE FRESH-START PATH STILL ONLY WARNS, and the assertion must be made on a fresh build
+    # THAT ACTUALLY CROSSES THE LINE. Asserting it on the shipped config was the defect: no
+    # domain crosses fresh, so `not _fresh["_launch_blocked"]` holds no matter what the code
+    # does, and dropping the `and used` scope survived it. Caught by mutation, not by reading.
+    # textbook_30b at 60% is case 6's own over-the-line world (a real literal, far past the
+    # ceiling on its measured rows).
+    assert not _fresh["_launch_blocked"], (
+        f"a fresh start must not block: {_fresh['_launch_blocked']}")
+    _saved_tb = OBJECTIVE["textbook_30b"]
+    OBJECTIVE["textbook_30b"] = (0.60, _saved_tb[1])
+    try:
+        _fresh_over = build(8.85e9)
+        assert any("textbook_30b" in w and "exceeds" in w for w in _fresh_over["_warnings"]), (
+            f"the fixture must cross the ceiling or it tests nothing: "
+            f"{_fresh_over['_warnings']}")
+        assert not _fresh_over["_launch_blocked"], (
+            f"a FRESH over-ceiling draw must warn and not block -- blocking it would refuse a "
+            f"weight decision made deliberately, and every committed mix was written under the "
+            f"warn behaviour: {_fresh_over['_launch_blocked']}")
+        # The same weight WITH a cursor blocks, which is the whole scope of the ruling.
+        _cur_over = build(8.85e9, {"textbook_30b": 1})
+        assert "textbook_30b" in _cur_over["_launch_blocked"], (
+            f"the same over-ceiling weight under a cursor must block: "
+            f"{_cur_over['_launch_blocked']}")
+    finally:
+        OBJECTIVE["textbook_30b"] = _saved_tb
+    _hi = build(8.85e9, {"zh_web": 99_000_000})
+    assert "zh_web" in _hi["_launch_blocked"], "a huge cursor on any domain must block too"
+    print("  16 an over-ceiling total under a cursor goes to _launch_blocked with a reason naming "
+          "the total (not just _warnings, which nothing reads), the reason is in the same dict "
+          "main() prints per blocked name, and a fresh start still only warns")
+
+    print("selftest: 16/16")
     return 0
 
 
@@ -1364,6 +1486,34 @@ def build_probe():
     }
 
 
+def _read_cursor(path):
+    """{domain: rows} from a checkpoint's row_cursor, or a refusal.
+
+    torch.load with weights_only=False, because row_cursor sits beside the tensors in a dict
+    the trainer wrote. REFUSES rather than returning {} when the key is absent: an empty cursor
+    and a missing cursor produce identical mixes, and the whole point of this flag is that the
+    caller asserted a resume. A silent {} would write a fresh-start mix under a resume's name.
+    """
+    import torch
+
+    if not os.path.exists(path):
+        sys.exit(f"REFUSING: --resume-cursor {path} does not exist. The cursor decides every "
+                 f"`epochs` value in this file; guessing it is worse than not writing it.")
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    rc = ck.get("row_cursor")
+    if not rc:
+        sys.exit(f"REFUSING: {path} carries no row_cursor (keys: "
+                 f"{sorted(k for k in ck if not k.startswith('model'))}). A checkpoint without "
+                 f"one cannot seed used[], so --resume-cursor cannot mean anything against it.")
+    basis = ck.get("row_cursor_basis")
+    if basis != "full_plan_prefix":
+        sys.exit(f"REFUSING: {path} has row_cursor_basis {basis!r}, not 'full_plan_prefix'. "
+                 f"build_mix seeds used[] from a full-plan-prefix cursor; any other basis counts "
+                 f"rows differently and the epoch totals here would be arithmetic on two "
+                 f"incompatible conventions.")
+    return {k: int(v) for k, v in rc.items()}
+
+
 def main():
     global TOTAL_TOKENS, ROWS
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -1382,19 +1532,31 @@ def main():
                     help="token budget; the weights are the same function of the objective, "
                          "epochs and the code floor re-derive against this total")
     ap.add_argument("--out", default=None, help="output path; required with a non-default --total")
+    # A RESUME MIX IS NOT REUSABLE FOR A DIFFERENT RESUME POINT, and this flag is what makes that
+    # visible. Without it `epochs` counts one segment; with it `epochs` is the total the model
+    # will have read, so the file is correct for exactly the checkpoint named here and wrong for
+    # any other. That is not a limitation to work around -- a mix generated against a different
+    # cursor IS a different mix.
+    ap.add_argument("--resume-cursor", default=None, metavar="CKPT",
+                    help="checkpoint whose row_cursor this plan continues; makes every `epochs` "
+                         "value a TOTAL (cursor + this plan) instead of this plan alone. Omit "
+                         "for a fresh start.")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    cursor = _read_cursor(a.resume_cursor) if a.resume_cursor else None
     ref = None
     if int(a.total) != TOTAL_TOKENS:
         if not a.out or a.probe:
             ap.error("a non-default --total needs --out and excludes --probe")
+        # The REFERENCE build stays fresh-start: it exists only to lift the 20B weights for a
+        # smaller total, and a cursor-aware reference would compare two different quantities.
         ref = build(a.code_tokens)
         TOTAL_TOKENS = int(a.total)
         ROWS = TOTAL_TOKENS // SEQ
-    m = build_probe() if a.probe else build(a.code_tokens)
+    m = build_probe() if a.probe else build(a.code_tokens, cursor)
     out = PROBE_OUT if a.probe else (a.out or OUT)
     if ref is not None:
         # WEIGHTS ARE COPIED FROM THE 20B BUILD ONLY WHEN THE NEW TOTAL IS SMALLER, and that
