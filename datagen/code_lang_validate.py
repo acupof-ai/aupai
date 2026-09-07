@@ -44,6 +44,12 @@ import sys
 #: accepting it would inflate retention with fragments.
 MIN_CHARS = 40
 
+#: How much a hard marker is worth against a soft one when two languages both have evidence.
+#: Its only requirement is `_TIE_WEIGHT > max(len(_SOFT[lang]))`: above that bound every value
+#: gives the same answers, below it soft markers can outvote a hard one and the docstring's
+#: rule becomes false. Asserted in the selftest, both directions.
+_TIE_WEIGHT = 10
+
 
 def module_sha256(path=None):
     """This file's content hash -- what a build stamps to record which validator produced it.
@@ -315,7 +321,15 @@ def validate(text):
         # Score before tie-breaking: Java and C share `int f(){}`, JS and Java share `class`.
         # A hard marker outweighs any number of soft ones, so a `package x;` beats two shared
         # idioms, and `#include` beats a Java-shaped method signature.
-        score = hard * 10 + soft
+        #
+        # THE WEIGHT IS A BOUND, NOT A TUNED NUMBER. Any value strictly greater than the
+        # largest soft-marker set gives IDENTICAL answers, because one extra hard marker adds
+        # w while the soft term can differ by at most max(len(_SOFT[lang])). So 10 and 100 are
+        # the same function and no input distinguishes them; only w <= 6 changes an answer,
+        # and the selftest's tie-breaker case is red for w = 1. _SOFT_CAP below is the real
+        # invariant, asserted rather than left in prose (3b, PR #13: the weight survived two
+        # mutations because I audited thresholds and this is not one).
+        score = hard * _TIE_WEIGHT + soft
         if best is None or score > best[0]:
             best = (score, lang, f"hard={hard} soft={soft}")
 
@@ -528,6 +542,44 @@ def _selftest():
             fails.append(f"soft threshold: {why} -- want {want!r}, got {got!r} "
                          f"({reason}, hard={_h} soft={_s})")
 
+    # THE TIE-BREAKER WEIGHT, which is not a threshold and which my own threshold audit
+    # missed (3b, PR #13 review). Sweeping every numeric comparison in the module, five of
+    # seven were covered and the two survivors were both this weight: `hard * 10 -> hard * 1`
+    # and `-> hard * 100` each left all 60 known answers green. The weight is live, not a
+    # dead knob -- this input decides on it, measured: c is hard=1 soft=2 (w10 = 12, w1 = 3),
+    # java is hard=0 soft=4 (w10 = 4, w1 = 4). Weight 10 answers 'c', weight 1 answers
+    # 'java', both languages pass the evidence gate, so the weight ALONE picks the lane.
+    _tie = ('#include <stdio.h>\nvoid run() {\n    String name = "x";\n'
+            '    this.field = 1;\n    Thing t = new Thing();\n'
+            '    List<String> xs = null;\n}\nclass A extends B { }\n')
+    _sc = {}
+    for _lang in ("c", "js", "java"):
+        _st, _ok = _strip(_tie, _lang)
+        _sc[_lang] = (sum(1 for rx in _HARD[_lang] if rx.search(_st)),
+                      sum(1 for rx in _SOFT[_lang] if rx.search(_st)))
+    if not (_sc["c"][0] >= 1 and _sc["java"][0] == 0 and _sc["java"][1] > _sc["c"][1]):
+        # The case stopped straddling the weight, so asserting on its answer would assert
+        # nothing. Louder than a silent pass: a fixture that no longer discriminates is the
+        # shape that makes a green suite mean less than it reads.
+        fails.append(f"the tie-breaker case no longer straddles the weight (c={_sc['c']}, "
+                     f"java={_sc['java']}); it must be hard-for-c vs more-soft-for-java")
+    else:
+        got, reason = validate(_tie)
+        if got != "c":
+            fails.append(f"tie-breaker: one hard marker must outweigh more soft ones -- "
+                         f"want 'c', got {got!r} ({reason}); c={_sc['c']} java={_sc['java']}")
+
+    # AND THE ARITHMETIC THE DOCSTRING CLAIMS. "A hard marker outweighs any number of soft
+    # ones" is true only while every language has fewer soft markers than the weight. js
+    # already has 6 against a weight of 10. Someone adding four more inverts the rule with no
+    # test going red -- the claim is in prose and prose cannot fail. Asserted on the marker
+    # sets rather than on a classification, because that is where the invariant lives.
+    _max_soft = max(len(v) for v in _SOFT.values())
+    if _TIE_WEIGHT <= _max_soft:
+        fails.append(f"_TIE_WEIGHT is {_TIE_WEIGHT} but some language has {_max_soft} soft "
+                     f"markers, so soft markers can outvote a hard one and the docstring's "
+                     f"rule is false -- raise the weight or split the marker")
+
     if fails:
         print(f"code_lang_validate: {len(fails)} FAIL(s)")
         for f in fails:
@@ -536,8 +588,9 @@ def _selftest():
     total = sum(len(v) for v in KNOWN_ANSWERS.values())
     print(f"code_lang_validate selftest OK: {total} known answers (3 x 20, 14 accept + 6 reject "
           f"each), {len(_KA_CPP)} C++ refused-by-name cases with a plain-C negative control, "
-          f"6 stripper cases, a real-brace control and the JS division control. "
-          f"module_sha256={module_sha256()}")
+          f"6 stripper cases, a real-brace control, the JS division control, a soft-threshold "
+          f"pair, the tie-breaker case and the _TIE_WEIGHT > max-soft invariant "
+          f"({_TIE_WEIGHT} > {_max_soft}). module_sha256={module_sha256()}")
     return 0
 
 
