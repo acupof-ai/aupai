@@ -13173,7 +13173,34 @@ def _broken_getattr_cfg_names():
 #: may shrink, never grow. A file, not a literal here, so an owner shrinking it does not
 #: have to edit harness.py.
 _CITE_BASELINE = os.path.join("data", "train_cite_baseline.json")
-_CITE_RE = re.compile(r"train\.py:(\d+)")
+#: A citation names ONE OR MORE lines: one number, a comma list, or a hyphen range.
+#: The whole spec, not its first number -- the old `train\.py:(\d+)` matched only the FIRST
+#: entry of a comma list, so MEASURED 2026-09-07 on this tree: 3 comma lists and 3 ranges
+#: carried 11 targets the check never resolved, while it reported "21 citation(s): 19
+#: verified", a count that reads like coverage over 30. The same shape as the launcher glob that
+#: reported 6 of 13 -- a predicate that cannot see its own population. All 11 resolved non-blank
+#: at their shas, so nothing was rotten; what was missing was the checking.
+#:
+#: Spelled WITHOUT an example of the form, on purpose and for the second time in this file:
+#: this comment sits inside the tree the check walks, so a worked example here is a citation as
+#: far as the check can tell. Measured: the first version of this comment carried the five-number
+#: list verbatim and the check reported 4 of its own lines as bare debt. The docstring below
+#: already names that hazard for its own prose; the constant needed it too.
+_CITE_RE = re.compile(r"train\.py:(\d+(?:[,\-]\d+)*)")
+
+
+def _cite_line_numbers(spec):
+    """The line numbers a citation spec names: one number, or several, or a range's endpoints.
+
+    A RANGE names its ENDPOINTS, not every line between them: a region citation covering 84
+    lines would fail on the first blank line inside a normal function body. The endpoints are
+    what the sentence points at.
+    """
+    out = []
+    for part in re.split(r"[,\-]", spec):
+        out.append(int(part))
+    return out
+
 #: A 7+ hex run in the same sentence anchors the number to a frozen tree. `[0-9a-f]{7,40}`
 #: with a word boundary either side: a sha, not the tail of a longer hex string, and not a
 #: decimal number (a bare `1234567` matches [0-9a-f]{7} and is not a sha, so at least one
@@ -13373,40 +13400,45 @@ def check_train_cite_targets(root):
             # a whole-file search.
             after = src_lines[i:i + _CITE_WRAP_LINES]
             for m in _CITE_RE.finditer(line):
-                n += 1
-                num = int(m.group(1))
-                where = f"{rel}:{i}->{num}"
+                nums = _cite_line_numbers(m.group(1))
+                # PER TARGET, not per citation. A five-number list is five things to resolve,
+                # and counting it as one is what let 11 targets sit unverified behind a PASS
+                # reading "19 sha-anchored and verified". Written without an example of the
+                # form for the reason at _CITE_RE: this comment is inside the walked tree.
                 sha = _CITE_SHA_RE.search(_cite_sentence(line, m.start(), after))
-                if sha:
-                    anchored += 1
-                    s = sha.group(0)
-                    if s not in sha_cache:
-                        r = subprocess.run(["git", "show", f"{s}:train.py"], cwd=root,
-                                           capture_output=True, text=True)
-                        if r.returncode == 0:
-                            sha_cache[s] = r.stdout.splitlines()
-                        else:
-                            # A BLOB sha cannot be resolved as <sha>:<path>; cat-file reads
-                            # it directly.  The blob is the content the citation pins -- the
-                            # check stays syntactic (line exists, non-blank), not semantic
-                            # (the blob is train.py's), same as the commit path.
-                            r = subprocess.run(["git", "cat-file", "blob", s], cwd=root,
+                for num in nums:
+                    n += 1
+                    where = f"{rel}:{i}->{num}"
+                    if sha:
+                        anchored += 1
+                        s = sha.group(0)
+                        if s not in sha_cache:
+                            r = subprocess.run(["git", "show", f"{s}:train.py"], cwd=root,
                                                capture_output=True, text=True)
-                            sha_cache[s] = (r.stdout.splitlines()
-                                            if r.returncode == 0 else None)
-                    at = sha_cache[s]
-                    if at is None:
-                        bad.append(f"{where} names sha {s}, which this repo cannot resolve")
-                    elif not (0 < num <= len(at)) or not at[num - 1].strip():
-                        bad.append(f"{where} is blank or absent in train.py at {s}")
-                    continue
-                key = _cite_baseline_key(rel, str(num))
-                seen_counts[key] = seen_counts.get(key, 0) + 1
-                if seen_counts[key] <= baseline.get(key, 0):
-                    continue
-                target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
-                bad.append(f"{where} is a bare line number (now holds {target[:44]!r}) -- "
-                           f"cite the symbol, or anchor it to a sha")
+                            if r.returncode == 0:
+                                sha_cache[s] = r.stdout.splitlines()
+                            else:
+                                # A BLOB sha cannot be resolved as <sha>:<path>; cat-file reads
+                                # it directly.  The blob is the content the citation pins -- the
+                                # check stays syntactic (line exists, non-blank), not semantic
+                                # (the blob is train.py's), same as the commit path.
+                                r = subprocess.run(["git", "cat-file", "blob", s], cwd=root,
+                                                   capture_output=True, text=True)
+                                sha_cache[s] = (r.stdout.splitlines()
+                                                if r.returncode == 0 else None)
+                        at = sha_cache[s]
+                        if at is None:
+                            bad.append(f"{where} names sha {s}, which this repo cannot resolve")
+                        elif not (0 < num <= len(at)) or not at[num - 1].strip():
+                            bad.append(f"{where} is blank or absent in train.py at {s}")
+                        continue
+                    key = _cite_baseline_key(rel, str(num))
+                    seen_counts[key] = seen_counts.get(key, 0) + 1
+                    if seen_counts[key] <= baseline.get(key, 0):
+                        continue
+                    target = lines[num - 1].strip() if 0 < num <= len(lines) else "<past EOF>"
+                    bad.append(f"{where} is a bare line number (now holds {target[:44]!r}) -- "
+                               f"cite the symbol, or anchor it to a sha")
             # The ABBREVIATED form, checked per line rather than per match: a sentence naming
             # train.py and holding a bare number with no sha. Sentence-scoped, so a bare
             # number in a line that never names the file is not read as a citation.
@@ -14110,6 +14142,102 @@ def _selftest_cite_blob_anchor():
         shutil.rmtree(d, ignore_errors=True)
     return ("blob-anchored citations resolve via cat-file: in-range PASS, past-length "
             "FAIL (2 cases)")
+
+
+def _selftest_cite_multi_target_lists():
+    """Every number of a multi-target citation is resolved, not just the first.
+
+    The old spec regex stopped at the first number, so a comma list or a range was ONE target
+    to the check and N-1 of its numbers were never resolved. MEASURED 2026-09-07 on this tree:
+    3 comma lists and 3 ranges carried 11 unresolved targets, while the PASS line read "21
+    citation(s): 19 sha-anchored and verified" -- a count over citations that reads as a count
+    over targets. After the fix the same tree reports 35 and 33. All 11 resolved non-blank at
+    their shas, so nothing in the tree was rotten; the defect was coverage, not rot.
+
+    Four cases, and the fourth is the one that makes this a control rather than an assertion:
+      1. a list whose SECOND number is blank at the sha           -> FAIL, naming that number
+      2. a range whose ENDPOINT is past the file's length         -> FAIL, naming the endpoint
+      3. a list whose every number is real                        -> PASS
+      4. case 1 read with the OLD single-number spec              -> PASS, measured here
+
+    Case 4 runs the old regex against the same world instead of asserting it would pass. A
+    broken world only proves a fix when the unfixed code is green on it -- the registered
+    world for this check strips a sha, which fails under both specs and so distinguishes
+    neither. Same reasoning as the launcher-scope world that had to be built separately.
+
+    A range names its ENDPOINTS: the lines between them belong to a region, and a normal
+    function body has blank lines inside it, so requiring all of them to be non-blank would
+    fail on well-formed code.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        # A fixture train.py, not the real one: the assertion is about which numbers get
+        # resolved, and a fixture lets a chosen line be BLANK at the anchor sha, which is the
+        # condition the check reports. Line 2 is empty on purpose.
+        body = ["import os", "", "X = 1", "Y = 2", "Z = 3"]
+        with open(os.path.join(d, "train.py"), "w", encoding="utf-8") as fh:
+            fh.write("\n".join(body) + "\n")
+        os.makedirs(os.path.join(d, os.path.dirname(_CITE_BASELINE)), exist_ok=True)
+        shutil.copy(os.path.join(ROOT, _CITE_BASELINE), os.path.join(d, _CITE_BASELINE))
+        g("add", "-A")
+        g("commit", "-qm", "base")
+        sha = g("rev-parse", "HEAD").stdout.strip()
+        assert len(sha) == 40, f"expected a full sha, got {sha!r}"
+
+        subject = "train" + ".py"  # not spelled literally: this file is inside the walked tree
+        probe = os.path.join(d, "probe_multi.py")
+        old_spec = re.compile(r"train\.py:(\d+)")
+        cases = (
+            (f"# see {subject}:1,2 at {sha}\n", FAIL, "2",
+             "a list whose second number is blank at the sha must FAIL, naming it"),
+            (f"# see {subject}:1-99 at {sha}\n", FAIL, "99",
+             "a range whose endpoint is past EOF must FAIL, naming the endpoint"),
+            (f"# see {subject}:1,3,4,5 at {sha}\n", PASS, None,
+             "a list whose every number is real must PASS"),
+        )
+        for text, want, needle, why in cases:
+            with open(probe, "w", encoding="utf-8") as fh:
+                fh.write(text)
+            g("add", "-A")
+            g("commit", "-qm", "probe")
+            st, ev = check_train_cite_targets(d)
+            assert st is want, f"{why}, got {st}: {ev[:200]}"
+            if needle:
+                assert f"->{needle} " in ev, (
+                    f"{why}; the evidence must name :{needle}, got {ev[:200]}")
+
+        # CASE 4, the control. The world from case 1, read with the OLD single-number spec:
+        # it must be GREEN, or the world does not discriminate the two specs and cases 1-2
+        # would pass for a reason unrelated to the fix.
+        with open(probe, "w", encoding="utf-8") as fh:
+            fh.write(cases[0][0])
+        g("add", "-A")
+        g("commit", "-qm", "probe old-spec")
+        global _CITE_RE
+        _saved = _CITE_RE
+        try:
+            _CITE_RE = old_spec
+            st_old, ev_old = check_train_cite_targets(d)
+        finally:
+            _CITE_RE = _saved
+        assert st_old is PASS, (
+            "the old single-number spec must be GREEN on the case-1 world, or that world "
+            f"does not distinguish the two specs; got {st_old}: {ev_old[:200]}")
+        st_new, _ = check_train_cite_targets(d)
+        assert st_new is FAIL, "restoring the spec must restore the FAIL"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return ("multi-target citations: every number resolved (list-blank FAIL, range-endpoint "
+            "FAIL, all-real PASS), and the old single-number spec measured GREEN on the "
+            "list-blank world (4 cases)")
 
 
 def check_no_conflict_markers(root):
@@ -20963,6 +21091,7 @@ def _demo(only=None):
         _selftest_train_cite_baseline_is_content_keyed,
         _selftest_cite_scope_covers_facts,
         _selftest_cite_blob_anchor,
+        _selftest_cite_multi_target_lists,
         _selftest_launch_closes_its_orphaned_row,
         _selftest_monitor_close_loses_to_a_human,
         _selftest_shard_contract_worlds,
