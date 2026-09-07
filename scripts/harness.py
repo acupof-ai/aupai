@@ -17,6 +17,7 @@ python scripts/harness.py --selftest # every check must fail on its broken world
 import argparse
 import ast
 import errno
+import datetime
 import functools
 import glob
 import importlib.machinery
@@ -68,6 +69,7 @@ from harness_core import (  # noqa: E402
     _card_map,
     _cat_file_exists,
     _cite_sentence,
+    _classify_card_note,
     _close_row,
     _commit_delivers,
     _csv,
@@ -77,6 +79,8 @@ from harness_core import (  # noqa: E402
     _gitignore_reader,
     _gitignored_set,
     _main_touched,
+    _mentions_lend,
+    _parse_lend_window,
     _read_tasks,
     _tmp_repo,
     _tmp_repo_shaped,
@@ -87,6 +91,7 @@ from harness_core import (  # noqa: E402
     read_mix,
     refuse_in_integration_tree,
     tree_provenance,
+    _theirs_baseline,
     _unclassified_cards,
     walk_tracked,
 )
@@ -14583,12 +14588,22 @@ def _assert_card_ownership(root):
     #     SUBJECT was another team. Over-restrictive is a defect too -- it refuses aupai's own
     #     launches onto aupai's own cards and sends someone hunting for a grant that already
     #     exists -- so the guard has to bound the classifier from both sides, not just one.
+    #     THE TRIGGER IS `theirs`, NOT `theirs | unknown` (4c's ruling, 2026-09-08, asked for
+    #     before this was built because it decides the blast radius). A baseline-ours card must
+    #     classify NOT-THEIRS; ours and unclassified both satisfy that. Including `unknown` here
+    #     turns one unreadable note on any block card into a repo-wide FAIL -- measured: doctoring
+    #     cards[3] to unparseable prose failed the whole invariant and with it every commit in the
+    #     repo, where today it refuses `--cards 3` and nothing else. That is the wrong direction to
+    #     fail in: this property exists to catch drift in the PERMISSIVE direction (a card silently
+    #     leaving aupai's side), and an unreadable note is already fail-closed where it matters,
+    #     because _validate_explicit_cards refuses it at launch and property (2) asserts that
+    #     refusal on the live text. A guard that blocks everyone in order to report a condition
+    #     that already blocks the one launcher who cares is a worse guard, not a stricter one.
     block = _grant_cards(root, raise_on_false=False)[0] or []
-    misowned = [c for c in block if c in theirs or c in unknown]
+    misowned = [c for c in block if c in theirs]
     if misowned:
         return (f"block_cards gives {_csv(sorted(block))} to an aupai training block, but "
-                f"cards[] classifies {_csv(sorted(misowned))} as "
-                f"{'another team' if any(c in theirs for c in misowned) else 'unreadable'} "
+                f"cards[] classifies {_csv(sorted(misowned))} as another team's "
                 f"({'; '.join(f'cards[{c}] = ' + repr(str(cmap.get(c))[:60]) for c in misowned)}) "
                 f"-- the same controller wrote both, so they cannot disagree about the owner. An "
                 f"over-restrictive classifier refuses aupai's own launches onto aupai's own cards")
@@ -14635,6 +14650,77 @@ def _assert_card_ownership(root):
                         f"the cards[] owner")
         finally:
             _sh3.rmtree(_sd, ignore_errors=True)
+    # (6) THE BASELINE IS PINNED TO {0, 6} BY THE 2026-09-06 USER ORDER, and this is the property
+    #     without which the whole expiry mechanism is decorative. _theirs_baseline READS the list
+    #     from the file, which is what lets the controller move a card without editing code -- and
+    #     it is therefore also what lets a lend shrink the baseline instead of expiring. Dropping
+    #     card 6 from theirs_baseline mid-lend makes its note classify by the ordinary rule, which
+    #     returns `theirs` on a tileRL-subject note, so properties (1)-(5) and every agreement
+    #     property still pass while the card has silently stopped being expiry-checked. The
+    #     mechanism cannot detect its own removal; only a pin can.
+    #
+    #     A USER ORDER IS THE AUTHORITY, so this names the two cards and cites the order rather
+    #     than deriving the list from anything in the repo. That is the one place a card number
+    #     belongs in this function: properties (1)-(5) are deliberately number-free because they
+    #     guard a mechanism, and this one guards a decision only the user can change.
+    _base = _theirs_baseline(root)
+    if sorted(_base) != [0, 6]:
+        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. Cards "
+                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'); this list is what "
+                f"makes a lend on them EXPIRE, so removing a card from it silently stops the "
+                f"expiry check while every other property still passes -- the mechanism cannot see "
+                f"its own removal. Changing this needs a user order, not an edit")
+    # (7) A LEND IS A WINDOW, AND A NOTE CLAIMING ONE WITHOUT A READABLE WINDOW REFUSES. The
+    #     natural shortcut is to accept the word "lent" as the grant and read the dates as
+    #     decoration; measured on card 6's real note, that shortcut makes a 13-minute loan
+    #     permanent -- the note stays in the file forever because the file records what happened,
+    #     not only who owns what. So the classifier must return ours ONLY inside the window, and
+    #     a lend whose window it cannot parse must land in `unclassified` (which refuses) rather
+    #     than fall back to either owner.
+    #
+    #     ASSERTED BY VARYING THE CLOCK ON THE LIVE NOTE, not on a fixture I wrote: the same text
+    #     must read ours inside its window and theirs outside it. A fixture would prove the parser
+    #     works on my sentence; this proves it works on the controller's.
+    #
+    #     THE POPULATION IS "CLAIMS A LEND", NOT "HAS A PARSEABLE WINDOW", and my first version got
+    #     this wrong in the way I have the most notes about. It read
+    #         _lends = {c: n for c, n in cmap.items() if c in _base and _parse_lend_window(n)}
+    #     and every unparseable-window mutant PASSED -- 25:99Z, a backwards window, and the
+    #     timestamps deleted outright -- because each one makes _parse_lend_window return None,
+    #     which REMOVES the card from the set the property then quantifies over. The defect empties
+    #     its own population, so the loop runs zero times and reports success. Three of the four
+    #     worlds this property exists for were green against it.
+    _claimed = {c: n for c, n in cmap.items() if c in _base and _mentions_lend(n)}
+    for _c, _n in sorted(_claimed.items()):
+        _w = _parse_lend_window(_n)
+        if _w is None:
+            return (f"cards[{_c}] claims a lend but carries no readable window "
+                    f"({str(_n)[:110]!r}). A lend on a baseline-theirs card is a WINDOW: without "
+                    f"one there is nothing to expire, so the note would read as a standing grant "
+                    f"on another team's card. Write it as 'Lent ... YYYY-MM-DD HH:MM-HH:MMZ ...' "
+                    f"or drop the lend wording; an unreadable window refuses --cards {_c} today "
+                    f"and that refusal is a symptom, not the fix")
+        _inside = _w[0] + (_w[1] - _w[0]) / 2
+        _after = _w[1] + datetime.timedelta(days=1)
+        _before = _w[0] - datetime.timedelta(days=1)
+        _in_ours = _classify_card_note(_n, baseline_theirs=True, now=_inside)
+        _post = _classify_card_note(_n, baseline_theirs=True, now=_after)
+        _pre = _classify_card_note(_n, baseline_theirs=True, now=_before)
+        if (_in_ours, _post, _pre) != ("ours", "theirs", "theirs"):
+            return (f"cards[{_c}]'s lend window {_w[0]:%Y-%m-%d %H:%M}-{_w[1]:%H:%M}Z classifies "
+                    f"inside={_in_ours}, after={_post}, before={_pre} -- it must be ours ONLY "
+                    f"inside the window. A lend that stays ours after its window makes a "
+                    f"13-minute loan permanent; one that is ours BEFORE it opens hands the card "
+                    f"over while its owner is still running on it")
+        # The word without a window must NOT be a grant. Stripping the timestamps from the
+        # controller's own sentence is the drift this guards: the result claims a lend and cannot
+        # prove one, so it refuses instead of picking an owner.
+        _stripped = re.sub(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*Z", "", str(_n))
+        if _classify_card_note(_stripped, baseline_theirs=True, now=_inside) != "unclassified":
+            return (f"cards[{_c}] still classifies as "
+                    f"{_classify_card_note(_stripped, baseline_theirs=True, now=_inside)!r} with "
+                    f"its lend TIMESTAMPS REMOVED -- the word 'lent' is being read as the grant "
+                    f"and the window as decoration, which makes every past loan permanent")
     return None
 
 
@@ -20478,6 +20564,150 @@ def _selftest_main_in_no_worktree_discriminates():
             "third tree holds sidebranch, PASS on the same three-worktree world once main detaches")
 
 
+def _selftest_card_lend_expires():
+    """A lend on another team's card is ours ONLY inside its window, and the pin catches its removal.
+
+    WHY AN EXPLICIT SELFTEST AND NOT A `broken()` WORLD (b0-32). This check's registered world
+    grants block 0-3 and names card 2 as the lane, so it FAILs at case 1 -- long before
+    _assert_card_ownership runs. `--selftest` only demands the world reach the failing tier, so
+    every property below would stay unexercised behind a green selftest, which is the trap the
+    registered world's own docstring records one guard over.
+
+    THE WORLDS 4c SPECIFIED, and the two that would silently disable the mechanism:
+
+      baseline [0, 6]                      -> PASS   (the live shape)
+      baseline [0]                         -> FAIL   a lend can shrink the baseline instead of
+                                                     expiring; every other property still passes,
+                                                     so only the pin sees it
+      baseline [0, 6, 7]                   -> FAIL   card 7's standing GRANTED note is not a lend
+      lend with no readable window         -> FAIL   nothing to expire = a permanent grant
+      unreadable note on a block card      -> PASS   4c's ruling: per-card refusal, never repo-wide
+      block card handed to another team    -> FAIL   the permissive drift (4) exists for
+
+    THE CLOCK IS PINNED IN EVERY WORLD. A verdict that depends on the wall clock cannot be
+    tested: the same fixture passes this hour and fails next hour, and the failure reads as a
+    defect in the classifier rather than in the test.
+    """
+    import copy
+    import shutil as _sh
+    import tempfile as _tf
+
+    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(live_p):
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+    with open(live_p, encoding="utf-8") as fh:
+        live = json.load(fh)
+    if not _parse_lend_window(str((live.get("cards") or {}).get("6", ""))):
+        raise SelftestSkip("the live file carries no parseable lend to vary the clock on")
+
+    utc = datetime.timezone.utc
+    inside = datetime.datetime(2026, 9, 8, 21, 33, tzinfo=utc)   # in card 6's 21:32-21:34Z lend
+    after = datetime.datetime(2026, 9, 20, 12, 0, tzinfo=utc)    # long after it closed
+    before = datetime.datetime(2026, 9, 8, 21, 0, tzinfo=utc)    # before it opened
+
+    def world(mut):
+        d = copy.deepcopy(live)
+        mut(d)
+        t = _tf.mkdtemp(prefix="lend_")
+        os.makedirs(os.path.join(t, "runs"), exist_ok=True)
+        os.makedirs(os.path.join(t, "data"), exist_ok=True)
+        with open(os.path.join(t, "runs", "card_assignment.json"), "w") as f:
+            json.dump(d, f)
+        src = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+        if os.path.isfile(src):
+            _sh.copy(src, os.path.join(t, "data", "mix_scale_run_config.json"))
+        return t
+
+    def verdict(mut):
+        t = world(mut)
+        try:
+            return _assert_card_ownership(t)
+        finally:
+            _sh.rmtree(t, ignore_errors=True)
+
+    assert verdict(lambda d: None) is None, (
+        f"the unmutated live file must PASS or every FAIL below proves nothing: "
+        f"{str(verdict(lambda d: None))[:200]}")
+
+    # THE EXPIRY ITSELF, on the controller's own sentence rather than one I wrote.
+    note6 = str(live["cards"]["6"])
+    for label, now, want in (("inside its window", inside, "ours"),
+                             ("after it closed", after, "theirs"),
+                             ("before it opened", before, "theirs")):
+        got = _classify_card_note(note6, baseline_theirs=True, now=now)
+        assert got == want, (
+            f"card 6 {label}: expected {want}, got {got}. A lend that stays ours after its window "
+            f"makes a 13-minute loan permanent; one that is ours before it opens hands the card "
+            f"over while its owner is still running on it")
+    # And with the baseline flag OFF the same note is theirs at every clock -- no expiry applies to
+    # a card that is not baseline-theirs, so the flag is doing the work and not the timestamps.
+    assert _classify_card_note(note6, baseline_theirs=False, now=inside) == "theirs", (
+        "card 6's note classified as ours with baseline_theirs=False -- the expiry branch must be "
+        "gated on the baseline, or a lend note anywhere would grant the card")
+
+    # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [0])) is not None, (
+        "dropping card 6 from theirs_baseline PASSED. That world classifies card 6 by the ordinary "
+        "rule, which returns theirs on a tileRL-subject note, so the partition still looks right "
+        "while the card has silently stopped being expiry-checked -- the mechanism cannot detect "
+        "its own removal and property (6) is the only thing that can")
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7])) is not None, (
+        "widening theirs_baseline to include card 7 PASSED -- card 7 carries a standing aupai "
+        "grant, and a baseline naming it would expire a grant that has no window")
+    assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
+        "removing theirs_baseline entirely PASSED -- an absent baseline reads as no cards being "
+        "another team's, which is the permissive direction")
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [6, 0])) is None, (
+        "theirs_baseline [6, 0] FAILED -- the pin compares a SET of cards, not a written order")
+
+    # A LEND MUST BE A WINDOW. The population is "claims a lend", not "has a parseable window":
+    # my first version quantified over the latter, and all three unparseable worlds passed because
+    # the defect removes the card from the set the property loops over.
+    def no_window(d):
+        d["cards"]["6"] = ("tileRL (user order 2026-09-06, '0,6 tileRL'). Lent once to b0 for "
+                           "domain_loss, released and confirmed 0 MiB.")
+
+    assert verdict(no_window) is not None, (
+        "a lend claimed with NO readable window PASSED -- there is nothing to expire, so the note "
+        "reads as a standing grant on another team's card")
+    for bad in ("25:99-26:88Z", "21:34-21:32Z"):
+        assert verdict(lambda d, b=bad: d["cards"].__setitem__(
+            "6", note6.replace("21:32-21:34Z", b))) is not None, (
+            f"lend window {bad} PASSED -- an unparseable or backwards window must refuse, not fall "
+            f"back to either owner")
+
+    # 4c's RULING ON BLAST RADIUS, both halves. Unreadable is per-card; theirs is repo-wide.
+    def uncl3(d):
+        d["cards"]["3"] = "qqq prose no parser can classify"
+
+    assert verdict(uncl3) is None, (
+        "an unreadable note on block card 3 FAILED the repo-wide invariant. 4c's ruling "
+        "2026-09-08: a baseline-ours card must classify NOT-THEIRS, and ours or unclassified both "
+        "satisfy that -- an unreadable note is already fail-closed at launch, so blocking every "
+        "commit to report it is the wrong direction to fail in")
+    t_uncl = world(uncl3)
+    try:
+        _got, _ref = _validate_explicit_cards("3", root=t_uncl)
+        assert _ref, (f"--cards 3 was ACCEPTED with an unreadable note ({_got!r}) -- the per-card "
+                      f"refusal is what makes the repo-wide PASS above safe, so it is asserted "
+                      f"here rather than assumed")
+    finally:
+        _sh.rmtree(t_uncl, ignore_errors=True)
+    assert verdict(lambda d: d["cards"].__setitem__(
+        "2", "tileRL owns this now, 2026-09-08")) is not None, (
+        "a block card whose note hands it to another team PASSED -- this is the permissive drift "
+        "property (4) exists for, and the ruling above narrowed that property, so it is asserted "
+        "here to prove the narrowing did not disable it")
+    assert verdict(lambda d: d.__setitem__("block_cards", "1,2,3,4,5,6,7")) is not None, (
+        "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
+        "fields, so they cannot disagree about the owner")
+    return ("card lends expire: card 6 ours only inside 21:32-21:34Z (theirs before and after, and "
+            "theirs at every clock with baseline_theirs off); baseline [0] / [0,6,7] / absent all "
+            "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
+            "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
+            "while a card handed to another team still FAILs")
+
+
 def _selftest_facts_ephemeral_only_source():
     """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
     does not.
@@ -22069,6 +22299,7 @@ def _demo(only=None):
         _selftest_exp_fold,
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
+        _selftest_card_lend_expires,
         _selftest_facts_ephemeral_only_source,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
