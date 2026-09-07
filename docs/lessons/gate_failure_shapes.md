@@ -116,7 +116,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232, §236, §237).
 
-### R2-c Mutation did not take (9 incidents)
+### R2-c Mutation did not take (10 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
@@ -127,8 +127,9 @@ The mutation never landed or its verification reads the wrong signal.
 - §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where the OLD logic answers differently, enforced by an in-case assertion naming the old answer (a disagreement property, not a coverage property).
 - §234: three mutants were all caught at the SAME assertion with the same message, so the run proved one assertion and exercised none of the others; a mutation run proves N assertions only if the N mutants fail at N DIFFERENT, target-naming assertions — the vacuous-PASS shape moved into the thing that validates the test.
 - §241: a test that reimplements its subject tests the copy — the launch_gate selftest re-derived gate 9's partition inline, so mutating the gate's own exclusion changed nothing the test could see; 3 of 4 mutants survived, including "exclude nothing", which is the original bug. Fixed by extracting one function both sides call. Two invalid-mutant lessons from the same run: a mutant that dies of NameError is caught by the interpreter, not the test; and `x = "" or (f"...")` is a mutant identical to the original, whose survival measures nothing.
+- §268: a shared broken world already reporting 42 errors cannot test a fifth predicate added to it — the verdict is FAIL with or without the new mutation, and only five of the 42 reach the evidence string, so all four mutants survived. The clean tree failed the same way for the opposite reason: its instances of the new class are registered debt. A dedicated one-fact world per predicate separated them, each mutant redding exactly one. Two further green-on-the-wrong-branch defects inside that world: a `path@rev` case must cite a path resolvable ONLY at that rev, or the earlier openable-beside clause answers first and the branch under test is never reached; and a `git init` world has an empty object store so no rev resolves at all — it needs `objects/info/alternates` on the real store. Before adding a mutation to an existing world, ask what that world's verdict and visible evidence are without it.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234, §241).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234, §241, §268); how many errors a world already reports before a new mutation joins it (§268).
 
 ### R2-d Parser reads prose as code (11 incidents)
 
@@ -187,7 +188,9 @@ Cannot see: whether the metric's null hypothesis is the property's null hypothes
 - §185: a memory budget was costed at 6 bytes per parameter from a bf16 table nobody had set; the tensors are fp32 and the gradient was omitted, so the real figure is 12 and the 2048^2 arm OOMed after construction succeeded.
 - §230: a review reported five checks as MEASURED that had only been READ; the figure then acquired a second independent-looking source when repeated back, with zero executions. A stated basis is itself a claim — ask "when did this command run" of your own claim. Second instance the same day: a derived ratio carried across a rebuild of its inputs, so the digits in the decision document matched neither the old quantity nor the new one.
 
-Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185, §192).
+- §269: a summary grouped by SIZE cannot fail on a difference of KIND. Five recount deltas reported as "small, both directions, consistent with sampling noise"; four were, and the fifth was a definitional error whose +1,029,505 equalled the domain's document count to the unit — an omitted `<eos>` — while its own `tokens_config` claimed a full pass with no extrapolation. +0.159% sits unremarkably among -0.106%, -0.091%, +0.234%, +0.481%, which is the axis the grouping chose. What would have caught it is a per-row predicate the grouping discards: `delta == docs` is true or false of one row and no summary of five can express it. Shares one line with §268 — an aggregate is CHOSEN, so it cannot report what the choice discarded, and nothing in the artifact records that anything was.
+
+Cannot see: whether the basis a number carries is the basis it was produced with (§11, §12, §20, §21, §50, §62, §63, §64, §79, §86, §99, §104, §105, §109, §111, §115, §117, §118, §124, §127, §133, §143, §152, §155, §156, §157, §159, §161, §164, §172, §185, §192, §269); whether a grouped report's members share the KIND its grouping implies (§269).
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
