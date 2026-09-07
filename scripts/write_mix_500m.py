@@ -686,6 +686,7 @@ def build(code_tokens, cursor=None):
     )
 
     domains, warnings = {}, []
+    over_ceiling = {}
     total_rows_used = 0
     for name, (rows, why) in spec.items():
         _refuse_cross_role_rate(name, why)
@@ -735,6 +736,21 @@ def build(code_tokens, cursor=None):
         # end of the plan, and re-reads are re-reads whether an earlier segment or this one
         # bought them. On a fresh start used is 0 and this is the old expression exactly.
         drawn_epochs = (used + runtime) / pool_rows_est
+        if drawn_epochs > EPOCH_SOFT_CEILING and used:
+            # BLOCKS, DOES NOT WARN, and only under a cursor (4c's ruling 2026-09-07). The cap is
+            # already decided, so a resume mix over it is a WRONG mix, not a mix with a note --
+            # and _warnings is print-and-continue: nothing reads it, no gate refuses on it, and a
+            # 6.0-epoch mix would have shipped carrying an accurate warning nobody had to read.
+            # `and used` scopes it to the resume case: on a fresh start the ceiling keeps warning
+            # exactly as it did, because a fresh over-ceiling draw is a weight decision somebody
+            # is making deliberately and every committed mix was written under that behaviour.
+            over_ceiling[name] = (
+                f"{drawn_epochs:.3f} total epochs exceeds the {EPOCH_SOFT_CEILING}-epoch line "
+                f"once the resume cursor is counted: {used:,} rows already drawn plus {runtime:,} "
+                f"this plan, over a {pool_rows_est:,}-row pool. The segment alone is "
+                f"{runtime / pool_rows_est:.3f} epochs, which is why a per-segment ceiling read "
+                f"this as a PASS. Cut this domain's weight until the TOTAL clears 4."
+            )
         if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
                 f"{name}: {drawn_epochs:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
@@ -825,8 +841,14 @@ def build(code_tokens, cursor=None):
         "_budget_rationale": "docs/lessons/mix_500m_rationale.md",
         "_code_supply_tokens_at_generation": code_tokens,
         "_warnings": warnings,
-        "_untrusted_supply": {n: why for n, why in UNTRUSTED_SUPPLY.items() if n in domains},
-        "_launch_blocked": sorted(n for n in UNTRUSTED_SUPPLY if n in domains),
+        # ONE REASON DICT FOR BOTH BLOCK SOURCES, because main() prints
+        # _untrusted_supply[n] for every n in _launch_blocked -- a name in the list with no
+        # entry here is a KeyError at the moment the tool is trying to explain a refusal.
+        "_untrusted_supply": dict(
+            {n: why for n, why in UNTRUSTED_SUPPLY.items() if n in domains},
+            **over_ceiling),
+        "_launch_blocked": sorted(
+            set(n for n in UNTRUSTED_SUPPLY if n in domains) | set(over_ceiling)),
         "domains": domains,
     }
 
@@ -1325,7 +1347,57 @@ def selftest():
           "fresh 4 epochs: cot/chatml/chat_qa pass fresh and trip the ceiling under the live "
           "30B cursor, while build(..., None) and build(..., {}) stay byte-identical to fresh")
 
-    print("selftest: 15/15")
+    # 16. AND IT BLOCKS THE LAUNCH, not merely warns (4c's ruling 2026-09-07). Case 15 proves the
+    #     ceiling COUNTS right; this proves it BINDS. The distinction is not academic -- I shipped
+    #     case 15 believing the job was done, and _warnings is print-and-continue: no gate reads
+    #     it, so a 6.0-epoch resume mix would have been written with an accurate warning nobody
+    #     was required to read. That is the shape where the code is defensible and the contract
+    #     is false.
+    assert set(_resumed["_launch_blocked"]) == set(_cur), (
+        f"every over-ceiling domain must block the launch, got "
+        f"{_resumed['_launch_blocked']} for a cursor over {sorted(_cur)}")
+    for _n in _cur:
+        # A NAME WITH NO REASON IS A KeyError IN main()'s REFUSAL PRINT, which reads
+        # _untrusted_supply[n] for every n in _launch_blocked. The two fields are one mechanism.
+        assert _n in _resumed["_untrusted_supply"], (
+            f"{_n} blocks with no entry in _untrusted_supply; main() prints that dict per blocked "
+            f"name and would raise KeyError while explaining the refusal")
+        assert "total epochs" in _resumed["_untrusted_supply"][_n], (
+            f"{_n}'s block reason must name the TOTAL, since the segment figure is what read as "
+            f"a pass: {_resumed['_untrusted_supply'][_n][:80]}")
+    # THE FRESH-START PATH STILL ONLY WARNS, and the assertion must be made on a fresh build
+    # THAT ACTUALLY CROSSES THE LINE. Asserting it on the shipped config was the defect: no
+    # domain crosses fresh, so `not _fresh["_launch_blocked"]` holds no matter what the code
+    # does, and dropping the `and used` scope survived it. Caught by mutation, not by reading.
+    # textbook_30b at 60% is case 6's own over-the-line world (a real literal, far past the
+    # ceiling on its measured rows).
+    assert not _fresh["_launch_blocked"], (
+        f"a fresh start must not block: {_fresh['_launch_blocked']}")
+    _saved_tb = OBJECTIVE["textbook_30b"]
+    OBJECTIVE["textbook_30b"] = (0.60, _saved_tb[1])
+    try:
+        _fresh_over = build(8.85e9)
+        assert any("textbook_30b" in w and "exceeds" in w for w in _fresh_over["_warnings"]), (
+            f"the fixture must cross the ceiling or it tests nothing: "
+            f"{_fresh_over['_warnings']}")
+        assert not _fresh_over["_launch_blocked"], (
+            f"a FRESH over-ceiling draw must warn and not block -- blocking it would refuse a "
+            f"weight decision made deliberately, and every committed mix was written under the "
+            f"warn behaviour: {_fresh_over['_launch_blocked']}")
+        # The same weight WITH a cursor blocks, which is the whole scope of the ruling.
+        _cur_over = build(8.85e9, {"textbook_30b": 1})
+        assert "textbook_30b" in _cur_over["_launch_blocked"], (
+            f"the same over-ceiling weight under a cursor must block: "
+            f"{_cur_over['_launch_blocked']}")
+    finally:
+        OBJECTIVE["textbook_30b"] = _saved_tb
+    _hi = build(8.85e9, {"zh_web": 99_000_000})
+    assert "zh_web" in _hi["_launch_blocked"], "a huge cursor on any domain must block too"
+    print("  16 an over-ceiling total under a cursor goes to _launch_blocked with a reason naming "
+          "the total (not just _warnings, which nothing reads), the reason is in the same dict "
+          "main() prints per blocked name, and a fresh start still only warns")
+
+    print("selftest: 16/16")
     return 0
 
 
