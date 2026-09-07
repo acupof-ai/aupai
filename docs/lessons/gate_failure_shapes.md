@@ -62,13 +62,14 @@ Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false gree
 
 Seven mechanism sub-rules. Each is a check target.
 
-### R2-a No broken world (23 incidents)
+### R2-a No broken world (24 incidents)
 
 A check that was never made to fail is decoration; the broken world must be asserted, not assumed.
 
 - §89: a selftest "passed" because the world-build step silently failed and the check ran on an empty population.
 - §103: a check that cannot fail — its acceptance condition was tautological.
 - §218: a fixture sampling "a recent commit" drew a merge commit; `git show --name-only` on a merge prints no files, so the world had no subject and read as broken code.
+- §258: a module extracted so it could be tested got seven worlds, all calling its functions in-process; nothing exec'd its `__main__`, so exit-code and cwd-root mutants — including one that accepts every commit — went 7/7 green.
 - §219: the next filter over the same sample rejected the only file the first non-merge commit touched (.jsonl not in the extension list); both were caught only because the world FAILs rather than skips when it cannot find its subject.
 - §228: a world copied from real files was too incomplete for the subject to import (only scripts/ on sys.path; `from train import ...` died at module scope); the subject's ModuleNotFoundError read as the subject being broken. An import error in a fixture's verdict is a fixture bug until proven otherwise.
 - §231: agreement between two things that share an error is not evidence — a fixture with no power to disagree (one directory, so cwd and $MAIN are the same path) reported agreement and it read as confirmation; a differential fixture must be fed an input where the two sides are known to differ.
