@@ -631,10 +631,47 @@ def _main_when(root=None):
     and cannot be compared to a commit date."""
     root = root or ROOT
     if root not in _MAIN_WHEN:
-        r = subprocess.run(["git", "-C", root, "log", "main", "--format=%H %cd", "--date=format-local:%Y-%m-%d %H:%M"],
+        # main_ref, not a bare "main": on a CI pull_request build the bare form exits 128 and this
+        # returns an EMPTY map, which reads as "no commit on main has a date" -- silent, unlike
+        # _main_touched's raise, so every time-comparison in _commit_delivers quietly stopped
+        # applying rather than failing loudly.
+        r = subprocess.run(["git", "-C", root, "log", main_ref(root) or "main",
+                            "--format=%H %cd", "--date=format-local:%Y-%m-%d %H:%M"],
                            capture_output=True, text=True, env={**os.environ, "TZ": "UTC"})
         _MAIN_WHEN[root] = dict(ln.split(" ", 1) for ln in r.stdout.splitlines() if " " in ln)
     return _MAIN_WHEN[root]
+
+_MAIN_REF = {}
+
+
+def main_ref(root):
+    """The ref that IS main in `root`: "main", "origin/main", or "refs/remotes/origin/main".
+
+    None when no ref named main resolves at all -- an unreadable tree, which callers must
+    treat as such rather than as an empty history.
+
+    WHY THIS IS SHARED. actions/checkout on a pull_request build fetches the base as
+    refs/remotes/origin/main and creates NO local main, so a bare `git log main` /
+    `git rev-parse main` exits 128 on a repository that reads perfectly. Three call sites had
+    the bare form and each fails differently: _main_touched raised, _main_when returned an
+    empty map, and _broken_tasks_closed_by_commit BUILT A WORLD WITH NO MAIN -- which is the
+    one that cost the second CI round, because fixing only the reader left the fixture handing
+    it a mainless repo and the raise fired from the world instead of the code under test.
+
+    A LOCAL main WINS wherever it exists, so a laptop, the pod, and a normal push build are
+    unchanged; the remote-tracking forms are the CI fallback only.
+    """
+    if root not in _MAIN_REF:
+        found = None
+        for ref in ("main", "origin/main", "refs/remotes/origin/main"):
+            r = subprocess.run(["git", "-C", root, "rev-parse", "--verify", "--quiet", ref],
+                               capture_output=True, text=True)
+            if r.returncode == 0 and r.stdout.strip():
+                found = ref
+                break
+        _MAIN_REF[root] = found
+    return _MAIN_REF[root]
+
 
 def _main_touched(root):
     """{full sha: [paths touched]} for every commit reachable from main, one git call.
@@ -668,7 +705,13 @@ def _main_touched(root):
     and absent from the second would read as not delivered.
     """
     if root not in _MAIN_TOUCHED:
-        r = subprocess.run(["git", "-C", root, "log", "main", "-m",
+        # WHICH REF IS `main` HERE: see main_ref. A local main wins; on a CI pull_request build
+        # only refs/remotes/origin/main exists, and the bare form exited 128 there -- reported
+        # faithfully by the raise below as an unreadable main, which failed every PR check job
+        # on a tree that reads fine (4c 2026-09-07: 3b's PR #1, jobs 34088976228 / 34089010051,
+        # blocking every session's PRs on the day the flip landed).
+        ref = main_ref(root) or "main"
+        r = subprocess.run(["git", "-C", root, "log", ref, "-m",
                             "--name-only", "--format=%x00%H"],
                            capture_output=True, text=True)
         # A NONZERO rc RAISES. It used to be discarded: a tree with no readable `main` exits 128
@@ -686,7 +729,8 @@ def _main_touched(root):
         # in the same structure, and it only ever described the first.
         if r.returncode != 0:
             raise RuntimeError(
-                f"git log main failed in {root} (exit {r.returncode}): {r.stderr.strip()[:200]}")
+                f"git log main failed in {root} (exit {r.returncode}): no ref named main, "
+                f"origin/main or refs/remotes/origin/main resolves: {r.stderr.strip()[:200]}")
         out = {}
         for block in r.stdout.split("\x00")[1:]:
             lines = block.split("\n")
