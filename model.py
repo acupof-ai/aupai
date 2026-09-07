@@ -1497,25 +1497,23 @@ class HybridLM(nn.Module):
                     f"moe_layers={getattr(cfg, 'moe_layers', None)!r}. An out-of-range index would "
                     f"silently convert fewer layers than the launch line says, and the params "
                     f"assertion would then be the only thing that noticed")
-            # REFUSED WITH grad_ckpt, for the reason the memory branch above documents and one
-            # more that is specific to MoE. Under recomputation the block's forward runs twice, so
-            # tokens_per_expert -- written under no_grad inside forward -- would be counted twice
-            # per step, and readout 4's usage fraction and load Gini are computed from exactly
-            # that counter. A stop rule reading a doubled denominator is worse than no stop rule:
-            # it reports a healthier spread than the arm has. The control's launch line carries
-            # --no-grad_ckpt, so nothing is lost; enabling it later means moving the counter, not
-            # flipping a flag (hooks-dont-fire-in-recompute cost a day here already).
-            if getattr(cfg, "grad_ckpt", False):
-                raise ValueError(
-                    "moe_experts with grad_ckpt is refused. MoEFFN.forward increments "
-                    "tokens_per_expert under no_grad, and grad_ckpt re-runs the forward during "
-                    "recomputation, so every routed token would be counted twice and readout 4's "
-                    "usage fraction, entropy and Gini would all be computed over a doubled "
-                    "denominator -- reporting a healthier load spread than the arm actually has, "
-                    "which is the direction that makes a stop rule fail to fire. The control's "
-                    "line carries --no-grad_ckpt so the arms do not need it. To enable it, move "
-                    "the counter out of forward and measure on a card first."
-                )
+            # GRAD_CKPT IS ALLOWED (b0-27, 2026-09-07). It was refused here on the reasoning that
+            # recomputation runs forward twice, so tokens_per_expert -- written under no_grad
+            # inside forward -- would double, and readout 4's usage fraction and load Gini are
+            # computed from that counter. The doubling is real and was measured on a card: ratio
+            # exactly 2.0000, uniform across all four MoE layers, with the surplus correction
+            # disabled. The CONSEQUENCE was not real. A uniform 2x moves neither consumer:
+            # update_bias steps on sign(counts - mean), and sign is invariant under a positive
+            # scale (ties included), so the bias step is bit-identical; usage_frac, used_experts,
+            # entropy_norm and load_gini are all functions of the count distribution or are
+            # normalised by the total, and were verified bit-identical at 1x and 2x on the measured
+            # counts. Only `tokens` and `window_steps` moved -- two bookkeeping fields, not the
+            # stop rule. So the refusal's specific claim, that a doubled denominator would report
+            # a healthier spread, was false for the doubling that actually occurs.
+            # MoEFFN.commit_token_counts now subtracts the surplus after backward, so the counter
+            # is exact rather than merely harmless: post-fix ratio 1.0000 on the same card, with a
+            # --no-commit control reading 2.0000 in the same claim to prove the test can still see
+            # the defect.
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
@@ -1653,6 +1651,32 @@ class HybridLM(nn.Module):
             for b in self.blocks:
                 b.ar1 = b.ar2 = None
         return super().load_state_dict(sd, strict)
+
+    def commit_moe_token_counts(self):
+        """Commit every MoE layer's token counts for this micro-batch. Returns the layers swept.
+
+        One call per micro-batch, after loss.backward(). Wraps MoEFFN.commit_token_counts, whose
+        docstring carries the arithmetic and why it runs after backward rather than inside forward.
+
+        RETURNS THE COUNT SO A CALLER CAN ASSERT IT IS NOT ZERO (tilerl). A sweep that resolves
+        zero layers leaves the surplus in place and the ratio reads 2.0 -- indistinguishable from
+        the correction not working at all. The count separates those two failures. It also splits
+        what `getattr(model, "moe_layers", None) or []` folds together at an external call site:
+        "this model has no MoE layers" and "the attribute is gone" both yield an empty list there,
+        and only one of them is a bug.
+
+        `self.moe_layers` holds block INDICES, not modules, so the layers are reached as
+        self.blocks[i].ffn -- the same shape train.py uses for its balancer sweep.
+        """
+        n = 0
+        for i in self.moe_layers:
+            ffn = getattr(self.blocks[i], "ffn", None)
+            commit = getattr(ffn, "commit_token_counts", None)
+            if commit is None:
+                continue
+            commit()
+            n += 1
+        return n
 
     @staticmethod
     def _init(m):
