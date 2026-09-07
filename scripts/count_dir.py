@@ -103,7 +103,7 @@ def count_dir(d, nw=24, quiet=False):
     from corpus_fingerprint import fp_dir
     from count_tokens import CONVENTION
 
-    return {
+    out = {
         "dir": d,
         "n_shards": len(shards),
         "docs": docs,
@@ -115,6 +115,62 @@ def count_dir(d, nw=24, quiet=False):
         "counter": f"scripts/count_dir.py -> {os.path.basename(TOK)}",
         "wall_s": round(time.time() - t0, 1),
     }
+    out.update(classify_delta(d, tot, docs))
+    return out
+
+
+def classify_delta(d, tokens, docs, stats_name="build_corpus_stats.json"):
+    """Name the cause when this count disagrees with the domain's own stamp.
+
+    delta == docs is an <eos> defect and NOT sampling noise, and the two are
+    indistinguishable by magnitude: en_c4_30b's +1,029,505 is +0.159%, which sits
+    unremarkably among the -0.106%, -0.091%, +0.234%, +0.481% of four genuine byte
+    extrapolations recounted the same afternoon. Reported as a per-row identity because a
+    summary of several deltas cannot express it -- delta == docs is true or false of ONE
+    domain (3b, gate_failure_incidents §269).
+
+    Here rather than in facts_well_formed, which was the other candidate: a fact row is
+    written after someone has already decided what the delta means, and 4 of 51 int-valued
+    rows carry both a doc count and a prior value, all 4 already attributing the cause
+    correctly. This function runs where both numbers exist and nobody has attributed
+    anything yet -- the moment the mistake was actually available to make.
+    """
+    p = os.path.join(d, stats_name)
+    if not os.path.isfile(p):
+        return {}
+    from count_tokens import CONVENTION
+
+    try:
+        with open(p, encoding="utf-8") as f:
+            st = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        return {"stamp_delta_note": f"{stats_name} unreadable ({e.__class__.__name__})"}
+    stamped = st.get("tokens")
+    if stamped is None:
+        stamped = st.get("kept_tokens")
+    if not isinstance(stamped, int):
+        return {"stamp_delta_note": f"{stats_name} carries no integer tokens/kept_tokens"}
+    delta = tokens - stamped
+    o = {"stamp_tokens": stamped, "stamp_delta": delta}
+    if delta == 0:
+        o["stamp_delta_cause"] = "agrees"
+    elif delta == docs:
+        o["stamp_delta_cause"] = (
+            f"CONVENTION: delta {delta:,} == docs {docs:,} exactly. The stamp omits one "
+            f"<eos> per document, so it is short under {CONVENTION!r}. This is a "
+            f"definitional error, NOT sampling noise -- do not report it as a percentage."
+        )
+    elif delta == -docs:
+        o["stamp_delta_cause"] = (
+            f"CONVENTION (inverted): delta {delta:,} == -docs. The stamp counted a "
+            f"terminator this counter does not, or double-counted one."
+        )
+    else:
+        o["stamp_delta_cause"] = (
+            f"unattributed: delta {delta:,} != docs {docs:,}; read the stamp's "
+            f"tokens_config before calling it sampling noise"
+        )
+    return o
 
 
 def _selftest():
@@ -142,9 +198,15 @@ def _selftest():
         with open(os.path.join(d, "build_corpus_stats.json"), "w") as f:
             json.dump({"domain": "x"}, f)
 
-        got = count_dir(d, nw=2, quiet=True)
+        # The stamp carries the <eos>-defective count on purpose, so count_dir's OWN return
+        # has to name the cause. A stamp with no tokens key would make the wiring assertion
+        # below unfalsifiable.
         bare = 2 * sum(len(e.ids) for e in tok.encode_batch(rows))
         want = bare + 2 * len(rows)
+        with open(os.path.join(d, "build_corpus_stats.json"), "w") as f:
+            json.dump({"domain": "x", "tokens": bare}, f)
+
+        got = count_dir(d, nw=2, quiet=True)
         assert got["n_shards"] == 2, f"n_shards {got['n_shards']} != 2 (exclusions leaked)"
         assert got["docs"] == 2 * len(rows), f"docs {got['docs']} != {2 * len(rows)}"
         assert got["tokens"] == want, f"tokens {got['tokens']} != {bare} + {2 * len(rows)}"
@@ -157,9 +219,53 @@ def _selftest():
         assert sum(os.path.getsize(p) for p in leaked) > got["bytes"], (
             "negative control: including holdout_slice_* must inflate bytes, it did not"
         )
+
+        # WIRING, not just the function. The four cases below call classify_delta directly,
+        # so they all pass even if count_dir never calls it -- measured: deleting the
+        # out.update(...) line left this selftest green (§268's shape in this file). Assert
+        # against the fixture's real stamp, which count_dir already read above.
+        assert "stamp_delta" in got, (
+            "count_dir's return carries no stamp_delta: classify_delta is not wired in, "
+            "so every case below is testing a function nothing calls"
+        )
+        assert got["stamp_delta_cause"].startswith("CONVENTION:"), (
+            f"the fixture's stamp is short by exactly its {got['docs']} docs, so count_dir "
+            f"must name the convention; it said {got['stamp_delta_cause']!r}"
+        )
+
+        # classify_delta, against a stamp mutated to each of the four cases. The <eos> case
+        # is checked at a delta the percentage view cannot distinguish: the fixture's own
+        # +docs is a large relative shift, so the assertion is on the CAUSE string, never on
+        # a threshold. The three-way spread is the point -- a magnitude test would group the
+        # eos case with the unattributed one and report both as "small" (§269).
+        stamp_p = os.path.join(d, "build_corpus_stats.json")
+        cases = {
+            "agrees": got["tokens"],
+            "CONVENTION:": got["tokens"] - got["docs"],
+            "CONVENTION (inverted)": got["tokens"] + got["docs"],
+            "unattributed": got["tokens"] - got["docs"] - 1,
+        }
+        for want_prefix, stamped in cases.items():
+            with open(stamp_p, "w") as f:
+                json.dump({"domain": "x", "tokens": stamped}, f)
+            cause = classify_delta(d, got["tokens"], got["docs"])["stamp_delta_cause"]
+            assert cause.startswith(want_prefix), f"stamp {stamped}: {cause!r} !~ {want_prefix!r}"
+        # off-by-one from the eos case must NOT read as the convention: the identity is
+        # exact, and a near-miss is the case a tolerance would wrongly absorb.
+        assert "delta" in cause and "!= docs" in cause, cause
+        # and a stamp with no integer tokens says so rather than passing silently
+        with open(stamp_p, "w") as f:
+            json.dump({"domain": "x"}, f)
+        o = classify_delta(d, got["tokens"], got["docs"])
+        assert "stamp_delta_note" in o, (
+            f"a stamp with no tokens key must report why it could not be compared; "
+            f"classify_delta returned {o!r}, which reads as 'nothing to say'"
+        )
+        assert "no integer tokens" in o["stamp_delta_note"], o
     print(
         f"count_dir selftest OK: 2 shards, {got['docs']} docs, {bare} ids + "
-        f"{2 * len(rows)} <eos> = {got['tokens']}; holdout_slice_* and stats excluded"
+        f"{2 * len(rows)} <eos> = {got['tokens']}; holdout_slice_* and stats excluded; "
+        f"classify_delta separates agrees/eos/inverted/unattributed by identity, not magnitude"
     )
     return 0
 
