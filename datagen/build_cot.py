@@ -12,6 +12,7 @@ recorded per source: N/A when the source carries no ground-answer column
         --schema openthoughts --raw data/raw/cot_open_thoughts \
         --out data/corpus/cot_open_thoughts
 """
+
 import argparse
 import json
 import os
@@ -26,6 +27,8 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from cot_pilot import THINK_TAG, chain_of  # noqa: E402
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+from count_tokens import CONVENTION, count_docs  # noqa: E402
 
 
 def ok_flags(chain, ans, ans_verified):
@@ -36,7 +39,8 @@ def ok_flags(chain, ans, ans_verified):
     norm = re.sub(r"\s+", " ", chain).strip() if chain else ""
     f["too_short"] = (not f["no_chain"]) and len(norm) < 200
     f["truncated"] = (not f["no_chain"]) and bool(
-        re.search(r"(\.\.\.\s*$|truncat|\[\s*\.\.\.\s*\])", chain, re.I))
+        re.search(r"(\.\.\.\s*$|truncat|\[\s*\.\.\.\s*\])", chain, re.I)
+    )
     if ans_verified is None:
         f["math_unchecked"] = False  # N/A: no ground answer in this source
     else:
@@ -79,26 +83,55 @@ def main():
                 if any(fl.values()):
                     continue
                 docs_kept += 1
-                t = len(TOK.encode(body).ids)
+                t = count_docs([body], TOK)
                 tok_tot += t
-                f.write(json.dumps({"src": a.source, "problem": r.get("problem") or
-                        r.get("input") or "", "chain": body, "answer": ans or "",
-                        "tokens": t}, ensure_ascii=False) + "\n")
+                f.write(
+                    json.dumps(
+                        {
+                            "src": a.source,
+                            "problem": r.get("problem") or r.get("input") or "",
+                            "chain": body,
+                            "answer": ans or "",
+                            "tokens": t,
+                        },
+                        ensure_ascii=False,
+                    )
+                    + "\n"
+                )
         wrote += 1
         print(f"  {pq_name}: {len(rows)} rows", flush=True)
-    stats = {"domain": os.path.basename(a.out), "source": a.source,
-             "filters": "cot_criterion_0903", "srcfp": None,
-             "criterion": "docs/standards/cot_criterion_0903.md",
-             "schema": a.schema, "docs_in": docs_in, "docs_kept": docs_kept,
-             "docs_deleted": docs_in - docs_kept,
-             "reject_checks": dict(ck), "tokens_kept": tok_tot,
-             "check4": "verified-from-source" if a.schema == "openr1" else "N/A-no-ground-answer",
-             "n_shards": wrote}
+    stats = {
+        "domain": os.path.basename(a.out),
+        "source": a.source,
+        "filters": "cot_criterion_0903",
+        "srcfp": None,
+        "criterion": "docs/standards/cot_criterion_0903.md",
+        "schema": a.schema,
+        "docs_in": docs_in,
+        "docs_kept": docs_kept,
+        "docs_deleted": docs_in - docs_kept,
+        "reject_checks": dict(ck),
+        "tokens_kept": tok_tot,
+        "tokens_config": f"{CONVENTION}, counted at build time over the `chain` field by "
+        f"scripts/count_tokens.count_docs; full population, no sampling",
+        "check4": "verified-from-source" if a.schema == "openr1" else "N/A-no-ground-answer",
+        "n_shards": wrote,
+    }
     with open(os.path.join(base, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
-    print(json.dumps({"docs_in": docs_in, "docs_kept": docs_kept,
-                      "docs_deleted": docs_in - docs_kept,
-                      "tokens_kept": tok_tot, "shards": wrote}, ensure_ascii=False), flush=True)
+    print(
+        json.dumps(
+            {
+                "docs_in": docs_in,
+                "docs_kept": docs_kept,
+                "docs_deleted": docs_in - docs_kept,
+                "tokens_kept": tok_tot,
+                "shards": wrote,
+            },
+            ensure_ascii=False,
+        ),
+        flush=True,
+    )
 
 
 if __name__ == "__main__":
