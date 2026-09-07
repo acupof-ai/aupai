@@ -425,6 +425,51 @@
    "uncertainty": "exact for the current code_dedup08/ dir",
    "status": "measured",
    "boundary": "PYTHON ONLY -- inputs are code_py_starcoder + code_py_rp1t. It does not feed the all-language code_rp1t role, and summing it with cs.code_rp1t_landed double-counts rp1t's python: the union size is unmeasured."
+  },
+  {
+   "id": "cs.code_rp1t_near_dup_rate",
+   "value": {
+    "th0.7": 0.225725,
+    "th0.8": 0.18235,
+    "th0.9": 0.11415
+   },
+   "unit": "fraction of documents in a near-duplicate cluster",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/runs/code_rp1t_neardedup.json via `python3 datagen/near_dedup_scale.py --root data/corpus --domains code_rp1t --out runs/code_rp1t_neardedup.json --ckdir <pod>/runs/code_rp1t_ck --pool 16` (105m52s, exp row code_rp1t_neardedup_0907)",
+   "config": {
+    "docs_total": 3747157,
+    "sample": "FULL (all shards, no sampling)",
+    "method": "MinHash-J estimate, n_perm 96, bands 12 x 8 rows, char 5-gram",
+    "candidate_pairs": 271834915,
+    "edges": {
+     "th0.7": 140366800,
+     "th0.8": 66945658,
+     "th0.9": 10970754
+    },
+    "clusters_th0.7": 184477,
+    "ci95": {
+     "th0.7": [
+      0.225302,
+      0.226149
+     ],
+     "th0.8": [
+      0.18196,
+      0.18274
+     ],
+     "th0.9": [
+      0.11382,
+      0.11447
+     ]
+    },
+    "verify": "n=200 pairs with est>=0.85, mean est 0.899 vs exact J 0.876, MAE 0.030 -- the estimator reads slightly HIGH, so it over-clusters marginally"
+   },
+   "uncertainty": "Wilson 95% CI given per threshold; the estimate-vs-exact MAE of 0.030 is a separate error term and is not folded into those CIs",
+   "status": "measured",
+   "boundary": "A rate over DOCUMENTS, not tokens. Near-duplicates are not length-neutral, so this does not convert to a token loss by multiplication -- the deduped token count requires building the dir and counting it. It also says nothing about WHICH copy is kept: code_dedup_build keeps the minimum ordinal.",
+   "guard_phrases": [
+    "code_rp1t is upstream-deduped",
+    "rp1t github needs no dedup"
+   ]
   }
  ]
 }
