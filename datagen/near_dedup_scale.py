@@ -307,10 +307,27 @@ def _selftest():
         caught = "drop" in str(e)
     assert caught, "a drop computed without subtracting the representative was NOT refused"
 
-    print("near_dedup_scale selftest OK: code_rp1t th0.9 reproduces participation 0.114146 and "
-          "drop 0.083486 (427,723 - 114,888 = 312,835 = the build's exact removal, 3,747,157 - "
-          "3,434,322); an empty world gives 0/0 and does not raise; a representative-less count "
-          "is refused")
+    # (4) the control that makes (3) mean something: with the GUARD removed as well, the
+    # same mutant must pass silently. Without this, case 3 proves only "something raises",
+    # and a future edit that makes _rates raise for an unrelated reason keeps it green.
+    # 62 called this as the finding on PR #1; it was run by hand and belongs in the file.
+    noguard = mutant_src.replace("    if multi and drop >= part:\n", "    if False:\n")
+    assert noguard != mutant_src, "the guard line moved; this control no longer applies"
+    ns2 = {}
+    exec(noguard, {"__builtins__": __builtins__}, ns2)  # noqa: S102
+    slipped = True
+    try:
+        ns2["_rates"]([2, 3], 100)
+    except AssertionError:
+        slipped = False
+    assert slipped, ("with the guard disabled the mutant still raised -- case 3 is passing for "
+                     "some other reason and proves nothing about the guard")
+
+    print("near_dedup_scale selftest OK: 4 cases. code_rp1t th0.9 reproduces participation "
+          "0.114146 and drop 0.083486 (427,723 - 114,888 = 312,835 = the build's exact removal, "
+          "3,747,157 - 3,434,322); an empty world gives 0/0 and does not raise; a mutant that "
+          "drops the representative subtraction is refused; and with the guard also removed that "
+          "same mutant passes silently, so case 3 fails on the guard and not on something else")
     return 0
 
 
