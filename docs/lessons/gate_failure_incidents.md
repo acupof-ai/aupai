@@ -455,6 +455,24 @@ The general form: a property true of every pair is not true of the transitive cl
 Evidence: `runs/dedup_b2v2.py` and `runs/why_refuse.py` on the pod, `runs/dedup_b2v2.log` (`REFUSE: 8355 code_rp1t_dd09 document(s) would be deleted`), `runs/why_refuse.log` (`dd09-dd09 0 ... TRANSITIVE 8355 ... MISSED it 0`).
 open: nothing asserts that a keep-whole or hold-out set is enforced as a predicate rather than inferred from ordering. The class is one grep — a dedup or partition that relies on `min()`/sort position to protect a subset — and it would have fired here before the run.
 
+### §270 (2026-09-08, R2)
+
+A surviving mutant has two causes that demand opposite fixes: the check is weak, or the clause the mutation touched is dead. Reading the survival as the first when it is the second adds a check that cannot fire.
+
+b0's review of 3b-17 found that `build_dd09_full.py` asserted the union's token total and never its file set. `count_dir` globs `*.jsonl`, so a stray shard from an earlier run is counted as supply and the total stays self-consistent — the token gate is blind by construction, not weak, because the stray's tokens really are in the directory. I added the comparison as `{(name, st_ino)}` sets and its selftest summary printed **"file set asserted equal to the plan BY INODE"**.
+
+Three things went wrong in the mutation sweep, in order.
+
+**The first mutant died on the wrong assertion.** Zeroing the inodes in both sets also collapsed `set(inos)` in the duplicate-inode check two lines below, so that check raised instead. The selftest was red, which read as the mutation working. A mutation that kills a different assertion than the one it targets establishes nothing about the target; the message named `links one inode under two names`, not `file set is not the plan`, and that is the only signal that separated them.
+
+**The honest mutant then survived**, and so did a second (`len(got) != len(want)` instead of membership). Both for one reason: the link loop above refuses any planned name whose `st_ino` differs from its source, and creates every planned name. So by the time the comparison runs, every planned name is present and inode-verified, `want <= got` always holds, `missing` is empty on every reachable path, and cardinality is equivalent to membership. The inode half was unreachable and the summary line was claiming a property the comparison could not have — the strength lives in the loop.
+
+Neither survivor is a hole. Both clauses are kept with the unreachability commented, since a refactor of the loop should not silently downgrade the check to a cardinality test, and the summary line was rewritten to say what the check does.
+
+**The duplicate-inode check had no world at all.** It catches what the name comparison cannot: two sources already hardlinked to each other, where every name is present, every link is verified, the file set equals the plan, and one file is counted under two names. The world links `src_d_000` to `src_a_000`, and its control has to assert that the token gate cannot catch it — 3 docs over 2 distinct inodes — or the world never establishes the check is load-bearing. Same for the stray-shard world: its control asserts the stray IS counted (`docs == 7`, not 6).
+
+The real directory is clean — 387 names both ways, sources disjoint because `b2v2_dd` was deduped against `dd09`. b0's line on that: "safe by accident of the numbering rather than by construction, which is worth a line in the script if a third source is ever added." The check is that line.
+
 ### §268 (2026-09-08, R2)
 A shared broken world cannot test a check whose verdict its mutation cannot move. `_broken_facts` is the world for `facts_well_formed`, and it is a good one: real files, four mutations, each a copy-then-break of a real artifact. Adding a fifth predicate to that check, three mutations were added to the same world — a source naming only `/tmp`, one naming `/tmp` beside a tracked script, one naming `/tmp` beside `path@rev` — and all four mutants of the new predicate SURVIVED.
 
