@@ -21832,8 +21832,19 @@ def _demo(only=None):
 
     # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
     # allowed data file must pass; a small unallowed data file must refuse.
+    #
+    # ON A BRANCH, NOT main. This world invokes the REAL hook directly, so every gate in it
+    # fires, and _refuse_committing_on_main (de, 2026-09-08) refuses when HEAD is the branch
+    # main -- which broke main's CI at 60a6f0af on the "allowed data file must pass" assertion.
+    # `git init -b fixture` rather than a checkout: -b names the initial branch, and this world's
+    # first hook run happens before any commit exists, where HEAD is unborn.
+    #
+    # The two `rc != 0` assertions were the more dangerous half: my refusal satisfies them, so
+    # they would have kept passing for the wrong reason -- the 6MB blob and the unallowed data
+    # file would never have been the cause. A gate that makes a negative assertion pass by
+    # firing first is invisible in exactly the world that asserts a refusal.
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
@@ -21862,8 +21873,14 @@ def _demo(only=None):
     # refused. git runs no pre-commit hook on a clean merge, so this is the only
     # commit-time gate on the merge path (2026-08-31: a bad fact landed in main
     # through a merge). The branch commit uses --no-verify: the point is the merge.
+    #
+    # `-b fixture`, not main: this world installs the REAL hook, and
+    # _refuse_committing_on_main refuses a commit whose HEAD is main (de, 2026-09-08). On main
+    # the merge would be refused by that gate rather than by the data/ allow-list, so the world
+    # would pass for the wrong reason -- its assertion is a refusal, and any gate firing first
+    # satisfies it.
     dm = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=dm, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=dm, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=dm, capture_output=True)
     for hk in ("pre-commit", "pre-merge-commit"):
@@ -21878,7 +21895,7 @@ def _demo(only=None):
     open(os.path.join(dm, "data", "evil.bin"), "w").write("x")
     subprocess.run(["git", "add", "data/evil.bin"], cwd=dm, capture_output=True)
     subprocess.run(["git", "commit", "-qm", "evil", "--no-verify"], cwd=dm, capture_output=True)
-    subprocess.run(["git", "checkout", "-q", "main"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "checkout", "-q", "fixture"], cwd=dm, capture_output=True)
     open(os.path.join(dm, "other"), "w").write("y")  # diverge so the merge is non-ff
     subprocess.run(["git", "add", "other"], cwd=dm, capture_output=True)
     subprocess.run(["git", "commit", "-qm", "other"], cwd=dm, capture_output=True)
@@ -21889,8 +21906,12 @@ def _demo(only=None):
 
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
+    #
+    # `-b fixture`, not main: this world installs the REAL hook and asserts a commit SUCCEEDS, so
+    # _refuse_committing_on_main (de, 2026-09-08) would refuse it outright. Same shape as the
+    # AGENTS.md note below -- a gate that has nothing to do with manifests deciding this world.
     d2 = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
     hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
