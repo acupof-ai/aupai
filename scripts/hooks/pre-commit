@@ -283,6 +283,67 @@ def _shared_repo_state(root):
     return digest, frozenset(idx)
 
 
+def _refuse_committing_on_main(merging):
+    """Refuse a commit whose HEAD is the branch `main`. Nobody's session branch is main.
+
+    2026-09-08, 05:40:09Z: b0 committed 484a9528 onto refs/heads/main from aupai-b0, which had
+    main checked out. At 05:45:45 they ran `branch: Reset to origin/main`, and main moved off
+    that commit -- a sideways move, caught by main_advances_by_ancestry, which then refused every
+    commit repo-wide until PR #54 recorded the pair. Nothing was lost only because b0 created
+    refs/heads/b0 from HEAD in the same second (both reflog entries read 05:45:45), so the rescue
+    was an act rather than a safety net.
+
+    THE PREDICATE IS "HEAD IS main", NOT "main != origin/main". 4c's proposal was the latter, and
+    it would NOT have fired: at 05:40:09 local main was 7049750c and origin/main had been pushed
+    to 7049750c at 05:39:05, so the two were EQUAL and the divergence was created BY the commit
+    this hook runs before. A predicate reading the state the commit produces cannot see the commit
+    that produces it. Checking HEAD's branch instead fires before the first such commit exists,
+    which is the whole point of a pre-commit gate.
+
+    This is main_in_no_worktree's hazard at the write. That check (WARN, harness) sees the state
+    statically and asks another session to fix their own tree; this refuses the act that turns the
+    state into a loss. Neither replaces the other: a tree can hold main checked out for hours
+    harmlessly, and a commit here is wrong the first time.
+
+    `symbolic-ref --short -q HEAD` and not `rev-parse --abbrev-ref HEAD`, and the reason is NOT
+    the one this docstring first gave. It claimed abbrev-ref's literal "HEAD" when detached was a
+    string a name test could match; measured, both refuse identically there, because "HEAD" !=
+    "main" and the gate returns. A mutation sweep swapping the two commands SURVIVED every world
+    until an UNBORN HEAD was added -- `git init` with no commit yet, where abbrev-ref exits 128 and
+    prints "HEAD" (so the mutant returns early and PERMITS the commit) while symbolic-ref exits 0
+    and correctly answers "main". That is the repo's very first commit, made on main, which is the
+    one commit this gate most needs to catch. The right justification is that symbolic-ref reads
+    the ref HEAD points at, which exists before any commit does; rev-parse resolves HEAD to an
+    object, which does not.
+
+    Exempt while merging: `merge_main.sh` never checks main out, but a session resolving a
+    conflict on a branch that legitimately tracks main must be able to finish. Silent when git
+    cannot answer -- a tree with no HEAD is not a tree committing on main.
+    """
+    if merging:
+        return
+    r = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or r.stdout.strip() != "main":
+        return
+    print(
+        "REFUSING: HEAD is the branch `main`, so this commit lands on main directly.\n"
+        "Commit on your own branch and let merge_main advance main:\n"
+        "  git branch <your-name> && git checkout <your-name>   # keeps the staged work\n"
+        "  git commit <paths> -m '...'\n"
+        "  scripts/merge_main.sh <your-name>\n"
+        "main is advanced by an atomic update-ref compare-and-swap that touches no working "
+        "tree, which is safe only while no tree holds main. A commit here also puts work on a "
+        "ref every other session fast-forwards: on 2026-09-08 the next `Reset to origin/main` "
+        "moved main off such a commit and the sideways move refused every commit in the "
+        "repository until it was recorded by hand.\n"
+        "If you are already holding work here, `git branch <name>` first -- it keeps HEAD's "
+        "commit and your index, and costs nothing if you were about to be right.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
+
+
 def _refuse_copied_worktree(top):
     """Refuse a commit from a COPY of a linked worktree -- it writes the original's branch.
 
@@ -454,6 +515,7 @@ def main():
             )
             sys.exit(1)
         _refuse_copied_worktree(top)
+        _refuse_committing_on_main(merging)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Behind main. A conclusion drawn from a check has two inputs -- the check's code
@@ -934,6 +996,12 @@ def main():
         # Measured 2026-09-07, three mutants each killing a different world set: count-not-overlap
         # -> W2/W3-control/W6, two-dot -> W3-control/W6, always-empty -> W1/W3.
         "scripts/test_behind_main_overlap.py",
+        # _refuse_committing_on_main's five worlds. Registered because the gate it tests lives in
+        # THIS file and nowhere else, and because its load-bearing world is one nobody would think
+        # to build: an UNBORN HEAD is the only world separating symbolic-ref from
+        # `rev-parse --abbrev-ref`, and the swap mutant survived the other four. Detached, which is
+        # the world the first docstring claimed, does not discriminate at all.
+        "scripts/test_on_main_refusal.py",
         # The stamp branch that decides whether the next training launch is allowed. Registered
         # because it runs entirely against a FAKE pod -- the three outcomes are decided by
         # stamp_sync's own arguments, so the one gate nobody can exercise from this machine
@@ -2592,22 +2660,41 @@ def _selftest():
     # true merge, not a fast-forward: a fast-forward runs no hook, which is how this
     # stayed hidden. Kept separate because it needs a worktree, not just a repo.
     d2 = tempfile.mkdtemp()
+    _nohooks = tempfile.mkdtemp()  # empty: advance_main points core.hooksPath here
     try:
         def git(*a, cwd=d2):
             return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
                                   text=True, env=clean)
+
+        def advance_main(msg, *paths):
+            """Advance MAIN in the primary worktree, which is checked out on main.
+
+            core.hooksPath at an empty directory, so this command runs NO hooks. These commits
+            BUILD the world; they are not the action under test. _refuse_committing_on_main
+            refuses a commit whose HEAD is the branch main (de, 2026-09-08), so without this
+            every world-5 setup commit was refused, main never advanced, and 5c/5e failed on a
+            precondition -- "worktree is not behind" -- rather than on what they assert. Setup
+            must not pass through the gate under test; the same mistake in the other direction
+            cost an hour in test_on_main_refusal.py, where installing the hook during setup made
+            the merge exemption read as broken.
+
+            NOT --no-verify: that is banned repo-wide, and a hook's own selftest is the last
+            place to demonstrate it. hooksPath says what is meant -- this world's construction
+            runs no hooks -- and leaves the flag with no foothold.
+            """
+            git("add", *paths)
+            return git("-c", f"core.hooksPath={_nohooks}", "commit", "-q", "-m", msg)
+
         for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
                   ("config", "user.name", "t")):
             git(*a)
         with open(os.path.join(d2, "f.txt"), "w") as fh:
             fh.write("base\n")
-        git("add", "f.txt")
-        git("commit", "-q", "-m", "base")
+        advance_main("base", "f.txt")
         git("branch", "-q", "feat")
         with open(os.path.join(d2, "m.txt"), "w") as fh:
             fh.write("m\n")
-        git("add", "m.txt")
-        git("commit", "-q", "-m", "main-ahead")
+        advance_main("main-ahead", "m.txt")
         wt = os.path.join(d2, "wt")
         git("worktree", "add", "-q", wt, "feat")
         hooks = os.path.join(d2, ".git", "hooks")
@@ -2650,8 +2737,7 @@ def _selftest():
             git(*a, cwd=wt)
         with open(os.path.join(d2, "m2.txt"), "w") as fh:
             fh.write("m2\n")
-        git("add", "m2.txt")
-        git("commit", "-q", "-m", "main-ahead-2")
+        advance_main("main-ahead-2", "m2.txt")
         behind2 = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
         if behind2 == "0":
             fails.append("world 5b precondition: worktree is not behind again, proves nothing")
@@ -2682,8 +2768,7 @@ def _selftest():
         # legitimately allowed and this world would assert the wrong thing.
         with open(os.path.join(d2, "code.py"), "w") as fh:
             fh.write("x = 0  # main's version\n")
-        git("add", "code.py")
-        git("commit", "-q", "-m", "main touches code.py")
+        advance_main("main touches code.py", "code.py")
         with open(os.path.join(wt, "runs", "friction.jsonl"), "a") as fh:
             fh.write('{"id": "y", "kind": "hook"}\n')
         with open(os.path.join(wt, "code.py"), "w") as fh:
@@ -2708,8 +2793,7 @@ def _selftest():
         # Nothing this commit writes lands on top of anything main changed.
         with open(os.path.join(d2, "unrelated.txt"), "w") as fh:
             fh.write("main moved here\n")
-        git("add", "unrelated.txt")
-        git("commit", "-q", "-m", "main-ahead on an unrelated file")
+        advance_main("main-ahead on an unrelated file", "unrelated.txt")
         behind5e = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
         if behind5e == "0":
             fails.append("world 5e precondition: worktree is not behind, proves nothing")
@@ -2758,6 +2842,7 @@ def _selftest():
                          "git can merge without a person, not merge=union alone")
     finally:
         shutil.rmtree(d2, ignore_errors=True)
+        shutil.rmtree(_nohooks, ignore_errors=True)
 
     # WORLD 6 (must DETECT): _shared_repo_state notices a selftest that wrote to the
     # shared repo, which is the e1-14 detector. Built from the real leak: a fake
@@ -3026,6 +3111,13 @@ def _selftest():
                          f"pass without testing anything (copied {_copied})")
         git8("add", "-A")
         git8("commit", "-q", "-m", "base")
+        # ON A BRANCH, not main. This world runs the hook DIRECTLY (below), so every gate in it
+        # fires, and _refuse_committing_on_main (de, 2026-09-08) refuses first when HEAD is main --
+        # the mapped-test refusal this world asserts was never reached, and it failed as "refused
+        # but not by the mapped test". A branch is also what a real session commits on, so this
+        # makes the world more faithful rather than less. After the base commit, so the branch has
+        # somewhere to point.
+        git8("checkout", "-q", "-b", "feat8")
 
         # THE WORLD MUST BE GREEN BEFORE IT IS BROKEN, or a refusal proves nothing. Measured
         # directly: run the mapped test against the unmutated copy.
