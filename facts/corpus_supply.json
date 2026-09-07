@@ -429,11 +429,14 @@
   {
    "id": "cs.code_rp1t_near_dup_rate",
    "value": {
-    "th0.7": 0.225725,
-    "th0.8": 0.18235,
-    "th0.9": 0.11415
+    "participation_th0.7": 0.225725,
+    "participation_th0.8": 0.18235,
+    "participation_th0.9": 0.114146,
+    "drop_th0.7": 0.176494,
+    "drop_th0.8": 0.138487,
+    "drop_th0.9": 0.083486
    },
-   "unit": "fraction of documents in a near-duplicate cluster",
+   "unit": "two rates, both over documents. participation_thX = docs_in_clustered_pairs / docs_total, the share of documents that have at least one near-dup. drop_thX = (docs_in_clustered_pairs - clusters) / docs_total, the share a dedup removes, because one representative per cluster is kept. They are not interchangeable and participation is the larger of the two.",
    "measured": "2026-09-07",
    "source": "/work/aupai/runs/code_rp1t_neardedup.json via `python3 datagen/near_dedup_scale.py --root data/corpus --domains code_rp1t --out runs/code_rp1t_neardedup.json --ckdir <pod>/runs/code_rp1t_ck --pool 16` (105m52s, exp row code_rp1t_neardedup_0907)",
    "config": {
@@ -461,14 +464,124 @@
       0.11447
      ]
     },
-    "verify": "n=200 pairs with est>=0.85, mean est 0.899 vs exact J 0.876, MAE 0.030 -- the estimator reads slightly HIGH, so it over-clusters marginally"
+    "verify": "n=200 pairs with est>=0.85, mean est 0.899 vs exact J 0.876, MAE 0.030 -- the estimator reads slightly HIGH, so it over-clusters marginally",
+    "clusters": {
+     "th0.7": 184477,
+     "th0.8": 164364,
+     "th0.9": 114888
+    },
+    "docs_in_clustered_pairs": {
+     "th0.7": 845827,
+     "th0.8": 683295,
+     "th0.9": 427723
+    },
+    "drop_derivation": "drop = (docs_in_clustered_pairs - clusters) / docs_total. At th0.9: (427723 - 114888) / 3747157 = 312835 / 3747157 = 0.083486, and 312835 is exactly the 3,747,157 - 3,434,322 the build removed, so the fact and the artifact agree to the document."
    },
    "uncertainty": "Wilson 95% CI given per threshold; the estimate-vs-exact MAE of 0.030 is a separate error term and is not folded into those CIs",
    "status": "measured",
-   "boundary": "A rate over DOCUMENTS, not tokens. Near-duplicates are not length-neutral, so this does not convert to a token loss by multiplication -- the deduped token count requires building the dir and counting it. It also says nothing about WHICH copy is kept: code_dedup_build keeps the minimum ordinal.",
+   "boundary": "A rate over DOCUMENTS, not tokens. Near-duplicates are not length-neutral -- the removed documents are 2.1106x mean length -- so NEITHER rate converts to a token loss by multiplication; the deduped token count requires building the dir and counting it (cs.code_rp1t_dd09_landed). Second, participation is not a drop rate: this entry carried one field named near_dup_rate holding the participation value at all three thresholds, and multiplying th0.9's 0.114146 by a token count overstates the loss by 701,466,449 tokens (62, 2026-09-07). It also says nothing about WHICH copy is kept: code_dedup_build keeps the minimum ordinal.",
    "guard_phrases": [
     "code_rp1t is upstream-deduped",
-    "rp1t github needs no dedup"
+    "rp1t github needs no dedup",
+    "near_dup_rate is the drop rate"
+   ]
+  },
+  {
+   "id": "cs.code_rp1t_markup_composition",
+   "value": {
+    "rate_docs": 0.13,
+    "frac_tokens": 0.3685,
+    "generated_doc_tokens": 443264290,
+    "generated_doc_frac": 0.059
+   },
+   "unit": "fraction of code_rp1t, and tokens",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/runs/code_rp1t_markup_rate.json (400-doc uniform draw, datagen/sample_markup_rate.py) plus runs/code_rp1t_markup_handread.json (100 code-verdict heads + all 52 positives, hand read by 3b)",
+   "config": {
+    "draw": "400 documents drawn uniformly over code_rp1t's 3,747,157; binomial CI on the doc rate",
+    "rate_docs_ci95": [
+     0.097,
+     0.163
+    ],
+    "frac_tokens_basis": "token-weighted over the SAME 400-doc draw; a ratio estimator, so its error exceeds the binomial CI and no CI is quoted",
+    "mean_tokens": {
+     "markup": 6613,
+     "code": 1694
+    },
+    "positives_labelled_52": {
+     "FP-code": {
+      "n": 13,
+      "token_share": 0.341,
+      "note": "C#/Java/TypeScript/PHP source with inline XML doc-comments or Android string resources; the >=20-tags-in-4k rule fires on them"
+     },
+     "handwritten-web": {
+      "n": 22,
+      "token_share": 0.317,
+      "note": "three.js demos, Thymeleaf templates, WordPress walkers, test harness pages -- code we keep"
+     },
+     "data-xml": {
+      "n": 12,
+      "token_share": 0.183,
+      "note": "Android manifests, Atom feeds, DocBook, Qt .ts translations"
+     },
+     "generated-doc": {
+      "n": 5,
+      "token_share": 0.159,
+      "note": "javadoc, dlib cpp_pretty_printer, Xtext -- the only class a filter should target"
+     }
+    },
+    "false_negatives": "2 of 100 code-verdict heads were generated markup the sniff missed (an ASF-licensed XML file, a JAXB-generated file); 10 more were prose/README/rst, neither markup nor code",
+    "classifier": "content sniff only -- code_rp1t rows carry {content, source, url} and url is null in 6000 of 6000 sampled, so there is no filename in the domain and extension-based classification is impossible"
+   },
+   "uncertainty": "rate_docs 0.130 is a LOWER BOUND: the sniff misses markup without a doctype or generator line, measured at 2 per 100 code verdicts. The 0.3685 token fraction is NOT removable supply -- three of its four classes are content to keep.",
+   "status": "measured",
+   "retracted_value": [
+    2790000000,
+    2.79
+   ],
+   "claim": "Retracted 2026-09-07 within the hour it was made: '~2.79B tokens of generated markup, the filter is a bigger lever than the dedup by 3.2x'. That multiplied the 36.85% token fraction by the domain total without labelling what was inside it. The hand read shows only 15.9% of those tokens are generated documentation -- 443,264,290, 5.9% of the domain -- against ~864M removed by the th0.9 dedup, so DEDUP is the bigger lever by about 2x and the original claim was inverted.",
+   "audit": "3b hand-read all 52 positives and 100 of the 348 code verdicts; 4c ruled no markup filter, and that any future one keys on the generator line, never the tag count",
+   "refuted_by": "runs/code_rp1t_markup_handread.json",
+   "boundary": "Says nothing about the OTHER code domains: code_py_starcoder and code_py_rp1t are python-filtered by AST parse, so a generated-HTML population cannot survive there and this rate must not be carried across.",
+   "guard_phrases": [
+    "37% of code_rp1t is markup",
+    "the markup filter is the bigger lever"
+   ]
+  },
+  {
+   "id": "cs.code_rp1t_dd09_landed",
+   "value": 6232268741,
+   "unit": "tokens",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/data/corpus/code_rp1t_dd09 via `python3 datagen/count_corpus_dir.py code_rp1t_dd09 --root /work/aupai` on the pod: frozen data/tokenizer.json over ALL 235 shards, 3,434,322 docs, no sampling",
+   "config": {
+    "shards": 235,
+    "docs": 3434322,
+    "text_bytes": 19133282151,
+    "tok_per_byte": 0.32573,
+    "built_by": "datagen/code_dedup_build.py --inputs code_rp1t --th 0.9 --ckdir runs/code_rp1t_ck, 28m3s; stamp carries threshold 0.9 and filters near-dedup-th0.9-ordinal-rep",
+    "input": {
+     "domain": "code_rp1t",
+     "srcfp": "d8b9b18ba080f487",
+     "filters_fp": "33462c13868a2194",
+     "tokens": 7565334396
+    },
+    "dedup": {
+     "docs_in": 3747157,
+     "docs_kept": 3434322,
+     "docs_deleted": 312835,
+     "clusters_gt1": 114888,
+     "method": "MinHash-J char 5-gram est>=0.9, 96 perms, 12 bands, ordinal representative"
+    },
+    "exact_j_note": "est reads 0.030 HIGH against exact J (n=200 at est>=0.85, mean est 0.899 vs exact 0.876), so th0.9 on est is about J 0.87 exact",
+    "threshold_choice": "th0.9 over code_dedup08's th0.8, on a 40-pair band hand read: the 0.8-0.9 band is distinct files sharing boilerplate -- two projects' Android ApplicationTestCase stubs at est 0.8854, two Coq CI pages differing in one title at 0.8646 (runs/code_rp1t_band_handread.json, 4c ruling)"
+   },
+   "uncertainty": "exact for the current code_rp1t_dd09/ dir. Token loss is 17.62% (1,333,065,655) against a DOCUMENT loss of 8.35%: near-duplicate documents are 2.11x the mean length, so a doc rate does not convert to a token loss -- the projection from 11.415% said 6,701,751,475 and was 469,482,734 high, +7.5%, in the direction that flatters supply.",
+   "status": "measured",
+   "boundary": "The all-language rp1t github role only. Does not compose with cs.code_dedup08_landed, whose python inputs overlap this dir's source by construction. Says nothing about what a markup filter would additionally remove (cs.code_rp1t_markup_composition puts the generated-doc class at 5.9% of the PRE-dedup dir).",
+   "guard_phrases": [
+    "dedup costs 8% of the code supply",
+    "the near-dup rate is the token loss"
    ]
   }
  ]
