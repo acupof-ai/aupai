@@ -274,7 +274,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 
 | Rule | Shapes | §refs |
 |---|---|---|
-| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 22 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 §179 §190 §198 §199 §211 §246 |
+| Verify premises before acting, sources before citing; a correct conclusion does not certify its argument | 23 | §8 §14 §18 §37 §38 §46 §49 §52 §57 §66 §70 §96 §106 §131 §139 §175 §179 §190 §198 §199 §211 §246 §263 |
 | A criterion must express the property asked; test it on known-answer positive and negative worlds before trusting output | 122 | §9 §10 §23 §26 §29 §31 §34 §35 §40 §45 §48 §54 §56 §61 §65 §67 §69 §71 §72 §73 §75 §76 §77 §80 §81 §84 §85 §89 §90 §91 §94 §97 §98 §103 §108 §110 §112 §114 §121 §125 §128 §132 §134 §135 §137 §140 §141 §142 §146 §147 §148 §149 §150 §151 §153 §158 §165 §169 §170 §171 §173 §174 §176 §177 §178 §180 §183 §184 §186 §187 §191 §196 §200 §201 §202 §203 §205 §206 §207 §208 §209 §212 §213 §215 §216 §217 §218 §219 §220 §221 §222 §223 §224 §225 §226 §227 §228 §229 §231 §232 §233 §234 §235 §236 §237 §238 §239 §240 §241 §242 §243 §244 §247 §248 §249 §250 §252 §253 §254 §257 §258 §259 |
 | Artifacts carry their producer's identity; missing identity refuses, never rebuilds | 6 | §4 §24 §44 §182 §189 §210 |
 | Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue | 14 | §7 §13 §25 §51 §59 §136 §166 §181 §188 §193 §197 §204 §251 §256 |
@@ -333,8 +333,10 @@ checkout" sent a session into the one tree where sessions overwrite each other.
 | A commit that touches a file in the manifest's scope is pushed by its committer | `pod_drift` |
 | `harness task` and `harness friction` write the ledger of the tree | `test_integration_tree_guard` |
 | Corpus directories named by any ladder mix (data/mix_scale_ | `ladder_config_frozen` |
+| Code goes through a GitHub PR; ledger-only commits keep `merge_main` | `merge_main.sh --selftest` |
+| A push now happens AFTER the merge, not in the same step (4) | manual: the ORDER of two operator actions leaves no artifact recording which came first. `pod_drift --check` catches the consequence — a stamp naming a sha main does not hold reads as drift — but not the discipline |
 
-56 rules: 25 checked, 31 manual. The count is regenerated from `harness check`'s
+56 rules: 23 checked, 33 manual. The count is regenerated from `harness check`'s
 `agents_rules_covered` line, not maintained by hand — it was stale at "35 rules: 14
 checked, 21 manual" while the code said 36/13/23, and stale again at "39 rules: 18
 checked, 21 manual" on 2026-09-05, which is the same drift the table itself had before
@@ -372,6 +374,45 @@ the check began reading it.
 
 - `harness task` and `harness friction` write the ledger of the tree they are invoked from: run them in your worktree, never in the integration tree, whose hook refuses EVERY commit there (2026-09-05 flip; there is no controller exemption). **Enforced from 2026-09-05, and the scope is all three ledgers — tasks, friction, and board.** The writers refuse when the tree they are about to append to is the integration tree. The predicate is `scripts/integration_tree.py` — main worktree AND has linked worktrees, both read from git, shared with the pre-commit hook so both read one implementation — and NOT the branch: the branch form answered `"HEAD"` once the tree was detached, so it went inert at exactly the moment the guard was needed. A path test would hardcode one laptop's layout and be wrong on the pod and in CI. The has-linked-worktrees clause is what keeps a standalone clone out: CI and all 27 of `harness.py`'s `git init` fixtures are their own main worktree and block nobody. It fails open where git cannot answer (no repository, git absent), because such a tree is not the integration tree and refusing there would break every `_tmp_repo()` fixture and every CI checkout; an unimportable predicate is loud instead of silent, since with the tree detached there is no branch test left to fall back to. The refusal is at the write rather than the commit because by the time the hook refuses, the row is already dirty in the tree everyone merges through — which is what happened twice, ten minutes apart, before this existed.
 - Each session works in its own worktree on its own branch: `git worktree add ../aupai-<name> -b <name>` (from this repository; the branch starts at `main`). `/Users/bytedance/code/aupai` is the integration tree and is **detached** — `main` is checked out in no worktree at all, which is what makes the compare-and-swap below legal. NOBODY commits there, controller included.
+- **Code goes through a GitHub PR; ledger-only commits keep `merge_main` (user order 2026-09-07).**
+  A commit touching anything outside `runs/*.jsonl` and `EXPERIMENTS.md` is code:
+
+  ```bash
+  git push -u origin HEAD
+  gh pr create --base main --head <branch>
+  # CI must be green on the PR's HEAD sha
+  # your second reader approves ON THE PR, with `artifact:` or `case:` in the approval body
+  # THE REVIEWER, never the author: gh pr merge --merge
+  ```
+
+  Ledger-only commits still merge with `scripts/merge_main.sh <branch>` — immediate, union-merged,
+  CAS. That split is the ruling and not a shortcut: the union driver and the compare-and-swap are
+  what make an append-only ledger mergeable without a person, and putting a review cycle in front
+  of every experiment row would buy nothing and cost every measurement a round trip.
+
+  Four consequences worth knowing before the first PR, each measured rather than assumed:
+
+  - `--merge`, never `--squash`. tilerl squashes; we cannot. Three checks key on shas that must
+    stay on main — `pod_drift`'s `data/pod_synced_head` stamp, `tasks_closed_by_commit`, and
+    `main_advances_by_ancestry`. A squash gives the merged commit a new sha, so a close row or a pod
+    stamp written before the merge names a commit main never holds. `--merge` keeps branch shas
+    reachable and all three predicates unchanged.
+  - Approval is necessary, not sufficient. The approval body must contain `artifact:` or
+    `case:`. GitHub approval is a click; a review row names what the reviewer opened, and
+    `review_present` FAILs 30 minutes after a close if it names neither. `review.jsonl` stays for
+    rulings and non-code reviews; `scripts/review_row_lookup.py --pr` reads either source and
+    either satisfies the gate.
+  - `merge_main` refuses post-flip code and prints these commands. The refusal is per commit
+    and by the commit's own committer date, so a branch carrying pre-flip code work still drains
+    through `merge_main` — you are not asked to follow a rule that did not exist when you wrote the
+    commit. `AUPAI_CONTROLLER=1` overrides, logged to `runs/friction.jsonl`.
+  - The pod push moves to the PR merger, in the same step as the merge (4c's ruling
+    2026-09-07). The existing rule — "a commit that touches a file in the manifest's scope is
+    pushed to the pod by its committer in the same step" — cannot hold for a PR: at commit time the
+    code is not on main yet, and the pod runs what main holds. So for CODE, whoever runs
+    `gh pr merge --merge` pushes the pod in the same step and stamps main's sha; for LEDGER commits
+    the committer still pushes, unchanged. The obligation moves with the act that puts the code on
+    main, which is now the reviewer's, not the author's.
 - Commit in your worktree as soon as a change works, at most 30 minutes after touching a file. Merge into `main` at least every 30 minutes: `scripts/merge_main.sh <name>`, **run from the worktree that holds `<name>`** — the merge happens THERE and `main` then advances by an atomic `update-ref` compare-and-swap that touches no working tree. If it conflicts, resolve in your worktree and re-run; if it reports main moved, re-run (the merge is already in your tree). It pushes `origin/main` for you and prints when a pod push is due. Never rebase a branch someone else has merged.
 - **To hold the tree quiet, `scripts/merge_main.sh --hold`, then `--release`; never `mkdir` the lock directly.** `--hold` writes the holder file the waiters read, and a waiter refuses to remove a `deliberate=yes` hold even after its pid dies. A bare `mkdir` of the lock is indistinguishable from a crash between mkdir and the write, so a waiter clears it after a 3-second grace and merges into the window — measured 2026-09-05, when the controller's commits took the lock by hand and de's waiter removed it mid-commit. The flag existed before that and this line did not name it, which is the whole reason the hand-rolled path was the reachable one.
 - **Never `git stash` in this repository.** `.git/refs/stash` is one stack shared by every worktree — not per-worktree like HEAD and the index — so two sessions stashing in the same window each pop the other's entry, applying a diff they never wrote to a tree it was not made against (e1 and b0, 2026-09-02; nothing was lost, and that was luck). `no_shared_stash` reports a non-empty stack.

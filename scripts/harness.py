@@ -324,6 +324,7 @@ _RULE_CHECKS = {
     "scripts/pod_push.sh pushes only content reachable from main": "pod_drift",
     "A commit that touches a file in the manifest's scope is pushed by its committer": "pod_drift",
     "Corpus directories named by any ladder mix": "ladder_config_frozen",
+    "Code goes through a GitHub PR; ledger-only commits keep": "merge_main.sh --selftest",
     "The shared corpus, checkpoints, and GPUs on the pod are unchanged": "pod_drift",
     "8×H20, all usable": "pod_drift",
     "pod is at ~/bin/pod": "pod_drift",
@@ -349,6 +350,9 @@ _RULE_CHECKS = {
 #: ratcheted (_MANUAL_BASELINE): "manual" must not become the default answer.
 #: A rule enters this list only when enforcement is impossible, not merely awkward.
 _MANUAL_RULES = {
+    "A push now happens AFTER the merge, not in the same step":
+        "the ORDER of two operator actions leaves no artifact; pod_drift --check catches the "
+        "consequence (a stamp naming a sha main does not hold), not the discipline",
     # NO CHECK CAN ENFORCE THIS. It is about what a session does in the seconds AFTER a failed
     # push, which no repo state records. main_advances_by_ancestry catches the DAMAGE if someone
     # forces the ref; nothing can catch a session that reads "main X -> Y", believes it, and
@@ -529,7 +533,7 @@ _MANUAL_RULES = {
 #: and AGENTS.md named only `merge_main.sh <name>`, so a hand-rolled mkdir was the reachable
 #: path and de's waiter cleared the controller's lock mid-commit. Manual by nature: the lock
 #: does not record which command created it.
-_MANUAL_BASELINE = 32
+_MANUAL_BASELINE = 33
 
 
 def _norm_rule(text):
@@ -2533,7 +2537,7 @@ def check_agents_rules_covered(root):
         return FAIL, err
     if not bullets:
         return FAIL, "no rule bullets found -- the sections were renamed or emptied"
-    known = {c[0] for c in CHECKS} | {"CI", "pre-commit hook", "podput", "pod_push.sh"}
+    known = {c[0] for c in CHECKS} | {"CI", "pre-commit hook", "podput", "pod_push.sh", "merge_main.sh --selftest"}
     covered = _RULE_CHECKS
     unmapped = []
     for b in bullets:
@@ -8866,7 +8870,7 @@ def _broken_entrypoints_table():
 DOCS_SUBDIRS = ("lessons", "audits")
 FRONTMATTER_KEYS = ("question", "status", "source")
 FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
-CMD_BLOCK_RE = re.compile(r"```(?:bash|sh|shell)?\n(.*?)```", re.S)
+CMD_BLOCK_RE = re.compile(r"```(?:\w+)?\n(.*?)```", re.S)
 CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
 
 
