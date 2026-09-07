@@ -260,6 +260,33 @@ def wait_for_device(pid, deadline=DEVICE_WAIT_S, interval=0.25):
         return None  # no /proc anywhere here: this predicate has no opinion, decided once
     end = None if deadline is None else time.time() + deadline
     while True:
+        # THE HOLDER ITSELF IS A CANDIDATE, and until 2026-09-07 it was not. _descendants seeds
+        # `seen = {pid}`, so the holder can never appear in _job_descendants(pid) -- the poll
+        # searched only for a CHILD on a card. That is right for the launcher shape this was
+        # written for (a wrapper shell spawns torchrun, the ranks open the devices) and wrong for
+        # a job that opens its own card: it has no descendant, so the poll could only time out or
+        # outlive the job, and either way nothing was claimed.
+        #
+        # MEASURED, not reasoned (b0-31, card 7, three durations x two claim timings, with the
+        # claim directory sampled every 100ms during each run):
+        #     claim AFTER the job is on the card:   3s ok   20s ok   120s ok
+        #     claim BEFORE it opens the device:     3s FAIL 20s FAIL 120s FAIL, ledger NEVER
+        # Duration is not the variable -- claim TIMING is. The 3s and 120s arms fail identically,
+        # which is what rules out "the poll is too slow for a short job".
+        #
+        # THE FAILURE IS SILENT IN THE DIRECTION THAT MATTERS: acquire prints its refusal and the
+        # JOB keeps running on the card it was granted, so the measurement completes with correct
+        # numbers and an empty ledger. `idle is not a grant` is enforced by reading claims, so an
+        # unclaimed run makes a card look free while it is in use. That is how the b0-27
+        # verification ran on card 7 with nothing claimed.
+        #
+        # The holder is checked FIRST and only when it is not a shell: a shell holding a device fd
+        # would be a wrapper that inherited one, and claiming a shell is what the caller's own
+        # refusal at :790 exists to prevent.
+        if not _argv0_is_shell(_cmdline(pid)):
+            n = nvidia_fds(pid)
+            if n:
+                return pid, n
         for p, _a in _job_descendants(pid):
             n = nvidia_fds(p)
             if n:
@@ -1667,6 +1694,65 @@ def _selftest():
                     pass
             idle.kill()
             idle.wait()
+
+        # b0-31: THE HOLDER ITSELF OPENS THE CARD, so there is no descendant to follow. Every
+        # earlier world here gives the holder a CHILD that opens a device, which is the launcher
+        # shape; a self-claiming job (score_matrix, a micro-timing, a known-answer test) opens its
+        # own card and the poll used to search past it, because _descendants seeds seen={pid}.
+        # Measured on card 7 before this fix, three durations x two claim timings: claiming after
+        # the job was on the card landed at 3s/20s/120s, claiming before it opened the device
+        # failed at all three with the ledger NEVER holding a row. Duration was not the variable.
+        #
+        # A NEGATIVE CONTROL IS PART OF THIS CASE, not a separate one: the same world with the
+        # holder's fds set to 0 must still return None. Without it, "the holder is a candidate"
+        # would pass for a poll that returns the holder unconditionally, which would bind a claim
+        # to a process that is not on a card -- the b0_mem_m1 defect this whole mechanism exists
+        # to prevent.
+        selfjob = subprocess.Popen(["python3", "-c", "import time; time.sleep(9)"],
+                                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                   stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(0.4)
+            _case(not _job_descendants(selfjob.pid),
+                  "world: the self-claiming job has NO python descendant, so only the holder "
+                  f"can be on a card ({len(_job_descendants(selfjob.pid))} found)")
+            _fake_proc(selfjob.pid, nvidia=0, other=4)
+            _case(wait_for_device(selfjob.pid, deadline=0.8, interval=0.1) is None,
+                  "b0-31 control: a holder with 0 device fds and no descendant is NOT claimed")
+            _fake_proc(selfjob.pid, nvidia=17, other=4)
+            got_self = wait_for_device(selfjob.pid, deadline=2.0, interval=0.1)
+            _case(got_self is not None and got_self[0] == selfjob.pid,
+                  f"b0-31: the holder itself is claimed when IT holds the device (got {got_self})")
+        finally:
+            selfjob.kill()
+            selfjob.wait()
+
+        # THE SHELL GUARD ON THE NEW HOLDER CHECK, and it needed its own world: a mutant that
+        # dropped `not _argv0_is_shell(...)` SURVIVED the three cases above, because none of them
+        # gives a SHELL a device fd. A shell can hold one by inheritance, and claiming a shell is
+        # what the caller's refusal at the acquire site exists to prevent -- the claim then dies
+        # with the wrapper (card reads ORPHAN) or outlives the job (card reads held after it is
+        # gone), both observed 2026-09-03. Verified reachable before writing the case: a bash
+        # holder with an nvidia fd reads _argv0_is_shell True and nvidia_fds 1.
+        shjob = subprocess.Popen(["bash", "-c", "while :; do sleep 0.2; done"],
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+                                 stdin=subprocess.DEVNULL, start_new_session=True)
+        try:
+            time.sleep(0.4)
+            _fake_proc(shjob.pid, nvidia=1, other=2)
+            _case(_argv0_is_shell(_cmdline(shjob.pid)) and nvidia_fds(shjob.pid) == 1,
+                  "world: the holder IS a shell and holds a device fd "
+                  f"({_cmdline(shjob.pid)[:40]!r})")
+            _case(wait_for_device(shjob.pid, deadline=0.7, interval=0.1) is None,
+                  "b0-31: a SHELL holding a device fd is still not claimed as the job")
+        finally:
+            for q, _a in _descendants(shjob.pid):
+                try:
+                    os.kill(q, 9)
+                except OSError:
+                    pass
+            shjob.kill()
+            shjob.wait()
 
         # THE LIVE M1 DEFECT, 2026-09-05, and it was NOT the deadline the message blamed. The
         # launcher printed "no descendant of 915701 opened a GPU device within 90s" while the ranks
