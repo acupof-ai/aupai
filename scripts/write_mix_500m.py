@@ -639,8 +639,19 @@ def _code_split(starcoder_tokens, code_rows):
     }
 
 
-def build(code_tokens):
-    """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it."""
+def build(code_tokens, cursor=None):
+    """code_tokens is the STARCODER supply; rp1t's parse-verified Python is added to it.
+
+    cursor is the resume checkpoint's row_cursor: {domain: rows already drawn} or None for a
+    fresh start. IT CHANGES WHAT `epochs` MEANS. build_mix caps a domain at
+    int(pool*epochs) - used[name] with used[] seeded from that same cursor, but compares
+    `epochs` against THIS PLAN'S draw only -- so on a resume the ceiling is per-segment and
+    every resume grants a fresh 4 epochs on top of whatever the cursor already spent. Measured
+    on the live 30B resume: cot's plan drew 3.999 epochs and read as a PASS while the cursor had
+    already spent 1.416, for 5.415 total; chat_qa and chatml reached 5.4 the same way, and the
+    30B plan would take all three to ~6.0. Passing the cursor makes `epochs` a TOTAL and the
+    ceiling enforceable; omitting it keeps the fresh-start behaviour byte for byte.
+    """
     code_supply = code_tokens + _rp1t_tokens()
     if code_supply < CODE_FLOOR:
         raise SystemExit(
@@ -700,7 +711,11 @@ def build(code_tokens):
         # cache is the thing build_mix actually draws from, so where it exists there is
         # nothing to reconcile.
         pool_rows_est = meas["pool_rows"] if meas else _pool_rows(pool_tok)
-        used = 0  # fresh run, new names; asserted rather than assumed
+        # ROWS THIS DOMAIN HAS ALREADY DRAWN, from the resume cursor. Was `used = 0` with the
+        # comment "fresh run, new names; asserted rather than assumed" -- which was true when
+        # every mix started from scratch and became the defect the moment one did not. Nothing
+        # asserted it; the zero was the assumption.
+        used = int((cursor or {}).get(name, 0))
         epochs = math.ceil((used + runtime) / pool_rows_est)
         assert pool_rows_est * epochs >= used + runtime, (
             f"{name}: pool {pool_rows_est} x epochs {epochs} < used {used} + want {runtime}; "
@@ -716,7 +731,10 @@ def build(code_tokens):
         # The token version was the guard for a day and read UNDER the ceiling the whole time.
         # It was not measuring re-reads; it was measuring a quantity that correlates with them
         # (b0, 2026-09-01, found by reading the real caches for the launch gate's epochs item).
-        drawn_epochs = runtime / pool_rows_est
+        # TOTAL, NOT THIS SEGMENT. (used + runtime) is what the model will have read by the
+        # end of the plan, and re-reads are re-reads whether an earlier segment or this one
+        # bought them. On a fresh start used is 0 and this is the old expression exactly.
+        drawn_epochs = (used + runtime) / pool_rows_est
         if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
                 f"{name}: {drawn_epochs:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
@@ -1275,7 +1293,39 @@ def selftest():
           "share); the code share resolves to CODE_TOTAL at 8B and at 20B and to "
           "CODE_TOTAL_ABOVE_20B only past it, so the boundary is exclusive")
 
-    print("selftest: 14/14")
+    # 15. THE CURSOR MAKES `epochs` A TOTAL, and the case is built so it FAILS without the fix
+    #     rather than merely passing with it. The live 30B resume is the world: cot's cursor is
+    #     139,492 rows on a 98,529-row pool and its plan draws 393,xxx more, so the segment alone
+    #     is 3.999 epochs -- a PASS under the old expression -- while the total is 5.415.
+    #
+    #     ASSERTED ON THE WARNING, not on the epochs field, because the warning is what a person
+    #     reads and what a launch gate can refuse on. The epochs INTEGER moves too (ceil of the
+    #     total), but an integer going 4 -> 6 is also what a legitimately bigger draw does; only
+    #     the warning names the ceiling being crossed.
+    _cur = {"cot": 139_492, "chatml": 12_726, "chat_qa": 12_555}
+    _fresh = build(8.85e9)
+    _resumed = build(8.85e9, _cur)
+    _fw = " ".join(_fresh["_warnings"])
+    _rw = " ".join(_resumed["_warnings"])
+    for _n in _cur:
+        assert f"{_n}: " not in _fw or "exceeds" not in _fw.split(f"{_n}: ")[1][:80], (
+            f"{_n} must NOT trip the ceiling on a fresh start -- if it does, this case cannot "
+            f"tell the fix from a pre-existing violation")
+        assert any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
+            f"{_n} draws past {EPOCH_SOFT_CEILING} epochs once the cursor is counted "
+            f"(cursor {_cur[_n]:,}) and no warning names it. The ceiling is measuring one "
+            f"segment, which is the defect this argument exists to fix.")
+    # AND THE FRESH-START PATH IS BYTE-IDENTICAL. A cursor-aware ceiling that changed the
+    # no-cursor answer would silently rewrite every committed mix.
+    assert build(8.85e9, None)["domains"] == _fresh["domains"], (
+        "build(..., None) must equal build(...): the cursor path must not touch a fresh start")
+    assert build(8.85e9, {})["domains"] == _fresh["domains"], (
+        "an EMPTY cursor must also equal a fresh start -- {} means 'nothing drawn yet'")
+    print("  15 the epoch ceiling counts cursor + this plan, so a resume cannot be granted a "
+          "fresh 4 epochs: cot/chatml/chat_qa pass fresh and trip the ceiling under the live "
+          "30B cursor, while build(..., None) and build(..., {}) stay byte-identical to fresh")
+
+    print("selftest: 15/15")
     return 0
 
 
@@ -1364,6 +1414,34 @@ def build_probe():
     }
 
 
+def _read_cursor(path):
+    """{domain: rows} from a checkpoint's row_cursor, or a refusal.
+
+    torch.load with weights_only=False, because row_cursor sits beside the tensors in a dict
+    the trainer wrote. REFUSES rather than returning {} when the key is absent: an empty cursor
+    and a missing cursor produce identical mixes, and the whole point of this flag is that the
+    caller asserted a resume. A silent {} would write a fresh-start mix under a resume's name.
+    """
+    import torch
+
+    if not os.path.exists(path):
+        sys.exit(f"REFUSING: --resume-cursor {path} does not exist. The cursor decides every "
+                 f"`epochs` value in this file; guessing it is worse than not writing it.")
+    ck = torch.load(path, map_location="cpu", weights_only=False)
+    rc = ck.get("row_cursor")
+    if not rc:
+        sys.exit(f"REFUSING: {path} carries no row_cursor (keys: "
+                 f"{sorted(k for k in ck if not k.startswith('model'))}). A checkpoint without "
+                 f"one cannot seed used[], so --resume-cursor cannot mean anything against it.")
+    basis = ck.get("row_cursor_basis")
+    if basis != "full_plan_prefix":
+        sys.exit(f"REFUSING: {path} has row_cursor_basis {basis!r}, not 'full_plan_prefix'. "
+                 f"build_mix seeds used[] from a full-plan-prefix cursor; any other basis counts "
+                 f"rows differently and the epoch totals here would be arithmetic on two "
+                 f"incompatible conventions.")
+    return {k: int(v) for k, v in rc.items()}
+
+
 def main():
     global TOTAL_TOKENS, ROWS
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
@@ -1382,19 +1460,31 @@ def main():
                     help="token budget; the weights are the same function of the objective, "
                          "epochs and the code floor re-derive against this total")
     ap.add_argument("--out", default=None, help="output path; required with a non-default --total")
+    # A RESUME MIX IS NOT REUSABLE FOR A DIFFERENT RESUME POINT, and this flag is what makes that
+    # visible. Without it `epochs` counts one segment; with it `epochs` is the total the model
+    # will have read, so the file is correct for exactly the checkpoint named here and wrong for
+    # any other. That is not a limitation to work around -- a mix generated against a different
+    # cursor IS a different mix.
+    ap.add_argument("--resume-cursor", default=None, metavar="CKPT",
+                    help="checkpoint whose row_cursor this plan continues; makes every `epochs` "
+                         "value a TOTAL (cursor + this plan) instead of this plan alone. Omit "
+                         "for a fresh start.")
     ap.add_argument("--check", action="store_true")
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
         return selftest()
+    cursor = _read_cursor(a.resume_cursor) if a.resume_cursor else None
     ref = None
     if int(a.total) != TOTAL_TOKENS:
         if not a.out or a.probe:
             ap.error("a non-default --total needs --out and excludes --probe")
+        # The REFERENCE build stays fresh-start: it exists only to lift the 20B weights for a
+        # smaller total, and a cursor-aware reference would compare two different quantities.
         ref = build(a.code_tokens)
         TOTAL_TOKENS = int(a.total)
         ROWS = TOTAL_TOKENS // SEQ
-    m = build_probe() if a.probe else build(a.code_tokens)
+    m = build_probe() if a.probe else build(a.code_tokens, cursor)
     out = PROBE_OUT if a.probe else (a.out or OUT)
     if ref is not None:
         # WEIGHTS ARE COPIED FROM THE 20B BUILD ONLY WHEN THE NEW TOTAL IS SMALLER, and that
