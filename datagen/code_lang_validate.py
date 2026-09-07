@@ -505,6 +505,25 @@ def validate(text):
     if "\x00" in text:
         return None, "binary"
 
+    # CRLF IS NORMALISED HERE, ONCE, BEFORE ANY RULE SEES THE TEXT. Ten patterns in this
+    # module end in an anchored `$` -- both css rules, go, scala, php, python (x2), ruby, and
+    # the `public:` C++ marker. Most write it as `[ \t]*$`, and `\r` is neither a space nor a
+    # tab, so on a CRLF document `$` is never reached and the rule silently does nothing. 113
+    # of 2000 documents in the shard117 draw are CRLF -- 5.65%, not a corner.
+    #
+    # MEASURED BLAST RADIUS TODAY IS 1 DOCUMENT, not 113: the anchored rules are mostly
+    # secondary, so a CRLF document usually gets the same verdict from some other rule. The
+    # normalisation is here for the class, not for the count -- the next anchored rule
+    # written will not think about `\r` either.
+    #
+    # Found by A/B-ing this commit against its parent per document rather than by comparing
+    # aggregate shares: the shares were IDENTICAL to two decimal places and one document had
+    # moved. It was real CSS (`html{\r\n\toverflow: hidden;\r\n}`) that the pre-allowlist
+    # rule caught and the allowlist did not, because the old selector class was loose enough
+    # to absorb the `\r` and the new one is not. Both answers were refusals, so no share
+    # moved and no known-answer case could see it -- every other fixture in this file is LF.
+    text = text.replace("\r\n", "\n")
+
     # NON-CODE BEFORE FOREIGN-LANGUAGE. An HTML page quoting a shell command, or a Maven POM
     # naming a Java class, would otherwise be reported under the language it mentions. The
     # more specific verdict is "this is not source at all".
@@ -707,6 +726,16 @@ _KA_MISSED = [
      "noncode:css", "multi-line CSS with no at-rule: the block branch, alone"),
     (".btn { color: red; }\n.btn-primary { background: #fff; border: 1px solid #ccc; }\n",
      "noncode:css", "one-line CSS with no at-rule: the inline branch, alone"),
+    # THE SAME CSS WITH CRLF ENDINGS, which is the only case in this file that is not LF and
+    # the reason `validate()` normalises. `\r` is neither space nor tab, so every anchored
+    # `[ \t]*$` tail in this module fails on a CRLF document and the rule silently does
+    # nothing. 113 of 2000 documents in the shard117 draw are CRLF. This went unseen because
+    # a rule that stops firing moves documents between two REFUSAL reasons, which changes no
+    # share -- it was found by diffing per-document verdicts against the parent commit.
+    ("html{\r\n\toverflow: hidden;\r\n}\r\niframe{\r\n\twidth:100%;\r\n\theight:900px;\r\n}\r\n"
+     "input#word{\r\n\tfont-size:120px;\r\n\tposition:absolute;\r\n}\r\n"
+     ".serif, .serif input{\r\n\tfont-family:serif;\r\n}\r\n",
+     "noncode:css", "CRLF CSS: every `[ \\t]*$` tail in this module dies on the `\\r`"),
     # A COMMENT BETWEEN THE SELECTOR AND ITS FIRST DECLARATION. Found by a mutation that
     # widened the gap back to `[^{}]*` and survived: chasing what distinguished it turned up
     # 19 documents and this real-CSS shape, which the narrow gap MISSED. The mutation was
