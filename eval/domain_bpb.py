@@ -242,11 +242,43 @@ def _selftest():
                      "mixed \u4e2d\u82f1 text with 12345 numbers"):
             assert _d(_e(text)) == text, f"tokenizer lost text on a known-answer case: {text!r}"
 
+    # ONE REFUSED DOMAIN LEAVES A PARTIAL PANEL, NOT A DEAD RUN. The loop's own skip paths all
+    # `continue`, but val_seqs RAISES CoResidentCacheRead, and an exception is not a continue --
+    # so the first refusal killed the run and none of the eight scorable domains reached the
+    # row. Driven here rather than argued: nine domains, one raising, and the assertion is that
+    # the other eight are scored AND the refused one is named in `skipped`.
+    #
+    # A world, not a mock of the loop: the same try/except/continue shape the loop uses, over a
+    # val_seqs that raises for one name. If the catch is removed the exception escapes this
+    # block and the selftest errors, which is the failure the run had.
+    from cache_guard import CoResidentCacheRead  # noqa: PLC0415
+    _doms = [f"d{i}" for i in range(9)]
+
+    def _vs(name):
+        if name == "d3":
+            raise CoResidentCacheRead("REFUSING: this eval is about to read 85.2 GB ...")
+        return [[1, 2, 3]]
+
+    _out, _skipped = {}, {}
+    for _n in _doms:
+        try:
+            _rows = _vs(_n)
+        except CoResidentCacheRead as _e:
+            _skipped[_n] = str(_e).splitlines()[0]
+            continue
+        _out[_n] = 1.0 * len(_rows)
+    assert len(_out) == 8, f"a refused domain must not void the others: {sorted(_out)}"
+    assert "d3" in _skipped and "REFUSING" in _skipped["d3"], _skipped
+    assert "d3" not in _out, "a refused domain must not contribute a number"
+    # The row still reports its population, which is what makes the partial panel readable.
+    assert len(_out) != len(_doms), "this world is only meaningful when the panel IS partial"
+
     print("domain_bpb self-test OK: uniform models read exactly log2(V) bits/byte, the "
           "unscored first token enters neither numerator nor denominator (so chunking cannot "
           "change the figure), a too-short text refuses, the gate detects a "
-          "lossy codec while ignoring a pure re-split, and five known-answer texts survive "
-          "the real tokenizer exactly")
+          "lossy codec while ignoring a pure re-split, five known-answer texts survive "
+          "the real tokenizer exactly, and a co-residency refusal on one domain leaves the "
+          "other eight scored with the refusal named in `skipped`")
 
 
 def main():
@@ -276,6 +308,7 @@ def main():
     # OUR tokenizer decodes the held-out ids to text; that text is what BOTH arms score. It is
     # loaded even on the control arm, because it is the only thing that can read the cache.
     from scripts.loader import load_tokenizer, vocab_fingerprint  # noqa: PLC0415
+    from cache_guard import CoResidentCacheRead  # noqa: PLC0415
     from domain_loss import val_seqs  # noqa: PLC0415
     import train  # noqa: PLC0415
 
@@ -321,7 +354,21 @@ def main():
             r = done[name]
             (out if r.get("bpb") is not None else skipped)[name] = r.get("bpb") or r.get("skip")
             continue
-        rows = val_seqs(name, ours_tok)
+        # A REFUSAL IS A SKIP, NOT THE END OF THE PANEL. val_seqs reaches assert_caches_fresh,
+        # which RAISES -- and an exception is not a `continue`, so one refused domain killed
+        # the whole run and the per-domain `skipped` machinery below never ran. Measured in
+        # runs/sm_30b_step14000.log: one ERROR line, no per-domain rows.
+        #
+        # SECOND OCCURRENCE OF THIS SHAPE, not the first: scripts/e1_41_domain_bpb_attribution.py
+        # records MIN_ROUNDTRIP = 0.98 skipping all nine domains, `out` coming out empty, and
+        # this metric printing "REFUSING: no domain produced a number" for every checkpoint
+        # ever scored. A per-domain condition that voids the whole panel, twice.
+        try:
+            rows = val_seqs(name, ours_tok)
+        except CoResidentCacheRead as e:
+            skipped[name] = str(e).splitlines()[0]
+            print(f"  {name:16} SKIPPED (co-resident cache read refused)", flush=True)
+            continue
         if rows is None or not len(rows):
             skipped[name] = "no shards for this domain (absent, not zero)"
             continue
