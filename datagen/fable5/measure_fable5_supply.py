@@ -22,7 +22,12 @@ import re
 import sys
 
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "scripts"),
+)
 import pyarrow.parquet as pq  # noqa: E402
+from count_tokens import count_docs  # noqa: E402
 from tokenizers import Tokenizer  # noqa: E402
 
 from filters.secrets import redact_text  # noqa: E402
@@ -89,7 +94,7 @@ def measure(parquet, tokenizer):
                 red_by_src[src] += nred
             kept += 1
             by_src[src] += 1
-            tok_by_src[src] += len(tok.encode(body).ids)
+            tok_by_src[src] += count_docs([body], tok)
 
     return {
         "rows_in": n,
