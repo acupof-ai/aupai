@@ -21,6 +21,11 @@ WHAT MAKES THIS SAFE, asserted rather than assumed:
   - every source inode is distinct, so two sources that are already hardlinks of each other
     are refused rather than double-counted. b2v2_dd was deduped against dd09, so today's two
     sources are disjoint by how they were built -- a third source would not inherit that.
+    Broader than its fixture shows (b0, 2026-09-08): the count runs over the whole plan, so two
+    names for one inode WITHIN one source are refused too, though REFUSAL 5 exercises only the
+    across-source case.
+  - shards() REFUSES a case-variant extension. This is the one blind spot the file-set check
+    cannot cover, because both of its sides derive from shards() -- see that function.
 
 The stamp's tokens are COUNTED over the union, never summed from the two source stamps: a
 sum cannot see a shard the link pass dropped, which is the one failure this script can have.
