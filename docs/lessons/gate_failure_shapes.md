@@ -90,7 +90,7 @@ Ledger-field semantics (test_ledger_field_writers.py, 315755cc): class/cards ABS
 
 Cannot see: whether the selftest's broken world actually exercises the check's logic (§31, §69, §137, §153, §206, §218, §219, §228, §231, §235, §238, §239, §240, §242, §243).
 
-### R2-b Population narrower than the property (31 incidents)
+### R2-b Population narrower than the property (32 incidents)
 
 The check's scope, inputs, or environment do not cover the property asked.
 
@@ -112,6 +112,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 - §260: a lock file's timestamp and `ps`'s start time live in different timezones — the lock prints UTC (Z), ps prints local. Comparing them by eye is a trap; `etime` answers "how long has this been running" and the lock stamp answers "when was this file written." Reading `01:00` as 1 hour and `00:45` as 45 minutes when etime format is `[[DD-]hh:]mm:ss` produced a false "stuck lock" report; both were 1 minute and 45 seconds, and the lock's UTC stamp and ps's local start agreed within 29 seconds. Read the holder's `since=` and subtract from current UTC before reporting a hang.
 - §261: a predicate too narrow to see its own population makes the premise it tests unfalsifiable. A writer regex `torch.save([^)]*\bcache\b` catches `torch.save(data, cache)` but misses `torch.save(dict(a=1), cache)` (the `[^)]*` cannot cross the inner `)`), `torch.save(data, cache_path)` (the trailing `\b` fails on the underscore), and `torch.save(obj, _cache_for(name))` — three ordinary shapes, each defeating the check silently. Green over an unfalsifiable premise is indistinguishable from green over a cleared one; the fix is to match the whole logical line or co-occurrence, not to parse an argument list with a regex.
 - §262: a regex-hit is not an anchor. A sha-finder matching loose patterns offers ten candidate shas for one fact; a criterion accepting ten answers identifies none, and a wrong anchor is permanently green. The anchor must be the sha that produced the artifact, verified by content, not by pattern-match.
+- §266: a survey for one defect returned five real sites and the four legitimate ones are defended by four DIFFERENT mechanisms, so the greppable shape (`os.kill(pid,0)`, `/proc/<pid>`) is not the criterion — a check on it would be four-fifths false positives. The one finding was a false JUSTIFICATION beside correct code: `sweep.py:167` re-tests `isdir(/proc/<pid>)` because "a dead holder's fd can still appear in the walk", and a zombie measured on the pod has `isdir` true with `/proc/<pid>/fd` at 0 entries — the branch is unreachable for the case its comment names. Survey a defect class by reading each hit's defense, not by counting hits.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232, §236, §237).
 
