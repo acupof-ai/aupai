@@ -532,6 +532,42 @@
     "37% of code_rp1t is markup",
     "the markup filter is the bigger lever"
    ]
+  },
+  {
+   "id": "cs.code_rp1t_dd09_landed",
+   "value": 6232268741,
+   "unit": "tokens",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/data/corpus/code_rp1t_dd09 via `python3 datagen/count_corpus_dir.py code_rp1t_dd09 --root /work/aupai` on the pod: frozen data/tokenizer.json over ALL 235 shards, 3,434,322 docs, no sampling",
+   "config": {
+    "shards": 235,
+    "docs": 3434322,
+    "text_bytes": 19133282151,
+    "tok_per_byte": 0.32573,
+    "built_by": "datagen/code_dedup_build.py --inputs code_rp1t --th 0.9 --ckdir runs/code_rp1t_ck, 28m3s; stamp carries threshold 0.9 and filters near-dedup-th0.9-ordinal-rep",
+    "input": {
+     "domain": "code_rp1t",
+     "srcfp": "d8b9b18ba080f487",
+     "filters_fp": "33462c13868a2194",
+     "tokens": 7565334396
+    },
+    "dedup": {
+     "docs_in": 3747157,
+     "docs_kept": 3434322,
+     "docs_deleted": 312835,
+     "clusters_gt1": 114888,
+     "method": "MinHash-J char 5-gram est>=0.9, 96 perms, 12 bands, ordinal representative"
+    },
+    "exact_j_note": "est reads 0.030 HIGH against exact J (n=200 at est>=0.85, mean est 0.899 vs exact 0.876), so th0.9 on est is about J 0.87 exact",
+    "threshold_choice": "th0.9 over code_dedup08's th0.8, on a 40-pair band hand read: the 0.8-0.9 band is distinct files sharing boilerplate -- two projects' Android ApplicationTestCase stubs at est 0.8854, two Coq CI pages differing in one title at 0.8646 (runs/code_rp1t_band_handread.json, 4c ruling)"
+   },
+   "uncertainty": "exact for the current code_rp1t_dd09/ dir. Token loss is 17.62% (1,333,065,655) against a DOCUMENT loss of 8.35%: near-duplicate documents are 2.11x the mean length, so a doc rate does not convert to a token loss -- the projection from 11.415% said 6,701,751,475 and was 469,482,734 high, +7.5%, in the direction that flatters supply.",
+   "status": "measured",
+   "boundary": "The all-language rp1t github role only. Does not compose with cs.code_dedup08_landed, whose python inputs overlap this dir's source by construction. Says nothing about what a markup filter would additionally remove (cs.code_rp1t_markup_composition puts the generated-doc class at 5.9% of the PRE-dedup dir).",
+   "guard_phrases": [
+    "dedup costs 8% of the code supply",
+    "the near-dup rate is the token loss"
+   ]
   }
  ]
 }
