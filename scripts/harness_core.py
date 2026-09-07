@@ -109,15 +109,38 @@ _NOT_OURS_RE = re.compile(r"^\s*(tile[ _-]?rl|rl[ _-]?team)\b", re.I)
 # with a bare timestamp and an arrow. Both are recognised; anything else is unclassified.
 _OURS_RE = re.compile(r"^\s*(granted\b|\d{4}-\d{2}-\d{2})", re.I)
 
-# A LEND WINDOW inside a note whose subject is another team: "Lent once to b0 2026-09-08
-# 21:32-21:34Z for ...". The date and both clock times are required, so a note that merely says
-# "lent to b0 earlier" parses as no window at all rather than as a window that happens to be open.
-# Zulu only, because every timestamp the controller writes in this file is Zulu and a naive local
-# time would silently shift the window by the host's offset.
+# A LEND WINDOW on a card another team owns by standing order. Three things about this pattern are
+# corrections, each measured against a note the controller actually wrote:
+#
+#   1. NO `lent` REQUIREMENT. The first version anchored on `\blent\b`, and 4c's real note for the
+#      only lend that has ever happened does not contain the word: it reads "GRANTED 2026-09-08
+#      21:30Z-21:45Z -> b0: domain_loss ... Card 6 is tileRL's". A window is a window whatever verb
+#      introduces it, and requiring a vocabulary word made the mechanism depend on prose style.
+#   2. `Z` ON EITHER TIME OR BOTH. 4c writes `21:30Z-21:45Z`; my fixture wrote `21:32-21:34Z`. The
+#      first version required the Z only after the second time, so the controller's own form failed
+#      to parse -- the instrument fit the example I invented rather than the one in the file.
+#   3. THE DATE MAY FOLLOW THE TIMES as well as precede them, since "21:30Z-21:45Z on 2026-09-08"
+#      and "2026-09-08 21:30Z-21:45Z" are both natural and both appear in this repo's prose.
+#
+# What stays required is a full date and both clock times. "lent to b0 earlier" parses as NO window
+# rather than as one that happens to be open, which is what makes the refusal branch reachable.
+_LEND_TIMES = r"(?P<h1>\d{1,2}):(?P<m1>\d{2})\s*Z?\s*-\s*(?P<h2>\d{1,2}):(?P<m2>\d{2})\s*Z?"
+_LEND_TIMES_B = r"(?P<h1b>\d{1,2}):(?P<m1b>\d{2})\s*Z?\s*-\s*(?P<h2b>\d{1,2}):(?P<m2b>\d{2})\s*Z?"
 _LEND_RE = re.compile(
-    r"\blent\b[^.]{0,80}?(?P<date>\d{4}-\d{2}-\d{2})\s+"
-    r"(?P<h1>\d{2}):(?P<m1>\d{2})\s*-\s*(?P<h2>\d{2}):(?P<m2>\d{2})\s*Z",
+    r"(?P<date>\d{4}-\d{2}-\d{2})[\sT]+" + _LEND_TIMES
+    + r"|" + _LEND_TIMES_B + r"[^.\d]{0,20}(?P<date2>\d{4}-\d{2}-\d{2})",
     re.I)
+# Does the note claim a time-bounded handover at all? This is the population the expiry properties
+# quantify over, so it must not be narrowed by the same thing that makes a window unparseable (see
+# the population note in harness.py's property (7)).
+#
+# A CLAIMED HANDOVER, NOT A MENTIONED ONE, and the difference is card 0's live note. It reads
+# "short aupai lane jobs only by explicit grant while tileRL is not using it" -- a statement that a
+# grant WOULD BE REQUIRED, not that one was made. My first widening matched a bare `grant`, so card 0
+# read as "claims a lend with no readable window" and refused a card whose note is doing its job.
+# The verbs are therefore split: `lent`/`lend`/`loan`/`granted` assert a completed act, while a bare
+# `grant` (noun, or "by explicit grant") asserts a requirement. A hypothetical is not a claim.
+_LEND_WORD_RE = re.compile(r"\b(lent|lend|loaned|granted)\b", re.I)
 
 
 def _parse_lend_window(note):
@@ -134,9 +157,11 @@ def _parse_lend_window(note):
     if not m:
         return None
     try:
-        d = datetime.datetime.strptime(m.group("date"), "%Y-%m-%d").date()
-        t1 = datetime.time(int(m.group("h1")), int(m.group("m1")))
-        t2 = datetime.time(int(m.group("h2")), int(m.group("m2")))
+        d = datetime.datetime.strptime(m.group("date") or m.group("date2"), "%Y-%m-%d").date()
+        t1 = datetime.time(int(m.group("h1") or m.group("h1b")),
+                           int(m.group("m1") if m.group("h1") else m.group("m1b")))
+        t2 = datetime.time(int(m.group("h2") or m.group("h2b")),
+                           int(m.group("m2") if m.group("h2") else m.group("m2b")))
     except ValueError:
         return None                      # 25:99Z and 2026-02-30 land here, not in an open window
     utc = datetime.timezone.utc
@@ -148,8 +173,8 @@ def _parse_lend_window(note):
 
 
 def _mentions_lend(note):
-    """Whether the note claims a lend at all, independent of whether its window parses."""
-    return bool(re.search(r"\blent\b|\blend\b", str(note or ""), re.I))
+    """Whether the note claims a time-bounded handover at all, independent of whether it parses."""
+    return bool(_LEND_WORD_RE.search(str(note or "")))
 
 
 def _theirs_baseline(root=None):
@@ -192,9 +217,31 @@ def _classify_card_note(note, baseline_theirs=False, now=None):
       lend claimed, window unreadable    -> unclassified, which refuses
       no lend claimed      -> theirs     (the standing order)
 
-    A WINDOW THAT HAS NOT OPENED YET READS THEIRS, not ours. A lend written ahead of time is the
-    normal way the controller schedules one, and treating a future window as licence would hand
-    the card over early -- while its owner is still running on it.
+    THE BASELINE DECIDES BEFORE THE NOTE IS READ, and this ordering is the fix for the defect
+    tilerl-0a found in my first version (2026-09-08, PR #58). I had put the expiry branch INSIDE
+    `if _NOT_OURS_RE.search(s)`, so it only ran on a note that opens with the other team's name.
+    4c's real note for the only lend that has ever happened opens with `GRANTED`:
+
+        GRANTED 2026-09-08 21:30Z-21:45Z -> b0: domain_loss ... Card 6 is tileRL's (user order ...)
+
+    `_NOT_OURS_RE` misses that, so it fell through to `_OURS_RE`, matched `granted\\b`, and returned
+    `ours` -- during the window AND three days after it closed. `harness launch --cards 6` was
+    ACCEPTED. The expiry did not fire on the one note form the controller actually writes.
+
+    Three separate escapes, all in the same direction: the branch was gated on the note's opening
+    token, `_LEND_RE` required the literal word "lent" which that note does not contain, and it
+    required `Z` only after the second time while 4c writes `21:30Z-21:45Z`. Each one alone was
+    enough. The docstring's own table was false as written -- it says a live lend is the ONLY thing
+    that makes a baseline-theirs card ours, and a `GRANTED` prefix was a second thing.
+
+    THE POPULATION WAS THE DEFECT AGAIN, third instance on this function in two days. What should
+    be quantified over is "cards in the baseline"; what was effectively quantified over was "cards
+    in the baseline whose note begins with the owner's name". A note form that dodges the classifier
+    removes the card from the set the expiry covers -- the same disease as `theirs=[]` satisfying
+    "every not-ours card refuses" (09-07) and as property (7)'s parseable-window population. This
+    one was worse than both because it sat in the CLASSIFIER rather than in a property: the check
+    and the launch read different code, so the check could go red while the launch said yes, and
+    only the launch gates a card.
 
     `now` IS INJECTABLE so the worlds below can pin a time. A check whose verdict depends on the
     wall clock cannot be tested: the same fixture passes this hour and fails next hour, and the
@@ -202,23 +249,25 @@ def _classify_card_note(note, baseline_theirs=False, now=None):
 
     STANDING GRANTS ON aupai's OWN CARDS ARE UNTOUCHED. Cards 1-5 and 7 carry "GRANTED <when> ->
     <who>" with no end time, and they are not lends -- they are the controller allocating aupai's
-    own cards, so no migration and no expiry applies to them. That is why the expiry branch is
-    gated on baseline_theirs rather than on the presence of a date.
+    own cards, so no migration and no expiry applies to them. That is why the expiry is gated on
+    baseline_theirs rather than on the presence of a date or a grant word.
     """
     s = str(note or "")
-    if _NOT_OURS_RE.search(s):
-        if not baseline_theirs:
-            return "theirs"
-        # A baseline-theirs card: the standing order says theirs, and only a live lend moves it.
+    if baseline_theirs:
+        # THE STANDING OWNER IS KNOWN FROM THE BASELINE. Nothing the note says can transfer the
+        # card except a window that is open right now, so this runs before either regex: what the
+        # prose opens with must not be able to override a user order.
         win = _parse_lend_window(s)
         if win is None:
-            # Distinguish "no lend claimed" from "a lend I cannot read". The second must refuse:
+            # Distinguish "no handover claimed" from "one I cannot read". The second must refuse:
             # it is what a drifting wording produces, and that is when a wrong answer is least
             # visible. Requiring a PARSEABLE WINDOW rather than just the word is load-bearing --
-            # otherwise a baseline naming a card whose note merely mentions lending reads as ours.
+            # otherwise a note merely mentioning a lend reads as ours.
             return "unclassified" if _mentions_lend(s) else "theirs"
         now = datetime.datetime.now(datetime.timezone.utc) if now is None else now
         return "ours" if win[0] <= now <= win[1] else "theirs"
+    if _NOT_OURS_RE.search(s):
+        return "theirs"
     if _OURS_RE.search(s):
         return "ours"
     return "unclassified"
