@@ -8872,6 +8872,50 @@ FRONTMATTER_KEYS = ("question", "status", "source")
 FRONTMATTER_STATUS = ("measured", "recorded", "open", "retracted")
 CMD_BLOCK_RE = re.compile(r"```(?:\w+)?\n(.*?)```", re.S)
 CMD_PATH_RE = re.compile(r"(?<![\w.-])([\w./-]+\.(?:sh|py))(?![\w.-])")
+#: Inline `code` spans. THE POPULATION THIS CHECK ACTUALLY WANTS, and it was never read (de-72,
+#: 2026-09-07). AGENTS.md cites 63 scripts in backticks against 2 in fenced blocks, so a
+#: fenced-only scan covers 3% of what the document names.
+#:
+#: HOW THE GAP HID FOR SO LONG: the old `(?:bash|sh|shell)?` pattern could not OPEN at the
+#: ```python fence (AGENTS.md:156), so it opened at that block's CLOSING fence and every later
+#: marker alternated the other way -- pairing 173-181, 187-249 and 251-380, which are PROSE. It was
+#: scanning most of the document by accident and finding 29 paths. 3fd80424 corrected the pairing to
+#: `(?:\w+)?`, which is right, and the reach fell 29 -> 2 while the check went on PASSing: correct
+#: fence pairing cannot reach those paths, because they are not in fenced blocks. Three candidate
+#: regexes were measured (closer-alone-on-its-line, positional pairing on markers, tag-optional) and
+#: all give 2. The accident was covering the right population by the wrong means.
+#:
+#: So the fix is to read both, and to PRINT THE COUNT: a population that falls silently is what let
+#: a 93% collapse read as PASS (§259's shape at a second site).
+CMD_INLINE_RE = re.compile(r"`([^`\n]+)`")
+#: Where a bare script name is allowed to live. AGENTS.md cites `vet_programs.py`, which is real at
+#: mathbank/, and `train.py` at the root: resolving only against `root` calls both rot. These are the
+#: directories AGENTS.md's own Layout table names, so the resolver's scope comes from the document
+#: rather than from a guess.
+CMD_PATH_DIRS = ("", "scripts", "eval", "datagen", "mathbank", "probes", "algorithms", "filters")
+
+
+def cited_script_paths(text):
+    """Every .sh/.py path a doc cites, from fenced blocks AND inline `code` spans."""
+    out = set()
+    for block in CMD_BLOCK_RE.findall(text):
+        out |= set(CMD_PATH_RE.findall(block))
+    for span in CMD_INLINE_RE.findall(text):
+        out |= set(CMD_PATH_RE.findall(span))
+    return out
+
+
+def cited_script_exists(root, tok):
+    """Whether `tok` resolves to a file, searching the directories AGENTS.md's Layout names.
+
+    A path WITH a directory component is resolved as given -- `scripts/harness.py` must be at
+    scripts/, and accepting it from anywhere would let a wrong directory pass. Only a BARE name
+    (`vet_programs.py`, `train.py`) is searched, because that is how the document cites files whose
+    directory the reader is expected to know."""
+    rel = tok.lstrip("./")
+    if "/" in rel:
+        return os.path.exists(os.path.join(root, rel))
+    return any(os.path.exists(os.path.join(root, d, rel)) for d in CMD_PATH_DIRS)
 
 
 def _frontmatter(path):
@@ -9329,11 +9373,13 @@ def check_doc_commands(root):
                       "not the repo -- doc-cited paths are checked on dev/CI, not here")
     agents = os.path.join(root, "AGENTS.md")
     missing = set()
+    n_scanned = 0
     if os.path.exists(agents):
-        for block in CMD_BLOCK_RE.findall(open(agents, encoding="utf-8").read()):
-            for tok in CMD_PATH_RE.findall(block):
-                if not os.path.exists(os.path.join(root, tok)):
-                    missing.add(tok)
+        cited = cited_script_paths(open(agents, encoding="utf-8").read())
+        n_scanned = len(cited)
+        for tok in cited:
+            if not cited_script_exists(root, tok):
+                missing.add(tok)
     for f, _ln, tok in _doc_data_paths(root):
         if not _cited_path_exists(root, tok):
             missing.add(f"{f}:{_ln} {tok}")
@@ -9341,7 +9387,11 @@ def check_doc_commands(root):
         return FAIL, f"doc(s) cite path(s) not in the repo: {sorted(missing)[:5]}"
     if not os.path.exists(agents) and not _doc_data_paths(root):
         return SKIP, "no docs present"
-    return PASS, "every doc-cited script and data path exists"
+    # THE COUNT IS IN THE EVIDENCE because this check's reach silently fell 29 -> 2 at 3fd80424 and
+    # went on PASSing. A reader can now tell "64 citations resolved" from "2 resolved" without
+    # reading the regex.
+    return PASS, (f"{n_scanned} script citation(s) in AGENTS.md (fenced blocks and inline spans) "
+                  f"plus every doc-cited data path exist")
 
 
 # Retired phrases that must not reappear in README. The objective changed 2026-08-30;
@@ -9445,6 +9495,105 @@ def _broken_readme_current():
     with open(p, "w", encoding="utf-8") as f:
         f.write("A 200M 中文推理模型.\n\n" + text)
     return d
+
+
+def _selftest_inline_citations_are_scanned():
+    """An INLINE `nonexistent.py` in AGENTS.md must FAIL, and a real one must not (de-72).
+
+    THE WORLD 3fd80424 WOULD HAVE PASSED. That commit corrected CMD_BLOCK_RE's fence pairing --
+    rightly: the old `(?:bash|sh|shell)?` could not open at the ```python fence, so it opened at
+    that block's CLOSER and paired prose as command blocks, scanning most of the document by
+    accident. The reach fell from 29 paths to 2 and the check kept PASSing, because AGENTS.md cites
+    63 scripts in inline spans against 2 in fenced blocks. Nothing here could see that: no world
+    put a bogus citation in an inline span, so both the accident and its removal read identical.
+
+    FOUR CASES, and the last two are what stop this being satisfied by a check that FAILs on
+    everything: a bogus inline citation FAILs, a real one PASSes, a bogus one in a FENCED block
+    still FAILs (the old coverage is not traded away), and a bare name that lives in a subdirectory
+    named by AGENTS.md's own Layout table (`vet_programs.py` at mathbank/) PASSes -- resolving only
+    against root would call that rot, which is the false positive a naive fix produces.
+    """
+    import shutil
+
+    def _world(insert):
+        d = _tmp_repo()
+        # A REAL GIT REPO, not a `.git` directory. The check's data half calls `_cited_path_exists`,
+        # which exempts a cited path that is GITIGNORED -- absent from a clean checkout is normal
+        # for corpus bytes and tokenizer.json -- and it decides that from `git ls-files`. With an
+        # empty `mkdir .git` the ls-files answer is an empty tracked set, so every such path reads
+        # as rot: measured, the world FAILed naming `data/pod_synced_head`, `data/mix_scale`,
+        # `data/_corpus_unsanitized` and `data/corpus/code`, none of which is the citation under
+        # test. `git init` plus one commit of AGENTS.md gives the exemption something true to read.
+        subprocess.run(["git", "init", "-q", "-b", "main", "."], cwd=d, capture_output=True)
+        subprocess.run(["git", "config", "user.email", "t@example.invalid"], cwd=d,
+                       capture_output=True)
+        subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
+        shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+        # The real code directories, so the world FAILs only on the inserted citation and not on
+        # every path AGENTS.md legitimately names (the trap _broken_readme_current records).
+        for name in CMD_PATH_DIRS:
+            if name and os.path.isdir(os.path.join(ROOT, name)):
+                os.symlink(os.path.join(ROOT, name), os.path.join(d, name))
+        for f in os.listdir(ROOT):
+            if f.endswith((".py", ".sh")) and os.path.isfile(os.path.join(ROOT, f)):
+                open(os.path.join(d, f), "w").close()
+        # THE DATA PATHS TOO, or the world FAILs for a reason that has nothing to do with the
+        # citation under test. The check has two halves -- script citations and `_doc_data_paths`
+        # -- and the second resolves data/ files. Measured: without this the FAIL named
+        # `AGENTS.md:103 data/mix_scale_3.24b.json` and four more, so the bogus-inline case passed
+        # while proving nothing and the two PASS cases would have been red. The name-the-path
+        # assertion is what caught it; a bare `state == FAIL` check would not have.
+        #
+        # THE DATA HALF IS SATISFIED BY COPYING THE REAL TREE'S ANSWER, not by re-deriving it. The
+        # check has two halves -- script citations and `_doc_data_paths` -- and without the second
+        # the world FAILed on `AGENTS.md:103 data/mix_scale_3.24b.json` and four more, so the
+        # bogus-inline case passed while proving nothing and the two PASS cases would have been red.
+        # The name-the-path assertion caught that; a bare `state == FAIL` would not have.
+        #
+        # A SYMLINK TO THE REAL data/, after removing the empty one _tmp_repo makes. Creating each
+        # cited path by hand does not work: `_doc_data_paths` yields prefixes (`data/shape`) as well
+        # as files under them, so whichever comes first decides whether the next is a file colliding
+        # with a directory or the reverse -- two FileExistsErrors, in both orders. The real tree
+        # already holds exactly the set the check will accept, and the fixture is read-only here.
+        _dd = os.path.join(d, "data")
+        if os.path.islink(_dd) or os.path.isfile(_dd):
+            os.remove(_dd)
+        elif os.path.isdir(_dd):
+            shutil.rmtree(_dd)
+        os.symlink(os.path.join(ROOT, "data"), _dd)
+        with open(os.path.join(d, "AGENTS.md"), "a", encoding="utf-8") as fh:
+            fh.write(insert)
+        return d
+
+    for label, insert, want in (
+        ("an inline citation of a nonexistent script FAILs",
+         "\n- The tool is `scripts/de72_no_such_tool.py`, which does not exist.\n", FAIL),
+        ("an inline citation of a real script does not",
+         "\n- The tool is `scripts/harness.py`, which exists.\n", PASS),
+        ("a bogus citation in a FENCED block still FAILs",
+         "\n```bash\npython scripts/de72_no_such_tool.py --flag\n```\n", FAIL),
+        ("a bare name that lives in a Layout subdirectory PASSes",
+         "\n- The registry root is `vet_programs.py`, real at mathbank/.\n", PASS),
+    ):
+        d = _world(insert)
+        try:
+            state, ev = check_doc_commands(d)
+            assert state == want, f"{label}: expected {want}, got {state}: {ev}"
+            if want is FAIL:
+                assert "de72_no_such_tool.py" in ev, (
+                    f"{label}: the FAIL must name the bogus path, or it fired on something else: "
+                    f"{ev}")
+            else:
+                # THE COUNT IS THE POINT of this change: a PASS that scanned 2 citations reads the
+                # same as one that scanned 64 unless the number is there.
+                assert re.search(r"\b6[0-9] script citation", ev), (
+                    f"{label}: the PASS must state how many citations it resolved, or a collapse "
+                    f"like 3fd80424's is invisible again: {ev}")
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    n = len(cited_script_paths(open(os.path.join(ROOT, "AGENTS.md"), encoding="utf-8").read()))
+    print(f"  doc citations: {n} scanned in AGENTS.md (fenced + inline); a bogus inline or fenced "
+          f"citation FAILs by name, a real one and a bare Layout-subdirectory name PASS")
 
 
 def _broken_doc_commands():
@@ -20850,6 +20999,7 @@ def _demo(only=None):
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
         _selftest_review_present_legacy,
+        _selftest_inline_citations_are_scanned,
     ):
         try:
             _fn()

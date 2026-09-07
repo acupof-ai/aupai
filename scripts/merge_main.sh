@@ -16,6 +16,19 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # reimplementation of it. Nothing else sets these.
 LOCK=${MERGE_LOCK_DIR:-$MAIN/.git/merge_main.lock}
 HOLDER=$LOCK/holder
+# THE PR FLIP IS ON (4c's trigger fired 2026-09-07: the 30B run printed step 9010/25430 at 05:18Z).
+# 1788759138 is THIS commit's own committer date, not the date of the commit that finished the
+# transition -- read with `git log -1 --format=%ct` AFTER committing, and amended back in, so the
+# number is a fact in the history rather than one somebody typed. It has to be this commit: the gate
+# refuses `when > epoch`, so an earlier boundary would refuse every commit written between it and
+# this one, this commit included. Work written before the flip existed drains through merge_main;
+# code written after it goes through a PR.
+#
+# A DEFAULT rather than something each session exports, so every session gets the flip by merging
+# main -- there is no per-session step to forget. An assignment still wins, which is how the nine
+# selftest worlds drive both sides of the boundary: each case assigns the variable inside its own
+# subshell, after this line has already run.
+AUPAI_PR_FLIP_EPOCH=${AUPAI_PR_FLIP_EPOCH:-1788759138}
 [ $# -eq 1 ] || { echo "usage: scripts/merge_main.sh <branch>|--hold|--release|--selftest" >&2; exit 2; }
 
 # REFUSE A DEADLINE SHORTER THAN A HOOK RUN. A merge commit runs the full pre-commit hook -- ~50-60 s
