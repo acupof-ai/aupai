@@ -1,5 +1,19 @@
 {
   "data/mix_scale_": "prefix, not a path; update ds.scaling_fit_protocol to name a specific file (e.g. data/mix_scale_3.24b.json)",
   "runs/p02_seeds": "pod-only directory with seed-run logs, not committed; update ds.seed_variance_0p2b / ds.nondeterminism_washes_out to cite a durable artifact",
-  "runs/warmup_smoke": "smoke-test output directory, not committed; update eff.warmup_absolute_not_fractional to cite a durable artifact"
+  "runs/warmup_smoke": "smoke-test output directory, not committed; update eff.warmup_absolute_not_fractional to cite a durable artifact",
+  "contamination.json#cont.math500_webhq_fp_explained": "scanner detail scripts written to /tmp on 2026-08-30 and gone; the scan's conclusion is reproduced by the tracked scanner, the false-positive breakdown is not. Owner contamination: re-derive with a committed script or drop the breakdown to `recorded`.",
+  "contamination.json#cont.code_holdout_carved": "/tmp/carve_code_eval.py gone; the carve it produced (the code holdout) IS tracked, so the number is checkable and the procedure is not. Cite the carved artifact instead.",
+  "contamination.json#cont.generator_families_in_owm": "/tmp/famscan.py still exists on this laptop (36 lines) and nowhere else; commit it to probes/ rather than baselining, next time this row is touched.",
+  "data_quality.json#dq.verification.blossom_gold_agreement": "/tmp/gold_answer_agree.py gone; agreement rate unreproducible. Owner data-quality: recommit the comparator or mark the row `recorded`.",
+  "efficiency.json#eff.fetch_curl92_silent_death": "/tmp/fetch_code.log was the evidence -- a fetch log, not a script -- and the conclusion (curl 92 dies silently) is reproduced by the tracked fetcher's -4 handling. Cite the fetcher; the log is not recoverable.",
+  "efficiency.json#eff.optimizer_step_gpu_cost_p200m": "/tmp/de_opt_cost2.py gone (de, 2026-09-02); the trace it read, runs/trace_p200m_3step.json, is also absent from this checkout. Owner de: recommit the reader with the trace, or retire both.",
+  "efficiency.json#eff.clip_and_sync_cost_p200m": "same measurement pair as eff.optimizer_step_gpu_cost_p200m; same owner, same fix.",
+  "multilingual.json#mlm.corpus.traditional_rate": "/tmp/census_web_hq.py is the counter behind four multilingual rows and is gone -- the largest single cluster here. Owner multilingual: one commit of the census script closes four entries.",
+  "multilingual.json#mlm.corpus.step01_hit_rate": "same /tmp/census_web_hq.py cluster.",
+  "multilingual.json#mlm.corpus.web_hq_ordered_by_source": "same /tmp/census_web_hq.py cluster.",
+  "multilingual.json#mlm.fertility.traditional": "/tmp/fertility_trad.py and its /tmp/fert_pairs.json output both gone; fertility on traditional characters is unreproducible. Owner multilingual.",
+  "multilingual.json#mlm.tokenizer.wholechar_gate_check": "/tmp/wholechar_gate.py gone; the gate itself is tracked in scripts/tokenizer_eval.py, so the CHECK is reproducible and this row's particular run is not. Cite tokenizer_eval.",
+  "multilingual.json#mlm.corpus.cosmopedia_template_concentration": "/tmp/template_concentration.py gone. Owner multilingual.",
+  "corpus_supply.json#cs.en_c4_30b_landed": "THE ROW THAT PRODUCED THIS CHECK, and the shortest-lived entry here: 84's PR #36 (head ae6829c2) rewrites this source to scripts/count_tokens.py@5955b3e0 plus scripts/count_dir.py, verified PASS on a real worktree of that head with this check applied. DELETE THIS LINE when #36 merges -- it exists only so the check can land before #36 without main going red, not because the debt is accepted."
 }

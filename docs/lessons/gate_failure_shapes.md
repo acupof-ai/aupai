@@ -116,7 +116,7 @@ The check's scope, inputs, or environment do not cover the property asked.
 
 Cannot see: whether the test's inputs, environment, or scale match the property's (§26, §29, §34, §35, §40, §48, §65, §72, §121, §146, §151, §169, §180, §201, §202, §203, §209, §213, §215, §216, §222, §223, §224, §225, §229, §232, §236, §237).
 
-### R2-c Mutation did not take (9 incidents)
+### R2-c Mutation did not take (10 incidents)
 
 The mutation never landed or its verification reads the wrong signal.
 
@@ -127,8 +127,9 @@ The mutation never landed or its verification reads the wrong signal.
 - §233: three selftest cases passed with the new rule deleted entirely — the fixture routed around it into a pre-existing clause giving the same answer; a case must include a shape where the OLD logic answers differently, enforced by an in-case assertion naming the old answer (a disagreement property, not a coverage property).
 - §234: three mutants were all caught at the SAME assertion with the same message, so the run proved one assertion and exercised none of the others; a mutation run proves N assertions only if the N mutants fail at N DIFFERENT, target-naming assertions — the vacuous-PASS shape moved into the thing that validates the test.
 - §241: a test that reimplements its subject tests the copy — the launch_gate selftest re-derived gate 9's partition inline, so mutating the gate's own exclusion changed nothing the test could see; 3 of 4 mutants survived, including "exclude nothing", which is the original bug. Fixed by extracting one function both sides call. Two invalid-mutant lessons from the same run: a mutant that dies of NameError is caught by the interpreter, not the test; and `x = "" or (f"...")` is a mutant identical to the original, whose survival measures nothing.
+- §268: a shared broken world already reporting 42 errors cannot test a fifth predicate added to it — the verdict is FAIL with or without the new mutation, and only five of the 42 reach the evidence string, so all four mutants survived. The clean tree failed the same way for the opposite reason: its instances of the new class are registered debt. A dedicated one-fact world per predicate separated them, each mutant redding exactly one. Two further green-on-the-wrong-branch defects inside that world: a `path@rev` case must cite a path resolvable ONLY at that rev, or the earlier openable-beside clause answers first and the branch under test is never reached; and a `git init` world has an empty object store so no rev resolves at all — it needs `objects/info/alternates` on the real store. Before adding a mutation to an existing world, ask what that world's verdict and visible evidence are without it.
 
-Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234, §241).
+Cannot see: whether the mutation reached the code path the check exercises (§81, §207, §221, §227, §233, §234, §241, §268); how many errors a world already reports before a new mutation joins it (§268).
 
 ### R2-d Parser reads prose as code (11 incidents)
 
