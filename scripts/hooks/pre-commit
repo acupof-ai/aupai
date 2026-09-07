@@ -852,6 +852,13 @@ def main():
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
         "scripts/corpus_snapshot.py",
+        # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
+        # Registered because it is the instrument that CORRECTS a measurement-basis defect:
+        # build_corpus stamped a 3-of-235-shard extrapolation as "measured", and a counter
+        # that silently skipped a shard would reproduce that defect inside the artifact meant
+        # to fix it. Its selftest carries the negative control that makes that detectable --
+        # a first-shard-only count that must differ from the full one.
+        "datagen/count_corpus_dir.py",
         # --selftest needs no GPU BY CONSTRUCTION, which is why it can be gated here. The
         # replica guard reads source text only, so it runs before the CUDA check; gating a
         # source-text check behind CUDA is how an untested guard stays untested, and this
