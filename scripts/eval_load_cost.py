@@ -74,14 +74,17 @@ MEASURED = {
 # Both are needed and neither substitutes: an eval can be quick and disruptive (score_matrix's
 # likelihood metrics) or slow and gentle (a generative eval that leaves the GPU 74% idle).
 WALL_SECS = {
-    "lambada_en.py": (970.7, 5153, "generative, ONE ITEM AT A TIME -- eval/lambada_en.py:286 "
-                      "loops greedy_word + target_nll_per_byte per item with no batching, so the "
-                      "card sits at ~26% util for 16 minutes. Measured 2026-09-03 in b0-17's "
-                      "readout (runs/b0_17_readout.log, ckpt_ab_untiehead_untiehead.pt.ep1) on a "
-                      "dedicated card 3. The log goes SILENT for the whole 16 min, which reads as "
-                      "a hang: py-spy showed the parent blocked in subprocess.communicate at "
-                      "score_matrix.py:269, i.e. working. 5153 items, not the 1000 I assumed "
-                      "before reading n_items."),
+    "lambada_en.py": (111.0, 5153, "generative, BATCHED at --batch 32 (default). Measured "
+                      "2026-09-07 on a dedicated card 1 (step17000, runs/lambada_ab.log, "
+                      "12:39:46-12:41:37Z): 1 m 51 s INCLUDING checkpoint load, against the same "
+                      "checkpoint's 19 m 09 s on the old path in the same session -- 10.4x. Two "
+                      "causes, and the batch was the smaller one: greedy decoding ran one full "
+                      "forward per generated token at B=1, and the NLL ran ONE FORWARD PER TARGET "
+                      "TOKEN when teacher-forced scoring needs a single pass. The old figure was "
+                      "970.7 s (2026-09-03, b0-17, card 3, ~26% util); it is replaced rather than "
+                      "kept because the shape it described is gone, and it is replaced by a "
+                      "measurement rather than a projection because this table is read as "
+                      "measurement. Includes load, so it is an upper bound on the eval itself."),
     "l1_fewshot.py": (2134.3, 497, "generative, 497 problems x 512 new tokens. THE ONLY EVAL "
                       "WITH BOTH COLUMNS FILLED, and they disagree 10x: the dip in MEASURED is "
                       "209.1s of training lost, the wall here is 2134.3s of yours. Neither is "
