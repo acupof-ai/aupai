@@ -858,7 +858,18 @@ def main():
         # that silently skipped a shard would reproduce that defect inside the artifact meant
         # to fix it. Its selftest carries the negative control that makes that detectable --
         # a first-shard-only count that must differ from the full one.
+        #
+        # And it DID reproduce a defect of its own, on the axis the registration did not
+        # name: registered and green for a week while :50 counted ids with no <eos>, because
+        # the selftest asserted shard COVERAGE and nothing named the convention. Six facts
+        # were short by exactly their document counts. Registration gates the file, not the
+        # property; the convention assertion added 2026-09-08 is what gates this one.
         "datagen/count_corpus_dir.py",
+        # The multiprocess batch counter for a whole directory, and the second reader that
+        # confirmed en_c4_30b. Same convention as count_tokens.py by calling it; its own
+        # selftest asserts ids + one <eos> per document plus the two exclusions
+        # (holdout_slice_*, the stats file) that would otherwise move n_shards and bytes.
+        "scripts/count_dir.py",
         # --selftest needs no GPU BY CONSTRUCTION, which is why it can be gated here. The
         # replica guard reads source text only, so it runs before the CUDA check; gating a
         # source-text check behind CUDA is how an untested guard stays untested, and this
