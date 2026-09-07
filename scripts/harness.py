@@ -87,6 +87,7 @@ from harness_core import (  # noqa: E402
     read_mix,
     refuse_in_integration_tree,
     tree_provenance,
+    _unclassified_cards,
     walk_tracked,
 )
 
@@ -14198,6 +14199,134 @@ def _broken_no_shared_stash():
     return d
 
 
+def _assert_card_ownership(root):
+    """None when cards[] ownership is sound, else the FAIL message.
+
+    A FUNCTION SO ONE DEFINITION SERVES BOTH BRANCHES of check_allocation_reads_the_grant. That
+    check returns early when the file names a block grant, so anything written after that return
+    runs only in the no-grant world -- which is not the world this repo has been in all week. The
+    assertions below were written down there first and seven mutants survived them, the original
+    `\\bRL[ _-]?TEAM\\b` defect included, because none of them was ever reached.
+
+    THEN THEY WERE REACHABLE AND STILL GREEN ON THE PRE-FIX WORLD, which is the more instructive
+    failure and the reason property (3) exists. With the old regex AND the old two-state
+    classifier restored, _aupai_cards returns ours=[0..7] and theirs=[], and properties (1) and
+    (2) both hold: a partition of eight cards into "all ours" is still a partition, and "every
+    not-ours card must refuse" iterates over an empty set. Both of my first two assertions are
+    SATISFIED BY THE DEFECT. An assertion quantified over a set the defect empties cannot see the
+    defect -- the emptying IS the defect.
+
+    Three properties, and NONE NAMES A CARD NUMBER. Hard-coding "0 and 6 must refuse" would go
+    stale the day the controller moves a card, and a check that must be edited whenever the grant
+    changes is a check that will eventually disagree with the grant it is guarding.
+    """
+    ours, theirs, cmap = _aupai_cards(root)
+    if not cmap:
+        return None                      # no map is "no information"; other checks own that case
+    unknown = _unclassified_cards(root)
+    # (1) COVERAGE. Every listed card lands in exactly one of the three states. A card in none of
+    #     them has no owner decision at all -- the shape that let `--cards 0` through -- and a card
+    #     in two makes the answer depend on which list the caller happens to read first.
+    seen = sorted(ours) + sorted(theirs) + sorted(unknown)
+    if sorted(set(seen)) != sorted(cmap) or len(seen) != len(set(seen)):
+        return (f"the live cards[] map lists {sorted(cmap)} but ours={sorted(ours)}, "
+                f"theirs={sorted(theirs)}, unclassified={sorted(unknown)} do not partition it -- "
+                f"a card in none of the three has no owner decision, and one in two has an answer "
+                f"that depends on the reader")
+    # (2) THE REFUSAL FIRES ON THE LIVE TEXT. For every card the live file does not give aupai,
+    #     --cards must refuse. This is the assertion item 8's typed fixture could not make: it is
+    #     stated over whatever the file says today, so the wording cannot drift out from under it.
+    #     Card 0's note lost the "TEAM" token at some point and nothing went red for it.
+    for c in sorted(set(theirs) | set(unknown)):
+        got, ref = _validate_explicit_cards(str(c), root=root)
+        if not ref:
+            return (f"--cards {c} was ACCEPTED as {got!r} while the LIVE "
+                    f"runs/card_assignment.json note for card {c} reads "
+                    f"{str(cmap.get(c))[:90]!r} -- that note does not grant the card to aupai, and "
+                    f"this is the exact shape that accepted --cards 0 and 6 on 2026-09-07")
+    # (3) THE CLASSIFIER DISCRIMINATES AT ALL, asserted on the live notes and not on a count.
+    #     (1) and (2) are both vacuously true when the classifier calls everything ours, which is
+    #     precisely the bug: measured, the pre-fix predicate gives ours=[0..7] theirs=[] and turns
+    #     (2) into a loop over nothing. So the property has to be about the DECISION, not about the
+    #     partition's shape: a note whose subject is another team must not classify as ours. Stated
+    #     over the file's own text, so it needs no card number and cannot be satisfied by a
+    #     predicate that has stopped discriminating.
+    for c, note in sorted(cmap.items()):
+        subject = str(note or "").strip()[:24].lower()
+        if ("tilerl" in subject or "rl team" in subject) and c in ours:
+            return (f"cards[{c}] opens with {str(note)[:40]!r} -- another team's name is the "
+                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. This "
+                    f"is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
+                    f"'tileRL (...)' (no TEAM token) nor even 'tileRL TEAM' (no word boundary "
+                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours")
+    # (4) A CARD THE CONTROLLER PUT IN block_cards CANNOT BE ANOTHER TEAM'S. The block grant and
+    #     cards[] are written by the same controller in the same file, so they cannot disagree
+    #     about who owns a card; if they do, one of the two reads is wrong and a launcher will act
+    #     on whichever it happens to consult.
+    #
+    #     THIS PROPERTY EXISTS BECAUSE MY OWN FIRST FIX FAILED IT AND MUTATION FOUND IT SURVIVING.
+    #     An unanchored `tile[ _-]?rl` matched "for tilerl's PR" and "b0+tilerl" -- a peer's name
+    #     mentioned inside a note about aupai's own work -- and classified cards 1 and 2 as
+    #     tileRL's while card 1 was running resume 1. Properties (1)-(3) all passed on that world:
+    #     the partition was still a partition, every not-ours card still refused, and no note's
+    #     SUBJECT was another team. Over-restrictive is a defect too -- it refuses aupai's own
+    #     launches onto aupai's own cards and sends someone hunting for a grant that already
+    #     exists -- so the guard has to bound the classifier from both sides, not just one.
+    block = _grant_cards(root, raise_on_false=False)[0] or []
+    misowned = [c for c in block if c in theirs or c in unknown]
+    if misowned:
+        return (f"block_cards gives {_csv(sorted(block))} to an aupai training block, but "
+                f"cards[] classifies {_csv(sorted(misowned))} as "
+                f"{'another team' if any(c in theirs for c in misowned) else 'unreadable'} "
+                f"({'; '.join(f'cards[{c}] = ' + repr(str(cmap.get(c))[:60]) for c in misowned)}) "
+                f"-- the same controller wrote both, so they cannot disagree about the owner. An "
+                f"over-restrictive classifier refuses aupai's own launches onto aupai's own cards")
+    # (5) OWNERSHIP COMES FROM cards[] AND NOT FROM THE TOP-LEVEL `status` PROSE. tilerl-0a's
+    #     check, adopted here so it runs on every commit rather than once at review.
+    #
+    #     The trap it closes: the phrase the OLD regex wanted -- "RL TEAM (tileRL) KEEPS CARDS 0
+    #     AND 6" -- is still in the file today, in the top-level `status` field, which _card_map
+    #     never reads. So a "fix" that widened the search to the whole file would classify 0 and 6
+    #     as theirs and pass properties (1)-(4) for entirely the wrong reason: it would be reading
+    #     a running commentary that goes stale in hours, not an ownership record. Card 0's note
+    #     already proves the hazard -- its "Current: tilerl-48 levers arm 3" status line is a
+    #     misattribution, confirmed by 48 as a job it never ran.
+    #
+    #     THE FIXTURE IS ASSERTED NON-VACUOUS FIRST. Blanking a field that never held the phrase
+    #     would prove nothing, so the check requires the phrase to be there before removing it.
+    _raw = os.path.join(root, "runs", "card_assignment.json")
+    try:
+        with open(_raw, encoding="utf-8") as _fh:
+            _obj = json.load(_fh)
+    except (OSError, ValueError):
+        _obj = None
+    if _obj is not None and "RL TEAM" in str(_obj.get("status", "")):
+        import shutil as _sh3
+        import tempfile as _tf3
+
+        _sd = _tf3.mkdtemp(prefix="status_blank_")
+        try:
+            os.makedirs(os.path.join(_sd, "runs"), exist_ok=True)
+            _obj2 = dict(_obj)
+            _obj2["status"] = ""
+            with open(os.path.join(_sd, "runs", "card_assignment.json"), "w") as _fh:
+                json.dump(_obj2, _fh)
+            _o2, _t2, _ = _aupai_cards(_sd)
+            _u2 = _unclassified_cards(_sd)
+            if (sorted(_o2), sorted(_t2), sorted(_u2)) != (sorted(ours), sorted(theirs),
+                                                           sorted(unknown)):
+                return (f"blanking the top-level `status` field changed the ownership partition "
+                        f"from ours={sorted(ours)}/theirs={sorted(theirs)}/"
+                        f"unclassified={sorted(unknown)} to ours={sorted(_o2)}/"
+                        f"theirs={sorted(_t2)}/unclassified={sorted(_u2)} -- ownership is being "
+                        f"read from `status`, which is running commentary that goes stale in hours "
+                        f"(card 0's own status line misattributes a job 48 never ran), not from "
+                        f"the cards[] owner")
+        finally:
+            _sh3.rmtree(_sd, ignore_errors=True)
+    return None
+
+
 def check_allocation_reads_the_grant(root):
     """The cards a training launch GETS are the cards the grant file GIVES.
 
@@ -14305,8 +14434,28 @@ def check_allocation_reads_the_grant(root):
                 return FAIL, (f"the grant's lane card(s) {_csv(sorted(both))} are inside its "
                               f"own block {_csv(block)} -- a non-training job would land on a "
                               f"card the training block holds, which OOMs both")
+        # THE OWNERSHIP ASSERTIONS RUN ON BOTH BRANCHES, and that placement is the whole reason
+        # they are here rather than below with items 6-8 (b0, 2026-09-07).
+        #
+        # Items 6, 7 and 8 sit AFTER the `return PASS` on the next line, inside a function whose
+        # first branch is `if granted:`. So they execute only when the file names NO block grant.
+        # The live file has named one all week. I wrote the --cards ownership assertions down
+        # there first and mutation-tested them: SEVEN mutants survived, including restoring the
+        # original `\bRL[ _-]?TEAM\b` defect verbatim -- not because the assertions were weak but
+        # because nothing reached them. The check returned PASS at line 14309 every time.
+        #
+        # That is the same shape as the defect being fixed, one level up: item 8's fixture was
+        # vacuous because its wording matched only itself, and item 8 ITSELF was unreachable
+        # because a grant exists. A guard can be dead for a reason that has nothing to do with
+        # what it asserts, so the delivery standard is that a planted regression turns it RED --
+        # never that it passes today.
+        _own_fail = _assert_card_ownership(root)
+        if _own_fail:
+            return FAIL, _own_fail
         return PASS, (f"grant {_csv(granted)} decides the block, one source; "
-                      f"lane {lane_s or 'none (grant says null)'}")
+                      f"lane {lane_s or 'none (grant says null)'}; "
+                      f"cards[] ownership: ours {_csv(_aupai_cards(root)[0])}, "
+                      f"theirs {_csv(_aupai_cards(root)[1])}")
     # 6. An explicit launch_block_granted:false must RAISE FOR A LAUNCH and NOT for a read.
     #    "I say no" and "I have not spoken" are different answers, and on the pod they were
     #    worlds apart: the pod held a false grant from 2026-09-01 and the launcher happily fell
@@ -14369,6 +14518,19 @@ def check_allocation_reads_the_grant(root):
     #    The fixture is written here because the property is about values this tree does not hold
     #    (a card the map omits), and it is exercised through _validate_explicit_cards so no ledger
     #    row or log is produced.
+    #
+    #    THE FIXTURE'S OWN WORDING IS WHAT HID THE DEFECT THIS CHECK EXISTS TO CATCH (b0,
+    #    2026-09-07). The typed note below reads "RL TEAM (tileRL) -- not ours", which is the one
+    #    phrasing the old `\bRL[ _-]?TEAM\b` matched, while the LIVE file said
+    #    "tileRL (user order 2026-09-06, '0,6 tileRL')" and matched nothing -- so `--cards 0` and
+    #    `--cards 6` were accepted for as long as the pattern and the fixture agreed with each
+    #    other and with nothing else. A fixture that supplies the wording the predicate wants
+    #    tests the predicate against itself.
+    #
+    #    SO PART (b) BELOW READS THE LIVE runs/card_assignment.json. The typed fixture stays for
+    #    the cases the live file cannot exhibit (a card absent from the map, an empty spec), and
+    #    the live read covers the case it hid. Both are needed: the fixture alone was vacuous, and
+    #    a live-only check cannot construct an unlisted card.
     import shutil as _sh2
     import tempfile as _tf2
 
@@ -14378,15 +14540,23 @@ def check_allocation_reads_the_grant(root):
         with open(os.path.join(_fx, "runs", "card_assignment.json"), "w") as fh:
             json.dump({"launch_block_granted": True, "block_cards": "1,2",
                        "lane_card": "5",
+                       # BOTH SPELLINGS, because the live file uses one and the old fixture used
+                       # the other, and the predicate must read either. Card 3's note is the live
+                       # file's shape ("tileRL (...)"), card 0's is the fixture's historical one.
                        "cards": {"0": "RL TEAM (tileRL) -- not ours",
+                                 "3": "tileRL (user order 2026-09-06, '0,6 tileRL')",
+                                 "4": "a note in nobody's vocabulary",
                                  "1-2": "GRANTED -> a training block",
                                  "5": "GRANTED -> a probe"}}, fh)
         for _spec, _must_refuse, _label in (
             ("5", False, "a card cards[] grants us and no block holds"),
             ("0", True, "a card marked RL TEAM"),
+            ("3", True, "a card whose note leads with tileRL, the LIVE file's wording"),
+            ("4", True, "a card whose note names no owner the parser can read"),
             ("7", True, "a card no cards[] entry mentions"),
             ("1", True, "a card inside block_cards"),
             ("5,0", True, "a set with one RL-team card among ours"),
+            ("5,3", True, "a set with one tileRL-worded card among ours"),
             ("", True, "an empty spec"),
         ):
             _got, _ref = _validate_explicit_cards(_spec, root=_fx)
@@ -14396,6 +14566,11 @@ def check_allocation_reads_the_grant(root):
             if not _must_refuse and _ref:
                 return FAIL, (f"--cards {_spec!r} ({_label}) was refused: {_ref[:120]} -- a flag "
                               f"that refuses a granted card leaves no way to place a job")
+        # (b) THE LIVE FILE, not a typed copy of it -- via the same function the granted branch
+        #     calls, so the two branches cannot drift into asserting different things.
+        _own = _assert_card_ownership(root)
+        if _own:
+            return FAIL, _own
     finally:
         _sh2.rmtree(_fx, ignore_errors=True)
 
@@ -22484,13 +22659,22 @@ def _validate_explicit_cards(spec, root=None):
     mutant's success was visible only to a human reading the output.
 
     The rule: every card named must be one runs/card_assignment.json's cards[] map grants US --
-    an entry that exists and is not marked RL TEAM -- and none may be in block_cards. This
-    overrides the DERIVATION of cards, never the grant: a caller may choose among our cards and
-    may not add one. A card absent from the map is refused, because the map is the whole
-    statement of ownership and silence about a card is not a grant of it.
+    an entry that exists and whose note reads as an aupai grant -- and none may be in
+    block_cards. This overrides the DERIVATION of cards, never the grant: a caller may choose
+    among our cards and may not add one. A card absent from the map is refused, because the map is
+    the whole statement of ownership and silence about a card is not a grant of it.
+
+    A CARD WHOSE NOTE THE PARSER CANNOT CLASSIFY IS REFUSED TOO, and that is a third case rather
+    than a variant of the other two: "the map says this is tileRL's" and "the map says something
+    nobody wrote a rule for" are different facts, and only the first can be reported as an owner.
+    Before 2026-09-07 the classifier had two states and an unreadable note fell into `ours`, which
+    is how `--cards 0` and `--cards 6` were accepted against a file whose own prose gives those
+    cards to tileRL. See _classify_card_note in harness_core for the two independent reasons the
+    old regex missed.
     """
     want = _expand_cards(spec)
     ours, theirs, cmap = _aupai_cards(root)
+    unknown_map = _unclassified_cards(root)
     if not want:
         return "", f"--cards {spec!r} names no card."
     if not cmap:
@@ -22499,16 +22683,25 @@ def _validate_explicit_cards(spec, root=None):
                     "just CUDA_VISIBLE_DEVICES with a ledger row.")
     rl = [c for c in want if c in theirs]
     unlisted = [c for c in want if c not in cmap]
+    unknown = [c for c in want if c in unknown_map]
     # block_cards, when the file names one. raise_on_false=False: an explicit false grant is the
     # launch's problem to refuse further down, not a reason to crash while validating.
     blocked = [c for c in want if c in (_grant_cards(root, raise_on_false=False)[0] or [])]
-    if rl or unlisted or blocked:
+    if rl or unlisted or unknown or blocked:
         why = []
         if rl:
             why.append(f"{_csv(rl)} belong(s) to the RL team per cards[]")
         if unlisted:
             why.append(f"{_csv(unlisted)} appear(s) in no cards[] entry, so nothing grants it to "
                        f"us -- silence is not a grant")
+        if unknown:
+            # THE NOTE IS QUOTED. A refusal saying only "unclassified" sends the reader to the
+            # file to guess which words tripped it; the text is the whole evidence for the
+            # refusal, so it belongs in the refusal.
+            why.append("; ".join(
+                f"cards[{c}] reads {str(unknown_map[c])[:120]!r}, which names neither an aupai "
+                f"grant nor another team -- an owner the parser cannot read is not a grant"
+                for c in unknown))
         if blocked:
             why.append(f"{_csv(blocked)} is in block_cards, which a training block owns")
         return "", (f"--cards {spec!r}: " + "; ".join(why) + ".\n"
