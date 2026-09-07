@@ -18717,41 +18717,55 @@ def _selftest_main_touched_raises_on_unreadable_main():
         # world must do -- rather than raising.
         ci_root = tempfile.mkdtemp(prefix="mt_ciroot_")
         try:
-            # THE REMOTE-TRACKING REF IS FETCHED EXPLICITLY, not left to clone's defaults.
-            # Measured 2026-09-07 (/tmp/de_clone_probe.py): `clone --depth 50` of the integration
-            # tree, of its common git dir, and of this worktree ALL produce exactly
-            # refs/remotes/origin/HEAD plus the source's current branch -- fb, fb, de. None has
-            # refs/remotes/origin/main, because a shallow clone fetches the source's HEAD branch
-            # only, and the source is a worktree parked on somebody's branch. An earlier version
-            # asserted the clone would carry origin/main and it worked once, when the integration
-            # tree happened to sit on a main-carrying branch; that is a world whose premise depends
-            # on which branch a neighbouring session left checked out.
-            #
-            # So: clone the common git dir for its objects, then `fetch origin main:` into the
-            # remote-tracking namespace and delete any local main. That is actions/checkout's end
-            # state for a pull_request build, built rather than hoped for.
+            # THE REF STATE IS CONSTRUCTED, NOT DERIVED FROM A CLONE. Two measured failures got
+            # here, and both were the world inheriting the defect it tests:
+            #   `clone --depth 50` of the integration tree, of its common git dir, and of this
+            #   worktree ALL yield refs/remotes/origin/HEAD plus the SOURCE's current branch only
+            #   -- fb, fb, de -- because a shallow clone fetches the source's HEAD branch alone
+            #   (/tmp/de_clone_probe.py). An earlier version simply asserted origin/main would be
+            #   there and passed once, when the integration tree happened to sit on a
+            #   main-carrying branch: a premise that depends on a neighbouring session's checkout.
+            #   Then `fetch +refs/heads/main:` failed ON CI (run 34096313397) for the same reason
+            #   one level down -- the CI checkout has NO refs/heads/main to fetch, which is the
+            #   whole subject of this fix.
+            # So: an empty repo, its objects borrowed via `alternates`, and
+            # refs/remotes/origin/main pointed at the tip main_ref finds in ROOT -- whatever ref
+            # that is here. No local head exists because none is ever created. That is
+            # actions/checkout's end state for a pull_request build, and it is the same
+            # borrow-the-objects trick _broken_tasks_closed_by_commit itself uses.
+            _tip = subprocess.run(["git", "-C", ROOT, "rev-parse", main_ref(ROOT) or "main"],
+                                  capture_output=True, text=True).stdout.strip()
             _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
                                       "--git-common-dir"], capture_output=True, text=True
-                                     ).stdout.strip() or ROOT
-            subprocess.run(["git", "clone", "-q", "--no-checkout", "--depth", "50",
-                            _common, ci_root], capture_output=True, text=True)
-            subprocess.run(["git", "-C", ci_root, "checkout", "-q", "--detach"], capture_output=True)
-            subprocess.run(["git", "-C", ci_root, "fetch", "-q", "--depth", "50", "origin",
-                            "+refs/heads/main:refs/remotes/origin/main"], capture_output=True)
+                                     ).stdout.strip()
+            subprocess.run(["git", "-C", ci_root, "init", "-q", "."], capture_output=True)
+            if _common:
+                _alt = os.path.join(ci_root, ".git", "objects", "info", "alternates")
+                os.makedirs(os.path.dirname(_alt), exist_ok=True)
+                with open(_alt, "w") as fh:
+                    fh.write(os.path.join(_common, "objects") + "\n")
+            if _tip:
+                subprocess.run(["git", "-C", ci_root, "update-ref",
+                                "refs/remotes/origin/main", _tip], capture_output=True)
+                subprocess.run(["git", "-C", ci_root, "read-tree", _tip], capture_output=True)
             for _b in subprocess.run(["git", "-C", ci_root, "for-each-ref", "--format=%(refname)",
                                       "refs/heads/"], capture_output=True, text=True
                                      ).stdout.split():
                 subprocess.run(["git", "-C", ci_root, "update-ref", "-d", _b], capture_output=True)
+            # The fixture reads ROOT/runs/tasks.jsonl from the FILESYSTEM, so the world needs it.
+            os.makedirs(os.path.join(ci_root, "runs"), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, "runs", "tasks.jsonl"),
+                        os.path.join(ci_root, "runs", "tasks.jsonl"))
             _no_local = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
                                         "main"], capture_output=True, text=True).returncode != 0
             _has_remote = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
                                           "refs/remotes/origin/main"],
                                          capture_output=True, text=True).returncode == 0
             # A SKIP THAT HIDES THE SUBJECT IS A FAILURE, not a note. The premise is buildable
-            # wherever git can clone, so failing to build it means this world is not running and
+            # wherever git can init, so failing to build it means this world is not running and
             # the mutant sweep reads its silence as a pass.
             assert _no_local and _has_remote, (
-                f"world 5: could not build a PR-shaped clone of {_common} (local main "
+                f"world 5: could not build the PR-shaped ref state in {ci_root} (local main "
                 f"absent={_no_local}, origin/main present={_has_remote}); the world would SKIP, "
                 f"and a SKIP here is indistinguishable from a pass")
             _row = next((t for t in CHECKS if t[0] == "tasks_closed_by_commit"), None)
