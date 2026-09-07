@@ -144,15 +144,16 @@ def _cvd(pid):
     except OSError:
         pass
     try:
-        cmd = subprocess.run(["ps", "-o", "command=", "-p", str(pid)],
-                             capture_output=True, text=True).stdout.strip()
+        cmd = subprocess.run(
+            ["ps", "-o", "command=", "-p", str(pid)], capture_output=True, text=True
+        ).stdout.strip()
         full = subprocess.run(["ps", "eww", "-p", str(pid)], capture_output=True, text=True).stdout
     except (OSError, subprocess.SubprocessError):
         return None
     if not cmd or not full.strip():
         return None
     i = full.find(cmd)
-    env = full[i + len(cmd):] if i >= 0 else ""
+    env = full[i + len(cmd) :] if i >= 0 else ""
     for tok in env.split():
         if tok.startswith("CUDA_VISIBLE_DEVICES="):
             return tok.split("=", 1)[1]
@@ -434,6 +435,50 @@ FOREIGN_MARKERS = ("NEVER TAKE", "FOREIGN OCCUPANT", "not an aupai job", "anothe
 FOREIGN_ROOT = ROOT
 
 
+def waiting_cards(table=None):
+    """{card: (pid, args)} for cards a live `acquire --wait-for-device` is polling for.
+
+    THE GAP THIS CLOSES, from tilerl-27 2026-09-07. wait_for_device resolves the job's
+    descendant BEFORE any claim file is written (the acquire path calls _resolve_holder first),
+    so for the whole polling window -- up to 300 s while a 27B model loads -- the card holds
+    memory and has no claim. status() called that ORPHAN, whose printed instruction is "find it
+    with nvidia-smi", and a reader who acts on it kills a healthy job. It happened on the H20
+    pod: card 6, pid 2057986, hand-reclaimed in time. Same shape as the FOREIGN branch above --
+    the absence of a claim means several different things and only one of them is reclaimable.
+
+    KEYED ON THE CARD, NEVER A BARE pgrep. A wait on card 7 must not make card 6 read PENDING:
+    that would turn every real orphan invisible for as long as anyone anywhere is waiting, which
+    trades a destructive false ORPHAN for a silent false PENDING. So each waiting process is
+    matched to the cards IT named, read from its own argv.
+
+    Read from argv rather than from _cvd: the waiting process is card_claim.py itself, and it is
+    told which cards to claim by --cards, not by CUDA_VISIBLE_DEVICES. Its CVD is whatever the
+    operator's shell had, which is frequently unset and occasionally wrong.
+    """
+    out = {}
+    for pid, _ppid, args in table if table is not None else _ps_table():
+        if "card_claim" not in args or "--wait-for-device" not in args:
+            continue
+        if pid == os.getpid():
+            continue
+        toks = args.split()
+        cards = None
+        for i, t in enumerate(toks):
+            if t == "--cards" and i + 1 < len(toks):
+                cards = toks[i + 1]
+                break
+            if t.startswith("--cards="):
+                cards = t.split("=", 1)[1]
+                break
+        if not cards:
+            continue
+        for c in cards.split(","):
+            c = c.strip()
+            if c:
+                out.setdefault(c, (pid, args))
+    return out
+
+
 def foreign_cards(root=ROOT):
     """{card: why} for cards runs/card_assignment.json says are not ours to take.
 
@@ -515,8 +560,10 @@ def grant_lane(card, to, why, by, root=None):
         return False, f"card {card!r} is not a card index"
     foreign = foreign_cards(root).get(card)
     if foreign:
-        return False, (f"refusing: card {card} is marked {foreign[0]!r} -- {foreign[1][:80]}. "
-                       f"The lane cannot be granted onto another container's job")
+        return False, (
+            f"refusing: card {card} is marked {foreign[0]!r} -- {foreign[1][:80]}. "
+            f"The lane cannot be granted onto another container's job"
+        )
     stamp = _now()
     obj["lane_card"] = card
     obj["lane_to"] = to
@@ -524,14 +571,16 @@ def grant_lane(card, to, why, by, root=None):
     obj["lane_note"] = f"{stamp} {by}: lane card {card} granted to {to} -- {why}"
     hist = obj.get("granted_by")
     obj["granted_by"] = (hist if isinstance(hist, list) else [hist] if hist else []) + [
-        f"{by} {stamp} (lane {card} -> {to})"]
+        f"{by} {stamp} (lane {card} -> {to})"
+    ]
     tmp = p + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
         json.dump(obj, fh, ensure_ascii=False, indent=1)
         fh.write("\n")
     os.replace(tmp, p)
-    return True, (f"lane card {card} -> {to} ({why}); lane_card, lane_to, cards[{card}], "
-                  f"lane_note, granted_by written")
+    return True, (
+        f"lane card {card} -> {to} ({why}); lane_card, lane_to, cards[{card}], lane_note, granted_by written"
+    )
 
 
 def card_memory():
@@ -542,7 +591,10 @@ def card_memory():
     try:
         out = subprocess.run(
             ["nvidia-smi", "--query-gpu=index,memory.used", "--format=csv,noheader,nounits"],
-            capture_output=True, text=True, timeout=20)
+            capture_output=True,
+            text=True,
+            timeout=20,
+        )
     except (OSError, subprocess.SubprocessError):
         return None
     if out.returncode != 0:
@@ -620,9 +672,10 @@ def _resolve_to_device_holder(holder, deadline):
     if len(on_card) > 1:
         return None, (
             f"pid {holder} has {len(on_card)} descendants holding a device, so --wait-for-device "
-            f"cannot choose one for you:\n" + "\n".join(
-                f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in on_card[:6])
-            + "\nName the one that IS the job with --pid.")
+            f"cannot choose one for you:\n"
+            + "\n".join(f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in on_card[:6])
+            + "\nName the one that IS the job with --pid."
+        )
     if len(on_card) == 1:
         return on_card[0][0], None
 
@@ -631,15 +684,19 @@ def _resolve_to_device_holder(holder, deadline):
         if nvidia_fds(os.getpid()) is None:
             return None, (
                 f"pid {holder} is not the job and this host cannot follow it: /proc is unreadable "
-                f"here (macOS), so --wait-for-device has no opinion. Pass --pid explicitly.")
+                f"here (macOS), so --wait-for-device has no opinion. Pass --pid explicitly."
+            )
         if not _alive(holder):
-            return None, (f"pid {holder} exited while --wait-for-device was polling, so it never "
-                          f"had a descendant on a card. Nothing was claimed.")
+            return None, (
+                f"pid {holder} exited while --wait-for-device was polling, so it never "
+                f"had a descendant on a card. Nothing was claimed."
+            )
         return None, (
             f"no descendant of pid {holder} opened a GPU device in {deadline}s -- it is still "
             f"alive, so this is a TIMEOUT and not a dead job. If it never launches one (an "
             f"interactive shell), waiting longer will not help and this is the wrong pid to "
-            f"claim; if it is a launcher still in startup, raise the seconds.")
+            f"claim; if it is a launcher still in startup, raise the seconds."
+        )
     return got[0], None
 
 
@@ -794,22 +851,34 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     holder = resolved
                 else:
                     kids = _job_descendants(holder)
-                    msg = (f"pid {holder} is a shell, not the job: "
-                           f"{_cmdline(holder)[:90]!r}\n"
-                           f"A claim on a shell fails both ways -- the shell exits and the card "
-                           f"reads ORPHAN, or it lingers and the card reads held after the job is "
-                           f"gone (both happened 2026-09-03).")
+                    msg = (
+                        f"pid {holder} is a shell, not the job: "
+                        f"{_cmdline(holder)[:90]!r}\n"
+                        f"A claim on a shell fails both ways -- the shell exits and the card "
+                        f"reads ORPHAN, or it lingers and the card reads held after the job is "
+                        f"gone (both happened 2026-09-03)."
+                    )
                     if kids:
-                        msg += ("\nIts python/torchrun descendants -- claim one of these, or pass "
-                                "--wait-for-device to follow it automatically:\n" + "\n".join(
-                                    f"    --pid {p}  {a[:96]}" for p, a in kids[:6]))
+                        msg += (
+                            "\nIts python/torchrun descendants -- claim one of these, or pass "
+                            "--wait-for-device to follow it automatically:\n"
+                            + "\n".join(f"    --pid {p}  {a[:96]}" for p, a in kids[:6])
+                        )
                     else:
-                        msg += ("\nIt has no python/torchrun descendant yet. Claim after the job "
-                                "starts, pass --pid explicitly, or pass --wait-for-device to poll "
-                                "until one is on a card.")
+                        msg += (
+                            "\nIt has no python/torchrun descendant yet. Claim after the job "
+                            "starts, pass --pid explicitly, or pass --wait-for-device to poll "
+                            "until one is on a card."
+                        )
                     return False, msg
-            claim = {"name": name, "cards": list(cards), "pid": holder,
-                     "cmdline": _cmdline(holder), "acquired": _now(), "note": note}
+            claim = {
+                "name": name,
+                "cards": list(cards),
+                "pid": holder,
+                "cmdline": _cmdline(holder),
+                "acquired": _now(),
+                "note": note,
+            }
             # REFUSE A DISAGREEING CUDA_VISIBLE_DEVICES. The claim says which cards this job may
             # touch and the variable says which it CAN touch; when they differ the claim protects
             # the wrong cards, and the job runs on cards nobody claimed -- which is how an ORPHAN
@@ -830,7 +899,8 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     f"runs on cards nobody claimed -- an orphan behind a healthy claim. Claim the "
                     f"cards the job can see, or relaunch with the variable set to "
                     f"{','.join(str(c) for c in cards)}. (Read at exec time: a value set inside "
-                    f"the process after start is invisible here and never refuses.)")
+                    f"the process after start is invisible here and never refuses.)"
+                )
             # REFUSE A PID THAT HOLDS NO CARD. The shell refusal above is necessary and not
             # sufficient: measured on the pod in the harness wrapper shape, the first non-shell
             # descendant appears at t=0.11s holding ZERO device fds and the first fd appears at
@@ -857,18 +927,25 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 else:
                     holders = [(p, a, nvidia_fds(p)) for p, a in _job_descendants(holder)]
                     holders = [(p, a, n) for p, a, n in holders if n]
-                    msg = (f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
-                           f"A claim on a process that is not on a card protects nothing: the card "
-                           f"reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04).")
+                    msg = (
+                        f"pid {holder} holds no GPU device fd: {_cmdline(holder)[:90]!r}\n"
+                        f"A claim on a process that is not on a card protects nothing: the card "
+                        f"reads ORPHAN while the job runs (b0_mem_m1, 2026-09-04)."
+                    )
                     if holders:
-                        msg += ("\nIts descendants that DO hold a device -- claim one of these, or "
-                                "pass --wait-for-device:\n" + "\n".join(
-                                    f"    --pid {p}  ({n} device fds)  {a[:82]}"
-                                    for p, a, n in holders[:6]))
+                        msg += (
+                            "\nIts descendants that DO hold a device -- claim one of these, or "
+                            "pass --wait-for-device:\n"
+                            + "\n".join(
+                                f"    --pid {p}  ({n} device fds)  {a[:82]}" for p, a, n in holders[:6]
+                            )
+                        )
                     else:
-                        msg += ("\nNo descendant holds one yet either. Wait for the job to reach "
-                                "torch.cuda.set_device (~1.3s after exec, measured) and claim "
-                                "then, or pass --wait-for-device to poll.")
+                        msg += (
+                            "\nNo descendant holds one yet either. Wait for the job to reach "
+                            "torch.cuda.set_device (~1.3s after exec, measured) and claim "
+                            "then, or pass --wait-for-device to poll."
+                        )
                     return False, msg
             if devs:
                 claim["device_fds"] = devs
@@ -893,8 +970,10 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     # claim_file(name, cards), so reaching this line at all means the file for THESE
                     # cards under THIS name exists. That is why the test is on the pid alone.
                     if holder == old:
-                        return True, (f"{name} already holds {','.join(cards)} for pid {old} "
-                                      f"(same pid, same cards -- claim reused, not re-taken)")
+                        return True, (
+                            f"{name} already holds {','.join(cards)} for pid {old} "
+                            f"(same pid, same cards -- claim reused, not re-taken)"
+                        )
                     # REBIND, not refuse, when the new pid is a DESCENDANT of the recorded one.
                     # The VE arm hit this: the claim held the wrapper bash and the rebind wanted
                     # torchrun, its own child, so "already holds a live claim" refused the
@@ -918,11 +997,14 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                             f"not. Nothing is auto-broken: `card_claim.py release --name "
                             f"{name}`, then acquire again. os.kill(pid,0) and /proc both "
                             f"report a zombie as alive; `ps -o stat=` is the only reader "
-                            f"that does not.")
-                    return False, (f"{name} already holds a live claim (pid {existing['pid']}"
-                                   f"{', a shell' if _argv0_is_shell(existing.get('cmdline', '')) else ''})"
-                                   f". If pid {holder} is the real job and not a descendant of "
-                                   f"{old}, release first.")
+                            f"that does not."
+                        )
+                    return False, (
+                        f"{name} already holds a live claim (pid {existing['pid']}"
+                        f"{', a shell' if _argv0_is_shell(existing.get('cmdline', '')) else ''})"
+                        f". If pid {holder} is the real job and not a descendant of "
+                        f"{old}, release first."
+                    )
                 os.unlink(mine)
                 continue
             with os.fdopen(fd, "w", encoding="utf-8") as fh:
@@ -941,8 +1023,7 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
             corpses = []
             for c in live:
                 p = c.get("pid")
-                if (isinstance(p, int) and _is_zombie(p)
-                        and any(card in clash for card in c.get("cards", []))):
+                if isinstance(p, int) and _is_zombie(p) and any(card in clash for card in c.get("cards", [])):
                     corpses.append((c.get("name"), p, _proc_stat(p)))
             if corpses:
                 nm, zp, st = corpses[0]
@@ -952,9 +1033,11 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     f"is not, so this is not a queue to wait in. Nothing is auto-broken: "
                     f"`card_claim.py release --name {nm}`, then acquire again. os.kill(pid,0) and "
                     f"/proc both report a zombie as alive; `ps -o stat=` is the only reader that "
-                    f"does not.")
-            return False, (f"cards {sorted(clash)} are claimed by {clash}. "
-                           f"Queue -- do not spill onto a claimed card.")
+                    f"does not."
+                )
+            return False, (
+                f"cards {sorted(clash)} are claimed by {clash}. Queue -- do not spill onto a claimed card."
+            )
         time.sleep(min(15, max(2, wait / 20)))
 
 
@@ -1034,10 +1117,12 @@ def status():
         if isinstance(p, int) and _is_zombie(p):
             zombies.append((c.get("name"), p, _proc_stat(p), c.get("acquired"), c.get("cards", [])))
     for name, p, st, since, cards in zombies:
-        lines.append(f"ZOMBIE {name} holds cards {','.join(cards)} on pid {p}, state {st!r} -- the "
-                     f"process is a corpse, so the job ended; claimed since {since}. "
-                     f"os.kill(pid,0) and /proc BOTH report it alive, `ps -o stat=` does not. "
-                     f"A human releases: `card_claim.py release --name {name}`")
+        lines.append(
+            f"ZOMBIE {name} holds cards {','.join(cards)} on pid {p}, state {st!r} -- the "
+            f"process is a corpse, so the job ended; claimed since {since}. "
+            f"os.kill(pid,0) and /proc BOTH report it alive, `ps -o stat=` does not. "
+            f"A human releases: `card_claim.py release --name {name}`"
+        )
     # CVD-MISMATCH: the fourth disagreement, and the only one between a claim and the JOB'S OWN
     # VIEW of the cards rather than between a claim and the hardware. The claim names cards the
     # job cannot touch, so the job runs on cards nobody claimed -- an orphan sitting behind a
@@ -1057,11 +1142,13 @@ def status():
         if got:
             mismatches.append((c.get("name"), p, got[0], got[1]))
     for name, p, val, why in mismatches:
-        lines.append(f"CVD-MISMATCH {name} claims cards it cannot touch: pid {p} was started with "
-                     f"CUDA_VISIBLE_DEVICES={val!r}, {why}. The job runs on cards nobody claimed "
-                     f"while this claim protects cards it never touches. Fix the claim or the "
-                     f"launch: `card_claim.py release --name {name}` and acquire the cards the "
-                     f"job can see.")
+        lines.append(
+            f"CVD-MISMATCH {name} claims cards it cannot touch: pid {p} was started with "
+            f"CUDA_VISIBLE_DEVICES={val!r}, {why}. The job runs on cards nobody claimed "
+            f"while this claim protects cards it never touches. Fix the claim or the "
+            f"launch: `card_claim.py release --name {name}` and acquire the cards the "
+            f"job can see."
+        )
     orphan_shells = []
     for c in live:
         p = c.get("pid")
@@ -1080,9 +1167,11 @@ def status():
         if _argv0_is_shell(args) and not _job_descendants(p, table):
             orphan_shells.append((c.get("name"), p))
     for name, p in orphan_shells:
-        lines.append(f"ORPHAN-SHELL {name} holds pid {p}, a shell with no live python/torchrun "
-                     f"descendant -- the job ended and the claim did not. "
-                     f"`card_claim.py release --name {name}`")
+        lines.append(
+            f"ORPHAN-SHELL {name} holds pid {p}, a shell with no live python/torchrun "
+            f"descendant -- the job ended and the claim did not. "
+            f"`card_claim.py release --name {name}`"
+        )
     for c in live:
         # PENDING SAYS SO. de-47: harness launch writes a state="pending" row before the device
         # poll can name the job's own pid, so a job shorter than the poll leaves a row instead of
@@ -1091,12 +1180,16 @@ def status():
         # the two alike would leave a reader unable to tell "a job is on this card" from "a job is
         # starting here". The pid on a pending row is the launch WRAPPER, deliberately.
         if c.get("state") == "pending":
-            lines.append(f"PEND. {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
-                         f"wrapper pid {c.get('pid')} since {c.get('acquired')} -- reserved, no "
-                         f"device fd observed yet; upgraded or released by the launch")
+            lines.append(
+                f"PEND. {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
+                f"wrapper pid {c.get('pid')} since {c.get('acquired')} -- reserved, no "
+                f"device fd observed yet; upgraded or released by the launch"
+            )
         else:
-            lines.append(f"CLAIM {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
-                         f"pid {c.get('pid')} since {c.get('acquired')}")
+            lines.append(
+                f"CLAIM {c['name']:<20} cards {','.join(c.get('cards', [])):<16} "
+                f"pid {c.get('pid')} since {c.get('acquired')}"
+            )
     for s in stale:
         lines.append(f"STALE {s.get('name') or s.get('file')} -- {s.get('why')} (reclaimable)")
     dup = {c: n for c, n in held.items() if len(n) > 1}
@@ -1108,9 +1201,9 @@ def status():
     # nothing -- the foreign case would then silently never fire and the world would prove the
     # ORPHAN branch twice. FOREIGN_ROOT is the seam the selftest moves instead.
     foreign = foreign_cards(FOREIGN_ROOT)
+    waiting = waiting_cards()
     if mem is None:
-        lines.append("CARDS  not measured (no nvidia-smi here) -- claims listed above are all "
-                     "this can say")
+        lines.append("CARDS  not measured (no nvidia-smi here) -- claims listed above are all this can say")
     else:
         for card, m in sorted(mem.items(), key=lambda kv: kv[0]):
             if m > FREE_MIB and card not in held and card in foreign:
@@ -1118,25 +1211,42 @@ def status():
                 # "find it and reclaim it", which for the user's own job or another container's
                 # is destructive advice. Exits 0 for this card -- nothing is wrong.
                 hit, why = foreign[card]
-                lines.append(f"FOREIGN card {card} holds {m} MiB, no claim, and "
-                             f"runs/card_assignment.json says {hit!r} -- not ours to take or "
-                             f"reclaim: {why[:110]}")
+                lines.append(
+                    f"FOREIGN card {card} holds {m} MiB, no claim, and "
+                    f"runs/card_assignment.json says {hit!r} -- not ours to take or "
+                    f"reclaim: {why[:110]}"
+                )
+            elif m > FREE_MIB and card not in held and card in waiting:
+                # PENDING, not ORPHAN, and NOT in `orphans`: a live acquire --wait-for-device is
+                # polling for THIS card, so the claim is seconds away and the memory is the job
+                # the claim is for. Exits 0 -- nothing is wrong (tilerl-27, 2026-09-07).
+                wpid, wargs = waiting[card]
+                lines.append(
+                    f"PENDING card {card} pid {wpid} waiting -- holds {m} MiB and a live "
+                    f"acquire --wait-for-device is polling for this card, so the claim "
+                    f"is not written yet. Do NOT reclaim: {wargs[:100]}"
+                )
             elif m > FREE_MIB and card not in held:
                 orphans.append((card, m))
-                lines.append(f"ORPHAN card {card} holds {m} MiB with no claim -- find it with "
-                             f"nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory")
+                lines.append(
+                    f"ORPHAN card {card} holds {m} MiB with no claim -- find it with "
+                    f"nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory"
+                )
             elif card in held and m <= FREE_MIB:
                 # A PENDING row's card is SUPPOSED to be idle -- that is what pending means, and
                 # saying "starting up, or the job died" of it reads as a possible fault when the
                 # state is normal and self-resolving (de-47).
-                _pending = any(c.get("state") == "pending" and card in c.get("cards", [])
-                               for c in live)
+                _pending = any(c.get("state") == "pending" and card in c.get("cards", []) for c in live)
                 if _pending:
-                    lines.append(f"note   card {card} RESERVED by {held[card][0]} and idle "
-                                 f"({m} MiB) -- expected: the job has not opened a device yet")
+                    lines.append(
+                        f"note   card {card} RESERVED by {held[card][0]} and idle "
+                        f"({m} MiB) -- expected: the job has not opened a device yet"
+                    )
                 else:
-                    lines.append(f"note   card {card} claimed by {held[card][0]} but idle "
-                                 f"({m} MiB) -- starting up, or the job died without releasing")
+                    lines.append(
+                        f"note   card {card} claimed by {held[card][0]} but idle "
+                        f"({m} MiB) -- starting up, or the job died without releasing"
+                    )
     if not lines:
         lines.append("no claims, no orphans")
     # An ORPHAN-SHELL goes in `dup`, not `orphans`: `orphans` is (card, MiB) and one caller
@@ -1164,6 +1274,7 @@ def _selftest():
     """Known answers over a temporary claim dir. No cards."""
     import shutil
     import tempfile
+
     global CLAIM_DIR
     bad = 0
     # Counted as the cases run, not hardcoded. `n = 10` at the bottom stayed 10 when two cases
@@ -1213,20 +1324,29 @@ def _selftest():
     # own pid, exited, and the claim was stale before the next command could read it. Run two
     # real subprocesses and assert the second is refused.
     import subprocess as _sp
+
     env = dict(os.environ, AUPAI_CLAIM_DIR=d)
     here = os.path.abspath(__file__)
-    r1 = _sp.run([sys.executable, here, "acquire", "--name", "cliA", "--cards", "3",
-                  "--wait", "0"], capture_output=True, text=True, env=env)
-    r2 = _sp.run([sys.executable, here, "acquire", "--name", "cliB", "--cards", "3",
-                  "--wait", "0"], capture_output=True, text=True, env=env)
+    r1 = _sp.run(
+        [sys.executable, here, "acquire", "--name", "cliA", "--cards", "3", "--wait", "0"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    r2 = _sp.run(
+        [sys.executable, here, "acquire", "--name", "cliB", "--cards", "3", "--wait", "0"],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
     good = r1.returncode == 0 and r2.returncode != 0
-    _case(good, f"a claim survives the claiming COMMAND's exit "
-          f"(first rc={r1.returncode}, second rc={r2.returncode})")
-    r3 = _sp.run([sys.executable, here, "release", "--name", "cliA"],
-                 capture_output=True, text=True, env=env)
+    _case(
+        good,
+        f"a claim survives the claiming COMMAND's exit (first rc={r1.returncode}, second rc={r2.returncode})",
+    )
+    r3 = _sp.run([sys.executable, here, "release", "--name", "cliA"], capture_output=True, text=True, env=env)
     good = r3.returncode == 0
-    _case(good, f"and the original holder can release it "
-          f"({r3.stdout.strip() or r3.stderr.strip()})")
+    _case(good, f"and the original holder can release it ({r3.stdout.strip() or r3.stderr.strip()})")
 
     # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
     # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
@@ -1237,8 +1357,10 @@ def _selftest():
     okd2, msgd2 = acquire("sameName", ["8"], wait=0, pid=me)
     _case(okd1 and okd2, f"one name holds two DISJOINT claims ({msgd1} / {msgd2})")
     live_sn = [c for c in claims()[0] if c.get("name") == "sameName"]
-    _case(sorted(sum((c.get("cards", []) for c in live_sn), [])) == ["7", "8"],
-          f"and both are live at once ({[c.get('cards') for c in live_sn]})")
+    _case(
+        sorted(sum((c.get("cards", []) for c in live_sn), [])) == ["7", "8"],
+        f"and both are live at once ({[c.get('cards') for c in live_sn]})",
+    )
 
     # SAME NAME, OVERLAPPING CARDS, REFUSED. The other half, and the one that decides whether
     # this change weakened the lock: the old clash filter was `c.get("name") != name`, so with
@@ -1246,27 +1368,32 @@ def _selftest():
     # from its own clash check, taken a new path via O_EXCL, and produced TWO live claims on one
     # card. Reverting the filter to the name form fails this case and leaves the two above green.
     okd3, msgd3 = acquire("sameName", ["8", "9"], wait=0, pid=me)
-    _case(not okd3 and "claimed by" in msgd3,
-          f"the same name is refused on an OVERLAPPING set ({msgd3})")
+    _case(not okd3 and "claimed by" in msgd3, f"the same name is refused on an OVERLAPPING set ({msgd3})")
 
     # A NAME-SCOPED RELEASE MUST NOT FREE THE OTHER ARM. loader's atexit hook passes the cards
     # it acquired for exactly this reason: with one name holding two claims, releasing by name
     # at one arm's exit would drop the other arm's card while its job is still running.
     okr, msgr = release("sameName", ["7"])
     left = [c for c in claims()[0] if c.get("name") == "sameName"]
-    _case(okr and [c.get("cards") for c in left] == [["8"]],
-          f"releasing one arm's cards leaves the other's held ({msgr}; left {[c.get('cards') for c in left]})")
+    _case(
+        okr and [c.get("cards") for c in left] == [["8"]],
+        f"releasing one arm's cards leaves the other's held ({msgr}; left {[c.get('cards') for c in left]})",
+    )
     # ...and the bare form, which is what a human types after a crash, clears them all.
     acquire("sameName", ["7"], wait=0, pid=me)
     okr2, msgr2 = release("sameName")
-    _case(okr2 and not [c for c in claims()[0] if c.get("name") == "sameName"],
-          f"the bare release clears every claim under the name ({msgr2})")
+    _case(
+        okr2 and not [c for c in claims()[0] if c.get("name") == "sameName"],
+        f"the bare release clears every claim under the name ({msgr2})",
+    )
     # A PREFIX IS NOT A NAME. `sameName` must not release `sameNameProbe`: the filename now
     # begins with the name, so a prefix test would take both and free a card nobody asked about.
     acquire("sameNameProbe", ["7"], wait=0, pid=me)
     release("sameName")
-    _case([c.get("cards") for c in claims()[0] if c.get("name") == "sameNameProbe"] == [["7"]],
-          "releasing a name leaves a longer name that starts with it alone")
+    _case(
+        [c.get("cards") for c in claims()[0] if c.get("name") == "sameNameProbe"] == [["7"]],
+        "releasing a name leaves a longer name that starts with it alone",
+    )
     release("sameNameProbe")
 
     # A LEGACY NAME-ONLY CLAIM STAYS RELEASABLE. Claims written by the copy of this file that is
@@ -1274,11 +1401,22 @@ def _selftest():
     # the moment the new code lands. Hand-placed on purpose -- this is the only way that filename
     # can exist once acquire has changed.
     with open(os.path.join(d, "legacyClaim.json"), "w", encoding="utf-8") as fh:
-        json.dump({"name": "legacyClaim", "cards": ["4"], "pid": me,
-                   "cmdline": _cmdline(me), "acquired": _now(), "note": ""}, fh)
+        json.dump(
+            {
+                "name": "legacyClaim",
+                "cards": ["4"],
+                "pid": me,
+                "cmdline": _cmdline(me),
+                "acquired": _now(),
+                "note": "",
+            },
+            fh,
+        )
     okl, msgl = release("legacyClaim", ["4"])
-    _case(okl and not os.path.exists(os.path.join(d, "legacyClaim.json")),
-          f"a pre-rename name-only claim is still releasable by its owner ({msgl})")
+    _case(
+        okl and not os.path.exists(os.path.join(d, "legacyClaim.json")),
+        f"a pre-rename name-only claim is still releasable by its owner ({msgl})",
+    )
 
     # A dead claimant's cards are reclaimable, or a crash locks the machine forever.
     p = os.path.join(d, claim_file("runA", ["0", "1"]))
@@ -1305,13 +1443,76 @@ def _selftest():
     # test is the DISAGREEMENT logic, not nvidia-smi.
     global card_memory
     real = card_memory
-    card_memory = lambda: {"3": 9000, "5": 12, "6": 40}   # 3 unclaimed+busy, 5/6 claimed+idle
+    card_memory = lambda: {"3": 9000, "5": 12, "6": 40}  # 3 unclaimed+busy, 5/6 claimed+idle
     orphans, dup, lines = status()
-    good = orphans == [("3", 9000)] and any("ORPHAN card 3" in x for x in lines) \
+    good = (
+        orphans == [("3", 9000)]
+        and any("ORPHAN card 3" in x for x in lines)
         and any("claimed by runC but idle" in x for x in lines)
+    )
     _case(good, "busy-and-unclaimed is an ORPHAN; claimed-and-idle is a note")
     if not good:
         print("       " + " | ".join(lines))
+
+    # PENDING vs ORPHAN (tilerl-27, 2026-09-07). FOUR arms, because three of them can pass
+    # while the fix is still wrong in the direction that matters.
+    global waiting_cards
+    _real_waiting = waiting_cards
+
+    # 1. A live wait for THIS card: PENDING, not ORPHAN, and not in `orphans` -- the whole
+    #    point is that a reader must not reclaim it.
+    waiting_cards = lambda table=None: {
+        "3": (4242, "python3 scripts/card_claim.py acquire --name x --cards 3 --wait-for-device 300")
+    }
+    orphans, _dup, lines = status()
+    good = (
+        orphans == []
+        and any("PENDING card 3" in x and "4242" in x for x in lines)
+        and not any("ORPHAN card 3" in x for x in lines)
+    )
+    _case(good, "a live --wait-for-device on card 3 reads PENDING, never ORPHAN")
+    if not good:
+        print("       " + " | ".join(lines))
+
+    # 2. THE WRONG-CARD ARM, and it is the one a bare pgrep fails. A wait on card 7 must leave
+    #    card 3 reading ORPHAN: keying on "is anyone waiting anywhere" would hide every real
+    #    orphan for as long as any wait is alive, trading a destructive false ORPHAN for a
+    #    silent false PENDING.
+    waiting_cards = lambda table=None: {
+        "7": (4243, "python3 scripts/card_claim.py acquire --name y --cards 7 --wait-for-device 300")
+    }
+    orphans, _dup, lines = status()
+    good = (
+        orphans == [("3", 9000)]
+        and any("ORPHAN card 3" in x for x in lines)
+        and not any("PENDING card 3" in x for x in lines)
+    )
+    _case(good, "a wait on card 7 does NOT make card 3 read PENDING (keyed on the card)")
+    if not good:
+        print("       " + " | ".join(lines))
+
+    # 3. No wait at all: the pre-existing behaviour is unchanged. Without this arm the fix
+    #    could suppress ORPHAN unconditionally and arms 1 and 2 would still pass.
+    waiting_cards = lambda table=None: {}
+    orphans, _dup, lines = status()
+    good = orphans == [("3", 9000)] and any("ORPHAN card 3" in x for x in lines)
+    _case(good, "with no wait alive, busy-and-unclaimed still reads ORPHAN")
+
+    # 4. The PARSE, against a real argv rather than the stub: waiting_cards must read --cards
+    #    from the process table and must key on it. A fabricated table, because the property
+    #    is the parse and a real wait cannot be conjured here.
+    waiting_cards = _real_waiting
+    tbl = [
+        (4244, 1, "python3 scripts/card_claim.py acquire --name z --cards 6 --wait-for-device 300"),
+        (4245, 1, "python3 scripts/card_claim.py acquire --name w --cards=1,2 --wait-for-device"),
+        (4246, 1, "python3 scripts/card_claim.py status"),
+        (4247, 1, "python3 train.py --cards 9 --wait-for-device"),
+    ]
+    got = waiting_cards(tbl)
+    good = set(got) == {"6", "1", "2"} and got["6"][0] == 4244 and got["1"][0] == 4245
+    _case(good, f"waiting_cards parses --cards and --cards=a,b, ignores non-waiters ({sorted(got)})")
+    if not good:
+        print(f"       parsed {got}")
 
     # No nvidia-smi must not read as "all cards idle".
     card_memory = lambda: None
@@ -1357,28 +1558,36 @@ def _selftest():
         second = 'python3 -c "import time; time.sleep(30)"'
         tree = subprocess.Popen(
             ["bash", "-lc", f"{second} & {inner}; true"],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-            start_new_session=True)
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         time.sleep(1.5)
         shell_pid = tree.pid
         table = _ps_table()
         kids = _job_descendants(shell_pid, table)
 
         # The world must actually BE the pod's shape, or the cases below prove nothing.
-        _case(_argv0_is_shell(_cmdline(shell_pid)),
-              f"world: pid {shell_pid} really is a shell (argv0), not exec'd away")
+        _case(
+            _argv0_is_shell(_cmdline(shell_pid)),
+            f"world: pid {shell_pid} really is a shell (argv0), not exec'd away",
+        )
         _case(bool(kids), f"world: it really has a python descendant ({len(kids)} found)")
         # And the discriminator has to be argv0, because the substring test is TRUE here.
-        _case("python" in _cmdline(shell_pid),
-              "world: the shell's own argv mentions python -- why a substring test binds to it")
+        _case(
+            "python" in _cmdline(shell_pid),
+            "world: the shell's own argv mentions python -- why a substring test binds to it",
+        )
 
         ok, msg = acquire("de34_shell", ["7"], pid=shell_pid)
-        _case(not ok and "is a shell" in msg and "--pid" in msg,
-              "acquire refuses a shell pid and lists its python descendants")
+        _case(
+            not ok and "is a shell" in msg and "--pid" in msg,
+            "acquire refuses a shell pid and lists its python descendants",
+        )
         if ok:
             release("de34_shell")
-        _case("--wait-for-device" in msg,
-              "and the refusal offers the flag that acts on what it just printed")
+        _case("--wait-for-device" in msg, "and the refusal offers the flag that acts on what it just printed")
 
         # de45: --wait-for-device FOLLOWS the shell to its job instead of refusing. This world has
         # no GPU, so wait_for_device returns None and the resolver takes its no-device branch --
@@ -1388,23 +1597,31 @@ def _selftest():
         # from becoming 60 indistinguishable slow ones.
         okw, msgw = acquire("de45_follow", ["7"], pid=shell_pid, wait_for_device_s=2)
         if nvidia_fds(os.getpid()) is None:
-            _case(not okw and "cannot follow it" in msgw and "/proc" in msgw,
-                  f"--wait-for-device says /proc is unreadable here rather than polling for an "
-                  f"answer that cannot arrive: {msgw[:70]}")
+            _case(
+                not okw and "cannot follow it" in msgw and "/proc" in msgw,
+                f"--wait-for-device says /proc is unreadable here rather than polling for an "
+                f"answer that cannot arrive: {msgw[:70]}",
+            )
         else:
-            _case(not okw and ("TIMEOUT" in msgw or "opened a GPU device in 2s" in msgw),
-                  f"--wait-for-device times out with its OWN sentence, not the immediate "
-                  f"refusal's: {msgw[:70]}")
-            _case("is a shell" not in msgw,
-                  "and the timeout message is not the shell refusal reworded -- a reader can tell "
-                  "which one they got")
+            _case(
+                not okw and ("TIMEOUT" in msgw or "opened a GPU device in 2s" in msgw),
+                f"--wait-for-device times out with its OWN sentence, not the immediate "
+                f"refusal's: {msgw[:70]}",
+            )
+            _case(
+                "is a shell" not in msgw,
+                "and the timeout message is not the shell refusal reworded -- a reader can tell "
+                "which one they got",
+            )
         if okw:
             release("de45_follow")
         # NEGATIVE CONTROL, or the case above passes for any flag value: without the flag the same
         # pid gets the immediate shell refusal, which is a DIFFERENT message.
         okn, msgn = acquire("de45_noflag", ["7"], pid=shell_pid)
-        _case(not okn and "is a shell" in msgn and msgn != msgw,
-              "without the flag the same pid gets the immediate shell refusal, a different message")
+        _case(
+            not okn and "is a shell" in msgn and msgn != msgw,
+            "without the flag the same pid gets the immediate shell refusal, a different message",
+        )
         if okn:
             release("de45_noflag")
 
@@ -1419,23 +1636,31 @@ def _selftest():
                 # One holder: resolves. Two: refuses. The stub differs between the two cases only
                 # in HOW MANY pids it says are on a card, which is the variable under test.
                 _one = {kids[0][0]}
-                globals()["nvidia_fds"] = lambda p: (4 if p in _one else
-                                                     (0 if p == shell_pid else _real_fds(p)))
+                globals()["nvidia_fds"] = lambda p: (
+                    4 if p in _one else (0 if p == shell_pid else _real_fds(p))
+                )
                 got, why = _resolve_to_device_holder(shell_pid, 2)
-                _case(got == kids[0][0] and why is None,
-                      f"one descendant on a card resolves to it (pid {got})")
+                _case(
+                    got == kids[0][0] and why is None, f"one descendant on a card resolves to it (pid {got})"
+                )
                 if len(kids) > 1:
                     _many = {p for p, _a in kids}
-                    globals()["nvidia_fds"] = lambda p: (4 if p in _many else
-                                                         (0 if p == shell_pid else _real_fds(p)))
+                    globals()["nvidia_fds"] = lambda p: (
+                        4 if p in _many else (0 if p == shell_pid else _real_fds(p))
+                    )
                     got2, why2 = _resolve_to_device_holder(shell_pid, 2)
-                    _case(got2 is None and "cannot choose one for you" in (why2 or "")
-                          and "--pid" in (why2 or ""),
-                          "two descendants on a card REFUSE and list them, rather than picking")
+                    _case(
+                        got2 is None
+                        and "cannot choose one for you" in (why2 or "")
+                        and "--pid" in (why2 or ""),
+                        "two descendants on a card REFUSE and list them, rather than picking",
+                    )
                 else:
-                    _case(False,
-                          f"world: only {len(kids)} descendant, so the ambiguity refusal did not "
-                          f"run -- the case 4c named (e1's two candidates) is unexercised")
+                    _case(
+                        False,
+                        f"world: only {len(kids)} descendant, so the ambiguity refusal did not "
+                        f"run -- the case 4c named (e1's two candidates) is unexercised",
+                    )
             finally:
                 globals()["nvidia_fds"] = _real_fds
 
@@ -1457,8 +1682,16 @@ def _selftest():
             # clash check twice and the rebind never.
             release("de34_job")
             with open(os.path.join(CLAIM_DIR, claim_file("de34_rebind", ["7"])), "w", encoding="utf-8") as fh:
-                json.dump({"name": "de34_rebind", "cards": ["7"], "pid": shell_pid,
-                           "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
+                json.dump(
+                    {
+                        "name": "de34_rebind",
+                        "cards": ["7"],
+                        "pid": shell_pid,
+                        "cmdline": _cmdline(shell_pid),
+                        "acquired": _now(),
+                    },
+                    fh,
+                )
             ok, msg = acquire("de34_rebind", ["7"], pid=job_pid)
             _case(ok, f"a live claim on an ancestor rebinds to the job (the VE case): {msg[:60]}")
 
@@ -1466,11 +1699,21 @@ def _selftest():
             # descendant is the same job by construction.
             release("de34_rebind")
             with open(os.path.join(CLAIM_DIR, claim_file("de34_unrel", ["7"])), "w", encoding="utf-8") as fh:
-                json.dump({"name": "de34_unrel", "cards": ["7"], "pid": job_pid,
-                           "cmdline": _cmdline(job_pid), "acquired": _now()}, fh)
+                json.dump(
+                    {
+                        "name": "de34_unrel",
+                        "cards": ["7"],
+                        "pid": job_pid,
+                        "cmdline": _cmdline(job_pid),
+                        "acquired": _now(),
+                    },
+                    fh,
+                )
             ok, msg = acquire("de34_unrel", ["7"], pid=os.getpid())
-            _case(not ok and "already holds a live claim" in msg,
-                  f"an unrelated live pid is still refused, not rebound: {msg[:60]}")
+            _case(
+                not ok and "already holds a live claim" in msg,
+                f"an unrelated live pid is still refused, not rebound: {msg[:60]}",
+            )
             release("de34_unrel")
 
         # de-55: SAME PID, SAME CARDS is idempotent. The shared acquire on load_checkpoint means
@@ -1479,8 +1722,10 @@ def _selftest():
         ok, msg = acquire("de55_idem", ["7"], pid=os.getpid())
         _case(ok, f"de-55: first acquire succeeds ({msg[:44]})")
         ok2, msg2 = acquire("de55_idem", ["7"], pid=os.getpid())
-        _case(ok2 and "same pid, same cards" in msg2,
-              f"de-55: the SAME pid re-acquiring the SAME cards is granted, not refused: {msg2[:70]}")
+        _case(
+            ok2 and "same pid, same cards" in msg2,
+            f"de-55: the SAME pid re-acquiring the SAME cards is granted, not refused: {msg2[:70]}",
+        )
         ok3, _ = acquire("de55_idem", ["7"], pid=os.getpid())
         held_now = [c for c in claims()[0] if c.get("name") == "de55_idem"]
         # COUNT THE FILES, not just what claims() reports. claims() globs *.json, so a duplicate
@@ -1488,27 +1733,43 @@ def _selftest():
         # second time as `<file>.dup` passed a claims()-only assertion while leaving a second copy
         # on disk. The property is "the acquire wrote nothing", and only the directory can say so.
         files_now = sorted(f for f in os.listdir(CLAIM_DIR) if "de55_idem" in f)
-        _case(ok3 and len(held_now) == 1 and len(files_now) == 1,
-              f"de-55: three acquires leave ONE live claim and ONE file, not three "
-              f"(claims={len(held_now)}, files={files_now}) -- a refcount nobody decrements on a "
-              f"raised exception would leak the card, and a rewritten file is a second claim")
+        _case(
+            ok3 and len(held_now) == 1 and len(files_now) == 1,
+            f"de-55: three acquires leave ONE live claim and ONE file, not three "
+            f"(claims={len(held_now)}, files={files_now}) -- a refcount nobody decrements on a "
+            f"raised exception would leak the card, and a rewritten file is a second claim",
+        )
         # THE TWO NEGATIVE CONTROLS, without which the case above would pass for an acquire that
         # stopped excluding anything at all.
         okx, msgx = acquire("de55_idem", ["7"], pid=os.getpid() + 90000)
-        _case(not okx and "already holds a live claim" in msgx,
-              f"de-55 control: a DIFFERENT pid on the same name+cards is still refused: {msgx[:60]}")
+        _case(
+            not okx and "already holds a live claim" in msgx,
+            f"de-55 control: a DIFFERENT pid on the same name+cards is still refused: {msgx[:60]}",
+        )
         oky, msgy = acquire("de55_other", ["7"], pid=os.getpid())
-        _case(not oky and "claimed by" in msgy,
-              f"de-55 control: a different NAME on the held card still clashes: {msgy[:60]}")
+        _case(
+            not oky and "claimed by" in msgy,
+            f"de-55 control: a different NAME on the held card still clashes: {msgy[:60]}",
+        )
         release("de55_idem")
 
         # status reports ORPHAN-SHELL once the job is gone but the shell lives.
         with open(os.path.join(CLAIM_DIR, claim_file("de34_orphan", ["7"])), "w", encoding="utf-8") as fh:
-            json.dump({"name": "de34_orphan", "cards": ["7"], "pid": shell_pid,
-                       "cmdline": _cmdline(shell_pid), "acquired": _now()}, fh)
+            json.dump(
+                {
+                    "name": "de34_orphan",
+                    "cards": ["7"],
+                    "pid": shell_pid,
+                    "cmdline": _cmdline(shell_pid),
+                    "acquired": _now(),
+                },
+                fh,
+            )
         _, dup_now, lines_now = status()
-        _case(not any("ORPHAN-SHELL" in x for x in lines_now),
-              "no ORPHAN-SHELL while the job is still running (the negative case)")
+        _case(
+            not any("ORPHAN-SHELL" in x for x in lines_now),
+            "no ORPHAN-SHELL while the job is still running (the negative case)",
+        )
 
         for p, _a in kids:
             try:
@@ -1518,10 +1779,14 @@ def _selftest():
         time.sleep(1.0)
         _, dup_now, lines_now = status()
         said = [x for x in lines_now if "ORPHAN-SHELL" in x]
-        _case(bool(said) and any("de34_orphan" in x for x in said),
-              "status reports ORPHAN-SHELL when the shell lives and the job is gone")
-        _case(any(k.startswith("orphan-shell:") for k in dup_now),
-              "and it drives a nonzero exit, not a printed line nobody acts on")
+        _case(
+            bool(said) and any("de34_orphan" in x for x in said),
+            "status reports ORPHAN-SHELL when the shell lives and the job is gone",
+        )
+        _case(
+            any(k.startswith("orphan-shell:") for k in dup_now),
+            "and it drives a nonzero exit, not a printed line nobody acts on",
+        )
     finally:
         if tree is not None:
             for p, _a in _descendants(tree.pid):
@@ -1562,8 +1827,10 @@ def _selftest():
     try:
         globals()["PROC_ROOT"] = proot
         _fake_proc(4242, nvidia=52, other=9)
-        _case(nvidia_fds(4242) == 52,
-              f"nvidia_fds counts only nvidia links, not every fd ({nvidia_fds(4242)} of 61)")
+        _case(
+            nvidia_fds(4242) == 52,
+            f"nvidia_fds counts only nvidia links, not every fd ({nvidia_fds(4242)} of 61)",
+        )
         _fake_proc(4243, nvidia=0, other=7)
         _case(nvidia_fds(4243) == 0, "a process with fds but no device reads 0, not None")
 
@@ -1577,8 +1844,7 @@ def _selftest():
         _case(me_ok, f"W4: a claim proceeds when the device cannot be read ({me_msg[:52]})")
         if me_ok:
             got = _read(os.path.join(CLAIM_DIR, claim_file("w4_noproc", ["4"])))
-            _case("device_fds" not in (got or {}),
-                  "and it records no device_fds rather than recording 0")
+            _case("device_fds" not in (got or {}), "and it records no device_fds rather than recording 0")
             release("w4_noproc")
 
         # THE SELF-CLAIM SHAPE, and it is the world that was missing. CI went red on main for two
@@ -1603,18 +1869,24 @@ def _selftest():
         # moved to the path that can honour it. Without this pair the case above would pass for a
         # version that deleted the refusal outright.
         ok, msg = acquire("launchclaim", ["4"], pid=me, require_device=True)
-        _case(not ok and "holds no GPU device fd" in msg,
-              "and require_device=True still refuses it (the launcher path, unweakened)")
+        _case(
+            not ok and "holds no GPU device fd" in msg,
+            "and require_device=True still refuses it (the launcher path, unweakened)",
+        )
 
         # W1: the claimed pid holds nothing while a descendant holds a card. THIS process is the
         # holder, so its real descendants are whatever the selftest spawned -- give it a fake
         # /proc entry with 0 and let the refusal name what it found.
         _fake_proc(me, nvidia=0, other=4)
         ok, msg = acquire("w1_nodev", ["4"], pid=me, require_device=True)
-        _case(not ok and "holds no GPU device fd" in msg,
-              f"W1: a pid holding 0 device fds is refused ({msg.splitlines()[0][:58]})")
-        _case(not ok and ("--pid" in msg or "No descendant holds one yet" in msg),
-              "and the refusal says what to claim instead, not just that it failed")
+        _case(
+            not ok and "holds no GPU device fd" in msg,
+            f"W1: a pid holding 0 device fds is refused ({msg.splitlines()[0][:58]})",
+        )
+        _case(
+            not ok and ("--pid" in msg or "No descendant holds one yet" in msg),
+            "and the refusal says what to claim instead, not just that it failed",
+        )
 
         # And the positive: the same pid with a device is accepted, and the count is recorded.
         # Without this case W1 passes for a version that refuses everything.
@@ -1623,8 +1895,10 @@ def _selftest():
         _case(ok, f"W1 positive: the same pid WITH a device is accepted ({msg[:48]})")
         if ok:
             got = _read(os.path.join(CLAIM_DIR, claim_file("w1_dev", ["4"])))
-            _case((got or {}).get("device_fds") == 36,
-                  f"and the claim records device_fds={(got or {}).get('device_fds')}")
+            _case(
+                (got or {}).get("device_fds") == 36,
+                f"and the claim records device_fds={(got or {}).get('device_fds')}",
+            )
             release("w1_dev")
 
         # W2: wait_for_device must not bind a pid that exits during the poll. A dead wrapper ends
@@ -1635,8 +1909,10 @@ def _selftest():
         t0 = time.time()
         got = wait_for_device(dead.pid, deadline=5.0, interval=0.1)
         el = time.time() - t0
-        _case(got is None and el < 2.0,
-              f"W2: a pid that is gone ends the wait at once, claiming nothing ({el:.2f}s)")
+        _case(
+            got is None and el < 2.0,
+            f"W2: a pid that is gone ends the wait at once, claiming nothing ({el:.2f}s)",
+        )
 
         # W2b: a live pid whose descendants never open a device times out. Bounded, and it
         # returns None rather than the pid it found -- "not a shell" is no longer sufficient.
@@ -1646,9 +1922,13 @@ def _selftest():
         # world is empty rather than because the timeout works, which is §186 exactly. Measured:
         # 0 descendants, the case green, the accept path below unreachable. The de-34 world
         # documents the same trap; it caught this one 20 lines later.
-        idle = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+        idle = subprocess.Popen(
+            ["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         try:
             time.sleep(1.0)
             kids2 = _job_descendants(idle.pid)
@@ -1686,9 +1966,13 @@ def _selftest():
         # So: patch _job_descendants for the duration, to return a vanished pid FIRST and the
         # device-holding one second -- the real ordering, since ps lists by pid and the transient
         # child is younger. The tree is real, only the walk's answer is staged.
-        vlive = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
-                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                 stdin=subprocess.DEVNULL, start_new_session=True)
+        vlive = subprocess.Popen(
+            ["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         _saved_jd = globals()["_job_descendants"]
         try:
             time.sleep(1.0)
@@ -1698,16 +1982,17 @@ def _selftest():
                 real = kids4[0][0]
                 _fake_proc(real, nvidia=44)
                 gone = 9999991
-                _case(nvidia_fds(gone) is None and nvidia_fds(real) == 44,
-                      "world: one pid reads None (vanished), the other reads 44 (on a card)")
+                _case(
+                    nvidia_fds(gone) is None and nvidia_fds(real) == 44,
+                    "world: one pid reads None (vanished), the other reads 44 (on a card)",
+                )
 
                 def _staged(pid, table=None):
                     return [(gone, "python3 -u train.py"), (real, "python3 -u train.py")]
 
                 globals()["_job_descendants"] = _staged
                 got = wait_for_device(vlive.pid, deadline=3.0, interval=0.1)
-                _case(got == (real, 44),
-                      f"a vanished pid EARLIER in the walk does not end the wait: {got}")
+                _case(got == (real, 44), f"a vanished pid EARLIER in the walk does not end the wait: {got}")
                 # THE TWO SEPARATIONS THE MUTATION RUN FOUND UNCOVERED. Both were GREEN on the
                 # first rebuild, i.e. the code was right and nothing held it there.
                 #
@@ -1720,9 +2005,11 @@ def _selftest():
                 _t0 = time.time()
                 got2 = wait_for_device(vlive.pid, deadline=1.0, interval=0.1)
                 _el = time.time() - _t0
-                _case(got2 is None and _el >= 0.9,
-                      f"an all-vanished walk TIMES OUT rather than abstaining instantly "
-                      f"({_el:.2f}s of a 1.0s deadline)")
+                _case(
+                    got2 is None and _el >= 0.9,
+                    f"an all-vanished walk TIMES OUT rather than abstaining instantly "
+                    f"({_el:.2f}s of a 1.0s deadline)",
+                )
 
                 # (b) deadline=None means "while the wrapper lives", not "90 seconds". A constant
                 # reinstated anywhere reads identically until the wait outlives it, so the world
@@ -1735,11 +2022,15 @@ def _selftest():
                 globals()["_job_descendants"] = _saved_jd
                 _t0 = time.time()
                 got3 = wait_for_device(_dead.pid, deadline=None, interval=0.1)
-                _case(got3 is None and time.time() - _t0 < 2.0,
-                      "deadline=None still returns at once when the wrapper is gone")
-                _case(DEVICE_WAIT_S is None,
-                      f"and the module default carries no ceiling ({DEVICE_WAIT_S!r}) -- a "
-                      f"constant here abandoned a live launch's cards")
+                _case(
+                    got3 is None and time.time() - _t0 < 2.0,
+                    "deadline=None still returns at once when the wrapper is gone",
+                )
+                _case(
+                    DEVICE_WAIT_S is None,
+                    f"and the module default carries no ceiling ({DEVICE_WAIT_S!r}) -- a "
+                    f"constant here abandoned a live launch's cards",
+                )
 
                 # (a2) THE OTHER HALF OF "decided once, on the wrapper": with the wrapper
                 # UNREADABLE the answer is None even though a descendant holds 44 fds. Case (a)
@@ -1753,9 +2044,11 @@ def _selftest():
                 _t0 = time.time()
                 got4 = wait_for_device(vlive.pid, deadline=3.0, interval=0.1)
                 _el4 = time.time() - _t0
-                _case(got4 is None and _el4 < 0.5,
-                      f"an unreadable wrapper abstains AT ONCE even with a 44-fd descendant in "
-                      f"the walk ({got4}, {_el4:.2f}s)")
+                _case(
+                    got4 is None and _el4 < 0.5,
+                    f"an unreadable wrapper abstains AT ONCE even with a 44-fd descendant in "
+                    f"the walk ({got4}, {_el4:.2f}s)",
+                )
                 _fake_proc(me, nvidia=36)
 
                 # (b2) deadline=0 MEANS CHECK ONCE. `deadline or 90.0` reads identically to
@@ -1767,9 +2060,11 @@ def _selftest():
                 _t0 = time.time()
                 got5 = wait_for_device(vlive.pid, deadline=0, interval=0.1)
                 _el5 = time.time() - _t0
-                _case(got5 is None and _el5 < 0.5,
-                      f"deadline=0 checks once and returns, it is not falsy-promoted to a "
-                      f"default wait ({_el5:.2f}s)")
+                _case(
+                    got5 is None and _el5 < 0.5,
+                    f"deadline=0 checks once and returns, it is not falsy-promoted to a "
+                    f"default wait ({_el5:.2f}s)",
+                )
         finally:
             globals()["_job_descendants"] = _saved_jd
             for q, _a in _descendants(vlive.pid):
@@ -1793,22 +2088,31 @@ def _selftest():
         # deliberately before the claim is attempted -- which is why this is recorded rather than
         # worked around.
         orph = subprocess.Popen(
-            ["bash", "-lc", 'bash -c \'python3 -c "import time; time.sleep(8)" & exit 0\'; sleep 8'],
-            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
-            start_new_session=True)
+            ["bash", "-lc", "bash -c 'python3 -c \"import time; time.sleep(8)\" & exit 0'; sleep 8"],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         try:
             time.sleep(1.5)
             reparented = [(q, pp) for q, pp, a in _ps_table() if "time.sleep(8)" in a and pp == 1]
-            _case(bool(reparented),
-                  f"world: the job really did reparent out of the tree (ppid 1): {reparented[:1]}")
-            _case(not _job_descendants(orph.pid),
-                  "W3: the ppid walk cannot see it -- so the poll finds nothing to claim")
+            _case(
+                bool(reparented),
+                f"world: the job really did reparent out of the tree (ppid 1): {reparented[:1]}",
+            )
+            _case(
+                not _job_descendants(orph.pid),
+                "W3: the ppid walk cannot see it -- so the poll finds nothing to claim",
+            )
             for q, _pp in reparented:
                 _fake_proc(q, nvidia=48)
             got = wait_for_device(orph.pid, deadline=1.0, interval=0.1)
-            _case(got is None,
-                  "and it claims nothing even though a process on a card exists (a limit, "
-                  "not a fix: an exited intermediate shell yields no claim)")
+            _case(
+                got is None,
+                "and it claims nothing even though a process on a card exists (a limit, "
+                "not a fix: an exited intermediate shell yields no claim)",
+            )
         finally:
             for q, _pp, a in _ps_table():
                 if "time.sleep(8)" in a:
@@ -1822,19 +2126,27 @@ def _selftest():
         # The accept path end to end: a wrapper whose live descendant holds a device is found and
         # returned. Without it every case above passes for a wait_for_device that returns None
         # unconditionally (§186: an absence assertion is satisfied by code that never runs).
-        good = subprocess.Popen(["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                                stdin=subprocess.DEVNULL, start_new_session=True)
+        good = subprocess.Popen(
+            ["bash", "-c", 'python3 -c "import time; time.sleep(9)"; true'],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            stdin=subprocess.DEVNULL,
+            start_new_session=True,
+        )
         try:
             time.sleep(1.0)
             kids3 = _job_descendants(good.pid)
             for q, _a in kids3:
                 _fake_proc(q, nvidia=52)
             got = wait_for_device(good.pid, deadline=3.0, interval=0.1)
-            _case(got is not None and got[1] == 52,
-                  f"the accept path returns the device-holding descendant: {got}")
-            _case(got is not None and got[0] in {q for q, _a in kids3},
-                  "and it is a real descendant, not the wrapper")
+            _case(
+                got is not None and got[1] == 52,
+                f"the accept path returns the device-holding descendant: {got}",
+            )
+            _case(
+                got is not None and got[0] in {q for q, _a in kids3},
+                "and it is a real descendant, not the wrapper",
+            )
         finally:
             for q, _a in _descendants(good.pid):
                 try:
@@ -1860,36 +2172,50 @@ def _selftest():
     try:
         os.makedirs(os.path.join(froot, "runs"), exist_ok=True)
         with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
-            json.dump({"cards": {
-                "3": "lane, but HELD by the user's container job -- NEVER TAKE while held",
-                "0-1": "params leg block, ours",
-            }}, fh)
+            json.dump(
+                {
+                    "cards": {
+                        "3": "lane, but HELD by the user's container job -- NEVER TAKE while held",
+                        "0-1": "params leg block, ours",
+                    }
+                },
+                fh,
+            )
         globals()["FOREIGN_ROOT"] = froot
         got = foreign_cards(froot)
-        _case(set(got) == {"3"},
-              f"only the marked card is foreign, and a ranged ours-key is not: {sorted(got)}")
+        _case(
+            set(got) == {"3"}, f"only the marked card is foreign, and a ranged ours-key is not: {sorted(got)}"
+        )
 
         # OVERLAPPING KEYS, which the real file has carried since 2026-09-04 ("0-3" alongside
         # "0".."3"). A card named by a foreign range AND by a non-foreign single key must stay
         # foreign whichever order the dict yields, since the wrong direction tells someone to
         # reclaim a card that is not ours.
         with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
-            json.dump({"cards": {
-                "2-3": "FOREIGN OCCUPANT: another container",
-                "2": " | after the run ends: granted to e1",
-                "3": " | after the run ends: granted to e1",
-            }}, fh)
+            json.dump(
+                {
+                    "cards": {
+                        "2-3": "FOREIGN OCCUPANT: another container",
+                        "2": " | after the run ends: granted to e1",
+                        "3": " | after the run ends: granted to e1",
+                    }
+                },
+                fh,
+            )
         got = foreign_cards(froot)
-        _case(set(got) == {"2", "3"},
-              f"a non-foreign single key does not clear a foreign range over it: {sorted(got)}")
+        _case(
+            set(got) == {"2", "3"},
+            f"a non-foreign single key does not clear a foreign range over it: {sorted(got)}",
+        )
 
         # A ranged FOREIGN key must expand, since the file uses both forms and a string
         # compare against an nvidia-smi index would miss every range.
         with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
             json.dump({"cards": {"4-6": "FOREIGN OCCUPANT: another container's pids"}}, fh)
         got = foreign_cards(froot)
-        _case(set(got) == {"4", "5", "6"},
-              f"a ranged foreign key expands to every index in it: {sorted(got)}")
+        _case(
+            set(got) == {"4", "5", "6"}, f"a ranged foreign key expands to every index in it: {sorted(got)}"
+        )
 
         with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
             json.dump({"cards": {"7": "the user's own job, NEVER TAKE"}}, fh)
@@ -1898,12 +2224,18 @@ def _selftest():
         orphans, dup, lines = status()
         said_foreign = [x for x in lines if x.startswith("FOREIGN")]
         said_orphan = [x for x in lines if x.startswith("ORPHAN")]
-        _case(any("card 7" in x and "NEVER TAKE" in x for x in said_foreign),
-              "a marked card holding memory prints FOREIGN with the reason, not ORPHAN")
-        _case(not any("card 7" in x for x in said_orphan) and ("7", 27809) not in orphans,
-              "and it is NOT counted as an orphan, so nothing tells anyone to reclaim it")
-        _case(any("card 2" in x for x in said_orphan) and ("2", 27809) in orphans,
-              "THE SAME memory on an unmarked card still reads ORPHAN (the negative case)")
+        _case(
+            any("card 7" in x and "NEVER TAKE" in x for x in said_foreign),
+            "a marked card holding memory prints FOREIGN with the reason, not ORPHAN",
+        )
+        _case(
+            not any("card 7" in x for x in said_orphan) and ("7", 27809) not in orphans,
+            "and it is NOT counted as an orphan, so nothing tells anyone to reclaim it",
+        )
+        _case(
+            any("card 2" in x for x in said_orphan) and ("2", 27809) in orphans,
+            "THE SAME memory on an unmarked card still reads ORPHAN (the negative case)",
+        )
         globals()["card_memory"] = real
 
         # ---------------------------------------------------------- grant_lane (de, 2026-09-04)
@@ -1912,56 +2244,75 @@ def _selftest():
         # readable by launch_gate.gate_cards -- a grant written in a shape the gate refuses is
         # the divergence with an extra step.
         with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
-            json.dump({"cards": {"6": "FOREIGN OCCUPANT: another container"},
-                       "block_cards": "0-3", "lane_card": "7",
-                       "launch_block_granted": True, "granted_by": "fb 2026-09-03"}, fh)
+            json.dump(
+                {
+                    "cards": {"6": "FOREIGN OCCUPANT: another container"},
+                    "block_cards": "0-3",
+                    "lane_card": "7",
+                    "launch_block_granted": True,
+                    "granted_by": "fb 2026-09-03",
+                },
+                fh,
+            )
         ok, msg = grant_lane("5", "de", "the gate_cards fixture", "6e", root=froot)
         _case(ok, f"grant_lane writes a lane grant: {msg}")
         got = json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
-        _case(got.get("lane_card") == "5" and got.get("lane_to") == "de"
-              and "de" in got["cards"].get("5", "") and "de" in got.get("lane_note", "")
-              and any("lane 5 -> de" in x for x in got.get("granted_by", [])),
-              f"all five fields name the same grant: {json.dumps(got)[:120]}")
-        _case(got["cards"].get("6", "").startswith("FOREIGN"),
-              "and the other cards' entries are untouched")
+        _case(
+            got.get("lane_card") == "5"
+            and got.get("lane_to") == "de"
+            and "de" in got["cards"].get("5", "")
+            and "de" in got.get("lane_note", "")
+            and any("lane 5 -> de" in x for x in got.get("granted_by", [])),
+            f"all five fields name the same grant: {json.dumps(got)[:120]}",
+        )
+        _case(got["cards"].get("6", "").startswith("FOREIGN"), "and the other cards' entries are untouched")
 
         ok, msg = grant_lane("6", "de", "onto a foreign card", "6e", root=froot)
-        _case(not ok and "FOREIGN" in msg.upper(),
-              f"REFUSES the lane onto a card marked foreign: {msg}")
-        _case(json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
-              .get("lane_card") == "5",
-              "and a refused grant writes nothing (lane_card still the previous grant)")
+        _case(not ok and "FOREIGN" in msg.upper(), f"REFUSES the lane onto a card marked foreign: {msg}")
+        _case(
+            json.load(open(os.path.join(froot, "runs", "card_assignment.json"))).get("lane_card") == "5",
+            "and a refused grant writes nothing (lane_card still the previous grant)",
+        )
 
         # THE GATE READS IT. Positive: de's own lane launch on card 5 is confirmed. Negative,
         # and this is the case the old gate got wrong: the same launch on card 6 refuses.
         import launch_gate
+
         _saved = launch_gate.LAUNCH_CARDS
         _saved_owner = os.environ.get("LAUNCH_OWNER")
         try:
             os.environ["LAUNCH_OWNER"] = "de"
             launch_gate.LAUNCH_CARDS = ["5"]
             st, why = launch_gate.gate_cards(froot, None, 1)
-            _case(st == launch_gate.GO and "de" in why,
-                  f"gate_cards confirms the lane it was granted: {st} {why[:90]}")
+            _case(
+                st == launch_gate.GO and "de" in why,
+                f"gate_cards confirms the lane it was granted: {st} {why[:90]}",
+            )
             launch_gate.LAUNCH_CARDS = ["6"]
             st, why = launch_gate.gate_cards(froot, None, 1)
-            _case(st == launch_gate.NOGO and "6" in why,
-                  f"and refuses the same launch on an ungranted card: {st} {why[:90]}")
+            _case(
+                st == launch_gate.NOGO and "6" in why,
+                f"and refuses the same launch on an ungranted card: {st} {why[:90]}",
+            )
             # The lane granted to SOMEONE ELSE. The gate must refuse b0 on de's lane card --
             # this is the collision the item was raised for, and it is the case an
             # ownership-blind gate reports GO on.
             os.environ["LAUNCH_OWNER"] = "b0"
             launch_gate.LAUNCH_CARDS = ["5"]
             st, why = launch_gate.gate_cards(froot, None, 1)
-            _case(st == launch_gate.NOGO and "b0" in why,
-                  f"and refuses a lane granted to someone else: {st} {why[:90]}")
+            _case(
+                st == launch_gate.NOGO and "b0" in why,
+                f"and refuses a lane granted to someone else: {st} {why[:90]}",
+            )
             # OWNERSHIP COMES FROM lane_to, NOT FROM THE PROSE, and this world is the reason:
             # the real 2026-09-04 lane_note grants card 5 to e1, and a substring search for the
             # session name "de" hits inside the word "excluded" in it. My first version of the
             # gate did exactly that and reported GO for de on e1's lane. Word boundaries do not
             # rescue it -- "b0" then matches "ckpt_b0_sd_equalcompute" in the same string.
-            _prose = ("2026-09-04 05:40Z fb: lane card 5 granted to e1 for C11: one score_matrix "
-                      "run over ckpt_b0_sd_equalcompute; domain_bpb excluded (C12)")
+            _prose = (
+                "2026-09-04 05:40Z fb: lane card 5 granted to e1 for C11: one score_matrix "
+                "run over ckpt_b0_sd_equalcompute; domain_bpb excluded (C12)"
+            )
             _obj = json.load(open(os.path.join(froot, "runs", "card_assignment.json")))
             _obj["lane_note"] = _prose
             _obj["cards"]["5"] = "lane: e1 C11 doc_cu re-score"
@@ -1971,8 +2322,10 @@ def _selftest():
             for _w in ("de", "b0"):
                 os.environ["LAUNCH_OWNER"] = _w
                 st, why = launch_gate.gate_cards(froot, None, 1)
-                _case(st == launch_gate.NOGO and "e1" in why,
-                      f"{_w} does not get e1's lane off a prose match: {st} {why[:80]}")
+                _case(
+                    st == launch_gate.NOGO and "e1" in why,
+                    f"{_w} does not get e1's lane off a prose match: {st} {why[:80]}",
+                )
             os.environ["LAUNCH_OWNER"] = "e1"
             st, why = launch_gate.gate_cards(froot, None, 1)
             _case(st == launch_gate.GO, f"and e1, whom lane_to names, does: {st} {why[:80]}")
@@ -1981,8 +2334,10 @@ def _selftest():
             with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
                 json.dump(_obj, fh)
             st, why = launch_gate.gate_cards(froot, None, 1)
-            _case(st == launch_gate.UNKNOWN and "grant-lane" in why,
-                  f"a lane grant with no lane_to is UNKNOWN naming the writer: {st} {why[:80]}")
+            _case(
+                st == launch_gate.UNKNOWN and "grant-lane" in why,
+                f"a lane grant with no lane_to is UNKNOWN naming the writer: {st} {why[:80]}",
+            )
         finally:
             launch_gate.LAUNCH_CARDS = _saved
             if _saved_owner is None:
@@ -2006,32 +2361,55 @@ def _selftest():
         # claim whose pid is running. Without this the positive could pass on a status() that
         # printed ZOMBIE for everything.
         with open(os.path.join(CLAIM_DIR, "zlive.json"), "w", encoding="utf-8") as fh:
-            json.dump({"name": "zlive", "cards": ["7"], "pid": os.getpid(),
-                       "cmdline": _cmdline(os.getpid()), "acquired": _now()}, fh)
+            json.dump(
+                {
+                    "name": "zlive",
+                    "cards": ["7"],
+                    "pid": os.getpid(),
+                    "cmdline": _cmdline(os.getpid()),
+                    "acquired": _now(),
+                },
+                fh,
+            )
         _, dup_z, lines_z = status()
-        _case(not any("ZOMBIE" in x for x in lines_z),
-              "no ZOMBIE for a claim whose pid is genuinely running (the negative case)")
+        _case(
+            not any("ZOMBIE" in x for x in lines_z),
+            "no ZOMBIE for a claim whose pid is genuinely running (the negative case)",
+        )
         release("zlive")
 
         # The defect this fixes, asserted as a fact about the readers rather than trusted:
         # every liveness test in this file says the corpse is alive.
         time.sleep(0.3)
         st = _proc_stat(zpid)
-        _case(st.startswith("Z") and _alive(zpid),
-              f"a zombie reads state {st!r} while _alive() says True -- os.kill(pid,0) cannot "
-              f"see the difference, which is why claims() filed b0's corpse as live")
+        _case(
+            st.startswith("Z") and _alive(zpid),
+            f"a zombie reads state {st!r} while _alive() says True -- os.kill(pid,0) cannot "
+            f"see the difference, which is why claims() filed b0's corpse as live",
+        )
 
         with open(os.path.join(CLAIM_DIR, claim_file("zdead", ["7"])), "w", encoding="utf-8") as fh:
-            json.dump({"name": "zdead", "cards": ["7"], "pid": zpid,
-                       "cmdline": "python3 rescore.py", "acquired": _now()}, fh)
+            json.dump(
+                {
+                    "name": "zdead",
+                    "cards": ["7"],
+                    "pid": zpid,
+                    "cmdline": "python3 rescore.py",
+                    "acquired": _now(),
+                },
+                fh,
+            )
         live_z, stale_z = claims()
-        _case(any(c["name"] == "zdead" for c in live_z)
-              and "zdead" not in [s.get("name") for s in stale_z],
-              "the zombie claim is still LIVE, not stale -- so acquire keeps refusing the card "
-              "and nothing is auto-broken")
+        _case(
+            any(c["name"] == "zdead" for c in live_z) and "zdead" not in [s.get("name") for s in stale_z],
+            "the zombie claim is still LIVE, not stale -- so acquire keeps refusing the card "
+            "and nothing is auto-broken",
+        )
         ok_z, msg_z = acquire("zother", ["7"], wait=0, pid=me)
-        _case(not ok_z and "claimed by" in msg_z,
-              f"and the card is still refused to a second acquirer ({msg_z[:52]})")
+        _case(
+            not ok_z and "claimed by" in msg_z,
+            f"and the card is still refused to a second acquirer ({msg_z[:52]})",
+        )
         # ...AND THAT REFUSAL NAMES THE ZOMBIE. This is the case a reader actually hits -- armB
         # wanting the card armA died holding -- and it arrives at the CLASH path, not the O_EXCL
         # path the ruling was implemented on. Measured before the fix: "cards ['7'] are claimed
@@ -2039,26 +2417,34 @@ def _selftest():
         # as "wait for the running job" while waiting ten minutes on a corpse. Deleting the
         # corpses loop in acquire fails this case and leaves the same-name one green, which is
         # exactly how the gap survived the ruling.
-        _case("ZOMBIE" in msg_z and "release --name zdead" in msg_z,
-              f"a DIFFERENT name's refusal names the zombie and the release command too "
-              f"({msg_z[:70]})")
+        _case(
+            "ZOMBIE" in msg_z and "release --name zdead" in msg_z,
+            f"a DIFFERENT name's refusal names the zombie and the release command too ({msg_z[:70]})",
+        )
         # ACQUIRE'S OWN MESSAGE must name the zombie, not just status's line. e1 got
         # "already holds a live claim" for a Zs pid in production, where the advice reads as
         # "wait for the running job" (6e, 2026-09-04). Asserted on the SAME name, which is the
         # case that arises: arm 2 re-acquiring the name arm 1 left behind.
         ok_same, msg_same = acquire("zdead", ["7"], wait=0, pid=me)
-        _case(not ok_same and "ZOMBIE" in msg_same,
-              f"acquire on the zombie's own claim name says ZOMBIE, not 'a live claim': "
-              f"{msg_same[:60]}")
-        _case(not ok_same and "release --name zdead" in msg_same,
-              "and it names the release command rather than leaving the reader to guess")
+        _case(
+            not ok_same and "ZOMBIE" in msg_same,
+            f"acquire on the zombie's own claim name says ZOMBIE, not 'a live claim': {msg_same[:60]}",
+        )
+        _case(
+            not ok_same and "release --name zdead" in msg_same,
+            "and it names the release command rather than leaving the reader to guess",
+        )
 
         _, dup_z, lines_z = status()
         said_z = [x for x in lines_z if "ZOMBIE" in x]
-        _case(bool(said_z) and any("zdead" in x for x in said_z),
-              "status names it: ZOMBIE with the pid state and the claim age")
-        _case(any(k.startswith("zombie:") for k in dup_z),
-              "and it drives a nonzero exit, not a printed line nobody acts on")
+        _case(
+            bool(said_z) and any("zdead" in x for x in said_z),
+            "status names it: ZOMBIE with the pid state and the claim age",
+        )
+        _case(
+            any(k.startswith("zombie:") for k in dup_z),
+            "and it drives a nonzero exit, not a printed line nobody acts on",
+        )
         release("zdead")
     finally:
         os.waitpid(zpid, 0)
@@ -2077,42 +2463,60 @@ def _selftest():
     env_set = dict(os.environ)
     env_set["CUDA_VISIBLE_DEVICES"] = "2,3"
     env_bare = {k: v for k, v in os.environ.items() if k != "CUDA_VISIBLE_DEVICES"}
-    kid_set = subprocess.Popen([sys.executable, child], env=env_set,
-                               stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    kid_trap = subprocess.Popen([sys.executable, child, "CUDA_VISIBLE_DEVICES=7"], env=env_bare,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    kid_set = subprocess.Popen(
+        [sys.executable, child], env=env_set, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+    )
+    kid_trap = subprocess.Popen(
+        [sys.executable, child, "CUDA_VISIBLE_DEVICES=7"],
+        env=env_bare,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
     try:
         time.sleep(1.0)
-        _case(_cvd(kid_set.pid) == "2,3",
-              f"_cvd reads the exec-time value ({_cvd(kid_set.pid)!r} for a child given 2,3)")
+        _case(
+            _cvd(kid_set.pid) == "2,3",
+            f"_cvd reads the exec-time value ({_cvd(kid_set.pid)!r} for a child given 2,3)",
+        )
         # THE TRAP, asserted directly. Without the command-prefix strip this reads '7' and the
         # check would refuse every run_ddp launch, whose wrapper argv names the variable.
-        _case(_cvd(kid_trap.pid) == "",
-              f"a cmdline CONTAINING CUDA_VISIBLE_DEVICES=7 with none in the environment reads "
-              f"absent, not '7' ({_cvd(kid_trap.pid)!r}) -- the command prefix is stripped")
-        _case(_cvd_mismatch(kid_set.pid, ["2", "3"]) is None,
-              "a matching claim is not a mismatch")
-        _case(_cvd_mismatch(kid_set.pid, ["3", "2"]) is None,
-              "and order does not matter -- compared as sets, which is what both sides hold")
+        _case(
+            _cvd(kid_trap.pid) == "",
+            f"a cmdline CONTAINING CUDA_VISIBLE_DEVICES=7 with none in the environment reads "
+            f"absent, not '7' ({_cvd(kid_trap.pid)!r}) -- the command prefix is stripped",
+        )
+        _case(_cvd_mismatch(kid_set.pid, ["2", "3"]) is None, "a matching claim is not a mismatch")
+        _case(
+            _cvd_mismatch(kid_set.pid, ["3", "2"]) is None,
+            "and order does not matter -- compared as sets, which is what both sides hold",
+        )
         got_m = _cvd_mismatch(kid_set.pid, ["4"])
-        _case(got_m is not None and got_m[0] == "2,3" and "claimed ['4']" in got_m[1],
-              f"a disagreeing claim IS a mismatch, and says both sides ({got_m and got_m[1]})")
+        _case(
+            got_m is not None and got_m[0] == "2,3" and "claimed ['4']" in got_m[1],
+            f"a disagreeing claim IS a mismatch, and says both sides ({got_m and got_m[1]})",
+        )
         # ABSENT DOES NOT REFUSE, and this is the case that keeps four correct scripts working.
         # scripts/test_e2e.py:37 and bench_eff/*'s setdefault assign CUDA_VISIBLE_DEVICES INSIDE
         # the process, which no exec-time reader can see. The original ruling said to refuse on
         # absent; measured 2026-09-04, that refuses them.
-        _case(_cvd_mismatch(kid_trap.pid, ["0"]) is None,
-              "absent never refuses -- a job that sets the variable itself reads absent here "
-              "(test_e2e.py:37, bench_eff/*'s setdefault)")
+        _case(
+            _cvd_mismatch(kid_trap.pid, ["0"]) is None,
+            "absent never refuses -- a job that sets the variable itself reads absent here "
+            "(test_e2e.py:37, bench_eff/*'s setdefault)",
+        )
         # CARD 4 ONLY, and unclaimed by every case above: runC holds 5,6 and the de34/zombie cases
         # hold 7. My first fixture claimed 4,5 and the clash check refused it FIRST with "cards
         # ['5'] are claimed by runC" -- correct precedence, and the CVD assertion never ran. A
         # negative that fails for the wrong reason certifies nothing.
         ok_cvd, msg_cvd = acquire("de_cvd", ["4"], pid=kid_set.pid)
-        _case(not ok_cvd and "CUDA_VISIBLE_DEVICES" in msg_cvd and "'2,3'" in msg_cvd,
-              f"acquire REFUSES a claim on cards the job cannot see: {msg_cvd[:78]}")
-        _case(not ok_cvd and "relaunch with the variable set to 4" in msg_cvd,
-              "and the message names the cards to relaunch with, not just the disagreement")
+        _case(
+            not ok_cvd and "CUDA_VISIBLE_DEVICES" in msg_cvd and "'2,3'" in msg_cvd,
+            f"acquire REFUSES a claim on cards the job cannot see: {msg_cvd[:78]}",
+        )
+        _case(
+            not ok_cvd and "relaunch with the variable set to 4" in msg_cvd,
+            "and the message names the cards to relaunch with, not just the disagreement",
+        )
         ok_cvd2, msg_cvd2 = acquire("de_cvd_ok", ["2", "3"], pid=kid_set.pid)
         # WITHOUT THIS the negative above would pass on a check that refuses every acquire.
         _case(ok_cvd2, f"a claim on the cards it CAN see is accepted ({msg_cvd2})")
@@ -2120,21 +2524,33 @@ def _selftest():
             _, dup_c, lines_c = status()
             said_c = [x for x in lines_c if "CVD-MISMATCH" in x]
             _case(not said_c, "a matching claim produces no CVD-MISMATCH line")
-            _case(not any(k.startswith("cvd-mismatch:") for k in dup_c),
-                  "and does not drive a nonzero exit")
+            _case(not any(k.startswith("cvd-mismatch:") for k in dup_c), "and does not drive a nonzero exit")
             release("de_cvd_ok")
         # status's own line, on a hand-placed claim: acquire refuses this state, so the only way
         # it exists on disk is a launch that changed the variable after the claim -- which is
         # exactly the state status has to report.
         with open(os.path.join(d, claim_file("de_cvd_bad", ["6", "7"])), "w", encoding="utf-8") as fh:
-            json.dump({"name": "de_cvd_bad", "cards": ["6", "7"], "pid": kid_set.pid,
-                       "cmdline": _cmdline(kid_set.pid), "acquired": _now(), "note": ""}, fh)
+            json.dump(
+                {
+                    "name": "de_cvd_bad",
+                    "cards": ["6", "7"],
+                    "pid": kid_set.pid,
+                    "cmdline": _cmdline(kid_set.pid),
+                    "acquired": _now(),
+                    "note": "",
+                },
+                fh,
+            )
         _, dup_c2, lines_c2 = status()
         said_c2 = [x for x in lines_c2 if "CVD-MISMATCH" in x]
-        _case(bool(said_c2) and any("de_cvd_bad" in x for x in said_c2),
-              "status names it: CVD-MISMATCH with the value and both card sets")
-        _case(any(k.startswith("cvd-mismatch:") for k in dup_c2),
-              "and it drives a nonzero exit, not a printed line nobody acts on")
+        _case(
+            bool(said_c2) and any("de_cvd_bad" in x for x in said_c2),
+            "status names it: CVD-MISMATCH with the value and both card sets",
+        )
+        _case(
+            any(k.startswith("cvd-mismatch:") for k in dup_c2),
+            "and it drives a nonzero exit, not a printed line nobody acts on",
+        )
         release("de_cvd_bad")
     finally:
         kid_set.kill()
@@ -2155,8 +2571,7 @@ def _selftest():
     _icards = [7, 3]
     try:
         ok_i, msg_i = acquire("int_cards", _icards, pid=me)
-        _case(ok_i and "7,3" in msg_i,
-              f"ints are accepted and the success message names the cards ({msg_i})")
+        _case(ok_i and "7,3" in msg_i, f"ints are accepted and the success message names the cards ({msg_i})")
     except Exception as e:  # noqa: BLE001 -- the pre-fix behaviour, and it must not come back
         _case(False, f"acquire RAISED on int cards: {type(e).__name__}: {e}")
     #     THE CALLER'S ARGUMENT IS NOT MUTATED. acquire normalises a local rebinding; if it ever
@@ -2165,8 +2580,10 @@ def _selftest():
     #     AND THE ROW ON DISK CARRIES STRINGS, so no reader inherits the type.
     _live_i, _ = claims()
     _row_i = [c for c in _live_i if c["name"] == "int_cards"]
-    _case(len(_row_i) == 1 and all(isinstance(c, str) for c in _row_i[0]["cards"]),
-          f"the claim row stores str cards ({_row_i[0]['cards'] if _row_i else 'MISSING'})")
+    _case(
+        len(_row_i) == 1 and all(isinstance(c, str) for c in _row_i[0]["cards"]),
+        f"the claim row stores str cards ({_row_i[0]['cards'] if _row_i else 'MISSING'})",
+    )
     _case(release("int_cards", cards=_icards)[0], "and an int-cards release finds its file")
 
     # (b) status MUST SURVIVE A ROW IT DID NOT WRITE. The int-carrying row above was written by
@@ -2176,13 +2593,23 @@ def _selftest():
     #     disk now that acquire normalises: an older build, or a hand-edited file.
     _hand = os.path.join(CLAIM_DIR, "legacy_ints.9.json")
     with open(_hand, "w", encoding="utf-8") as fh:
-        json.dump({"name": "legacy_ints", "cards": [9], "pid": me, "cmdline": "python3 selftest",
-                   "acquired": "2026-09-06 00:00:00", "note": "hand-written int row"}, fh)
+        json.dump(
+            {
+                "name": "legacy_ints",
+                "cards": [9],
+                "pid": me,
+                "cmdline": "python3 selftest",
+                "acquired": "2026-09-06 00:00:00",
+                "note": "hand-written int row",
+            },
+            fh,
+        )
     try:
         _orph, _dup, _lines = status()
-        _case(any("legacy_ints" in ln for ln in _lines),
-              "status renders a hand-written int-cards row rather than raising for every peer "
-              "who runs it")
+        _case(
+            any("legacy_ints" in ln for ln in _lines),
+            "status renders a hand-written int-cards row rather than raising for every peer who runs it",
+        )
     except Exception as e:  # noqa: BLE001
         _case(False, f"status RAISED on an int-cards row: {type(e).__name__}: {e}")
     os.unlink(_hand)
@@ -2265,24 +2692,37 @@ def main():
     ap.add_argument("--by", default="", help="grant-lane: who is granting (the controller)")
     ap.add_argument("--wait", type=int, default=0, help="seconds to wait for a clash to clear")
     ap.add_argument("--note", default="", help="free text: what this job is")
-    ap.add_argument("--pid", type=int, default=None,
-                    help="the pid that HOLDS the cards (default: this command's parent, i.e. "
-                         "the launcher script). A claim recording this command's own pid is "
-                         "stale the instant it is written")
-    ap.add_argument("--require-device", action="store_true",
-                    help="refuse a --pid that holds no GPU device fd. For a LAUNCHER claiming "
-                         "another process after it is on a card (harness launch does this after "
-                         "wait_for_device). NOT for a process claiming itself before it opens "
-                         "the device it named through CUDA_VISIBLE_DEVICES -- that holds zero "
-                         "fds by construction (scripts/loader.py claim_my_cards)")
-    ap.add_argument("--wait-for-device", nargs="?", type=int, const=90, default=None,
-                    metavar="SECONDS",
-                    help="when --pid is a shell or holds no device fd, follow it to the ONE "
-                         "python/torchrun descendant that IS on a card and claim that, polling up "
-                         "to SECONDS (default 90, matching harness launch's own poll). Refuses, "
-                         "listing them, if several descendants hold a device -- choosing for you "
-                         "would be wrong half the time. Off unless passed: a process claiming "
-                         "ITSELF has no descendant to follow and would just wait out the deadline")
+    ap.add_argument(
+        "--pid",
+        type=int,
+        default=None,
+        help="the pid that HOLDS the cards (default: this command's parent, i.e. "
+        "the launcher script). A claim recording this command's own pid is "
+        "stale the instant it is written",
+    )
+    ap.add_argument(
+        "--require-device",
+        action="store_true",
+        help="refuse a --pid that holds no GPU device fd. For a LAUNCHER claiming "
+        "another process after it is on a card (harness launch does this after "
+        "wait_for_device). NOT for a process claiming itself before it opens "
+        "the device it named through CUDA_VISIBLE_DEVICES -- that holds zero "
+        "fds by construction (scripts/loader.py claim_my_cards)",
+    )
+    ap.add_argument(
+        "--wait-for-device",
+        nargs="?",
+        type=int,
+        const=90,
+        default=None,
+        metavar="SECONDS",
+        help="when --pid is a shell or holds no device fd, follow it to the ONE "
+        "python/torchrun descendant that IS on a card and claim that, polling up "
+        "to SECONDS (default 90, matching harness launch's own poll). Refuses, "
+        "listing them, if several descendants hold a device -- choosing for you "
+        "would be wrong half the time. Off unless passed: a process claiming "
+        "ITSELF has no descendant to follow and would just wait out the deadline",
+    )
     ap.add_argument("--selftest", action="store_true")
     a = ap.parse_args()
     if a.selftest:
@@ -2313,9 +2753,15 @@ def main():
     if not a.cards:
         ap.error("--cards is required for acquire")
     cards = [c.strip() for c in a.cards.split(",") if c.strip()]
-    ok, msg = acquire(a.name, cards, wait=a.wait, note=a.note, pid=a.pid,
-                      require_device=a.require_device,
-                      wait_for_device_s=a.wait_for_device)
+    ok, msg = acquire(
+        a.name,
+        cards,
+        wait=a.wait,
+        note=a.note,
+        pid=a.pid,
+        require_device=a.require_device,
+        wait_for_device_s=a.wait_for_device,
+    )
     print(msg, file=sys.stdout if ok else sys.stderr)
     return 0 if ok else 1
 
