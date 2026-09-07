@@ -190,11 +190,12 @@ Cannot see: whether the basis a number carries is the basis it was produced with
 
 ## R1. Verify premises before acting, sources before citing; a correct conclusion does not certify its argument
 
-22 incidents (12 infra, 10 model), ~3h each, 66h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
+23 incidents (13 infra, 10 model), ~3h each, 69h. `manual:` no check can verify that a human's premise matches the world; `check_fact_refs` (citations resolve) and `ckpt_facts_sources_present` (fact sources exist) cover the citation, not the argument.
 
 - §66: saw literal `0` in `blocks=0`, concluded "not the config"; `0 or n_sub` made 0 the sentinel for Full. Read the default def and the consumer line, not the literal.
 - §131: `tail` read a dead process's `SRCFP CHANGED` line as the current result. Read the artifact, not the log tail.
 - §246: a review row's basis named a sha that later stopped existing (the branch was rebuilt to drop a live-key commit) and stayed auditable only because the reviewer had happened to record a BLOB hash. A basis that is a sha describes something that can be rewritten or garbage-collected; a basis that is content survives its own subject. Same shape as §247 one rule down — the identity of a thing is not its bytes, and here the bytes are the identity that lasts.
+- §263: a kill is an input to the parent, not an operation on the child. Two throttled `curl` chunks were killed by exact PID — right PIDs, right intent — and the launcher's `wait "$p" || ok=0` turned that into its whole-file failure path, `rm -f "$out".c*`, which deleted the six chunks that had already completed. Every signal an operator reads before a kill (whose process, what it holds, is it the right one) was read correctly and none of them names the consequence; the parent's response to a non-zero child is the only thing that does. Read the failure branch of whatever launched the process, or kill nothing.
 
 Cannot see: whether a true statement is being used to support an untested conclusion (§8, §14, §18, §37, §38, §46, §49, §52, §57, §70, §96, §106, §131, §139, §175, §179, §190, §198, §199, §211, §246).
 
@@ -248,7 +249,7 @@ Cannot see: whether a pod-only measurement was brought back before the pod was r
 
 ## R8. Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class
 
-6 incidents (5 infra, 1 model), ~2h each (infra), ~1h (model), 11h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources, and WARNs after the launch rather than refusing it.
+7 incidents (6 infra, 1 model), ~2h each (infra), ~1h (model), 13h. `check_card_held_without_claim` + `check_free_card` (registered CHECKS entries) enforce card exclusivity; partial: covers cards, not all shared resources, and WARNs after the launch rather than refusing it.
 
 - §15: a shared resource was used without an explicit claim; the co-residency cost was measured against a metric class, not the run's own spend.
 - §126: a resource's exclusivity was inferred from "0 MiB" in nvidia-smi; idle is not a grant.
@@ -256,6 +257,7 @@ Cannot see: whether a pod-only measurement was brought back before the pod was r
 - §195: a rank-0-only phase (save, 33.6 s) inside a world-2 job desynchronised the ranks; rank 1 entered the next collective with nothing to meet.
 - §214: a live job ran unclaimed on card 0 and every reader read it as an orphan; the claim-write is the only thing separating "orphan" from "unclaimed live job", so the unclaimed launch was the defect, not the reading.
 - §245: a manual `git update-ref refs/heads/main` (no expected-old-value) bypassed merge_main.sh's CAS and silently overwrote a landed commit; the CAS would have refused. Ruling: nothing but merge_main.sh writes main; a refused push is fixed on the branch and re-merged.
+- §264: two readers of one collection in the same function applied different exclusions, and the omitted one waived a FOREIGN claim. `card_claim.acquire` excludes the asker's own claim file from the clash set at :833 (with a comment naming why) and not from the ancestry-exemption candidates at :866; harness launch's PENDING row names the WRAPPER pid and the acquired pid is its child, so the row supplied the ancestor for its own ask unconditionally -- no quiet case. The 30B launch took card 6 while tilerl-gdnfloor held it, acquire returned True and that branch writes nothing, so `runs/claims/` was empty while six ranks ran. Exclude by FILE, not by name: by-name reintroduces §58 (a descendant asking for an overlapping card set under the parent's name IS the same job). The unlink-before-acquire in harness launch was a second defect and the MASK: fixing it alone turns a loud six-ORPHAN symptom into a silent True.
 
 Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-resident with a run it degrades; whether a launch that never wrote a claim is refused before it starts (§214).
 

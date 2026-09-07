@@ -16,6 +16,7 @@ sample of est>=0.85 pairs; report sample n, mean(est-J), and a CI on that. Read-
 """
 import argparse
 import glob
+import inspect
 import json
 import os
 import random
@@ -189,6 +190,18 @@ def main():
         multi = {r: mem for r, mem in cl.items() if len(mem) > 1}
         docs_in = sum(len(m) for m in multi.values())
         rate = docs_in / max(1, n)
+        # PARTICIPATION, not drop. docs_in counts every document that has a near-dup;
+        # a dedup keeps one representative per cluster, so it removes docs_in - clusters.
+        # The two were one field named near_dup_rate until 2026-09-07, and multiplying
+        # code_rp1t's th0.9 participation by a token count overstated the loss by
+        # 701,466,449 tokens. Both are written, and neither is named near_dup_rate.
+        drop = (docs_in - len(multi)) / max(1, n)
+        if multi and drop >= rate:
+            raise AssertionError(
+                f"th{th}: drop {drop} >= participation {rate} over {len(multi)} cluster(s). "
+                f"A cluster has >=2 members by construction, so a kept representative must "
+                f"make drop strictly smaller. Equal means clusters was counted wrong or the "
+                f"two rates are reading one number.")
         z = 1.96
         denom = 1 + z * z / n
         p_hat = (rate + z * z / (2 * n)) / denom
@@ -197,7 +210,9 @@ def main():
         samples = sorted([(int(u), int(v), float(e)) for u, v, e in zip(edges[:, 0], edges[:, 1], est[emask])],
                          key=lambda x: -x[2])[:20]
         out["thresholds"][str(th)] = {
-            "near_dup_rate": round(rate, 6), "rate_ci95": [round(p_hat - half, 6), round(p_hat + half, 6)],
+            "participation_rate": round(rate, 6), "drop_rate": round(drop, 6),
+            "rate_ci95": [round(p_hat - half, 6), round(p_hat + half, 6)],
+            "rate_ci95_is_for": "participation_rate",
             "docs_in_clustered_pairs": docs_in, "edges": int(emask.sum()), "clusters": len(multi),
             "cross_domain_pairs": cross, "cross_domain_share": round(cross / max(1, int(emask.sum())), 4),
             "sample_pairs": [
@@ -206,7 +221,9 @@ def main():
                  "est": round(e, 3)} for u, v, e in samples],
         }
         rr = round(time.perf_counter() - t0)
-        print(f"  est>=th{th}: rate {rate:.5f} (CI {round(p_hat-half,5)},{round(p_hat+half,5)}), {int(emask.sum())} edges ({rr // 60}m{rr % 60}s)", flush=True)
+        print(f"  est>=th{th}: participation {rate:.5f} (CI {round(p_hat-half,5)},{round(p_hat+half,5)}), "
+              f"drop {drop:.5f}, {int(emask.sum())} edges, {len(multi)} clusters ({rr // 60}m{rr % 60}s)",
+              flush=True)
 
     # exact verify: random sample of est>=BAND_HI top pairs, fixed seed
     topmask = est >= BAND_HI
@@ -238,5 +255,66 @@ def main():
     print(f"DONE in {rr // 60}m{rr % 60}s -> {a.out}", flush=True)
 
 
+def _rates(cluster_sizes, n):
+    """participation and drop from cluster sizes. Both rates in one place, so the writer
+    and the selftest cannot disagree about which is which."""
+    multi = [s for s in cluster_sizes if s > 1]
+    docs_in = sum(multi)
+    part = docs_in / max(1, n)
+    drop = (docs_in - len(multi)) / max(1, n)
+    if multi and drop >= part:
+        raise AssertionError(
+            f"drop {drop} >= participation {part} over {len(multi)} cluster(s). A cluster has "
+            f">=2 members by construction, so a kept representative must make drop strictly "
+            f"smaller. Equal means clusters was counted wrong or the two rates read one number.")
+    return part, drop, len(multi), docs_in
+
+
+def _selftest():
+    """The two rates are different numbers, and a count with no representative subtracted
+    is refused. Against the REAL measurement rather than an invented one: the published
+    code_rp1t th0.9 row must reproduce, including the identity that its drop equals what
+    the build actually removed. The field was named near_dup_rate and held participation
+    for weeks -- a name cannot fail, so the distinction is enforced here."""
+    n = 3747157
+    sizes = [2] * 114888
+    sizes[0] += 427723 - 2 * 114888
+    part, drop, nc, docs_in = _rates(sizes, n)
+    assert docs_in == 427723, docs_in
+    assert nc == 114888, nc
+    assert round(part, 6) == 0.114146, part
+    assert round(drop, 6) == 0.083486, drop
+    assert docs_in - nc == 3747157 - 3434322, docs_in - nc
+    assert drop < part
+
+    part0, drop0, nc0, _ = _rates([1, 1, 1], 3)
+    assert (part0, drop0, nc0) == (0.0, 0.0, 0), (part0, drop0, nc0)
+
+    # The guard cannot be tripped through _rates' own arithmetic: the subtraction of one
+    # representative per cluster happens inside it, so with any cluster list drop < part
+    # holds identically. It is a tripwire for a FUTURE edit to that line, and a test that
+    # pretended otherwise would be a world built from the implementation. So mutate the
+    # line and assert the guard catches the mutant, which is the thing actually claimed.
+    src = inspect.getsource(_rates)
+    mutant_src = src.replace("(docs_in - len(multi)) / max(1, n)", "docs_in / max(1, n)")
+    assert mutant_src != src, "the drop line moved; this mutation no longer applies"
+    ns = {}
+    exec(mutant_src, {"__builtins__": __builtins__}, ns)  # noqa: S102
+    caught = False
+    try:
+        ns["_rates"]([2, 3], 100)
+    except AssertionError as e:
+        caught = "drop" in str(e)
+    assert caught, "a drop computed without subtracting the representative was NOT refused"
+
+    print("near_dedup_scale selftest OK: code_rp1t th0.9 reproduces participation 0.114146 and "
+          "drop 0.083486 (427,723 - 114,888 = 312,835 = the build's exact removal, 3,747,157 - "
+          "3,434,322); an empty world gives 0/0 and does not raise; a representative-less count "
+          "is refused")
+    return 0
+
+
 if __name__ == "__main__":
+    if "--selftest" in sys.argv:
+        sys.exit(_selftest())
     main()
