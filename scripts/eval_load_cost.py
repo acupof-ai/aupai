@@ -160,7 +160,24 @@ def mix_cache_bytes(mix_path):
             [d for d in doms if d not in CACHE_BYTES])
 
 
-def domains_cache_bytes(domains):
+def head_read_bytes(n_rows, seq_plus_one=4097, itemsize=8):
+    """Bytes a val-head read actually faults in, which is not the cache's size on disk.
+
+    train._domain_seqs loads with torch.load(mmap=True), and its own comment records the
+    measurement: resident cost scales with the rows DRAWN, not with the file -- 368 MiB against
+    a full load's 1128 MiB on a 0.92 GiB cache, with "zh_web is 85 GB on disk to draw 0.08
+    epochs of it". A val-head read draws at most SEQ_CAP=64 sequences (eval/domain_loss.py:57),
+    so it is ~2 MB regardless of whether the domain is 0.15 GB or 85 GB.
+
+    Pricing that read by file size overstates zh_web by 40,604x, which is how the co-residency
+    refusal came to block the three largest domains of every per-domain panel while scoring the
+    other six -- a partial panel nobody had said was partial. int64 is assumed because it is the
+    widest the cache can hold; the estimate errs high, which is the safe direction for a guard.
+    """
+    return int(n_rows) * int(seq_plus_one) * int(itemsize)
+
+
+def domains_cache_bytes(domains, head_rows=None):
     """(bytes, [domains with no recorded cache]) for an explicit domain list.
 
     The refusal in eval/cache_guard.py calls THIS, not mix_cache_bytes: it is handed the
@@ -168,12 +185,21 @@ def domains_cache_bytes(domains):
     `--mix` narrowed, one domain re-scored, a probe over three. Summing the mix would
     refuse on bytes the caller was never going to read.
 
+    head_rows declares a VAL-HEAD read of that many rows per domain, priced by
+    head_read_bytes rather than by file size. Omit it and the caller is charged for the whole
+    cache, which is right for anything that reads the pool: eval/ppl.py's 166 GB still refuses.
+    The declaration is the caller's claim about what it will touch, so it is explicit rather
+    than inferred -- a guard that guessed "this looks like a head read" would fail open on the
+    next caller that guessed wrong.
+
     An unrecorded domain contributes 0 and is RETURNED BY NAME rather than silently
     skipped, because the caller's decision differs on it: a sum with a hole in it is a
     lower bound, not a measurement, and cache_guard warns on unknown rather than
-    refusing.
+    refusing. A head read has no such hole -- its size does not depend on the table.
     """
     doms = list(domains)
+    if head_rows is not None:
+        return (len(doms) * head_read_bytes(head_rows), [])
     return (sum(CACHE_BYTES.get(d, 0) for d in doms),
             [d for d in doms if d not in CACHE_BYTES])
 
@@ -416,6 +442,23 @@ def _selftest():
     _names = {n for n, _, _, _ in rows()}
     for _n in WALL_SECS:
         assert _n in _names, f"WALL_SECS names {_n}, which is not an eval in the table"
+
+    # THE HEAD-READ DECLARATION MUST CHANGE THE PRICE. Without this, `head_rows` could be
+    # accepted and ignored -- the signature would look fixed, the guard would still refuse
+    # zh_web on file size, and nothing would say so. Measured: a 64-row head read is ~2.1 MB
+    # while zh_web's cache is 85.2 GB, so the declaration has to move the number by ~4 orders.
+    _head = head_read_bytes(64)
+    assert _head == 64 * 4097 * 8, _head
+    _big = ["zh_web", "code_py_starcoder", "math_owm_stage2"]
+    _file_bytes, _ = domains_cache_bytes(_big)
+    _head_bytes, _unknown = domains_cache_bytes(_big, head_rows=64)
+    assert _file_bytes > CO_RESIDENCY_BYTES, f"{_file_bytes} should trip the guard by file size"
+    assert _head_bytes < CO_RESIDENCY_BYTES, (
+        f"a declared 64-row head read prices at {_head_bytes} and must NOT trip the "
+        f"{CO_RESIDENCY_BYTES:.0f} B guard -- this is the refusal that removed three domains "
+        f"from every per-domain panel")
+    assert _file_bytes / _head_bytes > 1000, f"only {_file_bytes / _head_bytes:.0f}x apart"
+    assert _unknown == [], "a head read's size does not depend on the CACHE_BYTES table"
 
     print(
         f"selftest OK: interval arithmetic on 4 known answers, 4 published costs "
