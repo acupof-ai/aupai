@@ -420,7 +420,7 @@ def _band_warning(name, rows, pool_tok):
     ]
 
 
-def _allocation():
+def _allocation(cursor=None, code_tokens=None):
     """The objective's weights with supply-capped domains held fixed and the rest renormalised.
 
     One function because the selftest needs the same numbers build() uses, and a selftest that
@@ -428,7 +428,7 @@ def _allocation():
     from the thing it checks. `code` appears here as a single objective; _code_split divides its
     rows afterwards.
     """
-    capped = {n: _ceiling_weight(n) for n in OBJECTIVE if n in SUPPLY_CAPPED}
+    capped = {n: _ceiling_weight(n, cursor) for n in OBJECTIVE if n in SUPPLY_CAPPED}
     free = {n: w for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_CAPPED}
     # THE CODE SHARE ABSORBS WHAT THE CAPPED DOMAINS RELEASE, above 20B only (4c's ruling; see
     # CODE_TOTAL_ABOVE_20B). Raising code's pre-scale share by the released amount is what makes the
@@ -437,9 +437,135 @@ def _allocation():
     # so scale returns to ~1 and the other five keep their decided weights instead of each taking a
     # slice of weight released by a domain they have nothing to do with.
     free["code"] = CODE_TOTAL_ABOVE_20B if TOTAL_TOKENS > 20_000_000_000 else CODE_TOTAL
-    scale = (1.0 - sum(capped.values())) / sum(free.values())
+    if cursor:
+        free = _place_freed_under_ceiling(free, cursor, code_tokens)
+    # THE RENORMALISATION MUST NOT REACH A CLAMPED DOMAIN, or the ceiling is a comment. Placing
+    # the freed share raises sum(free) above the pre-scale total, so `scale` came out at 1.013417
+    # on .step22500 -- and multiplying a clamped weight by 1.013417 puts it back over the ceiling
+    # it was just clamped to. Measured before this fix: math and starcoder were clamped to 2.10
+    # epochs and written at 2.1282, the clamp applied and then undone in the same function.
+    # So: hold the clamped domains fixed alongside `capped` and renormalise only what is free to
+    # move. Iterate, because absorbing the difference can push a previously-unclamped recipient
+    # over its own ceiling; the loop is bounded by the number of free domains, since each pass
+    # either clamps one more or converges.
+    return _renormalise_holding_clamped(free, capped, cursor, code_tokens)
 
-    return dict({n: w * scale for n, w in free.items()}, **capped)
+
+def _renormalise_holding_clamped(free, capped, cursor, code_tokens):
+    """Scale the unclamped free domains to fill 1 - sum(capped) - sum(pinned).
+
+    A domain is PINNED when the ceiling decided its weight rather than the objective. Such a
+    weight is a bound, so scaling it is not a renormalisation -- it is a violation with a
+    multiplication in front of it. Separated from _allocation so the fixed point is testable.
+    """
+    free = dict(free)
+    pinned = {}
+    # Bounded by len(free): each pass either pins one more domain or converges.
+    for _ in range(len(free) + 1):
+        movable = {n: w for n, w in free.items() if n not in pinned}
+        if not movable:
+            raise SystemExit(
+                "REFUSING: every free domain is pinned at its ceiling, so nothing can absorb the "
+                f"remainder; the weights sum to {sum(free.values()) + sum(capped.values()):.6f}."
+            )
+        scale = (1.0 - sum(capped.values()) - sum(pinned.values())) / sum(movable.values())
+        scaled = dict(pinned, **{n: w * scale for n, w in movable.items()})
+        over = _ceiling_overshoot(scaled, cursor, code_tokens)
+        if not over:
+            return dict(scaled, **capped)
+        # Pin each overshooting domain AT its ceiling and renormalise the rest around it.
+        pinned.update(over)
+        free.update(over)
+    raise SystemExit("REFUSING: ceiling renormalisation did not converge")
+
+
+def _ceiling_overshoot(weights, cursor, code_tokens):
+    """{domain: its weight AT the ceiling} for every FREED_RECIPIENT above FREED_CEILING.
+
+    Reads the same weights that will be written, so it cannot pass a check the file then fails.
+    starcoder is translated through _code_split's share for the reason _place_freed_under_ceiling
+    documents: `code` is the objective, starcoder is a fraction of it.
+    """
+    if not cursor:
+        return {}
+    sc_share = code_tokens / (code_tokens + _rp1t_tokens())
+    out = {}
+    for name in FREED_RECIPIENTS:
+        is_sc = name == "code_py_starcoder"
+        key = "code" if is_sc else name
+        if key not in weights:
+            continue
+        pool = _pool_rows(code_tokens if is_sc else SUPPLY[name])
+        drawn = int(ROWS * weights[key])
+        if is_sc:
+            drawn = int(drawn * sc_share)
+        if drawn + int(cursor.get(name, 0)) <= int(FREED_CEILING * pool):
+            continue
+        rows = max(0, int(FREED_CEILING * pool) - int(cursor.get(name, 0)))
+        out[key] = _weight_for_rows(int(rows / sc_share) if is_sc else rows, ROWS)[0]
+    return out
+
+
+# The two domains that absorb what the capped three release on a resume, and the ceiling they may
+# not cross.
+def _ceil_pool(name):
+    """The pool row count _ceiling_weight sizes against, for tests that need to construct a
+    cursor relative to the ceiling. Same expression, not a copy of the number."""
+    return _pool_rows(SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0)))
+
+
+FREED_RECIPIENTS = {"math_owm_stage2": 0.2643, "code_py_starcoder": 0.3297}
+# 2.10 TOTAL EPOCHS, ruled by 4c 2026-09-07 after two withdrawals, and the withdrawals are the
+# reason the number is where it is. The first ruling said 1.000, which is below what the UNCHANGED
+# mix already draws (math 1.2179, starcoder 1.1314 measured on .step22500) -- a ceiling under the
+# untouched behaviour cannot be met by any reallocation, so the overflow rule had nowhere to send
+# anything. The second said 1.30, and I sized that against the 3,004,219-row SEGMENT while every
+# weight in this file is a fraction of the 7,324,218-row WHOLE PLAN: at 1.30 the recipients may
+# take 2,268,335 plan rows while their launch weights already ask 4,980,346. Both numbers were
+# real and each was correct for its own denominator, which is why neither reading looked wrong.
+# 2.10 is above the 2.0509/2.0045 the fixed deriver actually produces, so nothing binds today and
+# this changes no number in the launch mix. It is here so the ceiling is a guard and not a comment.
+FREED_CEILING = 2.10
+
+
+def _place_freed_under_ceiling(weights, cursor, code_tokens):
+    """Send the share released by the capped domains to FREED_RECIPIENTS, pro rata.
+
+    THE CEILING IS NOT ENFORCED HERE, and the first version's attempt to is worth recording.
+    It computed each recipient's room as `int(FREED_CEILING * pool) - cursor` and clamped the
+    FREED rows against it -- but a recipient's base weight already draws from that same room, so
+    the comparison was freed-rows against total-room and passed a recipient whose total was over.
+    4c's ruling is stated in TOTAL epochs (cursor + everything this plan draws), so the bound has
+    to be applied to the final weights, which only _renormalise_holding_clamped sees. Two
+    derivations of one ceiling in two units is how the 1.000 and 1.30 rulings both went wrong.
+
+    code_py_starcoder IS NOT AN OBJECTIVE. `code` is, and _code_split divides it between starcoder
+    and rp1t IN PROPORTION TO SUPPLY, so starcoder's share has to be translated back through that
+    split or the freed rows would be added to a quantity nothing draws.
+    """
+    # STARCODER SUPPLY IS A PARAMETER, not a SUPPLY entry: build() takes it as code_tokens and
+    # _code_split is handed it too. Reading a constant here would size against a different supply
+    # than the split divides, and the two would drift silently.
+    if code_tokens is None:
+        raise SystemExit("REFUSING: freed-share placement needs starcoder supply (code_tokens)")
+    sc_share = code_tokens / (code_tokens + _rp1t_tokens())
+    # The freed share is whatever the capped domains did NOT take relative to a fresh start: their
+    # cursor-free weights minus their cursor-aware ones. Derived, not passed in, so it cannot drift
+    # from what _ceiling_weight actually returned.
+    freed = sum(_ceiling_weight(n) - _ceiling_weight(n, cursor) for n in SUPPLY_CAPPED
+                if n in OBJECTIVE)
+    if freed <= 0:
+        return weights
+    base = sum(FREED_RECIPIENTS.values())
+    out = dict(weights)
+    for name, share in FREED_RECIPIENTS.items():
+        rows = int(ROWS * freed * share / base)
+        if name == "code_py_starcoder":
+            # rows are STARCODER rows; `code` has to rise by rows/sc_share to deliver them.
+            out["code"] = out.get("code", 0.0) + _weight_for_rows(int(rows / sc_share), ROWS)[0]
+        else:
+            out[name] = out.get(name, 0.0) + _weight_for_rows(rows, ROWS)[0]
+    return out
 
 
 MEASURED = os.path.join(ROOT, "data", "token_cache_pools.json")
@@ -569,7 +695,7 @@ def _pool_rows(pool_tok):
     return rows - min(int(rows * 0.05), 5000)
 
 
-def _ceiling_weight(name):
+def _ceiling_weight(name, cursor=None, ceiling=EPOCH_SOFT_CEILING):
     """The largest weight for a supply-capped domain whose WHOLE error band clears the ceiling.
 
     A supply-capped weight is not a judgement, it is arithmetic on the supply -- so it should be
@@ -582,13 +708,27 @@ def _ceiling_weight(name):
     supply. It costs 0.01pt of chat_qa and buys a verdict that does not depend on which way a
     rounding went. When 3b lands the exact integers, SUPPLY_RELATIVE_ERROR loses the entry and
     this returns to the sharp ceiling with no other edit.
+
+    THE CURSOR IS SUBTRACTED, or this sizes each domain to `ceiling` epochs OF THIS SEGMENT while
+    the launch check counts cursor + segment. Those are the same two quantities the epoch guard
+    itself confused: PR #2 taught the CHECK to count the total and left this, the thing that
+    CHOOSES the weight, counting the segment -- so on the first real resume the two disagreed by
+    construction and the mix blocked on its own guard. Measured on .step22500: cot/chatml/chat_qa
+    sit at 3.54 total epochs already, so a fresh 4.0-per-segment weight put them at 7.54 and the
+    room actually left is 53,553 rows, 1.78% of the segment budget against 15.50% before.
+    A guard that counts right and a deriver that does not is one defect wearing two faces.
     """
     rel = SUPPLY_RELATIVE_ERROR.get(name, 0.0)
     # ROWS, not tokens. The ceiling asks how many times the model re-reads the pool, and the
     # pool is packed rows -- tokens overstate it, because packing drops a partial row per
     # document and n_val rows are held out on top. Deriving in tokens put all three capped
     # domains over the real line while reporting them under it.
-    max_rows = EPOCH_SOFT_CEILING * _pool_rows(SUPPLY[name] * (1 - rel))
+    pool_rows = _pool_rows(SUPPLY[name] * (1 - rel))
+    max_rows = ceiling * pool_rows - int((cursor or {}).get(name, 0))
+    # NEVER NEGATIVE. A domain already past the ceiling on the cursor alone has no room, and a
+    # negative weight would be allocated as one -- silently taking rows from the other domains.
+    # Zero is the honest answer and the launch check still reports the overrun.
+    max_rows = max(0, max_rows)
     # _weight_for_rows, not a floor at some chosen precision: build_mix draws int(ROWS*weight),
     # so the weight has to hit max_rows EXACTLY. Flooring to 4dp instead cost 488 rows -- a
     # rounding loss dressed as a safety margin, and indistinguishable from one by anyone reading
@@ -670,7 +810,7 @@ def build(code_tokens, cursor=None):
     # Derived here, not cached at module level: the ladder-dir selftest mutates OBJECTIVE,
     # and a module-level snapshot would not follow it -- the refusal then dies on a
     # KeyError instead of its own assertion, which is a guard failing for the wrong reason.
-    alloc = _allocation()
+    alloc = _allocation(cursor, code_tokens)
     rows_by_name = _rows_for_weights(alloc, ROWS)
     code = _code_split(code_tokens, rows_by_name.pop("code"))
     spec = {n: (rows_by_name[n], why) for n, (_, why) in OBJECTIVE.items()}
@@ -854,6 +994,9 @@ def build(code_tokens, cursor=None):
 
 
 def selftest():
+    # Case 17 rebinds these to build the only world where a recipient ceiling binds; declared here
+    # because Python requires `global` before the name's first use in the function.
+    global FREED_CEILING, TOTAL_TOKENS, ROWS
     # 1. the OBJECTIVE is fixed and only its internal split tracks supply. The first version of
     #    this check asserted the per-domain code weight never moves, which was right when code
     #    was one domain and became wrong the moment it became two -- the invariant is the SUM.
@@ -1333,10 +1476,27 @@ def selftest():
         assert f"{_n}: " not in _fw or "exceeds" not in _fw.split(f"{_n}: ")[1][:80], (
             f"{_n} must NOT trip the ceiling on a fresh start -- if it does, this case cannot "
             f"tell the fix from a pre-existing violation")
-        assert any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
-            f"{_n} draws past {EPOCH_SOFT_CEILING} epochs once the cursor is counted "
-            f"(cursor {_cur[_n]:,}) and no warning names it. The ceiling is measuring one "
-            f"segment, which is the defect this argument exists to fix.")
+        # THE ASSERTION FLIPPED WHEN THE DERIVER WAS FIXED, and the flip is the point. Until
+        # 2026-09-07 this read "the cursor-aware build MUST warn", because the check counted the
+        # total while _ceiling_weight still sized each domain to 4.0 epochs of THIS SEGMENT -- so a
+        # resume necessarily produced a mix that violated its own ceiling and the warning was the
+        # evidence the check had been fixed. Now the deriver subtracts the cursor, so a resume mix
+        # is BUILT under the ceiling and must NOT warn: the correct end state is no violation to
+        # report. Asserted on the total epochs rather than on the warning's absence alone, because
+        # "no warning" is also what a check that stopped looking would produce.
+        _dom = _resumed["domains"][_n]
+        # pool_rows_estimated and rows, NOT epochs_fractional: that field is want_tok/pool_tok, a
+        # TOKEN ratio, and the ceiling is a ROW count -- the two differ because packing drops a
+        # partial row per document and n_val rows are held out. Its own note says the token ratio
+        # "is NOT what build_mix draws against".
+        _tot = (_cur[_n] + _dom["rows_from_weight_at_runtime"]) / _dom["pool_rows_estimated"]
+        assert _tot <= EPOCH_SOFT_CEILING + 1e-9, (
+            f"{_n} draws {_tot:.4f} total epochs (cursor {_cur[_n]:,} + "
+            f"{_dom['rows_from_weight_at_runtime']:,} over {_dom['pool_rows_est']:,}), past "
+            f"{EPOCH_SOFT_CEILING}. The deriver is sizing to one segment again.")
+        assert not any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
+            f"{_n} is built under the ceiling but still warns -- the check and the deriver "
+            f"disagree, which is the defect in the other direction.")
     # AND THE FRESH-START PATH IS BYTE-IDENTICAL. A cursor-aware ceiling that changed the
     # no-cursor answer would silently rewrite every committed mix.
     assert build(8.85e9, None)["domains"] == _fresh["domains"], (
@@ -1353,10 +1513,27 @@ def selftest():
     #     it, so a 6.0-epoch resume mix would have been written with an accurate warning nobody
     #     was required to read. That is the shape where the code is defensible and the contract
     #     is false.
-    assert set(_resumed["_launch_blocked"]) == set(_cur), (
+    #     THE WORLD HAD TO BE REBUILT WHEN THE DERIVER WAS FIXED. Until 2026-09-07 `_resumed`
+    #     itself blocked, because the deriver sized to 4.0 epochs per SEGMENT and any cursor
+    #     pushed the total over -- so the live cursor was a world where blocking was reachable.
+    #     With the cursor subtracted a normal resume is built UNDER the ceiling and blocks nothing,
+    #     which would leave this assertion vacuous on `_resumed`: `set([]) == set([])` after the
+    #     loop below iterates nothing. A binding check needs a world where the bad thing is still
+    #     possible, so the world is now a cursor ALREADY PAST the ceiling on its own -- there the
+    #     deriver returns zero rows (clamped, never negative) and the overrun is real and
+    #     unfixable by any weight, which is exactly when a launch must be refused.
+    _over = {n: int(_ceil_pool(n) * 4.5) for n in _cur}
+    _blocked = build(8.85e9, _over)
+    assert set(_blocked["_launch_blocked"]) == set(_over), (
         f"every over-ceiling domain must block the launch, got "
-        f"{_resumed['_launch_blocked']} for a cursor over {sorted(_cur)}")
-    for _n in _cur:
+        f"{_blocked['_launch_blocked']} for a cursor over {sorted(_over)}")
+    for _n in _over:
+        assert _blocked["domains"][_n]["rows_from_weight_at_runtime"] == 0, (
+            f"{_n}'s cursor is past the ceiling, so the deriver must ask for ZERO further rows, "
+            f"not a negative count silently allocated as one: "
+            f"{_blocked['domains'][_n]['rows_from_weight_at_runtime']}")
+    _resumed = _blocked
+    for _n in _over:
         # A NAME WITH NO REASON IS A KeyError IN main()'s REFUSAL PRINT, which reads
         # _untrusted_supply[n] for every n in _launch_blocked. The two fields are one mechanism.
         assert _n in _resumed["_untrusted_supply"], (
@@ -1397,7 +1574,71 @@ def selftest():
           "the total (not just _warnings, which nothing reads), the reason is in the same dict "
           "main() prints per blocked name, and a fresh start still only warns")
 
-    print("selftest: 16/16")
+    # 17 THE RECIPIENT CEILING BINDS, AND SURVIVES THE RENORMALISATION THAT FOLLOWS IT.
+    #     The defect this catches shipped and was measured: the ceiling was clamped in ROWS inside
+    #     _place_freed_under_ceiling, and then `scale = (1 - sum(capped)) / sum(free)` came out at
+    #     1.013417 and multiplied the clamp away -- applied and undone in the same function, with
+    #     nothing warning, because every row count in between was correct.
+    #     THE WORLD IS THE LIVE .step22500 CURSOR AT THE 30B TOTAL, because that is the only
+    #     cursor where a recipient is anywhere near its ceiling: the small fixture `_cur` above
+    #     leaves math at 0.86 epochs, where any ceiling above 0.86 is vacuous and a test on it
+    #     would pass however _renormalise_holding_clamped behaves. Same lesson as case 16's fresh
+    #     path -- a negative assertion needs a world where the positive is reachable.
+    #     AND THE CEILING HAS TO BE LOWERED, because at the shipped 2.10 nothing binds by design
+    #     (measured: math 2.0557, starcoder 2.0142), which is exactly why 4c set it there.
+    _live_cur = {"chat_qa": 31260, "chatml": 31945, "code_py_rp1t": 68575,
+                 "code_py_starcoder": 1424422, "cot": 348846, "en_c4_stage2": 702789,
+                 "math_owm_stage2": 1142230, "textbook_30b": 438345, "zh_web": 131588}
+    _saved = (FREED_CEILING, TOTAL_TOKENS, ROWS)
+    try:
+        TOTAL_TOKENS, ROWS = 30_000_000_000, 30_000_000_000 // SEQ
+        _unpinned = build(8.85e9, _live_cur)
+
+        def _ep_of(m, n):
+            _pool = _pool_rows(8.85e9 if n == "code_py_starcoder" else SUPPLY[n])
+            return (m["domains"][n]["rows_from_weight_at_runtime"]
+                    + int(_live_cur.get(n, 0))) / _pool
+        # THE UNPINNED WORLD MUST BE OVER THE LOWERED CEILING, or there is nothing to clamp.
+        FREED_CEILING = 1.90
+        for _n in FREED_RECIPIENTS:
+            assert _ep_of(_unpinned, _n) > FREED_CEILING, (
+                f"fixture is vacuous: {_n} draws {_ep_of(_unpinned, _n):.4f} epochs without any "
+                f"clamp, already under the {FREED_CEILING} ceiling this case lowers it to")
+        _pinned = build(8.85e9, _live_cur)
+        for _n in FREED_RECIPIENTS:
+            _ep = _ep_of(_pinned, _n)
+            assert _ep <= FREED_CEILING + 1e-6, (
+                f"{_n} draws {_ep:.6f} total epochs against a {FREED_CEILING} ceiling that BOUND "
+                f"it -- the clamp was applied and then renormalised away, the defect measured at "
+                f"scale=1.013417")
+            # AT the ceiling, not merely under it. `<=` alone would pass if the renormalisation
+            # cut the domain to zero, which is a different bug wearing this one's green tick.
+            assert _ep > FREED_CEILING - 0.02, (
+                f"{_n} pinned to {_ep:.6f} against {FREED_CEILING}: under the line by more than "
+                f"rounding, so the clamp overshot rather than pinned")
+        assert abs(sum(v["weight"] for v in _pinned["domains"].values()) - 1.0) < 1e-5, (
+            f"pinning both recipients must still leave a normalised mix, got "
+            f"{sum(v['weight'] for v in _pinned['domains'].values()):.9f}")
+        # THE CAPPED THREE MUST NOT MOVE: their weight is the epoch ceiling's answer, not a share
+        # of the remainder, so a recipient pinning cannot be paid for out of them.
+        for _n in SUPPLY_CAPPED:
+            assert (_pinned["domains"][_n]["rows_from_weight_at_runtime"]
+                    == _unpinned["domains"][_n]["rows_from_weight_at_runtime"]), (
+                f"{_n} is supply-capped; pinning a RECIPIENT must not move it")
+        # AND SOMETHING MUST ABSORB THE REFUSED ROWS, or the mix sums to 1 only by dropping them.
+        assert [n for n in _pinned["domains"]
+                if n not in SUPPLY_CAPPED and n not in FREED_RECIPIENTS
+                and _pinned["domains"][n]["rows_from_weight_at_runtime"]
+                != _unpinned["domains"][n]["rows_from_weight_at_runtime"]], (
+            "no unpinned domain absorbed the rows the ceiling refused")
+    finally:
+        FREED_CEILING, TOTAL_TOKENS, ROWS = _saved
+    print("  17 a recipient ceiling that BINDS survives the renormalisation after it: on the live "
+          "cursor with the ceiling lowered under the unclamped draw, both recipients pin AT it "
+          "instead of 1.3% above, the capped three do not move, and another domain absorbs the "
+          "difference")
+
+    print("selftest: 17/17")
     return 0
 
 

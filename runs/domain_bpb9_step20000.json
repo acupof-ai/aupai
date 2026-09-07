@@ -1,0 +1,24 @@
+{
+ "ckpt": "ckpt_1.5b-a0.2b-e48_30b.pt.step20000",
+ "hf": false,
+ "mix": "mix_200m_4b.json",
+ "n_params": 1480737864,
+ "per_domain_bpb": {
+  "math_owm_stage2": 0.34844762928854617,
+  "en_c4_stage2": 0.5297112321237325,
+  "cot": 0.21713481826574904,
+  "textbook_30b": 0.2475392147540737,
+  "chatml": 0.3170032367994356,
+  "chat_qa": 0.332029375501699,
+  "zh_web": 0.6546264208239981,
+  "code_py_starcoder": 0.23728592910162255,
+  "code_py_rp1t": 0.20114669054421971
+ },
+ "unweighted_mean_bpb": 0.34276939413367513,
+ "n_domains": 9,
+ "n_domains_total": 9,
+ "skipped": {},
+ "cu_path": "cu_none",
+ "reading": "bits per UTF-8 byte of the held-out rows train.py holds out, decoded to text so both arms score the SAME bytes with their own tokenizers",
+ "boundary": "NOT comparable to domain_loss.py's numbers: that metric is nats per TOKEN and every existing record and threshold is in those units. This is a second reading for the cross-tokenizer comparison, not a replacement. The mean is unweighted over the domains that produced a number; `skipped` names the rest with reasons, since a mean over a silently smaller set is a different metric wearing the same name."
+}
