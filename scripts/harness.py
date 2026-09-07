@@ -5949,14 +5949,20 @@ def check_no_oversized_blob(root):
     p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-l", "HEAD"], capture_output=True, text=True)
     if p.returncode:
         return SKIP, "not a git repository (the pod checkout is not one)"
-    big = []
+    big, scanned = [], 0
     for ln in p.stdout.splitlines():
         f = ln.split(maxsplit=4)
-        if len(f) == 5 and f[1] == "blob" and f[3].isdigit() and int(f[3]) > MAX_TRACKED_MB * 2**20:
-            big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
+        if len(f) == 5 and f[1] == "blob" and f[3].isdigit():
+            scanned += 1
+            if int(f[3]) > MAX_TRACKED_MB * 2**20:
+                big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
     if big:
         return FAIL, f"{len(big)} tracked blob(s) over {MAX_TRACKED_MB}MB: {', '.join(big[:4])}"
-    return PASS, f"no tracked blob over {MAX_TRACKED_MB}MB"
+    # THE COUNT IS THE EVIDENCE. `git ls-tree HEAD` exits 128 in a commitless repo, so that
+    # case SKIPs correctly -- but an EMPTY COMMIT exits 0 with no output (measured 2026-09-08),
+    # and then the loop runs zero times and this returned the same string as a full scan. Not
+    # reachable on this repo's main today; the string was the only thing that could not say so.
+    return PASS, f"{scanned} tracked blob(s) scanned, none over {MAX_TRACKED_MB}MB"
 
 
 def _broken_blob():
@@ -9526,6 +9532,217 @@ def check_doc_commands(root):
     # reading the regex.
     return PASS, (f"{n_scanned} script citation(s) in AGENTS.md (fenced blocks and inline spans) "
                   f"plus every doc-cited data path exist")
+
+
+DOC_INVOCATION_RE = re.compile(
+    r"\b(?:python3?|bash)\s+"
+    r"((?:scripts|datagen|eval|filters|probes|mathbank|algorithms)/[\w/]+\.py)"
+    r"((?:[^\n`])*)"
+)
+DOC_FLAG_RE = re.compile(r"(?<![\w-])(--[a-zA-Z][\w-]*)")
+
+
+def accepted_flags(path):
+    """The flags a script accepts, or (None, why) when that is not statically knowable.
+
+    Returning None is the whole design. Two shapes were measured as false positives before
+    this check existed, each on a real file, and each would have made the check wrong rather
+    than strict:
+      - positional dispatch: pod_drift.py reads `sys.argv[1]` and has no argparse at all,
+        so there is no flag set to compare against. It produced 4 of 7 flags in the first
+        measurement, all wrong.
+      - a list-literal comparison: test_merge_main_ancestor.py accepts --selftest via
+        `sys.argv[1:] not in ([], ["--selftest"])`, where the flag is a string inside a
+        comparator, not an add_argument literal.
+    Both are now read; if a third shape appears, widen this and re-measure the FP count
+    rather than tightening the caller."""
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except Exception as e:
+        return None, f"unparsable: {type(e).__name__}"
+    flags, argparse_seen, dynamic, argv_indexed = set(), False, False, False
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            if n.func.attr == "add_argument":
+                argparse_seen = True
+                lits = [a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+                if not lits and n.args:
+                    dynamic = True
+                flags |= {L for L in lits if L.startswith("-")}
+            if n.func.attr in ("parse_known_args", "add_subparsers"):
+                dynamic = True
+            if n.func.attr == "index":
+                flags |= {
+                    a.value
+                    for a in n.args
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("-")
+                }
+        if isinstance(n, ast.Compare):
+            # `"--x" in sys.argv` AND `"--x" not in sys.argv` -- NotIn was missing here and
+            # test_behind_main_overlap.py:231 uses that exact form, so the flag read as
+            # undeclared. Measured 2026-09-08 while breaking down the skip classes: it fell
+            # into "no flags declared" and was skipped rather than flagged, so the omission
+            # cost reach and not a false positive -- which is why the sweep did not show it.
+            if (
+                isinstance(n.left, ast.Constant)
+                and isinstance(n.left.value, str)
+                and n.left.value.startswith("-")
+                and any(isinstance(o, (ast.In, ast.NotIn)) for o in n.ops)
+            ):
+                flags.add(n.left.value)
+            for c in n.comparators:
+                for sub in ast.walk(c):
+                    if (
+                        isinstance(sub, ast.Constant)
+                        and isinstance(sub.value, str)
+                        and sub.value.startswith("-")
+                    ):
+                        flags.add(sub.value)
+        if (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.value, ast.Attribute)
+            and n.value.attr == "argv"
+            and isinstance(n.slice, ast.Constant)
+            and isinstance(n.slice.value, int)
+            and n.slice.value > 0
+        ):
+            argv_indexed = True
+    if not argparse_seen and argv_indexed:
+        return None, "positional argv dispatch, no argparse"
+    if dynamic:
+        return None, "parser built dynamically"
+    if not flags:
+        return None, "no flags declared"
+    return flags, ""
+
+
+def doc_invocations(root):
+    """Every `python <script> ...` line in a doc's fenced block or a module docstring."""
+    out = []
+    docs = [os.path.join(root, "AGENTS.md"), os.path.join(root, "README.md")]
+    docs += glob.glob(os.path.join(root, "docs", "**", "*.md"), recursive=True)
+    for p in docs:
+        if not os.path.isfile(p):
+            continue
+        try:
+            txt = open(p, encoding="utf-8").read()
+        except Exception:
+            continue
+        for blk in re.findall(r"```[a-z]*\n(.*?)```", txt, re.S):
+            for m in DOC_INVOCATION_RE.finditer(blk.replace("\\\n", " ")):
+                out.append((os.path.relpath(p, root), m.group(1), m.group(2)))
+    for p in _tracked_py(root):
+        try:
+            d = ast.get_docstring(ast.parse(open(os.path.join(root, p), encoding="utf-8").read()))
+        except Exception:
+            continue
+        if not d:
+            continue
+        for m in DOC_INVOCATION_RE.finditer(d.replace("\\\n", " ")):
+            out.append((p, m.group(1), m.group(2)))
+    return out
+
+
+def _tracked_py(root):
+    """Every .py under the code directories, from git when it can answer and from a walk
+    when it cannot.
+
+    The walk is not a fallback for tidiness: `git ls-files` returns EMPTY in a tree whose
+    index is empty, which is every `_tmp_repo_shaped()` world (a fresh `git init`) and any
+    clone before the first `git add`. Returning [] there made this check's module-docstring
+    half invisible -- and that half carries 3 of the 4 real defects it was written for, so
+    the broken world went green with the mutation present (2026-09-08). A count that silently
+    falls to zero is the same defect as doc_commands_exist's reach falling 29 -> 2 while
+    PASSing, which is why that check prints its count too."""
+    out = []
+    try:
+        r = subprocess.run(
+            ["git", "-C", root, "ls-files", "*.py"], capture_output=True, text=True, timeout=30
+        )
+        if r.returncode == 0:
+            out = r.stdout.split()
+    except Exception:
+        out = []
+    if out:
+        return out
+    for d in ("scripts", "datagen", "eval", "filters", "probes", "mathbank", "algorithms"):
+        base = os.path.join(root, d)
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _dirs, files in os.walk(base):
+            for f in files:
+                if f.endswith(".py"):
+                    out.append(os.path.relpath(os.path.join(dirpath, f), root))
+    return out
+
+
+def check_doc_flags_parse(root):
+    """Every flag in a documented invocation is one its script accepts.
+
+    doc_commands_exist checks that a cited FILE exists, never that a cited COMMAND parses,
+    so a documented invocation can be wrong for as long as nobody types it. Measured
+    2026-09-08: code_dedup_handread.py's own docstring named `--rep math 40 --n_rep 100`,
+    flags the parser has never had, and the run that needed it lost the time to argparse's
+    error. Three more were live at the same moment on 308 checkable invocations, each
+    confirmed against the script's own --help."""
+    inv = doc_invocations(root)
+    if not inv:
+        return SKIP, "no documented invocations found"
+    bad, skipped = [], 0
+    for src, script, rest in inv:
+        if not os.path.isfile(os.path.join(root, script)):
+            continue
+        flags, why = accepted_flags(os.path.join(root, script))
+        if flags is None:
+            skipped += 1
+            continue
+        unknown = sorted(set(DOC_FLAG_RE.findall(rest)) - flags)
+        if unknown:
+            bad.append(f"{src} -> {script} {unknown}")
+    if bad:
+        return FAIL, (
+            f"{len(bad)} documented invocation(s) name flags the script does not accept: {sorted(bad)[:4]}"
+        )
+    return PASS, (
+        f"{len(inv) - skipped} of {len(inv)} documented invocation(s) checked, every flag "
+        f"accepted; {skipped} skipped (parser not statically knowable)"
+    )
+
+
+def _broken_doc_flags_parse():
+    """The REAL docstring of a REAL script, with one flag renamed in the DOC only.
+
+    Mutating the DOC and not the parser is the defect's own direction: the doc rots while the
+    code stays right, which is why nothing else catches it. `scripts/count_tokens.py` is the
+    subject because its parser is statically knowable ({--selftest}) -- a script whose parser
+    reads as dynamic would be SKIPPED and the world would go green with the mutation present.
+
+    The first version of this world did go green, twice over (2026-09-08, §270's own shape in
+    the world built to guard against it): it replaced the docs/ symlink with a real directory,
+    which cut the collected invocations from 428 to 1, and that 1 cited count_dir.py, whose
+    positional argv dispatch is a SKIP. Nothing was flagged because nothing was checked. So
+    docs/ stays symlinked here and only the mutated file is a real copy."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    rel = "scripts/count_tokens.py"
+    dst = os.path.join(d, rel)
+    # scripts/ is a symlink to the real tree: writing through it would edit the repo
+    # (harness_core._tmp_repo_shaped says so), so replace that one link with a real dir.
+    link = os.path.join(d, "scripts")
+    if os.path.islink(link):
+        os.unlink(link)
+        os.makedirs(link, exist_ok=True)
+        for f in os.listdir(os.path.join(ROOT, "scripts")):
+            src = os.path.join(ROOT, "scripts", f)
+            if f != os.path.basename(rel):
+                os.symlink(src, os.path.join(link, f))
+    shutil.copy(os.path.join(ROOT, rel), dst)
+    txt = open(dst, encoding="utf-8").read()
+    doc = ast.get_docstring(ast.parse(txt)) or ""
+    assert "--selftest" in doc, f"{rel}'s docstring no longer cites --selftest; pick another subject"
+    open(dst, "w", encoding="utf-8").write(txt.replace(doc, doc.replace("--selftest", "--self-test"), 1))
+    return d
 
 
 # Retired phrases that must not reappear in README. The objective changed 2026-08-30;
@@ -16067,6 +16284,13 @@ CHECKS = [
         _broken_doc_commands,
     ),
     (
+        "doc_flags_parse",
+        "every flag in a documented invocation is one its script accepts",
+        "code_dedup_handread's own docstring named --rep/--n_rep, flags the parser never had; the run that needed it lost the time to argparse's error, and doc_commands_exist cannot see a stale flag because it checks that the cited FILE exists",
+        check_doc_flags_parse,
+        _broken_doc_flags_parse,
+    ),
+    (
         "readme_current",
         "README reflects the current objective, not a retired one",
         "README opened with the retired Chinese-LLM framing after the objective changed; a stale README misdirects every new reader",
@@ -16476,7 +16700,7 @@ EVIDENCE = {
     "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
-    "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
+    "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo", "doc_flags_parse": "repo",
     "prereg_citations_current": "repo",
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
