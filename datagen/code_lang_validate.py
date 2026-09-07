@@ -332,7 +332,26 @@ _FOREIGN = [
     (re.compile(r"^\s*(?:import\s+\w+|from\s+\w[\w.]*\s+import\s+\w)\s*$", re.M), "python"),
     (re.compile(r"\bfn\s+\w+\s*\(|\blet\s+mut\b|::<"), "rust"),
     (re.compile(r"^\s*(?:end|def\s+\w+[?!]?\s*$|require\s+['\"])", re.M), "ruby"),
-    (re.compile(r":\s*(?:string|number|boolean)\s*[;,)=]|\binterface\s+\w+\s*\{[^}]*:\s*\w+"),
+    # A TYPE ANNOTATION'S COLON IS NOT PRECEDED BY ANOTHER COLON. TypeScript writes
+    # `name: string`; C++ writes `std::string`, and the substring `:string,` inside
+    # `std::map<std::string, std::string>` matched the first version. Found by 3b sampling
+    # the bucket rather than the movers: 9 of 18 typescript-labelled docs in the shard117
+    # strided sample carried a C++ marker, 6 of 25 in shard000 -- 16 of 43 across 4000 were
+    # C++ using std::string in a template.
+    #
+    # `(?<!:)` and not `(?<![:\w])`: the wider lookbehind also rejects real TypeScript,
+    # measured -- `function f(a: string, b: number)` has a word character before the colon
+    # like every annotation does. What C++ never writes is a colon preceded by a colon.
+    #
+    # The second branch KEEPS `[^}]`, unlike the css and python rules. It looks like the
+    # same defect and is not: `[^}]` cannot escape the interface body, because it stops at
+    # the first `}`. Checked rather than assumed -- a Java interface followed by a labelled
+    # statement, a Java interface holding `static final String K = "k";`, and C++ after the
+    # word `interface` all stay unmatched. Narrowing it to `[^}\n]` DOES break something:
+    # multi-line interfaces are the common TypeScript form, and 18 documents in 4000 have
+    # one. That mutation survived the known-answer set, which is why it is written here.
+    (re.compile(r"(?<!:):\s*(?:string|number|boolean)\s*[;,)=]"
+                r"|\binterface\s+\w+\s*\{[^}]*:\s*\w+"),
      "typescript"),
 ]
 
@@ -389,7 +408,16 @@ _NONCODE = [
     # seconds, against 0.002s for this form. A corpus filter that hangs on one document in
     # 4000 is worse than the misclassification it was fixing, and no known-answer case is
     # large enough to show it -- only running the corpus does.
-    (re.compile(r"^[ \t]*(?:[.#][\w-]+|[\w-]+)[^\n{}]*\{[ \t]*$"
+    # A CSS TYPE SELECTOR IS AN ELEMENT NAME, NEVER A LANGUAGE KEYWORD. `interface X {`
+    # followed by `clientId: string;` is exactly the CSS block shape, so 13 of the 43 docs
+    # this rule claimed were TypeScript and JS modules -- found because a TypeScript
+    # known-answer case I added for the rule below was answered `noncode:css` instead. Same
+    # for `class A {` with a labelled statement. The keyword list is the discriminator; a
+    # bare word that opens a block in C-family or TS is not an HTML element.
+    (re.compile(r"^[ \t]*(?:[.#][\w-]+|(?!(?:interface|namespace|class|struct|union|enum|if"
+                r"|for|while|switch|try|do|else|catch|function|return|typedef|template"
+                r"|public|private|protected|static|const|export|import|package|module|def)"
+                r"\b)[\w-]+)[^\n{}]*\{[ \t]*$"
                 r"\n(?:[ \t]*(?://.*|/\*.*?\*/)?[ \t]*\n)*"
                 r"^[ \t]*[-\w]+[ \t]*:[ \t]*[^;{}\n:=]+;[ \t]*$", re.M), "noncode:css"),
     (re.compile(r"^[ \t]*(?:[.#][\w-]+|[\w-]+)[\w\s.#,-]*\{[ \t]*[-\w]+[ \t]*:[ \t]*"
@@ -671,6 +699,25 @@ _KA_MISSED = [
     ("Licensed under the Apache License, Version 2.0 (the \"License\");\n"
      "you may not use this file except in compliance with the License.\n",
      "noncode:license", "44 rule 4, length-conditioned"),
+    # TYPESCRIPT ON THE ANNOTATION BRANCH ALONE. The `interface User { ... }` reject in
+    # _KA_JS also carries `interface X {`, so the second alternation answers it and the
+    # annotation branch could be narrowed to nothing with nothing going red. Measured while
+    # fixing that branch: my first lookbehind was `(?<![:\w])`, which rejects EVERY real
+    # annotation -- they all follow an identifier -- and the 60 known answers stayed green.
+    ("export async function sleep(time: number): Promise<void> {\n"
+     "  return new Promise((r) => setTimeout(r, time));\n}\n"
+     "export function label(name: string, count: number) { return name + count; }\n",
+     "foreign:typescript", "a bare type annotation, with no `interface` in the file"),
+    # AND A MULTI-LINE INTERFACE, on the INTERFACE branch alone. My first version of this
+    # case used `clientId: string;` members, which the annotation branch also answers -- so
+    # narrowing the interface branch to `[^}\n]` changed nothing and the mutation survived.
+    # These members are named types, invisible to the annotation branch, so the case tests
+    # the branch it is written for. 18 documents in 4000 have a multi-line interface, which
+    # is why `[^}]` is right here: it cannot escape the interface body, unlike the css and
+    # python rules where the same class crossed into unrelated code.
+    ("interface Handler {\n    onEvent: EventCallback;\n    target: HTMLElement;\n}\n"
+     "export default Handler;\n",
+     "foreign:typescript", "a multi-line interface, on the interface branch alone"),
 ]
 
 #: NEGATIVE CONTROLS for the widened patterns (4c required these with the widening). Each is
@@ -734,6 +781,15 @@ _KA_NOT_EATEN = [
     ("#include <memory>\nnamespace n { base::Foo x = Y; }\n"
      "void run() { n::x.reset(); }\n", "cpp",
      "a one-line scoped initialiser must not read as an inline CSS declaration"),
+    # THE TYPESCRIPT RULE MATCHED A SUBSTRING OF A QUALIFIED C++ NAME (3b). `:string,` sits
+    # inside `std::map<std::string, std::string>`, so 16 of 43 typescript-labelled docs
+    # across 4000 were C++. The discriminator is that a C++ colon here follows another
+    # colon; a TypeScript annotation's never does.
+    ("#include <map>\n#include <string>\n"
+     "std::map<std::string, std::string> mapValue;\n"
+     "typedef std::map<std::string, int> Acc;\n"
+     "void f(const std::string& url) { (void)url; }\n", "cpp",
+     "std::string inside a template argument list is not a TypeScript annotation"),
 ]
 
 KNOWN_ANSWERS = {"c": _KA_C, "js": _KA_JS, "java": _KA_JAVA}
