@@ -416,6 +416,63 @@ def _demo_keys():
     print(f"HybridLM submodules agree across both copies ({len(a)}): {sorted(a)}")
 
 
+def _launcher_claim_covers(card_claim, claim_name, cards):
+    """(True, reason) when `claim_name` holds a LIVE claim covering `cards` for this process.
+
+    (False, reason) otherwise, and the reason is the refusal text -- so a caller never has to
+    guess which of the four ways this can fail happened.
+
+    THREE CONDITIONS, and dropping any one turns AUPAI_CLAIMED_BY into a free pass:
+      the claim EXISTS and is live   -- a stale variable from a previous launch names nothing
+      its cards COVER every card asked for -- a claim on card 1 does not license cards 1,2
+      its pid is THIS process or a BOUNDED ancestor -- a claim held by an unrelated live job
+                                                       elsewhere must not vouch for this one
+
+    Ancestry, not equality, because harness launch binds the claim to the descendant that opened
+    the device -- usually this process, but for a torchrun job it is the rank's parent. Reading the
+    ancestor chain covers both without a second convention.
+
+    BOUNDED, AND pid 1 IS EXCLUDED, because unbounded ancestry accepts everything. init is the
+    ancestor of every process in the namespace, so `me in _descendants(1)` is true by construction
+    and a claim recorded against pid 1 would license any card anywhere -- measured: the
+    unrelated-pid world was GRANTED with the message "pid 1, an ancestor of 21093" before this
+    bound existed. The real topology is wrapper bash -> torchrun -> rank, so the chain that means
+    "same job" is a few levels deep; card_claim.MAX_DEPTH (6) is the same cap it uses downward.
+    """
+    live, _stale = card_claim.claims()
+    rows = [c for c in live if c.get("name") == claim_name]
+    if not rows:
+        names = sorted({c.get("name") for c in live if c.get("name")})
+        return False, (f"no live claim is named {claim_name!r} (live: {names[:6] or 'none'}) -- "
+                       f"the variable is stale or was set by hand")
+    me = os.getpid()
+    # The upward chain from this process, capped, with init dropped.
+    parents = {}
+    for pid_, ppid_, _args in card_claim._ps_table():
+        parents[pid_] = ppid_
+    chain, cur = {me}, me
+    for _ in range(getattr(card_claim, "MAX_DEPTH", 6)):
+        cur = parents.get(cur)
+        if not cur or cur <= 1:
+            break
+        chain.add(cur)
+    for row in rows:
+        row_cards = {str(c) for c in row.get("cards", [])}
+        missing = [c for c in cards if c not in row_cards]
+        if missing:
+            continue
+        pid = row.get("pid")
+        if not isinstance(pid, int):
+            continue
+        if pid in chain:
+            return True, (f"claim {claim_name!r} holds {','.join(sorted(row_cards))} for pid "
+                          f"{pid}{'' if pid == me else f', an ancestor of {me}'}")
+    return False, (f"claim {claim_name!r} exists but does not cover {','.join(cards)} for this "
+                   f"process (pid {me}, chain {sorted(chain)}): " + "; ".join(
+                       f"pid {r.get('pid')} holds {','.join(str(c) for c in r.get('cards', []))}"
+                       for r in rows[:3]))
+
+
 def claim_my_cards(name, note="", wait=0):
     """Claim the cards this process can SEE, for the whole life of this process. Returns the
     claimed card list.
@@ -446,6 +503,28 @@ def claim_my_cards(name, note="", wait=0):
     caller is a launcher that outlives the command; here the caller IS the job, and it dies when
     the work ends -- which is precisely what a claim must name. `atexit` releases, so a claim
     never outlives the process that holds it (the ORPHAN half of the 2026-09-03 pair).
+
+    UNDER `harness launch` IT DOES NOT ACQUIRE AT ALL (4c's ruling (b), 2026-09-07). The launcher
+    has already claimed these cards for THIS pid -- it polls for the descendant that opens a
+    device and binds the claim to it -- so a second acquire under a different name asks
+    card_claim to distinguish "the same job re-asking" from "a different job on the same pid",
+    which a pid cannot do. MEASURED on the pod 11:45Z: `harness launch lambada_ab --cards 1`
+    bound the claim to pid 2430696, the eval itself; the eval then acquired as
+    `lambada_en_batch` and was refused "cards ['1'] are claimed by {'1': ['lambada_ab']}. Queue",
+    the wrapper bash died a zombie, the claim went with it and the job never ran. Every eval that
+    acquires at startup under harness launch is that shape, so the lane was unusable for all of
+    them, not just the one job that surfaced it.
+
+    The alternative -- exempting `anc == asking` inside acquire -- was implemented and REVERTED:
+    it turned four cases red including the lock's core one (`runA` holds 0,1; `runB` asking for
+    1,2 under the same pid must be refused, and was granted). Two acquires sharing a pid are not
+    necessarily the same job.
+
+    A SET-BUT-UNVERIFIABLE VARIABLE REFUSES rather than skipping. `AUPAI_CLAIMED_BY` names the
+    claim; this reads `runs/claims/` and requires a LIVE claim under that name whose cards cover
+    the ones being asked for and whose pid is this process or an ancestor of it. A stale variable
+    from a previous launch, or a hand-set one, would otherwise be a free pass to run unclaimed --
+    which is the ORPHAN this helper exists to prevent, reached through the fix for it.
     """
     import atexit
     import sys
@@ -462,6 +541,19 @@ def claim_my_cards(name, note="", wait=0):
             f"card_claim.py status and contends with whatever the controller queued next. "
             f"Relaunch with CUDA_VISIBLE_DEVICES=<lane card>, or go through "
             f"`python scripts/harness.py launch`, which allocates and claims for you.")
+    claimed_by = (os.environ.get("AUPAI_CLAIMED_BY") or "").strip()
+    if claimed_by:
+        held, why = _launcher_claim_covers(card_claim, claimed_by, cards)
+        if not held:
+            raise SystemExit(
+                f"{name}: AUPAI_CLAIMED_BY={claimed_by!r} is set, but {why}. A set-but-unverified "
+                f"variable must not skip the claim: this process would run on "
+                f"{','.join(cards)} with nothing in runs/claims/ naming it, which is the ORPHAN "
+                f"this helper exists to prevent. Unset the variable to acquire normally, or read "
+                f"`python3 scripts/card_claim.py status`.")
+        print(f"[card_claim] {name}: cards {','.join(cards)} already claimed by "
+              f"{claimed_by!r} for this process ({why}); not acquiring again", flush=True)
+        return cards
     ok, msg = card_claim.acquire(name, cards, wait=wait, note=note, pid=os.getpid())
     if not ok:
         raise SystemExit(f"{name}: {msg}")
@@ -547,6 +639,63 @@ def _demo_claim():
         left = sorted(sum((c.get("cards", []) for c in card_claim.claims()[0]
                            if c.get("name") == "demo_arms"), []))
         assert left == ["3"], f"releasing arm 4 must leave arm 3 held, got {left}"
+
+        # AUPAI_CLAIMED_BY: THE LAUNCHED SHAPE, THE FORGED VARIABLE, AND THE BARE RUN
+        # (4c's ruling (b), 2026-09-07). The launched shape is what refused lambada_ab on the pod:
+        # harness launch claims the cards for the pid that opens the device, and the eval then
+        # acquires under its own name. Here the launcher's claim is written for THIS pid, which is
+        # exactly what harness launch does after its device poll.
+        os.environ["CUDA_VISIBLE_DEVICES"] = "1"
+        assert claim_my_cards("demo_launcher") == ["1"]
+        os.environ["AUPAI_CLAIMED_BY"] = "demo_launcher"
+        try:
+            assert claim_my_cards("demo_evalname") == ["1"], "the launched shape must not refuse"
+            # AND IT WROTE NOTHING. A second file would double-count the card in status(), and this
+            # process's atexit would release a claim the launcher still owns.
+            assert not any(c.get("name") == "demo_evalname" for c in card_claim.claims()[0]), (
+                "the skip wrote a claim of its own -- the launcher's row is the only one that may "
+                "exist for these cards")
+
+            # THE FORGED VARIABLE MUST REFUSE. Three ways it can be wrong and each is checked,
+            # because any one of them passing turns AUPAI_CLAIMED_BY into a free pass to run
+            # unclaimed -- the ORPHAN this helper exists to prevent, reached through its own fix.
+            os.environ["AUPAI_CLAIMED_BY"] = "no_such_claim"
+            try:
+                claim_my_cards("demo_forged")
+                raise AssertionError("a variable naming no live claim must refuse")
+            except SystemExit as e:
+                assert "no live claim is named" in str(e), str(e)
+            # Names a real claim that does NOT cover this card: demo_launcher holds 1, ask for 2.
+            os.environ["CUDA_VISIBLE_DEVICES"] = "2"
+            os.environ["AUPAI_CLAIMED_BY"] = "demo_launcher"
+            try:
+                claim_my_cards("demo_uncovered")
+                raise AssertionError("a claim that does not cover the asked cards must refuse")
+            except SystemExit as e:
+                assert "does not cover" in str(e), str(e)
+            # Names a real claim held by an unrelated live pid -- neither this process nor an
+            # ancestor. pid 1 is live everywhere and is nobody's descendant here.
+            os.environ["CUDA_VISIBLE_DEVICES"] = "5"
+            with open(os.path.join(d, card_claim.claim_file("demo_elsewhere", ["5"])), "w",
+                      encoding="utf-8") as fh:
+                json.dump({"name": "demo_elsewhere", "cards": ["5"], "pid": 1,
+                           "cmdline": "init", "acquired": card_claim._now(), "note": "other job"},
+                          fh)
+            os.environ["AUPAI_CLAIMED_BY"] = "demo_elsewhere"
+            try:
+                claim_my_cards("demo_notmine")
+                raise AssertionError("a claim held by an unrelated pid must refuse")
+            except SystemExit as e:
+                assert "does not cover" in str(e), str(e)
+        finally:
+            os.environ.pop("AUPAI_CLAIMED_BY", None)
+
+        # THE BARE RUN IS UNCHANGED: with the variable gone, the same call acquires as before.
+        # Without this the three refusals above are satisfied by a helper that refuses always.
+        os.environ["CUDA_VISIBLE_DEVICES"] = "7"
+        assert claim_my_cards("demo_bare") == ["7"]
+        assert any(c.get("name") == "demo_bare" for c in card_claim.claims()[0]), (
+            "a bare run must still write its own claim")
     finally:
         card_claim.CLAIM_DIR = saved_dir
         if saved_cvd is None:
