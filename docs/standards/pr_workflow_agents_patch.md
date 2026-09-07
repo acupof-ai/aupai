@@ -42,11 +42,13 @@ in the Coordination section.
     and by the commit's own committer date, so a branch carrying pre-flip code work still drains
     through `merge_main` — you are not asked to follow a rule that did not exist when you wrote the
     commit. `AUPAI_CONTROLLER=1` overrides, logged to `runs/friction.jsonl`.
-  - **A push now happens AFTER the merge, not in the same step.** The existing rule — "a commit
-    that touches a file in the manifest's scope is pushed to the pod by its committer in the same
-    step" — cannot hold for a PR: at commit time the code is not on main yet, and the pod runs what
-    main holds. For code, the pod push follows the PR merge and stamps main's sha. Ledger commits
-    are unaffected.
+  - **The pod push moves to the PR merger, in the same step as the merge (4c's ruling
+    2026-09-07).** The existing rule — "a commit that touches a file in the manifest's scope is
+    pushed to the pod by its committer in the same step" — cannot hold for a PR: at commit time the
+    code is not on main yet, and the pod runs what main holds. So for CODE, whoever runs
+    `gh pr merge --merge` pushes the pod in the same step and stamps main's sha; for LEDGER commits
+    the committer still pushes, unchanged. The obligation moves with the act that puts the code on
+    main, which is now the reviewer's, not the author's.
 
 ---
 
