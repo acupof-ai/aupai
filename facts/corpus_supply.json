@@ -429,11 +429,14 @@
   {
    "id": "cs.code_rp1t_near_dup_rate",
    "value": {
-    "th0.7": 0.225725,
-    "th0.8": 0.18235,
-    "th0.9": 0.11415
+    "participation_th0.7": 0.225725,
+    "participation_th0.8": 0.18235,
+    "participation_th0.9": 0.114146,
+    "drop_th0.7": 0.176494,
+    "drop_th0.8": 0.138487,
+    "drop_th0.9": 0.083486
    },
-   "unit": "fraction of documents in a near-duplicate cluster",
+   "unit": "two rates, both over documents. participation_thX = docs_in_clustered_pairs / docs_total, the share of documents that have at least one near-dup. drop_thX = (docs_in_clustered_pairs - clusters) / docs_total, the share a dedup removes, because one representative per cluster is kept. They are not interchangeable and participation is the larger of the two.",
    "measured": "2026-09-07",
    "source": "/work/aupai/runs/code_rp1t_neardedup.json via `python3 datagen/near_dedup_scale.py --root data/corpus --domains code_rp1t --out runs/code_rp1t_neardedup.json --ckdir <pod>/runs/code_rp1t_ck --pool 16` (105m52s, exp row code_rp1t_neardedup_0907)",
    "config": {
@@ -461,14 +464,26 @@
       0.11447
      ]
     },
-    "verify": "n=200 pairs with est>=0.85, mean est 0.899 vs exact J 0.876, MAE 0.030 -- the estimator reads slightly HIGH, so it over-clusters marginally"
+    "verify": "n=200 pairs with est>=0.85, mean est 0.899 vs exact J 0.876, MAE 0.030 -- the estimator reads slightly HIGH, so it over-clusters marginally",
+    "clusters": {
+     "th0.7": 184477,
+     "th0.8": 164364,
+     "th0.9": 114888
+    },
+    "docs_in_clustered_pairs": {
+     "th0.7": 845827,
+     "th0.8": 683295,
+     "th0.9": 427723
+    },
+    "drop_derivation": "drop = (docs_in_clustered_pairs - clusters) / docs_total. At th0.9: (427723 - 114888) / 3747157 = 312835 / 3747157 = 0.083486, and 312835 is exactly the 3,747,157 - 3,434,322 the build removed, so the fact and the artifact agree to the document."
    },
    "uncertainty": "Wilson 95% CI given per threshold; the estimate-vs-exact MAE of 0.030 is a separate error term and is not folded into those CIs",
    "status": "measured",
-   "boundary": "A rate over DOCUMENTS, not tokens. Near-duplicates are not length-neutral, so this does not convert to a token loss by multiplication -- the deduped token count requires building the dir and counting it. It also says nothing about WHICH copy is kept: code_dedup_build keeps the minimum ordinal.",
+   "boundary": "A rate over DOCUMENTS, not tokens. Near-duplicates are not length-neutral -- the removed documents are 2.1106x mean length -- so NEITHER rate converts to a token loss by multiplication; the deduped token count requires building the dir and counting it (cs.code_rp1t_dd09_landed). Second, participation is not a drop rate: this entry carried one field named near_dup_rate holding the participation value at all three thresholds, and multiplying th0.9's 0.114146 by a token count overstates the loss by 701,466,449 tokens (62, 2026-09-07). It also says nothing about WHICH copy is kept: code_dedup_build keeps the minimum ordinal.",
    "guard_phrases": [
     "code_rp1t is upstream-deduped",
-    "rp1t github needs no dedup"
+    "rp1t github needs no dedup",
+    "near_dup_rate is the drop rate"
    ]
   },
   {
