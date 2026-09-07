@@ -29,9 +29,10 @@ in the first 3 layers, and the routing-target-node constraint removed.
 
 **Loop 2 — CSA-with-SWA for long context. This is where the PE break lives.**
 CSA compresses every m=4 tokens into one KV entry (overlapped grouping, 2m
-neighbors), a Lightning Indexer selects top-k=512 compressed entries per query,
-and an SWA branch restores the n_win=128 most recent uncompressed KV entries so
-a query keeps the local detail its own compressed block lost. This is the
+neighbors), a Lightning Indexer selects top-k compressed entries per query
+(top-k=512 Flash / 1024 Pro), and an SWA branch restores the n_win=128 most
+recent uncompressed KV entries so a query keeps the local detail its own
+compressed block lost. This is the
 1M-context mechanism: Pro reaches 27% of V3.2's single-token FLOPs and 10% of
 its KV cache at 1M. CSA is the layer type that needs the positional-encoding
 decision, because V4's CSA ships with partial RoPE (see below).
@@ -49,9 +50,10 @@ Our checkpoints are NoPE. `GatedMLA` (model.py:227) carries no positional
 encoding; position is handled by KDA/DeltaRecurrence. DeepSeek-V4 uses partial
 RoPE on the last 64 dimensions of queries, compressed KV entries, and
 attention outputs, with a -i position correction on the outputs so the result
-encodes relative rather than absolute position. V4 ships this PE change inside
-the same layers as CSA/HCA — the attention upgrade and the PE change are not
-separable in their design.
+encodes relative rather than absolute position. V4 ships the attention upgrade
+and the PE change together, and the -i correction exists because CSA's
+KV-as-values structure introduces absolute position -- so the coupling is
+likely structural, but the paper does not state that CSA requires partial RoPE.
 
 The cost of Loop 2 is therefore not just the attention implementation. It is
 one of:
