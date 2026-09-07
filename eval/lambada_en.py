@@ -59,28 +59,48 @@ DEFAULT_DATA = os.path.join(ROOT, "data", "eval", "lambada_en", "lambada_test_en
 WORD_BOUNDARY = set(" \t\n\r-.,;:!?\"()[]{}<>/\\|`~@#$%^&*+=—–…")
 MAX_NEW_TOKENS = 8  # a word is at most a few tokens; 8 bounds the worst case cheaply
 
-# WHAT THE TWO PATHS MAY DIFFER BY, and why it is not 1e-4.
+# WHAT THE TWO ARMS MAY DIFFER BY, and the history of this number, because it has been wrong
+# twice in opposite directions.
 #
-# I first set this to 1e-4 on the reasoning that the paths "differ only in batch shape, so this
-# is bf16 accumulation order". Measured on the pod (4c, card 1, step17000): deltas of 1e-3 to
-# 8e-3, e.g. item 0 at 1.56926 vs 1.57485. So the premise was wrong, and it was wrong about
-# WHICH thing varies -- padding is innocent (verified cardless on a causal toy model in fp32
-# and bf16: batched and per-item agree to 0.0e+00), and the batch is not what changed.
+# 1e-4, asserted: "the paths differ only in batch shape, so this is bf16 accumulation order".
+# The premise was wrong about WHICH thing varied. The pod measured 1e-3 to 8e-3.
+# 2e-2, fitted to that sample: the next run hit 2.20e-02 on 1 of 64. A tolerance set from the
+# failures so far becomes whatever the data needs, which is not a gate.
 #
-# THE OLD PATH'S FORWARDS HAVE DIFFERENT LENGTHS. target_nll_per_byte appended one target token
-# and re-ran, so it scored at lengths ctx, ctx+1, ... ctx+len(t)-1; the new path runs one
-# forward at ctx+len(t). DeltaRecurrence is a CHUNKED recurrence (chunk_size=32, model.py:128,
-# passed to chunk_kda at :222), so a different sequence length puts the chunk boundaries in
-# different places and the state is accumulated in a different order. Same function, different
-# summation order, at bf16 -- which is exactly the size of effect measured.
+# The cause was never batch shape. The per-item arm scored at ctx, ctx+1, ... because it
+# appended one target token per forward, and DeltaRecurrence is a chunked recurrence
+# (chunk_size=32, model.py:128 -> chunk_kda at :222), so each length aligned the chunks
+# differently. Both arms now score in ONE forward at ONE length, so that source is gone and
+# what remains is genuine batch-shape noise: the same rows in a (B, T) tensor rather than a
+# (1, T) one.
 #
-# So the tolerance is a property of the recurrence, not of the arithmetic, and 1e-4 was a number
-# I asserted rather than measured. 2e-2 is set to pass the observed 8e-3 with room and still
-# catch a real defect: the off-by-one this file's selftest mutates gives whole nats, not
-# hundredths. The right long-term fix is a per-item path that also scores in one forward, so
-# both arms see one length -- filed rather than done, because it changes the reference the
-# existing preds file was written under.
-NLL_TOL = 2e-2
+# 1e-3 is a CEILING TO BE REPLACED BY MEASUREMENT, not a measurement. I have no card, so I
+# cannot observe bf16 batch-shape noise on this model and will not print a number I did not
+# take. It is loose enough not to fail on plausible noise and 3 orders tighter than the
+# off-by-one it must catch (2.55 nats, measured in _selftest). The pod run reports the worst
+# observed delta on success; set this from that figure.
+NLL_TOL = 1e-3
+
+
+def first_word_span(text):
+    """(word, index just past it). The stop rule needs the END, not just the word.
+
+    greedy_word used to reconstruct the leading offset with `len(text) - len(text.lstrip())`,
+    i.e. WHITESPACE only, while this skip loop consumes every WORD_BOUNDARY character
+    including punctuation. On a generation opening with punctuation the two disagree: at
+    text='.L' the word is 'L' (len 1) and lstrip's offset is 0, so `len(text) > len(w) + 0`
+    fired and the decode stopped one character into the word. Every LAMBADA generation
+    beginning with punctuation was truncated to its first letter -- 'L' where the model had
+    produced 'Lucien'. Returning the span removes the second derivation rather than fixing it
+    twice.
+    """
+    i = 0
+    while i < len(text) and text[i] in WORD_BOUNDARY:
+        i += 1
+    j = i
+    while j < len(text) and text[j] not in WORD_BOUNDARY:
+        j += 1
+    return text[i:j], j
 
 
 def first_word(text):
@@ -90,13 +110,7 @@ def first_word(text):
     a real outcome (the model emitted punctuation or a newline), scored as a miss, never
     silently skipped. _selftest covers it.
     """
-    i = 0
-    while i < len(text) and text[i] in WORD_BOUNDARY:
-        i += 1
-    j = i
-    while j < len(text) and text[j] not in WORD_BOUNDARY:
-        j += 1
-    return text[i:j]
+    return first_word_span(text)[0]
 
 
 def split_item(raw):
@@ -283,8 +297,12 @@ def greedy_word(m, ctx_ids, max_new=MAX_NEW_TOKENS):
         # Stop at the FIRST boundary after a word has begun. Checking the decoded string
         # rather than the token id is what makes this tokenizer-independent: a boundary may
         # arrive inside a merged token (" cat." is one token in some vocabularies).
-        w = first_word(text)
-        if w and len(text) > len(w) + (len(text) - len(text.lstrip())):
+        #
+        # `end` comes from first_word_span, so the offset is the one the word was actually
+        # cut at. The old form recomputed it as len(text)-len(text.lstrip()) -- whitespace
+        # only -- and truncated every punctuation-opening generation to one letter.
+        w, end = first_word_span(text)
+        if w and len(text) > end:
             break
     return first_word(m.decode(made)), made
 
@@ -354,11 +372,19 @@ def _assert_batch_equivalence(m, items):
     batched = greedy_words_batched(m, ctxs)
     tgts = [m.encode(" " + it["target"]) for it in items]
     nll_b = m.nll_batch(ctxs, tgts)
+    # THE PER-ITEM ARM SCORES IN ONE FORWARD TOO, at batch size 1. The old arm appended a
+    # target token and re-ran, so it scored at ctx, ctx+1, ... -- different lengths, therefore
+    # different chunk_kda alignments (chunk_size=32), therefore a different summation order.
+    # That put 2.2e-2 nats/byte between the arms and the tolerance was being widened to absorb
+    # it. Comparing at ONE length removes the cause instead, and what is left is batch shape
+    # alone, which is what this gate is supposed to be about.
+    nll_1 = [m.nll_batch([c], [t])[0] for c, t in zip(ctxs, tgts, strict=True)]
     bad_pred, bad_nll, worst = [], [], 0.0
-    for it, c, w, nb in zip(items, ctxs, batched, nll_b, strict=True):
+    for it, c, w, nb, n1 in zip(items, ctxs, batched, nll_b, nll_1, strict=True):
         w1, _ = greedy_word(m, c)
-        n1 = target_nll_per_byte(m, c, it["target"])
-        nb = None if nb is None else nb / max(1, len(it["target"].encode("utf-8")))
+        byts = max(1, len(it["target"].encode("utf-8")))
+        nb = None if nb is None else nb / byts
+        n1 = None if n1 is None else n1 / byts
         # PRED AND NLL REPORTED SEPARATELY, never as if/elif. The first version chained them,
         # so an nll line meant "pred matched" and a pred line hid the nll entirely -- 4c ran it
         # on the pod and could not tell from the output whether the predictions agreed, which
@@ -388,6 +414,14 @@ def _selftest():
     assert first_word(" well-known") == "well", "a hyphen ends the word"
     assert first_word(" door.") == "door"
     assert first_word("\n\ndoor") == "door"
+    # THE SPAN, which is what the stop rule reads. `end` is past the word, NOT len(word) --
+    # the difference is the leading boundary run, and conflating them is the defect that
+    # truncated every punctuation-opening generation to one letter.
+    assert first_word_span(".Lucien") == ("Lucien", 7), first_word_span(".Lucien")
+    assert first_word_span(" Lucien") == ("Lucien", 7)
+    assert first_word_span("Lucien") == ("Lucien", 6)
+    assert first_word_span(".L") == ("L", 2), "a word not yet finished must not read as ended"
+    assert first_word_span(".Lucien ") == ("Lucien", 7), "a real boundary ends it"
     # DEGENERATE: nothing but boundary characters. Must be "" (scored as a miss), not a
     # crash and not a silent skip -- the model really does emit bare punctuation at 200M.
     assert first_word("") == ""
@@ -414,6 +448,31 @@ def _selftest():
     assert abs(_got[0] - -(_lg[0, 2, 7] + _lg[0, 3, 8]).item()) < 1e-5, _got
     assert abs(_got[1] - -_lg[1, 1, 9].item()) < 1e-5, _got
     assert _gather_nll(_lg, [[1, 2]], [[]]) == [None], "an empty target scores None, not 0.0"
+
+    # THE CLAIM BATCHING RESTS ON, checked by ENUMERATION rather than by the cases I thought
+    # of. greedy_words_batched runs all max_new tokens and truncates afterwards, which is only
+    # equivalent to stopping early if a stopped word equals first_word of the full decode. I
+    # asserted that in a docstring and it was FALSE: over all 1110 decode sequences of length
+    # 1-3 on this alphabet, 48 disagreed under the old lstrip-based offset -- every one a
+    # generation opening with punctuation, which is exactly the 'Lucien' -> 'L' the pod found.
+    # With the span-based offset the count is 0. A keyword search for the cases I imagined
+    # would not have found them; enumerating what must be empty did.
+    import itertools  # noqa: PLC0415
+    _alpha = ["a", "L", "u", ".", " ", "-", "", '"', "\n", "ab"]
+    _bad = []
+    for _n in (1, 2, 3):
+        for _combo in itertools.product(_alpha, repeat=_n):
+            _text, _stopped = "", None
+            for _piece in _combo:
+                _text += _piece
+                _w, _end = first_word_span(_text)
+                if _w and len(_text) > _end:
+                    _stopped = _w
+                    break
+            if _stopped is not None and _stopped != first_word("".join(_combo)):
+                _bad.append(_combo)
+    assert not _bad, (f"{len(_bad)} decode sequence(s) where stopping early differs from the "
+                      f"full decode, e.g. {_bad[:3]} -- batching is not equivalent")
 
     print(f"lambada_en self-test OK: {len(WORD_BOUNDARY)} boundary chars, stop rule covers "
           f"apostrophe/hyphen/newline and the empty-generation case")
@@ -513,6 +572,7 @@ def main():
         # ~1e-2 nats/byte between the two, so a row without this field cannot be compared to
         # one with it, and nothing else in the JSON distinguishes them.
         "method": "nll_one_forward",
+        "decoder": "first_word_v2",
         "batch": a.batch,
         "reading": "greedy continuation to first word boundary, exact string match "
                    "(lm-eval-harness definition); tokenizer-independent",
