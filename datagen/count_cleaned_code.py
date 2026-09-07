@@ -23,13 +23,37 @@ import multiprocessing as mp
 import os
 import sys
 
-from tokenizers import Tokenizer  # type: ignore
-
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
-TOK = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+TOK_PATH = os.path.join(ROOT, "data", "tokenizer.json")
 SHARDS = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", "code_rp1t", "*.jsonl")))
 WORKERS = int(os.environ.get("COUNT_WORKERS", "8"))
+_TOK = None
+
+
+def tok():
+    """The frozen tokenizer, loaded on first use.
+
+    LAZY BECAUSE data/tokenizer.json IS GITIGNORED (.gitignore:5). Loading it at import
+    time made every importer of this module unrunnable in a worktree that had never copied
+    the file in: `count_code_dirs.py --selftest` raised `No such file or directory` from
+    line 30 before reaching any test, and the pre-commit hook refused a ledger merge on it
+    at 8e536df7. CI and the pod both hold the file, which is why it was green in both
+    (4c, 2026-09-08). The import-time load predates this; registering the selftest in
+    SELFTEST_FILES is what made it reachable, so the defect arrived by being exposed.
+    """
+    global _TOK
+    if _TOK is None:
+        if not os.path.isfile(TOK_PATH):
+            raise SystemExit(
+                f"tokenizer missing at {TOK_PATH}. It is gitignored (.gitignore:5), so a "
+                f"fresh worktree does not have it -- copy it from another checkout or the "
+                f"pod. Nothing here can run without it."
+            )
+        from tokenizers import Tokenizer  # type: ignore
+
+        _TOK = Tokenizer.from_file(TOK_PATH)
+    return _TOK
 
 
 def _count_shard(shard):
@@ -50,9 +74,9 @@ def _count_shard(shard):
             tb += len(t.encode("utf-8"))
             texts.append(t)
             if len(texts) >= 2000:
-                tokens += count_docs(texts, TOK)
+                tokens += count_docs(texts, tok())
                 texts = []
-    tokens += count_docs(texts, TOK)
+    tokens += count_docs(texts, tok())
     return kept, tokens, tb
 
 
