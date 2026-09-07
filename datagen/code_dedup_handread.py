@@ -73,6 +73,26 @@ def cluster_row(ord_, mem, dom_of, doc, domains):
     }
 
 
+def locate(where, dom_locs, domains):
+    """(shard, line) for a (domain_name, local_index) pair.
+
+    Exists as its own function because the inline version was WRONG and the selftest could not
+    see it: `dom_of` returns the domain NAME (a.domains[d]) while dom_locs is a LIST indexed by
+    position, so `dom_locs[name]` raised TypeError. The script therefore never once reached the
+    sheet -- clustering completed, 116,380 clusters were found, and the first cluster_row call
+    died on it (2026-09-08).
+
+    The old selftest passed three hand-built cluster_row cases with their own `doc` closure, so
+    the real lookup was never called with a real dom_locs. Hoisted here so it can be.
+
+    dom_of keeps returning the NAME on purpose: cluster_row's callers compare against names
+    (`dom_of(g)[0] == domains[1]`), so making dom_of return an index would move the defect into
+    three comparisons rather than fix it.
+    """
+    name, local = where
+    return dom_locs[domains.index(name)][local]
+
+
 def draw_mixed(mixed, n, rng):
     """n mixed clusters, drawn rather than sliced -- and the assertion lives HERE, not in the
     caller, so the selftest exercises the production path instead of a copy of it.
@@ -149,6 +169,23 @@ def _selftest():
     if any(r["same_file"] is not None for r in (pure, mixed, rp_first)):
         fails.append("same_file must start blank; it is the human's judgement")
 
+    # THE LOOKUP, through the real locate(). `dom_of` hands it a NAME and dom_locs is indexed
+    # by POSITION; the inline version indexed by name and raised TypeError on every run, which
+    # the three cluster_row cases above cannot see because they pass their own `doc` closure.
+    # Second domain on purpose: index 0 would pass even if locate() ignored the name entirely.
+    _locs = [[("shard_a", 7)], [("shard_b", 3), ("shard_b", 9)]]
+    _doms = ["dom_zero", "dom_one"]
+    if locate(("dom_one", 1), _locs, _doms) != ("shard_b", 9):
+        fails.append("locate() did not resolve (dom_one, 1) to shard_b line 9")
+    if locate(("dom_zero", 0), _locs, _doms) != ("shard_a", 7):
+        fails.append("locate() did not resolve the first domain")
+    try:
+        locate(("no_such_domain", 0), _locs, _doms)
+    except ValueError:
+        pass
+    else:
+        fails.append("locate() accepted a domain name not in domains; it must raise")
+
     # THE DRAW, through draw_mixed itself. The three cluster_row cases above cannot see this
     # defect: they test the SHAPE of one row and the no-op was in WHICH rows get built.
     pool = {k: [k, k + 1] for k in range(200)}
@@ -177,7 +214,9 @@ def _selftest():
         "keeps its excerpt, an rp1t-first cluster is labelled rp1t(rep), and same_file is "
         "blank for the reader; and draw_mixed -- the production draw, not a copy of it -- "
         "returns 40 distinct clusters from the pool and never the pool's first 40 in order, "
-        "which is the only property that separates a draw from the no-op shuffle it replaced"
+        "which is the only property that separates a draw from the no-op shuffle it replaced; "
+        "and locate() resolves a (name, local) pair through the real position lookup that "
+        "raised TypeError on every run before 2026-09-08"
     )
     return 0
 
@@ -295,8 +334,13 @@ def main():
     chosen = rp1t_sample + star_sample
 
     def doc(g):
-        d, local = dom_of(g)
-        shard, ln = dom_locs[d][local]
+        # dom_of returns the domain NAME (a.domains[d]) and dom_locs is a LIST indexed by
+        # position, so `dom_locs[name]` raises TypeError. Pre-existing, and it means this script
+        # never once reached the sheet: clustering finishes, 116,380 clusters are found, and the
+        # first cluster_row call dies. Index by position and keep dom_of's contract, because
+        # cluster_row's callers read the NAME (`dom_of(g)[0] == domains[1]`) -- changing dom_of
+        # to return an index would move the defect into three comparisons instead of fixing it.
+        shard, ln = locate(dom_of(g), dom_locs, a.domains)
         with open(shard, encoding="utf-8") as f:
             for i, line in enumerate(f):
                 if i == ln:
