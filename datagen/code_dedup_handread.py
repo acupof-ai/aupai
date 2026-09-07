@@ -15,9 +15,16 @@ or comments; different program = not. If the rp1t member is a genuine duplicate 
 the starcoder representative in >= 80% of mixed clusters, code_dedup08 stands;
 below that, rerun with a domain-fair representative (prefer the rp1t member).
 
-    python datagen/code_dedup_handread.py --root data/corpus \
+    python3 datagen/code_dedup_handread.py --root data/corpus \
         --domains code_py_starcoder code_py_rp1t --ckdir runs/code_dedup08_ck \
-        --rep math 40 --n_rep 100 --out runs/code_dedup_handread_sheet.json
+        --n_rp1t_clusters 40 --n_total_clusters 100 \
+        --out runs/code_dedup_handread_sheet.json
+
+`--rep math 40 --n_rep 100` stood here until 2026-09-08 and does not parse: the parser
+has never had either flag. doc_commands_exist checks that a cited FILE exists, not that
+a cited command's flags are accepted, so a documented invocation can be wrong for as
+long as nobody types it -- this one was, and the run that needed it lost the time to
+argparse's error. Verified by `--help` before this edit, not by reading the parser.
 """
 
 import argparse
@@ -64,6 +71,35 @@ def cluster_row(ord_, mem, dom_of, doc, domains):
         # deletion rate is duplicate removal or supply loss. Blank until a human fills it.
         "same_file": None,
     }
+
+
+def draw_mixed(mixed, n, rng):
+    """n mixed clusters, drawn rather than sliced -- and the assertion lives HERE, not in the
+    caller, so the selftest exercises the production path instead of a copy of it.
+
+    `rng.shuffle(list(mixed.keys()))` stood in the caller until 2026-09-08 and was a NO-OP:
+    shuffle mutates in place and the list it was handed was discarded on the same line, so the
+    slice that followed took the LOWEST-ORDINAL n clusters. Ordinal is position in the corpus
+    scan, so that was a contiguous slice of the first shards, not a sample of the stratum -- and
+    the mixed stratum is the arm #70's whole question rests on.
+
+    The first fix asserted the property in the caller and re-tested both spellings on a synthetic
+    pool inside the selftest. The mutant SURVIVED: restoring the no-op in the caller left the
+    selftest green, because the selftest was checking its own copy of the logic. Hence one
+    function, called by both.
+    """
+    keys = sorted(mixed)
+    got = rng.sample(keys, min(n, len(keys)))
+    if len(keys) > n:
+        # A no-op shuffle is indistinguishable from a working draw by the output's SIZE -- both
+        # return n. The property that separates them: a random draw cannot be the pool's first n
+        # in order.
+        if got == keys[:n]:
+            raise SystemExit(
+                f"REFUSE: the mixed draw of {n} equals the {n} lowest-ordinal clusters exactly. "
+                f"That is corpus position, not a sample; the 2026-09-08 no-op shuffle is back."
+            )
+    return got
 
 
 def _selftest():
@@ -113,6 +149,23 @@ def _selftest():
     if any(r["same_file"] is not None for r in (pure, mixed, rp_first)):
         fails.append("same_file must start blank; it is the human's judgement")
 
+    # THE DRAW, through draw_mixed itself. The three cluster_row cases above cannot see this
+    # defect: they test the SHAPE of one row and the no-op was in WHICH rows get built.
+    pool = {k: [k, k + 1] for k in range(200)}
+    got = draw_mixed(pool, 40, random.Random(5))
+    if len(got) != 40:
+        fails.append(f"draw_mixed returned {len(got)}, not 40")
+    if got == sorted(pool)[:40]:
+        fails.append("draw_mixed returned the pool's first 40 in order -- not a draw")
+    if len(set(got)) != len(got):
+        fails.append("draw_mixed returned a duplicate cluster; a cluster must be read once")
+    if not set(got) <= set(pool):
+        fails.append("draw_mixed invented a cluster not in the pool")
+    # and the REFUSAL: a pool whose draw would be the first n must raise, not return
+    try:
+        draw_mixed({k: [k] for k in range(3)}, 3, random.Random(5))
+    except SystemExit:
+        fails.append("draw_mixed refused when n >= pool size, where every draw IS the whole pool")
     for f in fails:
         print(f"  FAIL {f}", file=sys.stderr)
     if fails:
@@ -122,7 +175,9 @@ def _selftest():
         "code_dedup_handread selftest OK: pure-starcoder cluster yields a row with a None "
         "excerpt (the old rp1t[0] raised IndexError on all 60 of them), the mixed cluster "
         "keeps its excerpt, an rp1t-first cluster is labelled rp1t(rep), and same_file is "
-        "blank for the reader"
+        "blank for the reader; and draw_mixed -- the production draw, not a copy of it -- "
+        "returns 40 distinct clusters from the pool and never the pool's first 40 in order, "
+        "which is the only property that separates a draw from the no-op shuffle it replaced"
     )
     return 0
 
@@ -226,8 +281,16 @@ def main():
     print(f"total rp1t docs in clusters: {rp1t_members}", flush=True)
 
     # ordinal rep per cluster = min global index (code_dedup08 kept min ordinal)
-    rng.shuffle(list(mixed.keys()))
-    rp1t_sample = list(mixed.keys())[: a.n_rp1t_clusters]
+    #
+    # `rng.shuffle(list(mixed.keys()))` stood here until 2026-09-08 and was a NO-OP: shuffle
+    # mutates in place, and the list it was handed is discarded on the same line, so `mixed` was
+    # untouched and the slice below took the 40 LOWEST-ORDINAL mixed clusters. Ordinal is position
+    # in the corpus scan, so that is a contiguous slice of the first shards, not a sample of the
+    # stratum -- and the mixed stratum is the arm the whole question rests on. The intent was
+    # visible in the code and the effect was absent, which is why the sample below is asserted
+    # rather than assumed. `sorted()` first, because dict order depends on insertion and a seeded
+    # draw over an unordered set is not reproducible.
+    rp1t_sample = draw_mixed(mixed, a.n_rp1t_clusters, rng)
     star_sample = rng.sample(sorted(pure_star), max(0, a.n_total_clusters - a.n_rp1t_clusters))
     chosen = rp1t_sample + star_sample
 
