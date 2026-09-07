@@ -1667,6 +1667,26 @@ class HybridLM(nn.Module):
 
         `self.moe_layers` holds block INDICES, not modules, so the layers are reached as
         self.blocks[i].ffn -- the same shape train.py uses for its balancer sweep.
+
+        WHAT THE COUNT CANNOT CATCH, because both sides read this same attribute (tilerl): the
+        caller's check is `swept != len(_moe_balance_layers)`, and train.py builds that list as
+        `[raw_model.blocks[i].ffn for i in (getattr(raw_model, "moe_layers", None) or [])]` -- from
+        this same attribute. Anything that corrupts the LIST moves both sides equally, so the check
+        sees only a broken SWEEP. Measured against these two functions:
+
+            moe_layers      balancer  sweep  fires?  per-block commits
+            [0,1,2,3]              4      4      no  [1, 1, 1, 1]
+            [0,1]                  2      2      no  [1, 1, 0, 0]
+            []                     0      0      no  [0, 0, 0, 0]
+            [0,0,0,0]              4      4      no  [4, 0, 0, 0]
+
+        Three of those four are caught elsewhere by construction: the `moe=(i in self.moe_layers)`
+        comprehension below builds experts from the SAME list, so a truncated list builds fewer
+        experts and trips the parameter-count assertion, and an out-of-range index raises during
+        __init__. The residue is a DUPLICATED index -- it builds, it double-commits layer 0 while
+        layers 1-3 are never swept, and nothing catches it. No code path generates one, so this is
+        recorded here rather than guarded: a check on a state with no producer reads like coverage
+        without being coverage.
         """
         n = 0
         for i in self.moe_layers:
