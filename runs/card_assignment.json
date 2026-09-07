@@ -96,6 +96,11 @@
    "when": "2026-09-07 12:3xZ",
    "who": "fb",
    "what": "card 1 -> fb lambada A/B for tilerl PR acceptance"
+  },
+  {
+   "when": "2026-09-07 12:5xZ",
+   "who": "fb",
+   "what": "card 0 -> tilerl-48 tilerl-fp8shapes (asked before claiming)"
   }
  ],
  "granted": "2026-09-03",
@@ -112,7 +117,7 @@
   "granted": "2026-09-06T07:2xZ fb: GRANTED. e1 launches via harness launch --training the moment b0 reports the score_matrix done; world 6, b8 a4, 10,172 steps; ETA is an estimate (ratio measured at world 2), re-cost if the first 100 steps exceed 2.5 s/step"
  },
  "cards": {
-  "0": "GRANTED 2026-09-07T12:1xZ -> tilerl-48: tilerl-fp8eager, the paired A/B of prof_backward_ops.py --gdn-chunk 128 --steps 2 with linear_fp8_bwd popped from the registry, ~7 min, one run, released on exit; last card work for tileRL row 67. Card 0 otherwise idle, lane for short jobs while 2-7 hold the 30B run",
+  "0": "GRANTED 2026-09-07T12:5xZ -> tilerl-48: tilerl-fp8shapes, prof_backward_ops.py --gdn-chunk 128 --steps 2 --frozen-shapes (kernel vs eager ms/call, same clock), ~7 min, one run, released on exit; third and last card-0 window for tileRL row 67 (fp8eager released, card read 0 MiB). Card 0 otherwise idle, lane for short jobs while 2-7 hold the 30B run",
   "6": "ours (tileRL reservation released 2026-08-30; entry corrected 2026-09-07 by fb)",
   "1-4": "2026-09-05T05:54Z: 1,2 -> MoE arm E1 (world 2, b0+tilerl) when (c)+(d) merge. 3 -> see key \"3\"; 4 -> see key \"4\": SFT p04/p16 cancelled, ladder checkpoints unrecoverable; experiment 2 rides on the MoE round's step checkpoints.",
   "5": "GRANTED 2026-09-05T08:11Z -> e1: experiment 1 (runs/prereg.jsonl#conversion_rate_0905 @amended_4, 44 review 11:05Z): five world-2 arms SEQUENTIAL on cards 5+7 (n1, n8, n64, n256, control_arm), 500 steps each, via harness launch --training --cards 5,7 --class incremental; one arm at a time",
