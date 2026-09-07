@@ -1,7 +1,7 @@
 ---
 question: What do the four 2026-09-04 experiments conclude, at what resolution, and what can each not say?
 status: measured
-source: facts/data_scaling.json#ds.n2_params_vs_data_matched_compute; facts/smelt_deeploop.json#repo.loop_from_scratch_stage_d, #repo.loop_not_adopted_equal_compute; facts/efficiency.json#eff.conv_doc_isolation_ab_200m; runs/experiments.jsonl e1_c11_doccu_rescore; runs/prereg.jsonl b0_head_hybrid_3to1; runs/b0_headmix_armA.log, runs/b0_headmix_armB.log
+source: facts/data_scaling.json#ds.n2_params_vs_data_matched_compute; facts/smelt_deeploop.json#repo.loop_from_scratch_stage_d, #repo.loop_not_adopted_equal_compute; facts/efficiency.json#eff.conv_doc_isolation_ab_200m; runs/experiments.jsonl e1_c11_doccu_rescore; runs/prereg.jsonl#b0_head_hybrid_3to1@amended_3; runs/b0_headmix_armA.log, runs/b0_headmix_armB.log
 ---
 
 # Experiments of 2026-09-04
@@ -96,7 +96,7 @@ What this cannot say:
 
 **Verdict: B LOSES. Per-layer 6 KDA + 2 MLA heads (head_mixed=3, latent 256) loses to layer-level 3:1 at d1024 L12, 1B tokens, seed 42, on doc_cu by 0.087 nat, 576/576 blocks. The layer-level form stays.**
 
-Design (`runs/prereg.jsonl` b0_head_hybrid_3to1, registered 2026-09-04T08:29Z, amended 08:34Z):
+Design (`runs/prereg.jsonl#b0_head_hybrid_3to1@amended_3`, registered 2026-09-04T08:29Z, amended 08:34Z):
 
 - Arm A: layer-level hybrid, d1024 L12 h8 ffn3072, attn_every=4 (9 KDA blocks + 3 MLA blocks).
 - Arm B: head_mixed=3 — both mixers in every block on a 3:1 KDA:MLA head split (KDA h=6 inner=768, MLA h=2 inner=256, latent 256). Both read the full residual; outputs summed (o(concat(a,b)) == o1(a)+o2(b), verified max|diff| 1.43e-06).

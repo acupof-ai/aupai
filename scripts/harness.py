@@ -3687,6 +3687,13 @@ def _exp_fold(evs):
             if (prev is not None and prev.get("status") == "retracted"
                     and r.get("status") != "retracted"):
                 continue
+            # And the monitor rule, duplicated for the same reason as the retraction rule above: a
+            # fallback that folds differently from the real fold is the divergence this function
+            # exists to end. A monitor's close reports process state, not a result, so a human's
+            # close outvotes it regardless of union-merge order (4c, 2026-09-07).
+            if (prev is not None and r.get("writer") == "monitor"
+                    and prev.get("status") in ("ok", "fail") and prev.get("writer") != "monitor"):
+                continue
             out[key] = r
         return list(out.values())
 
@@ -13631,7 +13638,17 @@ def _selftest_train_cite_baseline_is_content_keyed():
         "key is back, which is the defect this selftest exists for")
     victim_key = next((k for k in allowed if k.startswith("scripts/")), None)
     if victim_key is None:
-        raise SelftestSkip("no baselined citation under scripts/ to build the world from")
+        # ANY baselined file, not scripts/ only. The scripts/ restriction was written when the
+        # code side carried most of the debt; the 2026-09-07 sweep took scripts/ to zero, so this
+        # selftest started SKIPping -- green over a population it could no longer see, which is
+        # the shape it exists to catch in the check. A world built from a facts/*.json victim
+        # exercises the same four cases: the check reads json string fields and .py comments
+        # through one _CITE_RE, and the four assertions are about the BASELINE's key schema, not
+        # about which file the citation sits in.
+        victim_key = next(iter(allowed), None)
+    if victim_key is None:
+        raise SelftestSkip("no baselined citation anywhere to build the world from -- the "
+                           "baseline is empty, so the multiset schema has no subject")
     victim = victim_key.split("->")[0]
     target = victim_key.split("->")[1].lstrip(":")
 
@@ -13643,6 +13660,21 @@ def _selftest_train_cite_baseline_is_content_keyed():
         g("init", "-q", "-b", "main", ".")
         g("config", "user.email", "t@example.invalid")
         g("config", "user.name", "t")
+        # THE FIXTURE MUST BE ABLE TO RESOLVE THE REAL TREE'S SHA ANCHORS. The check verifies
+        # every sha-anchored citation with `git show <sha>:train.py` in the world it is given, and
+        # a fresh `git init` has no objects, so 19 anchors that are correct in the real repo read
+        # as `names sha X, which this repo cannot resolve` and case 1 FAILs for a reason that has
+        # nothing to do with the baseline schema. Only visible once the victim became a facts/
+        # file: the old scripts/ victim carried no anchors. Alternates rather than a clone --
+        # borrowing the object database is one line and read-only, where a clone of this repo per
+        # selftest run is seconds and disk.
+        _objs = subprocess.run(["git", "-C", ROOT, "rev-parse", "--git-path", "objects"],
+                               capture_output=True, text=True)
+        if _objs.returncode == 0:
+            _alt = os.path.join(d, ".git", "objects", "info", "alternates")
+            os.makedirs(os.path.dirname(_alt), exist_ok=True)
+            with open(_alt, "w", encoding="utf-8") as fh:
+                fh.write(os.path.abspath(os.path.join(ROOT, _objs.stdout.strip())) + "\n")
         for rel in ("train.py", _CITE_BASELINE, victim):
             dst = os.path.join(d, rel)
             os.makedirs(os.path.dirname(dst), exist_ok=True)
@@ -13776,6 +13808,121 @@ def _selftest_cite_scope_covers_facts():
         shutil.rmtree(d, ignore_errors=True)
     return ("facts/ in scope: a bare citation in a fact FAILs naming the file, the same fact "
             "by symbol PASSes, and the untouched tree PASSes (3 cases)")
+
+
+def _selftest_monitor_close_loses_to_a_human():
+    """A monitor's close must not outvote a human's, in EITHER union-merge order.
+
+    4c's report, 2026-09-07: harness launch's monitor writes `exit 0 / monitor: process exited
+    cleanly` for a run a human already closed with a real reading, and the ledger folds to
+    whichever row a union merge happened to place last. Reproduced on the real fold before fixing:
+    with the human's row first the monitor's terse close is live and the reading is invisible, with
+    nothing red -- the row still says status=ok, which is why nobody looks at it again.
+
+    WHAT THE EXISTING GUARDS DO NOT COVER, measured rather than assumed. Two guards already exist
+    and both were checked first: the monitor's `settled()` skips its close when it sees a terminal
+    row, and `exp.py done` refuses an already-closed row outright -- a single-tree run of the real
+    _close_row against a real ledger confirms the refusal fires and the human's finding survives.
+    Both are races. settled() polls at 60-second resolution, and the refusal only fires when both
+    writers share a working tree, which two sessions on two branches never do. So the rule has to
+    hold in the FOLD, the only place that ever sees both rows.
+
+    IDENTITY, NOT PROSE. The rule keys on the `writer` field rather than matching "monitor:" in the
+    finding, because a predicate on prose is escaped by any rewording and misfires on a human whose
+    finding quotes the monitor. A row with no `writer` is a human's, which every row already in the
+    ledger is.
+
+    FIVE CASES, and the last three are what keep this from being a disarm -- a rule that always
+    preferred the earlier row would pass the first two alone:
+      1. human close, then monitor's        -> the human's reading is live   (4c's defect)
+      2. monitor's close, then human's      -> the human's reading is live   (already true)
+      3. monitor's close alone              -> it IS the row; a run nobody closed still reports
+      4. two monitor closes                 -> the later wins, unchanged (a resumed run's monitor)
+      5. a RETRACTION after a monitor close -> retracted, not un-retracted by the earlier rule
+    """
+    sys.path.insert(0, os.path.join(ROOT, "scripts"))
+    from exp import fold
+
+    st = "2026-09-07 21:30"
+
+    def run_row(**kw):
+        base = {"name": "arm1", "started": st, "status": "running", "cmd": "train.py"}
+        base.update(kw)
+        return base
+
+    human = run_row(status="ok", result="val 2.884 vs control 2.877",
+                    finding="key usage collapsed to 3.1%; stop rule 4 tripped",
+                    decision="stop the arm")
+    mon = run_row(status="ok", result="exit 0", finding="monitor: process exited cleanly",
+                  decision="check the log", writer="monitor")
+    mon2 = run_row(status="fail", result="vanished", finding="monitor: no exit code recorded",
+                   decision="check the log", writer="monitor")
+    retracted = run_row(status="retracted", result="withdrawn",
+                        retracted_reason="the arm read the wrong cache")
+
+    def live(evs):
+        got = [r for r in fold(evs) if r.get("name") == "arm1"]
+        assert len(got) == 1, f"the fold must yield exactly one row per (name, started): {got}"
+        return got[0]
+
+    r = live([run_row(), human, mon])
+    assert "stop rule 4" in str(r.get("finding")), (
+        "4c'S DEFECT: a monitor close ordered after a human's is live, so the reading a human took "
+        f"is invisible while status still reads ok: {r.get('finding')!r}")
+
+    r = live([run_row(), mon, human])
+    assert "stop rule 4" in str(r.get("finding")), (
+        f"the other order regressed -- a human's close must win either way: {r.get('finding')!r}")
+
+    r = live([run_row(), mon])
+    assert r.get("writer") == "monitor" and "monitor:" in str(r.get("finding")), (
+        "A MONITOR CLOSE ALONE MUST STILL CLOSE THE ROW. Preferring a human's close cannot mean "
+        f"discarding the only close there is, or every unattended run reads as running: {r}")
+
+    r = live([run_row(), mon, mon2])
+    assert r.get("result") == "vanished", (
+        "two monitor closes must still fold last-wins -- a resumed run's monitor supersedes the "
+        f"earlier one, and this rule is only about monitor-vs-human: {r.get('result')!r}")
+
+    r = live([run_row(), mon, retracted])
+    assert r.get("status") == "retracted", (
+        "a retraction after a monitor close must stand: the monitor rule must not be readable as "
+        f"'the earlier row wins' in general: {r.get('status')!r}")
+
+    # THE FIELD IS ACTUALLY WRITTEN, not merely honoured when hand-built. Without this the five
+    # cases above pass while no real close ever carries `writer`, which is green over an empty
+    # population -- the shape three checks in this file exist to catch.
+    import shutil
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="writer_field_")
+    try:
+        subprocess.run([sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+                        "--name", "arm2", "--cmd", "x", "--hypothesis", "y"],
+                       check=True, capture_output=True)
+        assert _close_row("arm2", "ok", "exit 0", "monitor: process exited cleanly",
+                          "check the log", root=d, writer="monitor"), \
+            "_close_row(writer=) reported failure"
+        led = os.path.join(d, "runs", "experiments.jsonl")
+        rows = [json.loads(x) for x in open(led, encoding="utf-8") if x.strip()]
+        term = [r for r in rows if r.get("name") == "arm2" and r.get("status") == "ok"]
+        assert term and term[-1].get("writer") == "monitor", (
+            "the close did not carry writer=monitor, so the fold rule has nothing to key on: "
+            f"{term[-1] if term else 'no terminal row at all'}")
+        subprocess.run([sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+                        "--name", "arm3", "--cmd", "x", "--hypothesis", "y"],
+                       check=True, capture_output=True)
+        assert _close_row("arm3", "ok", "val 1.23", "a real reading", "keep", root=d)
+        rows = [json.loads(x) for x in open(led, encoding="utf-8") if x.strip()]
+        term = [r for r in rows if r.get("name") == "arm3" and r.get("status") == "ok"]
+        assert term and "writer" not in term[-1], (
+            f"a human close must carry NO writer field, not writer='human': {term[-1]}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    return ("monitor close loses to a human's in both orders; alone it still closes the row; two "
+            "monitor closes stay last-wins; a retraction still wins; the field is really written "
+            "and a human close carries none")
 
 
 def _selftest_launch_closes_its_orphaned_row():
@@ -20817,6 +20964,7 @@ def _demo(only=None):
         _selftest_cite_scope_covers_facts,
         _selftest_cite_blob_anchor,
         _selftest_launch_closes_its_orphaned_row,
+        _selftest_monitor_close_loses_to_a_human,
         _selftest_shard_contract_worlds,
         _selftest_cold_cache_refuses,
         _selftest_refusal_writes_no_row,
@@ -22172,7 +22320,7 @@ while True:
             status, result = "fail", "exit %d%s" % (rc, sig)
             finding = "monitor: process exited %d%s" % (rc, sig)
         subprocess.run([sys.executable, exp_py, "done", "--name", name,
-            "--result", result, "--finding", finding,
+            "--result", result, "--finding", finding, "--writer", "monitor",
             "--decision", "check the log", "--status", status], capture_output=True)
         # RELEASE THE CARDS HERE, beside the row that records the death. cmd_launch cannot:
         # it returns while the job is still running, so releasing there would free a card
@@ -23080,23 +23228,24 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
         rc = proc.wait()
         if rc == 0:
             _close_row(args.name, "ok", f"exited 0 after {len(resumes)} resume(s)",
-                       "clean exit", "none", root)
+                       "clean exit", "none", root, writer="monitor")
             return 0
         if rc == _KILL_CRITERION_EXIT:
             _close_row(args.name, "fail", f"kill criterion (exit {rc}) after {len(resumes)} resume(s)",
                        "deliberate stop: NaN or kill criterion, not a crash",
-                       "diagnose the stop; auto-resume does not relaunch it", root)
+                       "diagnose the stop; auto-resume does not relaunch it", root,
+                       writer="monitor")
             return rc
         if attempt == args.auto_resume:
             _close_row(args.name, "fail", f"exit {rc}, auto-resume exhausted ({args.auto_resume})",
                        f"crashed {len(resumes) + 1} times; resumed at steps {resumes}",
-                       "investigate the crash before relaunching", root)
+                       "investigate the crash before relaunching", root, writer="monitor")
             return rc
         ckpt, step = _latest_step_ckpt(args.name)
         if ckpt is None:
             _close_row(args.name, "fail", f"exit {rc}, no step checkpoint to resume from",
                        "crashed before the first --save_every save",
-                       "relaunch from scratch", root)
+                       "relaunch from scratch", root, writer="monitor")
             return rc
         # The env fingerprint is part of what the checkpoint was trained under. A
         # changed environment makes a resume a different run wearing the same name.
@@ -23153,11 +23302,19 @@ def _supervise(args, cmd, proc, cards, log_path, pid_path, root=None, started=""
     return 0
 
 
-def _close_row(name, status, result, finding, decision, root=None):
+def _close_row(name, status, result, finding, decision, root=None, writer=""):
     """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
     override (the ledger gets no env var), so a test that cannot redirect it writes
     into the real ledger -- which is exactly what happened (four 'arts' rows,
     2026-08-31, one pair sharing an identity that then failed the sync guard).
+
+    `writer` marks who closed it. Every call from the auto-resume supervisor passes
+    `monitor`, because those rows report PROCESS STATE (the pid returned 0, the pid
+    vanished) rather than what the run measured. exp.fold then lets a human's close
+    outvote them regardless of union-merge order -- without it, `exit 0 / monitor:
+    process exited cleanly` can silently replace `val 2.884, stop rule 4 tripped`
+    when two branches' rows are unioned (4c, 2026-09-07). Default empty: a row with
+    no writer is a human's, which is what every row already in the ledger is.
 
     `--root` GOES BEFORE THE SUBCOMMAND, and until 2026-09-07 this function appended it after.
     exp.py declares it on the top-level parser, so `exp.py done ... --root X` exits 2 with
@@ -23173,6 +23330,8 @@ def _close_row(name, status, result, finding, decision, root=None):
         cmd += ["--root", root]
     cmd += ["done", "--name", name,
             "--result", result, "--finding", finding, "--decision", decision, "--status", status]
+    if writer:
+        cmd += ["--writer", writer]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"WARN: could not close the row for {name}: exp.py exited {r.returncode}: "

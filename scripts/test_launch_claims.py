@@ -23,16 +23,24 @@ that execs one, as run_ddp.sh does.
 
 The cases run locally with no cards: the wrapper is a shell, a descendant exists at Popen, the
 claim records the job pid and a non-empty cmdline, status does not call it ORPHAN-SHELL, release
-removes it, cmd_launch's body really calls the helpers, and the monitor carries a release on both
+removes it, cmd_launch really reaches the helpers, and the monitor carries a release on both
 of its exit paths.
 
-TWO DEFECTS IN THIS FILE, both found by trying to make it fail rather than by reading it:
+THREE DEFECTS IN THIS FILE, all found by trying to make it fail rather than by reading it:
 
   The wiring assertion grepped the source for `_acquire_cards(` and PASSED with the call site
   stubbed out, because that name also appears in its own `def`. Measured: 9/9 green on a tree
-  where the launch claimed nothing. It is now an AST walk over cmd_launch's own body, which goes
+  where the launch claimed nothing. It became an AST walk over cmd_launch's own body, which goes
   red naming the missing call. Same shape as gate_failure_shapes §61 -- a criterion that
   recomputes what it judges.
+
+  That AST walk then read one function body, and 16d08b1c reported 4 BUGs on an intact launcher:
+  the commit moved cmd_launch's post-row half into _launch_after_row, leaving `return
+  _launch_after_row(...)`, so all four helpers sat one call outside the walk. Main was RED and
+  blocking every commit that stages scripts/card_claim.py (84 diagnosed it in a clean clone,
+  18/22). The walk now follows LOCAL calls to fixpoint, because what the launcher depends on is
+  that the call happens when cmd_launch runs -- a property of the call graph, not of one body. A
+  behaviour-preserving refactor must not red an assertion about behaviour.
 
   The helper case wrote a claim into the repo's REAL runs/claims/. card_claim.py reads
   AUPAI_CLAIM_DIR at import and the helper shells out to it, so patching this process's
@@ -119,21 +127,50 @@ def selftest():
     #    gate_failure_shapes §61, a criterion that recomputes what it judges.
     #
     #    Instead, CALL cmd_launch's helpers and check the effect: _acquire_cards must actually
-    #    write a claim file for a job pid, and the call site must be reachable from cmd_launch --
-    #    checked by AST, on the function's own body rather than the file's text.
+    #    write a claim file for a job pid, and the call site must be REACHABLE from cmd_launch --
+    #    checked by AST, on the call graph rather than the file's text.
+    #
+    #    REACHABLE, not "in the body": walking cmd_launch's own body only was the second version
+    #    of this assertion, and 16d08b1c broke it without breaking the launcher. That commit moved
+    #    the post-row half of cmd_launch into _launch_after_row and left `return
+    #    _launch_after_row(...)` behind, so all four helpers moved one call out of the walk and the
+    #    test reported 4 BUGs on an intact tree (84 diagnosed it in a clean clone of main; measured
+    #    18/22). A refactor that preserves behaviour must not red an assertion about behaviour.
+    #    What the launcher depends on is that the call happens when cmd_launch runs, which is a
+    #    property of the call graph, so the walk follows local calls to fixpoint.
+    #
+    #    The closure is 32 of harness.py's 466 module functions, so this is not "anything in the
+    #    file": the negative control below deletes the one edge that carries all four helpers and
+    #    goes red. Local names only (ast.Name, not Attribute) -- a method on an object is not a
+    #    module function and cannot be resolved this way.
     import ast
 
     src = open(os.path.join(ROOT, "scripts", "harness.py"), encoding="utf-8").read()
     tree = ast.parse(src)
-    launch = next((n for n in tree.body
-                   if isinstance(n, ast.FunctionDef) and n.name == "cmd_launch"), None)
-    called = set()
-    if launch:
-        for node in ast.walk(launch):
-            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name):
-                called.add(node.func.id)
+    _fns = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+
+    def _direct(node):
+        return {x.func.id for x in ast.walk(node)
+                if isinstance(x, ast.Call) and isinstance(x.func, ast.Name)}
+
+    def _reachable_from(fns, root):
+        """Every local name called on any path out of `root`, local calls followed to fixpoint."""
+        called, reached = set(), {root}
+        frontier = [root] if root in fns else []
+        while frontier:
+            nxt = []
+            for name in frontier:
+                for c in _direct(fns[name]):
+                    called.add(c)
+                    if c in fns and c not in reached:
+                        reached.add(c)
+                        nxt.append(c)
+            frontier = nxt
+        return called, reached
+
+    called, reached = _reachable_from(_fns, "cmd_launch")
     _case(results, "_acquire_cards" in called,
-          f"cmd_launch's body CALLS _acquire_cards (AST, not a text match): {sorted(called & {'_acquire_cards', '_job_pids_for', '_release_cards'})}")
+          f"cmd_launch REACHES _acquire_cards (AST call graph, not a text match): {sorted(called & {'_acquire_cards', '_job_pids_for', '_release_cards'})}")
     _case(results, "_job_pids_for" in called,
           "and _job_pids_for, so the pid it claims is the job and not the wrapper shell")
 
@@ -147,6 +184,28 @@ def selftest():
           "cmd_launch waits for a descendant that HOLDS a device before claiming")
     _case(results, "_proc_readable" in called,
           "and asks whether /proc is readable, so macOS falls back instead of blocking 90s")
+
+    # THE CLOSURE IS NOT "ANYTHING IN harness.py". Following local calls to fixpoint makes the
+    # walk survive a refactor, and the cost is that it could reach so far that it stops being a
+    # statement about cmd_launch. Two controls, because "it passes here" cannot tell those apart:
+    #
+    #   SCOPE -- the closure is a strict subset. Measured on this tree: 32 of 466 module
+    #   functions. Asserted as a fraction rather than 32, because the number moves with any
+    #   refactor and the property is that most of the file is out of reach.
+    _case(results, len(reached) < len(_fns) // 4,
+          f"the call closure is a strict subset of harness.py: {len(reached)} of {len(_fns)} functions")
+
+    #   TEETH -- delete the one edge carrying the four helpers and every one of them must go
+    #   missing. All four live in _launch_after_row, so dropping cmd_launch's `return
+    #   _launch_after_row(...)` is exactly 16d08b1c's damage without the call left behind. If this
+    #   world still resolved them, the assertions above would be about the file and not the path.
+    _cut = {k: v for k, v in _fns.items() if k != "cmd_launch"}
+    _cut["cmd_launch"] = ast.parse("def cmd_launch(a):\n    return _csv(a)\n").body[0]
+    _cut_called, _ = _reachable_from(_cut, "cmd_launch")
+    _missing = sorted({"_acquire_cards", "_job_pids_for", "_device_pid_for", "_proc_readable"}
+                      - _cut_called)
+    _case(results, len(_missing) == 4,
+          f"cutting cmd_launch -> _launch_after_row loses all four helpers ({len(_missing)}/4: {_missing})")
 
     # The predicate's contract, at the level the launcher depends on. A device count and an
     # unreadable pid must not collapse to the same value: None is not 0, and only 0 refuses.
