@@ -3323,6 +3323,9 @@ def main():
     # EVERY MoE layer, because each owns its own expert_bias -- see the call site after opt.step().
     _moe_balance_layers = [raw_model.blocks[i].ffn
                            for i in (getattr(raw_model, "moe_layers", None) or [])]
+    # Checked on the first micro-batch only: the counts cannot change mid-run, and the check reads
+    # len() of a list built once, so paying it every micro-batch buys nothing.
+    _moe_commit_checked = False
     # ONE merged map into build_optimizers, so a parameter is resolved to a master exactly once.
     # The two maps are disjoint by construction and test_arch_compat asserts it.
     _mmap = {}
@@ -3578,13 +3581,29 @@ def main():
             # recompute. Measured on card 7 before the fix: tokens_per_expert read exactly 2x
             # with grad_ckpt on, uniformly per expert on every MoE layer, `windows` 2 -> 4.
             #
+            # ONE MODEL-LEVEL SWEEP, not this loop's own copy of it. sft.py and sft_math.py both
+            # recompute and both need the same correction, and three copies of "walk moe_layers and
+            # commit" is three places to forget one. The sweep returns the number of layers it
+            # committed, checked ONCE below against the list resolved at :3324 -- a sweep that
+            # resolves zero layers leaves the surplus and the counter reads 2x, which looks exactly
+            # like the correction not working.
+            #
             # AFTER backward, not before: the recompute happens during backward, so committing
             # earlier would fold a count the recompute is about to overwrite. In the loop body
             # rather than the accum-boundary block, because every micro-batch's tokens belong in
             # the window -- the boundary block runs once per OPTIMIZER step and would drop
             # accum-1 micro-batches out of the readout.
-            for _bl in _moe_balance_layers:
-                _bl.commit_token_counts()
+            _swept = raw_model.commit_moe_token_counts()
+            if not _moe_commit_checked:
+                _moe_commit_checked = True
+                if _swept != len(_moe_balance_layers):
+                    raise RuntimeError(
+                        f"commit_moe_token_counts() committed {_swept} layer(s) but the balancer "
+                        f"resolved {len(_moe_balance_layers)} MoE layer(s) from the same model. An "
+                        f"uncommitted layer keeps its recompute surplus, so its tokens_per_expert "
+                        f"reads 2x under grad_ckpt -- and that is indistinguishable from the "
+                        f"correction being broken, which is why this is checked and not assumed."
+                    )
 
             if (i // Cfg.batch + 1) % Cfg.accum == 0:
                 grad_norm = nn.utils.clip_grad_norm_(raw_model.parameters(), Cfg.clip)
