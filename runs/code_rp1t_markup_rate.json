@@ -1,0 +1,3241 @@
+{
+ "summary": {
+  "n_docs": 400,
+  "rate_docs": 0.13,
+  "rate_docs_ci95": [
+   0.097,
+   0.163
+  ],
+  "frac_tokens": 0.3685,
+  "frac_tokens_basis": "token-weighted over the SAME 400-doc uniform draw; this is a ratio estimator, so its error is larger than the doc rate's binomial CI and no CI is given for it",
+  "mean_tokens_markup": 6613,
+  "mean_tokens_code": 1694,
+  "why_counts": {
+   "ext-": 348,
+   "sniff:52tags-in-4k": 1,
+   "sniff:41tags-in-4k": 2,
+   "sniff:doctype-or-generator": 29,
+   "sniff:98tags-in-4k": 1,
+   "sniff:137tags-in-4k": 1,
+   "sniff:112tags-in-4k": 1,
+   "sniff:65tags-in-4k": 1,
+   "sniff:53tags-in-4k": 1,
+   "sniff:22tags-in-4k": 1,
+   "sniff:48tags-in-4k": 1,
+   "sniff:94tags-in-4k": 1,
+   "sniff:34tags-in-4k": 2,
+   "sniff:27tags-in-4k": 1,
+   "sniff:26tags-in-4k": 1,
+   "sniff:20tags-in-4k": 1,
+   "sniff:90tags-in-4k": 1,
+   "sniff:32tags-in-4k": 1,
+   "sniff:31tags-in-4k": 1,
+   "sniff:43tags-in-4k": 1,
+   "sniff:25tags-in-4k": 1,
+   "sniff:71tags-in-4k": 1,
+   "sniff:23tags-in-4k": 1
+  }
+ },
+ "sample": [
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2542,
+   "chars": 9410,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 15923
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2406,
+   "chars": 5755,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 15899
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 74,
+   "chars": 265,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 5515
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1611,
+   "chars": 4975,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 3854
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1893,
+   "chars": 3178,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 9090
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 598,
+   "chars": 1610,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 14241
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4038,
+   "chars": 9604,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 4583
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 75,
+   "chars": 198,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 5157
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 172,
+   "chars": 515,
+   "shard": "code_rp1t_199.jsonl",
+   "line": 13059
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 338,
+   "chars": 1014,
+   "shard": "code_rp1t_228.jsonl",
+   "line": 13567
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2770,
+   "chars": 8616,
+   "shard": "code_rp1t_228.jsonl",
+   "line": 13089
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 136,
+   "chars": 342,
+   "shard": "code_rp1t_228.jsonl",
+   "line": 15319
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:52tags-in-4k",
+   "tokens": 3598,
+   "chars": 7183,
+   "shard": "code_rp1t_228.jsonl",
+   "line": 16086
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1876,
+   "chars": 6009,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 9167
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 78,
+   "chars": 182,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 10427
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 566,
+   "chars": 1481,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 8305
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 84,
+   "chars": 244,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 5955
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1903,
+   "chars": 6787,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 13007
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 39,
+   "chars": 119,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 11378
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 22082,
+   "chars": 66867,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 2937
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 356,
+   "chars": 1104,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 5137
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1620,
+   "chars": 3546,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 2740
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 650,
+   "chars": 2248,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 4581
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 276,
+   "chars": 752,
+   "shard": "code_rp1t_004.jsonl",
+   "line": 5446
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 667,
+   "chars": 2052,
+   "shard": "code_rp1t_108.jsonl",
+   "line": 6130
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4913,
+   "chars": 17061,
+   "shard": "code_rp1t_108.jsonl",
+   "line": 8135
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:41tags-in-4k",
+   "tokens": 2100,
+   "chars": 6254,
+   "shard": "code_rp1t_108.jsonl",
+   "line": 2941
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 87,
+   "chars": 233,
+   "shard": "code_rp1t_108.jsonl",
+   "line": 10880
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 7324,
+   "chars": 15676,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 2167
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2686,
+   "chars": 5931,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 1067
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 638,
+   "chars": 2204,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 2446
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4275,
+   "chars": 15341,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 5770
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 239,
+   "chars": 732,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 1238
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4297,
+   "chars": 15732,
+   "shard": "code_rp1t_091.jsonl",
+   "line": 14780
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 220,
+   "chars": 893,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 4152
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 424,
+   "chars": 949,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 574
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 779,
+   "chars": 1950,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 1683
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 458,
+   "chars": 1487,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 252
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1120,
+   "chars": 2956,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 9363
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 597,
+   "chars": 2302,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 14921
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 877,
+   "chars": 2531,
+   "shard": "code_rp1t_049.jsonl",
+   "line": 5767
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 379,
+   "chars": 982,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 3483
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 538,
+   "chars": 1720,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 7469
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1464,
+   "chars": 4954,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 11384
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 973,
+   "chars": 3208,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 12280
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 917,
+   "chars": 2939,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 14738
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 4069,
+   "chars": 14271,
+   "shard": "code_rp1t_003.jsonl",
+   "line": 4259
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 57,
+   "chars": 159,
+   "shard": "code_rp1t_116.jsonl",
+   "line": 15103
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 2905,
+   "chars": 9181,
+   "shard": "code_rp1t_116.jsonl",
+   "line": 9196
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:98tags-in-4k",
+   "tokens": 920,
+   "chars": 2608,
+   "shard": "code_rp1t_116.jsonl",
+   "line": 15366
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 660,
+   "chars": 1922,
+   "shard": "code_rp1t_116.jsonl",
+   "line": 12972
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 115,
+   "chars": 341,
+   "shard": "code_rp1t_116.jsonl",
+   "line": 12809
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:137tags-in-4k",
+   "tokens": 9301,
+   "chars": 26222,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 1414
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 304,
+   "chars": 918,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 417
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4330,
+   "chars": 15500,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 7535
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1233,
+   "chars": 3859,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 220
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1305,
+   "chars": 4122,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 7628
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 101,
+   "chars": 210,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 1924
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 177,
+   "chars": 563,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 15040
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 27372,
+   "chars": 74525,
+   "shard": "code_rp1t_027.jsonl",
+   "line": 15866
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1825,
+   "chars": 6596,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 7795
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 225,
+   "chars": 772,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 12439
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2268,
+   "chars": 6273,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 4616
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 674,
+   "chars": 1621,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 15567
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 114,
+   "chars": 418,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 10475
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 366,
+   "chars": 949,
+   "shard": "code_rp1t_181.jsonl",
+   "line": 9325
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:112tags-in-4k",
+   "tokens": 19985,
+   "chars": 82100,
+   "shard": "code_rp1t_005.jsonl",
+   "line": 8084
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3496,
+   "chars": 10754,
+   "shard": "code_rp1t_005.jsonl",
+   "line": 7205
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1489,
+   "chars": 5175,
+   "shard": "code_rp1t_005.jsonl",
+   "line": 2341
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 800,
+   "chars": 3096,
+   "shard": "code_rp1t_005.jsonl",
+   "line": 7546
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 374,
+   "chars": 1091,
+   "shard": "code_rp1t_005.jsonl",
+   "line": 9165
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1391,
+   "chars": 4135,
+   "shard": "code_rp1t_187.jsonl",
+   "line": 6841
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 14612,
+   "chars": 57893,
+   "shard": "code_rp1t_187.jsonl",
+   "line": 10600
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 872,
+   "chars": 2710,
+   "shard": "code_rp1t_187.jsonl",
+   "line": 6475
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 3459,
+   "chars": 10275,
+   "shard": "code_rp1t_187.jsonl",
+   "line": 12096
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 590,
+   "chars": 1613,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 262
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 322,
+   "chars": 1196,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 4136
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 237,
+   "chars": 699,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 1742
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 341,
+   "chars": 973,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 2351
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 47,
+   "chars": 114,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 2999
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 404,
+   "chars": 1434,
+   "shard": "code_rp1t_197.jsonl",
+   "line": 2055
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 497,
+   "chars": 1644,
+   "shard": "code_rp1t_200.jsonl",
+   "line": 574
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 210,
+   "chars": 756,
+   "shard": "code_rp1t_200.jsonl",
+   "line": 15920
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:65tags-in-4k",
+   "tokens": 1070,
+   "chars": 2942,
+   "shard": "code_rp1t_200.jsonl",
+   "line": 6419
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:53tags-in-4k",
+   "tokens": 630,
+   "chars": 2117,
+   "shard": "code_rp1t_200.jsonl",
+   "line": 10344
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 522,
+   "chars": 1442,
+   "shard": "code_rp1t_200.jsonl",
+   "line": 5414
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1872,
+   "chars": 5299,
+   "shard": "code_rp1t_094.jsonl",
+   "line": 10948
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5356,
+   "chars": 17377,
+   "shard": "code_rp1t_094.jsonl",
+   "line": 1836
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 905,
+   "chars": 2873,
+   "shard": "code_rp1t_094.jsonl",
+   "line": 9578
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2457,
+   "chars": 6563,
+   "shard": "code_rp1t_094.jsonl",
+   "line": 9041
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2711,
+   "chars": 9724,
+   "shard": "code_rp1t_094.jsonl",
+   "line": 5109
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:22tags-in-4k",
+   "tokens": 263,
+   "chars": 607,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 3342
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 124,
+   "chars": 320,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 12127
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 454,
+   "chars": 1181,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 3179
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 8746,
+   "chars": 31442,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 8226
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 324,
+   "chars": 1313,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 6717
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 402,
+   "chars": 1083,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 12092
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 357,
+   "chars": 1254,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 3893
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2664,
+   "chars": 8932,
+   "shard": "code_rp1t_158.jsonl",
+   "line": 5026
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:48tags-in-4k",
+   "tokens": 2696,
+   "chars": 9232,
+   "shard": "code_rp1t_188.jsonl",
+   "line": 5811
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4783,
+   "chars": 15304,
+   "shard": "code_rp1t_188.jsonl",
+   "line": 546
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1248,
+   "chars": 4268,
+   "shard": "code_rp1t_188.jsonl",
+   "line": 10570
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 7367,
+   "chars": 22064,
+   "shard": "code_rp1t_188.jsonl",
+   "line": 13843
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 397,
+   "chars": 1037,
+   "shard": "code_rp1t_188.jsonl",
+   "line": 9191
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 213,
+   "chars": 744,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 14032
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1009,
+   "chars": 3399,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 9648
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 2466,
+   "chars": 6153,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 10616
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 280,
+   "chars": 809,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 51
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 386,
+   "chars": 1275,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 12902
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1665,
+   "chars": 4756,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 6689
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 58,
+   "chars": 142,
+   "shard": "code_rp1t_194.jsonl",
+   "line": 13137
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 830,
+   "chars": 1922,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 4234
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 542,
+   "chars": 1270,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 6349
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 480,
+   "chars": 1667,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 5655
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 37,
+   "chars": 126,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 3285
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 65,
+   "chars": 190,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 4028
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:94tags-in-4k",
+   "tokens": 6387,
+   "chars": 15694,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 3526
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3799,
+   "chars": 12085,
+   "shard": "code_rp1t_146.jsonl",
+   "line": 12108
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 868,
+   "chars": 2728,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 9824
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 423,
+   "chars": 1273,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 601
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2841,
+   "chars": 8580,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 12176
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1038,
+   "chars": 4158,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 3160
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 5308,
+   "chars": 11124,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 13238
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 94,
+   "chars": 275,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 10632
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 597,
+   "chars": 1809,
+   "shard": "code_rp1t_080.jsonl",
+   "line": 16158
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 11461,
+   "chars": 39137,
+   "shard": "code_rp1t_208.jsonl",
+   "line": 7924
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 616,
+   "chars": 2155,
+   "shard": "code_rp1t_208.jsonl",
+   "line": 2759
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 951,
+   "chars": 3852,
+   "shard": "code_rp1t_208.jsonl",
+   "line": 10167
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 7371,
+   "chars": 17080,
+   "shard": "code_rp1t_208.jsonl",
+   "line": 1927
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 143,
+   "chars": 552,
+   "shard": "code_rp1t_208.jsonl",
+   "line": 11342
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 237,
+   "chars": 768,
+   "shard": "code_rp1t_183.jsonl",
+   "line": 7714
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 139,
+   "chars": 516,
+   "shard": "code_rp1t_183.jsonl",
+   "line": 4345
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1861,
+   "chars": 6690,
+   "shard": "code_rp1t_183.jsonl",
+   "line": 9772
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1425,
+   "chars": 3761,
+   "shard": "code_rp1t_183.jsonl",
+   "line": 8053
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 63,
+   "chars": 213,
+   "shard": "code_rp1t_183.jsonl",
+   "line": 10002
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 225,
+   "chars": 813,
+   "shard": "code_rp1t_202.jsonl",
+   "line": 7483
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1405,
+   "chars": 4359,
+   "shard": "code_rp1t_202.jsonl",
+   "line": 11185
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 628,
+   "chars": 1668,
+   "shard": "code_rp1t_202.jsonl",
+   "line": 3701
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 266,
+   "chars": 621,
+   "shard": "code_rp1t_202.jsonl",
+   "line": 10183
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1343,
+   "chars": 3638,
+   "shard": "code_rp1t_202.jsonl",
+   "line": 9395
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 550,
+   "chars": 1762,
+   "shard": "code_rp1t_164.jsonl",
+   "line": 2543
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 131,
+   "chars": 496,
+   "shard": "code_rp1t_164.jsonl",
+   "line": 12418
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 22263,
+   "chars": 101743,
+   "shard": "code_rp1t_164.jsonl",
+   "line": 11392
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2645,
+   "chars": 9252,
+   "shard": "code_rp1t_164.jsonl",
+   "line": 9042
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 719,
+   "chars": 2738,
+   "shard": "code_rp1t_164.jsonl",
+   "line": 6752
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 151,
+   "chars": 358,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 2938
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 71,
+   "chars": 262,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 7399
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 174,
+   "chars": 403,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 9491
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 87,
+   "chars": 225,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 755
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:34tags-in-4k",
+   "tokens": 13813,
+   "chars": 42816,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 14217
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 425,
+   "chars": 1075,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 4750
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 169,
+   "chars": 586,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 16340
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1311,
+   "chars": 3231,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 15452
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 287,
+   "chars": 817,
+   "shard": "code_rp1t_204.jsonl",
+   "line": 11246
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 52,
+   "chars": 133,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 11320
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 222,
+   "chars": 651,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 12540
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 211,
+   "chars": 539,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 4870
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 45693,
+   "chars": 109306,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 13956
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 222,
+   "chars": 579,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 825
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 222,
+   "chars": 579,
+   "shard": "code_rp1t_082.jsonl",
+   "line": 825
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 419,
+   "chars": 1316,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 3028
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 6886,
+   "chars": 29927,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 10481
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1827,
+   "chars": 5997,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 7442
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 641,
+   "chars": 2058,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 8494
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 58,
+   "chars": 181,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 8416
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 319,
+   "chars": 1064,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 14760
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 591,
+   "chars": 1779,
+   "shard": "code_rp1t_133.jsonl",
+   "line": 7088
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 460,
+   "chars": 1549,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 1350
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 759,
+   "chars": 2734,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 3854
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 278,
+   "chars": 703,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 8333
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2465,
+   "chars": 6832,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 312
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 723,
+   "chars": 2141,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 1066
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 263,
+   "chars": 973,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 14230
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 395,
+   "chars": 1124,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 4078
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:27tags-in-4k",
+   "tokens": 68535,
+   "chars": 150405,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 14743
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 272,
+   "chars": 629,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 10684
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 203,
+   "chars": 743,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 7623
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:26tags-in-4k",
+   "tokens": 1336,
+   "chars": 3402,
+   "shard": "code_rp1t_029.jsonl",
+   "line": 7876
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3026,
+   "chars": 11696,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 630
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 598,
+   "chars": 1636,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 16078
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 81,
+   "chars": 257,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 7658
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 107,
+   "chars": 360,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 12190
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 238,
+   "chars": 877,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 10553
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 846,
+   "chars": 2934,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 14655
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 371,
+   "chars": 1145,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 338
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:34tags-in-4k",
+   "tokens": 299,
+   "chars": 847,
+   "shard": "code_rp1t_109.jsonl",
+   "line": 10632
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 509,
+   "chars": 1263,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 14486
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1306,
+   "chars": 4952,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 7399
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5988,
+   "chars": 21270,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 14789
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 12871,
+   "chars": 52630,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 3088
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2360,
+   "chars": 6282,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 8054
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 700,
+   "chars": 2756,
+   "shard": "code_rp1t_070.jsonl",
+   "line": 7606
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 484,
+   "chars": 1394,
+   "shard": "code_rp1t_071.jsonl",
+   "line": 12628
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 243,
+   "chars": 957,
+   "shard": "code_rp1t_071.jsonl",
+   "line": 8710
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1043,
+   "chars": 4122,
+   "shard": "code_rp1t_071.jsonl",
+   "line": 13151
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 170,
+   "chars": 583,
+   "shard": "code_rp1t_071.jsonl",
+   "line": 3679
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 166,
+   "chars": 621,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 1820
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 339,
+   "chars": 985,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 12586
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2036,
+   "chars": 6874,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 14597
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 16674,
+   "chars": 61086,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 2150
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3275,
+   "chars": 8161,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 10116
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 653,
+   "chars": 2469,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 15860
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2392,
+   "chars": 6810,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 8241
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 430,
+   "chars": 1190,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 15051
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:20tags-in-4k",
+   "tokens": 725,
+   "chars": 2372,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 2100
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 457,
+   "chars": 1151,
+   "shard": "code_rp1t_084.jsonl",
+   "line": 14517
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 154,
+   "chars": 275,
+   "shard": "code_rp1t_230.jsonl",
+   "line": 4838
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 107,
+   "chars": 219,
+   "shard": "code_rp1t_230.jsonl",
+   "line": 10041
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 385,
+   "chars": 1151,
+   "shard": "code_rp1t_230.jsonl",
+   "line": 3558
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 121,
+   "chars": 379,
+   "shard": "code_rp1t_230.jsonl",
+   "line": 14859
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5548,
+   "chars": 16438,
+   "shard": "code_rp1t_230.jsonl",
+   "line": 2747
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1022,
+   "chars": 2743,
+   "shard": "code_rp1t_078.jsonl",
+   "line": 13701
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 542,
+   "chars": 2067,
+   "shard": "code_rp1t_078.jsonl",
+   "line": 12317
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 871,
+   "chars": 2988,
+   "shard": "code_rp1t_078.jsonl",
+   "line": 5037
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:90tags-in-4k",
+   "tokens": 2512,
+   "chars": 7938,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 2306
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 207,
+   "chars": 377,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 3948
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 279,
+   "chars": 960,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 4095
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 819,
+   "chars": 2869,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 6804
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2464,
+   "chars": 4774,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 376
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4094,
+   "chars": 12220,
+   "shard": "code_rp1t_066.jsonl",
+   "line": 5621
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1591,
+   "chars": 5422,
+   "shard": "code_rp1t_126.jsonl",
+   "line": 3616
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 697,
+   "chars": 2228,
+   "shard": "code_rp1t_126.jsonl",
+   "line": 11587
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 648,
+   "chars": 2793,
+   "shard": "code_rp1t_126.jsonl",
+   "line": 4053
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 217,
+   "chars": 715,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 2155
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 945,
+   "chars": 3153,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 14185
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1190,
+   "chars": 3744,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 14036
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 846,
+   "chars": 2678,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 187
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 447,
+   "chars": 1420,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 9057
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:32tags-in-4k",
+   "tokens": 372,
+   "chars": 955,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 11217
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3495,
+   "chars": 8515,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 786
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1006,
+   "chars": 3001,
+   "shard": "code_rp1t_139.jsonl",
+   "line": 9896
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 948,
+   "chars": 3466,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 9518
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 430,
+   "chars": 1217,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 3828
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 935,
+   "chars": 3502,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 9007
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 304,
+   "chars": 1034,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 826
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 120,
+   "chars": 325,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 1402
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 112,
+   "chars": 372,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 11579
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 556,
+   "chars": 1477,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 10956
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 31,
+   "chars": 103,
+   "shard": "code_rp1t_190.jsonl",
+   "line": 8703
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 129,
+   "chars": 297,
+   "shard": "code_rp1t_098.jsonl",
+   "line": 2662
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 294,
+   "chars": 671,
+   "shard": "code_rp1t_098.jsonl",
+   "line": 12082
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 272,
+   "chars": 690,
+   "shard": "code_rp1t_098.jsonl",
+   "line": 14380
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1612,
+   "chars": 3717,
+   "shard": "code_rp1t_098.jsonl",
+   "line": 8092
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1198,
+   "chars": 3434,
+   "shard": "code_rp1t_098.jsonl",
+   "line": 12515
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 190,
+   "chars": 461,
+   "shard": "code_rp1t_008.jsonl",
+   "line": 897
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 972,
+   "chars": 3334,
+   "shard": "code_rp1t_008.jsonl",
+   "line": 3878
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 234,
+   "chars": 672,
+   "shard": "code_rp1t_008.jsonl",
+   "line": 13341
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 207,
+   "chars": 651,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 6606
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 3382,
+   "chars": 9421,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 6156
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3010,
+   "chars": 8626,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 140
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 651,
+   "chars": 1854,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 1438
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 112,
+   "chars": 255,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 13365
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5360,
+   "chars": 14162,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 2898
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 231,
+   "chars": 728,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 2737
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5586,
+   "chars": 18536,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 7397
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 768,
+   "chars": 2705,
+   "shard": "code_rp1t_106.jsonl",
+   "line": 15574
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4240,
+   "chars": 10562,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 13518
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 10284,
+   "chars": 34075,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 3515
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1173,
+   "chars": 4170,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 9840
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 274,
+   "chars": 1236,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 11363
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 2396,
+   "chars": 6893,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 11747
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 538,
+   "chars": 2026,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 263
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 479,
+   "chars": 1468,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 8502
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 5207,
+   "chars": 16856,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 21
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 28267,
+   "chars": 95788,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 13914
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 9742,
+   "chars": 23508,
+   "shard": "code_rp1t_041.jsonl",
+   "line": 9096
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 168,
+   "chars": 628,
+   "shard": "code_rp1t_175.jsonl",
+   "line": 202
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 653,
+   "chars": 2417,
+   "shard": "code_rp1t_175.jsonl",
+   "line": 2320
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 47,
+   "chars": 111,
+   "shard": "code_rp1t_175.jsonl",
+   "line": 2744
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2778,
+   "chars": 9355,
+   "shard": "code_rp1t_175.jsonl",
+   "line": 8625
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:31tags-in-4k",
+   "tokens": 648,
+   "chars": 1827,
+   "shard": "code_rp1t_175.jsonl",
+   "line": 4833
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 328,
+   "chars": 1136,
+   "shard": "code_rp1t_056.jsonl",
+   "line": 12265
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4389,
+   "chars": 10730,
+   "shard": "code_rp1t_056.jsonl",
+   "line": 8836
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 209,
+   "chars": 566,
+   "shard": "code_rp1t_056.jsonl",
+   "line": 14951
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 144,
+   "chars": 334,
+   "shard": "code_rp1t_014.jsonl",
+   "line": 8588
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 411,
+   "chars": 1558,
+   "shard": "code_rp1t_014.jsonl",
+   "line": 1183
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1885,
+   "chars": 5636,
+   "shard": "code_rp1t_014.jsonl",
+   "line": 15032
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 194,
+   "chars": 456,
+   "shard": "code_rp1t_014.jsonl",
+   "line": 9109
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 659,
+   "chars": 1517,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 12235
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 662,
+   "chars": 1914,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 12446
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 373,
+   "chars": 1155,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 124
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 497,
+   "chars": 1469,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 6039
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 436,
+   "chars": 1392,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 4332
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 282,
+   "chars": 786,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 6014
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1894,
+   "chars": 5285,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 50
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:43tags-in-4k",
+   "tokens": 2152,
+   "chars": 6190,
+   "shard": "code_rp1t_113.jsonl",
+   "line": 12921
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2337,
+   "chars": 7260,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 262
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1650,
+   "chars": 4833,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 1405
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 274,
+   "chars": 1150,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 9004
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 980,
+   "chars": 3343,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 4848
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 422,
+   "chars": 1292,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 8526
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1403,
+   "chars": 4272,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 6991
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 9913,
+   "chars": 23558,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 5752
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1836,
+   "chars": 7268,
+   "shard": "code_rp1t_088.jsonl",
+   "line": 12501
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 841,
+   "chars": 3336,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 6231
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 830,
+   "chars": 3020,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 15812
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 125,
+   "chars": 517,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 14896
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 97,
+   "chars": 204,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 4962
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 722,
+   "chars": 2095,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 2151
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1305,
+   "chars": 3069,
+   "shard": "code_rp1t_201.jsonl",
+   "line": 5429
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 155,
+   "chars": 490,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 6902
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 422,
+   "chars": 1458,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 13313
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2359,
+   "chars": 8887,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 4030
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 1537,
+   "chars": 5382,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 5929
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2428,
+   "chars": 7080,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 9471
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 784,
+   "chars": 2011,
+   "shard": "code_rp1t_067.jsonl",
+   "line": 12115
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 114,
+   "chars": 299,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 11574
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 40,
+   "chars": 119,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 13061
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 152,
+   "chars": 420,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 12411
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2390,
+   "chars": 7711,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 13979
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 843,
+   "chars": 3130,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 5863
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4426,
+   "chars": 16587,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 3077
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 211,
+   "chars": 732,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 1307
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 567,
+   "chars": 1749,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 11189
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 734,
+   "chars": 2388,
+   "shard": "code_rp1t_050.jsonl",
+   "line": 13776
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 138,
+   "chars": 492,
+   "shard": "code_rp1t_117.jsonl",
+   "line": 15901
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 410,
+   "chars": 863,
+   "shard": "code_rp1t_117.jsonl",
+   "line": 5823
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 450,
+   "chars": 1488,
+   "shard": "code_rp1t_117.jsonl",
+   "line": 6695
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1301,
+   "chars": 4552,
+   "shard": "code_rp1t_055.jsonl",
+   "line": 1436
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 361,
+   "chars": 716,
+   "shard": "code_rp1t_055.jsonl",
+   "line": 13995
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 528,
+   "chars": 1718,
+   "shard": "code_rp1t_055.jsonl",
+   "line": 2499
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4755,
+   "chars": 17247,
+   "shard": "code_rp1t_055.jsonl",
+   "line": 4315
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4342,
+   "chars": 14474,
+   "shard": "code_rp1t_055.jsonl",
+   "line": 9089
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 415,
+   "chars": 1380,
+   "shard": "code_rp1t_142.jsonl",
+   "line": 8155
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 101,
+   "chars": 275,
+   "shard": "code_rp1t_142.jsonl",
+   "line": 12531
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:25tags-in-4k",
+   "tokens": 508,
+   "chars": 1159,
+   "shard": "code_rp1t_142.jsonl",
+   "line": 9401
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 134,
+   "chars": 364,
+   "shard": "code_rp1t_142.jsonl",
+   "line": 9495
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 401,
+   "chars": 1285,
+   "shard": "code_rp1t_043.jsonl",
+   "line": 11816
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:71tags-in-4k",
+   "tokens": 1524,
+   "chars": 3267,
+   "shard": "code_rp1t_043.jsonl",
+   "line": 701
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1438,
+   "chars": 4008,
+   "shard": "code_rp1t_043.jsonl",
+   "line": 120
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 2479,
+   "chars": 6931,
+   "shard": "code_rp1t_043.jsonl",
+   "line": 15863
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4170,
+   "chars": 12863,
+   "shard": "code_rp1t_043.jsonl",
+   "line": 10868
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 849,
+   "chars": 3675,
+   "shard": "code_rp1t_064.jsonl",
+   "line": 1523
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 325,
+   "chars": 950,
+   "shard": "code_rp1t_064.jsonl",
+   "line": 1687
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2835,
+   "chars": 10530,
+   "shard": "code_rp1t_064.jsonl",
+   "line": 245
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:23tags-in-4k",
+   "tokens": 1332,
+   "chars": 4470,
+   "shard": "code_rp1t_064.jsonl",
+   "line": 1409
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 441,
+   "chars": 1438,
+   "shard": "code_rp1t_064.jsonl",
+   "line": 2800
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 28686,
+   "chars": 56637,
+   "shard": "code_rp1t_042.jsonl",
+   "line": 15296
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 61,
+   "chars": 170,
+   "shard": "code_rp1t_042.jsonl",
+   "line": 3468
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 53,
+   "chars": 130,
+   "shard": "code_rp1t_042.jsonl",
+   "line": 4026
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 347,
+   "chars": 1205,
+   "shard": "code_rp1t_168.jsonl",
+   "line": 13868
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2253,
+   "chars": 6091,
+   "shard": "code_rp1t_168.jsonl",
+   "line": 9327
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 481,
+   "chars": 1665,
+   "shard": "code_rp1t_168.jsonl",
+   "line": 5049
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 464,
+   "chars": 1543,
+   "shard": "code_rp1t_168.jsonl",
+   "line": 4397
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 374,
+   "chars": 1239,
+   "shard": "code_rp1t_168.jsonl",
+   "line": 15080
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 355,
+   "chars": 1008,
+   "shard": "code_rp1t_157.jsonl",
+   "line": 10549
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1075,
+   "chars": 3381,
+   "shard": "code_rp1t_157.jsonl",
+   "line": 8213
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 9158,
+   "chars": 27911,
+   "shard": "code_rp1t_157.jsonl",
+   "line": 6540
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 507,
+   "chars": 1548,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 1130
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 137,
+   "chars": 337,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 10159
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 936,
+   "chars": 3600,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 11213
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 235,
+   "chars": 821,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 9503
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 917,
+   "chars": 3307,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 9325
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1593,
+   "chars": 4452,
+   "shard": "code_rp1t_105.jsonl",
+   "line": 977
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 475,
+   "chars": 1348,
+   "shard": "code_rp1t_212.jsonl",
+   "line": 14501
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 467,
+   "chars": 1757,
+   "shard": "code_rp1t_212.jsonl",
+   "line": 1313
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 96,
+   "chars": 374,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 6513
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 344,
+   "chars": 1106,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 7184
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2358,
+   "chars": 6514,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 6825
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 162,
+   "chars": 435,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 7878
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 6056,
+   "chars": 17362,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 12044
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 77,
+   "chars": 263,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 10401
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 97,
+   "chars": 244,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 1230
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 206,
+   "chars": 542,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 12995
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:41tags-in-4k",
+   "tokens": 1637,
+   "chars": 6441,
+   "shard": "code_rp1t_075.jsonl",
+   "line": 11976
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 1099,
+   "chars": 3398,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 12268
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 442,
+   "chars": 1357,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 2029
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 881,
+   "chars": 2617,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 13673
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 218,
+   "chars": 496,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 9476
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 2000,
+   "chars": 5838,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 14104
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 476,
+   "chars": 1521,
+   "shard": "code_rp1t_076.jsonl",
+   "line": 12708
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 174,
+   "chars": 518,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 13121
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 119,
+   "chars": 494,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 2588
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 13411,
+   "chars": 43351,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 12390
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 501,
+   "chars": 1638,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 10349
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 607,
+   "chars": 1810,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 11624
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 249,
+   "chars": 696,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 3052
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1167,
+   "chars": 3575,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 7474
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1141,
+   "chars": 4297,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 2195
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 136,
+   "chars": 336,
+   "shard": "code_rp1t_013.jsonl",
+   "line": 2582
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3756,
+   "chars": 11989,
+   "shard": "code_rp1t_035.jsonl",
+   "line": 5713
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3334,
+   "chars": 12157,
+   "shard": "code_rp1t_035.jsonl",
+   "line": 16018
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1085,
+   "chars": 3462,
+   "shard": "code_rp1t_035.jsonl",
+   "line": 14606
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 832,
+   "chars": 2596,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 11620
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 51,
+   "chars": 130,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 10979
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 676,
+   "chars": 1730,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 15270
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 755,
+   "chars": 2039,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 6325
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 38440,
+   "chars": 92450,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 8297
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1469,
+   "chars": 5813,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 3632
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1264,
+   "chars": 4337,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 11481
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 420,
+   "chars": 1169,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 9196
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 86,
+   "chars": 245,
+   "shard": "code_rp1t_143.jsonl",
+   "line": 13437
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 3021,
+   "chars": 6828,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 4126
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 929,
+   "chars": 2675,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 8195
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 1650,
+   "chars": 3659,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 2117
+  },
+  {
+   "kind": "markup",
+   "why": "sniff:doctype-or-generator",
+   "tokens": 48821,
+   "chars": 134068,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 15187
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 4543,
+   "chars": 14965,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 10969
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 391,
+   "chars": 1516,
+   "shard": "code_rp1t_110.jsonl",
+   "line": 10238
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 287,
+   "chars": 733,
+   "shard": "code_rp1t_169.jsonl",
+   "line": 1219
+  },
+  {
+   "kind": "code",
+   "why": "ext-",
+   "tokens": 202,
+   "chars": 655,
+   "shard": "code_rp1t_169.jsonl",
+   "line": 12000
+  }
+ ]
+}
