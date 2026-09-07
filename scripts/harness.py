@@ -68,6 +68,7 @@ from harness_core import (  # noqa: E402
     _aupai_cards,
     _card_map,
     _cat_file_exists,
+    _LEND_RE,
     _cite_sentence,
     _classify_card_note,
     _close_row,
@@ -14712,15 +14713,27 @@ def _assert_card_ownership(root):
                     f"inside the window. A lend that stays ours after its window makes a "
                     f"13-minute loan permanent; one that is ours BEFORE it opens hands the card "
                     f"over while its owner is still running on it")
-        # The word without a window must NOT be a grant. Stripping the timestamps from the
-        # controller's own sentence is the drift this guards: the result claims a lend and cannot
-        # prove one, so it refuses instead of picking an owner.
-        _stripped = re.sub(r"\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}\s*-\s*\d{2}:\d{2}\s*Z", "", str(_n))
+        # The word without a window must NOT be a grant. Stripping the window from the controller's
+        # own sentence is the drift this guards: the result claims a lend and cannot prove one, so
+        # it refuses instead of picking an owner.
+        #
+        # STRIPPED BY THE PARSER'S OWN MATCH, not by a second regex written here. My first version
+        # substituted a hand-written `\d{4}-\d{2}-\d{2} \d{2}:\d{2}-\d{2}:\d{2}\s*Z` -- which does
+        # not match 4c's real `2026-09-08 21:30Z-21:45Z` form, so the "timestamps removed" world
+        # still parsed a window and this assertion failed against a CORRECT classifier. A test that
+        # reimplements what it is testing tests the copy: the strip has to use _LEND_RE, the thing
+        # the classifier actually consults, or the two drift apart and the test accuses the code.
+        _m = _LEND_RE.search(str(_n))
+        _stripped = str(_n)[:_m.start()] + str(_n)[_m.end():] if _m else str(_n)
+        if _parse_lend_window(_stripped) is not None:
+            return (f"cards[{_c}]: removing the window _LEND_RE matched still leaves a parseable "
+                    f"window -- the note carries two, so this property is testing the second one "
+                    f"and a drift in the first would go unseen")
         if _classify_card_note(_stripped, baseline_theirs=True, now=_inside) != "unclassified":
             return (f"cards[{_c}] still classifies as "
                     f"{_classify_card_note(_stripped, baseline_theirs=True, now=_inside)!r} with "
-                    f"its lend TIMESTAMPS REMOVED -- the word 'lent' is being read as the grant "
-                    f"and the window as decoration, which makes every past loan permanent")
+                    f"its lend WINDOW REMOVED -- a handover word is being read as the grant and "
+                    f"the window as decoration, which makes every past loan permanent")
     return None
 
 
@@ -20645,6 +20658,60 @@ def _selftest_card_lend_expires():
         "card 6's note classified as ours with baseline_theirs=False -- the expiry branch must be "
         "gated on the baseline, or a lend note anywhere would grant the card")
 
+    # THE NOTE FORM THE CONTROLLER ACTUALLY WROTE, which my first version did not expire at all
+    # (tilerl-0a's review of PR #58). This world is permanent because it is the ONLY lend that has
+    # ever happened and its wording is 4c's, not mine: 4c opened it with GRANTED, gave the date once
+    # and put Z on BOTH times. My expiry branch sat inside `if _NOT_OURS_RE.search(s)`, which that
+    # note misses, so it fell through to _OURS_RE, matched `granted\b` and returned ours -- during
+    # the window and three days after. `harness launch --cards 6` was ACCEPTED on an expired lend.
+    #
+    # THE PROPERTY IS ASSERTED ON THE CLASSIFIER, NOT ON THE CHECK, and that distinction is the
+    # whole lesson: my check DID go red on this note while the classifier said ours, and only the
+    # classifier gates a launch. A red check nobody runs before launching refuses nothing. So the
+    # three asserts below read _classify_card_note directly, and the fourth walks the launch path.
+    note_4c = ("GRANTED 2026-09-08 21:30Z-21:45Z -> b0: domain_loss on .step25000/25500/26000. "
+               "Card 6 is tileRL's (user order 2026-09-06 '0,6 tileRL'); released after.")
+    assert _parse_lend_window(note_4c) is not None, (
+        "4c's own note form parses to NO window. It gives the date once and puts Z on both times "
+        "('21:30Z-21:45Z'); a pattern requiring Z only after the second time fits the example I "
+        "invented rather than the one in the file, and then nothing expires")
+    for label, now, want in (("inside", datetime.datetime(2026, 9, 8, 21, 35, tzinfo=utc), "ours"),
+                             ("3 days later", datetime.datetime(2026, 9, 11, 12, 0, tzinfo=utc),
+                              "theirs"),
+                             ("before it opens",
+                              datetime.datetime(2026, 9, 8, 20, 0, tzinfo=utc), "theirs")):
+        got = _classify_card_note(note_4c, baseline_theirs=True, now=now)
+        assert got == want, (
+            f"4c's GRANTED-leading note {label}: expected {want}, got {got}. The baseline must "
+            f"decide before the note's opening token is read -- what the prose begins with cannot "
+            f"be allowed to override a user order, or the expiry covers only the note forms whose "
+            f"first word happens to name the owner")
+    _t4c = world(lambda d: d["cards"].__setitem__("6", note_4c))
+    try:
+        _o4c, _, _ = _aupai_cards(_t4c)
+        assert 6 not in _o4c, (
+            f"card 6 is in ours={_o4c} with 4c's note and the lend long expired -- the classifier "
+            f"is what gates a launch")
+        _g4c, _r4c = _validate_explicit_cards("6", root=_t4c)
+        assert _r4c, (
+            f"--cards 6 was ACCEPTED ({_g4c!r}) on 4c's note with the lend expired. This is the "
+            f"defect tilerl-0a measured: rc=0 through the launch path while the check went red")
+    finally:
+        _sh.rmtree(_t4c, ignore_errors=True)
+    # THE HYPOTHETICAL IS NOT A CLAIM. Card 0's live note says "short aupai lane jobs only by
+    # explicit grant while tileRL is not using it" -- a grant would be REQUIRED, not made. My first
+    # widening of the handover vocabulary matched a bare `grant` and turned that into "claims a lend
+    # with no readable window", refusing a card whose note is doing its job. Asserted on the live
+    # text so the next widening cannot re-break it.
+    note0 = str(live["cards"].get("0", ""))
+    if "explicit grant" in note0:
+        assert not _mentions_lend(note0), (
+            f"card 0's note reads as a claimed handover: {note0[:90]!r}. It states that a grant "
+            f"would be required, which is a condition and not an act -- reading it as a claim "
+            f"refuses a card nobody lent")
+        assert _classify_card_note(note0, baseline_theirs=True) == "theirs", (
+            "card 0 must be theirs: it is baseline-theirs and no window was ever written for it")
+
     # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [0])) is not None, (
         "dropping card 6 from theirs_baseline PASSED. That world classifies card 6 by the ordinary "
@@ -20654,6 +20721,25 @@ def _selftest_card_lend_expires():
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7])) is not None, (
         "widening theirs_baseline to include card 7 PASSED -- card 7 carries a standing aupai "
         "grant, and a baseline naming it would expire a grant that has no window")
+    # AND THE WRONG BASELINE MUST BE FAIL-CLOSED, not merely caught. Since the baseline now decides
+    # before the note's opening token (tilerl-0a's fix), card 7's windowless GRANTED note reads
+    # `unclassified` under that bad baseline rather than staying `ours`. That is the safe direction
+    # and is asserted rather than assumed: the card must NOT land in theirs, and --cards 7 must
+    # refuse. Before the fix a wrong baseline could not move card 7 at all, which sounds safer and
+    # was not -- it meant property (6)'s pin was the only thing standing between a bad baseline and
+    # a launch.
+    _t7 = world(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7]))
+    try:
+        _o7, _th7, _ = _aupai_cards(_t7)
+        assert 7 not in _th7, (
+            f"a wrong baseline handed card 7 to the other team (theirs={_th7}) -- card 7 is aupai's "
+            f"by a standing grant and no baseline edit may transfer it")
+        _g7, _r7 = _validate_explicit_cards("7", root=_t7)
+        assert _r7, (
+            f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that wrongly claims it. An "
+            f"unreadable ownership state must refuse the card, not grant it")
+    finally:
+        _sh.rmtree(_t7, ignore_errors=True)
     assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
         "removing theirs_baseline entirely PASSED -- an absent baseline reads as no cards being "
         "another team's, which is the permissive direction")
@@ -20702,7 +20788,10 @@ def _selftest_card_lend_expires():
         "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
         "fields, so they cannot disagree about the owner")
     return ("card lends expire: card 6 ours only inside 21:32-21:34Z (theirs before and after, and "
-            "theirs at every clock with baseline_theirs off); baseline [0] / [0,6,7] / absent all "
+            "theirs at every clock with baseline_theirs off); 4c's OWN GRANTED-leading note form "
+            "('2026-09-08 21:30Z-21:45Z', Z on both times) parses, reads ours inside and theirs 3 "
+            "days later, and --cards 6 REFUSES on it through the launch path; card 0's 'only by "
+            "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
             "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
             "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
             "while a card handed to another team still FAILs")
