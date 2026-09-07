@@ -5948,14 +5948,20 @@ def check_no_oversized_blob(root):
     p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-l", "HEAD"], capture_output=True, text=True)
     if p.returncode:
         return SKIP, "not a git repository (the pod checkout is not one)"
-    big = []
+    big, scanned = [], 0
     for ln in p.stdout.splitlines():
         f = ln.split(maxsplit=4)
-        if len(f) == 5 and f[1] == "blob" and f[3].isdigit() and int(f[3]) > MAX_TRACKED_MB * 2**20:
-            big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
+        if len(f) == 5 and f[1] == "blob" and f[3].isdigit():
+            scanned += 1
+            if int(f[3]) > MAX_TRACKED_MB * 2**20:
+                big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
     if big:
         return FAIL, f"{len(big)} tracked blob(s) over {MAX_TRACKED_MB}MB: {', '.join(big[:4])}"
-    return PASS, f"no tracked blob over {MAX_TRACKED_MB}MB"
+    # THE COUNT IS THE EVIDENCE. `git ls-tree HEAD` exits 128 in a commitless repo, so that
+    # case SKIPs correctly -- but an EMPTY COMMIT exits 0 with no output (measured 2026-09-08),
+    # and then the loop runs zero times and this returned the same string as a full scan. Not
+    # reachable on this repo's main today; the string was the only thing that could not say so.
+    return PASS, f"{scanned} tracked blob(s) scanned, none over {MAX_TRACKED_MB}MB"
 
 
 def _broken_blob():
