@@ -34,11 +34,14 @@ and no existing domain's fingerprint moves.
 # restartable: pure function of a string, no state, no I/O outside --histogram's reads.
 """
 import argparse
+import contextlib
 import hashlib
+import io
 import json
 import os
 import re
 import sys
+import time
 
 #: Reject before lexing. A doc this short cannot carry the structural evidence below, and
 #: accepting it would inflate retention with fragments.
@@ -313,7 +316,15 @@ _FOREIGN = [
     # `class X ... :` with a BRACE on the line is C++'s access specifier, not python's block
     # opener. Measured: `class Base { public:` matched the first version of this pattern and
     # was named foreign:python, which refused a C++ file under a language it is not.
-    (re.compile(r"^\s*(?:def|class)\s+\w+[^{}]*:\s*$", re.M), "python"),
+    #
+    # AND `\n` MUST BE EXCLUDED TOO, which `[^{}]` alone does not do. Measured on a bullet
+    # physics header in the shard117 strided sample: `class btCollisionShape;` on one line
+    # paired with a doc comment 300 characters later ending "There are 3 types of rigid
+    # bodies:", and the whole span matched. A python block opener is ONE line by definition,
+    # so the character class has to say so. Over both strided samples (n=4000) the fix moves
+    # 9 docs out of foreign:python -- 7 to foreign:ruby, 1 to foreign:typescript, and 1 C++
+    # header into the cpp lane -- and changes no python answer in the known-answer set.
+    (re.compile(r"^\s*(?:def|class)\s+\w+[^{}\n]*:\s*$", re.M), "python"),
     # A python SCRIPT need not define anything: `import sys` then `sys.argv[1]` was one of the
     # nine, and the def/class pattern above cannot see it. `import x` with no semicolon and no
     # brace anywhere is not a C/JS/Java shape -- the balance check runs later, so this only has
@@ -321,7 +332,26 @@ _FOREIGN = [
     (re.compile(r"^\s*(?:import\s+\w+|from\s+\w[\w.]*\s+import\s+\w)\s*$", re.M), "python"),
     (re.compile(r"\bfn\s+\w+\s*\(|\blet\s+mut\b|::<"), "rust"),
     (re.compile(r"^\s*(?:end|def\s+\w+[?!]?\s*$|require\s+['\"])", re.M), "ruby"),
-    (re.compile(r":\s*(?:string|number|boolean)\s*[;,)=]|\binterface\s+\w+\s*\{[^}]*:\s*\w+"),
+    # A TYPE ANNOTATION'S COLON IS NOT PRECEDED BY ANOTHER COLON. TypeScript writes
+    # `name: string`; C++ writes `std::string`, and the substring `:string,` inside
+    # `std::map<std::string, std::string>` matched the first version. Found by 3b sampling
+    # the bucket rather than the movers: 9 of 18 typescript-labelled docs in the shard117
+    # strided sample carried a C++ marker, 6 of 25 in shard000 -- 16 of 43 across 4000 were
+    # C++ using std::string in a template.
+    #
+    # `(?<!:)` and not `(?<![:\w])`: the wider lookbehind also rejects real TypeScript,
+    # measured -- `function f(a: string, b: number)` has a word character before the colon
+    # like every annotation does. What C++ never writes is a colon preceded by a colon.
+    #
+    # The second branch KEEPS `[^}]`, unlike the css and python rules. It looks like the
+    # same defect and is not: `[^}]` cannot escape the interface body, because it stops at
+    # the first `}`. Checked rather than assumed -- a Java interface followed by a labelled
+    # statement, a Java interface holding `static final String K = "k";`, and C++ after the
+    # word `interface` all stay unmatched. Narrowing it to `[^}\n]` DOES break something:
+    # multi-line interfaces are the common TypeScript form, and 18 documents in 4000 have
+    # one. That mutation survived the known-answer set, which is why it is written here.
+    (re.compile(r"(?<!:):\s*(?:string|number|boolean)\s*[;,)=]"
+                r"|\binterface\s+\w+\s*\{[^}]*:\s*\w+"),
      "typescript"),
 ]
 
@@ -338,6 +368,22 @@ _FOREIGN = [
 #: syntactically valid code in the target languages, 44's note says they are "lower-value but
 #: not harmful", and refusing them needs a real parse to do correctly -- exactly what this
 #: module does not have. Refusing them by regex would drop real classes with short bodies.
+#: The selector and declaration halves of the two CSS rules below, named once so both rules
+#: use the SAME text. They were two hand-written copies, and the copies drifted exactly the
+#: way copies do: the block form was fixed twice (newline-bounded, then element-allowlisted)
+#: while the one-line form kept the pre-fix pattern verbatim. A shared name makes the next
+#: fix reach both.
+_CSS_SELECTOR = (r"^[ \t]*(?:[.#\[:][\w\[\]\"'=~^$*|-]+"
+                 r"|(?:html|body|head|div|span|p|a|ul|ol|li|table|tr|td|th|thead|tbody|tfoot"
+                 r"|form|input|button|select|option|textarea|label|img|h1|h2|h3|h4|h5|h6"
+                 r"|header|footer|nav|main|section|article|aside|figure|figcaption"
+                 r"|blockquote|pre|code|em|strong|small|hr|br|iframe|canvas|video|audio"
+                 r"|source|svg|path|circle|rect|g|text|fieldset|legend|dl|dt|dd|caption"
+                 r"|colgroup|col|abbr|cite|q|sub|sup|mark|time|progress|meter|details"
+                 r"|summary|dialog|template|slot|picture|track|map|area|object|embed|param"
+                 r"|ins|del)\b)[^\n{}]*")
+_CSS_DECL = r"[-\w]+[ \t]*:[ \t]*[^;{}\n:=]+;[ \t]*$"
+
 _NONCODE = [
     (re.compile(r"^\s*<!DOCTYPE\s+html|^\s*<html[\s>]|<(?:div|span|body|head|table)\b", re.I),
      "noncode:html"),
@@ -350,8 +396,59 @@ _NONCODE = [
                 r"LCOV - code coverage report|Doxygen \d)", re.I | re.M), "noncode:html"),
     (re.compile(r"auto-generated|autogenerated|Generated by|do not (?:edit|modify)|@generated"
                 r"|WSDL2Java|Propel", re.I), "noncode:generated"),
-    (re.compile(r"^\s*(?:[.#][\w-]+|[\w-]+)\s*(?:,\s*[.#]?[\w-]+\s*)*\{[^{}]*[\w-]+\s*:"
-                r"\s*[^;{}]+;", re.M), "noncode:css"),
+    # CSS BY A DECLARATION ON ITS OWN LINE, not by a brace with a colon somewhere after it.
+    # The first version was `\{[^{}]*[\w-]+\s*:\s*[^;{}]+;` and `[^{}]` matches NEWLINES, so
+    # `namespace {` opened it and any later colon-and-semicolon line closed it, spanning
+    # arbitrary C++. Measured by 3b over both strided samples: 29 of the 81 docs the C++
+    # evidence question was about were sitting in this bucket and NONE was CSS -- chromium
+    # `namespace {` with a LazyInstance, a Greenplum GPOS file, a `#pragma once` CUDA header,
+    # Lucene++'s `const int32_t Token::MIN_BUFFER_SIZE = 10;`. `try {` plus any `x: y;` line
+    # catches Java and C# the same way. Same defect as the python marker above, in a second
+    # rule; both were found by reading the buckets rather than by any test.
+    #
+    # Two forms, because CSS is written both ways and the naive `\n` exclusion breaks the
+    # multi-line one -- which is the common one:
+    #   selector {                        selector { prop: value; ... }
+    #     prop: value;
+    # The value excludes `:` and `=`, which is what separates a declaration from
+    # `base::LazyInstance<Foo>::Leaky g = X;` -- that line has both and CSS has neither.
+    # Blank lines and a comment may sit between the selector and its first declaration; the
+    # block-comment form was found by a mutation that reached farther than this rule and
+    # was right to on that one input.
+    #
+    # THE SELECTOR BODY EXCLUDES `\n` EXPLICITLY, and that is not cosmetic. The first version
+    # used `[\w\s.#,:...]*`, and `\s` CONTAINS `\n` -- the same defect this rule is being
+    # fixed for, reintroduced inside the fix. With a newline-crossing, self-overlapping
+    # character class in front of an anchored tail, one real 68KB C# document in the 4000
+    # sample sent it into catastrophic backtracking: `validate()` did not return in 20
+    # seconds, against 0.002s for this form. A corpus filter that hangs on one document in
+    # 4000 is worse than the misclassification it was fixing, and no known-answer case is
+    # large enough to show it -- only running the corpus does.
+    # A CSS TYPE SELECTOR IS AN ELEMENT NAME, AND THE ELEMENT NAMES ARE A CLOSED SET. This
+    # was first written as a DENYLIST of block-opening keywords, which is the wrong shape: I
+    # measured my own list and all 25 keywords I had not thought of still tripped the rule --
+    # `impl`, `trait`, `record`, `message`, `service`, `data class`, every one of them. A
+    # denylist of "words that open a block" is open-ended across languages; the allowlist is
+    # finite and does not grow.
+    #
+    # `interface X {` followed by `clientId: string;` is exactly the CSS block shape, which
+    # is how 13 of the 43 docs this rule claimed were TypeScript and JS modules. Found when
+    # a TypeScript known-answer case came back `noncode:css`.
+    #
+    # The allowlist also RECOVERS two real CSS documents the denylist version missed
+    # (`ul li a {`, `input[type="text"] {`), because it is written around what a selector
+    # is rather than around what it is not.
+    (re.compile(_CSS_SELECTOR + r"\{[ \t]*$"
+                r"\n(?:[ \t]*(?://.*|/\*.*?\*/)?[ \t]*\n)*"
+                r"^[ \t]*" + _CSS_DECL, re.M), "noncode:css"),
+    # The one-line form, `selector { prop: value; }`. It shares `_CSS_SELECTOR` with the block
+    # form above rather than carrying its own copy: the copy it used to carry still had BOTH
+    # defects the block form was fixed for -- `[\w\s.#,-]` crosses newlines, and there was no
+    # guard at all, so `impl Foo { name: String;` matched it directly. Measured by 3b on the
+    # real corpus: of 31 noncode:css docs, 6 were matched only here and 1 of those crossed a
+    # newline (an Artsy GraphQL loader, real TypeScript).
+    (re.compile(_CSS_SELECTOR + r"\{[ \t]*" + _CSS_DECL.replace(r"[ \t]*$", ""),
+                re.M), "noncode:css"),
     (re.compile(r"@media\b|@import\s+url\(|!important\s*;"), "noncode:css"),
     (re.compile(r"^\s*<\?xml|^\s*<(?:project|configuration|beans|manifest|RelativeLayout)\b"
                 r"|xmlns(?::\w+)?\s*=", re.I | re.M), "noncode:config"),
@@ -407,6 +504,25 @@ def validate(text):
         return None, "too_short"
     if "\x00" in text:
         return None, "binary"
+
+    # CRLF IS NORMALISED HERE, ONCE, BEFORE ANY RULE SEES THE TEXT. Ten patterns in this
+    # module end in an anchored `$` -- both css rules, go, scala, php, python (x2), ruby, and
+    # the `public:` C++ marker. Most write it as `[ \t]*$`, and `\r` is neither a space nor a
+    # tab, so on a CRLF document `$` is never reached and the rule silently does nothing. 113
+    # of 2000 documents in the shard117 draw are CRLF -- 5.65%, not a corner.
+    #
+    # MEASURED BLAST RADIUS TODAY IS 1 DOCUMENT, not 113: the anchored rules are mostly
+    # secondary, so a CRLF document usually gets the same verdict from some other rule. The
+    # normalisation is here for the class, not for the count -- the next anchored rule
+    # written will not think about `\r` either.
+    #
+    # Found by A/B-ing this commit against its parent per document rather than by comparing
+    # aggregate shares: the shares were IDENTICAL to two decimal places and one document had
+    # moved. It was real CSS (`html{\r\n\toverflow: hidden;\r\n}`) that the pre-allowlist
+    # rule caught and the allowlist did not, because the old selector class was loose enough
+    # to absorb the `\r` and the new one is not. Both answers were refusals, so no share
+    # moved and no known-answer case could see it -- every other fixture in this file is LF.
+    text = text.replace("\r\n", "\n")
 
     # NON-CODE BEFORE FOREIGN-LANGUAGE. An HTML page quoting a shell command, or a Maven POM
     # naming a Java class, would otherwise be reported under the language it mentions. The
@@ -599,12 +715,65 @@ _KA_MISSED = [
     ("/* Semantic UI 2.6.0 */\n.ui.loader {\n  position: absolute;\n  top: 50%;\n"
      "  display: none;\n}\n@media only screen and (max-width: 767px) {\n  .ui { margin: 0; }\n}\n",
      "noncode:css", "44 rule 3"),
+    # CSS WITHOUT AN AT-RULE, which is what actually tests the block rule: the case above
+    # also carries `@media`, so the second css pattern answers it and the first could be
+    # deleted with nothing going red. Both forms are here because the rule has two branches
+    # and the multi-line one is the branch the pre-fix rule MISSED -- it required the
+    # declaration to follow the brace on the same logical span, and matched a C++ file
+    # instead.
+    ("html,body {\n    font-family: sans-serif;\n    -ms-text-size-adjust: 100%;\n}\n"
+     "#columns #newsletter_block_left .form-group {\n    margin-bottom: 0;\n}\n",
+     "noncode:css", "multi-line CSS with no at-rule: the block branch, alone"),
+    (".btn { color: red; }\n.btn-primary { background: #fff; border: 1px solid #ccc; }\n",
+     "noncode:css", "one-line CSS with no at-rule: the inline branch, alone"),
+    # THE SAME CSS WITH CRLF ENDINGS, which is the only case in this file that is not LF and
+    # the reason `validate()` normalises. `\r` is neither space nor tab, so every anchored
+    # `[ \t]*$` tail in this module fails on a CRLF document and the rule silently does
+    # nothing. 113 of 2000 documents in the shard117 draw are CRLF. This went unseen because
+    # a rule that stops firing moves documents between two REFUSAL reasons, which changes no
+    # share -- it was found by diffing per-document verdicts against the parent commit.
+    ("html{\r\n\toverflow: hidden;\r\n}\r\niframe{\r\n\twidth:100%;\r\n\theight:900px;\r\n}\r\n"
+     "input#word{\r\n\tfont-size:120px;\r\n\tposition:absolute;\r\n}\r\n"
+     ".serif, .serif input{\r\n\tfont-family:serif;\r\n}\r\n",
+     "noncode:css", "CRLF CSS: every `[ \\t]*$` tail in this module dies on the `\\r`"),
+    # A COMMENT BETWEEN THE SELECTOR AND ITS FIRST DECLARATION. Found by a mutation that
+    # widened the gap back to `[^{}]*` and survived: chasing what distinguished it turned up
+    # 19 documents and this real-CSS shape, which the narrow gap MISSED. The mutation was
+    # right about this input and wrong about the other 18, so the fix is to widen the gap to
+    # comments only, not to accept the mutant.
+    #
+    # ONE BLOCK, and that is load-bearing. The first version had a second `.b { padding: 1px; }`
+    # block for realism, and that block has no comment, so it matched on its own and a
+    # mutation removing `/*...*/` from the gap SURVIVED -- the case could not test the thing
+    # it was added for. A fixture for a specific construct must contain that construct and
+    # no easier path to the same answer.
+    (".a {\n  /* the first rule */\n  color: red;\n  margin: 0;\n}\n",
+     "noncode:css", "a block comment between selector and declaration"),
     ("/*\n * This file was auto-generated by WSDL2Java. Do not modify.\n */\n"
      "package x;\npublic class Stub { public void f() { } }\n", "noncode:generated",
      "44 rule 2 -- and it must beat the java markers below it"),
     ("Licensed under the Apache License, Version 2.0 (the \"License\");\n"
      "you may not use this file except in compliance with the License.\n",
      "noncode:license", "44 rule 4, length-conditioned"),
+    # TYPESCRIPT ON THE ANNOTATION BRANCH ALONE. The `interface User { ... }` reject in
+    # _KA_JS also carries `interface X {`, so the second alternation answers it and the
+    # annotation branch could be narrowed to nothing with nothing going red. Measured while
+    # fixing that branch: my first lookbehind was `(?<![:\w])`, which rejects EVERY real
+    # annotation -- they all follow an identifier -- and the 60 known answers stayed green.
+    ("export async function sleep(time: number): Promise<void> {\n"
+     "  return new Promise((r) => setTimeout(r, time));\n}\n"
+     "export function label(name: string, count: number) { return name + count; }\n",
+     "foreign:typescript", "a bare type annotation, with no `interface` in the file"),
+    # AND A MULTI-LINE INTERFACE, on the INTERFACE branch alone. My first version of this
+    # case used `clientId: string;` members, which the annotation branch also answers -- so
+    # narrowing the interface branch to `[^}\n]` changed nothing and the mutation survived.
+    # These members are named types, invisible to the annotation branch, so the case tests
+    # the branch it is written for. 18 documents in 4000 have a multi-line interface, which
+    # is why `[^}]` is right here: it cannot escape the interface body, unlike the css and
+    # python rules where the same class crossed into unrelated code.
+    ("interface Handler {\n    onEvent: EventCallback;\n    target: HTMLElement;\n}\n"
+     "export default Handler;\n",
+     "foreign:typescript", "a multi-line interface, on the interface branch alone"),
 ]
 
 #: NEGATIVE CONTROLS for the widened patterns (4c required these with the widening). Each is
@@ -630,6 +799,98 @@ _KA_NOT_EATEN = [
      "    /** Generated docs live in javadoc/. This class is hand-written. */\n"
      "    public void f() { }\n}\n", "java",
      "the word javadoc in a COMMENT must not make a real class noncode:html"),
+    # THE MULTI-LINE PYTHON MATCH, from the shard117 strided sample. `class X;` forward
+    # declarations followed anywhere later by a line ending in a colon matched python's
+    # block-opener pattern, because `[^{}]*` spans newlines. This exact document was
+    # foreign:python before the `\n` exclusion. It is here rather than in _KA_MISSED because
+    # it is a NEGATIVE control -- the defect was a refusal eating real code, and this is the
+    # code it ate.
+    ("#ifndef RIGIDBODY_H\n#define RIGIDBODY_H\n\n#include \"btTransform.h\"\n\n"
+     "class btCollisionShape;\nclass btMotionState;\nclass btTypedConstraint;\n\n"
+     "extern btScalar gDeactivationTime;\n\n"
+     "///The btRigidBody is the main class for rigid body objects.\n"
+     "///There are 3 types of rigid bodies:\n"
+     "class btRigidBody : public btCollisionObject {\n"
+     "    btScalar m_inverseMass;\n"
+     "public:\n"
+     "    void setMassProps(btScalar mass);\n};\n#endif\n", "cpp",
+     "a C++ header whose forward declarations paired with a later prose colon"),
+    # THE SAME DEFECT IN THE CSS RULE (3b, hand-read of 29 docs, none of them CSS). Each of
+    # these was noncode:css before the rule became line-anchored, and each is a different
+    # opener: an anonymous namespace, a do-block, and a try-block, which is the one that
+    # reaches Java and C# rather than only C++.
+    ("namespace {\n\nbase::LazyInstance<Foo>::Leaky g_foo = LAZY_INSTANCE_INITIALIZER;\n\n"
+     "}\n\nnamespace blink {\nvoid f() { g_foo.Get(); }\n}\n", "cpp",
+     "an anonymous namespace plus a scoped static must not read as a CSS block"),
+    ("#include <zlib.h>\nvoid deflate_all(z_stream *s) {\n  do {\n"
+     "    s->avail_out = kChunkSize;\n    deflate(s, 0);\n  } while (s->avail_in);\n}\n", "c",
+     "a do-block plus a `->` assignment is brace-then-colon-free but was css-adjacent"),
+    ("package x;\n\npublic class A {\n    public void f() {\n        try\n        {\n"
+     "            int clientIndex = 0;\n            System.out.println(clientIndex);\n"
+     "        } catch (Exception e) { }\n    }\n}\n", "java",
+     "a try-block opener: the css defect reached Java, not only C++"),
+    # THE INLINE CSS BRANCH NEEDS THE SAME `:=` EXCLUSION AS THE BLOCK ONE, and nothing in
+    # 4000 docs proves it: dropping `:=` from the inline pattern alone changed no answer on
+    # the corpus and survived mutation. It is not equivalent, though -- this one line differs
+    # -- so the case is written rather than the mutation left alive. A scoped initialiser on
+    # one line inside a brace is the shape: CSS values contain neither `::` nor `=`.
+    ("#include <memory>\nnamespace n { base::Foo x = Y; }\n"
+     "void run() { n::x.reset(); }\n", "cpp",
+     "a one-line scoped initialiser must not read as an inline CSS declaration"),
+    # THE TYPESCRIPT RULE MATCHED A SUBSTRING OF A QUALIFIED C++ NAME (3b). `:string,` sits
+    # inside `std::map<std::string, std::string>`, so 16 of 43 typescript-labelled docs
+    # across 4000 were C++. The discriminator is that a C++ colon here follows another
+    # colon; a TypeScript annotation's never does.
+    # THE SELECTOR ALLOWLIST, tested with a keyword NO denylist of mine contained. The first
+    # version of the css guard listed block-opening keywords; measured, all 25 I had not
+    # thought of still tripped it. `record` is a Java one, `message` a protobuf one, and
+    # neither is an HTML element -- which is the property the allowlist checks and the
+    # denylist could not.
+    ("package com.example;\nimport java.util.List;\n\nrecord Point(int x, int y) {\n"
+     "    width: 10;\n}\nclass Use { List<Point> ps; }\n", "java",
+     "a Java record: a block-opening keyword no denylist of mine listed"),
+    # THE `\b` AFTER THE ELEMENT LIST IS LOAD-BEARING: without it every element name is a
+    # PREFIX, and the list contains short ones -- `map`, `a`, `col`, `pre`, `param`. So
+    # `mapping_t *f() {` opens a "css block" and any `label:` line under it closes it. A goto
+    # label is the natural shape; nothing in 4000 docs happened to have one, so the mutation
+    # dropping `\b` survived until this case. Note the brace must be on the selector line:
+    # with it on the next line the rule does not reach, so that variant proves nothing.
+    ("#include <unistd.h>\n#include <stdio.h>\n"
+     "mapping_t *table_open(const char *path, int fd) {\n"
+     "retry: reconnect(fd);\n"
+     "    if (fd < 0) goto retry;\n"
+     "    return load(path);\n}\n", "c",
+     "an element name is a PREFIX without `\\b`: `map` inside `mapping_t`, closed by a goto label"),
+    # THE `:=` EXCLUSION IN THE DECLARATION VALUE, on the BLOCK branch. A CSS value contains
+    # neither `::` nor `=`; a C++ scoped initialiser contains both. `map` is a real element
+    # name, so `map<int,int> f() {` passes the allowlist honestly and only the value test
+    # separates the two. The inline branch has its own case above; this is the block one, and
+    # they are not the same pattern text even though they now share `_CSS_DECL`.
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> build_index() {\n"
+     "    base::Registry::Handle h = base::Registry::Get();\n"
+     "    return {};\n}\n"
+     "void run() { build_index(); }\n", "cpp",
+     "a scoped initialiser under an element-named function: only `:=` in the value separates it"),
+    # THE OTHER TWO EXCLUSIONS IN THE SAME VALUE CLASS, `{}` and `\n`, each with the one line
+    # that separates it. All three cases need an element-named function (`map<...>`) so the
+    # selector half passes honestly and only the value test is under test; with any other
+    # name the allowlist answers first and the case proves nothing about the value class.
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> table_reset(int fd) {\n"
+     "retry: reset(fd, Cfg{0});\n"
+     "    if (fd < 0) goto retry;\n    return {};\n}\n", "cpp",
+     "a brace-initialised argument: a CSS declaration value never contains `{}`"),
+    ("#include <map>\nusing namespace std;\n"
+     "map<int, int> table_load(int fd) {\n"
+     "retry: reconnect(fd,\n                 kDefaultPath);\n"
+     "    if (fd < 0) goto retry;\n    return {};\n}\n", "cpp",
+     "a call wrapped across two lines: a CSS declaration value never contains a newline"),
+    ("#include <map>\n#include <string>\n"
+     "std::map<std::string, std::string> mapValue;\n"
+     "typedef std::map<std::string, int> Acc;\n"
+     "void f(const std::string& url) { (void)url; }\n", "cpp",
+     "std::string inside a template argument list is not a TypeScript annotation"),
 ]
 
 KNOWN_ANSWERS = {"c": _KA_C, "js": _KA_JS, "java": _KA_JAVA}
@@ -902,6 +1163,43 @@ def _selftest():
             fails.append(f"missed-bucket case ({why}): want {want!r}, got "
                          f"{lang!r}/{reason!r} :: {src.splitlines()[0][:48]!r}")
 
+    # AND WHICH BRANCH ANSWERED, for the rules that have more than one (3b's suggestion, and
+    # the right form: it turns a discipline into a check). A case for a two-branch rule can
+    # be answered by the OTHER branch and pass -- the green is real and about the wrong
+    # thing, so narrowing the untested branch reads as safe when it means nothing reaches
+    # it. That happened twice on the typescript rule and cost two surviving mutations.
+    #
+    # Asserted on the branch SET, not on which case is which: the two typescript cases must
+    # fire exactly one branch each and between them cover both. That is checkable without
+    # reading the `why` prose, and it is the property that matters -- a branch no case fires
+    # alone is a branch no mutation can red.
+    #
+    # The branches are SPLIT OUT OF THE LIVE RULE rather than retyped here. A copy would
+    # drift: an edit to the rule would leave this check testing the old alternation and
+    # still passing, which is the same failure one level up.
+    _ts_rule = [rx for rx, n in _FOREIGN if n == "typescript"][0].pattern
+    _ts_parts = _ts_rule.split("|\\binterface")
+    if len(_ts_parts) != 2:
+        fails.append(f"the typescript rule is no longer the two branches this check splits "
+                     f"on ({_ts_rule[:60]!r}); re-derive the split before trusting it")
+        _ts_branches = {}
+    else:
+        _ts_branches = {"annotation": re.compile(_ts_parts[0]),
+                        "interface": re.compile("\\binterface" + _ts_parts[1])}
+    _ts_fired = []
+    for src, want, why in _KA_MISSED:
+        if want != "foreign:typescript" or not _ts_branches:
+            continue
+        hits = {n for n, rx in _ts_branches.items() if rx.search(src)}
+        if len(hits) != 1:
+            fails.append(f"typescript case ({why}) fires {sorted(hits) or '[]'}; a case must "
+                         f"fire exactly ONE branch or it does not test any of them")
+        _ts_fired.extend(hits)
+    if _ts_branches and set(_ts_fired) != set(_ts_branches):
+        fails.append(f"the typescript cases cover branches {sorted(set(_ts_fired))}, not "
+                     f"{sorted(_ts_branches)}; an uncovered branch can be narrowed to "
+                     f"nothing with the suite still green")
+
     # AND THE NEGATIVE CONTROLS. A widened refusal pattern fails in the direction the
     # known-answer sets cannot see: it eats real code and the accept lanes shrink silently.
     # These are the specific collisions each new pattern is one character away from.
@@ -911,6 +1209,98 @@ def _selftest():
             fails.append(f"a widened refusal ate real {want}: {why} -- got "
                          f"{lang!r}/{reason!r} :: {src.splitlines()[0][:48]!r}")
 
+    # AND A RUNTIME BOUND, because none of the assertions above can see the failure that
+    # nearly shipped: a character class containing `\s` in front of an anchored tail sent
+    # the css rule into catastrophic backtracking on one real 68KB C# document, and
+    # validate() did not return in 20 seconds. Every known-answer case is a few hundred
+    # bytes, so all of them stayed green, and a corpus filter that hangs on 1 document in
+    # 4000 is worse than the misclassification it was fixing.
+    #
+    # THE FIXTURE IS THE REAL DOCUMENT, delta-debugged from 68014 bytes to these 19 lines --
+    # TWICE I replaced it with a synthetic one I invented from the shape I assumed was slow,
+    # and both times the mutation reintroducing the bug SURVIVED because my reconstruction
+    # ran in 0.000s. What matters is not describable in a sentence: a brace-opening line,
+    # then `//` lines long enough and numerous enough that the gap alternation retries at
+    # every one while the newline-crossing selector class re-anchors. Truncating every line
+    # to 80 characters makes it fast; so does dropping lines. Keep the bytes.
+    _hostile = (
+        "    internal readonly partial struct ExpressionBinder\n"
+        "    {\n"
+        "        // \n"
+        "        // \n"
+        "        // Use assertions and naming guidelines to express the contract for methods. \n"
+        "        // The most common issue is whether an argument may be null or not. If an \n"
+        "        // argument may not be null, then the method must ASSERT that before any other \n"
+        "        // code. If an argument may be null then the name of the argument should \n"
+        "        // include 'Optional'. The exception to this rule is the input parse tree \n"
+        "        // parameter. If the parse tree may be null, then the method name should \n"
+        "        // include an 'Opt' suffix. For example bindArgumentList should really be \n"
+        "        // named bindArgumentListOpt. Abbreviations should be avoided, but the 'Opt' \n"
+        "        // suffix gets an exception because it is used consistently in the language \n"
+        "        // \n"
+        "        // \n"
+        "        // \n"
+        "        // Do not rely on the input parse tree being complete. Erroneous code may \n"
+        "        // result in parse trees with required children missing, or with unexpected \n"
+        "        // structure. Find out what the invariants are for the parse tree being \n"
+        # The last four repeated, and that repetition is the assertion's margin. The
+        # delta-debugged 19 lines run in 1.37s under the bad pattern -- UNDER the 2s bound,
+        # so the mutation survived against them. Four more lines take it past 6s: the cost
+        # is exponential in the comment-line count, which is exactly why a bound works here
+        # and why the fixture must sit clear of it rather than at it.
+        "        // \n"
+        "        // Do not rely on the input parse tree being complete. Erroneous code may \n"
+        "        // result in parse trees with required children missing, or with unexpected \n"
+        "        // structure. Find out what the invariants are for the parse tree being \n")
+    _t0 = time.monotonic()
+    validate(_hostile)
+    _dt = time.monotonic() - _t0
+    if _dt > 2.0:
+        fails.append(f"validate() took {_dt:.1f}s on a {len(_hostile)} byte document; a rule "
+                     f"is backtracking exponentially. Look for a character class that "
+                     f"contains \\s or . in front of an anchored tail")
+
+    # AND THE REPORTER ITSELF, because it was broken for the length of one editing session
+    # and nothing noticed. An edit indented `if fails:` into the timing branch above, so a
+    # run with THREE real failures in `fails` printed OK and returned 0 -- every mutation in
+    # a sweep came back green, including ones that had been red minutes earlier, and the
+    # green looked like evidence. A selftest that cannot fail is worse than no selftest: it
+    # launders every assertion above it. So the exit path is asserted here, on a deliberate
+    # non-empty list, before the real one is consulted. Its output is discarded: a probe
+    # that printed would itself read as a failure.
+    _probe = io.StringIO()
+    with contextlib.redirect_stdout(_probe):
+        _rc = _report(["a deliberate failure, to prove the reporter reports"], _max_soft)
+    if _rc != 1 or "FAIL" not in _probe.getvalue():
+        print("code_lang_validate: 1 FAIL(s)")
+        print(f"  _report() returned {_rc} and printed {_probe.getvalue()[:60]!r} for a "
+              f"NON-EMPTY failure list -- every assertion in this selftest is unenforced "
+              f"and any green above is meaningless")
+        return 1
+    _out = io.StringIO()
+    with contextlib.redirect_stdout(_out):
+        _rc = _report(fails, _max_soft)
+    _text = _out.getvalue()
+    print(_text, end="")
+    # AND THE RETURN MUST AGREE WITH WHAT WAS PRINTED. `return 0` in place of this call
+    # survives every assertion above -- it reports nothing and exits clean, and the hook
+    # judges on the exit code, so a silently-passing selftest is indistinguishable from a
+    # passing one. The summary line is the evidence that the reporter ran at all.
+    if _rc == 0 and "selftest OK" not in _text:
+        print("code_lang_validate: 1 FAIL(s)")
+        print(f"  the selftest returned 0 without printing its summary ({_text[:60]!r}); "
+              f"the reporter did not run and nothing above was enforced")
+        return 1
+    return _rc
+
+
+def _report(fails, max_soft):
+    """Print and return 1 if anything failed, else print the summary and return 0.
+
+    Split out of _selftest so the exit path is a named function that can be called with a
+    known-bad list -- see the assertion above. Inline, it was one indentation level away
+    from being unreachable, and that is exactly what happened.
+    """
     if fails:
         print(f"code_lang_validate: {len(fails)} FAIL(s)")
         for f in fails:
@@ -922,7 +1312,7 @@ def _selftest():
           f"scope control over the C set and an empty-marker teeth control, "
           f"6 stripper cases, a real-brace control, the JS division control, a soft-threshold "
           f"pair, the tie-breaker case and the _TIE_WEIGHT > max-soft invariant "
-          f"({_TIE_WEIGHT} > {_max_soft}). module_sha256={module_sha256()}")
+          f"({_TIE_WEIGHT} > {max_soft}). module_sha256={module_sha256()}")
     return 0
 
 
