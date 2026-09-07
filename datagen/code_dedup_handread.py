@@ -85,11 +85,29 @@ def locate(where, dom_locs, domains):
     The old selftest passed three hand-built cluster_row cases with their own `doc` closure, so
     the real lookup was never called with a real dom_locs. Hoisted here so it can be.
 
-    dom_of keeps returning the NAME on purpose: cluster_row's callers compare against names
-    (`dom_of(g)[0] == domains[1]`), so making dom_of return an index would move the defect into
-    three comparisons rather than fix it.
+    dom_of keeps returning the NAME on purpose, and the reason is not the number of call sites
+    (b0, reviewing #49) -- that count changes whenever someone adds a caller. Under
+    index-return, `dom_of(g)[0] == domains[1]` becomes `== 1`: a bare integer compared against
+    a positional convention that lives in the arg parser. `== domains[1]` carries its own
+    meaning; `== 1` requires the reader to know that position 1 is rp1t. That is POSITION
+    STANDING IN FOR IDENTITY, the same class as the ordinal slice removed from this file's draw
+    one commit earlier -- index-return would reintroduce in every comparison exactly the
+    confusion the sibling fix eliminated in one slice.
     """
     name, local = where
+    # `.index()` takes the FIRST match and --domains is nargs="+" with no duplicate check
+    # (line 227), so two domains sharing a name make every lookup for the later one resolve
+    # silently to the earlier one's shard and line -- no exception, and the sheet then
+    # attributes a document to the wrong corpus. That is the single mistake this tool exists
+    # to prevent, so it refuses (b0's review of #49, measured: locate(("same", 0), locs,
+    # ["same", "same"]) returned the FIRST domain's ("shard_a", 7)).
+    if len(set(domains)) != len(domains):
+        dup = sorted({d for d in domains if domains.count(d) > 1})
+        raise SystemExit(
+            f"REFUSE: --domains names {dup} more than once. Every lookup for the later "
+            f"occurrence would resolve to the earlier one's shard and line, so the sheet would "
+            f"attribute documents to the wrong corpus with nothing raising."
+        )
     return dom_locs[domains.index(name)][local]
 
 
@@ -185,6 +203,18 @@ def _selftest():
         pass
     else:
         fails.append("locate() accepted a domain name not in domains; it must raise")
+    # DUPLICATE NAMES: .index() takes the first match, so without the refusal a lookup for the
+    # later domain returns the earlier one's shard -- wrong provenance, nothing raised.
+    try:
+        locate(("same", 0), [[("shard_a", 7)], [("shard_b", 3)]], ["same", "same"])
+    except SystemExit as e:
+        if "more than once" not in str(e):
+            fails.append(f"duplicate --domains refused with the wrong message: {e}")
+    else:
+        fails.append(
+            "locate() accepted a duplicated domain name; it resolves to the FIRST and "
+            "would attribute a document to the wrong corpus"
+        )
 
     # THE DRAW, through draw_mixed itself. The three cluster_row cases above cannot see this
     # defect: they test the SHAPE of one row and the no-op was in WHICH rows get built.
@@ -216,7 +246,8 @@ def _selftest():
         "returns 40 distinct clusters from the pool and never the pool's first 40 in order, "
         "which is the only property that separates a draw from the no-op shuffle it replaced; "
         "and locate() resolves a (name, local) pair through the real position lookup that "
-        "raised TypeError on every run before 2026-09-08"
+        "raised TypeError on every run before 2026-09-08, and refuses a duplicated domain name "
+        "rather than silently resolving it to the first occurrence"
     )
     return 0
 
