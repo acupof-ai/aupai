@@ -1193,6 +1193,11 @@ def _broken_cache_readers_set_vocab_id():
 
     Mutating the live file rather than writing a fixture, for the reason de-7.3 records: a
     fixture encodes the author's assumption twice.
+
+    PR #21 wrapped the val_seqs call in try/except CoResidentCacheRead, which put the reader
+    at branch depth 1 -- the same depth the conditional setter lands at, so the coverage
+    check's min(sd) > min(rd) no longer fires. The broken world unwraps that try/except to
+    restore the reader to depth 0, reproducing the state the coverage half was built for.
     """
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "eval", "domain_bpb.py")
@@ -1202,6 +1207,15 @@ def _broken_cache_readers_set_vocab_id():
     line = "    train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"
     if line not in text:
         return None  # the fix moved or was renamed: this world cannot be built
+    # Unwrap PR #21's try/except so the reader is at depth 0, matching the setter at depth 1.
+    _try = ("        try:\n"
+            "            rows = val_seqs(name, ours_tok)\n"
+            "        except CoResidentCacheRead as e:\n"
+            "            skipped[name] = str(e).splitlines()[0]\n"
+            "            print(f\"  {name:16} SKIPPED (co-resident cache read refused)\", flush=True)\n"
+            "            continue\n")
+    if _try in text:
+        text = text.replace(_try, "        rows = val_seqs(name, ours_tok)\n")
     import shutil as _sh
     link = os.path.join(d, "eval")
     if os.path.islink(link):
@@ -10352,6 +10366,29 @@ def _token_cache_dir():
     forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
         return forced
+    # THE TORCH-FREE PATH IS TRIED FIRST, and it is not a second implementation -- it is train's
+    # own three steps (env, NVMe-if-it-exists, dirname(TOKEN_CACHE)) with TOKEN_CACHE read from
+    # train.py's source instead of from an imported module. `import train` reaches model.py and then
+    # fla, which costs 9.8 s of a 36.4 s `harness check` (profiled 2026-09-07, de) to produce one
+    # string, and on this laptop both paths return '/data00' -- measured, they AGREE.
+    #
+    # Correctness rests on the constant being a literal: if train.py ever computes TOKEN_CACHE, the
+    # regex misses and this FALLS THROUGH to the import rather than guessing, so the expensive path
+    # remains the authority and the cheap one is only allowed to answer when it can read the same
+    # inputs. That is the opposite order from the version before this change, which imported first
+    # and used the scrape only when torch was absent; the reason for THAT order was that the scrape
+    # then ignored AUPAI_TOKEN_CACHE_DIR, which the `forced` branch above now handles for both.
+    try:
+        src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+        m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
+        if m:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+            if os.path.isdir(cache_guard.NVME_CACHE_DIR):
+                return cache_guard.NVME_CACHE_DIR
+            return os.path.dirname(m.group(1))
+    except Exception:
+        pass   # fall through to the import, which is the authority
     try:
         sys.path.insert(0, ROOT)
         import train
