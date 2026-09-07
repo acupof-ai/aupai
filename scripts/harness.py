@@ -9431,7 +9431,7 @@ def check_prereg_citations_current(root):
     if unresolved:
         return FAIL, "; ".join(unresolved[:4])
     if unanchored and time.strftime("%Y-%m-%d", time.gmtime()) >= PREREG_FLIP:
-        return FAIL, f"{len(unanchored)} unanchored: " + "; ".join(unanchored[:4])
+        return FAIL, f"{len(unanchored)} unanchored (FAIL since {PREREG_FLIP}, WARN before): " + "; ".join(unanchored[:4])
     parts = []
     if stale:
         parts.append(f"{len(stale)} stale: " + "; ".join(stale[:3]))
