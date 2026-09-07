@@ -61,6 +61,28 @@ def _rows(path):
     return [json.loads(ln) for ln in open(path, encoding="utf-8") if ln.strip()]
 
 
+def _point_tasks_at(harness, path):
+    """Redirect the task register to `path` in BOTH modules, and return the path.
+
+    THE WRITER AND THE READER LIVE IN DIFFERENT NAMESPACES since the harness_core extraction.
+    harness.py:60 imports TASKS_PATH by VALUE, so `harness.TASKS_PATH = p` moves _append_task
+    (which reads harness's global) and NOT _read_tasks (which reads harness_core's). A fixture
+    that sets only the first writes its row into the temp dir and then reads the real 295-row
+    register, so `task done t1` answers "no task t1" -- a not-found, easily mistaken for a
+    validation refusal. That is why worlds 5-6 were red on clean origin/main.
+
+    MEASURED (/tmp/de_taskspath_probe.py, 2026-09-08): harness only -> _read_tasks() returns
+    ['t01','t02','t03'], 295 rows. Both -> ['t1'], 1 row.
+
+    A helper rather than two assignments, because there are two call sites and the next fixture
+    added here would copy whichever one it happened to read.
+    """
+    import harness_core
+    harness.TASKS_PATH = path
+    harness_core.TASKS_PATH = path
+    return path
+
+
 def _exp_world(d, extra):
     """Write one experiments row through exp.py's real CLI and return it.
 
@@ -162,7 +184,14 @@ def main():
             ]:
                 d = os.path.join(tmp, label.split()[0] + "task")
                 os.makedirs(os.path.join(d, "runs"))
-                harness.TASKS_PATH = os.path.join(d, "runs", "tasks.jsonl")
+                _point_tasks_at(harness, os.path.join(d, "runs", "tasks.jsonl"))
+                # NO produces/decides HERE, and that absence is measured rather than assumed.
+                # `task done` does refuse an empty produces/decides (74a69cb4), so filling them
+                # looked like the fix -- but reverting them alone leaves this test GREEN while
+                # reverting the both-bindings helper alone turns it RED (/tmp/de_which_fix.py:
+                # control rc=0, revert-keys rc=0, revert-helper rc=1 on worlds 5-6). The refusal is
+                # a second gate reached only AFTER the row is found, and the row was never found.
+                # Adding them would encode a wrong cause in the fixture.
                 harness._append_task({"id": "t1", "state": "open", "owner": "de",
                                       "deliverable": "x", "opened": "2026-09-05 00:00"})
                 argv = ["done", "t1", "--evidence", ev_path, "--reviewer", "44",
@@ -212,7 +241,7 @@ def main():
             for label, extra, want_rc in add_cases:
                 d = os.path.join(tmp, label.split()[0] + "add")
                 os.makedirs(os.path.join(d, "runs"))
-                harness.TASKS_PATH = os.path.join(d, "runs", "tasks.jsonl")
+                _point_tasks_at(harness, os.path.join(d, "runs", "tasks.jsonl"))
                 argv = ["add", "--owner", "de", "--socket", "uds:/tmp/x.sock", "--task", "t",
                         "--why", "w", "--pair", "44", "--prior", "defect-fix"] + extra
                 rc = harness.cmd_task(argv)
