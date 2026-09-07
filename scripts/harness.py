@@ -2741,6 +2741,17 @@ def check_no_foreground_pod_training(root):
         # foreground trainer on the box running the 15B job.
         allrows = [tuple(p) for p in (ln.split(None, 5) for ln in open(fake, encoding="utf-8"))
                    if len(p) == 6 and p[0].isdigit()]
+        # THE FIXTURE PATH NEEDS THE EMPTY GUARD THE LIVE PATH ALREADY HAS (44, 2026-09-07).
+        # `_pod_ps_rows` returns ("pod ps returned nothing") for an empty read and the caller
+        # SKIPs, so the live path can never hand judge_pod_ps an empty table. This path parses a
+        # file with no such guard, so an empty or all-malformed fixture reached judge_pod_ps and
+        # produced "0 process row(s) read, none a training process" -- PASS with an all-zero
+        # count, which the vacuous-PASS sweep flags. An empty ps table is not an idle pod: ps
+        # always lists itself, so zero rows means the read or the parse failed. The test's ""
+        # fixture is the IDLE case and correctly expects PASS from judge_pod_ps, which is why the
+        # guard belongs here, at the reader, and not in the predicate.
+        if not allrows:
+            return SKIP, f"HARNESS_POD_PS={fake} parsed to 0 usable rows: nothing was examined"
     else:
         if not os.path.exists(pod) or pod_drift.is_pod(root):
             return SKIP, "host-side check; needs ~/bin/pod"
