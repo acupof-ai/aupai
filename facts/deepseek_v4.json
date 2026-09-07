@@ -1,0 +1,94 @@
+{
+ "facts": [
+  {
+   "id": "dsv4.identity",
+   "value": "DeepSeek-V4: two MoE LLMs, 1M-token context. Pro: 1.6T total / 49B activated, 61 layers, d=7168. Flash: 284B total / 13B activated, 43 layers, d=4096. Pretrained on 32T (Flash) / 33T (Pro) tokens. arXiv 2606.19348, submitted 2026-04-26.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 abstract + Sec 4.2.1 Model Setups (p24-25), read in the PDF 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported; no independent replication",
+   "boundary": "architecture and training-budget description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.hybrid_attention",
+   "value": "Hybrid attention = CSA (Compressed Sparse Attention) + HCA (Heavily Compressed Attention), interleaved after the first 2 layers. Flash first 2 layers are pure SWA; Pro first 2 layers are HCA. CSA: KV compression m=4 (every 4 tokens -> 1 entry, overlapped grouping draws from 2m=8 neighbors), Lightning Indexer selects top-k compressed entries per query (indexer heads n_h^I=64, dim c^I=128), top-k=512 (Flash) / 1024 (Pro), MQA core, grouped output projection. HCA: aggressive compression m'=128, dense attention (no sparse selection). Both: n_h query heads (64 Flash / 128 Pro), head dimension c=512 (both models), query compression dimension d_c=1024 (Flash) / 1536 (Pro), output groups g=8 (Flash) / 16 (Pro), group dim d_g=1024, SWA branch n_win=128 recent uncompressed KV entries.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Sec 2.3 (Hybrid Attention) + Sec 4.2.1 (p24-25), read in the PDF 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported; hyperparameters stated in Sec 4.2.1, mechanism in Sec 2.3",
+   "boundary": "design description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.partial_rope",
+   "value": "Partial RoPE: applied to the last 64 dimensions of queries, compressed KV entries, and core-attention outputs. Because KV entries double as values, outputs carry absolute position; the fix is RoPE with position -i on the last 64 dims of each attention output so the result encodes relative position. KV storage: BF16 for the RoPE dims, FP8 for the rest (nearly halves KV cache vs pure BF16); lightning-indexer attention in FP4. NoPE is not used anywhere in the model.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Sec 2.3.3 (Other Details: Partial Rotary Positional Embedding) + Sec 2.3.4, read 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported",
+   "boundary": "design description; the NoPE/RoPE break with our checkpoints is in dsv4.nope_rope_break",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.moe",
+   "value": "MoE in every layer except the first 3 (which use Hash routing: targets from a predefined hash of the input token ID). Each MoE layer: 1 shared expert + routed experts, top-6 routed activated per token. Flash: 256 routed experts, intermediate hidden 2048. Pro: 384 routed experts, intermediate hidden 3072. Affinity scoring Sqrt(Softplus(.)) (not Sigmoid); auxiliary-loss-free load balancing + a slight sequence-wise balance loss (bias update speed 0.001, balance loss weight 0.0001); the constraint on the number of routing target nodes is removed. MTP depth 1 (same as V3, unmodified).",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Sec 2.1 (Designs Inherited from V3) + Sec 4.2.1 (p24-25), read 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported",
+   "boundary": "design description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.mhc",
+   "value": "Manifold-Constrained Hyper-Connections (mHC): residual stream expanded by factor n_hc=4 (n_hc residual branches). Three mappings per layer: input A (1 x n_hc), residual B (n_hc x n_hc), output C (n_hc x 1); update X_{l+1} = B_l X_l + C_l F_l(A_l X_l). B constrained to doubly-stochastic (Birkhoff polytope, spectral norm <= 1, non-expansive) via Sinkhorn-Knopp with t_max=20 iterations; A and C non-negative via Sigmoid (C = 2*sigma). Dynamic parameterization: A/B/C generated from the normalized layer input via learnable W^pre/W^res/W^post plus static biases, gated by learnable alphas initialized small.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Sec 2.2 (Manifold-Constrained Hyper-Connections) + Sec 4.2.1 (p24-25), read 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported",
+   "boundary": "design description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.efficiency_1m",
+   "value": "At 1M-token context vs DeepSeek-V3.2: Pro needs 27% of single-token inference FLOPs and 10% of KV cache; Flash needs 10% of FLOPs and 7% of KV cache. Against a BF16 GQA8 (head dim 128) baseline, KV cache falls to ~2% at 1M context. Enablers: mixed-precision KV (BF16 RoPE dims + FP8 rest), FP4 lightning-indexer attention, smaller attention top-k than V3.2.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 abstract + Sec 2.3.4 (Efficiency Discussion), read 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported; no independent replication",
+   "boundary": "relative efficiency claims, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.training_setup",
+   "value": "Muon optimizer for the majority of parameters (momentum 0.95, weight decay 0.1, RMS rescale 0.18); AdamW for embedding, prediction head, and RMSNorm modules (beta1=0.9, beta2=0.95, eps=1e-20, weight decay 0.1). Flash: 32T tokens, batch 75.5M tokens, LR 2.7e-4 -> 2.7e-5 cosine, 2000-step warmup. Pro: 33T tokens, batch 94.4M, peak LR 2.0e-4 -> 2.0e-5. Sequence length curriculum 4K -> 16K -> 64K -> 1M; sparse attention introduced at 64K, lightning-indexer warmup at 64K. MTP loss weight 0.3 -> 0.1 at LR decay. Stability: Anticipatory Routing (routing indices from theta_{t-dt}, ~20% wall-clock overhead, auto-activated on loss spikes) + SwiGLU clamping (linear [-10,10], gate cap 10).",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Sec 4.2.2 (Training Setups) + Sec 4.2.3 (Mitigating Training Instability, p25-26), read 2026-09-08",
+   "config": {"source_type": "paper-reported"},
+   "uncertainty": "vendor-reported",
+   "boundary": "training setup description, not our measurement",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.bench_base",
+   "value": "Base-model comparison (V3.2 / Flash / Pro), Table 1, all 24 rows. World Knowledge: AGIEval 80.1/82.6/83.1, MMLU 87.8/88.7/90.1, MMLU-Redux 87.5/89.4/90.8, MMLU-Pro 65.5/68.3/73.5, MMMLU 87.9/88.8/90.3, C-Eval 90.4/92.1/93.1, CMMLU 88.9/90.4/90.8, MultiLoKo 38.7/42.2/51.1, Simple-QA verified 28.3/30.1/55.2, SuperGPQA 45.0/46.5/53.9, FACTS Parametric 27.1/33.9/62.6, TriviaQA 83.3/82.8/85.6. Lang & Reas.: BBH 87.6/86.9/87.5, DROP 88.2/88.6/88.7, HellaSwag 86.4/85.7/88.0, WinoGrande 78.9/79.5/81.5, CLUEWSC 83.5/82.2/85.2. Code & Math: BigCodeBench 63.9/56.8/59.2 (V3.2 highest here -- the counterexample to the Flash-beats-V3.2 trend), HumanEval 62.8/69.5/76.8, GSM8K 91.1/90.8/92.6, MATH 60.5/57.4/64.5, MGSM 81.3/85.7/84.4, CMath 92.6/93.6/90.9. Long Context: LongBench-V2 40.2/44.7/51.5. Flash (13B active) beats V3.2 (37B active) on ~17/24; Pro (49B active) leads on ~20/24.",
+   "measured": "2026-09-08",
+   "source": "arXiv 2606.19348 Table 1 (p28), read in the PDF 2026-09-08",
+   "config": {"source_type": "paper-reported", "eval_framework": "DeepSeek internal, unified settings"},
+   "uncertainty": "vendor-reported; single-eval framework, no independent replication",
+   "boundary": "base-model (pre-post-training) scores; post-trained scores not extracted",
+   "status": "recorded"
+  },
+  {
+   "id": "dsv4.nope_rope_break",
+   "value": "Our checkpoints are NoPE: GatedMLA (model.py:227) carries no positional encoding, position is handled by KDA/DeltaRecurrence. DeepSeek-V4 uses partial RoPE on the last 64 dims (with a -i position correction on attention outputs). V4 ships the attention upgrade and the PE change together, and the -i correction exists because CSA's KV-as-values structure introduces absolute position -- so the coupling is likely structural, but the paper does not state that CSA requires partial RoPE. Adopting V4's partial RoPE still breaks checkpoint compatibility: the position-encoding dimensions change, so an existing NoPE checkpoint cannot be continued under the new scheme without a PE-conversion or a re-pretrain of the attention path. This is the cost of the CSA/HCA loop.",
+   "measured": "2026-09-08",
+   "source": "our model.py:227 (GatedMLA docstring 'NoPE, KDA handles position', read 2026-09-08) + arXiv 2606.19348 Sec 2.3.3 (partial RoPE)",
+   "config": {"source_type": "derived", "our_checkpoint": "NoPE (GatedMLA + KDA)", "v4": "partial RoPE 64-dim"},
+   "uncertainty": "the break is structural (different PE families); the cost of a conversion path is not measured",
+   "boundary": "cost statement for the next-version loop, not a measurement",
+   "status": "recorded"
+  }
+ ]
+}
