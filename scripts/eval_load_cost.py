@@ -81,7 +81,13 @@ WALL_SECS = {
                       "dedicated card 3. The log goes SILENT for the whole 16 min, which reads as "
                       "a hang: py-spy showed the parent blocked in subprocess.communicate at "
                       "score_matrix.py:269, i.e. working. 5153 items, not the 1000 I assumed "
-                      "before reading n_items."),
+                      "before reading n_items. "
+                      "STALE AS OF 2026-09-07 AND KEPT UNTIL REMEASURED: the shape this number "
+                      "describes is gone -- generation now batches through train.generate_batch "
+                      "and the NLL runs one forward per row instead of one per target token. "
+                      "The line it cites no longer loops. Left in place rather than guessed at, "
+                      "because a replacement figure has to be measured on a card and this table "
+                      "is read as measurement; the pod A/B replaces it."),
     "l1_fewshot.py": (2134.3, 497, "generative, 497 problems x 512 new tokens. THE ONLY EVAL "
                       "WITH BOTH COLUMNS FILLED, and they disagree 10x: the dip in MEASURED is "
                       "209.1s of training lost, the wall here is 2134.3s of yours. Neither is "
