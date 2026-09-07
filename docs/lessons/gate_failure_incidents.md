@@ -455,6 +455,23 @@ The general form: a property true of every pair is not true of the transitive cl
 Evidence: `runs/dedup_b2v2.py` and `runs/why_refuse.py` on the pod, `runs/dedup_b2v2.log` (`REFUSE: 8355 code_rp1t_dd09 document(s) would be deleted`), `runs/why_refuse.log` (`dd09-dd09 0 ... TRANSITIVE 8355 ... MISSED it 0`).
 open: nothing asserts that a keep-whole or hold-out set is enforced as a predicate rather than inferred from ordering. The class is one grep — a dedup or partition that relies on `min()`/sort position to protect a subset — and it would have fired here before the run.
 
+### §268 (2026-09-08, R2)
+A shared broken world cannot test a check whose verdict its mutation cannot move. `_broken_facts` is the world for `facts_well_formed`, and it is a good one: real files, four mutations, each a copy-then-break of a real artifact. Adding a fifth predicate to that check, three mutations were added to the same world — a source naming only `/tmp`, one naming `/tmp` beside a tracked script, one naming `/tmp` beside `path@rev` — and all four mutants of the new predicate SURVIVED.
+
+The arithmetic is the whole shape. That world already reports **42 errors** from its existing four mutations; the check returns `FAIL` plus the first five in its evidence string. So removing the new predicate entirely leaves the verdict `FAIL` and the visible slice unchanged, and `--selftest`, which asserts the state, cannot see the difference. Measured: `state=FAIL, ephemeral rows named: none` for the control and for every one of `drop the openable-beside check`, `drop the path@rev half`, `drop the check entirely`, `stop consulting the baseline`.
+
+The clean tree could not serve either, for the opposite reason: its 13 ephemeral-only rows are registered debt, so dropping the exemption logic leaves its failing set identical too. A world that is already saturated and a world that is already exempted fail the same way.
+
+The fix is a dedicated world per predicate — four one-fact trees, each built by mutating the real `facts/data_scaling.json` — where each mutant reds exactly one: openable-beside → world 2, `path@rev` → world 3, the check itself → world 1, the baseline lookup → world 4. Four mutants, four distinct single-world failures.
+
+Two world defects that sweep caught, both green-on-the-wrong-branch:
+- **World 3's rev must name a path that resolves ONLY at that rev.** The first version cited `scripts/exp.py@<rev>`; that path also exists in the working tree, so the openable-beside clause answered first and the `path@rev` branch was never reached — dropping it left the world green. Re-pointed at a probe deleted in a real commit, verified present at the parent and absent from the tree.
+- **A `git init` world has an empty object store, so no rev resolves at all.** World 3 then failed twice for one cause: the tracked-path half called the retired probe absent, and this half saw no openable evidence. Fixed with `objects/info/alternates` pointing at the real store — the narrowest thing that makes a rev resolvable while the world keeps its own HEAD, index and refs.
+
+The general form: a verdict is the least granular aggregate there is, so a world already failing for other reasons cannot certify a new check. Before adding a mutation to an existing world, ask what that world's verdict and visible evidence are WITHOUT it — if the answer is the same, the world is not a world for this check.
+Evidence: `/tmp/de_world_mutants.py` (four mutants against the shared world, all SURVIVED; the same four against the dedicated selftest, each reds one), `scripts/harness.py::_selftest_facts_ephemeral_only_source`.
+open: nothing counts how many errors a broken world already reports before a new mutation is added to it. `--selftest` asserts each world FAILs; it never asserts that the world fails FOR THE MUTATION, and with 42 errors in one world that distinction is where a new check goes unguarded.
+
 ## R3. Artifacts carry their producer identity
 
 ### §24 (2026-08-31, R3)
