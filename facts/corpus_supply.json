@@ -7,7 +7,8 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/code_py_starcoder (count_code_dirs.py exact run, shards=284 kept_docs=6180174)",
    "config": {
-    "note": "EXACT frozen-tokenizer count by datagen/count_code_dirs.py (not extrapolation); 8B-leg largest domain, weight 0.3297 needs 2.638B; margin 3.3x"
+    "note": "EXACT frozen-tokenizer count by datagen/count_code_dirs.py (not extrapolation); 8B-leg largest domain, weight 0.3297 needs 2.638B; margin 3.3x",
+    "basis_note": "2026-09-07: this entry's 8,780,736,158 is an exact count_code_dirs.py run over 284 shards and STANDS. Noted because the dir's build stamp separately carries 8,744,830,156 from a 3-of-283-shard extrapolation labelled `measured` -- two numbers for one dir, differing by 35,906,002 (0.41%). The fact is the exact one."
    },
    "uncertainty": "exact for the current code_py_starcoder/ dir; does not cover future re-filtering (exact count_code_dirs)",
    "status": "measured",
@@ -20,20 +21,25 @@
   },
   {
    "id": "cs.code_rp1t_landed",
-   "value": 7569415401,
+   "value": 7565334396,
    "unit": "tokens",
-   "measured": "2026-09-03",
-   "source": "/work/aupai/data/corpus/code_rp1t/build_corpus_stats.json",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/data/corpus/code_rp1t via `python3 datagen/count_corpus_dir.py code_rp1t --root /work/aupai` on the pod: frozen data/tokenizer.json over ALL 235 shards, 3,747,157 docs, no sampling",
    "config": {
-    "note": "existing code_rp1t/ dir; filters=light; tokens over first-3-shards byte-extrapolated (old stamp, predates 3b-10 instrument)"
+    "note": "EXACT full-pass count. Supersedes 7,569,415,401, which this entry carried as `measured` while its own source was the build stamp's 3-of-235-shard bytes extrapolation. The extrapolation was high by 4,081,005 (+0.054%), so the number was nearly right and the basis label was wrong; build_corpus.py 835ff5a4 fixes the producer.",
+    "shards": 235,
+    "docs": 3747157,
+    "text_bytes": 23089390650,
+    "tok_per_byte": 0.32765
    },
-   "uncertainty": "sample extrapolation not exact; needs rebuild+restamp for 30b primary (weight 0.2667); exact via datagen/count_code_dirs.py (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
+   "uncertainty": "exact for the current pre-dedup code_rp1t/ dir; near_dedup has never been run on it (stamp near_dedup=False), so this is not a deduped supply figure",
    "status": "measured",
    "guard_phrases": [
     "code_rp1t is landed for 30b",
     "code_rp1t supply is settled"
    ],
-   "tokens_status": "extrapolated"
+   "tokens_status": "extrapolated",
+   "boundary": "all-language rp1t github; does NOT compose with code_dedup08, whose python inputs overlap this dir by construction"
   },
   {
    "id": "cs.code_py_rp1t_landed",
@@ -42,10 +48,10 @@
    "measured": "2026-09-03",
    "source": "/work/aupai/data/corpus/code_py_rp1t/build_corpus_stats.json",
    "config": {
-    "note": "new ast-filtered build (filters=rp1t-python-ast); tokens over 3/15 shard byte-extrapolated"
+    "note": "BASIS CORRECTED 2026-09-07: the source is the build stamp, whose tokens_config is a 3-of-15-shard bytes extrapolation, not a count. Held as `recorded` until an exact pass runs. The stamp said `measured` because build_corpus.py wrote that label unconditionally (fixed at 835ff5a4)."
    },
-   "uncertainty": "sample extrapolation; exact count pending count_code_dirs run (rp1t=0.421B exact, done) (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
-   "status": "measured",
+   "uncertainty": "3-of-15-shard extrapolation; code_rp1t's equivalent extrapolation was high by 0.054%, which bounds nothing here but is the only calibration available",
+   "status": "recorded",
    "boundary": "ast-filtered subset, not the full rp1t raw",
    "guard_phrases": [],
    "tokens_status": "extrapolated"
@@ -401,6 +407,24 @@
    "uncertainty": "Exact at build time, not re-derived from the shards today: the value is build_cot.py's own count, and unlike cs.zh_web_landed there has been no independent full pass to confirm it. srcfp is None in the stamp, so the source directory it was built from is not recorded and a re-derivation cannot prove it read the same input.",
    "status": "measured",
    "boundary": "THIS IS THE NUMBER THAT MAKES THE COT SHORTFALL WRONG EVERYWHERE IT IS QUOTED. cs.cot_landed's uncertainty says '~4.1B short' against the 4.5B 30b target, computed as 4.5e9 - 424,056,227 = 4,075,943,773 and correct on 2026-09-03. With this domain the cot role holds 424,056,227 + 775,972,331 = 1,200,028,558 and the real shortfall is 3,299,971,442 -- the quoted figure overstates it by 775,972,331, 19.0%. It carries no filters_fp, so it is invisible to corpus_filters_fp and cannot be judged stale or current against the pipeline filters."
+  },
+  {
+   "id": "cs.code_dedup08_landed",
+   "value": 8902244575,
+   "unit": "tokens",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/data/corpus/code_dedup08 via `python3 datagen/count_corpus_dir.py code_dedup08 --root /work/aupai` on the pod: frozen data/tokenizer.json over ALL 298 shards, 6,239,038 docs, no sampling",
+   "config": {
+    "note": "EXACT full-pass count. The dir's own build_corpus_stats.json carries NO tokens key at all -- it records docs_in 6,389,842 -> docs_kept 6,239,038 (150,804 deleted, 2.36%) and nothing else, so no token figure for this dir existed before this count.",
+    "shards": 298,
+    "docs": 6239038,
+    "text_bytes": 28416764230,
+    "tok_per_byte": 0.31327,
+    "dedup": "th 0.8 MinHash-J char 5-gram, 96 perms, 12 bands, ordinal representative"
+   },
+   "uncertainty": "exact for the current code_dedup08/ dir",
+   "status": "measured",
+   "boundary": "PYTHON ONLY -- inputs are code_py_starcoder + code_py_rp1t. It does not feed the all-language code_rp1t role, and summing it with cs.code_rp1t_landed double-counts rp1t's python: the union size is unmeasured."
   }
  ]
 }
