@@ -91,6 +91,11 @@
    "when": "2026-09-07 12:1xZ",
    "who": "fb",
    "what": "card 0 -> tilerl-48 tilerl-fp8eager (asked before claiming)"
+  },
+  {
+   "when": "2026-09-07 12:3xZ",
+   "who": "fb",
+   "what": "card 1 -> fb lambada A/B for tilerl PR acceptance"
   }
  ],
  "granted": "2026-09-03",
@@ -114,7 +119,7 @@
   "7": "GRANTED 2026-09-05T08:11Z -> e1: paired with card 5 for experiment 1's world-2 arms (see 5)",
   "3": "GRANTED 2026-09-05T09:4xZ -> e1: experiment 3 part 2 (per-token arm correlation) -- needs a card because chunk_kda is Triton-only, no CPU forward exists; one job at a time, world 1, starts only after experiment 1's first arm is up on 5+7; via harness launch --cards 3 --class incremental",
   "4": "GRANTED 2026-09-05T11:24Z -> 3b: task #82, eval/nan_probe.py GC=0 fp8 on vs off (is sft_math.py:207's NaN premise true); one job, world 1, via harness launch --cards 4 --class incremental; released when the fact lands",
-  "1": "GRANTED 2026-09-07T09:2xZ -> fb: USER REQUEST, eval/score_matrix.py --profile control --cu_path cu_none on ckpt_1.5b-a0.2b-e48_30b.pt.step14000 (latest rolling save, 09:19Z), one job, ~1 min likelihood metrics; comparator = ckpt_1.5b-a0.2b-e48_8b.pt control/cu_none row. Returns to the E1 reservation when the claim is released"
+  "1": "GRANTED 2026-09-07T12:3xZ -> fb: lambada_en A/B for tilerl's PR (branch tilerl-lambada-batch 5a85183e): --equiv-sample 64, then old path full pass, then new path full pass, same ckpt step14000, preds to NEW files runs/lambada_{old,new}_step14000.preds.jsonl; ~35 min, one claim (harness launch lambada_ab). Returns to the E1 reservation after"
  },
  "lane_note": "2026-09-05T15:1xZ fb (USER ORDER): E1 close REVERSED -- MoE judged on val loss at equal wall-clock and tokens plus score_matrix, not speed. E1' arms, 1B tokens each, --bf16: dense on 1,2; MoE-24 on 3,4; latent-MoE (d_latent 512) on whichever pair frees; 48-expert 30-step memory probe on the first free card. block_cards 1,2,3,4 = b0's two concurrent world-2 arms. 5+7 -> e1 experiment-1 control_arm (unchanged); 0,6 tileRL. || 2026-09-05T08:11Z fb: 5+7 -> e1 experiment-1 arms, sequential; 1,2 -> E1 (block_cards); 3,4 free; 0,6 tileRL. || 2026-09-05T05:54Z fb: pool = 3,4,5,7 free; 1,2 reserved for E1; 0,6 tileRL. Next grants: e1 experiment-1 arms (5,7 and 3,4 as world size requires) after its row is reviewed. || 2026-09-05T05:47Z fb: user standard -- only incremental results, no reproductions. Struck: memory grid, P1 rerun, cache discriminator, readout 0. Live grants: 1,2 E1 at module merge; 3,4 SFT p04/p16; 5 e1 control floor only if a readout consumes it; 7 free. || 2026-09-05T05:44Z fb: lane_card null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[]. Memory grid CANCELLED (user: do not verify what the prior already says); cards 1,2 -> MoE E1 at module merge, 3,4 -> SFT p04/p16 (3b), 5 -> e1 control floor, 7 -> tilerl P1 rerun. || 2026-09-05T05:42Z fb: lane_card set to null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[] below; a lane derived by the launcher no longer exists. || 2026-09-05T04:34Z fb: lane 7 -> tilerl P1 rerun; lane 5 -> e1 shape-fault probe then control floor. || 2026-09-05T04:26Z fb: lane 7 -> tilerl P1 rerun (RL-team grant, 30 min, one job). || 2026-09-05T03:21Z fb: lane 7 -> tilerl MoE microbench (RL-team grant, 2 h, one job); lane 5 idle. || 2026-09-05T01:42Z fb: lane 7 -> e1 arm_token_corr (RL-team grant, one job); lane 5 idle (control floor waits for a card grant)",
  "superseded_2026_09_02": {
