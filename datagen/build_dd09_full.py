@@ -15,6 +15,17 @@ WHAT MAKES THIS SAFE, asserted rather than assumed:
     cannot modify its target, but the assertion is cheap and the claim is what matters.
   - st_ino equality per link, so "hardlink" is verified and not just intended -- a copy would
     pass every other check here while costing 30 GB on a filesystem at 93%.
+  - the union's file set equals the plan, so a stray .jsonl left in the directory is refused
+    rather than counted as supply. No count can catch that: a count over whatever is there is
+    a true count of whatever is there.
+  - every source inode is distinct, so two sources that are already hardlinks of each other
+    are refused rather than double-counted. b2v2_dd was deduped against dd09, so today's two
+    sources are disjoint by how they were built -- a third source would not inherit that.
+    Broader than its fixture shows (b0, 2026-09-08): the count runs over the whole plan, so two
+    names for one inode WITHIN one source are refused too, though REFUSAL 5 exercises only the
+    across-source case.
+  - shards() REFUSES a case-variant extension. This is the one blind spot the file-set check
+    cannot cover, because both of its sides derive from shards() -- see that function.
 
 The stamp's tokens are COUNTED over the union, never summed from the two source stamps: a
 sum cannot see a shard the link pass dropped, which is the one failure this script can have.
@@ -38,7 +49,39 @@ EXPECT_DOCS = 3434322 + 2103485
 
 
 def shards(d):
-    return sorted(f for f in os.listdir(d) if f.endswith(".jsonl") and not f.startswith("."))
+    """The .jsonl shards in d, REFUSING a case variant rather than filtering it away.
+
+    b0's review of 3b-17 (2026-09-08) found the hole this closes, and it is not the obvious
+    one. The file-set comparison in build() cannot catch a `.JSONL` shard, because BOTH sides
+    of that comparison come from this function: `want` is built from the plan, which came from
+    shards(), and `got` is set(shards(out)). A file this filter cannot see is absent from both
+    sets, so the sets agree about a plan that never contained it. Measured on a source holding
+    src_a_000.jsonl + src_a_001.JSONL: the build printed "file set == plan, 2 shards" and
+    passed, having silently dropped one shard's documents from the supply.
+
+    Refusing beats lowercasing the test. Every other reader is case-sensitive too --
+    count_dir.py globs *.jsonl and train.py's shard scan globs *.jsonl, 719 such sites across
+    190 files measured 2026-09-08 -- so accepting a variant here would put a shard into a
+    union that the trainer still cannot read. The name has to be fixed on disk, once, and a
+    refusal says so where a filter says nothing.
+
+    NOT live today: zero case variants exist under data/corpus or data/raw on the pod, and the
+    RedPajama manifest names are all lowercase. The reachable entry point is
+    fetch_rp1t_batch.py:39, `dst = os.path.join(a.out, f)`, which takes the filename verbatim
+    from the manifest list -- so a remote name's casing lands on disk unchanged.
+    """
+    names = sorted(f for f in os.listdir(d) if not f.startswith("."))
+    variants = [f for f in names if f.lower().endswith(".jsonl") and not f.endswith(".jsonl")]
+    if variants:
+        raise SystemExit(
+            f"REFUSE: {d} holds {len(variants)} shard(s) whose extension is not lowercase "
+            f".jsonl: {variants[:5]}. Every reader here is case-sensitive (count_dir globs "
+            f"*.jsonl, train.py's shard scan globs *.jsonl), so such a file is counted by "
+            f"nobody and its documents are silent under-supply. The file-set check below "
+            f"cannot catch it either: both sides of that comparison come from this function, "
+            f"so a name it cannot see is missing from both. Rename it on disk."
+        )
+    return [f for f in names if f.endswith(".jsonl")]
 
 
 def build(corpus, sources=SOURCES, out_name=OUT, expect_tokens=None, expect_docs=None, nw=32):
@@ -80,6 +123,47 @@ def build(corpus, sources=SOURCES, out_name=OUT, expect_tokens=None, expect_docs
     if after != before:
         raise SystemExit(f"REFUSE: a source directory changed: {before} -> {after}")
     print("source fingerprints unchanged", flush=True)
+
+    # THE FILE SET, which no count can check. A count over whatever the link pass produced is
+    # self-consistent no matter what that pass dropped OR what was already sitting in the
+    # directory: count_dir globs *.jsonl, so a stray shard from an earlier run, or one left by
+    # a different source, is counted as supply and the total still looks well-formed. Only
+    # comparing the sets catches it. b0 ran exactly this comparison by hand when reviewing
+    # 3b-17, because the script did not (2026-09-08).
+    #
+    # It compares NAMES, and that is all it can compare: the link loop above already refuses
+    # any planned name whose st_ino differs from its source, so by the time this runs every
+    # name in the plan is inode-verified and only an UNPLANNED name can be present. Carrying
+    # inodes in these sets looked stronger and was unreachable -- a name-only mutant survived
+    # the selftest (2026-09-08), which is what proved the inode half dead rather than strict.
+    #
+    # For the same reason `want <= got` always holds -- the loop creates every planned name --
+    # so `missing` is empty on every reachable path and a mutant comparing len() instead of
+    # membership also survives. Both are kept: the loop is what makes them unreachable, and a
+    # refactor there should not silently turn this into a cardinality check.
+    want = {f for _, f in plan}
+    got = set(shards(out))
+    if got != want:
+        extra = sorted(got - want)
+        missing = sorted(want - got)
+        raise SystemExit(
+            f"REFUSE: {out_name}'s file set is not the plan. "
+            f"{len(extra)} came from no source: {extra[:5]}; "
+            f"{len(missing)} planned but absent: {missing[:5]}. Any count over this directory "
+            f"would be self-consistent and wrong."
+        )
+    # DISTINCT INODES, which the name comparison cannot see: two sources may hold shards that
+    # are already hardlinks of each other, and then two names in the union are one file. Every
+    # name is present, every link verified, and the count doubles that file's tokens.
+    inos = [os.stat(src).st_ino for src, _ in plan]
+    if len(set(inos)) != len(inos):
+        dup = sorted(f for src, f in plan if inos.count(os.stat(src).st_ino) > 1)
+        raise SystemExit(
+            f"REFUSE: {out_name} would link one inode under two names -- {len(dup)} shards "
+            f"share an inode with another ({dup[:6]}), so a count over the union charges that "
+            f"file's tokens twice. The sources are not disjoint."
+        )
+    print(f"file set == plan, {len(got)} shards, {len(set(inos))} distinct inodes", flush=True)
 
     from count_dir import count_dir
     from count_tokens import CONVENTION
@@ -227,13 +311,96 @@ def _selftest():
             assert "REFUSE: counted" in str(e) and "do not stamp it" in str(e), e
         else:
             raise AssertionError("a short union must refuse, it did not")
+
+        # REFUSAL 4: a stray shard already in the output directory. The world b0's review had
+        # to build by hand: a .jsonl that came from no source, which count_dir globs and counts
+        # as supply. The count stays self-consistent -- it is a true count of what is there --
+        # so only the file-set comparison catches it, and the token gate does NOT (the stray's
+        # tokens are simply included). Asserted in that order: set check first, then that a
+        # count-only build would have accepted it.
+        u5 = os.path.join(corpus, "u5")
+        os.makedirs(u5)
+        stray = os.path.join(u5, "src_a_999.jsonl")
+        with open(stray, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"content": "not from any source"}) + "\n")
+        try:
+            build(corpus, ("src_a", "src_b"), "u5", None, None, nw=2)
+        except SystemExit as e:
+            assert "file set is not the plan" in str(e), e
+            assert "src_a_999.jsonl" in str(e), e
+        else:
+            raise AssertionError("a stray shard in the output must refuse, it did not")
+        # and the control that shows why the set check is needed at all: the stray is real
+        # supply to a counter, so a build gated only on tokens would have passed it.
+        from count_dir import count_dir as _cd
+
+        assert _cd(u5, nw=2, quiet=True)["docs"] == 7, "the stray must be counted, else no defect"
+
+        # REFUSAL 6: a case-variant extension. b0's review found this and it is the one world
+        # where the file-set check is structurally blind rather than merely silent: `want` and
+        # `got` are BOTH derived from shards(), so a name shards() cannot see is absent from both
+        # and the sets agree about a plan that never held it. The control below is the whole
+        # point -- with the old filtering shards(), this world PASSED at "file set == plan,
+        # 2 shards" while one shard's documents were dropped from the supply.
+        u7src = os.path.join(corpus, "src_case")
+        os.makedirs(u7src)
+        for nm, body in (("src_case_000.jsonl", "lower"), ("src_case_001.JSONL", "upper")):
+            with open(os.path.join(u7src, nm), "w", encoding="utf-8") as f:
+                f.write(json.dumps({"content": body}) + "\n")
+        with open(os.path.join(u7src, "build_corpus_stats.json"), "w") as f:
+            json.dump({"domain": "src_case", "tokens": 0}, f)
+        try:
+            build(corpus, ("src_case",), "u7", None, None, nw=2)
+        except SystemExit as e:
+            assert "not lowercase" in str(e), e
+            assert "src_case_001.JSONL" in str(e), e
+        else:
+            raise AssertionError("a case-variant shard must refuse, it did not")
+        # the control: the variant holds a real document, so what was dropped was supply. Read it
+        # directly rather than through shards(), which is the function under test.
+        assert sum(1 for _ in open(os.path.join(u7src, "src_case_001.JSONL"))) == 1, (
+            "the case-variant shard must hold a document, else nothing was under-counted"
+        )
+
+        # REFUSAL 5: two sources that are already hardlinks of each other. The world for the
+        # distinct-inode check, and the only one it can have: every planned name is present,
+        # every link is st_ino-verified against its source, the file set equals the plan -- and
+        # one file is counted under two names. No name comparison can see this; the token gate
+        # cannot either, because the doubled tokens ARE in the directory. b2v2_dd was deduped
+        # against dd09 so the real sources are disjoint, but that is a property of how they
+        # were built, not of this script, and a third source would not inherit it.
+        os.makedirs(os.path.join(corpus, "src_d"))
+        os.link(
+            os.path.join(corpus, "src_a", "src_a_000.jsonl"),
+            os.path.join(corpus, "src_d", "src_d_000.jsonl"),
+        )
+        try:
+            build(corpus, ("src_a", "src_d"), "u6", None, None, nw=2)
+        except SystemExit as e:
+            assert "one inode under two names" in str(e), e
+            assert "src_a_000.jsonl" in str(e) and "src_d_000.jsonl" in str(e), e
+        else:
+            raise AssertionError("two sources sharing an inode must refuse, it did not")
+        # the control: the union really does double-count, so the refusal is load-bearing. The
+        # failed build left both links in place, and a counter charges 3 documents for the 2
+        # distinct files behind them -- src_a_000 and src_d_000 are one inode.
+        u6 = os.path.join(corpus, "u6")
+        n6 = _cd(u6, nw=2, quiet=True)["docs"]
+        n_ino = len({os.stat(os.path.join(u6, f)).st_ino for f in shards(u6)})
+        assert (n6, n_ino) == (3, 2), (
+            f"the shared inode must be counted under both names: {n6} docs over {n_ino} "
+            f"distinct inodes, expected 3 over 2 -- else nothing was double-counted"
+        )
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
     print(
         f"build_dd09_full selftest OK: 6 docs over 6 shards, {want_tokens} tokens counted over "
-        f"the union (not summed), every shard verified st_ino-identical to its source, "
-        f"idempotent on re-run; refuses a name collision, a copy, and a short count"
+        f"the union (not summed), every shard verified st_ino-identical to its source, file "
+        f"set asserted equal to the plan and every source inode distinct, idempotent on "
+        f"re-run; refuses a name collision, a copy, a short count, a stray shard a count "
+        f"alone would accept, two sources that are already links of each other, and a "
+        f"case-variant extension that both sides of the file-set check are blind to"
     )
     return 0
 
