@@ -205,6 +205,19 @@ assert all(w is not None for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_C
 # labelled as the ast.parse pass's own count so nobody reads it as current.
 RP1T_PYTHON_TOKENS_FALLBACK = 420_646_182
 
+# WHICH corpus fills the rp1t half of the code objective. resume 2 swaps this to
+# "code_rp1t_dd09", the near-dedup rebuild (data/corpus/code_rp1t_dd09, 235 shards). Held as a
+# name rather than edited in three call sites because _code_split, _rp1t_tokens and the floor
+# message all need the same one, and a swap that changes two of three is silent.
+#
+# NOT SWITCHED YET, deliberately: dd09's build_corpus_stats.json currently carries only
+# {domain, filters, n_shards} -- no `tokens` and no `fingerprint` (b0 measured it on the pod,
+# 2026-09-07). _rp1t_tokens refuses a non-default domain with no stamped tokens, and
+# launch_gate.gate_corpora:184 already NOGOs a domain whose stamp has no fingerprint, so
+# flipping this line before 3b's pass writes those fields cannot ship a mix -- it fails, which
+# is the correct state, not a silent fallback to another corpus's count.
+CODE_RP1T_DOMAIN = "code_py_rp1t"
+
 
 # One-epoch supply, tokens. Measured stamps for the landed domains; code is a parameter.
 # chatml is a RE-RENDER of wiki_chat's chat rows, not new data, so its supply is bounded by
@@ -646,10 +659,26 @@ def _measured_pools():
     return out
 
 
-def _rp1t_tokens():
+def _rp1t_tokens(name=CODE_RP1T_DOMAIN):
     """The ast.parse-surviving Python supply: the stamp when the corpus is here, else the
-    fallback constant. Never both, and the JSON records which one was used."""
-    return _corpus_stamp("code_py_rp1t", "tokens") or RP1T_PYTHON_TOKENS_FALLBACK
+    fallback constant. Never both, and the JSON records which one was used.
+
+    The DOMAIN IS A PARAMETER because resume 2 swaps in a near-deduped rebuild under a new
+    name (code_rp1t_dd09). The fallback is only correct for the default: it is one specific
+    corpus's ast.parse count, so a different domain falling back to it would report another
+    corpus's supply under its own name -- SUPPLY's wiki_chat entry records what that costs.
+    """
+    tok = _corpus_stamp(name, "tokens")
+    if tok:
+        return tok
+    if name != CODE_RP1T_DOMAIN:
+        sys.exit(
+            f"REFUSING: {name} has no `tokens` in data/corpus/{name}/build_corpus_stats.json, "
+            f"and RP1T_PYTHON_TOKENS_FALLBACK is {CODE_RP1T_DOMAIN}'s count, not {name}'s. "
+            f"A supply figure measured on another corpus is the wiki_chat defect (SUPPLY:212): "
+            f"the guard is fine and the number handed to it is not the quantity it names."
+        )
+    return RP1T_PYTHON_TOKENS_FALLBACK
 
 
 def _corpus_stamp(name, field):
@@ -810,7 +839,7 @@ def _code_split(starcoder_tokens, code_rows):
     sc_rows = round(code_rows * starcoder_tokens / total)
     return {
         "code_py_starcoder": (sc_rows, starcoder_tokens),
-        "code_py_rp1t": (code_rows - sc_rows, _rp1t_tokens()),
+        CODE_RP1T_DOMAIN: (code_rows - sc_rows, _rp1t_tokens()),
     }
 
 
@@ -926,6 +955,27 @@ def build(code_tokens, cursor=None):
                 f"{runtime / pool_rows_est:.3f} epochs, which is why a per-segment ceiling read "
                 f"this as a PASS. Cut this domain's weight until the TOTAL clears 4."
             )
+        if os.path.isdir(os.path.join(ROOT, "data", "corpus", name)) and not _corpus_fingerprint(name):
+            # SCOPED TO A CORPUS THAT IS ACTUALLY HERE. Without the isdir guard this warns on
+            # EVERY domain from any machine without the corpora -- which is every dev box, since
+            # data/corpus lives on the pod (see the fingerprint comment below). Caught by running
+            # the selftest: the first version fired 9 of 9 locally and broke case 6's
+            # `assert not _warnings`, i.e. it was the warning-that-fires-on-everything its own
+            # negative control exists to forbid.
+            #
+            # WARN, not a refusal: the launcher cannot fix a missing stamp field, and the writer
+            # must stay able to regenerate the 17 committed mixes that carry a null fingerprint
+            # for at least one domain (b0 counted them 2026-09-07; those nulls are stale MIX
+            # files, written before the read below existed -- every one of those domains has a
+            # fingerprint in its stamp today). The BINDING check is
+            # launch_gate.gate_corpora:184, which NOGOs a domain whose stamp has no fingerprint,
+            # so nothing launches on this WARN alone. Recorded here because the writer, running
+            # ON the pod, is where the absence is first visible.
+            warnings.append(
+                f"{name}: data/corpus/{name} exists but its build_corpus_stats.json carries no "
+                f"`fingerprint`, so this mix pins no bytes for it. launch_gate.gate_corpora will "
+                f"refuse a launch against this mix until the corpus pass writes that field."
+            )
         if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
                 f"{name}: {drawn_epochs:.2f} epochs exceeds the {EPOCH_SOFT_CEILING}-epoch "
@@ -977,7 +1027,12 @@ def build(code_tokens, cursor=None):
             # it out; saying WHY it is out is the only version that survives being read by
             # someone who is about to launch.
             "fingerprint": _corpus_fingerprint(name),
-            "fingerprint_source": f"read from data/corpus/{name}/build_corpus_stats.json",
+            "fingerprint_source": (
+                f"read from data/corpus/{name}/build_corpus_stats.json"
+                if _corpus_fingerprint(name) else
+                f"ABSENT: data/corpus/{name}/build_corpus_stats.json carries no `fingerprint`, "
+                f"so this mix pins nothing for {name}. launch_gate.gate_corpora refuses it."
+            ),
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil(({used}+{runtime})/{pool_rows_est}). PROVISIONAL: the pool "
                 f"is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token "
@@ -1691,7 +1746,99 @@ def selftest():
           "instead of 1.3% above, the capped three do not move, and another domain absorbs the "
           "difference")
 
-    print("selftest: 17/17")
+    # 18. THE MISSING-FINGERPRINT WARN, with its NEGATIVE CONTROL in the same case. A warning
+    #     that fires on every domain is worth the same as one that fires on none, so the shipped
+    #     world (every domain stamped) must produce NO fingerprint warning, and only then does
+    #     the stubbed-absent world have to produce one. Ordered that way deliberately: the
+    #     positive alone would pass against a `warnings.append` with no condition at all.
+    #
+    #     `os.path.isdir` IS STUBBED TOO, because the WARN is guarded on the corpus being present
+    #     and data/corpus is on the pod: unstubbed, this case would assert on a branch it never
+    #     reaches from a dev box and pass for the wrong reason. Restricted to the corpus root so
+    #     nothing else in build() sees a lie.
+    _saved_fp = globals()["_corpus_fingerprint"]
+    _real_isdir = os.path.isdir
+    _corpus_root = os.path.join(ROOT, "data", "corpus")
+
+    def _isdir_corpora_exist(p):
+        return True if str(p).startswith(_corpus_root) else _real_isdir(p)
+
+    try:
+        os.path.isdir = _isdir_corpora_exist
+        globals()["_corpus_fingerprint"] = lambda n: "f" * 16
+        _all_fp = build(3.8e9)
+        assert not [w for w in _all_fp["_warnings"] if "no `fingerprint`" in w], (
+            f"a fully stamped mix must raise no fingerprint warning: {_all_fp['_warnings']}"
+        )
+        for _d in _all_fp["domains"].values():
+            assert _d["fingerprint_source"].startswith("read from"), _d["fingerprint_source"]
+
+        _one = sorted(_all_fp["domains"])[0]
+        globals()["_corpus_fingerprint"] = lambda n: None if n == _one else "f" * 16
+        _miss = build(3.8e9)
+        _hits = [w for w in _miss["_warnings"] if "no `fingerprint`" in w]
+        assert len(_hits) == 1 and _hits[0].startswith(f"{_one}: "), (
+            f"exactly the unstamped domain must warn, got {_hits}"
+        )
+        assert _miss["domains"][_one]["fingerprint"] is None
+        assert _miss["domains"][_one]["fingerprint_source"].startswith("ABSENT:"), (
+            "a null fingerprint must say WHY in fingerprint_source, or the field reads as an "
+            "omission rather than a statement"
+        )
+        # NOT in _launch_blocked: the binding refusal is launch_gate.gate_corpora:184, and
+        # duplicating it here would let a future edit satisfy the writer while the gate is the
+        # thing that actually has to hold.
+        assert _one not in _miss.get("_launch_blocked", []), (
+            "the missing fingerprint is a WARN in the writer; the refusal belongs to launch_gate"
+        )
+        # THE isdir GUARD ITSELF, or the stub above would hide a WARN that fires from every dev
+        # box: with the corpus absent there is nothing to pin and nothing to say.
+        os.path.isdir = _real_isdir
+        if not _real_isdir(os.path.join(_corpus_root, _one)):
+            globals()["_corpus_fingerprint"] = lambda n: None
+            assert not [w for w in build(3.8e9)["_warnings"] if "no `fingerprint`" in w], (
+                "with data/corpus absent the writer must not warn about fingerprints -- the "
+                "absence of a corpus is not the absence of a pin"
+            )
+    finally:
+        os.path.isdir = _real_isdir
+        globals()["_corpus_fingerprint"] = _saved_fp
+    print("  18 a domain whose stamp carries no fingerprint warns and says ABSENT with the "
+          "reason in fingerprint_source, while a fully stamped mix warns not at all; the "
+          "refusal stays in launch_gate rather than being duplicated here")
+
+    # 19. THE FALLBACK IS ONE CORPUS'S COUNT, so a SWAPPED code domain with no stamped tokens
+    #     must REFUSE rather than inherit it. Without the name check _rp1t_tokens would report
+    #     code_py_rp1t's 420,646,182 as dd09's supply -- the wiki_chat defect exactly: a real
+    #     number, honestly measured, for a different domain than the one it is filed under.
+    #     Asserted on SystemExit and on the message naming both domains, because a refusal that
+    #     does not say which corpus the fallback belongs to sends the reader to the wrong file.
+    assert _rp1t_tokens(CODE_RP1T_DOMAIN) > 0, "the default domain must still resolve"
+    _saved_stamp = globals()["_corpus_stamp"]
+    try:
+        globals()["_corpus_stamp"] = lambda n, f: None
+        assert _rp1t_tokens(CODE_RP1T_DOMAIN) == RP1T_PYTHON_TOKENS_FALLBACK, (
+            "with no stamp the DEFAULT domain falls back, which is what the constant is for"
+        )
+        try:
+            _rp1t_tokens("code_rp1t_dd09")
+        except SystemExit as e:
+            _msg = str(e)
+            assert "code_rp1t_dd09" in _msg and CODE_RP1T_DOMAIN in _msg, (
+                f"the refusal must name the domain asked for AND the one the fallback measures: "
+                f"{_msg}"
+            )
+        else:
+            raise AssertionError(
+                "a swapped code domain with no stamped tokens must refuse, not silently return "
+                "another corpus's ast.parse count"
+            )
+    finally:
+        globals()["_corpus_stamp"] = _saved_stamp
+    print("  19 a swapped code domain with no stamped tokens refuses and the message names both "
+          "domains, while the default still falls back to the constant it was measured for")
+
+    print("selftest: 19/19")
     return 0
 
 
