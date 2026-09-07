@@ -1814,6 +1814,64 @@ def _selftest():
             lnch.kill()
             lnch.wait()
 
+        # THE TWO CASES WHERE THE FALLBACK IS THE RIGHT ANSWER, so its reachability is asserted
+        # rather than inferred (de, 2026-09-07). The three worlds above prove the fallback fires
+        # when there is NO descendant; these prove it fires correctly when there is one that
+        # cannot be claimed. Both behaved this way before the reorder too -- they are not
+        # regressions, they are the untested half of the branch.
+        #
+        # (a) A SHELL DESCENDANT ON THE CARD. _job_descendants excludes it and the holder is
+        # claimed. This is the one shape where "deepest" and "correct" diverge: the deepest
+        # process on a card IS the shell, and claiming it is what the acquire site's own refusal
+        # exists to prevent (the claim dies with the wrapper -> ORPHAN, or outlives the job ->
+        # card reads held).
+        #
+        # THE SHELL'S COMMAND MENTIONS python DELIBERATELY, and a plainer `bash -c 'while :; do
+        # sleep'` would not test what this claims. _job_descendants applies TWO independent
+        # filters -- `_argv0_is_shell` skips it, and the python/torchrun NAME filter rejects it --
+        # and a sleep loop fails both, so a mutant disabling the shell skip survived that version
+        # of this case (measured: 129/129 green with `if False: continue`). The command here
+        # defines a shell function named python3_marker and never runs python, so its argv passes
+        # the name filter while the process is genuinely a shell with no python descendant: the
+        # shell skip is then the only thing excluding it. `bash -c python3 train.py` does NOT work
+        # for this -- it spawns a real python grandchild that holds the card and is correctly
+        # claimed, which turned the case red for a reason unrelated to the branch under test.
+        # The real shape is harness launch's wrapper: a shell whose command line names python.
+        #
+        # (b) A LIVE NON-SHELL RANK HOLDING ZERO fds while the holder holds 36 -- b0_mem_m1
+        # inverted. There the claim bound a launcher with 0 fds while a rank held 52; here the
+        # only process demonstrably on a card is the holder, and claiming it is right for the same
+        # reason claiming the rank was right there. `>0 fds` is the predicate, not depth.
+        for label, child_cmd, holder_fds, child_fds, want_holder in (
+            ("a SHELL descendant holds the card",
+             "subprocess.Popen(['bash', '-c', "
+             "'python3_marker() { :; }; while :; do sleep 0.2; done'])", 36, 52, True),
+            ("a live non-shell rank holds ZERO device fds",
+             "subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(9)'])", 36, 0, True),
+        ):
+            fb = subprocess.Popen(
+                ["python3", "-c",
+                 f"import subprocess, sys, time; {child_cmd}; time.sleep(9)"],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL,
+                start_new_session=True)
+            try:
+                time.sleep(0.9)
+                _fake_proc(fb.pid, nvidia=holder_fds, other=9)
+                for q, _a in _descendants(fb.pid):
+                    _fake_proc(q, nvidia=child_fds, other=3)
+                got_fb = wait_for_device(fb.pid, deadline=1.2, interval=0.1)
+                _case(got_fb is not None and (got_fb[0] == fb.pid) == want_holder,
+                      f"b0-31 fallback: {label} -> the holder is claimed "
+                      f"(got {got_fb}, holder {fb.pid})")
+            finally:
+                for q, _a in _descendants(fb.pid):
+                    try:
+                        os.kill(q, 9)
+                    except OSError:
+                        pass
+                fb.kill()
+                fb.wait()
+
         # THE LIVE M1 DEFECT, 2026-09-05, and it was NOT the deadline the message blamed. The
         # launcher printed "no descendant of 915701 opened a GPU device within 90s" while the ranks
         # had held device fds since 22:35:01, two seconds after launch -- b0 claimed by hand at
