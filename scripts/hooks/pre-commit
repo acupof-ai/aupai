@@ -1813,8 +1813,12 @@ def main():
         # regression de caught before it shipped.
         "scripts/test_ckpt_name_hyphen.py",
         # StepProfiler's arithmetic and its labels. Here and NOT in NEEDS_DATA because it needs
-        # no card: it execs the class body out of train.py and drives it with fake cuda events,
-        # 1.7s. Registered in the same commit as the file, which is what the gate that refused
+        # no card: it execs the class body out of train.py and drives it with fake cuda events.
+        # 0.05s, mean of 5 runs of `python3 scripts/test_step_profiler.py` at load average 8.3
+        # (0.12s at load ~20; it is startup-bound, so it tracks host load). The commit that
+        # added it claimed 1.7s, which was one run taken at load average 40 while a stalled
+        # hook held the box -- 34x the quiet-box figure, and stated without being re-read.
+        # Registered in the same commit as the file, which is what the gate that refused
         # that commit was for. Its capacity is measured, not assumed -- five mutants, all red:
         # summing the no-sync arm instead of averaging it, dropping the spread verdict, dropping
         # the cadence rounding, ignoring --no_bucket_view in the label, and restoring the
@@ -2106,9 +2110,9 @@ def main():
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
                      # Its subject is a class DEFINED in train.py, which it reads out of the file
                      # by source span -- so a train.py edit is exactly when it must run, and
-                     # SELFTEST_FILES alone would run it only when someone edits the test. 1.7s
-                     # measured, and train.py is the worst-case subject at 42.6s, so this takes
-                     # it to 44.3s and the 45s budget still holds.
+                     # SELFTEST_FILES alone would run it only when someone edits the test. 0.05s
+                     # (mean of 5, load average 8.3), and train.py is the worst-case subject at
+                     # 42.6s -- that figure read from this comment block, not re-measured here.
                      "scripts/test_step_profiler.py",
                      "scripts/test_untie_head.py",
                      "scripts/test_mem_defaults_frozen.py",
