@@ -258,7 +258,17 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
     # stderr, while an absent or crashing one prints a traceback or a shell error. Both are
     # captured, and the verdict reads stderr rather than the code.
     _lk_err=$(mktemp)
-    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" "$sha" "$1" 2>"$_lk_err")
+    # `--pr` ADDS THE PR-APPROVAL SOURCE (4c's split ruling 2026-09-07): a code commit reviewed on
+    # its PR has no ledger row, and a ruling reviewed in the ledger has no PR, so either source
+    # satisfies the gate and requiring both would refuse every real case. The approval must carry
+    # `artifact:` or `case:` in its body -- approval is necessary, not sufficient -- because bare
+    # approval is a click while a review row names what the reviewer opened.
+    #
+    # EXIT 3 IS THE NEW ONE and `-gt 1` below already covers it: the lookup exits 3 when the PR
+    # source could not answer (gh absent, timed out, non-JSON), with the reason on stderr, so an
+    # unreachable GitHub reads as a BROKEN GATE rather than as an unreviewed commit. Verified
+    # against this branch rather than assumed.
+    row=$(cd "$MAIN" && python3 "$SCRIPT_DIR/review_row_lookup.py" --pr "$sha" "$1" 2>"$_lk_err")
     _lk_rc=$?
     _lk_msg=$(cat "$_lk_err"); rm -f "$_lk_err"
     if [ -n "$_lk_msg" ] || [ "$_lk_rc" -gt 1 ]; then
