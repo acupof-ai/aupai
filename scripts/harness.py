@@ -10606,6 +10606,98 @@ def _provenance_fingerprints(path, domains):
     return out
 
 
+def check_tokens_status_honest(root):
+    """No corpus stamp may say tokens_status "measured" over a sampled count.
+
+    build_corpus.py wrote that label unconditionally while counting min(3, len(shards))
+    shards and extrapolating by bytes, so on 2026-09-07 seven landed domains carried a
+    false "measured" over 34.5B tokens -- four of them 30B-mix supply fields, including
+    code_rp1t's 7,569,415,401 from 3 of 235 shards. The producer is fixed (835ff5a4);
+    this reads the artifacts, because a stamp written before that fix keeps its label
+    until someone recounts, and the mix is budgeted against the field, not the fix.
+
+    The evidence is the stamp contradicting ITSELF: tokens_config names the sample
+    ("3/235-shard sample extrapolated by bytes", or "first 3 shards") one key away from
+    a tokens_status that claims a count. That self-contradiction is the whole predicate --
+    it needs no access to the shards and cannot be fooled by a directory that moved.
+    A null tokens_config beside "measured" is WARN, not FAIL: the basis is unrecoverable
+    from the artifact, which is a real defect, but it is not a proven overstatement and
+    zh_web's null config sits on a genuine 909-of-909 count.
+    """
+    corpus = os.path.join(root, "data", "corpus")
+    if not os.path.isdir(corpus):
+        return SKIP, "no data/corpus on this machine"
+    lying, blind, ok, seen = [], [], 0, 0
+    for dom in sorted(os.listdir(corpus)):
+        stats = os.path.join(corpus, dom, "build_corpus_stats.json")
+        if not os.path.isfile(stats):
+            continue
+        try:
+            with open(stats, encoding="utf-8") as f:
+                s = json.load(f)
+        except Exception:
+            continue
+        seen += 1
+        if s.get("tokens_status") != "measured":
+            continue
+        cfg = s.get("tokens_config")
+        if not cfg:
+            blind.append(dom)
+            continue
+        m = re.search(r"(\d+)\s*/\s*(\d+)-shard", str(cfg))
+        if m and int(m.group(1)) < int(m.group(2)):
+            lying.append(f"{dom}: measured over {m.group(1)}/{m.group(2)} shards")
+        elif re.search(r"first (\d+) shards?", str(cfg)) and (s.get("n_shards") or 0) > int(
+            re.search(r"first (\d+) shards?", str(cfg)).group(1)
+        ):
+            n = re.search(r"first (\d+) shards?", str(cfg)).group(1)
+            lying.append(f"{dom}: measured over the first {n} of {s.get('n_shards')} shards")
+        else:
+            ok += 1
+    if lying:
+        return FAIL, f"{len(lying)} stamp(s) claim measured over a sample: " + "; ".join(lying[:4])
+    if blind:
+        return WARN, f"{ok} honest; {len(blind)} say measured with no tokens_config: " + ", ".join(blind[:5])
+    if not ok:
+        # SKIP, not PASS. A laptop has data/corpus/sample and nothing else, so zero stamps say
+        # "measured" and a PASS here would be a green light earned by having no evidence -- the
+        # exact vacuous pass this check was written to catch in the stamps. The selftest's
+        # all-zero-counts gate refuses it, correctly, and that refusal is why this branch exists.
+        # It names what it did not read (4c, 2026-09-07): a SKIP that says only "skipped" leaves
+        # the reader unable to tell an empty corpus from a check that walked the wrong directory.
+        return SKIP, (
+            f"read {seen} stamp(s) under data/corpus, none claiming tokens_status measured; "
+            f"the 52 stamped domains are pod-side"
+        )
+    return PASS, f"{ok} stamp(s) say measured and their tokens_config agrees"
+
+
+def _broken_tokens_status_honest():
+    """The real code_rp1t stamp, if it still carried its pre-recount extrapolation.
+
+    Mutated from the artifact rather than hand-written: this is the exact shape that
+    shipped, and the numbers are the ones that were live on 2026-09-07.
+    """
+    d = _tmp_repo()
+    dom = os.path.join(d, "data", "corpus", "code_rp1t")
+    os.makedirs(dom, exist_ok=True)
+    with open(os.path.join(dom, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
+        json.dump(
+            {
+                "domain": "code_rp1t",
+                "n_shards": 235,
+                "tokens": 7569415401,
+                "tokens_status": "measured",
+                "tokens_config": (
+                    "tokenizer.json, 315MB sample (first 3 shards), ids + one <eos> per doc "
+                    "(train.py encode), tok/byte extrapolated"
+                ),
+            },
+            f,
+        )
+    return d
+
+
 def check_corpus_fp(root):
     """Every domain the default mix names must (a) carry a build-time fingerprint
     (build_corpus.py stamps build_corpus_stats.json) matching the live directory, and
@@ -16060,6 +16152,15 @@ CHECKS = [
         _broken_prereg_amendment_date,
     ),
     (
+        "tokens_status_honest",
+        "no corpus stamp says tokens_status measured over a sampled tokens_config; a null config WARNs",
+        "build_corpus wrote measured unconditionally while sampling 3 shards, so seven landed "
+        "domains carried a false measured over 34.5B tokens -- four of them 30B-mix supply "
+        "fields the budget is read against",
+        check_tokens_status_honest,
+        _broken_tokens_status_honest,
+    ),
+    (
         "corpus_fp_matches",
         "every domain the default mix names carries a build-time fingerprint matching its live directory; a missing stamp is FAIL, not SKIP",
         "the voided 0.2b run trained on CCI3 shards under web_hq's name and no fingerprint said so -- an unstamped domain cannot be distinguished from a swapped-in one",
@@ -16452,6 +16553,10 @@ EVIDENCE = {
     # on the pod found 10 unregistered files where a laptop glob plus a code grep reported 8.
     "eval_registry_complete": "pod",
     "eval_sft_template_contamination": "pod", "corpus_fp_matches": "pod", "pod_drift": "pod",
+    # pod: the stamps live beside the shards, and data/corpus/* is gitignored. On a laptop
+    # this check reads zero stamps and PASSES on an empty set -- the vacuous pass it exists
+    # to catch elsewhere -- so its verdict is only meaningful where the corpus is.
+    "tokens_status_honest": "pod",
     "ladder_config_frozen": "pod", "ladder_cfg_consistent": "pod", "mix_supply": "pod",
     "milestone_ckpt_pinned": "pod", "env_fp_present": "pod", "opt_state_present": "pod",
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
@@ -20457,7 +20562,39 @@ def _demo(only=None):
         return ("every move in the world's reflog advances by ancestry, so the world does not "
                 "hold the condition the check exists to catch")
 
+    # Third artifact that cannot live at a repo-real path, for the plainest reason of the
+    # three: every build_corpus_stats.json is gitignored (data/corpus/* is), so `git ls-files
+    # data/corpus | grep stats` returns zero and no world built in this repository can hold a
+    # stamp at a tracked path. The path test would refuse a world built from the real artifact
+    # and accept nothing else, so it is replaced rather than waived.
+    #
+    # The substitute is STRICTER than the path test on the property that matters: the world's
+    # stamp must be self-contradictory in the exact way the incident was -- tokens_status
+    # "measured" beside a tokens_config that names a proper sample -- and its numbers must be
+    # the ones that were live. A hand-written world that says "measured" over a full count, or
+    # over no config at all, fails here; the path test could not tell those apart.
+    def _stamp_sample_world_is_real(world):
+        p = os.path.join(world, "data", "corpus", "code_rp1t", "build_corpus_stats.json")
+        if not os.path.exists(p):
+            return "the world holds no code_rp1t stamp at data/corpus/code_rp1t/build_corpus_stats.json"
+        try:
+            with open(p, encoding="utf-8") as f:
+                s = json.load(f)
+        except Exception as e:
+            return f"the world's stamp is not readable json ({type(e).__name__})"
+        if s.get("tokens_status") != "measured":
+            return f"the world's stamp says tokens_status {s.get('tokens_status')!r}, so it does not hold the condition"
+        cfg = str(s.get("tokens_config") or "")
+        m = re.search(r"first (\d+) shards?", cfg) or re.search(r"(\d+)\s*/\s*(\d+)-shard", cfg)
+        if not m:
+            return "the world's tokens_config names no sample, so measured is not contradicted by it"
+        if s.get("tokens") != 7569415401 or s.get("n_shards") != 235:
+            return (f"the world's numbers are invented: tokens {s.get('tokens')} n_shards "
+                    f"{s.get('n_shards')}, not the 7569415401 over 235 that was live 2026-09-07")
+        return None
+
     world_reality = {"pod_stamp_is_main": _stamp_world_is_real,
+                     "tokens_status_honest": _stamp_sample_world_is_real,
                      "main_advances_by_ancestry": _reflog_world_is_real}
     # WARN-only checks: their broken world must produce WARN (or FAIL), not PASS/SKIP.
     # review_present joined them on 2026-09-01 when the user cut the blocking: a check

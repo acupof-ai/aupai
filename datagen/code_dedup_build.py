@@ -53,7 +53,10 @@ def main():
     ap.add_argument("--out_dir", required=True)
     ap.add_argument("--ckdir", required=True)
     ap.add_argument("--sample_out", default="")
+    ap.add_argument("--th", type=float, default=TH,
+                    help="est cluster threshold; the stamp records the value USED, not the default")
     a = ap.parse_args()
+    th = a.th
     os.makedirs(a.out_dir, exist_ok=True)
 
     dom_sigs, dom_locs = [], []
@@ -84,8 +87,8 @@ def main():
                 pairs.add((u, v) if u < v else (v, u))
     pv = np.asarray(sorted(pairs), dtype=np.int64).reshape(-1, 2)
     est = (all_sigs[pv[:, 0]] == all_sigs[pv[:, 1]]).mean(axis=1)
-    e = pv[est >= TH]
-    print(f"{len(pairs)} candidates, est>={TH}: {e.shape[0]} edges", flush=True)
+    e = pv[est >= th]
+    print(f"{len(pairs)} candidates, est>={th}: {e.shape[0]} edges", flush=True)
 
     parent = list(range(n))
     def find(x):
@@ -154,16 +157,16 @@ def main():
                            "filters_fp": s.get("filters_fp")}
     stats = {"domain": os.path.basename(a.out_dir),
              "inputs": stamps,
-             "dedup": {"threshold": TH, "method": "MinHash-J char 5-gram", "n_perm": PERMS, "bands": BANDS,
+             "dedup": {"threshold": th, "method": "MinHash-J char 5-gram", "n_perm": PERMS, "bands": BANDS,
                        "docs_in": n, "docs_kept": len(kept_set), "docs_deleted": len(deleted),
                        "clusters_gt1": len(multi),
                        "est_note": "est verified est≈exact on char 5-gram (dq.near_dedup_code_rate)"},
-             "filters": "code_dedup08-th0.8-ordinal-rep", "n_shards": shards_written}
+             "filters": f"near-dedup-th{th}-ordinal-rep", "n_shards": shards_written}
     with open(os.path.join(a.out_dir, "build_corpus_stats.json"), "w", encoding="utf-8") as f:
         json.dump(stats, f, ensure_ascii=False, indent=1)
     rr = round(time.perf_counter() - t0)
     print(json.dumps({"docs_in": n, "docs_deleted": len(deleted), "docs_kept": len(kept_set),
-                      "expected_rate_th08": 0.0418, "bytes_written_MB": round(bytes_w / 1e6, 1)}, ensure_ascii=False), flush=True)
+                      "threshold": th, "bytes_written_MB": round(bytes_w / 1e6, 1)}, ensure_ascii=False), flush=True)
     print(f"DONE in {rr // 60}m{rr % 60}s -> {a.out_dir}", flush=True)
 
 
