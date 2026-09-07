@@ -18599,6 +18599,8 @@ def _selftest_main_touched_raises_on_unreadable_main():
     check whose subject is individual deliveries -- failures equal to total is the signature
     of an absent comparison side, not of N real defects.
     """
+    global ROOT   # world 5 repoints it; declared after the docstring, never before it
+
     import shutil
     import tempfile
 
@@ -18715,29 +18717,55 @@ def _selftest_main_touched_raises_on_unreadable_main():
         # world must do -- rather than raising.
         ci_root = tempfile.mkdtemp(prefix="mt_ciroot_")
         try:
-            # CLONE THE COMMON GIT DIR, not ROOT. ROOT here is a linked WORKTREE, and cloning a
-            # worktree path gives a repo with a local main and NO refs/remotes/origin/main -- the
-            # world then SKIPped, and a SKIP is indistinguishable from a pass in the mutant sweep:
-            # measured, the fixture mutant stayed GREEN through a world that never ran. The clone
-            # source must be the repository, and `--depth 50` keeps it cheap while still carrying
-            # the shas the ledger cites near the tip.
+            # THE REF STATE IS CONSTRUCTED, NOT DERIVED FROM A CLONE. Two measured failures got
+            # here, and both were the world inheriting the defect it tests:
+            #   `clone --depth 50` of the integration tree, of its common git dir, and of this
+            #   worktree ALL yield refs/remotes/origin/HEAD plus the SOURCE's current branch only
+            #   -- fb, fb, de -- because a shallow clone fetches the source's HEAD branch alone
+            #   (/tmp/de_clone_probe.py). An earlier version simply asserted origin/main would be
+            #   there and passed once, when the integration tree happened to sit on a
+            #   main-carrying branch: a premise that depends on a neighbouring session's checkout.
+            #   Then `fetch +refs/heads/main:` failed ON CI (run 34096313397) for the same reason
+            #   one level down -- the CI checkout has NO refs/heads/main to fetch, which is the
+            #   whole subject of this fix.
+            # So: an empty repo, its objects borrowed via `alternates`, and
+            # refs/remotes/origin/main pointed at the tip main_ref finds in ROOT -- whatever ref
+            # that is here. No local head exists because none is ever created. That is
+            # actions/checkout's end state for a pull_request build, and it is the same
+            # borrow-the-objects trick _broken_tasks_closed_by_commit itself uses.
+            _tip = subprocess.run(["git", "-C", ROOT, "rev-parse", main_ref(ROOT) or "main"],
+                                  capture_output=True, text=True).stdout.strip()
             _common = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
                                       "--git-common-dir"], capture_output=True, text=True
-                                     ).stdout.strip() or ROOT
-            subprocess.run(["git", "clone", "-q", "--no-checkout", "--depth", "50",
-                            _common, ci_root], capture_output=True, text=True)
-            subprocess.run(["git", "-C", ci_root, "checkout", "-q", "--detach"], capture_output=True)
-            subprocess.run(["git", "-C", ci_root, "branch", "-D", "main"], capture_output=True)
+                                     ).stdout.strip()
+            subprocess.run(["git", "-C", ci_root, "init", "-q", "."], capture_output=True)
+            if _common:
+                _alt = os.path.join(ci_root, ".git", "objects", "info", "alternates")
+                os.makedirs(os.path.dirname(_alt), exist_ok=True)
+                with open(_alt, "w") as fh:
+                    fh.write(os.path.join(_common, "objects") + "\n")
+            if _tip:
+                subprocess.run(["git", "-C", ci_root, "update-ref",
+                                "refs/remotes/origin/main", _tip], capture_output=True)
+                subprocess.run(["git", "-C", ci_root, "read-tree", _tip], capture_output=True)
+            for _b in subprocess.run(["git", "-C", ci_root, "for-each-ref", "--format=%(refname)",
+                                      "refs/heads/"], capture_output=True, text=True
+                                     ).stdout.split():
+                subprocess.run(["git", "-C", ci_root, "update-ref", "-d", _b], capture_output=True)
+            # The fixture reads ROOT/runs/tasks.jsonl from the FILESYSTEM, so the world needs it.
+            os.makedirs(os.path.join(ci_root, "runs"), exist_ok=True)
+            shutil.copy(os.path.join(ROOT, "runs", "tasks.jsonl"),
+                        os.path.join(ci_root, "runs", "tasks.jsonl"))
             _no_local = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
                                         "main"], capture_output=True, text=True).returncode != 0
             _has_remote = subprocess.run(["git", "-C", ci_root, "rev-parse", "--verify", "--quiet",
                                           "refs/remotes/origin/main"],
                                          capture_output=True, text=True).returncode == 0
             # A SKIP THAT HIDES THE SUBJECT IS A FAILURE, not a note. The premise is buildable
-            # wherever git can clone, so failing to build it means this world is not running and
+            # wherever git can init, so failing to build it means this world is not running and
             # the mutant sweep reads its silence as a pass.
             assert _no_local and _has_remote, (
-                f"world 5: could not build a PR-shaped clone of {_common} (local main "
+                f"world 5: could not build the PR-shaped ref state in {ci_root} (local main "
                 f"absent={_no_local}, origin/main present={_has_remote}); the world would SKIP, "
                 f"and a SKIP here is indistinguishable from a pass")
             _row = next((t for t in CHECKS if t[0] == "tasks_closed_by_commit"), None)
@@ -18747,7 +18775,13 @@ def _selftest_main_touched_raises_on_unreadable_main():
             # world would then be half-CI and prove nothing.
             import harness_core as _core5
             _saved, _saved_core = ROOT, _core5.ROOT
-            globals()["ROOT"] = _core5.ROOT = ci_root
+            # `global ROOT`, not globals()["ROOT"]: harness.py defines its own module-level
+            # ROOT (:34), so the dict write was NOT inert -- but
+            # _selftest_core_reexports_are_identical flags any globals()[name] whose name also
+            # exists in harness_core, because from the outside an inert patch of a core object
+            # looks identical. It caught this on PR #3 (job 34094214357). The guard is right to
+            # be name-based and the fix is to use the idiom it cannot mistake.
+            ROOT = _core5.ROOT = ci_root
             _st = _ev = None
             _raised = None
             try:
@@ -18763,7 +18797,7 @@ def _selftest_main_touched_raises_on_unreadable_main():
                 # existed: the mutant produced that text and the sweep read it as uncaught.
                 _raised = e
             finally:
-                globals()["ROOT"] = _saved
+                ROOT = _saved
                 _core5.ROOT = _saved_core
                 _MAIN_REF.clear()
                 _MAIN_TOUCHED.clear()
@@ -23149,25 +23183,63 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             claim_pid = job_pids[0] if job_pids else None
         if claim_pid:
             note = f"harness launch {args.name}"
-            # The pending row is this name's claim file, so acquire would clash with itself.
-            # Remove it and let acquire write the real one -- the window it covered is over,
-            # because claim_pid is a process observed holding the card.
-            if pending_path and os.path.exists(pending_path):
-                try:
-                    os.unlink(pending_path)
-                except OSError:
-                    pass
-            # require_device only when the poll established it: on macOS the fallback picked
-            # the first non-shell descendant without proving anything, so asserting it there
-            # would refuse every laptop launch.
+            # ACQUIRE FIRST, UNLINK ONLY ON SUCCESS. The old order unlinked the pending row and
+            # then called acquire, so a REFUSED acquire left the cards declared by nobody while
+            # the job ran on them -- exactly the de-47 hole the pending row was written to close,
+            # reopened at the moment the row was needed most. It is not hypothetical: on
+            # 2026-09-07 the 30B launch was refused with "cards ['6'] are claimed by
+            # {'6': ['tilerl-gdnfloor']}" and runs/claims/ was empty a minute later with all six
+            # ranks alive; b0 had to hand-acquire.
+            #
+            # NO SELF-CLASH TO AVOID. The old comment said "the pending row is this name's claim
+            # file, so acquire would clash with itself", and that is not what acquire does:
+            # card_claim.py:833 excludes this claim's own file from the clash test, and its
+            # O_EXCL/FileExistsError path REBINDS when the new pid is a descendant of the recorded
+            # one (card_claim.py:1041) -- which is precisely pending(wrapper) -> held(job).
+            # Measured 2026-09-07 in an isolated claim dir: with the pending row present and no
+            # clash, acquire returns "claimed 2,3,4,5,6,7" and the row on disk carries the JOB's
+            # pid. The unlink bought nothing and cost the refusal case.
+            #
+            # It also masked a card_claim defect rather than avoiding one: the pending row satisfied
+            # acquire's ancestry exemption (the row names the wrapper, the asked pid is its child),
+            # so keeping the row without fixing that would have turned the refusal into a silent
+            # True with nothing written. Fixed at card_claim.py:866 in the same commit; the order
+            # here is safe only together with it.
+            #
+            # require_device only when the poll established it: on macOS the fallback picked the
+            # first non-shell descendant without proving anything, so asserting it there would
+            # refuse every laptop launch.
             ok_claim, claim_msg = _acquire_cards(args.name, cards, claim_pid, note,
                                                  require_device=claim_dev is not None)
             if ok_claim:
+                # The window the pending row covered is over: claim_pid was observed holding the
+                # card and acquire has written the real row. Remove the pending file only if
+                # acquire did not already reuse that path -- when it rebinds in place, this IS the
+                # real claim and unlinking it would delete what we just acquired.
+                if pending_path and os.path.exists(pending_path):
+                    still_pending = False
+                    try:
+                        with open(pending_path, encoding="utf-8") as _pf:
+                            still_pending = json.load(_pf).get("state") == "pending"
+                    except (OSError, ValueError):
+                        still_pending = False
+                    if still_pending:
+                        try:
+                            os.unlink(pending_path)
+                        except OSError:
+                            pass
                 claim_name = args.name
                 held = f" ({claim_dev} device fds)" if claim_dev else ""
                 print(f"claim  cards {cards} -> pid {claim_pid}{held}")
             else:
-                print(f"note   cards {cards} not claimed: {claim_msg}", file=sys.stderr)
+                # THE PENDING ROW STAYS. The cards are in use by this job whatever acquire thinks,
+                # and a row saying so is what stops the sweep calling them ORPHAN and a second
+                # launch taking them. It names the wrapper pid, so it goes stale on its own when
+                # the job ends -- no manual cleanup, and no claim on a shell being treated as real.
+                _kept = (" The PENDING row stands, so the cards are still declared and go stale "
+                         "when the wrapper exits." if pending_path and os.path.exists(pending_path)
+                         else " NO row exists for these cards -- claim them by hand.")
+                print(f"note   cards {cards} not claimed: {claim_msg}{_kept}", file=sys.stderr)
         elif _proc_readable():
             _w = _dev_wait()
             # THE JOB MAY SIMPLY HAVE BEEN FAST, and that is not the same as never holding a card.
