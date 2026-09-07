@@ -470,6 +470,68 @@
     "code_rp1t is upstream-deduped",
     "rp1t github needs no dedup"
    ]
+  },
+  {
+   "id": "cs.code_rp1t_markup_composition",
+   "value": {
+    "rate_docs": 0.13,
+    "frac_tokens": 0.3685,
+    "generated_doc_tokens": 443264290,
+    "generated_doc_frac": 0.059
+   },
+   "unit": "fraction of code_rp1t, and tokens",
+   "measured": "2026-09-07",
+   "source": "/work/aupai/runs/code_rp1t_markup_rate.json (400-doc uniform draw, datagen/sample_markup_rate.py) plus runs/code_rp1t_markup_handread.json (100 code-verdict heads + all 52 positives, hand read by 3b)",
+   "config": {
+    "draw": "400 documents drawn uniformly over code_rp1t's 3,747,157; binomial CI on the doc rate",
+    "rate_docs_ci95": [
+     0.097,
+     0.163
+    ],
+    "frac_tokens_basis": "token-weighted over the SAME 400-doc draw; a ratio estimator, so its error exceeds the binomial CI and no CI is quoted",
+    "mean_tokens": {
+     "markup": 6613,
+     "code": 1694
+    },
+    "positives_labelled_52": {
+     "FP-code": {
+      "n": 13,
+      "token_share": 0.341,
+      "note": "C#/Java/TypeScript/PHP source with inline XML doc-comments or Android string resources; the >=20-tags-in-4k rule fires on them"
+     },
+     "handwritten-web": {
+      "n": 22,
+      "token_share": 0.317,
+      "note": "three.js demos, Thymeleaf templates, WordPress walkers, test harness pages -- code we keep"
+     },
+     "data-xml": {
+      "n": 12,
+      "token_share": 0.183,
+      "note": "Android manifests, Atom feeds, DocBook, Qt .ts translations"
+     },
+     "generated-doc": {
+      "n": 5,
+      "token_share": 0.159,
+      "note": "javadoc, dlib cpp_pretty_printer, Xtext -- the only class a filter should target"
+     }
+    },
+    "false_negatives": "2 of 100 code-verdict heads were generated markup the sniff missed (an ASF-licensed XML file, a JAXB-generated file); 10 more were prose/README/rst, neither markup nor code",
+    "classifier": "content sniff only -- code_rp1t rows carry {content, source, url} and url is null in 6000 of 6000 sampled, so there is no filename in the domain and extension-based classification is impossible"
+   },
+   "uncertainty": "rate_docs 0.130 is a LOWER BOUND: the sniff misses markup without a doctype or generator line, measured at 2 per 100 code verdicts. The 0.3685 token fraction is NOT removable supply -- three of its four classes are content to keep.",
+   "status": "measured",
+   "retracted_value": [
+    2790000000,
+    2.79
+   ],
+   "claim": "Retracted 2026-09-07 within the hour it was made: '~2.79B tokens of generated markup, the filter is a bigger lever than the dedup by 3.2x'. That multiplied the 36.85% token fraction by the domain total without labelling what was inside it. The hand read shows only 15.9% of those tokens are generated documentation -- 443,264,290, 5.9% of the domain -- against ~864M removed by the th0.9 dedup, so DEDUP is the bigger lever by about 2x and the original claim was inverted.",
+   "audit": "3b hand-read all 52 positives and 100 of the 348 code verdicts; 4c ruled no markup filter, and that any future one keys on the generator line, never the tag count",
+   "refuted_by": "runs/code_rp1t_markup_handread.json",
+   "boundary": "Says nothing about the OTHER code domains: code_py_starcoder and code_py_rp1t are python-filtered by AST parse, so a generated-HTML population cannot survive there and this rate must not be carried across.",
+   "guard_phrases": [
+    "37% of code_rp1t is markup",
+    "the markup filter is the bigger lever"
+   ]
   }
  ]
 }
