@@ -364,6 +364,28 @@ def events_pod_lacks(pod_rows, local_rows, keyfn):
     itself is the event. Rows that do carry them keep the (key, status, result, ended) identity
     unchanged, which is what keeps the differing-close case below refused -- that pair differs in
     `result`, a field it has, so it never reaches this branch and stays `contradicts`.
+
+    WHICH LEDGERS THIS BRANCH ACTUALLY GOVERNS, censused 2026-09-07 over runs/*.jsonl rather than
+    assumed from the facts-shaped case it was written for. Every ledger except three is entirely
+    no-event-field: tasks.jsonl 565 of 584 rows (task rows carry `state`, not `status`),
+    review.jsonl 241 of 241, msg_log.jsonl 428 of 428, friction.jsonl 228 of 228,
+    score_matrix.jsonl 83 of 83. Only experiments.jsonl (431 of 432) is all-three. So this is not a
+    narrow path for one ledger -- it is the identity for most of them, and the event-field identity
+    is the exception.
+
+    AND THE SIGNATURE COUNT IS NOT THE PUSH COUNT, which is the number that matters and the one I
+    nearly reported wrongly. On tasks.jsonl the fallback takes 292 distinct signatures to 565, so
+    273 rows become newly distinguishable. That is not 273 new pushes: the cut still requires the
+    pod's own last event for the key to be found locally and only offers what follows it. Driven on
+    the real ledger with the pod one commit behind (pod = local minus its last 3 rows), the old
+    signature and the new one offer the SAME single row. The extra signatures buy discrimination,
+    not traffic.
+
+    A ROW CARRYING SOME BUT NOT ALL THREE keeps the event identity, because the test is `any`, not
+    `all`. That shape is live -- 19 rows in tasks.jsonl, 2 in prereg.jsonl, 1 in experiments.jsonl
+    -- so it is a real class and not a hypothetical: one field present is enough to mean the row
+    speaks the event vocabulary, and a row with a `status` and no `ended` is a start, which is
+    exactly what the event identity is for.
     """
     _EVENT_FIELDS = ("status", "result", "ended")
 
