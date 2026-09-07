@@ -523,8 +523,11 @@ FREED_RECIPIENTS = {"math_owm_stage2": 0.2643, "code_py_starcoder": 0.3297}
 # weight in this file is a fraction of the 7,324,218-row WHOLE PLAN: at 1.30 the recipients may
 # take 2,268,335 plan rows while their launch weights already ask 4,980,346. Both numbers were
 # real and each was correct for its own denominator, which is why neither reading looked wrong.
-# 2.10 is above the 2.0509/2.0045 the fixed deriver actually produces, so nothing binds today and
-# this changes no number in the launch mix. It is here so the ceiling is a guard and not a comment.
+# 2.10 is above what the fixed deriver produces, so nothing binds today and this changes no number
+# in the launch mix. THAT CLAIM IS ASSERTED IN THE SELFTEST (case 17) AGAINST THIS VALUE, not stated
+# here: three different pairs for those two epoch figures were in circulation in this file and none
+# matched the code to better than 1.2%, so the number is derived where it is checked and this comment
+# names only the ruling. It is here so the ceiling is a guard and not a comment.
 FREED_CEILING = 2.10
 
 
@@ -1584,8 +1587,13 @@ def selftest():
     #     leaves math at 0.86 epochs, where any ceiling above 0.86 is vacuous and a test on it
     #     would pass however _renormalise_holding_clamped behaves. Same lesson as case 16's fresh
     #     path -- a negative assertion needs a world where the positive is reachable.
-    #     AND THE CEILING HAS TO BE LOWERED, because at the shipped 2.10 nothing binds by design
-    #     (measured: math 2.0557, starcoder 2.0142), which is exactly why 4c set it there.
+    #     AND THE CEILING HAS TO BE LOWERED, because at the shipped FREED_CEILING nothing binds by
+    #     design -- which is why 4c set it there. That claim is ASSERTED below against the shipped
+    #     value rather than quoted: three different pairs for these two epoch figures were in
+    #     circulation in this file (2.0509/2.0045 at the FREED_CEILING comment, 2.0557/2.0142 here)
+    #     and tilerl measured starcoder at 1.9909, so all three disagreed with the code by up to
+    #     1.2%. A comment labelled `measured` is what the next reader trusts instead of deriving,
+    #     and a stale one is worse than no number. The assertion cannot go stale.
     _live_cur = {"chat_qa": 31260, "chatml": 31945, "code_py_rp1t": 68575,
                  "code_py_starcoder": 1424422, "cot": 348846, "en_c4_stage2": 702789,
                  "math_owm_stage2": 1142230, "textbook_30b": 438345, "zh_web": 131588}
@@ -1598,6 +1606,17 @@ def selftest():
             _pool = _pool_rows(8.85e9 if n == "code_py_starcoder" else SUPPLY[n])
             return (m["domains"][n]["rows_from_weight_at_runtime"]
                     + int(_live_cur.get(n, 0))) / _pool
+        # THE SHIPPED CEILING BINDS NOTHING -- asserted, not quoted. This is the claim the whole
+        # ruling rests on ("2.10 changes no number in the launch mix"), so it is checked against
+        # whatever FREED_CEILING currently says rather than against an epoch figure typed into a
+        # comment. If a future weight change pushes a recipient over the shipped ceiling, the mix
+        # silently starts pinning and this fires instead.
+        _shipped = {n: _ep_of(_unpinned, n) for n in FREED_RECIPIENTS}
+        for _n, _e in _shipped.items():
+            assert _e <= FREED_CEILING, (
+                f"{_n} draws {_e:.4f} total epochs against the shipped FREED_CEILING "
+                f"{FREED_CEILING}, so the ceiling BINDS in the launch mix and the ruling that it "
+                f"changes no number is no longer true. Re-derive the mix with 4c before launching.")
         # THE UNPINNED WORLD MUST BE OVER THE LOWERED CEILING, or there is nothing to clamp.
         FREED_CEILING = 1.90
         for _n in FREED_RECIPIENTS:
