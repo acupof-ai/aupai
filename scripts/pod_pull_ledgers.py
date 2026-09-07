@@ -674,7 +674,7 @@ def verify_pod_append(rel, rows, pod_root=POD_ROOT, reader=read_pod):
     return bad
 
 
-def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
+def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False, rulings=None):
     """[(rel, n_pod, n_local, missing, collisions, error)] for every ledger.
 
     `push` swaps which side is authoritative for `missing`: by default missing is pod rows
@@ -690,7 +690,11 @@ def survey(root=ROOT, pod_root=POD_ROOT, reader=read_pod, push=False):
     from ledger_resolutions import index, settled
 
     keys = _keys()
-    idx = index()
+    # `rulings` is for the selftest ONLY, and it exists because index() reads an absolute module
+    # path: survey(root=_tmp) redirects the ledgers but not the rulings, so a survey-level world
+    # could not carry a stale ruling and the one wiring that matters here was untestable. Default
+    # None keeps production reading the real file.
+    idx = index() if rulings is None else rulings
     out = []
     for rel in _ledgers():
         text, err = reader(rel, pod_root)
@@ -1605,16 +1609,51 @@ def _selftest():
     assert not (_MONITOR_CLEAN & _MONITOR_FAILED)
     assert _MONITOR_RESULTS == _MONITOR_CLEAN | _MONITOR_FAILED
 
-    # THE CLASS MUST SURVIVE A STALE RULING, asserted on the COMPOSITION rather than on classify.
-    # classify was already right about b0_p5_ctrl_bf16; the report was not, because the call site
-    # wrote `stale or why` and a stale-ruling string replaced the class outright. Nothing here
-    # tested the two together, which is why the conflation lived -- a selftest on classify alone
-    # cannot see what its caller does with the answer.
-    _lbl = (lambda why, stale: f"{why} [{stale}]" if stale else why)
-    assert _lbl("monitor_state_only", None) == "monitor_state_only"
-    _both = _lbl("monitor_state_only", "ruled 2026-09-06 by b0 about a different POD row")
-    assert _both.startswith("monitor_state_only"), _both
-    assert "ruled 2026-09-06" in _both, _both
+    # THE CLASS MUST SURVIVE A STALE RULING, ASSERTED THROUGH survey() (44, 2026-09-08). My first
+    # version tested a LAMBDA COPY of difference_label, and even calling the real function was not
+    # enough: reverting the call site to `stale or why` left the whole selftest GREEN, measured.
+    # That is line 1267's own principle -- "SURVEY MUST ACTUALLY USE IT, asserted through survey()
+    # and not just on the function" -- which I applied to events_pod_lacks and not to this. A
+    # helper that works and is not called is the shape this file exists against, and 44 caught me
+    # writing the rule in one place and breaking it in another.
+    #
+    # The world needs BOTH halves or the mutation is invisible: a monitor pair so classify returns
+    # monitor_state_only, AND a ruling registered for that key whose fingerprints no longer match,
+    # so settled() returns a stale-ruling string for the label to lose.
+    assert difference_label("monitor_state_only", None) == "monitor_state_only"
+    _lbl_meas = {"name": "lbl", "started": "L1", "status": "ok",
+                 "result": "62K tok/s/gpu at step 30", "finding": "val 5.094"}
+    _lbl_mon = {"name": "lbl", "started": "L1", "status": "ok", "result": "exit 0",
+                "finding": "monitor: process exited cleanly"}
+
+    def _lbl_pair(rel, pod_root):
+        if rel != "runs/experiments.jsonl":
+            return "", None
+        return json.dumps(_lbl_mon, ensure_ascii=False) + "\n", None
+
+    _lt = __import__("tempfile").mkdtemp(prefix="ledger_label_")
+    os.makedirs(os.path.join(_lt, "runs"))
+    for _rel in _ledgers():
+        with open(os.path.join(_lt, _rel), "w", encoding="utf-8") as _f:
+            if _rel == "runs/experiments.jsonl":
+                _f.write(json.dumps(_lbl_meas, ensure_ascii=False) + "\n")
+    # A ruling about OTHER rows: the fingerprints are deliberately wrong, which is what makes
+    # settled() report "ruled ... about a different LOCAL row -- re-read it" instead of settling.
+    _lbl_rulings = {("runs/experiments.jsonl", ("lbl", "L1")): {
+        "date": "2026-09-06", "ruled_by": "b0", "local_fp": "0" * 16, "pod_fp": "0" * 16}}
+    _lbl_rows = {r[0]: r for r in survey(root=_lt, reader=_lbl_pair, rulings=_lbl_rulings)}
+    _lbl_coll = _lbl_rows["runs/experiments.jsonl"][4]
+    assert len(_lbl_coll) == 1, f"expected one collision, got {_lbl_coll}"
+    _why = _lbl_coll[0][1]
+    assert _why.startswith("monitor_state_only"), (
+        f"survey() reported {_why!r}. The difference CLASS must lead: a stale ruling says what "
+        f"happened to an earlier decision, not why the rows differ, and `stale or why` at the "
+        f"call site drops the class entirely -- the defect this case exists to catch."
+    )
+    assert "ruled 2026-09-06" in _why, (
+        f"survey() reported {_why!r}, losing the stale ruling. Both belong: the class is what "
+        f"makes the rows differ, the ruling note is why the earlier decision no longer settles it."
+    )
 
     print(
         f"pod_pull_ledgers selftest OK: {len(_ledgers())} ledgers keyed from ledger_audit.KEYS; "
