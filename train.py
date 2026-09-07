@@ -1351,16 +1351,22 @@ class StepProfiler:
     reduce actually costs. What the accum structure gives instead is a differential on identical
     work: accum-1 backwards without the reduce, one with it, so
 
-        reduce_cost = backward_last - backward_nolast
+        bwd_last_excess = backward_last - mean(backward_nolast)
 
-    is the reduce's NON-OVERLAPPED remainder -- the part that actually lengthens the step. Both
-    terms are printed, so a reader sees the subtraction rather than trusting a single figure.
+    THE FIELD IS NAMED FOR WHAT IT MEASURES, NOT FOR THE REDUCE. The reduce's non-overlapped
+    remainder is the largest term in that excess and the reason to look at it, but it is not the
+    only one: the last backward also runs outside no_sync(), which under static_graph carries
+    DDP's end-of-iteration bookkeeping, and it is a different micro-batch from the ones it is
+    compared against. Calling the field `reduce` would put an interpretation into every log and
+    spreadsheet it reaches. Both terms are printed, so a reader sees the subtraction.
 
-    THE MEAN IS OVER accum-1 SAMPLES, so at accum 4 it is three, and n and the spread are printed
-    beside it. A differential smaller than the spread of the arm it subtracts is not resolvable at
-    that step and the line says so. At accum 1, or with DDP off, no no-sync arm runs at all and
-    there is no differential to take; the line names which arm was missing rather than printing a
-    zero, because a zero here would read as "the reduce is free".
+    n, the mean and the spread print beside it, and there is NO per-step verdict on whether the
+    excess is resolvable. A range grows with n on its own, so a `spread >= excess` test fires
+    more often at accum 8 than at accum 4 on identical hardware -- a threshold moving with a
+    nuisance parameter. At accum 4 n is 3, where the range IS the sample; no per-step test is
+    worth having there, so the instrument prints its inputs and a reader accumulates across
+    printed steps. At accum 1, or with DDP off, no no-sync arm runs at all; the line names which
+    arm was missing rather than printing a zero that would read as "the reduce is free".
 
     ONE SYNC PER PRINT, not per region: cuda events are recorded on the stream and read once, at
     the end of a profiled step. Synchronising per region would serialise the very overlap this
@@ -1377,23 +1383,22 @@ class StepProfiler:
         # into a void is worse than refusing, so the cadence is snapped to one that can print.
         every = int(every or 0)
         self.every = every and max(10, -(-every // 10) * 10)
+        self.requested = every
         self.torch = torch_mod
         # WHAT THE DIFFERENTIAL ACTUALLY CONTAINS depends on a flag no log reader can see.
         # Under gradient_as_bucket_view (the default) grads ARE the bucket storage, so the last
         # backward's extra work is essentially the reduce. With --no_bucket_view it also copies
         # 1.48B params grad->bucket, and the same field would silently mean a different quantity.
         # The label carries the difference rather than the number changing meaning underneath it.
-        self.reduce_label = "reduce" if bucket_view else "reduce+bucket"
+        self.reduce_label = "bwd_last_excess" if bucket_view else "bwd_last_excess+bucket"
         self._ev = {}
         self._acc = {}
-        self._nolast_ms = []
         self.active = False
 
     def step_begins(self, step):
         self.active = self.every > 0 and step % self.every == 0
         if self.active:
             self._acc = {}
-            self._nolast_ms = []
 
     def _mk(self):
         return self.torch.cuda.Event(enable_timing=True)
@@ -1425,28 +1430,35 @@ class StepProfiler:
         self.active = False
         parts = [f"{k} {ms[k]:.1f}" for k in self.REGIONS if k in ms]
         parts.append(self._reduce_field(ms, nolast))
+        # NAMED FOR ITS DENOMINATOR, because the denominator is not this step. step_s is dt/10,
+        # a ten-step WALL mean that carries val passes and checkpoint writes, while ms is one
+        # step's GPU regions -- and val_every is a multiple of the log cadence, so a profiled
+        # step CAN be the one right after a val. The difference is signed and can exceed the
+        # thing being attributed in either direction. "rest" would claim it is unattributed step
+        # time, which is a claim this subtraction does not support.
         total_ms = sum(ms.values())
-        parts.append(f"rest {step_s * 1000.0 - total_ms:.1f}")
+        parts.append(f"rest_vs_10step_mean {step_s * 1000.0 - total_ms:.1f}")
         return "step_profile ms | " + " | ".join(parts)
 
     def _reduce_field(self, ms, nolast):
-        """The differential, or the reason there isn't one. Never a number it cannot support."""
-        # NAMES THE ARM THAT IS MISSING, not a value of accum it never read. The no-sync arm is
-        # entered on `ddp and Cfg.accum > 1`, so at accum 4 without DDP it is also empty -- and
-        # the first version of this line said "unmeasurable at accum 1", asserting a fact about
-        # accum that was false. Skipping the differential was right; the stated cause was wrong,
-        # and every behavioural test passed because only the label was defective.
+        """The excess, or the reason there isn't one. Never a number it cannot support."""
+        # NAMED FOR WHAT IT MEASURES, not for what it is evidence of. This is "the last backward
+        # cost this much more than the mean of the others". The DDP reduce is the largest term in
+        # it and the reason to look, but it is not the only one: the last backward also runs
+        # outside no_sync(), which under static_graph carries DDP's end-of-iteration bookkeeping,
+        # and the last micro-batch is a different micro-batch. `reduce` in a field name would put
+        # an interpretation into every spreadsheet this is ever pasted into.
         if not nolast or "bwd_last" not in ms:
-            return "reduce unmeasurable — no no-sync backward ran (accum 1, or DDP off)"
+            return "bwd_last_excess unmeasurable — no no-sync backward ran (accum 1, or DDP off)"
         mean = sum(nolast) / len(nolast)
         diff = ms["bwd_last"] - mean
         spread = nolast[-1] - nolast[0]
-        # A DIFFERENTIAL SMALLER THAN THE SPREAD OF THE ARM IT SUBTRACTS IS NOISE. Both numbers
-        # are printed either way: a bare "unresolvable" gives the next reader nothing to
-        # accumulate across steps, and the per-step spread is exactly what decides whether
-        # averaging over N printed steps would resolve it.
-        verdict = "unresolvable " if spread >= abs(diff) else ""
-        return (f"{self.reduce_label} {verdict}{diff:+.1f} "
+        # n, mean AND spread, with NO per-step verdict. A range grows with n on its own, so a
+        # `spread >= diff` test fires more often at accum 8 than at accum 4 on identical
+        # hardware -- a threshold moving with a nuisance parameter. At n=3 the range IS the
+        # sample and no per-step test is worth having, so the instrument prints its inputs and
+        # a reader accumulates across printed steps.
+        return (f"{self.reduce_label} {diff:+.1f} "
                 f"(n={len(nolast)} mean {mean:.1f} spread {spread:.1f})")
 
 
@@ -2943,8 +2955,9 @@ def main():
     parser.add_argument("--profile_step_every", type=int, default=0,
                         help="print a step-time breakdown every N steps (0 = off; rounded up to "
                              "a multiple of 10, the log cadence). Measurement only: forward, "
-                             "backward with and without the DDP reduce, optimizer.step, the MoE "
-                             "balance block, and the unattributed rest")
+                             "backward with and without the DDP reduce (bwd_last_excess ~ the "
+                             "reduce's non-overlapped part), optimizer.step, the MoE balance "
+                             "block, and this step's regions against the ten-step wall mean")
     parser.add_argument(
         "--allow_corpus_drift", action="store_true",
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
@@ -3589,6 +3602,11 @@ def main():
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
     _sp = StepProfiler(getattr(args, "profile_step_every", 0), torch,
                        bucket_view=not args.no_bucket_view)
+    if _sp.every != _sp.requested and is_main:
+        # Said out loud, or a user who asked for 25 reads "step 30" in the log and spends twenty
+        # minutes on it. Rounding beats refusing for a diagnostic flag; rounding silently does not.
+        runlog(f"--profile_step_every {_sp.requested} rounded up to {_sp.every}: the breakdown "
+               f"prints from the every-10-steps log block, so a non-multiple would never print")
     _prof = None
     if getattr(args, "profile", False):
         import torch.profiler as _tp
