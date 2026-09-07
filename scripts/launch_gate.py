@@ -1086,6 +1086,21 @@ def _recorded_cmd(root):
             if (prev is not None and prev.get("status") == "retracted"
                     and r.get("status") != "retracted"):
                 continue
+            # A monitor's close loses to a human's regardless of order (4c, 2026-09-07). Duplicated
+            # from exp.fold for the same reason as the retraction rule beside it: this fallback only
+            # runs when the import fails, and one that folds differently is the divergence
+            # test_exp_fold_agree exists to catch.
+            #
+            # IT CANNOT CHANGE THIS FUNCTION'S ANSWER TODAY, and saying so beats implying coverage
+            # it does not have. `running` below keeps only status=="running", while a monitor close
+            # and a human close are both terminal -- so the clause is parity, not behaviour.
+            # MEASURED: reverting it here leaves test_exp_fold_agree green (all five cases), where
+            # reverting it in exp.py or harness.py turns case 5 red. It stays because the parity is
+            # the invariant that survives a future widening of this function; it is NOT counted as
+            # tested, and case 5's message says two readers rather than three for that reason.
+            if (prev is not None and r.get("writer") == "monitor"
+                    and prev.get("status") in ("ok", "fail") and prev.get("writer") != "monitor"):
+                continue
             out[key] = r
         folded = list(out.values())
     running = [r for r in folded if r.get("status") == "running" and r.get("cmd")]
