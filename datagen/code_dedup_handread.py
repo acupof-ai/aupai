@@ -15,9 +15,16 @@ or comments; different program = not. If the rp1t member is a genuine duplicate 
 the starcoder representative in >= 80% of mixed clusters, code_dedup08 stands;
 below that, rerun with a domain-fair representative (prefer the rp1t member).
 
-    python datagen/code_dedup_handread.py --root data/corpus \
+    python3 datagen/code_dedup_handread.py --root data/corpus \
         --domains code_py_starcoder code_py_rp1t --ckdir runs/code_dedup08_ck \
-        --rep math 40 --n_rep 100 --out runs/code_dedup_handread_sheet.json
+        --n_rp1t_clusters 40 --n_total_clusters 100 \
+        --out runs/code_dedup_handread_sheet.json
+
+`--rep math 40 --n_rep 100` stood here until 2026-09-08 and does not parse: the parser
+has never had either flag. doc_commands_exist checks that a cited FILE exists, not that
+a cited command's flags are accepted, so a documented invocation can be wrong for as
+long as nobody types it -- this one was, and the run that needed it lost the time to
+argparse's error. Verified by `--help` before this edit, not by reading the parser.
 """
 
 import argparse
