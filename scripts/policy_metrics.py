@@ -54,6 +54,20 @@ from collections import Counter
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 LEDGER = os.path.join(ROOT, "runs", "policy_metrics.jsonl")
 
+sys.path.insert(0, os.path.join(ROOT, "scripts"))
+# THE FOLD IS IMPORTED, NOT RE-DERIVED (de-71, 2026-09-07). This file used to carry its own
+# `_folded` with the comment "Last row per id wins, like harness._read_tasks" -- a copy documented
+# as a copy, agreeing with the original by coincidence. It had no importable home until
+# harness_core existed; now it does, and the copy is gone.
+#
+# ONE BEHAVIOUR DIFFERENCE, stated because it is latent rather than absent: the old local `_folded`
+# had `if r.get(key)` and DROPPED a row with no id, while fold_by_id keeps it under the key None.
+# Measured on runs/tasks.jsonl 2026-09-07: 0 rows carry no id, so metric 5 is unchanged today. If a
+# keyless row ever lands, it now folds into one None bucket and can reach open_tasks_unknown_owner
+# instead of vanishing -- which is the direction this file was already fixed in an hour earlier, so
+# the divergence resolves toward reporting rather than silence.
+from harness_core import fold_by_id as _folded  # noqa: E402
+
 MISROUTE_RE = re.compile(
     r"misroute|wrong address|outside the team|bare (ListAgents )?name|matched on the substring",
     re.I)
@@ -65,15 +79,6 @@ def _rows(rel):
     if not os.path.exists(p):
         return []
     return [json.loads(l) for l in open(p, encoding="utf-8") if l.strip()]
-
-
-def _folded(rows, key):
-    """Last row per id wins, like harness._read_tasks."""
-    out = {}
-    for r in rows:
-        if r.get(key):
-            out[r[key]] = r
-    return list(out.values())
 
 
 def _split_open_owners(tasks, roster):
