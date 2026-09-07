@@ -313,7 +313,15 @@ _FOREIGN = [
     # `class X ... :` with a BRACE on the line is C++'s access specifier, not python's block
     # opener. Measured: `class Base { public:` matched the first version of this pattern and
     # was named foreign:python, which refused a C++ file under a language it is not.
-    (re.compile(r"^\s*(?:def|class)\s+\w+[^{}]*:\s*$", re.M), "python"),
+    #
+    # AND `\n` MUST BE EXCLUDED TOO, which `[^{}]` alone does not do. Measured on a bullet
+    # physics header in the shard117 strided sample: `class btCollisionShape;` on one line
+    # paired with a doc comment 300 characters later ending "There are 3 types of rigid
+    # bodies:", and the whole span matched. A python block opener is ONE line by definition,
+    # so the character class has to say so. Over both strided samples (n=4000) the fix moves
+    # 9 docs out of foreign:python -- 7 to foreign:ruby, 1 to foreign:typescript, and 1 C++
+    # header into the cpp lane -- and changes no python answer in the known-answer set.
+    (re.compile(r"^\s*(?:def|class)\s+\w+[^{}\n]*:\s*$", re.M), "python"),
     # A python SCRIPT need not define anything: `import sys` then `sys.argv[1]` was one of the
     # nine, and the def/class pattern above cannot see it. `import x` with no semicolon and no
     # brace anywhere is not a C/JS/Java shape -- the balance check runs later, so this only has
@@ -630,6 +638,22 @@ _KA_NOT_EATEN = [
      "    /** Generated docs live in javadoc/. This class is hand-written. */\n"
      "    public void f() { }\n}\n", "java",
      "the word javadoc in a COMMENT must not make a real class noncode:html"),
+    # THE MULTI-LINE PYTHON MATCH, from the shard117 strided sample. `class X;` forward
+    # declarations followed anywhere later by a line ending in a colon matched python's
+    # block-opener pattern, because `[^{}]*` spans newlines. This exact document was
+    # foreign:python before the `\n` exclusion. It is here rather than in _KA_MISSED because
+    # it is a NEGATIVE control -- the defect was a refusal eating real code, and this is the
+    # code it ate.
+    ("#ifndef RIGIDBODY_H\n#define RIGIDBODY_H\n\n#include \"btTransform.h\"\n\n"
+     "class btCollisionShape;\nclass btMotionState;\nclass btTypedConstraint;\n\n"
+     "extern btScalar gDeactivationTime;\n\n"
+     "///The btRigidBody is the main class for rigid body objects.\n"
+     "///There are 3 types of rigid bodies:\n"
+     "class btRigidBody : public btCollisionObject {\n"
+     "    btScalar m_inverseMass;\n"
+     "public:\n"
+     "    void setMassProps(btScalar mass);\n};\n#endif\n", "cpp",
+     "a C++ header whose forward declarations paired with a later prose colon"),
 ]
 
 KNOWN_ANSWERS = {"c": _KA_C, "js": _KA_JS, "java": _KA_JAVA}
