@@ -28,6 +28,12 @@ the ledgers cannot carry is null with the missing field named, never an estimate
                            reader catches known to the controller.
   5 open tasks per owner   tasks.jsonl open rows over roster members (same
                            population as harness check one_deliverable_per_owner).
+                           An owner outside the roster is reported by name in
+                           open_tasks_unknown_owner, never dropped: the filter used
+                           to make such a row vanish, so the count read as complete
+                           while excluding work (4c, 2026-09-07; found by 58's
+                           roster sweep, which hit `db` -- the ListAgents label for
+                           roster name `de` -- in review.jsonl).
   6 message length         words/msg to the controller, from runs/msg_log.jsonl
                            (from, words, ts; scripts/msg_log.py, c1e146a6),
                            one row per peer message received. Counting starts
@@ -70,6 +76,19 @@ def _folded(rows, key):
     return list(out.values())
 
 
+def _split_open_owners(tasks, roster):
+    """Open rows counted per roster member, with non-roster owners kept beside them by name."""
+    known, unknown = Counter(), Counter()
+    for t in tasks:
+        if t.get("state") != "open":
+            continue
+        owner = t.get("owner")
+        if not owner:
+            continue
+        (known if owner in roster else unknown)[str(owner)] += 1
+    return known, unknown
+
+
 def _date(r):
     m = re.match(r"(\d{4}-\d{2}-\d{2})",
                  str(r.get("when") or r.get("ts") or r.get("at") or ""))
@@ -105,10 +124,8 @@ def compute(date):
     roster_p = os.path.join(ROOT, "runs", "roster.json")
     roster = ({m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]}
               if os.path.exists(roster_p) else set())
-    open_by_owner = Counter()
-    for t in _folded(_rows("runs/tasks.jsonl"), "id"):
-        if t.get("state") == "open" and t.get("owner") in roster:
-            open_by_owner[t["owner"]] += 1
+    open_by_owner, open_unknown = _split_open_owners(
+        _folded(_rows("runs/tasks.jsonl"), "id"), roster)
 
     msg = [r for r in _rows("runs/msg_log.jsonl") if _date(r) == date]
     n_msg = len(msg)
@@ -137,6 +154,7 @@ def compute(date):
                      "5 second-reader catches known to the controller",
         },
         "open_tasks_per_owner": dict(sorted(open_by_owner.items())),
+        "open_tasks_unknown_owner": dict(sorted(open_unknown.items())),
         "message_length": {
             "words_per_msg_to_fb": wpm,
             "n_msgs": n_msg,
@@ -180,6 +198,9 @@ def print_latest():
         d = r["defects"]
         print(f"    defects author/second-reader: {d['author_caught']}/{d['second_reader_caught']}")
         print(f"    open tasks per owner: {r['open_tasks_per_owner']}")
+        unk = r.get("open_tasks_unknown_owner")
+        if unk:
+            print(f"      non-roster owners: {unk}")
         m = r.get("message_length")
         if m:
             ml = (f"{m['words_per_msg_to_fb']} words/msg over {m['n_msgs']} msgs"
@@ -200,6 +221,23 @@ def _selftest():
         "'blocks.1' must not read as a blocked verdict (2026-09-05 false positive)"
     assert not BLOCK_RE.search("_ROW_CHECKSUM_BLOCK is 65,536, which at d=1024 is exactly 2"), \
         "'CHECKSUM_BLOCK' must not read as a blocked verdict (2026-09-05 false positive)"
+
+    # open_tasks_unknown_owner is empty on today's real ledger, so the live run cannot tell a
+    # working split from a dead branch -- the vacuous-population shape. Fixture instead: `db` is
+    # the real misnaming (ListAgents label for roster name `de`) that motivated the field.
+    roster = {"de", "b0"}
+    known, unknown = _split_open_owners([
+        {"state": "open", "owner": "de"},
+        {"state": "open", "owner": "de"},
+        {"state": "open", "owner": "db"},
+        {"state": "open"},
+        {"state": "done", "owner": "zz"},
+    ], roster)
+    assert dict(known) == {"de": 2}, known
+    assert dict(unknown) == {"db": 1}, unknown
+    assert not _split_open_owners([{"state": "open", "owner": "db"}], roster)[0], \
+        "a non-roster owner must not key open_tasks_per_owner"
+
     print("policy_metrics selftest OK")
 
 

@@ -18753,7 +18753,17 @@ def _selftest_content_restored_read_failure():
     d = tempfile.mkdtemp(prefix="cr_")
     try:
         def g(*a):
-            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+            # stdin=DEVNULL CLOSES THE CLASS, not just the one line below it. A `git` invocation
+            # that wants input and is given none INHERITS the caller's stdin: under the pre-commit
+            # hook or a terminal that is an open pipe, so the child waits for EOF that never comes
+            # and the whole selftest hangs with no output. 4c lost 29 minutes to exactly that here
+            # (2026-09-08) and had to kill it by PID. The offending call was a dead placeholder --
+            # `hash-object -w --stdin` whose value was overwritten three lines later, from
+            # 95193c47 -- and it is deleted below; DEVNULL is here so the next accidental
+            # input-wanting git call fails fast instead of blocking. A hang is worse than a
+            # failure: a red names its cause, a hang looks like a slow test.
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True,
+                                  stdin=subprocess.DEVNULL)
         g("init", "-q", "-b", "main", ".")
         g("config", "user.email", "t@t"); g("config", "user.name", "t")
         with open(os.path.join(d, "f.py"), "w") as fh:
@@ -18765,7 +18775,6 @@ def _selftest_content_restored_read_failure():
             fh.write("shared = 1\nlosing_side_line = 2\n")
         g("add", "-A"); g("commit", "-q", "-m", "losing side")
         losing = g("rev-parse", "HEAD").stdout.strip()
-        staged = g("hash-object", "-w", "--stdin").stdout  # placeholder, replaced below
         with open(os.path.join(d, "only_shared"), "w") as fh:
             fh.write("shared = 1\n")
         staged = g("hash-object", "-w", os.path.join(d, "only_shared")).stdout.strip()
