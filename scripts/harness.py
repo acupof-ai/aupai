@@ -1193,6 +1193,11 @@ def _broken_cache_readers_set_vocab_id():
 
     Mutating the live file rather than writing a fixture, for the reason de-7.3 records: a
     fixture encodes the author's assumption twice.
+
+    PR #21 wrapped the val_seqs call in try/except CoResidentCacheRead, which put the reader
+    at branch depth 1 -- the same depth the conditional setter lands at, so the coverage
+    check's min(sd) > min(rd) no longer fires. The broken world unwraps that try/except to
+    restore the reader to depth 0, reproducing the state the coverage half was built for.
     """
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "eval", "domain_bpb.py")
@@ -1202,6 +1207,15 @@ def _broken_cache_readers_set_vocab_id():
     line = "    train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"
     if line not in text:
         return None  # the fix moved or was renamed: this world cannot be built
+    # Unwrap PR #21's try/except so the reader is at depth 0, matching the setter at depth 1.
+    _try = ("        try:\n"
+            "            rows = val_seqs(name, ours_tok)\n"
+            "        except CoResidentCacheRead as e:\n"
+            "            skipped[name] = str(e).splitlines()[0]\n"
+            "            print(f\"  {name:16} SKIPPED (co-resident cache read refused)\", flush=True)\n"
+            "            continue\n")
+    if _try in text:
+        text = text.replace(_try, "        rows = val_seqs(name, ours_tok)\n")
     import shutil as _sh
     link = os.path.join(d, "eval")
     if os.path.islink(link):
