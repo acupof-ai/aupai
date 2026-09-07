@@ -12,7 +12,7 @@
   },
   {
    "id": "dsv4.hybrid_attention",
-   "value": "Hybrid attention = CSA (Compressed Sparse Attention) + HCA (Heavily Compressed Attention), interleaved after the first 2 layers. Flash first 2 layers are pure SWA; Pro first 2 layers are HCA. CSA: KV compression m=4 (every 4 tokens -> 1 entry, overlapped grouping draws from 2m=8 neighbors), Lightning Indexer selects top-k=512 compressed entries per query (indexer heads n_h^I=64, dim c^I=128), MQA core, grouped output projection. HCA: aggressive compression m'=128, dense attention (no sparse selection). Both: n_h heads (64 Flash / 128 Pro), head dim d_c=512 (Flash) / 1536 (Pro), output groups g=8 (Flash) / 16 (Pro), group dim d_g=1024, SWA branch n_win=128 recent uncompressed KV entries.",
+   "value": "Hybrid attention = CSA (Compressed Sparse Attention) + HCA (Heavily Compressed Attention), interleaved after the first 2 layers. Flash first 2 layers are pure SWA; Pro first 2 layers are HCA. CSA: KV compression m=4 (every 4 tokens -> 1 entry, overlapped grouping draws from 2m=8 neighbors), Lightning Indexer selects top-k compressed entries per query (indexer heads n_h^I=64, dim c^I=128), top-k=512 (Flash) / 1024 (Pro), MQA core, grouped output projection. HCA: aggressive compression m'=128, dense attention (no sparse selection). Both: n_h query heads (64 Flash / 128 Pro), head dimension c=512 (both models), query compression dimension d_c=1024 (Flash) / 1536 (Pro), output groups g=8 (Flash) / 16 (Pro), group dim d_g=1024, SWA branch n_win=128 recent uncompressed KV entries.",
    "measured": "2026-09-08",
    "source": "arXiv 2606.19348 Sec 2.3 (Hybrid Attention) + Sec 4.2.1 (p24-25), read in the PDF 2026-09-08",
    "config": {"source_type": "paper-reported"},
@@ -32,7 +32,7 @@
   },
   {
    "id": "dsv4.moe",
-   "value": "MoE in every layer except the first 3 (which use Hash routing: targets from a predefined hash of the input token ID). Each MoE layer: 1 shared expert + routed experts, top-6 routed activated per token. Flash: 256 routed experts, intermediate hidden 2048. Pro: 384 routed experts, intermediate hidden 3072. Affinity scoring Sqrt(Softplus(.)) (not Sigmoid); auxiliary-loss-free load balancing + a slight sequence-wise balance loss (bias update speed 0.001); the constraint on the number of routing target nodes is removed. MTP depth 1 (same as V3, unmodified).",
+   "value": "MoE in every layer except the first 3 (which use Hash routing: targets from a predefined hash of the input token ID). Each MoE layer: 1 shared expert + routed experts, top-6 routed activated per token. Flash: 256 routed experts, intermediate hidden 2048. Pro: 384 routed experts, intermediate hidden 3072. Affinity scoring Sqrt(Softplus(.)) (not Sigmoid); auxiliary-loss-free load balancing + a slight sequence-wise balance loss (bias update speed 0.001, balance loss weight 0.0001); the constraint on the number of routing target nodes is removed. MTP depth 1 (same as V3, unmodified).",
    "measured": "2026-09-08",
    "source": "arXiv 2606.19348 Sec 2.1 (Designs Inherited from V3) + Sec 4.2.1 (p24-25), read 2026-09-08",
    "config": {"source_type": "paper-reported"},
@@ -72,7 +72,7 @@
   },
   {
    "id": "dsv4.bench_base",
-   "value": "Base-model comparison (V3.2 / Flash / Pro), Table 1: LongBench-V2 40.2 / 44.7 / 51.5; MMLU-Pro 87.5 / 89.4 / 90.8; MMLU-Redux 65.5 / 68.3 / 73.5; MMLU 87.9 / 88.8 / 90.3; AGIEval 80.1 / 82.6 / 83.1; SuperGPQA 45.0 / 46.5 / 53.9; BBH 87.6 / 86.9 / 87.5; DROP 88.2 / 88.6 / 88.7; HumanEval 62.8 / 69.5 / 76.8; BigCodeBench 63.9 / 69.5 / 76.8; GSM8K 91.1 / 90.8 / 92.6; MATH 60.5 / 57.4 / 64.5; MGSM 81.3 / 85.7 / 84.4; CMath 92.6 / 93.6 / 90.9. Flash (13B active) beats V3.2 (37B active) on most; Pro (49B active) leads on most.",
+   "value": "Base-model comparison (V3.2 / Flash / Pro), Table 1, all 24 rows. World Knowledge: AGIEval 80.1/82.6/83.1, MMLU 87.8/88.7/90.1, MMLU-Redux 87.5/89.4/90.8, MMLU-Pro 65.5/68.3/73.5, MMMLU 87.9/88.8/90.3, C-Eval 90.4/92.1/93.1, CMMLU 88.9/90.4/90.8, MultiLoKo 38.7/42.2/51.1, Simple-QA verified 28.3/30.1/55.2, SuperGPQA 45.0/46.5/53.9, FACTS Parametric 27.1/33.9/62.6, TriviaQA 83.3/82.8/85.6. Lang & Reas.: BBH 87.6/86.9/87.5, DROP 88.2/88.6/88.7, HellaSwag 86.4/85.7/88.0, WinoGrande 78.9/79.5/81.5, CLUEWSC 83.5/82.2/85.2. Code & Math: BigCodeBench 63.9/56.8/59.2 (V3.2 highest here -- the counterexample to the Flash-beats-V3.2 trend), HumanEval 62.8/69.5/76.8, GSM8K 91.1/90.8/92.6, MATH 60.5/57.4/64.5, MGSM 81.3/85.7/84.4, CMath 92.6/93.6/90.9. Long Context: LongBench-V2 40.2/44.7/51.5. Flash (13B active) beats V3.2 (37B active) on ~17/24; Pro (49B active) leads on ~20/24.",
    "measured": "2026-09-08",
    "source": "arXiv 2606.19348 Table 1 (p28), read in the PDF 2026-09-08",
    "config": {"source_type": "paper-reported", "eval_framework": "DeepSeek internal, unified settings"},
@@ -82,7 +82,7 @@
   },
   {
    "id": "dsv4.nope_rope_break",
-   "value": "Our checkpoints are NoPE: GatedMLA (model.py:227) carries no positional encoding, position is handled by KDA/DeltaRecurrence. DeepSeek-V4 uses partial RoPE on the last 64 dims (with a -i position correction on attention outputs). Adopting V4's partial RoPE breaks checkpoint compatibility: the position-encoding dimensions change, so an existing NoPE checkpoint cannot be continued under the new scheme without a PE-conversion or a re-pretrain of the attention path. This is the cost of the CSA/HCA loop: the attention upgrade and the PE change ship together in V4 and cannot be adopted separately for free.",
+   "value": "Our checkpoints are NoPE: GatedMLA (model.py:227) carries no positional encoding, position is handled by KDA/DeltaRecurrence. DeepSeek-V4 uses partial RoPE on the last 64 dims (with a -i position correction on attention outputs). V4 ships the attention upgrade and the PE change together, and the -i correction exists because CSA's KV-as-values structure introduces absolute position -- so the coupling is likely structural, but the paper does not state that CSA requires partial RoPE. Adopting V4's partial RoPE still breaks checkpoint compatibility: the position-encoding dimensions change, so an existing NoPE checkpoint cannot be continued under the new scheme without a PE-conversion or a re-pretrain of the attention path. This is the cost of the CSA/HCA loop.",
    "measured": "2026-09-08",
    "source": "our model.py:227 (GatedMLA docstring 'NoPE, KDA handles position', read 2026-09-08) + arXiv 2606.19348 Sec 2.3.3 (partial RoPE)",
    "config": {"source_type": "derived", "our_checkpoint": "NoPE (GatedMLA + KDA)", "v4": "partial RoPE 64-dim"},
