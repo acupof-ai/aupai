@@ -20644,9 +20644,33 @@ def _selftest_card_lend_expires():
         raise SelftestSkip("the live file carries no parseable lend to vary the clock on")
 
     utc = datetime.timezone.utc
-    inside = datetime.datetime(2026, 9, 8, 21, 33, tzinfo=utc)   # in card 6's 21:32-21:34Z lend
-    after = datetime.datetime(2026, 9, 20, 12, 0, tzinfo=utc)    # long after it closed
-    before = datetime.datetime(2026, 9, 8, 21, 0, tzinfo=utc)    # before it opened
+    # THE CLOCK IS DERIVED FROM THE NOTE'S OWN WINDOW, NOT WRITTEN AS A CONSTANT. Pinning `now`
+    # made the verdict independent of the wall clock, which was the point -- and I then read the
+    # NOTE from a file that changes, so the pinned clock and the live note drifted apart. The
+    # constants below were 21:33/21:00 on 2026-09-08, inside and before card 6's FIRST lend
+    # (21:32-21:34Z). The controller then wrote a SECOND lend for 00:30-00:45Z, and 21:33 is
+    # outside it: the selftest failed with "expected ours, got theirs" and took main's CI red for
+    # four merges (c175826f, 3121cc24, 4fe54763, 021d59e8), blocking every ledger merge.
+    #
+    # HALF-PINNED IS NOT PINNED. A test whose verdict depends on two inputs is deterministic only
+    # if BOTH are fixed; fixing one and letting the other move is worse than fixing neither,
+    # because it passes for weeks and then fails for a reason that looks like the code.
+    #
+    # So the three clocks are computed from whichever window the note carries: the midpoint is
+    # inside by construction, and a day either side is outside by construction. That holds for
+    # every note the controller can write, including the next one.
+    def _clocks(note):
+        w = _parse_lend_window(note)
+        if w is None:
+            return None
+        return (w[0] + (w[1] - w[0]) / 2,          # inside, by construction
+                w[1] + datetime.timedelta(days=1),  # after, by construction
+                w[0] - datetime.timedelta(days=1))  # before, by construction
+
+    _c6 = _clocks(str((live.get("cards") or {}).get("6", "")))
+    if _c6 is None:
+        raise SelftestSkip("card 6's live note carries no parseable window to derive clocks from")
+    inside, after, before = _c6
 
     def world(mut):
         d = copy.deepcopy(live)
@@ -20682,11 +20706,26 @@ def _selftest_card_lend_expires():
             f"card 6 {label}: expected {want}, got {got}. A lend that stays ours after its window "
             f"makes a 13-minute loan permanent; one that is ours before it opens hands the card "
             f"over while its owner is still running on it")
-    # And with the baseline flag OFF the same note is theirs at every clock -- no expiry applies to
-    # a card that is not baseline-theirs, so the flag is doing the work and not the timestamps.
-    assert _classify_card_note(note6, baseline_theirs=False, now=inside) == "theirs", (
-        "card 6's note classified as ours with baseline_theirs=False -- the expiry branch must be "
-        "gated on the baseline, or a lend note anywhere would grant the card")
+    # THE FLAG IS WHAT MAKES THE WINDOW MATTER, asserted so the note's OPENING TOKEN cannot decide
+    # it. The first version asserted `baseline_theirs=False` gives "theirs" at every clock, which
+    # held only while the live note opened with tileRL: once the controller wrote a GRANTED-leading
+    # note, `_OURS_RE` matched and the assertion failed on correct code. Same defect as the pinned
+    # clock above -- a property stated over text the controller rewrites.
+    #
+    # The property that holds for EVERY note form: with the flag off, the verdict does not change
+    # across the window, because no expiry applies to a card that is not baseline-theirs. With the
+    # flag on it does change. That is the flag doing the work, and it needs no assumption about
+    # which vocabulary the note happens to use.
+    _off = {_classify_card_note(note6, baseline_theirs=False, now=t)
+            for t in (before, inside, after)}
+    assert len(_off) == 1, (
+        f"with baseline_theirs=False card 6's verdict CHANGES across the window ({_off}) -- the "
+        f"expiry must be gated on the baseline, or a lend note on any card would expire it")
+    _on = {_classify_card_note(note6, baseline_theirs=True, now=t)
+           for t in (before, inside, after)}
+    assert len(_on) > 1, (
+        f"with baseline_theirs=True the verdict is constant across the window ({_on}) -- the "
+        f"window is being ignored, so nothing expires")
 
     # THE NOTE FORM THE CONTROLLER ACTUALLY WROTE, which my first version did not expire at all
     # (tilerl-0a's review of PR #58). This world is permanent because it is the ONLY lend that has
@@ -20822,9 +20861,28 @@ def _selftest_card_lend_expires():
     assert verdict(no_window) is not None, (
         "a lend claimed with NO readable window PASSED -- there is nothing to expire, so the note "
         "reads as a standing grant on another team's card")
-    for bad in ("25:99-26:88Z", "21:34-21:32Z"):
-        assert verdict(lambda d, b=bad: d["cards"].__setitem__(
-            "6", note6.replace("21:32-21:34Z", b))) is not None, (
+    # A BAD WINDOW MUST REFUSE, and the mutation is applied to whatever window the note carries
+    # rather than to a literal I typed. The first version did note6.replace("21:32-21:34Z", bad),
+    # a substring of the FIRST lend; once the controller wrote a second lend that substring was
+    # absent, replace() returned the note UNCHANGED, and the world became "the live note with a
+    # valid window" -- which correctly PASSES, so the assertion failed against correct code. A
+    # mutation that does not mutate is the same defect as the truthy-`or` mutant from PR #58's
+    # own history, reached here through a stale literal instead of a truthy expression.
+    #
+    # ASSERTED NON-VACUOUS FIRST: the mutated text must differ from the original, or the world is
+    # not the world the assertion names.
+    _w6 = _parse_lend_window(note6)
+    _live_win = f"{_w6[0]:%H:%M}Z-{_w6[1]:%H:%M}Z"
+    if _live_win not in note6:                     # the controller may write it without the first Z
+        _live_win = f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z"
+    assert _live_win in note6, (
+        f"cannot locate card 6's own window text in its note to mutate it. Parsed "
+        f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z but neither spelling appears in {note6[:110]!r}; a "
+        f"mutation built on a literal that is absent does nothing and the world stays valid")
+    for bad in ("25:99Z-26:88Z", "21:34Z-21:32Z"):
+        _mutated = note6.replace(_live_win, bad)
+        assert _mutated != note6, f"the {bad} mutation left the note unchanged -- it is not a world"
+        assert verdict(lambda d, m=_mutated: d["cards"].__setitem__("6", m)) is not None, (
             f"lend window {bad} PASSED -- an unparseable or backwards window must refuse, not fall "
             f"back to either owner")
 
@@ -20853,8 +20911,10 @@ def _selftest_card_lend_expires():
     assert verdict(lambda d: d.__setitem__("block_cards", "1,2,3,4,5,6,7")) is not None, (
         "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
         "fields, so they cannot disagree about the owner")
-    return ("card lends expire: card 6 ours only inside 21:32-21:34Z (theirs before and after, and "
-            "theirs at every clock with baseline_theirs off); 4c's OWN GRANTED-leading note form "
+    return (f"card lends expire: card 6 ours only inside its OWN window "
+            f"({_w6[0]:%Y-%m-%d %H:%M}-{_w6[1]:%H:%M}Z, read from the live note and not typed here), "
+            f"theirs a day either side, and with baseline_theirs off the verdict does not change "
+            f"across that window at all; 4c's OWN GRANTED-leading note form "
             "('2026-09-08 21:30Z-21:45Z', Z on both times) parses, reads ours inside and theirs 3 "
             "days later, and --cards 6 REFUSES on it through the launch path; card 0's 'only by "
             "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
