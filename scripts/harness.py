@@ -3146,20 +3146,14 @@ def check_main_advances_by_ancestry(root):
                  # main. The commit survives on branch b0 and returns through merge_main.
                  ("484a952852ec8a82ba17fda22ee77ec5a49c170d",
                   "b8b396189be5a6d6ebd0adba0f1445b18d8a754d"),
-                 # 2026-09-08 13:44 +0800: fb ran `git branch -f main origin/main` after
-                 # merge_main's push was refused (origin had moved under a concurrent PR
-                 # merge), discarding two local-only commits -- 5154befd (board) and
-                 # a2375098 (a friction drain). Both survive on branch fb and return
-                 # through merge_main; verified here, not taken on report, with
-                 # `git merge-base --is-ancestor a2375098 fb`.
-                 #
-                 # THE DIRECTION IS THE TRAP, and this is the third entry of the same
-                 # shape. A reset onto origin/main reads as "going back to the correct
-                 # value" rather than as a sideways move, so the docstring above -- which
-                 # names this exact command -- was read and then contradicted within the
-                 # hour. ANY non-ancestor move is sideways, including one that looks like
-                 # a retreat. There is no such thing as reverting to a ref that holds
-                 # commits yours does not.
+                 # 2026-09-08 13:44Z: fb ran `git branch -f main origin/main` after merge_main's
+                 # push was refused non-fast-forward -- de had merged five PRs and origin/main had
+                 # moved 20 commits under the local ref. Both discarded commits are merge_main
+                 # CASes that never reached origin and both survive on branch fb; they return by
+                 # re-running merge_main. The recovery was reached for because merge_main's
+                 # push-refusal text (:1965-1969) says "only delivery failed", "retry the push
+                 # alone" and "Do NOT re-run the merge" -- all three correct when origin has not
+                 # moved, all three wrong here, and the third forbids the one safe action.
                  ("a2375098b7595abb67dc45a990d9aef6ded21410",
                   "12ecbf520be918785b76873ca2114fbb9128db28")}
     jumps = []
