@@ -815,7 +815,7 @@ open: nothing checks that a deletion-candidate generator's protection rule cover
 
 ## R10. What happened only on the pod did not happen
 
-### §276 (2026-09-08, R2)
+### §283 (2026-09-08, R2)
 
 **A verification tool's failure mode is isomorphic to what it verifies, so its breakage reads as a pass.** Three instances in one hour, on one mutation sweep over the pre-commit shared-repo guard:
 
