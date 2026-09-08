@@ -1937,12 +1937,19 @@ def build_probe():
 
 
 def _read_cursor(path):
-    """{domain: rows} from a checkpoint's row_cursor, or a refusal.
+    """(rows, srcfp, seed) from a checkpoint's cursor state, or a refusal.
 
     torch.load with weights_only=False, because row_cursor sits beside the tensors in a dict
     the trainer wrote. REFUSES rather than returning {} when the key is absent: an empty cursor
     and a missing cursor produce identical mixes, and the whole point of this flag is that the
     caller asserted a resume. A silent {} would write a fresh-start mix under a resume's name.
+
+    ALL THREE FIELDS, not just the rows. Rows alone decide the arithmetic, but they do not
+    identify the state the arithmetic was done against: the same row count over a different
+    corpus, or over the same corpus shuffled at a different seed, names DIFFERENT rows. The
+    launcher compares the triple the mix was derived against with the resuming checkpoint's,
+    so this function has to return what that comparison needs -- it used to discard srcfp and
+    seed, which is why the field could not be written at all.
     """
     import torch
 
@@ -1961,7 +1968,11 @@ def _read_cursor(path):
                  f"build_mix seeds used[] from a full-plan-prefix cursor; any other basis counts "
                  f"rows differently and the epoch totals here would be arithmetic on two "
                  f"incompatible conventions.")
-    return {k: int(v) for k, v in rc.items()}
+    return (
+        {k: int(v) for k, v in rc.items()},
+        {k: str(v) for k, v in (ck.get("row_cursor_srcfp") or {}).items()},
+        ck.get("row_cursor_seed"),
+    )
 
 
 def main():
@@ -1996,17 +2007,61 @@ def main():
     a = ap.parse_args()
     if a.selftest:
         return selftest()
-    cursor = _read_cursor(a.resume_cursor) if a.resume_cursor else None
+    cursor = cursor_srcfp = cursor_seed = None
+    if a.resume_cursor:
+        cursor, cursor_srcfp, cursor_seed = _read_cursor(a.resume_cursor)
     ref = None
     if int(a.total) != TOTAL_TOKENS:
         if not a.out or a.probe:
             ap.error("a non-default --total needs --out and excludes --probe")
+        # A SHRINKING --total AND --resume-cursor CANNOT BOTH BE HONOURED, so this refuses
+        # rather than picking one. Below, `_shrinking` overwrites every weight and anneal with
+        # the 20B build's -- and that reference build is deliberately cursor-free (:2016), so
+        # the copy discards precisely the cursor-aware sizing that _ceiling_weight,
+        # _place_freed_under_ceiling and _ceiling_overshoot just computed. The result is a
+        # fresh-start composition written under a resume's name.
+        #
+        # WORSE THAN SHIPPING IT UNBLOCKED: build() puts `_launch_blocked` and
+        # `_untrusted_supply` in the dict it returns (:1088-1090), the loop overwrites only
+        # `weight` and `anneal`, and nothing rebuilds them before json.dumps -- so the file
+        # keeps a block list computed against the cursor beside weights that ignore it. A
+        # reader sees the block and reads it as evidence the cursor WAS honoured.
+        if cursor and int(a.total) <= TOTAL_TOKENS:
+            ap.error(
+                f"--total {a.total / 1e9:.3f}B is at or below the default "
+                f"{TOTAL_TOKENS / 1e9:.3f}B AND --resume-cursor was passed. The shrinking path "
+                f"copies weights from a fresh-start 20B reference build, which would silently "
+                f"discard the cursor-aware sizing and write a file whose _launch_blocked was "
+                f"computed against a cursor its weights ignore. Drop --resume-cursor for a "
+                f"fresh-start mix at this total, or raise --total above the default so weights "
+                f"are recomputed under the cursor.")
         # The REFERENCE build stays fresh-start: it exists only to lift the 20B weights for a
         # smaller total, and a cursor-aware reference would compare two different quantities.
         ref = build(a.code_tokens)
         TOTAL_TOKENS = int(a.total)
         ROWS = TOTAL_TOKENS // SEQ
     m = build_probe() if a.probe else build(a.code_tokens, cursor)
+    if cursor:
+        # THE STATE THIS FILE'S ARITHMETIC WAS DERIVED AGAINST, so the launcher can refuse a
+        # resume it does not describe. A resume mix is correct for exactly one checkpoint --
+        # `epochs` is cursor + this plan -- and nothing else in the file says which. Written
+        # here rather than inside build(), which is handed the rows alone and never sees the
+        # other two.
+        #
+        # THE TRIPLE, NOT THE CHECKPOINT'S PATH OR HASH. Two checkpoints with equal cursor
+        # state are substitutable and a file identity would refuse one of them for no reason
+        # (4c's ruling 2026-09-07). Rows alone are not enough either: the same count over a
+        # re-fingerprinted corpus, or over the same corpus shuffled at a different sample
+        # seed, names different rows, and the epoch totals here would be arithmetic on a
+        # prefix that no longer exists.
+        m["_derived_against"] = {
+            "row_cursor": cursor,
+            "row_cursor_srcfp": cursor_srcfp,
+            "row_cursor_seed": cursor_seed,
+            "_note": (
+                "the resume state this mix's `epochs` values were computed against; "
+                "train.py refuses a resume whose own triple differs"),
+        }
     out = PROBE_OUT if a.probe else (a.out or OUT)
     if ref is not None:
         # WEIGHTS ARE COPIED FROM THE 20B BUILD ONLY WHEN THE NEW TOTAL IS SMALLER, and that
