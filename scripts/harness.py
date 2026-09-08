@@ -17162,6 +17162,10 @@ EVIDENCE = {
     "prereg_citations_current": "repo",
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
+    # repo, and the check says so itself: its only source of truth is
+    # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
+    # missing .git. A "pod" declaration would ask it to answer where it cannot run.
+    "score_matrix_rewrites_traced": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration

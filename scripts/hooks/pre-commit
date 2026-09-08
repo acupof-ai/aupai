@@ -1556,6 +1556,10 @@ def main():
         # check half (harness.py) must stay in step, and the test asserts they share ONE
         # comparison rather than two copies of it.
         "scripts/test_score_matrix_trace.py",
+        # Guards the EDGE KINDS, where test_reachability_fresh.py guards the listing's
+        # freshness. Both are needed and neither substitutes: a listing regenerated on the
+        # hour from a scan reading one ledger of 32 is fresh and wrong.
+        "scripts/test_reachability_edges.py",
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
