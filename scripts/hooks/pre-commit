@@ -1276,14 +1276,17 @@ def main():
         # the prompt TWICE -- `ids[len(prompt):]` on top of the slice train.generate_batch
         # already does, whose docstring says it returns generated ids.
         #
-        # BOTH BEHEADED RATHER THAN EMPTIED, which is why it survived two weeks. Read off the
-        # surviving predictions rather than derived: code_fewshot's published 3-shot run stored
-        # a median of 124 tokens starting mid-statement, 460 of 497 fail ast.parse, and the
-        # empty rate stayed at 1.6% -- 0/497 with almost everything a syntax error reads exactly
-        # like "the model cannot write code", which is the conclusion those runs drew.
-        # code_l0prime's 0-shot cut left 45 of the first 60 as fragments, all 45 unparseable,
-        # and freeze_hard keeps whatever FAILS execution, so each was a valid distractor by its
-        # own criterion.
+        # BOTH BEHEADED RATHER THAN EMPTIED, which is why it survived two weeks. The runs used
+        # max_new=512 with rep_stop off, so subtracting a 319-335 token prompt still left ~180
+        # tokens: scoring saw the tail of the generation with its head gone. The surviving
+        # predictions confirm NOT-EMPTY (0 of 497 empty, in every arm, matching the logs' own
+        # 2.2%) but cannot say more -- they were stored as `cont[-300:]`, a tail window, so parse
+        # rates read off them are confounded by the window itself.
+        # code_l0prime is the one measured end to end, because its prompt can be rebuilt: over
+        # the first 60 problems the cut left 15 empty and 45 fragments, all 45 unparseable, and
+        # freeze_hard keeps whatever FAILS execution, so each was a valid distractor by its own
+        # criterion. 0/497 with unparseable output reads exactly like "the model cannot write
+        # code", which is the conclusion those runs drew.
         #
         # Registered rather than commented because of WHERE the defect lived: inline in the
         # batch loop, reachable only from a pod with a checkpoint. Both selftests now drive the
