@@ -1477,3 +1477,142 @@ for _fused in (False, True):
         assert _dg < 1e-5, f"fused dV differs by {_dg:.2e}"
 print("attn_res_fused: default OFF; ON matches OFF in forward AND dV "
       f"(max {_do:.2e} / {_dg:.2e}) OK")
+
+# _n_active_params: MFU's denominator counts what a TOKEN multiplies, and the dense arm is
+# bit-identical (de-71, 62's filing 2026-09-08).
+#
+# Cfg SUBCLASSES, not kwargs: Cfg is a plain class the model reads attributes off, so
+# `Cfg(dim=64)` raises TypeError -- the same shape the file's other variant worlds use.
+
+
+class _CfgPaDense(Cfg):
+    # `layers`, NOT `n_layer` (train.Cfg.layers). Cfg has no n_layer, nothing reads it, and setting
+    # left every world at the default depth 12 -- caught only because the mixed world below
+    # asserts that its two predicates DISAGREE, and at depth 12 with moe_layers "0-1" it was
+    # already mixed, so the all-MoE world was never all-MoE either.
+    d = 64
+    layers = 2
+    vocab = 256
+    heads = 4
+    ffn_hidden = 128
+    moe_experts = 0
+
+
+class _CfgPaMoE(_CfgPaDense):
+    # EQUAL-ACTIVE PARITY IS ENFORCED BY MoEFFN: (moe_top_k + moe_shared) * moe_expert_ffn must
+    # equal ffn_hidden exactly, or construction raises -- so the world's numbers are not free.
+    # ffn_hidden 128 with moe_expert_ffn 32 admits top_k 3 (3+1)*32 == 128.
+    moe_experts = 8
+    moe_top_k = 3
+    moe_shared = 1
+    moe_expert_ffn = 32
+    moe_layers = "0-1"   # == every block, since layers is 2 here
+
+
+# THE DENSE CASE IS THE LOAD-BEARING ONE. 62's acceptance criterion is that the dense arm's MFU
+# come out unchanged, because a fix that lowers the MoE number by moving the shared denominator is
+# indistinguishable from the right change by reading only the MoE line. Asserted as exact equality
+# against the OLD expression, recomputed from the same primitives -- not "within rounding", since
+# with moe_experts 0 nothing should match at all.
+_pa_dense = HybridLM(_CfgPaDense)
+_pa_old = (sum(p.numel() for p in _pa_dense.parameters())
+           - sum(p.numel() for n, p in _pa_dense.named_parameters() if _train._is_mem_fqn(n)))
+assert _train._n_active_params(_pa_dense, _CfgPaDense) == _pa_old, (
+    f"dense arm's MFU denominator moved: {_train._n_active_params(_pa_dense, _CfgPaDense)} vs "
+    f"{_pa_old}. Every arm shares this line, so a changed dense denominator is a changed "
+    f"baseline, not a fix")
+
+# THE MoE CASE, on a real model rather than arithmetic over config.
+_pa_moe = HybridLM(_CfgPaMoE)
+_pa_total = sum(p.numel() for p in _pa_moe.parameters())
+_pa_routed = sum(p.numel() for p in _pa_moe.parameters() if p.dim() == 3 and p.shape[0] == _CfgPaMoE.moe_experts)
+assert _pa_routed > 0, "the MoE world has no 3-D routed stack; the shape predicate has no subject"
+_pa_act = _train._n_active_params(_pa_moe, _CfgPaMoE)
+assert _pa_act == _pa_total - _pa_routed + _pa_routed * _CfgPaMoE.moe_top_k // _CfgPaMoE.moe_experts, (
+    f"active {_pa_act} != total {_pa_total} - routed {_pa_routed} + its top_k share")
+assert _pa_act < _pa_total, "active must be below total when experts are routed"
+
+
+# top_k >= experts: every expert is reached, so the denominator is the full total and the
+# subtraction must be zero rather than negative. Parity forbids constructing such a MODEL
+# ((8+1)*32 != 128), so the CONFIG is varied against the model already built -- which is exactly
+# what the function reads: it takes cfg and model separately.
+#
+# BOTH == AND >, because == alone leaves the clamp untested: at k == e the expression
+# `n_routed * k // e` already equals n_routed and min() changes nothing, so dropping min()
+# SURVIVED that case (measured). Only k > e distinguishes them, and there the unclamped form
+# subtracts a negative -- inventing parameters the model does not have.
+class _CfgPaAll(_CfgPaMoE):
+    moe_top_k = 8
+
+
+class _CfgPaOver(_CfgPaMoE):
+    moe_top_k = 12   # nonsensical as a recipe, reachable as a typo, and the clamp's only witness
+
+
+assert _train._n_active_params(_pa_moe, _CfgPaAll) == _pa_total, \
+    "with top_k == experts the denominator must be the full total, never more"
+assert _train._n_active_params(_pa_moe, _CfgPaOver) == _pa_total, (
+    f"with top_k {_CfgPaOver.moe_top_k} > experts {_CfgPaOver.moe_experts} the denominator is "
+    f"{_train._n_active_params(_pa_moe, _CfgPaOver)}, above the total {_pa_total}: an unclamped "
+    f"k/e subtracts a negative and prices parameters the model does not contain")
+# A NAME TEST MUST FAIL HERE, and only a MIXED model can show it. model.py:337-338 names the
+# dense FFN's weights w13/w2 and MoEFFN (model.py:880-881) names its stacks the same -- but every
+# world above is all-MoE or all-dense, where the two predicates happen to agree, so a name test
+# SURVIVED them (measured). `moe_layers` is what makes a real model mixed: with "0-1" and 12
+# layers, blocks 0-1 hold (E, 2w, d) stacks called `ffn.w13` while blocks 2-11 hold nn.Linear
+# weights called `ffn.w13.weight`. Both are FLOPs a token pays; only the first is routed.
+class _CfgPaMixed(_CfgPaMoE):
+    layers = 12           # 0-1 routed, 2-11 dense FFN
+    moe_layers = "0-1"
+
+
+_pa_mixed = HybridLM(_CfgPaMixed)
+_pa_mx_total = sum(p.numel() for p in _pa_mixed.parameters())
+_pa_mx_shape = sum(p.numel() for p in _pa_mixed.parameters()
+                   if p.dim() == 3 and p.shape[0] == _CfgPaMixed.moe_experts)
+_pa_mx_name = sum(p.numel() for n, p in _pa_mixed.named_parameters()
+                  if "w13" in n or "w2" in n)
+assert _pa_mx_shape > 0, "the mixed world has no routed stack"
+# THE SUBSTRING SPELLING is what the mixed world separates, and it is worth being precise about
+# which name test is unsafe, because they are not equivalent. `"w13" in n` charges all 12 blocks
+# (344064 here) against the routed 98304 -- a 3.5x error. The last-component spelling
+# (`n.rsplit(".", 1)[-1] in ("w13", "w2")`) gives exactly 98304 and is CORRECT today, for a reason
+# that has nothing to do with routing: nn.Linear registers `weight` under the module, so its
+# leaf is "weight", while MoEFFN's bare nn.Parameter's leaf is "w13". Mutating the shape test into
+# that spelling therefore SURVIVES this file, correctly -- it is not a defect, it is a coincidence,
+# and it stops holding the day an expert stack becomes a module. The shape test does not depend on
+# that coincidence, which is the reason it is the one in train.py.
+assert _pa_mx_name > _pa_mx_shape, (
+    f"the mixed world does not separate substring from shape: name {_pa_mx_name} vs shape "
+    f"{_pa_mx_shape}. Without dense FFN blocks beside the routed ones a substring test gives the "
+    f"same answer, and the 3.5x understatement it causes would go unmeasured")
+assert _train._n_active_params(_pa_mixed, _CfgPaMixed) == (
+    _pa_mx_total - _pa_mx_shape + _pa_mx_shape * _CfgPaMixed.moe_top_k // _CfgPaMixed.moe_experts
+), ("the mixed model's active count subtracts something other than the routed stacks -- a name "
+    "test would also charge the 10 DENSE FFN blocks as inactive, understating the denominator")
+
+# THE MEMORY-TABLE HALF, which predates de-71 and must keep working: without a world holding a
+# table, deleting the `- n_mem` term SURVIVES (measured). mem_values > 0 builds the sparse pool.
+class _CfgPaMem(_CfgPaDense):
+    mem_values = 256
+    mem_layers = "0"
+    layers = 2
+
+
+try:
+    _pa_mem = HybridLM(_CfgPaMem)
+except Exception as _e:                                     # noqa: BLE001
+    print(f"_n_active_params: memory world unavailable ({type(_e).__name__}), "
+          f"the n_mem term is UNGUARDED here")
+else:
+    _pa_mm_total = sum(p.numel() for p in _pa_mem.parameters())
+    _pa_mm_mem = sum(p.numel() for n, p in _pa_mem.named_parameters() if _train._is_mem_fqn(n))
+    assert _pa_mm_mem > 0, "the memory world built no memory params; mem_values did not take"
+    assert _train._n_active_params(_pa_mem, _CfgPaMem) == _pa_mm_total - _pa_mm_mem, (
+        f"the memory table is back in the denominator: "
+        f"{_train._n_active_params(_pa_mem, _CfgPaMem)} vs {_pa_mm_total - _pa_mm_mem}. This is "
+        f"the M1 168%-MFU defect train._n_active_params's docstring records")
+print(f"_n_active_params: dense denominator identical ({_pa_old}); MoE {_CfgPaMoE.moe_experts} "
+      f"experts top_k {_CfgPaMoE.moe_top_k} counts "
+      f"{_pa_act} of {_pa_total} ({_pa_routed} routed); top_k == experts is the full total OK")
