@@ -1443,6 +1443,10 @@ def main():
         # tokenizer_sweep: its selftest builds four corpus dirs in tempfile and checks
         # which FILES load_text reaches -- no tokenizer, no data dir, no card.
         "scripts/tokenizer_sweep.py",
+        # test_v2_mix_is_resume1: reads two committed JSON files and diffs them. The v2 mix
+        # is a HAND COPY, so nothing else recomputes it; this is the only thing standing
+        # between a stray weight edit and a two-variable architecture comparison.
+        "scripts/test_v2_mix_is_resume1.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
         "mathbank/emit_novel_ops.py",
