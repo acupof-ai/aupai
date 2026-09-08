@@ -582,11 +582,13 @@ def main():
             #     and a new row carrying this one with cmd='' and hypothesis='' -- a result
             #     orphaned from the run that produced it. EXPERIMENTS.md then shows a row whose
             #     command is blank, which reads as a ledger defect rather than a misuse.
-            #     IT DOES CARRY A commit: the fabrication literal twenty lines below states
-            #     `"commit": git_commit()`, and git_commit's own contract is `Never ""`. This
-            #     comment said "no commit" until 2026-09-08 and 4c nearly derived a defect
-            #     classifier from it -- "has a commit, therefore hand-written" is false, and
-            #     the code two screens down is what says so.
+            #     IT DOES CARRY A commit: the fabrication literal in this same `done` branch --
+            #     the second of the file's two `"commit": git_commit()`, not the one on the
+            #     `start` path -- states `"commit": git_commit()`, and git_commit's own contract
+            #     is `Never ""`. This comment said "no commit" until 2026-09-08 and 4c nearly
+            #     derived a defect classifier from it: "has a commit, therefore hand-written" is
+            #     false. No line number here on purpose -- an eyeballed distance is how this
+            #     comment went wrong in the first place, and a written one rots silently.
             #
             # The fabrication is legitimate for a name with NO row: closing a run whose start
             # event was lost is the case it was written for, and run_sft.sh/run_pretrain.sh call
