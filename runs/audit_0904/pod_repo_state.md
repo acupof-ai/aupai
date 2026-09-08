@@ -1,6 +1,6 @@
 ---
 question: What is the true state of the pod and the repository on 2026-09-04, read from artifacts?
-status: partial
+status: open
 source: pod reads 2026-09-04 03:45-04:05Z via ~/bin/pod and tn exec; repo reads against main at 3f451a9f
 ---
 
