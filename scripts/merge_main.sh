@@ -714,6 +714,12 @@ _carry_restore() {
 # predicate that only ever says "dead" passes every positive case: the live-pid and deliberate-hold
 # rows are the ones that would have prevented 2026-09-05.
 if [ "$1" = "--selftest" ]; then
+  # A manual run reproduces the hook environment with GIT_DIR exported; under it the
+  # `git init` / `git config user.name T` calls below hit the SHARED .git -- the
+  # 2026-09-02 core.bare flip, and de's 2026-09-07 pod_push near-miss that wrote the
+  # shared config the same way (friction near_miss row). The hook strips GIT_* before
+  # invoking this; a manual run does not. Strip at the entry, once, for every world.
+  unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
   _fails=0
   _t=$(mktemp -d)
   _case() {  # $1=name $2=want dead|alive
@@ -789,6 +795,19 @@ time.sleep(20)
   # reimplementation of the predicate. Both directions: a gate that only ever refuses passes
   # every negative case, and one that only ever accepts is the prose rule it replaced.
   _g=$(mktemp -d)
+  # GUARD THE STRIP ABOVE, before any fixture write. Under a leaked GIT_DIR, git in a
+  # temp dir resolves to the SHARED repo (GIT_DIR overrides -C and cwd), so this reads
+  # the shared gitdir and refuses -- mutant-tested: drop the unset at the entry and
+  # this FAILs. The probe writes no config; the `git config user.name T` in the world
+  # below is what an unguarded leak would land on the shared repo.
+  _probe=$(mktemp -d)
+  git -C "$_probe" init -q . >/dev/null 2>&1
+  # pwd -P, not $_probe: on macOS /var is a symlink to /private/var, so rev-parse's
+  # absolute path and the mktemp path differ as strings while naming the same dir.
+  _probe_real=$(cd "$_probe" && pwd -P)
+  [ "$(git -C "$_probe" rev-parse --absolute-git-dir)" = "$_probe_real/.git" ] \
+    || { echo "  FAIL git-env guard: a temp-dir git resolved to $(git -C "$_probe" rev-parse --absolute-git-dir), not the temp world -- GIT_* leaked into the shared repo" >&2; _fails=$((_fails + 1)); }
+  rm -rf "$_probe"
   (
     cd "$_g" && git init -q . && git config user.email t@t && git config user.name T
     mkdir -p runs && echo x > model.py && echo y > train.py && echo z > other.txt
