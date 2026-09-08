@@ -16197,9 +16197,10 @@ def check_shared_config_not_fixture_identity(root):
 def _broken_shared_config_not_fixture_identity():
     """A repo whose config was flipped to the merge_main fixture identity must FAIL.
 
-    The world holds the real scripts/merge_main.sh -- the file whose fixtures write
-    T/t@t -- so it is repo-real rather than invented from the check's assumptions, and
-    it exercises the name=T branch that a t/t@t-only signature would have missed.
+    The world holds the real scripts/merge_main.sh because the selftest's meta-check
+    requires a repo-real path; the check reads only git config, so the FAIL comes from
+    the two config lines below, not the file. The T/t@t pair is merge_main.sh's own
+    fixture identity, exercising the name=T branch.
     """
     import shutil
     d = _tmp_repo()
