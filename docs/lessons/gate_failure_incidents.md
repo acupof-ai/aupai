@@ -870,8 +870,34 @@ Two cases added, both mutation-proven. A known answer: 3,000 tokens against a un
 `rows_truncated` and `max_ctx` now appear in every preds row and in the printed line. When truncation is non-zero the figure is the bpb of each row's first `max_ctx` tokens, which is an EASIER quantity than the bpb of the rows -- every scored token has full context and none sits past the cut -- and a reader has to see that rather than infer it.
 
 Cost: ~2h to find, fix, measure the factor and restate. The larger cost is that every absolute bpb in the record needs a restatement with retraction fields, and any external reading of those numbers was wrong for as long as they stood.
-Evidence: `eval/domain_bpb.py::text_bpb` and `_selftest`; the per-domain factor table above, computed on the pod; PR #79.
+Evidence: `eval/domain_bpb.py::text_bpb` and `_selftest`; PR #79. The factor table first filed with this incident was WRONG -- see §278; the corrected ratios are 1.9712 (cot) to 2.0634 (chatml), 2.0088 overall.
 open: no gate requires a metric's selftest to include an input that exercises every truncation or cutoff branch the metric has. The narrow machine-checkable half: any function taking a `max_*` bound must have one selftest input exceeding it.
+
+### §278 (2026-09-08, R11)
+
+**The probe I wrote to measure §277's correction factor had §277's shape, and it manufactured a defect that had not occurred.** Fourth instance of R11 in one night, and the only one where the flawed population was in the instrument rather than in the code under test.
+
+To price the divisor error I needed, per domain, the bytes of the whole row against the bytes of the first 2048 tokens. I computed both by reimplementing what `text_bpb` does. Two differences from the real function, each one token wide:
+
+    plain tok.decode(ids)          the metric passes skip_special_tokens=False (domain_bpb.py:379),
+                                   because the delimiter is part of the held-out bytes
+    first token of enc(dec(ids))   the code subtracts the ORIGINAL ids' first token
+
+The first produced a 5.20% disagreement with the recorded `scored_bytes` on chatml -- the domain with the most special tokens per row -- against 0.06 to 0.53% elsewhere. **I read that as evidence that chatml's held-out row set had drifted**, built a whole theory on it (`val_seqs` takes a seed-42 prefix sized `min(max(1,int(pool*0.05)),5000)`, chatml's pool is below the cap, so the prefix moves when the pool grows), reported it to 4c as outranking the divisor in what it invalidated, and got a ruling back agreeing it was the bigger finding. It was an artefact of my decode call.
+
+The second produced a 29-byte residue on chatml after the first was fixed. That one found a real curiosity and still was not the data's fault: two chatml rows do not round-trip token-for-token, 4097 ids re-encoding to 4099 because a U+FFFD fragment splits into three tokens. **Byte identity holds** -- `dec(enc(text)) == text` -- which is the property the metric's gate actually requires, so those rows are legitimately scored. But the re-encoded first token differs from the original's, and I was subtracting the wrong one.
+
+Calling the shipped `text_bpb` instead of reimplementing it reproduces the recorded `scored_bytes` **exactly, all nine domains, zero bytes of difference**. That comparison was free and available from the first minute, and it is the one that fails first.
+
+Corrected factors, shipped numerator over the b0-37 divisor on the same rows: math_owm_stage2 1.9916, en_c4_stage2 2.0131, cot 1.9712, textbook_30b 1.9938, chatml 2.0634, chat_qa 2.0286, zh_web 2.0122, code_py_starcoder 1.9929, code_py_rp1t 1.9968, all 2.0088. My probe's values were low by up to 2.4%.
+
+**And the row sets never moved.** All nine token caches under `/mnt/data02/tokens` are stamped 2026-09-05 03:49-04:01, before both the 09-07 and 09-08 scorings, so every cross-run comparison in that window scored identical rows and the -6.89% anneal pair is clean. The val-prefix mechanism is real as arithmetic -- 50 documents added give 16.3% val overlap at chatml's scale and 19.0% at cot's, and the 5000 cap holds the COUNT while turning over 4049 of 5000 members -- but it is a latent defect with no observed instance. Prevention, filed as b0-38, not repair.
+
+Why this is the sharpest instance: the probe's every intermediate number was well-formed, its disagreement with the artifact read as a finding ABOUT THE ARTIFACT rather than about itself, and being on alert for the shape did not help -- I had written R11 hours earlier. A reimplementation creates a second population by construction, and when two populations disagree the natural reading is that the world moved.
+
+Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 4c and one to the ledger, plus a peer's ruling issued on a false premise. No number reached a report: the retraction rows were corrected in place before anything shipped, and 4c's "publish no rescaled level" ruling meant the wrong factors were never going to be printed as values anyway.
+Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
+open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
 ## R10. What happened only on the pod did not happen
 

@@ -284,7 +284,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class. A claim says who intends to hold a resource and nothing about whether the job is progressing | 7 | §15 §126 §194 §195 §214 §245 §264 |
 | Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed; no listed path is tracked in main | 3 | §39 §41 §255 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
-| A predicate set answers the question it enumerates, not the one it is named for; assert its population against the filesystem, never against a list | 3 | §275 §276 §277 |
+| A predicate set answers the question it enumerates, not the one it is named for; assert its population against the filesystem, never against a list; to measure a correction for an instrument, call the instrument | 4 | §275 §276 §277 §278 |
 
 New shapes land in the incidents doc first and this table follows.
 
