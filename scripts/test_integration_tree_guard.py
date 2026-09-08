@@ -55,22 +55,8 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
 
 
-_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-_CLEAN_ENV.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-
-
 def _git(d, *a):
-    """git in a throwaway world, with the caller's git environment stripped.
-
-    This had no env= at all while running `init`, `config` and `branch -M main`. Under a
-    leaked GIT_DIR those write to the SHARED repository, and with GIT_DIR pointing at a
-    worktree gitdir `git init` flips core.bare and takes every session's git down (twice on
-    2026-09-02). `branch -M` also rewrites a [branch] section, which the pre-commit
-    shared-repo guard deliberately excludes from its digest -- so without this strip the
-    guard would be silent on exactly that write. Pattern from
-    test_behind_main_overlap.py:55-56."""
-    return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, timeout=60,
-                          env=_CLEAN_ENV)
+    return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, timeout=60)
 
 
 def _integration_tree(parent):

@@ -66,18 +66,9 @@ def _read(path):
 
 
 def run(args, cwd):
-    """Run git with the inherited git and override environment stripped.
-
-    GIT_* comes off for the reason the shared-repo guard exists: a selftest that runs
-    `git init` or `git branch -M` under a leaked GIT_DIR writes to the SHARED repository,
-    and when GIT_DIR points at a worktree gitdir `git init` flips core.bare and takes every
-    session's git down (twice on 2026-09-02). Copied from test_behind_main_overlap.py:55-56,
-    which had it right; the GLOBAL/NOSYSTEM pair goes with it so a developer's ~/.gitconfig
-    cannot change what a world does. AUPAI_BEHIND_MAIN_OK and AUPAI_CONTROLLER come off
-    separately: inherited from the caller's shell they would make some worlds pass for the
-    wrong reason."""
-    e = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
-    e.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    """Run git with the override flags stripped -- an inherited AUPAI_BEHIND_MAIN_OK or
+    AUPAI_CONTROLLER from the caller's shell would make some worlds pass for the wrong reason."""
+    e = dict(os.environ)
     e.pop("AUPAI_BEHIND_MAIN_OK", None)
     e.pop("AUPAI_CONTROLLER", None)
     return subprocess.run(args, cwd=cwd, capture_output=True, text=True, env=e)

@@ -236,61 +236,18 @@ def staged(diff_filter):
     return [f for f in r.stdout.splitlines() if f.strip()]
 
 
-def _config_sections(raw):
-    """[(header, body)] for an INI file: a section is its header line plus every line until
-    the next header. Used to hash part of a config rather than all of it."""
-    out, header, body = [], "", []
-    for line in raw.decode("utf-8", "replace").splitlines(True):
-        if line.lstrip().startswith("["):
-            if header or body:
-                out.append((header, "".join(body)))
-            header, body = line.strip(), []
-        else:
-            body.append(line)
-    if header or body:
-        out.append((header, "".join(body)))
-    return out
-
-
 def _shared_repo_state(root):
-    """(sha256 of the shared .git/config EXCEPT its [branch] sections, staged paths, branch
-    section names) -- what a selftest must not change.
+    """(sha256 of the shared .git/config, staged paths) -- what a selftest must not change.
 
     Stripping GIT_* from the child stops the leak we know about (e1-12). This measures
     the property instead of the mechanism: whatever a selftest does, the shared repo must
     look the same afterwards. Two cheap reads, ~10ms.
 
-    HASH THE FILE, do not enumerate fields (b0's correction, 2026-09-02). The first
+    HASH THE WHOLE FILE, do not enumerate fields (b0's correction, 2026-09-02). The first
     version compared core.bare, because that is the field that broke us -- but `git init`
     under a leaked GIT_DIR rewrites the entire config, and core.bare is merely the most
     lethal line in it. A field list only catches the forms already imagined; the next leak
     adds a remote or bumps repositoryformatversion and passes.
-
-    [branch] SECTIONS ARE EXCLUDED, and that exclusion is the whole difference between a
-    guard and a lottery. `git push -u` writes `[branch "<name>"] remote/merge` into the
-    SHARED config; six sessions open PRs continuously, so that writer is normal work and
-    cannot be paused. Every selftest the hook runs is one more collision window, and there
-    are about forty of them. What it cost, both measured 2026-09-08: b0 refused five times
-    with a different digest each time (3cfc2d49, cbf3cc0c, 33df6b01 among them), e1 four
-    times, each refusal naming a DIFFERENT innocent file. Nine refusals, nine wrong names.
-
-    WHAT WOULD MAKE THIS EXCLUSION WRONG, stated so the next person to widen it knows what
-    to falsify: it rests on the claim that the only writers of [branch] sections are
-    `git push -u` and a human `git config`. b0 measured the half that is easy to get
-    backwards -- creating a branch locally writes nothing to the shared config. If a
-    SELFTEST is ever found writing a [branch] section, that selftest has the bug; the
-    answer is still not to widen the digest, because widening it restores the livelock.
-    A leaked `git init` rewrites core.*, remote.* and repositoryformatversion, all still
-    hashed, so the destructive form this guard exists for is untouched.
-
-    The branch NAMES come back as the third element so a refusal can say which direction
-    they moved, because direction is the one observation that separates the innocent causes:
-    a gain is a push, a loss is a branch or worktree being pruned. It is deliberately NOT
-    part of the equality -- see _shared_repo_changed. b0 read the old hint ("same value
-    every run is a selftest, a different value each time is a peer") and reached a
-    confident, specific, wrong conclusion, because neither tell distinguishes a gain from
-    a loss: the evidence was in b0's own paste, a branch count of 84 -> 81, and a drop
-    rules a push OUT.
 
     The leak needs GIT_DIR pointing at a WORKTREE gitdir (.git/worktrees/<name>) -- a
     plain repo's GIT_DIR does not flip core.bare, so a casual test looks safe and only a
@@ -315,45 +272,15 @@ def _shared_repo_state(root):
     cfg = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
                           "--git-common-dir"],
                          capture_output=True, text=True, env=env).stdout.strip()
-    digest, branches = "", frozenset()
+    digest = ""
     if cfg:
         path = os.path.join(cfg, "config")
         if os.path.exists(path):
             with open(path, "rb") as fh:
-                raw = fh.read()
-            secs = _config_sections(raw)
-            branches = frozenset(h for h, _ in secs if h.startswith('[branch "'))
-            kept = "".join(h + "\n" + b for h, b in secs if not h.startswith('[branch "'))
-            digest = hashlib.sha256(kept.encode("utf-8")).hexdigest()[:16]
+                digest = hashlib.sha256(fh.read()).hexdigest()[:16]
     idx = subprocess.run(["git", "-C", root, "diff", "--cached", "--name-only"],
                          capture_output=True, text=True, env=env).stdout.split()
-    return digest, frozenset(idx), branches
-
-
-def _shared_repo_changed(before, after):
-    """What changed between two _shared_repo_state reads, as a list of observations.
-
-    Empty means nothing a selftest is answerable for. Branch sections are reported when
-    something else already changed, and never on their own: they are the thing six
-    concurrent pushes write, and charging a selftest for them is what produced five
-    false refusals across two sessions on 2026-09-08.
-    """
-    what = []
-    if after[0] != before[0]:
-        what.append(f".git/config changed outside its [branch] sections "
-                    f"({before[0]} -> {after[0]})")
-    gained, lost = after[1] - before[1], before[1] - after[1]
-    if gained:
-        what.append(f"staged {sorted(gained)[:4]}")
-    if lost:
-        what.append(f"unstaged {sorted(lost)[:4]}")
-    if what:
-        b_add, b_del = len(after[2] - before[2]), len(before[2] - after[2])
-        if b_add or b_del:
-            what.append(f"and, separately, [branch] sections {len(before[2])} -> "
-                        f"{len(after[2])} (+{b_add}/-{b_del}); a gain is someone's "
-                        f"`git push -u`, a loss is a branch or worktree being pruned")
-    return what
+    return digest, frozenset(idx)
 
 
 def _refuse_committing_on_main(merging):
@@ -2515,31 +2442,30 @@ def main():
             # already broken. Checked after the rc check so a crashing selftest reports
             # its own error first.
             after = _shared_repo_state(repo_root())
-            what = _shared_repo_changed(state_before, after)
-            if what:
-                # REPORT THE OBSERVATION, DO NOT NAME A CULPRIT. This said "<file> --selftest
-                # changed the SHARED repo", and it cannot know that. The wrongness is
-                # STRUCTURAL, not bad luck (e1's derivation, 2026-09-08): the window wraps one
-                # selftest's subprocess, a round runs about forty of them back to back, so the
-                # windows tile most of the round's wall clock. A concurrent write lands in
-                # WHICHEVER window it happens to fall in, uniformly, and that window's file gets
-                # named. Nine refusals across b0 and e1 on 2026-09-08 named nine different
-                # innocent files with zero repeats -- the uniformity IS the evidence. The
-                # correlation between the named file and the cause is zero, so printing it as
-                # the subject is not imprecise, it is misleading, and each reader spent their
-                # time proving a clean file clean.
-                print("REFUSING: the SHARED repo changed while a selftest was running.\n"
-                      "  observed: " + "; ".join(what) + "\n"
-                      f"  running at the time: {f} {flag} (it PASSED, which is why this "
-                      f"matters: rc=0 reads as verified while every other session's git may "
-                      f"already be broken)\n"
-                      "This does NOT establish that the selftest made the change -- the window "
-                      "is its duration, and any session's write lands in someone's window. Read "
-                      "the observation above first, then decide. If a selftest IS the cause it "
-                      "must build its world from nothing the caller is holding: strip GIT_* from "
-                      "every subprocess it spawns (pod_drift.py:61-66). Two tells that it is "
-                      "not: grep the named file for a git invocation at all, and re-run it "
-                      "alone.",
+            if after != state_before:
+                what = []
+                if after[0] != state_before[0]:
+                    what.append(f".git/config changed ({state_before[0]} -> {after[0]})")
+                gained, lost = after[1] - state_before[1], state_before[1] - after[1]
+                if gained:
+                    what.append(f"staged {sorted(gained)[:4]}")
+                if lost:
+                    what.append(f"unstaged {sorted(lost)[:4]}")
+                print(f"REFUSING: {f} --selftest changed the SHARED repo: "
+                      + "; ".join(what) + ".\n"
+                      "It passed, which makes this worse than a failure: rc=0 reads as "
+                      "verified while every other session's git is already broken.\n"
+                      "A selftest must build its world from nothing the caller is "
+                      "holding -- strip GIT_* from every subprocess it spawns "
+                      "(pod_drift.py:61-66).\n"
+                      "BEFORE READING THE FILE ABOVE: this cannot distinguish that selftest "
+                      "from a CONCURRENT write by another session -- a `git push -u` adding a "
+                      "[branch] section, a `git config` anywhere in this checkout -- that landed "
+                      "while it ran. Two tells: grep the named file for a git invocation at all, "
+                      "and re-run it alone. A selftest that writes the config writes the SAME "
+                      "value every run; a different value each time is a peer "
+                      "(measured 2026-09-07, card_claim.py refused while running zero git "
+                      "commands).",
                       file=sys.stderr)
                 sys.exit(1)
     finally:
@@ -3000,7 +2926,7 @@ def _selftest():
         finally:
             shutil.rmtree(victim, ignore_errors=True)
         after = _shared_repo_state(d3)
-        if not _shared_repo_changed(before, after):
+        if after == before:
             fails.append("world 6: the leak did not reproduce, so the detector is "
                          "untested -- GIT_DIR must point at a worktree gitdir")
         elif subprocess.run(["git", "-C", d3, "config", "--get", "core.bare"],
@@ -3016,7 +2942,7 @@ def _selftest():
         # which is the point of hashing.
         with open(cfg_path, "wb") as fh:
             fh.write(cfg_bytes)
-        if _shared_repo_changed(before, _shared_repo_state(d3)):
+        if _shared_repo_state(d3) != before:
             fails.append("world 6: state did not return to baseline after restoring the "
                          "config bytes, so a difference cannot be attributed to one "
                          "selftest")
@@ -3056,11 +2982,11 @@ def _selftest():
             # --- selftest A: writes the shared config while it runs. The guilty one.
             before_a = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
             g6("config", "de.world6b", "written-during-A")     # A's write
-            blamed_a = bool(_shared_repo_changed(before_a, _shared_repo_state(d6b)))
+            blamed_a = _shared_repo_state(d6b) != before_a
 
             # --- selftest B: touches nothing at all.
             before_b = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
-            blamed_b = bool(_shared_repo_changed(before_b, _shared_repo_state(d6b)))
+            blamed_b = _shared_repo_state(d6b) != before_b
 
             g6("config", "--unset", "de.world6b")
             return blamed_a, blamed_b
@@ -3081,71 +3007,6 @@ def _selftest():
                          f"without that this world passes with the fix reverted")
     finally:
         shutil.rmtree(d6b, ignore_errors=True)
-
-    # WORLD 6c (must NOT fire): a concurrent `git push -u` writing a [branch] section is not a
-    # selftest's doing, and a real `git init` leak still is. Both halves are asserted here
-    # because dropping [branch] from the digest can be taken too far: exclude too much and the
-    # detector that stopped two repo-wide outages measures nothing.
-    #
-    # MEASURED 2026-09-08, and this world is built from those refusals: b0 refused three times
-    # with a different digest each time (3cfc2d49 -> cbf3cc0c -> 33df6b01), e1 refused twice
-    # each naming a DIFFERENT innocent file. The actual config change behind e1's was the
-    # REMOVAL of `3b-zombie-lock` and `fb-code` during a worktree cleanup -- a direction the old
-    # hint could not express, since "a different value each time is a peer" reads identically
-    # for a gain and a loss.
-    d6c = tempfile.mkdtemp()
-    try:
-        def g7(*a, cwd=d6c):
-            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True, text=True,
-                                  env=clean)
-        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
-                  ("config", "user.name", "t")):
-            g7(*a)
-        with open(os.path.join(d6c, "f.txt"), "w") as fh:
-            fh.write("base\n")
-        g7("add", "f.txt")
-        g7("commit", "-q", "-m", "base")
-
-        base = _shared_repo_state(d6c)
-        if not base[0]:
-            fails.append("world 6c precondition: no config digest, so nothing here can show")
-
-        # (a) A PUSH-SHAPED WRITE MUST NOT FIRE. `git push -u` writes exactly this pair.
-        g7("config", "branch.peer-pushed.remote", "origin")
-        g7("config", "branch.peer-pushed.merge", "refs/heads/peer-pushed")
-        added = _shared_repo_state(d6c)
-        if _shared_repo_changed(base, added):
-            fails.append(f"world 6c: a [branch] section added by a peer's push was reported as "
-                         f"a shared-repo change: {_shared_repo_changed(base, added)}")
-        if len(added[2]) != len(base[2]) + 1:
-            fails.append(f"world 6c: the branch section was not counted "
-                         f"({len(base[2])} -> {len(added[2])}); direction cannot be reported")
-
-        # (b) A REMOVAL MUST NOT FIRE EITHER, and must be visible as a LOSS. This is e1's case:
-        # the config really did change, no selftest did it, and the direction is what says so.
-        g7("config", "--remove-section", "branch.peer-pushed")
-        removed = _shared_repo_state(d6c)
-        if _shared_repo_changed(added, removed):
-            fails.append(f"world 6c: removing a [branch] section was reported as a shared-repo "
-                         f"change: {_shared_repo_changed(added, removed)}")
-        if len(removed[2]) != len(added[2]) - 1:
-            fails.append("world 6c: a removed [branch] section did not lower the count, so a "
-                         "loss cannot be told from a gain -- the tell b0 needed")
-
-        # (c) THE DETECTOR STILL FIRES ON THE REAL THING, and says which direction the branch
-        # sections moved when it does. Without this the exclusion could be widened to
-        # everything and every world above would still pass.
-        g7("config", "branch.also-pushed.remote", "origin")   # concurrent push, same window
-        g7("config", "core.bare", "true")                     # the leak's signature field
-        leaked = _shared_repo_changed(removed, _shared_repo_state(d6c))
-        if not leaked:
-            fails.append("world 6c: core.bare=true did NOT fire -- the exclusion is too wide "
-                         "and this guard no longer detects the leak it exists for")
-        elif not any("[branch] sections" in w and "+1/-0" in w for w in leaked):
-            fails.append(f"world 6c: fired, but did not report the branch-section direction "
-                         f"alongside it: {leaked}")
-    finally:
-        shutil.rmtree(d6c, ignore_errors=True)
 
     # WORLDS 7-10 ARE GONE, and their absence is the point (shape A, 6e ruling 2026-09-04).
     # All four tested that the hook's manifest regeneration left no residue on a refusal:
