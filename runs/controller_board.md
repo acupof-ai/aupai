@@ -14,9 +14,15 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 | Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
 | Never delete without a named target | every removal names its files and runs each first |
 
-## Critical path
+## Queue state, 2026-09-08 12:05Z
 
-**de's shared-config guard onto main.** Committed locally on `de-agents-clean` (`f223e560` + a `wip:` commit), not pushed, sharing a branch with PR #85. The hook everyone executes is the integration tree's symlink, so a commit that has not reached main is not running anywhere: e1 has been refused nine times, naming eight different innocent files. Split onto a branch cut from main, squash the wip (it was committed with `--no-verify`, so the hook never ran on it), open a PR, 44 reviews.
+28 PRs merged today, 18 still open, CI green. **Reviews are now being picked up without dispatch** — de cleared 44's four, e1 cleared 98's three, b0 and tilerl are on the rest. The standing rule changed at 11:50Z: **a PR's roster pair reviews it without waiting to be assigned.** The earlier version made me watch the queue faster; de's correction is the right one — the bottleneck was not that only I could see it, it was that only I was looking.
+
+Merge order still binds three: **#81 (§276-278) → #96 (§279-282) → #85 (§283)**, and **#98, #100 before #101** (its two fact references are forward references that no check would catch — `_commit_delivers` parses `facts/<f>.json#<id>` only from `runs/tasks.jsonl` evidence, never from prose).
+
+## Critical path — cleared 2026-09-08 11:45Z
+
+The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
 
 ## Seven tracks
 
@@ -32,7 +38,7 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 
 ## The night's single finding
 
-Eleven instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
+Thirteen instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
 
 | instrument | question asked | question answered |
 |---|---|---|
@@ -47,6 +53,8 @@ Eleven instruments each answered a question narrower than the one asked, and non
 | `exp.py:582` comment | what does the fabricated row carry | correct on `hypothesis`, wrong on `commit`, 20 lines from the code |
 | mutation sweep "ALL KILLED" | did the mutants die on assertions | they died on `FileNotFoundError`, twice |
 | my own "40,000 rows vs a cap of 1,200" | can this batch's recorded command have produced it | how many programs the library holds -- a different unit, never checked |
+| `gh pr diff --name-only` | which files does this PR change | which files the branch's history touched -- a revert leaves them listed. The predicate is `git diff base..head --stat` |
+| a PASS line's summary (mine, via de's) | what does this check assert | what the summary line happens to print. `shapes_table_covers_doc` DOES refuse duplicate numbers (`harness.py:2390`, verified on a constructed world); its PASS line's "each referenced exactly once" is about the rule table, and both of us read the summary instead of the predicate |
 
 Two derived rules, both adopted: **an unusually tight cluster is a systematic instrument offset until shown otherwise — a real effect has spread** (3b, from 18 samples all inside 7.1–8.0h, which was a timezone constant); and **rewrite the question into a form that reads bytes directly** (3b: hash the file, compare UTC to UTC, run the target copy itself).
 
@@ -59,7 +67,39 @@ Shapes R12–R14 are PR #96, stacked on #81. A never-triggered exclusion belongs
 | A writer outside `exp.py` hand-appends rows to `runs/experiments.jsonl` | 3b | a refusal only guards the path through it; `pod_pull_ledgers` is cleared by time order and by reading `append_rows` |
 | ~~40,000 rows against a cap of 1,200~~ REFUTED 2026-09-08 | 44 | the units did not match: 1,302 is the count of PROGRAMS in the library, the run's cap is 100,000 rows, and 40,000 is the recorded L4 target (100,000 x 0.4) to the row. pod holds 97,771 rows with sha256 matching PROVENANCE. `facts/corpus_supply.json#cs.math_short_v8_cap_audit`, PR #98 |
 | `score_matrix.jsonl` has 1 dedicated watcher against `tasks.jsonl`'s 6 | b0 | its fold key makes rewrite legal, so append-only checks cannot see a changed value; a wrong factor table sat on main for hours |
-| Mutation sweeps need a positive control | de | "all killed" cannot distinguish a working sweep from one that ran nothing |
+| Mutation sweeps need a positive control | de | DONE in PR #99: M0 survives, and the new died-for-the-right-reason criterion caught M2 dying on `FileNotFoundError` on its first run |
+
+## Known-answer audit of the 16 unguarded eval metrics — 2026-09-08 12:20Z, fb
+
+11 groups (grouped by shared scoring path), every one run on CPU against the repo's own functions with only the model stubbed, each with a negative control, each claimed defect sent to two independent verifiers. **7 defects confirmed, 4 metrics reproduce their known answer, 0 blocked.** No metric was judged by reading it.
+
+| # | metric | defect | consequence |
+|---|---|---|---|
+| 1 | `eval/code_fewshot.py:178`, `eval/code_l0prime.py:217` | `cont_ids = ids[len(pr):]` strips the prompt length off a value that already excludes the prompt (`train.py:1662` returns generated ids only; `eval/l1_fewshot.py:596` has it right) | **At 3-shot it discards 319–335 tokens — more than a whole solution — and scores the empty string. Measured on six gold rows that must score 6/6: 0/6, empty-continuation rate 100%.** Every number these two tools ever produced is invalid |
+| 2 | `eval/l1_fewshot.py:60` | `ANS_RE`'s terminator class `(?:[。.\n]|$)` contains the ASCII full stop, which is also the decimal point, so the lazy capture stops there: "答案是 3.5。" yields "3". **Two retractions, and the second is the useful one.** (i) My fix — drop the `.`, as the monolingual sibling `math_zh.py:35` has it — looked wrong when scored on CAPTURED STRINGS: 4/10 current, 8/10 mine, 10/10 for e1's `(?:[。\n]|(?<!\d)\.|\.(?!\d)|$)`. (ii) e1 then retracted that: scored on `score()`'s RETURN VALUE, which is what anyone acts on, the tally is 4 / **11** / **12** of 12, because `algorithms/rlvr_reward.py:46` already does `s.rstrip("。.,，")`. The one real divergence is `The answer is 1.5. Next sentence.` — mine runs to end of line. **A captured string that looks obviously broken (`'3.5.'`) can score correctly; asserting the capture instead of the score reports a 100-point difference where the real one is 1 case in 12.** e1's version still wins, on a better reason: it keeps the terminator's meaning identical in both languages instead of leaning on a downstream `rstrip` that does not know it is covering for anyone | A verbatim-correct decimal answer scores 0.0 while still counting as answer-present. **Regression introduced 2026-09-03 in `8ab15148`; the sibling `eval/math_zh.py:35` terminates on `[。\n]` only and is correct.** Bounded by 23/500 = 4.6% decimal golds. `be.l1_fewshot_p324` predates it; any rerun today does not |
+| 3 | `eval/ceval.py:58` vs `eval/run_eval.py:281` | items are tagged `"norm": "char"` and the module documents per-character scoring, but the only scorer sums token log-probs with no divisor, and **no file in the repo ever reads the `norm` key** | The declared metric is inverted into a shortest-option bias. Verifier found it wider: `run_eval.py:146` registers ceval with `cloze=False`, so the per-character path is unreachable from the runner at all. Known answer: 100.0% declared vs 0.0% observed |
+| 4 | `eval/winogrande.py:14-15` | `prefix.strip()` deletes the separator and the option is built with no leading space | Every item is scored on `"...brown suitcase becausethe trophy is too large."`, and the first scored token flips to the no-leading-space form on both options |
+| 5 | `eval/ppl.py:69` | computes the held-out split from the global `train.Cfg.val_frac` only; `train.py:2695-2699` honours a per-domain `val_frac` from the mix | For the five `data/mix_e1_*.json` mixes that set `val_frac: 0`, ppl scores rows the run **trained on** and reports them as held-out, contradicting its own docstring. The ladder mixes carry no per-domain key, so figures taken with them are unaffected. The arithmetic itself is correct |
+| 6 | `eval/code_zh.py:43` | `_norm_lines` drops **every** blank line, not the trailing ones its docstring at :42 promises | stdout with leading or interior blank lines the oracle does not have is accepted: 500/500 where the stated contract requires 0/500 |
+| 7 | `eval/gsm8k.py:55` | never reads `cfg.fone`, so `skip_special_tokens=True` deletes `[NUM]` (id 32772) before `:31` extracts a number | **Latent**, not active: a correct answer would score 0.00% silently on a FoNE checkpoint, but no `--fone` run appears in `runs/experiments.jsonl`. `run_eval.py:384` guards this; `gsm8k.py`'s own `__main__` does not |
+
+Reproduce their known answer, with the divisor and the alignment pinned analytically: **`mmlu`, `math_hard`, `math_zh`, `fone`.** The MC likelihood scorer itself is correct — the divisor is exactly 1 (raw sum, crossing bisected to 1e-12) and option token k is scored at logit `pl-1+k`, verified on 2376 real ARC-Easy items where the count-derived known answer 0.2492 matched to 1e-9.
+
+**One sub-claim was refuted by verification and is not in the table**: that `chid_probe` shows the same defect on a chance-level baseline. A uniform-logit model is deterministic, not chance — its ranking is entirely `-T·lnV`, so it always picks the fewest-token candidate. The unequal-length contract violation is real; the way it was demonstrated was not.
+
+**A sibling implementation answers the question for its own scope, not yours.** Rolling back to it looks like the safest default and here it was not — I read `math_zh.py:35`, confirmed the character was absent, and did not ask why it did not need to be there. Sixteenth instance of the night's shape, and the first where the narrowed answer came from a correct piece of code rather than a tool.
+
+**Seventeenth, from e1's own retraction, and it is about who gets verified rather than what:** in the same hour e1 ran the control for `check_ckpt_facts_sources_present` against a baseline, ran the `[protected]` positive control and caught it deleting zero rows — then reasoned about `reward_fn` instead of calling it. **Own artefacts got a measurement; a peer's got an inference.** The asymmetry is invisible from inside because both feel like diligence.
+
+**Why this audit existed:** `eval/domain_bpb.py` truncated its input while dividing by the untruncated length and reported 5.460 where the true value is 8.000. One known-answer case found it. These 16 metrics had no such case. **Six of the seven defects are in the same family — a value computed over one population and divided, compared, or sliced against another.**
+
+## Unowned, ready to pick up
+
+**A check that `facts/<f>.json#<id>` references in prose resolve.** Today only `runs/tasks.jsonl` evidence is parsed (`_commit_delivers`); a reference in a doc dangles silently. e1 measured the real population: **493 references repo-wide, 2 genuinely dangling** — `runs/controller_board.md` → `cs.math_short_v8_cap_audit` (resolves once #98 lands) and `runs/tasks.jsonl` → `dq.t24`, whose closing row put a bare file path in `evidence`, so the id was never parsed at all.
+
+**The value is not the 2. It is the path to them: 24 → 20 → 11 → 2, false positives at ten times the real defects.** The middle step is the instructive one — a two-segment regex truncated every three-segment id (`mlm.ratio.sub1b_optimum` → `mlm.ratio`) and then reported that the truncated prefix did not exist. All 20 carried a complete evidence shape: the reference really is in the file, the prefix really is absent.
+
+Acceptance conditions, from e1 and not negotiable, because without them it reports 20 false rows on day one and gets turned off (a permanent red is the same as no signal): positive assertions for three- and four-segment ids; fixture ids whitelisted or excluded by directory (`_broken_*` worlds contain deliberately absent ids); one case for a reference split across a line break.
 
 ## Corpus reproducibility
 
