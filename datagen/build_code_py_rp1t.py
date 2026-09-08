@@ -17,6 +17,7 @@ current raw source shard". It lost everything and corrupted the output.
 The comment was fixed by changing the CODE to match it, not by weakening the sentence:
 the next person reads the comment, not the loop."""
 import ast
+import argparse
 import glob
 import json
 import os
@@ -29,25 +30,37 @@ import build_corpus as B  # noqa: E402
 SRC = "/work/aupai/data/corpus/code_rp1t"
 DST = "/work/aupai/data/corpus/code_py_rp1t"
 PHASE = "code_py_rp1t"
-DONE = os.path.join(DST, ".built_shards")
 
 
 def main():
+    # --out EXISTS SO A REPRODUCTION RUN DOES NOT OVERWRITE THE CORPUS IT IS CHECKING.
+    # DST was a module constant, so the only way to rebuild this domain and diff it against
+    # what is on disk was to re-implement this loop somewhere else -- which is what e1 did on
+    # 2026-09-08, and it makes the test unable to answer its own question: if the rebuild
+    # differs, the difference could be the pipeline being non-deterministic OR the copy having
+    # drifted from this file. Those two are the whole point of the check and a hand copy cannot
+    # separate them. Named --out, not --dst, to match build_corpus.py:1718.
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--src", default=SRC, help="source corpus dir (default: the live code_rp1t)")
+    ap.add_argument("--out", default=DST, help="output dir (default: the live code_py_rp1t)")
+    a = ap.parse_args()
+    src, dst = a.src, a.out
+    done_path = os.path.join(dst, ".built_shards")
     built = set()
-    if os.path.exists(DONE):
-        built = set(open(DONE).read().split())
-    shards = [p for p in sorted(glob.glob(os.path.join(SRC, "code_rp1t_*.jsonl")))
+    if os.path.exists(done_path):
+        built = set(open(done_path).read().split())
+    shards = [p for p in sorted(glob.glob(os.path.join(src, "code_rp1t_*.jsonl")))
               if os.path.basename(p) != "build_corpus_stats.json"]
     todo = [p for p in shards if os.path.basename(p) not in built]
     if not todo:
         print(json.dumps({"ndone": len(built), "note": "nothing new"}))
         return
-    B._LOCK_FD = B._build_lock(DST)
-    os.makedirs(DST, exist_ok=True)
+    B._LOCK_FD = B._build_lock(dst)
+    os.makedirs(dst, exist_ok=True)
     # Resume past what is already on disk. ShardWriter numbers from 0, so on a restart
     # it would otherwise reopen code_py_rp1t_000.jsonl and overwrite completed output.
-    w = B.ShardWriter(DST, "code_py_rp1t")
-    existing = sorted(glob.glob(os.path.join(DST, "code_py_rp1t_*.jsonl")))
+    w = B.ShardWriter(dst, "code_py_rp1t")
+    existing = sorted(glob.glob(os.path.join(dst, "code_py_rp1t_*.jsonl")))
     if existing and built:
         nxt = max(int(os.path.basename(p).split("_")[-1].split(".")[0])
                   for p in existing) + 1
@@ -82,18 +95,18 @@ def main():
         done.append(shard)
         # Appended per source shard, not once at the end: a kill between here and the
         # final write used to discard every shard already processed.
-        with open(DONE, "a") as f:
+        with open(done_path, "a") as f:
             f.write(shard + "\n")
     w.close()
     from collections import Counter
 
-    B._emit_holdout_slice(DST, PHASE, held_out, allow_empty=True)
-    B._write_stats(DST, "code_py_rp1t",
+    B._emit_holdout_slice(dst, PHASE, held_out, allow_empty=True)
+    B._write_stats(dst, "code_py_rp1t",
                    B.argparse.Namespace(domain="code_py_rp1t", workers=1, phase=PHASE, allow_empty_slice=True,
                                         filters="rp1t-python-ast", no_near_dedup=True),
                    Counter({"kept": rows_keep}), rows_keep, 0,
-                   len(glob.glob(os.path.join(DST, "code_py_rp1t_*.jsonl"))), held_out)
-    print(json.dumps({"phase": PHASE, "src": SRC, "dst": DST, "rows": rows_keep}))
+                   len(glob.glob(os.path.join(dst, "code_py_rp1t_*.jsonl"))), held_out)
+    print(json.dumps({"phase": PHASE, "src": src, "dst": dst, "rows": rows_keep}))
 
 
 if __name__ == "__main__":
