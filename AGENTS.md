@@ -224,7 +224,7 @@ Every checkpoint is scored with the vocabulary it was trained on. `data/tokenize
 
 Frozen 2026-08-29. A rebuild is allowed only under the three unfreeze conditions, and invalidates every checkpoint trained on the old vocabulary.
 
-- **Gates** (`scripts/tokenizer_eval.py --tokenizers <paths>`): round-trip lossless and all 256 bytes are vetoes; hanzi whole-char ≥ 0.95 is a veto; ref fertility ≤ 1.55 and never-used ≤ 0.01 are regression guards.
+- **Gates** (`scripts/tokenizer_eval.py --tokenizers <paths>`): round-trip lossless and all 256 bytes are vetoes; hanzi whole-char ≥ 0.95 is a veto; ref fertility ≤ 1.55 is a regression guard. Never-used is **reported, not gated** — the 0.01 threshold was set 0.003 above a single measured 0.0070 (`143f5d4a`), and the three-seed range at one fixed setting is 0.0110, larger than the whole threshold, so the seed decides pass or fail. To restore it, record a setting whose three-seed range is under a third of the threshold in `facts/tokenizer.json#tok.never_used_not_decidable`.
 - **Build** (`scripts/build_tokenizer.py`): always pass `initial_alphabet=ByteLevel.alphabet()` — without it NUL silently drops; stratified equal-byte sample per domain.
 - **Measure** with `scripts/tokenizer_report.py --selftest` — mandatory before believing any number it prints.
 - **Unfreeze conditions — three, and nothing else:**
