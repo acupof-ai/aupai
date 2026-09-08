@@ -335,7 +335,7 @@ _review_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
 # a card grant is a launch that waits on a reviewer. They join the set as the literal paths they
 # are, so `runs/anything.py` and a new runs/*.json nobody has ruled on stay code. runs/claims/ is
 # matched as a directory prefix because its filenames are `<name>.<cards>.json`, generated per job.
-_LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md|runs/card_assignment\.json|runs/claims/[A-Za-z0-9_.-]+\.json)$'
+_LEDGER_ONLY_RE='^(runs/[A-Za-z0-9_.-]+\.jsonl|EXPERIMENTS\.md|runs/card_assignment\.json|runs/controller_board\.md|runs/claims/[A-Za-z0-9_.-]+\.json)$'
 _code_pr_gate() {  # $1 = branch. Echoes the refusal reason; returns 1 to refuse.
   local shas sha when paths bad subject
   [ -n "${AUPAI_PR_FLIP_EPOCH:-}" ] || return 0   # unset means the flip has not happened
