@@ -122,6 +122,15 @@ _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
+    # Measured on this laptop 2026-09-08: 4.9s inside the full set, 5.16/6.30/6.16s solo.
+    # It straddles the 5s default, so whether it runs is decided by the machine's mood --
+    # it banked 3 consecutive strikes and FAILed with "has not actually run since" while
+    # passing by hand seconds later, which is the deadline-nothing-can-meet case the
+    # TIMEOUT comment above describes. Its cost is a real scan (431 documented invocations
+    # against 178 argparse parsers), and it grows with the docs, so any value near the
+    # measurement is crossed again. 30s is ~5x the solo worst, the same ratio as the
+    # entries below, and still far under a hang.
+    "doc_flags_parse": 30,
     "eval_sft_template_contamination": 90,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
@@ -3136,7 +3145,23 @@ def check_main_advances_by_ancestry(root):
                  # same hour), then `branch: Reset to origin/main` discarded that commit from
                  # main. The commit survives on branch b0 and returns through merge_main.
                  ("484a952852ec8a82ba17fda22ee77ec5a49c170d",
-                  "b8b396189be5a6d6ebd0adba0f1445b18d8a754d")}
+                  "b8b396189be5a6d6ebd0adba0f1445b18d8a754d"),
+                 # 2026-09-08 13:44 +0800: fb ran `git branch -f main origin/main` after
+                 # merge_main's push was refused (origin had moved under a concurrent PR
+                 # merge), discarding two local-only commits -- 5154befd (board) and
+                 # a2375098 (a friction drain). Both survive on branch fb and return
+                 # through merge_main; verified here, not taken on report, with
+                 # `git merge-base --is-ancestor a2375098 fb`.
+                 #
+                 # THE DIRECTION IS THE TRAP, and this is the third entry of the same
+                 # shape. A reset onto origin/main reads as "going back to the correct
+                 # value" rather than as a sideways move, so the docstring above -- which
+                 # names this exact command -- was read and then contradicted within the
+                 # hour. ANY non-ancestor move is sideways, including one that looks like
+                 # a retreat. There is no such thing as reverting to a ref that holds
+                 # commits yours does not.
+                 ("a2375098b7595abb67dc45a990d9aef6ded21410",
+                  "12ecbf520be918785b76873ca2114fbb9128db28")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -22855,6 +22880,14 @@ _FROZEN_KEYS = (
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
     # exists to catch (the arm's own weights carry the init; the flag does not).
     "zero_init_out", "muon_shape_lr", "value_embed",
+    # b0-35: CSA replaces the dense branch inside GatedMLA, and when on it adds parameters
+    # (the branch gate), so two segments of one run that disagree on it are two models wearing
+    # one name -- the same argument as head_mixed. The three shape knobs are here for a
+    # DIFFERENT reason than csa itself: they do not change the parameter count, they change
+    # what the attention can SEE (how coarse the pooling is, how many blocks are re-read, how
+    # wide the exact window is), so a resume that moved one would alter the receptive field
+    # mid-run while the loss curve carried a single name.
+    "csa", "csa_compress", "csa_topk", "csa_window",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling

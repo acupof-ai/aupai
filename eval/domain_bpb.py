@@ -120,22 +120,50 @@ def text_bpb(m, text, max_ctx=2048):
     The FIRST token carries no loss and its bytes are excluded from the divisor: nothing
     predicts it, so charging its bytes to the model would make the figure depend on how many
     chunks the text was split into. Returns (bits, bytes_scored) or (None, reason).
+
+    THE DIVISOR IS THE BYTES OF THE TOKENS ACTUALLY SCORED, and getting that wrong is the
+    defect this function shipped with (4c, 2026-09-08). It truncated `ids` to max_ctx and
+    summed loss over the truncated prefix, then set the divisor from the WHOLE text -- so a
+    4097-token row scored 2047 tokens' bits over ~4097 tokens' bytes and every published
+    domain_bpb came out roughly half its true value. Both arms of every comparison carried the
+    same factor, so no delta, sign, ratio or correlation moved; every ABSOLUTE figure did.
+
+    It was invisible for the reason this class always is: the numerator and the denominator
+    were each correct about their own quantity, and nothing in the output named the population
+    they disagreed about. The docstring asserted the property the code did not have.
+
+    The divisor is now decoded from the scored ids rather than from `text`, so the two cannot
+    drift apart again -- the same fix shape as measuring the first token's bytes by decoding
+    instead of assuming. `truncated` is returned so a caller can see the scored fraction
+    instead of inferring it.
     """
     ids = m.encode(text)
     if len(ids) < 2:
         return None, f"text encodes to {len(ids)} token(s); at least 2 are needed to score one"
+    n_full = len(ids)
     ids = ids[:max_ctx]
     lp = m.logprobs(ids)
     total = 0.0
     for j in range(1, len(ids)):
         total -= float(lp[j - 1, ids[j]])
-    # The bytes SCORED are the bytes of the text the scored tokens cover, which is the whole
-    # text minus whatever the first token spans. Measured by decoding, not assumed.
-    first = m.tok.decode([ids[0]]) if hasattr(m.tok, "decode") else ""
-    scored_bytes = len(text.encode("utf-8")) - len(first.encode("utf-8"))
+    # The bytes SCORED are the bytes the scored tokens span. Computed as the KEPT prefix's
+    # bytes minus the first token's, not as `decode(ids[1:])`: on a byte-level codec ids[1:]
+    # can begin mid-character, and decoding that slice yields replacement characters that are
+    # LONGER than the bytes they stand for -- measured on the CJK case, 9 real bytes decoded
+    # back as 15. Decoding the whole kept prefix never splits a character.
+    #
+    # What must NOT appear here is `text`: it carries the truncated tail, whose tokens nothing
+    # scored. That was the defect.
+    if hasattr(m.tok, "decode"):
+        kept_bytes = len(m.tok.decode(list(ids)).encode("utf-8"))
+        first_bytes = len(m.tok.decode([ids[0]]).encode("utf-8"))
+        scored_bytes = kept_bytes - first_bytes
+    else:
+        # No decoder: the identity path, where one byte is one token.
+        scored_bytes = len(ids) - 1
     if scored_bytes <= 0:
         return None, f"first token spans the whole text ({len(text)} chars); nothing to score"
-    return (total / math.log(2), scored_bytes), None
+    return (total / math.log(2), scored_bytes, n_full > len(ids)), None
 
 
 def text_identity_misses(rows, decode, encode):
@@ -182,19 +210,20 @@ def _selftest():
 
     for v in (256, 4096):
         m = UniformModel(v)
-        (bits, nbytes), err = text_bpb(m, "abcdefgh")
+        (bits, nbytes, trunc), err = text_bpb(m, "abcdefgh")
         assert err is None, err
         # 8 bytes, first excluded -> 7 scored tokens, 7 scored bytes
         assert nbytes == 7, nbytes
+        assert trunc is False, "an 8-token text is not truncated at max_ctx=2048"
         assert abs(bits / nbytes - math.log2(v)) < 1e-6, (bits / nbytes, math.log2(v))
 
     # THE FIRST TOKEN MUST NOT BE CHARGED. Splitting the same text into two chunks and summing
     # must give the same bits/byte as scoring it whole -- that only holds if each chunk's
     # unscored first token is excluded from both numerator and denominator.
     m = UniformModel(256)
-    (b_all, n_all), _ = text_bpb(m, "abcdefgh")
-    (b1, n1), _ = text_bpb(m, "abcd")
-    (b2, n2), _ = text_bpb(m, "efgh")
+    (b_all, n_all, _), _ = text_bpb(m, "abcdefgh")
+    (b1, n1, _), _ = text_bpb(m, "abcd")
+    (b2, n2, _), _ = text_bpb(m, "efgh")
     assert abs((b1 + b2) / (n1 + n2) - b_all / n_all) < 1e-9, \
         f"chunking changed bits/byte: {(b1 + b2) / (n1 + n2)} vs {b_all / n_all}"
 
@@ -202,10 +231,43 @@ def _selftest():
     # ASCII, where len(s) == len(s.encode()), so a divisor of characters passes all of it. A
     # 3-byte-per-character string is the only input that separates the two, and the earlier
     # version of this selftest did not have one: `len(text) - len(first)` was green.
-    (b_cjk, n_cjk), err = text_bpb(m, "\u4e2d\u6587\u6d4b\u8bd5")   # 4 chars, 12 bytes
+    (b_cjk, n_cjk, _), err = text_bpb(m, "\u4e2d\u6587\u6d4b\u8bd5")   # 4 chars, 12 bytes
     assert err is None, err
     assert n_cjk == 9, (f"scored bytes {n_cjk}, expected 9 (12 bytes minus the first "
                         f"character's 3). If it is 3, the divisor is COUNTING CHARACTERS.")
+
+    # TRUNCATION MUST NOT REACH THE DIVISOR, and this is the world the selftest did not have.
+    # Every case above is a handful of tokens, so `ids[:max_ctx]` never fired and the divisor's
+    # disagreement with the numerator had no input that could show it. The shipped code summed
+    # loss over max_ctx tokens and divided by the whole text's bytes; our rows are 4097 tokens
+    # against max_ctx 2048, which is where the ~2x came from.
+    #
+    # KNOWN ANSWER, so this is an equality and not a comparison against another arm of the same
+    # code. Under a uniform model over 256 symbols every scored token costs exactly 8 bits, so
+    # bits/byte is exactly log2(256) = 8 no matter where the text is cut. A divisor that counts
+    # unscored bytes gives 8 * 2047/2999 = 5.46, which is the number the defect produced.
+    long_text = "a" * 3000
+    (b_tr, n_tr, trunc), err = text_bpb(m, long_text, max_ctx=2048)
+    assert err is None, err
+    assert trunc is True, "a 3000-token text at max_ctx=2048 must report truncated=True"
+    assert n_tr == 2047, (
+        f"scored bytes {n_tr}, expected 2047 (2048 tokens kept, first unscored). 2999 means the "
+        f"divisor is the WHOLE text while the numerator covers only max_ctx tokens.")
+    # 1e-7 and not 1e-9: 2047 float32 log-probs summed one at a time leave 2.2e-8 of
+    # accumulation error, which is arithmetic and not the defect. The defect's value is 5.46 --
+    # two and a half BITS away, so no plausible tolerance hides it.
+    assert abs(b_tr / n_tr - 8.0) < 1e-7, (
+        f"bits/byte {b_tr / n_tr} on a uniform-256 model, expected exactly 8.0. 5.46 is the "
+        f"shipped defect: 8 * 2047/2999.")
+
+    # AND THE FIGURE MUST NOT DEPEND ON max_ctx. Same text, two context limits: the number of
+    # tokens scored changes, bits per byte does not. This is the property the divisor exists to
+    # have, stated without reference to any particular cut.
+    (b_a, n_a, _), _ = text_bpb(m, long_text, max_ctx=1024)
+    (b_b, n_b, _), _ = text_bpb(m, long_text, max_ctx=2048)
+    assert n_a != n_b, "max_ctx did not change how much was scored; the case is vacuous"
+    assert abs(b_a / n_a - b_b / n_b) < 1e-9, \
+        f"bits/byte moved with max_ctx: {b_a / n_a} at 1024 vs {b_b / n_b} at 2048"
 
     # A text too short to score REFUSES rather than returning 0.
     out, err = text_bpb(m, "")
@@ -275,7 +337,8 @@ def _selftest():
 
     print("domain_bpb self-test OK: uniform models read exactly log2(V) bits/byte, the "
           "unscored first token enters neither numerator nor denominator (so chunking cannot "
-          "change the figure), a too-short text refuses, the gate detects a "
+          "change the figure), A TRUNCATED TEXT IS DIVIDED BY THE BYTES IT SCORED and its "
+          "bits/byte does not move with max_ctx, a too-short text refuses, the gate detects a "
           "lossy codec while ignoring a pure re-split, five known-answer texts survive "
           "the real tokenizer exactly, and a co-residency refusal on one domain leaves the "
           "other eight scored with the refusal named in `skipped`")
@@ -395,6 +458,7 @@ def main():
             continue
         bits = nbytes = 0.0
         errs = 0
+        n_trunc = 0
         for r in rows:
             # THE SAME decode THE GATE CHECKED. Using the default here while the gate used
             # skip_special_tokens=False would score text the gate never cleared.
@@ -405,19 +469,30 @@ def main():
                 continue
             bits += res[0]
             nbytes += res[1]
+            n_trunc += bool(res[2])
         if nbytes <= 0:
             skipped[name] = f"no row produced scored bytes ({errs} errors)"
             continue
         # text_identity_dropped, not a round-trip FRACTION: the gate is exact now, so what a
         # reader needs is how many rows it removed, which is 0 on every domain measured so far.
+        #
+        # rows_truncated IS PART OF THE READING, not diagnostics. When it is non-zero the
+        # figure is the bpb of each row's first max_ctx tokens, which is a different quantity
+        # from the bpb of the rows -- easier, because every scored token has full context and
+        # none sits past the cut. Before the 2026-09-08 divisor fix this field did not exist
+        # and the truncation was unrepresented in the output: 9 of 9 domains were fully
+        # truncated and every row read as if it had scored the whole text.
         rec = {"domain": name, "bpb": bits / nbytes, "scored_bytes": int(nbytes),
-               "n_rows": len(rows), "text_identity_dropped": len(bad), "row_errors": errs}
+               "n_rows": len(rows), "text_identity_dropped": len(bad), "row_errors": errs,
+               "rows_truncated": n_trunc, "max_ctx": a.max_ctx}
         out[name] = rec["bpb"]
         if a.preds:
             with open(a.preds, "a", encoding="utf-8") as f:
                 f.write(json.dumps(rec, ensure_ascii=False) + "\n")
         print(f"  {name:16} {rec['bpb']:.4f} bits/byte over {int(nbytes):,} bytes "
-              f"({len(bad)} row(s) dropped on text identity)", flush=True)
+              f"({len(bad)} row(s) dropped on text identity"
+              + (f", {n_trunc}/{len(rows)} truncated at {a.max_ctx}" if n_trunc else "")
+              + ")", flush=True)
 
     if not out:
         print("REFUSING: no domain produced a number")

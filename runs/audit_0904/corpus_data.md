@@ -1,9 +1,11 @@
 ---
+question: What is the state of corpus and data on 2026-09-04, read from artifacts?
+status: measured
 area: corpus and data
 owner: 3b
 pair: b0
 date: 2026-09-04
-status: reviewed (pair check b0 done: CD-1/2/3/4 hold; CD-7 added from b0's correction; CD-5/6 accepted)
+source: user order 2026-09-04; pair check b0 done (CD-1/2/3/4 hold; CD-7 added from b0's correction; CD-5/6 accepted)
 ---
 
 # Audit: corpus and data (3b, 2026-09-04)

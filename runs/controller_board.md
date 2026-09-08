@@ -1,48 +1,185 @@
-# Controller board (fb) — updated 2026-09-08T07:20Z, rewritten every tick
+# Controller board (fb) — 2026-09-08
 
-Percent = share landed on main and verified by a second reader. Every row re-verified against origin/main f98f9c66 and the pod this tick.
+Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU job.
+**13:20Z, measured: cards 1,2,4,5,6,7 read 0 MiB / 0%; only 0 (100%) and 3 (94%) are working.** tilerl-27 answered the schedule question directly: **four needed tonight** (card 0 level-5 eval; card 3 GSM8K steps_to_score to 16:00Z; one for the 1x8 vs 2x4 arm; one conditional reserve, confirmed or released at 16:00Z), **four can come back**. Their own reading, quoted unedited: aupai's zero cards are not tileRL queueing, they are scheduling -- people held on measurement arguments that need no card. The same sentence is truer of me: eight sessions, 28 PRs merged today, zero new numbers.
 
-## The 30B leg: verdict, corrected after adversarial review
+## User orders in force
 
-| item | owner | % | delivered | quality / evidence | next gate |
-|---|---|---|---|---|---|
-| **domain_bpb divisor defect** | b0 | 0 | eval/domain_bpb.py:117 text_bpb truncates to max_ctx=2048 (line 127) and divides by the whole 4097-token row's bytes (line 135) | every published domain_bpb, the prereg bar 0.334243 and 98's report are ~2x low. Confirmed twice: in-row byte split 1.9944-2.0274 across nine domains, and domain_loss nats/token reproduces 0.7227 against the published 0.3588 scaled to 0.7195. The docstring claims the property the code lacks. Deltas, signs and ratios are unaffected | fix + known-answer selftest + restate facts and score rows, reviewer 3b |
-| Verdict on the leg | fb | 100 | reported to the user 07:0xZ, corrected from the 06:5xZ version | **flat on the metric of record** (mean domain_bpb -0.00018 over 18.7B tokens); real wins are lambada_en +0.0340 vs the annealed 8B at ~3.9 sigma and nll/byte -0.0321; HumanEval tie unbroken against the annealed 8B (estimators disagree in sign) | — |
-| Token efficiency, the leg's real yield | b0 | 0 | measured by review, to be filed as facts | on the six weight-stable domains 18.7B tokens bought ~0.0216 bpb; the 8B leg's 1,172-step warmdown (~0.92B tokens) bought ~0.0198 on the same six. Constant-LR tokens are worth about a twentieth of the decay per token | facts rows after the divisor fix |
-| Token-only contrast EXISTS | b0 | 0 | steps 9,000-22,500 all ran mix_..._20b_launch.json, so .step9000/.step14000/.step20000 share bit-identical weights; .step20000 is already bpb-scored | my earlier "this leg cannot say what tokens bought" was wrong; the cut to cot/chatml/chat_qa happened at 22,500, not at the resume | write it up; optionally score .step14000 (~85 s, lane card 1) |
-| r = -0.945 framing | fb | — | withdrawn from anything unmerged | the log weight ratio takes three distinct values over nine domains; Spearman -0.417; dropping the three starved domains flips the sign. Two-group difference (n=3 vs 6), not a dose-response. Mix and missing anneal are each individually sufficient to explain the whole bar miss | 44 and 98 drop it from unmerged text |
-| Forgetting cost, measured | b0 | 100 | b0_domain_loss_{resume1,cap,valrise}.jsonl on main | the RATE saturates (cot +0.073 -> +0.009 nats/1k, chatml and chat_qa 0.30 -> 0.02; half-life 400-1000 steps) but the LEVEL is permanent: those three end 9-16% worse in bpb | — |
-| Report | 98 | 100 | PR #70 + fixes in #74 | three defects filed and fixed | needs the divisor restatement when it lands |
+| order | state |
+|---|---|
+| Clean the whole repository, not one redundant word | seven tracks, below |
+| Any file readable by someone who has never seen the repo | folded into every track, no separate renaming round |
+| Worktrees cut to the live working set | 32 → 14; owners remove their own |
+| At most two open tasks per person | held all night; the count is work in progress, not work awaiting someone else's review |
+| Corpus reproducible byte-for-byte from zero | 98 leads; blocked behind the 40,000-vs-1,200 finding below |
+| Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
+| Never delete without a named target | every removal names its files and runs each first |
 
-## v2 program
+## Queue state, 2026-09-08 13:20Z
 
-| item | owner | % | delivered | next gate |
-|---|---|---|---|---|
-| Spec + prereg | 44 | 90 | PR #66, head 54b36b54, CI green, APPROVED by tilerl-0a (review row 7d6c260d on main) | **tilerl-0a merges it** — AGENTS.md:387 says the reviewer merges; this is the only blocker on the launch path |
-| CSA attention | b0 | 40 | PR #78 open | reviewer tilerl-0a |
-| Loop + schedule | de | 10 | flag plumbing | de-74, then the loop blocks |
-| Data / mix | e1 | 80 | total ruled 30B, weights = resume-1 byte-for-byte except math_owm supply +0.234%; gates pass on the v2 composition (hanzi 0.9793, ref fertility 1.4286) | write the mix; PR #77 (both tokenizer samplers read non-shard artifacts) with 3b |
-| Cursor identity | 3b | 80 | PR #72, 15 mutants red, accept-path prints the compared domain set | de reviews |
-| Answer-format arm (new) | e1 | 0 | preregister: restore cot/chatml/chat_qa to their 8B weights, readout answer_present and l1_fewshot | the endpoint's answer_present 0.340 is the lowest zh three-demo row in the ledger; the run cut those domains ~13x, so "needs SFT" is confounded and this is the cheaper test |
+**15 open. CI is not the bottleneck and neither is dispatch -- six green PRs are deadlocked behind one unmerged branch that contains the rows unblocking them.**
 
-## Cards, repo, infrastructure
+de has already reviewed **#75, #83, #89, #95, #98, #100**. All six review rows sit in commits `a5d530fd` and `6912878b`, which are on `de-agents-clean` -- that is **#85, itself awaiting review**. On main those six PRs read as zero review rows, so `review_present` cannot see work that was actually done, and nobody merges. **A PR awaiting review holds the key to six others.**
+
+Mechanism, and it is the general one: **`runs/review.jsonl` is a ledger and merges by union via `merge_main.sh` in seconds; riding a code branch makes a reviewer's latency equal to that code PR's review latency.** Today that was six PRs times several hours. de writes the row on a ledger-only branch and merges it immediately from now on; 44 is reviewing #85 to drain the six.
+
+Red, one assertion, one fix: **#102 and #105 both fail `EVIDENCE stale: []; undeclared: ['score_matrix_rewrites_traced']`** -- the new check entered `CHECKS` without an entry in `EVIDENCE` (`harness.py:17100`), and #105 contains #102's `0ab846c2`. Chain: b0 adds the line -> #102 green; #96 lands -> #102 merges -> #105 merges.
+
+**#96 is held by tilerl and the hold is correct.** `scripts/test_sft_holdout_gate.py:64` is still live while §279 describes it as fixed, in a PR with no code. An entry naming R12's sharpest instance, leaving that instance in the tree, lets a reader cite §279 as evidence the check is fixed -- which is what R12 condemns, inside the paragraph describing R12. Requirement: a reader cannot take §279 as evidence of a fix. b0 picks the landing.
+
+Landed since the last board: **#81 `c0944b06`, #94 `a50823d4`, #104 `5bf7eb38`** (tilerl merged and pushed the pod in the same step; drift OK, 837 files match, stamp `a50823d4`).
+
+Merge order still binds: **#81 -> #96 -> #85**, and **#98, #100 before #101**.
+## Critical path — cleared 2026-09-08 11:45Z
+
+The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
+
+## Seven tracks
+
+| track | owner | state | next gate |
+|---|---|---|---|
+| scripts and entry points | b0 | #94 landed: three edge types, unreachable 79 → 70, report prints tree/population/edge kinds/ledgers read; readability debt 9 of 537 | 3b's three PRs (#88 #93 #95); then the `score_matrix` watchdog gap |
+| AGENTS.md | de | #85 open; guard is the critical path above | guard to main, then readability |
+| docs | 44 | #83 landed three markers; 86 documents, zero duplicate questions | de's guard review; then 40,000-vs-1,200 |
+| facts | e1 | `a2361230` landed five files; read-side timezone rule added to `check_timestamps_are_utc`, four real defects found, three in e1's own scripts | two scripts blocked behind the guard |
+| ledgers | 3b | `no_ghost_close` attributed: 188 legal + 8 milestone + 31 forged + 0 of the suspected shape; ceiling 180 → 196 | per-ledger primary key, and the forged 31 as a literal set with new keys asserted empty |
+| eval, filters, probes | fb | 71 files, 31 selftests pass; divisor defect isolated to `domain_bpb`, fix merged | 16 metrics have no known-answer case |
+| datagen and mathbank | 98 | #92 open (pod wrapper mangles non-ASCII argv into false zeros) | that first — it contaminates other people's readings |
+
+## The night's single finding
+
+Thirteen instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
+
+| instrument | question asked | question answered |
+|---|---|---|
+| shared-config guard | who changed the shared config | who happened to be running (10 namings, 10 wrong, 0 repeats) |
+| file scan | how many files does this repo hold | how many are under the tree I was run in (537 vs 13,665) |
+| `gh pr list` | which PRs exist | the most recent N |
+| `reachability.py` | which files are unreferenced | which files are unreferenced by anything except my own FATE dict (12 self-rescued) |
+| `harness check` output | how many checks are there | how many passed (71 read as the total; it is 109) |
+| `git log --date=short` | when did this land | local midnight, not UTC (15 of 70 pairs were artifacts; 42 of 145 paths render a day late) |
+| `merge-base --is-ancestor` | did the running copy have the fix | does the commit's ancestry contain it |
+| unreachable total 79 → 56 | did the new edges help | yes, and it concealed 12 self-rescues moving the same direction |
+| `exp.py:582` comment | what does the fabricated row carry | correct on `hypothesis`, wrong on `commit`, 20 lines from the code |
+| mutation sweep "ALL KILLED" | did the mutants die on assertions | they died on `FileNotFoundError`, twice |
+| my own "40,000 rows vs a cap of 1,200" | can this batch's recorded command have produced it | how many programs the library holds -- a different unit, never checked |
+| `gh pr diff --name-only` | which files does this PR change | which files the branch's history touched -- a revert leaves them listed. The predicate is `git diff base..head --stat` |
+| a PASS line's summary (mine, via de's) | what does this check assert | what the summary line happens to print. `shapes_table_covers_doc` DOES refuse duplicate numbers (`harness.py:2390`, verified on a constructed world); its PASS line's "each referenced exactly once" is about the rule table, and both of us read the summary instead of the predicate |
+
+Two derived rules, both adopted: **an unusually tight cluster is a systematic instrument offset until shown otherwise — a real effect has spread** (3b, from 18 samples all inside 7.1–8.0h, which was a timezone constant); and **rewrite the question into a form that reads bytes directly** (3b: hash the file, compare UTC to UTC, run the target copy itself).
+
+Shapes R12–R14 are PR #96, stacked on #81. A never-triggered exclusion belongs to R12 — it is green because it did not run — not to R14, whose signature is a tool's own source appearing in its own output.
+
+## Open, owned
+
+| item | owner | why it matters |
+|---|---|---|
+| A writer outside `exp.py` hand-appends rows to `runs/experiments.jsonl` | 3b | a refusal only guards the path through it; `pod_pull_ledgers` is cleared by time order and by reading `append_rows` |
+| ~~40,000 rows against a cap of 1,200~~ REFUTED 2026-09-08 | 44 | the units did not match: 1,302 is the count of PROGRAMS in the library, the run's cap is 100,000 rows, and 40,000 is the recorded L4 target (100,000 x 0.4) to the row. pod holds 97,771 rows with sha256 matching PROVENANCE. `facts/corpus_supply.json#cs.math_short_v8_cap_audit`, PR #98 |
+| `score_matrix.jsonl` has 1 dedicated watcher against `tasks.jsonl`'s 6 | b0 | its fold key makes rewrite legal, so append-only checks cannot see a changed value; a wrong factor table sat on main for hours |
+| Mutation sweeps need a positive control | de | DONE in PR #99: M0 survives, and the new died-for-the-right-reason criterion caught M2 dying on `FileNotFoundError` on its first run |
+
+## Known-answer audit of the 16 unguarded eval metrics — 2026-09-08 12:20Z, fb
+
+11 groups (grouped by shared scoring path), every one run on CPU against the repo's own functions with only the model stubbed, each with a negative control, each claimed defect sent to two independent verifiers. **7 defects confirmed, 4 metrics reproduce their known answer, 0 blocked.** No metric was judged by reading it.
+
+| # | metric | defect | consequence |
+|---|---|---|---|
+| 1 | `eval/code_fewshot.py:178`, `eval/code_l0prime.py:217` | `cont_ids = ids[len(pr):]` strips the prompt length off a value that already excludes the prompt (`train.py:1662` returns generated ids only; `eval/l1_fewshot.py:596` has it right) | **At 3-shot it discards 319–335 tokens — more than a whole solution — and scores the empty string. Measured on six gold rows that must score 6/6: 0/6, empty-continuation rate 100%.** Every number these two tools ever produced is invalid |
+| 2 | `eval/l1_fewshot.py:60` | `ANS_RE`'s terminator class `(?:[。.\n]|$)` contains the ASCII full stop, which is also the decimal point, so the lazy capture stops there: "答案是 3.5。" yields "3". **Two retractions, and the second is the useful one.** (i) My fix — drop the `.`, as the monolingual sibling `math_zh.py:35` has it — looked wrong when scored on CAPTURED STRINGS: 4/10 current, 8/10 mine, 10/10 for e1's `(?:[。\n]|(?<!\d)\.|\.(?!\d)|$)`. (ii) e1 then retracted that: scored on `score()`'s RETURN VALUE, which is what anyone acts on, the tally is 4 / **11** / **12** of 12, because `algorithms/rlvr_reward.py:46` already does `s.rstrip("。.,，")`. The one real divergence is `The answer is 1.5. Next sentence.` — mine runs to end of line. **A captured string that looks obviously broken (`'3.5.'`) can score correctly; asserting the capture instead of the score reports a 100-point difference where the real one is 1 case in 12.** e1's version still wins, on a better reason: it keeps the terminator's meaning identical in both languages instead of leaning on a downstream `rstrip` that does not know it is covering for anyone | A verbatim-correct decimal answer scores 0.0 while still counting as answer-present. **Regression introduced 2026-09-03 in `8ab15148`; the sibling `eval/math_zh.py:35` terminates on `[。\n]` only and is correct.** Bounded by 23/500 = 4.6% decimal golds. `be.l1_fewshot_p324` predates it; any rerun today does not |
+| 3 | `eval/ceval.py:58` vs `eval/run_eval.py:281` | items are tagged `"norm": "char"` and the module documents per-character scoring, but the only scorer sums token log-probs with no divisor, and **no file in the repo ever reads the `norm` key** | The declared metric is inverted into a shortest-option bias. Verifier found it wider: `run_eval.py:146` registers ceval with `cloze=False`, so the per-character path is unreachable from the runner at all. Known answer: 100.0% declared vs 0.0% observed |
+| 4 | `eval/winogrande.py:14-15` | `prefix.strip()` deletes the separator and the option is built with no leading space | Every item is scored on `"...brown suitcase becausethe trophy is too large."`, and the first scored token flips to the no-leading-space form on both options |
+| 5 | `eval/ppl.py:69` | computes the held-out split from the global `train.Cfg.val_frac` only; `train.py:2695-2699` honours a per-domain `val_frac` from the mix | For the five `data/mix_e1_*.json` mixes that set `val_frac: 0`, ppl scores rows the run **trained on** and reports them as held-out, contradicting its own docstring. The ladder mixes carry no per-domain key, so figures taken with them are unaffected. The arithmetic itself is correct |
+| 6 | `eval/code_zh.py:43` | `_norm_lines` drops **every** blank line, not the trailing ones its docstring at :42 promises | stdout with leading or interior blank lines the oracle does not have is accepted: 500/500 where the stated contract requires 0/500 |
+| 7 | `eval/gsm8k.py:55` | never reads `cfg.fone`, so `skip_special_tokens=True` deletes `[NUM]` (id 32772) before `:31` extracts a number | **Latent**, not active: a correct answer would score 0.00% silently on a FoNE checkpoint, but no `--fone` run appears in `runs/experiments.jsonl`. `run_eval.py:384` guards this; `gsm8k.py`'s own `__main__` does not |
+
+Reproduce their known answer, with the divisor and the alignment pinned analytically: **`mmlu`, `math_hard`, `math_zh`, `fone`.** The MC likelihood scorer itself is correct — the divisor is exactly 1 (raw sum, crossing bisected to 1e-12) and option token k is scored at logit `pl-1+k`, verified on 2376 real ARC-Easy items where the count-derived known answer 0.2492 matched to 1e-9.
+
+**One sub-claim was refuted by verification and is not in the table**: that `chid_probe` shows the same defect on a chance-level baseline. A uniform-logit model is deterministic, not chance — its ranking is entirely `-T·lnV`, so it always picks the fewest-token candidate. The unequal-length contract violation is real; the way it was demonstrated was not.
+
+**A sibling implementation answers the question for its own scope, not yours.** Rolling back to it looks like the safest default and here it was not — I read `math_zh.py:35`, confirmed the character was absent, and did not ask why it did not need to be there. Sixteenth instance of the night's shape, and the first where the narrowed answer came from a correct piece of code rather than a tool.
+
+**Seventeenth, from e1's own retraction, and it is about who gets verified rather than what:** in the same hour e1 ran the control for `check_ckpt_facts_sources_present` against a baseline, ran the `[protected]` positive control and caught it deleting zero rows — then reasoned about `reward_fn` instead of calling it. **Own artefacts got a measurement; a peer's got an inference.** The asymmetry is invisible from inside because both feel like diligence.
+
+**Why this audit existed:** `eval/domain_bpb.py` truncated its input while dividing by the untruncated length and reported 5.460 where the true value is 8.000. One known-answer case found it. These 16 metrics had no such case. **Six of the seven defects are in the same family — a value computed over one population and divided, compared, or sliced against another.**
+
+## A criterion a degenerate input also satisfies — three instances in one hour, 2026-09-08
+
+`non-empty`, `not-all-identical`, `no error raised`: garbage satisfies each of them, so none of them can fail on the input they exist to catch. The fix is the same every time — assert the value, not a property that a broken value also has.
+
+| where | the criterion that could not fail | what it became |
+|---|---|---|
+| `eval/code_l0prime.py` (b0) | `non-empty` — and under the double-strip 45 of 60 truncated fragments ARE non-empty, all 45 failing `ast.parse`. `freeze_hard` keeps the first execution failure, so every fragment qualified as a distractor **by that tool's own criterion, inside a world truncation had built** | round-trip byte-identical |
+| pass@k degeneration guard (tilerl) | `at least one sample differs` | record the `distinct` count itself |
+| a tileRL test's seed assertion (tilerl) | the assertion **copied production's seed formula**, so it changed whenever production changed and could never fail | read the seed the engine actually submitted; mutation (step by `rows` instead of `group`) now turns it red, and was green before |
+
+**And the mirror of it, from the same hour:** `pod_drift` reports that two sides differ and never which side has the evidence. Those are different pieces of information, and only the second one tells you which way to fix. Two sessions each picked a direction — b0 aligned the pod to git, tilerl aligned git to the callers — and **both could say they had fixed it**. The criterion (all three call sites invoke it as `python3 runs/count_dir.py`, so the executable bit was never read) was not in the red, not in the hint, and not in the file. Resolved at `5bf7eb38`, pod `chmod 644`, stamp on, 836 files match.
+
+So the fix to that report is three items, and the third is the one that matters: the hint must not name a command that cannot work (`pod_push.sh` only ADDs content); it must print `sha256 identical (…)` rather than the bare assertion `content matches`; and **it must say where the criterion is found** — for a mode drift, grep the call sites. The first two save one wasted command and one repeated investigation. **Only the third stops two people fixing the same drift in opposite directions.**
+
+## Unowned, ready to pick up
+
+**A check that `facts/<f>.json#<id>` references in prose resolve.** Today only `runs/tasks.jsonl` evidence is parsed (`_commit_delivers`); a reference in a doc dangles silently. e1 measured the real population: **493 references repo-wide, 2 genuinely dangling** — `runs/controller_board.md` → `cs.math_short_v8_cap_audit` (resolves once #98 lands) and `runs/tasks.jsonl` → `dq.t24`, whose closing row put a bare file path in `evidence`, so the id was never parsed at all.
+
+**The value is not the 2. It is the path to them: 24 → 20 → 11 → 2, false positives at ten times the real defects.** The middle step is the instructive one — a two-segment regex truncated every three-segment id (`mlm.ratio.sub1b_optimum` → `mlm.ratio`) and then reported that the truncated prefix did not exist. All 20 carried a complete evidence shape: the reference really is in the file, the prefix really is absent.
+
+Acceptance conditions, from e1 and not negotiable, because without them it reports 20 false rows on day one and gets turned off (a permanent red is the same as no signal): positive assertions for three- and four-segment ids; fixture ids whitelisted or excluded by directory (`_broken_*` worlds contain deliberately absent ids); one case for a reference split across a line break.
+
+## Corpus reproducibility
+
+A corpus build should be a pure function of source bytes, pipeline version and seed.
+
+| finding | consequence |
+|---|---|
+| `filters_fp` hashes exactly three files: `filters/pass{1,2,3}_garbage.py` | 15 of 50 domains can say the garbage filters were identical. **Zero of 50 are demonstrated byte-reproducible.** Was 14/49 here until 2026-09-08; e1 recorded the drift as `config.count_drifted` rather than rewriting `value` |
+| 2,010 shard files have link count above one | domains are not disjoint. Disk holds 248.93 GB against a per-domain sum of 348.30 GB; a per-domain rebuild double-counts and drops the hardlinks |
+| One frozen batch excludes inputs that no longer exist | unreproducible by definition — a fourth answer, not a special case of "no" |
+| ~~A frozen batch has 40,000 rows against a program cap of 1,200~~ | **REFUTED.** I compared rows to programs. No constant `1200` exists in `mathbank/`; the figure came from a scheduling note. The recorded command IS the command that ran, to the row. What survives: `PROVENANCE.md:57`'s own arithmetic is wrong (509 x 150 = 76,350, not 57,771) -- the stall is real, its recorded explanation is not |
+
+## Distillation — designed, paused
+
+Route: sequence-level. Our vocabulary is 32,773 against the teacher's 248,044, so there is no token-level alignment and logit KL is not a tuning problem.
+
+| quantity | value | basis |
+|---|---|---|
+| teacher generation throughput | 130.3 tok/s | 1×H20, NVFP4, tp=1, batch 8, LoRA r16, measured 2026-09-08 |
+| samples per card-hour, cap 6144 | 141 | mean 3331 tokens |
+| samples per card-hour, cap 2048 | 335 | **boundary: contaminated by 32% truncation, do not cite** |
+| full openo1, K=4 | ~92 card-days | 8 cards ≈ 12 days, labelled an unverified linear extrapolation |
+| teacher correctness, level-5 math | 91% | 64% was a lower bound read as a point value: truncated is unscored, not wrong |
+
+Cap 2048 truncated 32% of level-5 generations and 84% of those were correct answers cut off. **Truncation is a second difficulty filter acting in the same direction as the ≥3/4 agreement filter — both drop long-reasoning problems, and the shared latent is reasoning length.** Pre-registered: truncation rate per domain is reported; truncated samples are dropped before the subset comparison, never after; the calibration batch runs at cap 8192 so the truncation rate at every smaller cap is read off one length distribution; the cap is the curve's knee, and the discarded tail must pass the collapse criterion already registered for the agreement filter. A gap in the length histogram below the cap means pure truncation; a continuous approach means real failures mixed in.
+
+Open for whoever picks this up: at 91% teacher correctness, is the agreement filter worth the difficulty skew it introduces? The design was written when the teacher was believed to be 64%.
+
+## Closed and not reopening
 
 | item | state |
 |---|---|
-| Cards | all eight at 0 MiB, no claims; 0 and 6 are tileRL's; 2,3,4,5,7 held for v2's first launch; 1 is the lane |
-| CI / main | completed success on f98f9c66; stash empty |
-| Pod | stamped 86e5014b, behind origin f98f9c66 — push due this tick |
-| Deletion listing | #76 merged: globs 78 ledgers, --resume both spellings, selftest registered. 44 files / 161 GB free, 19 carry a family annotation. Ruling: may PROPOSE candidates, family-annotated rows excluded, owner confirms each; deletion still needs a user instruction naming targets. Disk 95%, 109 GB free |
-| Open PRs | #78 b0 (tilerl-0a), #77 e1 (3b), #75 44 (3b), #72 3b (de), #66 44 (tilerl-0a, approved), #23 tilerl (changes requested) |
-| Shape of the night | a predicate set answering a narrower question than the one asked, invisible in its own well-formed output: §275, then reproduced inside its own fix, then again in the tokenizer samplers and in domain_bpb's divisor |
+| The 30B leg | closed at step 34,000 of 38,146 by user ruling, recorded as an incomplete schedule |
+| What annealing was worth | −6.89% on the unweighted mean, same run and same held-out rows, all nine domains down. Per token, 19× a constant-rate token |
+| `domain_bpb` divisor | real, about 2×, fix merged. Known answer: true 8.000, reported 5.460 |
+| `answer_present` at three demos | retired as a primary readout: 0.1147–0.5433 within one recipe, sd 9.2× the binomial floor |
+| SFT packs | 21 packs, zero with a current holdout stamp. A reporting defect, not a training hazard — both cases refuse today |
+| `no_ghost_close` ceiling | 180 → 196. The 31 forged rows stay out of the ceiling and become a literal set whose new keys must be empty |
 
 ## Open user decisions
 
-1. **Finish the 4,146 remaining steps to anneal the endpoint** (~3.5 h on six idle cards). Recommended: the 8B leg's 1,172-step decay bought 92% of what 25,000 constant-LR steps bought, and only an annealed endpoint is comparable to the registered bar.
-2. 30B composition for the next full run: code+math at <=1.0 epoch takes 83.8% of a 30B budget. Not needed for v2, which keeps the control's weights.
-3. cot/chat 4.0-epoch cap: keep for v2 as the control, test the restore in e1's new arm.
-4. Pod disk at 95%; nothing deleted.
+1. Corpus composition for the next full run.
+2. Pod disk at 95%.
 
-## Standing rules restated
+## MiniCPM5-2B research — 2026-09-08, 3b + 44, fb reviewing
 
-Cards 0 and 6 are tileRL's. Code through a PR from a branch with no ledger files; ledger rows through merge_main. Approval is a PR comment with artifact: or case: plus a review row, and the reviewer merges and pushes the pod. No attribution trailers; subjects end with the session marker. Nothing is deleted without a user instruction naming the target.
+Two sessions, assigned on the user's order to research it thoroughly. **One finding changes a decision; the rest close doors, which is also worth having.**
+
+**The decision-changing one (3b).** MiniCPM's own ablation (arXiv 2404.06395, Table 1) measures annealing with high-quality and SFT data mixed into the pretraining data against annealing on pretraining data alone: **+8 to 12 points**, with **B-2 as the negative control** -- doubling SFT tokens 6B to 12B moves 40.9 to 41.2, i.e. nothing, so the gain is the mixing and not the token count. **We copied the 10% anneal length (`train.py:406`, comment `(MiniCPM-style)`) and changed no data: all 25 `data/mix_*.json` have `anneal == weight` for every domain.** Our anneal lowers the learning rate over a distribution identical to the one before it.
+
+Cost of the gap, from our own store: the anneal is worth **-6.89%** unweighted mean loss with all nine domains down, at **19x** per-token value against a constant-LR token. That multiplier is what the data change would act on.
+
+Prerequisite before any proposal is executable, and 44 owns it: **do we hold instruction/SFT data we can mix in.** 21 SFT packs exist; **17 carry no holdout stamp, 4 stamp two superseded holdout sets, 0 stamp the current one.** And the contamination side decides whether the proposal is legal at all: **30% of math-500 questions already have a containment hit in the math SFT corpus** (`facts/contamination.json#cont.split`), so mixing that same data into the anneal makes every post-anneal math reading uninterpretable. Answer is three sentences: what we hold, whether it is usable, which readings die if we mix it.
+
+**Transfer caveat, raised by tilerl-27 and adopted before any run.** The +8 to 12 points was measured on *their* mix, not ours; four separate readings failed that way in tileRL today, each a correct number carried onto a different population. **So the first run carries our own control arm, not "do what they did and see how much it moves".** Our baseline is `anneal == weight`, and that baseline is itself the thing under test: if our normal-phase mix is already cleaner than theirs, the headroom the mixing buys may already be spent. **The criterion is written before the run -- how many points count, how wide the noise band, how many seeds** (tileRL lost 171 minutes today to a curve whose criterion was written after).
+
+**Tokenizer (3b).** Non-hanzi slots **11,487 (ours) against 103,883 (theirs) = 9.04x**, not the 4.0x the size ratio suggests; our code fertility is **1.248x worse**; ref fertility **1.4286 against 1.0519**; they carry FIM and tool-call tokens, we carry none. The unfreeze decision is the user's and is open.
+
+**Architecture (44), first-hand from `config.json` and the safetensors index, not the card.** No loop, no weight sharing (42 independent layers, no aliases, `lm_head` separate from `embed`); dense 2.5B; full attention GQA 16/2, head_dim 128; RoPE theta=5M unscaled, 131K context; vocabulary 130,560. **Every row of the transfer column reads "not transferable", and the two strongest rows are strong for different reasons**: MiniCPM4's InfLLM v2 sparse attention (81% sparse) was **dropped in gen 5, and the README's stated reason is deployment compatibility -- no custom kernel, no fork -- not capability**; theta=5M has no published reason in any of five sources checked. **The kernel one is a cost datum we have never priced: a team able to build sparse attention, and that shipped it, gave it up to avoid depending on a custom kernel -- and our v2 is entirely custom kernels (KDA, MoE, CSA).** Recorded in the fact's `boundary`, PR #106. Verdict for v2 architecture: change nothing.
