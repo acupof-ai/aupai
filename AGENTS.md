@@ -282,8 +282,9 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | Every number carries its basis: source type, resolution, algorithm; label extrapolation | 37 | §1 §11 §12 §20 §21 §50 §55 §62 §63 §64 §79 §86 §99 §104 §105 §109 §111 §115 §117 §118 §124 §127 §133 §143 §152 §155 §156 §157 §159 §161 §164 §172 §185 §192 §230 §260 §269 |
 | Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose | 6 | §16 §22 §58 §68 §102 §119 |
 | Shared resources are explicitly exclusive; co-residency is judged by each implementation's measured cost in seconds against the run's own spend, never by metric class. A claim says who intends to hold a resource and nothing about whether the job is progressing | 7 | §15 §126 §194 §195 §214 §245 §264 |
-| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed; no listed path is tracked in main | 4 | §39 §41 §255 §275 |
+| Run a deletion candidate before judging it; broadcast the list, delete after 24h unclaimed; no listed path is tracked in main | 3 | §39 §41 §255 |
 | What happened only on the pod did not happen; bring it back to the repo the same day | 2 | §2 §116 |
+| A predicate set answers the question it enumerates, not the one it is named for; assert its population against the filesystem, never against a list; to measure a correction for an instrument, call the instrument | 4 | §275 §276 §277 §278 |
 
 New shapes land in the incidents doc first and this table follows.
 
