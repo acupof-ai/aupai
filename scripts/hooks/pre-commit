@@ -1272,6 +1272,22 @@ def main():
         "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
+        # The two code generative evals, registered 2026-09-08 after both were found to strip
+        # the prompt TWICE -- `ids[len(prompt):]` on top of the slice train.generate_batch
+        # already does, whose docstring says it returns generated ids. Every number either tool
+        # produced was an artifact of that arithmetic: code_fewshot cut 319-335 tokens at 3-shot
+        # against reference solutions of 26-71, so the continuation decoded to the empty string;
+        # code_l0prime's 0-shot cut 15-32, which BEHEADED rather than emptied -- 45 of the first
+        # 60 problems came back as fragments and all 45 fail ast.parse. freeze_hard keeps
+        # whatever FAILS execution, so each fragment was a valid distractor by its own criterion
+        # and the frozen "hard layer" would have been three quarters truncation artifacts.
+        #
+        # Registered rather than commented because of WHERE the defect lived: inline in the
+        # batch loop, reachable only from a pod with a checkpoint. Both selftests now drive the
+        # decode through a known answer -- six reference solutions must round-trip byte for byte
+        # -- and both SKIP their sandbox halves off-pod (sandbox_exec needs root) so that case
+        # runs here. It is its own negative control: the same case reads 0/6 on the old code.
+        "eval/code_fewshot.py", "eval/code_l0prime.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
         # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-
