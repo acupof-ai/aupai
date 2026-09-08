@@ -1,57 +1,141 @@
-# Controller board (fb) — 2026-09-08T08:5xZ
+# Controller board (fb) — 2026-09-08
 
-User order, this supersedes every plan below it: hand the cards back, then clean the whole codebase until there is not one redundant word or mark left. Nothing else runs until that is signed off.
+Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU job.
 
-## Cards
+## User orders in force
 
-aupai's six cards (1,2,3,4,5,7) released. No aupai training, eval, probe or launch. Cards 0 and 6 are tileRL's by user order 2026-09-06 and this order never reached them. `runs/card_assignment.json` says so on every card. b0's `domain_bpb` re-score is the only GPU job queued and it waits with the rest.
+| order | state |
+|---|---|
+| Clean the whole repository, not one redundant word | seven tracks, below |
+| Any file readable by someone who has never seen the repo | folded into every track, no separate renaming round |
+| Worktrees cut to the live working set | 32 → 14; owners remove their own |
+| At most two open tasks per person | held all night; the count is work in progress, not work awaiting someone else's review |
+| Corpus reproducible byte-for-byte from zero | 98 leads; blocked behind the 40,000-vs-1,200 finding below |
+| Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
+| Never delete without a named target | every removal names its files and runs each first |
 
-## Cleanup program — one track per session
+## Queue state, 2026-09-08 12:05Z
 
-tilerl-0a is out: its critical path is tileRL's own P1 gate, and cards 0 and 6 are tileRL's, so I hold the eval track myself. Seven tracks, seven sessions.
+28 PRs merged today, 18 still open, CI green. **Reviews are now being picked up without dispatch** — de cleared 44's four, e1 cleared 98's three, b0 and tilerl are on the rest. The standing rule changed at 11:50Z: **a PR's roster pair reviews it without waiting to be assigned.** The earlier version made me watch the queue faster; de's correction is the right one — the bottleneck was not that only I could see it, it was that only I was looking.
 
-Scope is the whole tree: 473 Python files, 193,890 lines, 113 docs, 368 tracked files under `runs/`, 14 fact files, AGENTS.md at 439 lines. Every track ends in a PR reviewed by its pair.
+Merge order still binds three: **#81 (§276-278) → #96 (§279-282) → #85 (§283)**, and **#98, #100 before #101** (its two fact references are forward references that no check would catch — `_commit_delivers` parses `facts/<f>.json#<id>` only from `runs/tasks.jsonl` evidence, never from prose).
 
-| track | owner | scope | acceptance test |
+## Critical path — cleared 2026-09-08 11:45Z
+
+The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
+
+## Seven tracks
+
+| track | owner | state | next gate |
 |---|---|---|---|
-| Scripts and entry points | b0 | `scripts/` 270 files, root entry points | every surviving file is reached from an entry point or a check; `scripts/reachability.py` clean; each candidate ran once before it was judged, with a per-file grep for `glob`/`importlib` |
-| AGENTS.md | de | 439 lines | every rule maps to a check or a stated reason none can; `agents_rules_covered` green; no count in prose that a check already regenerates |
-| Docs | 44 | `docs/` 113 files | frontmatter on every file; every `facts/` and `runs/prereg.jsonl` citation resolves and is current; no two documents answering the same question; `docs_root_clean` |
-| Facts | e1 | `facts/` 14 files | `facts_well_formed` and `ckpt_facts_sources_present` green with zero WARN; every `retracted_value` list matches its entry; no source naming an absent checkpoint |
-| Ledgers | 3b | `runs/` 368 tracked, 43 of them `.py`/`.sh` | no script under `runs/` unless a doc cites it; one schema per ledger; no stale `running` row; the 77 unregistered `.py` on the pod resolved |
-| Eval and filters | fb | `eval/` 54, `filters/` 4, `probes/` 13 | every metric divides by exactly what it scored; every metric has a known-answer test that CALLS the shipped function rather than reimplementing it |
-| Data generation | 98 | `datagen/` 87, `mathbank/` 40 | no duplicate generator; the `vet_programs.py` glob registry reaches every live generator and nothing dead; then one index page saying where everything lives |
+| scripts and entry points | b0 | #94 landed: three edge types, unreachable 79 → 70, report prints tree/population/edge kinds/ledgers read; readability debt 9 of 537 | 3b's three PRs (#88 #93 #95); then the `score_matrix` watchdog gap |
+| AGENTS.md | de | #85 open; guard is the critical path above | guard to main, then readability |
+| docs | 44 | #83 landed three markers; 86 documents, zero duplicate questions | de's guard review; then 40,000-vs-1,200 |
+| facts | e1 | `a2361230` landed five files; read-side timezone rule added to `check_timestamps_are_utc`, four real defects found, three in e1's own scripts | two scripts blocked behind the guard |
+| ledgers | 3b | `no_ghost_close` attributed: 188 legal + 8 milestone + 31 forged + 0 of the suspected shape; ceiling 180 → 196 | per-ledger primary key, and the forged 31 as a literal set with new keys asserted empty |
+| eval, filters, probes | fb | 71 files, 31 selftests pass; divisor defect isolated to `domain_bpb`, fix merged | 16 metrics have no known-answer case |
+| datagen and mathbank | 98 | #92 open (pod wrapper mangles non-ASCII argv into false zeros) | that first — it contaminates other people's readings |
 
-Deletion rule for every track: propose the list, run each candidate before judging it, the owner confirms each file by name, and the removal lands in a reviewed PR. The standing "no deletion without a named target" order is satisfied by the owner naming each file, not by skipping the step.
+## The night's single finding
 
-## Track progress
+Thirteen instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
 
-| track | owner | measured so far | next |
+| instrument | question asked | question answered |
+|---|---|---|
+| shared-config guard | who changed the shared config | who happened to be running (10 namings, 10 wrong, 0 repeats) |
+| file scan | how many files does this repo hold | how many are under the tree I was run in (537 vs 13,665) |
+| `gh pr list` | which PRs exist | the most recent N |
+| `reachability.py` | which files are unreferenced | which files are unreferenced by anything except my own FATE dict (12 self-rescued) |
+| `harness check` output | how many checks are there | how many passed (71 read as the total; it is 109) |
+| `git log --date=short` | when did this land | local midnight, not UTC (15 of 70 pairs were artifacts; 42 of 145 paths render a day late) |
+| `merge-base --is-ancestor` | did the running copy have the fix | does the commit's ancestry contain it |
+| unreachable total 79 → 56 | did the new edges help | yes, and it concealed 12 self-rescues moving the same direction |
+| `exp.py:582` comment | what does the fabricated row carry | correct on `hypothesis`, wrong on `commit`, 20 lines from the code |
+| mutation sweep "ALL KILLED" | did the mutants die on assertions | they died on `FileNotFoundError`, twice |
+| my own "40,000 rows vs a cap of 1,200" | can this batch's recorded command have produced it | how many programs the library holds -- a different unit, never checked |
+| `gh pr diff --name-only` | which files does this PR change | which files the branch's history touched -- a revert leaves them listed. The predicate is `git diff base..head --stat` |
+| a PASS line's summary (mine, via de's) | what does this check assert | what the summary line happens to print. `shapes_table_covers_doc` DOES refuse duplicate numbers (`harness.py:2390`, verified on a constructed world); its PASS line's "each referenced exactly once" is about the rule table, and both of us read the summary instead of the predicate |
+
+Two derived rules, both adopted: **an unusually tight cluster is a systematic instrument offset until shown otherwise — a real effect has spread** (3b, from 18 samples all inside 7.1–8.0h, which was a timezone constant); and **rewrite the question into a form that reads bytes directly** (3b: hash the file, compare UTC to UTC, run the target copy itself).
+
+Shapes R12–R14 are PR #96, stacked on #81. A never-triggered exclusion belongs to R12 — it is green because it did not run — not to R14, whose signature is a tool's own source appearing in its own output.
+
+## Open, owned
+
+| item | owner | why it matters |
+|---|---|---|
+| A writer outside `exp.py` hand-appends rows to `runs/experiments.jsonl` | 3b | a refusal only guards the path through it; `pod_pull_ledgers` is cleared by time order and by reading `append_rows` |
+| ~~40,000 rows against a cap of 1,200~~ REFUTED 2026-09-08 | 44 | the units did not match: 1,302 is the count of PROGRAMS in the library, the run's cap is 100,000 rows, and 40,000 is the recorded L4 target (100,000 x 0.4) to the row. pod holds 97,771 rows with sha256 matching PROVENANCE. `facts/corpus_supply.json#cs.math_short_v8_cap_audit`, PR #98 |
+| `score_matrix.jsonl` has 1 dedicated watcher against `tasks.jsonl`'s 6 | b0 | its fold key makes rewrite legal, so append-only checks cannot see a changed value; a wrong factor table sat on main for hours |
+| Mutation sweeps need a positive control | de | DONE in PR #99: M0 survives, and the new died-for-the-right-reason criterion caught M2 dying on `FileNotFoundError` on its first run |
+
+## Known-answer audit of the 16 unguarded eval metrics — 2026-09-08 12:20Z, fb
+
+11 groups (grouped by shared scoring path), every one run on CPU against the repo's own functions with only the model stubbed, each with a negative control, each claimed defect sent to two independent verifiers. **7 defects confirmed, 4 metrics reproduce their known answer, 0 blocked.** No metric was judged by reading it.
+
+| # | metric | defect | consequence |
 |---|---|---|---|
-| Scripts | b0 | 14 unreached candidates, 2 proposed for removal, 12 kept with a named reason. 8 of the 12 are reached by edges `reachability.py` cannot see: a citation inside a code comment, a friction row's evidence field, a fact's provenance | teach `reachability.py` those three edge types and re-run — that, not a longer delete list, is the deliverable. `scripts/test_sft_holdout_gate.py` fails 5 of 9 cases on the pod and is being chased first: an inert holdout gate would let an unstamped pack train silently |
-| AGENTS.md | de | 439 lines, 11,769 words, 74,275 characters. The duplication is the coverage table, which repeats each rule's text as a row key, so every rule's wording exists twice and drifts independently | compress the coverage table, not the incidents; drop line 339's written rule count, which the file itself says should come from `harness check` |
-| Docs | 44 | — | frontmatter, citations, duplicate questions |
-| Facts | e1 | 489 facts across 12 files. `facts_well_formed` PASS zero WARN; `ckpt_facts_sources_present` WARN on 12 sources across 7 entries. No `retracted_value` rot in any of 21 entries. 53 boundary-flagged entries hand-read: 27 correct scoping, 22 negate a different claim than their own, 4 need action | restate `be.degeneration_rate` as bounds with status superseded; rename `eff.grad_ckpt_300m_two_arm`'s claim to a two-variable ratio; give `eff.pa_split_206m_438m` an explicit claim; add the `retracted_value` check |
-| Ledgers | 3b | 43 scripts inventoried; all 20 under `runs/audit_0904/` run, 18 green, 2 refuse for a stated reason, 1 has no selftest. None is dead | the proposed list with per-file evidence, then the 77 unregistered `.py` on the pod |
-| Eval | fb | 71 files, 20,443 lines. All 31 selftests pass on CPU. The divisor defect is isolated to `eval/domain_bpb.py`: `humaneval_bpb.py` truncates the prompt and never the solution, divides by the solution's own bytes, and its selftest asserts exactly that; `math_bpb.py` calls that function rather than reimplementing it and asserts its divisor against a literal. So the HumanEval gold bpb numbers are unaffected, and the correct pattern already existed in the same directory | 16 metrics compute a rate with no known-answer case: `arc`, `code_fewshot`, `code_zh`, `gsm8k`, `hellaswag`, `l1_2x2_diagnose`, `l1_fewshot`, `math_hard`, `math_zh`, `mmlu`, `piqa`, `ppl`, `run_eval`, `test_l1_fewshot_2x2`, `winogrande`, `probes/profile_step`. Each gets a CPU case so it runs in CI instead of waiting for a card |
-| Data generation | 98 | — | starts when PR #82 merges |
+| 1 | `eval/code_fewshot.py:178`, `eval/code_l0prime.py:217` | `cont_ids = ids[len(pr):]` strips the prompt length off a value that already excludes the prompt (`train.py:1662` returns generated ids only; `eval/l1_fewshot.py:596` has it right) | **At 3-shot it discards 319–335 tokens — more than a whole solution — and scores the empty string. Measured on six gold rows that must score 6/6: 0/6, empty-continuation rate 100%.** Every number these two tools ever produced is invalid |
+| 2 | `eval/l1_fewshot.py:60` | `ANS_RE`'s terminator class `(?:[。.\n]|$)` contains the ASCII full stop, which is also the decimal point, so the lazy capture stops there: "答案是 3.5。" yields "3" | A verbatim-correct decimal answer scores 0.0 while still counting as answer-present. **Regression introduced 2026-09-03 in `8ab15148`; the sibling `eval/math_zh.py:35` terminates on `[。\n]` only and is correct.** Bounded by 23/500 = 4.6% decimal golds. `be.l1_fewshot_p324` predates it; any rerun today does not |
+| 3 | `eval/ceval.py:58` vs `eval/run_eval.py:281` | items are tagged `"norm": "char"` and the module documents per-character scoring, but the only scorer sums token log-probs with no divisor, and **no file in the repo ever reads the `norm` key** | The declared metric is inverted into a shortest-option bias. Verifier found it wider: `run_eval.py:146` registers ceval with `cloze=False`, so the per-character path is unreachable from the runner at all. Known answer: 100.0% declared vs 0.0% observed |
+| 4 | `eval/winogrande.py:14-15` | `prefix.strip()` deletes the separator and the option is built with no leading space | Every item is scored on `"...brown suitcase becausethe trophy is too large."`, and the first scored token flips to the no-leading-space form on both options |
+| 5 | `eval/ppl.py:69` | computes the held-out split from the global `train.Cfg.val_frac` only; `train.py:2695-2699` honours a per-domain `val_frac` from the mix | For the five `data/mix_e1_*.json` mixes that set `val_frac: 0`, ppl scores rows the run **trained on** and reports them as held-out, contradicting its own docstring. The ladder mixes carry no per-domain key, so figures taken with them are unaffected. The arithmetic itself is correct |
+| 6 | `eval/code_zh.py:43` | `_norm_lines` drops **every** blank line, not the trailing ones its docstring at :42 promises | stdout with leading or interior blank lines the oracle does not have is accepted: 500/500 where the stated contract requires 0/500 |
+| 7 | `eval/gsm8k.py:55` | never reads `cfg.fone`, so `skip_special_tokens=True` deletes `[NUM]` (id 32772) before `:31` extracts a number | **Latent**, not active: a correct answer would score 0.00% silently on a FoNE checkpoint, but no `--fone` run appears in `runs/experiments.jsonl`. `run_eval.py:384` guards this; `gsm8k.py`'s own `__main__` does not |
 
+Reproduce their known answer, with the divisor and the alignment pinned analytically: **`mmlu`, `math_hard`, `math_zh`, `fone`.** The MC likelihood scorer itself is correct — the divisor is exactly 1 (raw sum, crossing bisected to 1e-12) and option token k is scored at logit `pl-1+k`, verified on 2376 real ARC-Easy items where the count-derived known answer 0.2492 matched to 1e-9.
 
-## What is finished and stays finished
+**One sub-claim was refuted by verification and is not in the table**: that `chid_probe` shows the same defect on a chance-level baseline. A uniform-logit model is deterministic, not chance — its ranking is entirely `-T·lnV`, so it always picks the fewest-token candidate. The unequal-length contract violation is real; the way it was demonstrated was not.
+
+**Why this audit existed:** `eval/domain_bpb.py` truncated its input while dividing by the untruncated length and reported 5.460 where the true value is 8.000. One known-answer case found it. These 16 metrics had no such case. **Six of the seven defects are in the same family — a value computed over one population and divided, compared, or sliced against another.**
+
+## Unowned, ready to pick up
+
+**A check that `facts/<f>.json#<id>` references in prose resolve.** Today only `runs/tasks.jsonl` evidence is parsed (`_commit_delivers`); a reference in a doc dangles silently. e1 measured the real population: **493 references repo-wide, 2 genuinely dangling** — `runs/controller_board.md` → `cs.math_short_v8_cap_audit` (resolves once #98 lands) and `runs/tasks.jsonl` → `dq.t24`, whose closing row put a bare file path in `evidence`, so the id was never parsed at all.
+
+**The value is not the 2. It is the path to them: 24 → 20 → 11 → 2, false positives at ten times the real defects.** The middle step is the instructive one — a two-segment regex truncated every three-segment id (`mlm.ratio.sub1b_optimum` → `mlm.ratio`) and then reported that the truncated prefix did not exist. All 20 carried a complete evidence shape: the reference really is in the file, the prefix really is absent.
+
+Acceptance conditions, from e1 and not negotiable, because without them it reports 20 false rows on day one and gets turned off (a permanent red is the same as no signal): positive assertions for three- and four-segment ids; fixture ids whitelisted or excluded by directory (`_broken_*` worlds contain deliberately absent ids); one case for a reference split across a line break.
+
+## Corpus reproducibility
+
+A corpus build should be a pure function of source bytes, pipeline version and seed.
+
+| finding | consequence |
+|---|---|
+| `filters_fp` hashes exactly three files: `filters/pass{1,2,3}_garbage.py` | 15 of 50 domains can say the garbage filters were identical. **Zero of 50 are demonstrated byte-reproducible.** Was 14/49 here until 2026-09-08; e1 recorded the drift as `config.count_drifted` rather than rewriting `value` |
+| 2,010 shard files have link count above one | domains are not disjoint. Disk holds 248.93 GB against a per-domain sum of 348.30 GB; a per-domain rebuild double-counts and drops the hardlinks |
+| One frozen batch excludes inputs that no longer exist | unreproducible by definition — a fourth answer, not a special case of "no" |
+| ~~A frozen batch has 40,000 rows against a program cap of 1,200~~ | **REFUTED.** I compared rows to programs. No constant `1200` exists in `mathbank/`; the figure came from a scheduling note. The recorded command IS the command that ran, to the row. What survives: `PROVENANCE.md:57`'s own arithmetic is wrong (509 x 150 = 76,350, not 57,771) -- the stall is real, its recorded explanation is not |
+
+## Distillation — designed, paused
+
+Route: sequence-level. Our vocabulary is 32,773 against the teacher's 248,044, so there is no token-level alignment and logit KL is not a tuning problem.
+
+| quantity | value | basis |
+|---|---|---|
+| teacher generation throughput | 130.3 tok/s | 1×H20, NVFP4, tp=1, batch 8, LoRA r16, measured 2026-09-08 |
+| samples per card-hour, cap 6144 | 141 | mean 3331 tokens |
+| samples per card-hour, cap 2048 | 335 | **boundary: contaminated by 32% truncation, do not cite** |
+| full openo1, K=4 | ~92 card-days | 8 cards ≈ 12 days, labelled an unverified linear extrapolation |
+| teacher correctness, level-5 math | 91% | 64% was a lower bound read as a point value: truncated is unscored, not wrong |
+
+Cap 2048 truncated 32% of level-5 generations and 84% of those were correct answers cut off. **Truncation is a second difficulty filter acting in the same direction as the ≥3/4 agreement filter — both drop long-reasoning problems, and the shared latent is reasoning length.** Pre-registered: truncation rate per domain is reported; truncated samples are dropped before the subset comparison, never after; the calibration batch runs at cap 8192 so the truncation rate at every smaller cap is read off one length distribution; the cap is the curve's knee, and the discarded tail must pass the collapse criterion already registered for the agreement filter. A gap in the length histogram below the cap means pure truncation; a continuous approach means real failures mixed in.
+
+Open for whoever picks this up: at 91% teacher correctness, is the agreement filter worth the difficulty skew it introduces? The design was written when the teacher was believed to be 64%.
+
+## Closed and not reopening
 
 | item | state |
 |---|---|
-| 30B leg | CLOSED at step 34,000 of 38,146 by user ruling. Recorded as an incomplete schedule, not an advance. Third on HumanEval gold bpb per task at 0.5609, behind `ckpt_0.2b_8b_b192` 0.5559 and its own annealed 8B sibling 0.5590; below two dense models on minimal pairs at 0.7653 against 0.8014; only clear win LAMBADA-en 0.3221 |
-| What the anneal was worth | −6.89% unweighted mean `domain_bpb`, same run and same held-out rows: `ckpt_..._8b.pt.step9000` 0.35897 against `ckpt_..._8b.pt` 0.33424, all nine domains down, −4.0% to −12.4%. All nine token caches are stamped 2026-09-05, before both scorings, so the rows did not move |
-| `domain_bpb` divisor defect | real, ~2×, known-answer test 8.000 true against 5.460 reported. Eight rows retracted in place. Fix is PR #79 with 3b. No rescaled level published; the prereg bar 0.334243 gets re-measured, never multiplied |
-| Val prefix | latent defect, no observed instance. `train.py:2204` shuffles the whole document list before packing, so a pool that grows re-draws the held-out set: 50 added documents give 16–19% overlap, and the 5,000 cap holds the count, not the membership |
-| `answer_present` at 3 demos | retired as a primary readout. Within one recipe it spans 0.1147–0.5433 across four checkpoints, sd 0.1852 against binomial 0.0201, so it cannot resolve a 1.42× effect. Both restoration arms are dead |
-| v2 spec and prereg | merged, on main and on the pod. Amendment 1 carries the two CSA divergences from the DeepSeek-V4 reference and the 1.21× gate note |
-| CSA attention | merged at 8c2308b7. Flag off is exact equality at 15,360 parameters; flag on differs at 0.154; 16 positions perturbed in k and v with no leaks; three mutants red |
-| Repo and pod | main, origin/main and the pod stamp all at 8eecbd36. 738 files in sync, no refusing line. CI green on b134b88d |
-| Pod disk | 95%, 109 GB free. Nothing deleted |
+| The 30B leg | closed at step 34,000 of 38,146 by user ruling, recorded as an incomplete schedule |
+| What annealing was worth | −6.89% on the unweighted mean, same run and same held-out rows, all nine domains down. Per token, 19× a constant-rate token |
+| `domain_bpb` divisor | real, about 2×, fix merged. Known answer: true 8.000, reported 5.460 |
+| `answer_present` at three demos | retired as a primary readout: 0.1147–0.5433 within one recipe, sd 9.2× the binomial floor |
+| SFT packs | 21 packs, zero with a current holdout stamp. A reporting defect, not a training hazard — both cases refuse today |
+| `no_ghost_close` ceiling | 180 → 196. The 31 forged rows stay out of the ceiling and become a literal set whose new keys must be empty |
 
 ## Open user decisions
 
-1. 30B composition for the next full run, once the cleanup is signed off.
+1. Corpus composition for the next full run.
 2. Pod disk at 95%.
