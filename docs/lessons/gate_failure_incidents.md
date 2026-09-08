@@ -477,6 +477,27 @@ Cost: caught in the mutation pass before review, so nothing shipped. The propert
 Evidence: `_assert_card_ownership` properties (6) and (7) in `scripts/harness.py`, `_selftest_card_lend_expires` (registered as a direct selftest, proven to run by a planted raise surfacing as "direct selftest: _selftest_card_lend_expires raised AssertionError"); PR #58; the three mutation suites at 12/12, 10/10 and 4/4.
 open: no check finds a comprehension whose filter predicate is also called in the assertion beneath it. That is the machine-checkable signature of this class and it is one AST walk over harness.py's properties -- it would have fired on both this instance and §266's.
 
+### §274 (2026-09-08, R2)
+
+A test whose verdict depends on two inputs is deterministic only if BOTH are fixed. Pinning one is worse than pinning neither: it passes for hours and then fails for a reason that reads as a defect in the code.
+
+`_selftest_card_lend_expires` (§272, PR #58) asks whether a lend expires. That needs a clock and a note. I pinned the clock -- `21:33Z` inside, `21:00Z` before -- so the verdict would not depend on wall time, and read the NOTE from the live `runs/card_assignment.json`, deliberately, because a fixture note is what let the original card-0/6 hole survive. Both halves are defensible. Together they are a test that silently depends on the controller never rewording the file. Three hours later 4c wrote the SECOND lend, `00:30Z-00:45Z`, and `21:33` is outside it: `card 6 inside its window: expected ours, got theirs`. **Main's CI was red for four merges** (`c175826f`, `3121cc24`, `4fe54763`, `021d59e8`, run 34174571345) and every session's ledger merge was blocked, over a note edit that was correct.
+
+The fix is to derive the clock from whatever window the note carries -- midpoint inside by construction, a day either side outside by construction -- so the pair is consistent for every note that can be written, including the next one. Not a fixture: a fixture would have to be re-typed on every rewording, which is the defect one level up.
+
+**Fixing it exposed two more instances of the same root cause in the same function, neither in the CI log**, and both would have broken on the following reword:
+
+- The `baseline_theirs=False` assertion required "theirs at every clock". That is a property of the note's OPENING TOKEN, not of the flag: 4c's `GRANTED`-leading note matches `_OURS_RE`, so the assertion would have failed on CORRECT code. Replaced with a form-independent statement of what the flag does -- baseline off, the verdict is the same at all three clocks; baseline on, it is not.
+- The bad-window worlds did `note6.replace("21:32-21:34Z", bad)`. That literal is absent from the new note, so `replace` returned it UNCHANGED and the "unparseable window" world became "the live note, valid window", which correctly passes. §272's truthy-`or` reached through a stale literal instead of an expression. Now the literal is rebuilt from the parser's own match, with `assert _mutated != note6` as the non-vacuity guard.
+
+One visible failure, three defects, one shape: a property stated over text another session owns. Deriving the second input from the first is the general fix -- when a test reads a live artifact, every other input must be a FUNCTION of what it read, never a constant that agreed with it once.
+
+The live read stays, and that is 4c's ruling rather than my preference: a controller reword that reddens CI is the check doing its job on the one artifact that matters, and a fixture reintroduces the hole PR #58 closed. The cost is real and now stated, which is what makes it a choice.
+
+Cost: main CI red across four merges, blocking every session's ledger merge; found by 4c reading the CI log, not by me. Fixed in PR #61 (`297acfc2`).
+Evidence: `_selftest_card_lend_expires` in `scripts/harness.py`; verified against 4 note forms including two not yet written (date-after-times single-`Z`, `GRANTED` with a `T` separator); paired revert of the clock fix reproduces the CI failure RED with the unmutated version GREEN; the non-vacuity guard shown to discriminate the stale literal from the derived one on the live note. The selftest summary names its skips rather than counting them, because the count is a property of the TREE, not of the fix -- a fresh `git worktree add` carries no gitignored artifacts, so `pinned_ids`, `sft_pack_uncontaminated` and `tokenizer_roundtrip` skip there and pass here, and CI reports a third number (§ skip-list rule). A skip that is NOT artifact-dependent is the signal.
+open: nothing finds a selftest that pins a constant AND reads a repo file whose content the constant must agree with. The signature is a literal timestamp, path or id in the same function as an `open()` of a live ledger, and it is one AST walk -- it would have fired on all three instances here before the first merge went red.
+
 ### §270 (2026-09-08, R2)
 
 A surviving mutant has two causes that demand opposite fixes: the check is weak, or the clause the mutation touched is dead. Reading the survival as the first when it is the second adds a check that cannot fire.
