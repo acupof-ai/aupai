@@ -212,8 +212,14 @@ hypotheses — composition, epoch wrap, repetition — are all falsified
 (runs/review.jsonl, 2026-09-08T04:1xZ rows), and it reversed at full LR before
 warmdown: -0.01041/1k, t=-28.67 over 29800-34000 — a 3200-step excursion, not a
 regime change. Neither rise settles "peak LR held too long" as its cause: the
-first is mix-driven, the second self-corrected without any lr change. v2 has no
-resume join and trains the resume-1 mix from scratch, so the 30B episode
+first is mix-driven, the second self-corrected without any lr change. The
+endpoint table agrees: across the nine domains, the correlation between log
+resume-1/parent weight ratio and endpoint-vs-8B BPB delta is r=-0.945
+(recomputed from runs/score_matrix.jsonl, cu_none, profile full, and the
+amendment-9 weight ratios) — the domains whose weight fell are the domains
+that got worse. The rise is a supply effect; the schedule is not the
+instrument for it, so the schedule choice is argued on its own grounds. v2 has
+no resume join and trains the resume-1 mix from scratch, so the 30B episode
 transfers no schedule prescription. Warmdown 0.3 is earlier than the 30B's 0.1
 and WSD-conventional; the val_rise stop rule with the amendment-10 per-domain
 instrument is the registered net. Warmdown 0.4 (anneal at 60%) was considered
@@ -237,9 +243,11 @@ a self-correcting excursion.
   95% CI includes zero at the endpoint. FALSIFIED.
 - **Claim "the loop contributes to the gain"**: the conditional loop-only A/B
   shows no per-token gain. FALSIFIED. (Conditional on v2 beating control.)
-- **Claim "warmdown 0.3 prevents the rise"**: two consecutive vals rise
-  during the peak-LR phase (before 70% of steps). FALSIFIED — the warmdown
-  was still too late.
+- **Claim "a rise under warmdown 0.3 is the supply effect the 30B showed,
+  not a schedule failure"**: two consecutive vals rise during the peak-LR
+  phase (before 70% of steps) AND the per-domain re-read (amendment-10
+  instrument) attributes the rise to domains whose weight did not fall.
+  FALSIFIED — the rise is not supply-driven, so warmdown 0.3 was too late.
 
 ## Owners
 
