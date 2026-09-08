@@ -2,7 +2,7 @@
 question: What exactly is run for experiment 2 — RLVR sample efficiency against pretraining tokens — and what must be true before a card is spent on it?
 status: recorded
 source: algorithms/rlvr_trainer.py at 09041709; docs/lessons/efficiency_gap_views.md:369,376-381,441; runs/controller_board.md:45; facts/data_scaling.json#ds.b_unidentified_from_val_traces; facts/contamination.json#cont.novel_ops_frozen_sets
-prereg_row: runs/prereg.jsonl#conversion_rate_0905 at amended_4
+prereg_row: runs/prereg.jsonl#conversion_rate_0905@amended_12
 ---
 
 # RLVR recipe, experiment 2
@@ -198,7 +198,7 @@ READS to a rollout the model WRITES, and the pretraining-vs-RL comparison these 
 exist for is exactly a comparison of those two quantities. The zero is written as a literal:
 a reader joining the ledgers cannot tell an absent column from an unrecorded one.
 `runs/rlvr_tokens_<out>.jsonl` carries `tok_generated`, `tok_trained` and `tok_consumed: 0`
-per logged step; experiment 1's row is `runs/prereg.jsonl#conversion_rate_0905`,
+per logged step; experiment 1's row is `runs/prereg.jsonl#conversion_rate_0905@amended_12`,
 `token_accounting`.
 
 The y-axis is **accuracy on S_test minus accuracy on P_test**, both at n=1000, matching the

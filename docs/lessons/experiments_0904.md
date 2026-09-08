@@ -148,7 +148,7 @@ Control: `ckpt_b0_headmix_armA.pt` — d1024 L12 h8 ffn3072 attn_every=4, mix_20
 
 Design: one memory pool shared by layers 3, 6, 9, added in parallel to the FFN (`h = h + mem(norm(h))`). Product-key lookup, top-k=32, one query head, output gated. Memory values and keys excluded from FP8 and Muon; sparse optimizer at their own lr. Sparse gradients across DDP: gather touched indices, never all-reduce the dense table.
 
-Pre-registered readouts (`runs/prereg.jsonl#memory_layers_0905`):
+Pre-registered readouts (`runs/prereg.jsonl#memory_layers_0905@amended_12`):
 
 1. Primary: block-paired doc_cu val, arm minus control. Adopt if ≤ −0.010 nat (the N2 params effect size); null if |Δ| < 0.003; in between is "measured, not adopted".
 2. Split: seen-vs-unseen difference-in-differences over code_py_starcoder API-name cloze (4-way, real names from the same module; SEEN rows the arms train on, UNSEEN rows in the never-read tail; row boundary and sample seed pinned into the item file). Claim "memory buys knowledge" = delta_seen − delta_unseen > 0 beyond both SEs. Reasoning probe (l1_fewshot answer-present, 3 demos) unchanged. Chance and control floors and the UNDEFINED rule apply to both regions. Amended twice (2026-09-04T17:04Z, 17:07Z): the mix has no encyclopedic domain, and a closed-book cloze over unread rows measures generalisation, which readout 1 already covers.

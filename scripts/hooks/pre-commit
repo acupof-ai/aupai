@@ -1528,6 +1528,10 @@ def main():
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
+        # Guards the EDGE KINDS, where test_reachability_fresh.py guards the listing's
+        # freshness. Both are needed and neither substitutes: a listing regenerated on the
+        # hour from a scan reading one ledger of 32 is fresh and wrong.
+        "scripts/test_reachability_edges.py",
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
@@ -2005,6 +2009,25 @@ def main():
         # the cadence rounding, ignoring --no_bucket_view in the label, and restoring the
         # "unmeasurable at accum 1" label that is false whenever DDP is off at accum > 1.
         "scripts/test_step_profiler.py",
+        # The checkpoint-deletion predicates. Registered because this file's output is what
+        # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
+        # first version scored three predicates and printed a well-formed listing that offered
+        # the 30B leg's resume source, and the fix for it scanned 7 of 78 runs/*.jsonl and
+        # printed an equally well-formed listing that offered four cited checkpoints. Neither
+        # was a crash, a skip or an odd-looking row -- a listing cannot show the predicate it
+        # does not have.
+        #
+        # Its selftest runs against the REAL runs/ tree rather than a fixture, on purpose: the
+        # recurring defect is a population narrower than the question, and a fixture is a
+        # population I choose. Off the pod there is no /work/aupai/runs and it SKIPs, so its
+        # green here is worth nothing; the load-bearing run is on the pod.
+        #
+        # Capacity measured against the shipped defect, not assumed: restoring the 7-ledger
+        # tuple leaves 4 files protected only by the resume predicate and the subsumption
+        # assertion fires. It catches that mutant through one predicate only -- had
+        # experiments.jsonl been inside the 7, nothing here would have fired while 71 ledgers
+        # went unread, which is why the ledger count is printed on every listing.
+        "scripts/deletion_candidates.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
