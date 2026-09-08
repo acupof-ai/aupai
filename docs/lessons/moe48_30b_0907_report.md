@@ -1,12 +1,12 @@
 ---
 question: What did the 1.5b-a0.2b-e48_30b run establish — does MoE-48 continued from its 8B checkpoint hold the 8B separation through 26.7B tokens, and what did the run cost?
 status: measured
-source: runs/experiments.jsonl (rows started 2026-09-07 05:03, 05:15; stop row ended 16:31; resume rows 17:51-18:32 2026-09-07), runs/prereg.jsonl#moe48_30b_0907 with amendments 1-12, pod log /work/aupai/runs/1.5b-a0.2b-e48_30b.log, runs/score_matrix.jsonl (rows measured 2026-09-07/08), runs/review.jsonl (domain_bpb ruling, 2026-09-08T05:2xZ), runs/moe_diag.jsonl, runs/friction.jsonl, facts/efficiency.json, ckpt_1.5b-a0.2b-e48_26.7b_0908.pt row_cursor (read 2026-09-08)
+source: runs/experiments.jsonl (rows started 2026-09-07 05:03, 05:15; stop row ended 16:31; resume rows 17:51-18:32 2026-09-07), runs/prereg.jsonl#moe48_30b_0907 with amendments 1-12, pod log /work/aupai/runs/1.5b-a0.2b-e48_30b.log, runs/score_matrix.jsonl (rows measured 2026-09-07/08; domain_bpb retractions stamped 2026-09-08T07:44Z), runs/review.jsonl (domain_bpb ruling, 2026-09-08T05:2xZ), runs/moe_diag.jsonl, runs/friction.jsonl, facts/efficiency.json, ckpt_1.5b-a0.2b-e48_26.7b_0908.pt row_cursor (read 2026-09-08), PR #79 (domain_bpb divisor fix, incident 277), closure ruling (user order, relayed 4c 2026-09-08)
 ---
 
 # MoE-48 30B leg, 2026-09-07 → 08
 
-The run resumed the 8B MoE-48 arm from `ckpt_1.5b-a0.2b-e48_8b.pt.step9000` and trained to step 34,000 of a planned 38,146 (26.74B of 30B tokens), when the user ordered it stopped 332 steps before warmdown. Endpoint scores landed 2026-09-08 (section 7); the end-state epochs are read from the `.step34000` checkpoint's cursor (section 2).
+The run resumed the 8B MoE-48 arm from `ckpt_1.5b-a0.2b-e48_8b.pt.step9000` and trained to step 34,000 of a planned 38,146 (26.74B of 30B tokens), when the user ordered it stopped 332 steps before warmdown. Endpoint scores landed 2026-09-08 (section 7); the end-state epochs are read from the `.step34000` checkpoint's cursor (section 2). The leg is CLOSED UNCLAIMED by user ruling 2026-09-08: the warmdown is not being completed, this checkpoint is final, and the comparison against the dense arms is undetermined by this leg, not resolved (section 10). Every absolute domain_bpb level in this report is RETRACTED: the metric summed 2048 tokens and divided by the whole text's bytes, so levels ran ~2x low (PR #79, incident 277); deltas and ratios stand because both arms of every contrast carry the same factor.
 
 ## 1. Architecture and launch shape
 
@@ -124,14 +124,14 @@ The stop is 332 steps before warmdown_start (34,332), so the endpoint never had 
 
 All numbers from runs/score_matrix.jsonl (pod ledger, rows measured 2026-09-07/08) and the review row runs/review.jsonl 2026-09-08T05:2xZ. The endpoint row is `ckpt_1.5b-a0.2b-e48_26.7b_0908.pt` (the renamed `.step34000`).
 
-The registered bar (runs/prereg.jsonl#moe48_30b_0907, readout_1_bar) names the 8B **endpoint** row: domain_bpb and nll_per_byte must not rise for the run to count as a continuation.
+The registered bar (runs/prereg.jsonl#moe48_30b_0907, readout_1_bar) names the 8B **endpoint** row: domain_bpb and nll_per_byte must not rise for the run to count as a continuation. The domain_bpb half of the bar cannot be adjudicated as written: both rows' levels are retracted (†), and the leg is closed unclaimed before any re-score (section 10). The nll/byte half stands and improved (0.7075 → 0.6754), but it is one annealed row against one constant-LR row, so it does not carry the bar alone.
 
 | row | lambada acc | nll/byte | humaneval per-task | humaneval byte-w | domain_bpb mean |
 |---|---|---|---|---|---|
-| 8B endpoint `ckpt_1.5b-a0.2b-e48_8b.pt` (annealed) | 0.2882 | 0.7075 | 0.5590 | 0.4436 | 0.3342 † |
-| 30B endpoint (constant-LR) | 0.3221 | 0.6754 | 0.5609 | 0.4333 | 0.3588 † |
+| 8B endpoint `ckpt_1.5b-a0.2b-e48_8b.pt` (annealed) | 0.2882 | 0.7075 | 0.5590 | 0.4436 | retracted † |
+| 30B endpoint (constant-LR) | 0.3221 | 0.6754 | 0.5609 | 0.4333 | retracted † |
 
-† The unweighted mean is two effects cancelling, not a measurement of learning (4c ruling, 2026-09-08): six held/raised domains improved 0.016-0.027 bpb while three starved domains regressed 0.020-0.054, r=−0.945 between log(weight ratio) and delta. The per-domain table below is the result; the mean is printed only because the registered bar names it.
+† Both domain_bpb levels are RETRACTED: `eval/domain_bpb.py` summed loss over the first 2048 tokens and divided by the whole text's bytes, so every absolute bpb in this section ran ~2x low (found by 4c, fixed in PR #79, incident 277; re-score pending). The unweighted mean was also two effects cancelling, not a measurement of learning (4c ruling, 2026-09-08): six held/raised domains improved 0.016-0.027 bpb while three starved domains regressed 0.020-0.054. The per-domain deltas below stand — both arms of every contrast carry the same factor — but no level is printed, and no ×2 rescale is offered: the factor is a sample statistic (per-domain 1.97-2.06, per-row spread ~1.7-2.5), not a conversion constant (b0, retraction rows in runs/score_matrix.jsonl).
 
 The endpoint-vs-endpoint column mixes an annealed row with a constant-LR row (section 6), so the cleaner comparison is against the resume source, both full-LR:
 
@@ -144,21 +144,23 @@ lambada_zh open_acc1 0.314 on the endpoint. l1_fewshot answer_present_rate 0.340
 
 The intermediate `.step14000` row (same ledger) sits between the two on lambada: acc 0.2509, nll/byte 0.7728 — so the lambada trajectory across the leg is 0.2354 → 0.2509 → 0.3221. Its domain_bpb cell is ERRORED by the same mid-run guard refusal (b0, confirmed against the ledger), not "not run".
 
-domain_bpb per domain, with each leg's training weight (review row):
+domain_bpb per domain, with each leg's training weight and the delta (levels retracted, see †):
 
-| domain | w_8B | w_30B | ratio | 8B | 30B | delta |
-|---|---|---|---|---|---|---|
-| math_owm_stage2 | 0.2643 | 0.2889 | 1.09x | 0.3651 | 0.3379 | −0.0272 |
-| en_c4_stage2 | 0.1626 | 0.1621 | 1.00x | 0.5445 | 0.5210 | −0.0234 |
-| textbook_30b | 0.1016 | 0.1013 | 1.00x | 0.2583 | 0.2400 | −0.0183 |
-| zh_web | 0.0305 | 0.0304 | 1.00x | 0.6709 | 0.6435 | −0.0274 |
-| code_py_starcoder | 0.3297 | 0.3911 | 1.19x | 0.2465 | 0.2293 | −0.0172 |
-| code_py_rp1t | 0.0159 | 0.0188 | 1.19x | 0.2093 | 0.1930 | −0.0162 |
-| cot | 0.0807 | 0.0062 | 0.08x | 0.2263 | 0.2467 | +0.0204 |
-| chatml | 0.0074 | 0.0006 | 0.08x | 0.3471 | 0.4015 | +0.0544 |
-| chat_qa | 0.0073 | 0.0006 | 0.08x | 0.3627 | 0.4161 | +0.0534 |
+| domain | w_8B | w_30B | ratio | delta (30B − 8B) |
+|---|---|---|---|---|
+| math_owm_stage2 | 0.2643 | 0.2889 | 1.09x | −0.0272 |
+| en_c4_stage2 | 0.1626 | 0.1621 | 1.00x | −0.0234 |
+| textbook_30b | 0.1016 | 0.1013 | 1.00x | −0.0183 |
+| zh_web | 0.0305 | 0.0304 | 1.00x | −0.0274 |
+| code_py_starcoder | 0.3297 | 0.3911 | 1.19x | −0.0172 |
+| code_py_rp1t | 0.0159 | 0.0188 | 1.19x | −0.0162 |
+| cot | 0.0807 | 0.0062 | 0.08x | +0.0204 |
+| chatml | 0.0074 | 0.0006 | 0.08x | +0.0544 |
+| chat_qa | 0.0073 | 0.0006 | 0.08x | +0.0534 |
 
-The unweighted means are 0.3590 (8B) and 0.3588 (30B). 4c ruled (2026-09-08, after reading this table) that the aggregate is NOT the result: −0.00018 is a 12x weight cut on three domains cancelling improvement on the other six, not a measurement of learning over 18.7B tokens. The six domains whose weight was held or raised improved 0.016-0.027 bpb; the three the resume-1 mix starved to 0.08x regressed 0.020-0.054. The correlation between log(weight ratio) and bpb delta is r=−0.945 across all nine — the per-domain deltas are almost entirely the mix change, not scale. No weighted mean is offered, deliberately: one under the 8B weights and one under the 30B weights move in opposite directions, and picking whichever flatters is the failure this row exists to prevent.
+The deltas split on mix lines: the six domains whose weight was held or raised improved 0.016-0.027; the three the resume-1 mix starved to 0.08x regressed 0.020-0.054. This is a two-group difference (n=3 against n=6), not a dose-response: the weight ratio takes four distinct values (0.08x, 1.00x, 1.09x, 1.19x) in three groups (starved, held, raised), Spearman is −0.43 on the exact per-domain weights (−0.51 on the ratios as printed; the basis moves the number), and dropping the three starved domains flips the sign to +0.77. The Pearson r=−0.945 from b0's ruling row (runs/review.jsonl, 2026-09-08) is WITHDRAWN by its author in a peer message the same day, on exactly those grounds: a Pearson over a four-value predictor overstates the dose-response, and the rank correlation above is the honest number. The withdrawal itself has no ledger row; this report is its on-record location. The mix change and the missing anneal are each individually sufficient to explain the bar miss, and this run cannot separate them. No weighted mean is offered: one under the 8B weights and one under the 30B weights move in opposite directions, and picking whichever flatters is the failure the 4c ruling exists to prevent.
+
+One same-run contrast IS clean and worth keeping: the 8B endpoint against its own `.step9000` source — same rows, same mix, same run, differing only by the anneal. All nine domains fell 4.0% to 12.4%, aggregate −6.89% (b0, from the two retracted rows; the ratio is factor-proof because both arms carry it). It is the repo's only same-run anneal measurement, and it prices what the 30B endpoint never got: warmdown_start sat 332 steps past the stop.
 
 Comparability of the two domain_bpb rows: both read the same seed-42 val prefix — verified, not assumed. The four uncapped pools' caches (/mnt/data02/tokens/) carry srcfp/vocab=0bce3584bc24f255/seed=42 sidecars, read 2026-09-08, with ctime==mtime at 2026-09-05 03:49-03:54Z, before either scoring. Neither scoring stamped its own srcfp, so this is inference from file state, not a stamp captured at read time. The aggregate is comparable only in this weak sense; it is NOT comparable across the mix change, because it weights all nine domains equally while the training did not. The per-domain cells are the readable part.
 
@@ -187,18 +189,21 @@ Routing health throughout: `usage_frac` 1.0 on all 245 diag rows of the leg (zer
 
 ## 10. Verdict and what changes in v2
 
+**Closed unclaimed, by user ruling 2026-09-08 (relayed by 4c): the warmdown is not being completed, the stop at step 34,000 stands, this checkpoint is final as it is.** Judged across versions on one vocabulary, the endpoint is THIRD on HumanEval gold BPB per task at 0.5609 — behind `ckpt_0.2b_8b_b192` at 0.5559 and behind its own annealed 8B sibling at 0.5590 (runs/score_matrix.jsonl, measured 2026-09-07/08) — and below dense 0.2B checkpoints on minimal pairs, 0.7653 against 0.8014. Its only clear win is LAMBADA-en, 0.3221 against the field's 0.2711-0.2930 — the top of that range is `ckpt_data_leg_206m_8b` at 0.2930, same vocabulary. At 26.74B tokens it sits behind a 0.2B dense model trained on 8B. The reason is structural and must travel with the verdict: the run stopped at 34,000 of 38,146 with warmdown_start at 34,332, so it never entered its own decay phase, and the 8B leg's own anneal moved this same metric −0.034 (0.5933 → 0.5590, section 7) — enough to reorder the three. The comparison is UNDETERMINED by this leg, not resolved against the architecture. Closed as an incomplete schedule, not claimed as an advance.
+
 好：
 
 - Val ended at 1.824, −0.073 from the leg's first reading (1.897 at 9200), and the descent re-established itself after both excursions. The stop trigger never fired.
 - Against the resume source (both full-LR): nll/byte 0.8074 → 0.6754, lambada acc +8.7pt (0.2354 → 0.3221, trajectory 0.2354 → 0.2509 at step 14000 → 0.3221), humaneval gold_bpb improved on both readings (0.5933 → 0.5609 per-task, 0.4721 → 0.4333 byte-weighted).
-- The six domains whose training weight was held or raised improved 0.016-0.027 bpb; zh_web improved 0.027 on 0.038 epochs of exposure.
+- The six domains whose training weight was held or raised improved 0.016-0.027 bpb (deltas; levels retracted, section 7); zh_web improved 0.027 on 0.038 epochs of exposure.
 - The epoch-ceiling defect was found cardless and fixed before resume; the cap's measured cost saturated (cot slope 0.13x by window 2) and the code domains the objective names stayed flat (starcoder −0.0002/1k in window 1). The realised epochs confirm the cap held: no domain crossed 4.0 (section 2).
 - Routing stayed healthy for the whole leg (section 9), and the run held 44.1 GiB/card with no OOM or NaN.
 
 坏：
 
-- No annealed endpoint. The stop landed 332 steps pre-warmdown, so every endpoint number is constant-LR while the 8B bar's lambada side is annealed; the endpoint-vs-endpoint comparison is not like-for-like.
-- The domain_bpb comparison splits on mix lines: the three starved domains regressed 0.020-0.054 bpb, and r=−0.945 between log(weight ratio) and bpb delta means the per-domain deltas are almost entirely the mix change, not scale. The run cannot separate the two, and the aggregate (−0.00018) is ruled not quotable as the result (4c, 2026-09-08).
+- No annealed endpoint, and the leg is closed without one: every endpoint number is constant-LR while the 8B bar's lambada side is annealed; the endpoint-vs-endpoint comparison is not like-for-like, and the missing decay is worth ~0.034 on HumanEval per the 8B leg's own anneal (section 7).
+- The domain_bpb comparison splits on mix lines: the three starved domains regressed 0.020-0.054 bpb against the six held/raised domains' 0.016-0.027 improvement — a two-group difference, not a dose-response (the r=−0.945 in the earlier version is withdrawn, section 7). The run cannot separate the mix change from the missing anneal.
+- Every absolute domain_bpb level in this report is retracted: the metric ran ~2x low (PR #79, incident 277). Deltas and ratios stand; levels await re-score.
 - l1_fewshot exact-match is 4.2% (21/497) with answer_present 34%: the model produces the answer in a third of continuations, but the generative reading is still near zero at 26.7B tokens.
 - The stop/restart and the mix change are confounded: 38% of the first excursion rose on domains whose weight did not change, and no control separates restart from mix.
 - The second excursion's hypotheses were written to review.jsonl after the fact, not pre-registered in the prereg row (section 5).
@@ -212,5 +217,6 @@ v2:
 3. Merge PR #40 before quoting any MoE efficiency number.
 4. Score the resume source's full panel before the run starts, on a free card — domain_bpb included; this run's was ERRORED mid-run and fillable only after the block released.
 5. Register excursion hypotheses in the prereg row, not in messages.
-6. Complete the warmdown, or register a constant-LR bar before the endpoint reading exists.
+6. Complete the warmdown, or register a constant-LR bar before the endpoint reading exists. This leg did neither, and the verdict is "undetermined" because of it.
 7. Stamp the srcfp a scoring read into its own row (task b0-36): the val-rows comparison in section 7 is inference from file state, not a stamp captured at read time.
+8. Re-score domain_bpb with the fixed metric (PR #79) before quoting any absolute level; until then the report prints deltas only.
