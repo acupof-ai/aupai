@@ -6,6 +6,9 @@ source: facts/distillation.json (teacher vocab, seed inventory, throughput — a
 
 # Distillation pipeline design (Qwen3.8-27B teacher)
 
+**Status 2026-09-08: PAUSED by user ruling — no cards for distillation, the 8 cards stay
+with tileRL. The design is closed at run-ready state; section 6 is the pick-up checklist.**
+
 4c's dispatch 2026-09-08. Deliverable: this design + a prereg row. Not code.
 
 ## 0. The vocab constraint, verified not accepted
@@ -63,7 +66,7 @@ the seed file's output:
 | domain | filter | independence |
 |---|---|---|
 | gsm8k (7,471) | answer match against the ORIGINAL GSM8K golds (`#### N`), re-fetched with the dataset — the golds our file dropped | fully independent |
-| openo1-math | two-stage: (a) symbolic/numeric re-derivation where the problem permits (arithmetic, determinate algebra); (b) consensus — keep generations where ≥3 of K=4 agree — for the rest. Consensus measures confidence, not correctness; the acceptance rate is labelled a consensus rate | independent of the original output |
+| openo1-math | two-stage: (a) symbolic/numeric re-derivation where the problem permits (arithmetic, determinate algebra); (b) consensus — keep generations where ≥3 of K=4 agree — for the rest. Consensus measures confidence, not correctness; the acceptance rate is labelled a consensus rate. Leg (b) is conditionally activated — see the teacher-correctness premise below | independent of the original output |
 | code | execute the teacher's code against the tests the problem embeds (openo1 code problems carry unittest assertions in the instruction) | execution is independent of any model output |
 
 The filter may NOT extract an answer from the seed file's output and call a match
@@ -92,6 +95,34 @@ population's; if the intersection median is < 0.7× the population median, the s
 systematically easier and the verdict is again unmeasured. A number is valid only on the
 population it was measured on, and that population is written down.
 
+**Teacher correctness premise, corrected 2026-09-08 (tilerl-0a, relayed by 4c).** The
+teacher is **91% correct on level-5 math** at cap 6144, not 64% — the 64% was a lower
+bound that counted the 32 unscored cap-hit samples as wrong; unscored is unknown, not
+wrong (facts/distillation.json#distill.teacher_correctness_level5_math). This opens the
+question the next owner judges FIRST (section 6, open question 1): is the ≥3/4 consensus
+leg worth running at 91%? The leg exists to remove 9% of errors; its price is a
+difficulty distribution that may collapse, and a collapsed SFT set teaches an easy-only
+student. Recorded proposal (amendment 5): activate the leg only if the pilot clears the
+pre-registered gates (standing condition, n≥100 per subset, representativeness, no
+collapse) AND the accepted set's residual error is ≤ 4.5% on the symbolic-verifiable
+intersection — at least half of the teacher's 9%; otherwise train on unfiltered teacher
+output and accept the 9% noise as SFT-tolerable. The pre-registered pilot numbers are
+what the judgment runs on, not the 64% premise.
+
+**Length distributions join the mandatory reported quantities (tilerl-0a's criterion,
+2026-09-08).** With the cap-hit rate, the **token-length distributions of cap-hit and
+non-cap-hit samples are reported together** — the rate says how much is lost, the
+distribution says which end. A continuous transition into the cap means genuinely-wrong
+answers are mixed in; a gap before the cap means pure truncation (the 32 level-5 cut-offs
+were confirmed via a 159-token gap at 1889–2048). The consensus comparison likewise
+reports both subsets' **output-length distributions**: output length cannot be the
+pre-registered difficulty proxy (it is known only after generation — circular), but the
+reader judges the stacking from the distributions. The stacking is measured, not assumed:
+cap-hit samples re-ran to a 3331-token mean against 1386 for naturally-terminating ones
+(2.4×), while length and correctness are nearly uncorrelated inside naturally-terminating
+samples (0–500 tok: 86% correct; 1000–1500: 100%) — truncation filters long reasoning,
+and reasoning length is the common latent variable behind both filters.
+
 **Cap-hit rate is a third pre-registered quantity (4c, 2026-09-08; tilerl-0a measurement
 the same day).** Truncation is a second difficulty filter and it is aligned with the
 consensus filter: long-reasoning problems hit the cap more, and high-consensus problems
@@ -99,11 +130,16 @@ skew easy — both drop hard problems, and they stack. cap 2048 truncated 32% of
 math generations, and 84% of those cut off were correct answers. Rules: (a) cap-hit rate
 is a mandatory reported quantity per domain; (b) truncated samples (finish_reason=length
 or output tokens == cap) are removed BEFORE any subset comparison — post-comparison
-removal leaves a truncation-rate difference inside the correctness difference; (c) a
-calibration batch of 200 problems at cap 6144 runs before the big batch, and its cap-hit
-rate decides the big-batch cap: the smallest cap whose calibration cap-hit is < 5%. If no
-cap up to model context reaches < 5%, the domain is reported cap-bound and its share is
-renegotiated. A batch run at cap 2048 that looks fine is a batch where 32% of rows are
+removal leaves a truncation-rate difference inside the correctness difference; (c) the
+big-batch cap is chosen from a calibration batch of 200 problems generated once at cap
+8192: one run yields the full truncation-rate-vs-cap curve — any smaller cap's rate is
+the mass of the measured length distribution above it — and the length segment each cap
+drops. The cap is set at the curve's knee (another +1024 tokens buys no meaningful
+drop), subject to the dropped segment passing the registered collapse check: the
+median-ratio ≥ 0.7 rule applied to the truncation-dropped subset versus the rest. A 5%
+truncation that cuts the hardest end off entirely is too high; a 12% truncation that
+leaves the distribution standing is acceptable. If no cap up to model context passes
+both, the domain is reported cap-bound and its share is renegotiated. A batch run at cap 2048 that looks fine is a batch where 32% of rows are
 half-answers. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
 facts/distillation.json#distill.openo1_answer_extractability): 81.0% of openo1 rows
 carry an `<Output>` tag; of those, 78.3% yield an extractable numeric answer (last
@@ -131,7 +167,8 @@ unverified linear extrapolation (multi-process interference unmeasured). gsm8k a
 29,884 generations, expected shorter.
 
 Pilot: 1,000 generations ≈ 7.1 card-hours. Cap calibration batch (section 2): 200
-problems × 4 = 800 generations ≈ 5.7 card-hours.
+problems × 4 = 800 generations at cap 8192 ≈ 7–8 card-hours (same order; the batch
+measures its own mean).
 
 Cards are tileRL's by user grant; the pilot needs cards back — a user decision 4c is
 reporting with this budget. The bf16 copy is broken (MMLU 0.0%) and is not a fallback.
@@ -156,3 +193,65 @@ report — the route is correct but unaffordable, and that is a user decision.
   section 4's gate fires).
 - A working cross-vocab alignment method with a measured success case (route 3 reopens).
 - The user ruling on vocab rebuild (route 2 reopens, owned by the user, not this design).
+
+## 6. Pick-up checklist (cards arrive → run)
+
+The leg is paused by user ruling. When cards are granted, run in this order:
+
+**1. Judge open question 1 first** — is the ≥3/4 consensus leg worth running at 91%
+teacher correctness (section 2 premise)? Do not run a design premised on 64%. The
+recorded proposal is conditional activation at ≤4.5% residual error; the pilot's
+pre-registered numbers are what the judgment runs on.
+
+**2. Calibration batch** — 200 openo1 problems, K=4, T=0.7, cap 8192, seed 42. One run
+yields the full truncation-rate-vs-cap curve (any smaller cap's rate is the mass of the
+measured length distribution above it) plus the length segment each cap drops:
+
+```bash
+# Run on the pod. Service URL/port: read from tileRL's serving config — the NVFP4 27B
+# service is tileRL's; this design does not hard-code its port. If the seed's training
+# template differs from the service default chat template, apply the seed template.
+python3 - <<'EOF'
+import json, random, urllib.request
+
+SERVICE = "http://127.0.0.1:<PORT>/v1/chat/completions"  # from tileRL config
+MODEL = "Qwen3.8-27B-NVFP4"
+SEED_FILE = "/work/aupai/data/openo1_sft.jsonl"
+OUT = "/work/aupai/data/distill/calibration_200.jsonl"
+
+random.seed(42)
+rows = [json.loads(l) for l in open(SEED_FILE)]
+with open(OUT, "w") as f:
+    for i, r in enumerate(random.sample(rows, 200)):
+        for k in range(4):
+            body = json.dumps({"model": MODEL,
+                "messages": [{"role": "user", "content": r["instruction"]}],
+                "max_tokens": 8192, "temperature": 0.7, "seed": 42 + i * 4 + k}).encode()
+            req = urllib.request.Request(SERVICE, data=body,
+                headers={"Content-Type": "application/json"})
+            resp = json.load(urllib.request.urlopen(req, timeout=600))
+            c = resp["choices"][0]
+            f.write(json.dumps({"id": i, "k": k, "finish_reason": c["finish_reason"],
+                "tokens": resp["usage"]["completion_tokens"],
+                "completion": c["message"]["content"]}) + "\n")
+EOF
+```
+
+**3. Mandatory readouts** — every one reported, no exceptions:
+- per-domain truncation rate (cap-hit / total)
+- token-length distributions of cap-hit vs non-cap-hit samples (a gap before the cap =
+  pure truncation; a continuous transition = genuinely-wrong answers mixed in)
+- output-length distributions of the consensus (≥3/4) vs filtered-out subsets
+- symbolic-verifiable intersection: n per subset (floor 100) and its instruction-length
+  distribution vs the population (median 222, p90 463)
+
+**4. Set the big-batch cap** at the curve's knee, subject to the dropped segment passing
+the median-ratio ≥ 0.7 collapse check (section 2).
+
+**5. Cost gate** — 141 samples/hr/card at cap 6144
+(facts/distillation.json#distill.teacher_throughput_nvfp4); full-scale openo1 ≈ 92
+card-days single-card, ≈ 12 days on 8 (unverified extrapolation). If the budget named
+for the leg can't cover it, stop and report.
+
+The amendment chain (runs/prereg.jsonl#distill_qwen27b_0908, amendments 1–5) carries
+every criterion; this section is the index.

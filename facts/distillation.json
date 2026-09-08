@@ -69,6 +69,19 @@
       "uncertainty": "8-card number is unverified extrapolation; single-card numbers are one-day measurements",
       "boundary": "Generation throughput, not forward. The 335/hr figure assumes the 1400-token mean, which is contaminated by 32% truncation at cap 2048; the 141/hr figure (cap 6144, mean 3331) is the uncontaminated planning number. Do not cite 335/hr as achievable.",
       "status": "measured"
+    },
+    {
+      "id": "distill.teacher_correctness_level5_math",
+      "value": "Qwen3.8-27B NVFP4 correctness on level-5 math: 91% at cap 6144 (measured 2026-09-08 by tilerl-0a). The 64% quoted at cap 2048 was a lower bound, not a point value: the 32 cap-hit samples were unscored, and unscored is unknown rather than wrong. Length-correctness decorrelation in naturally-terminating samples: 0-500 tok 86% correct, 1000-1500 tok 100%; cap-hit samples re-ran to a 3331-token mean vs 1386 for natural ones (2.4x).",
+      "measured": "2026-09-08",
+      "source": "tilerl-0a measurement 2026-09-08, relayed by 4c; not re-measured by 44",
+      "config": {
+        "domain": "level-5 math",
+        "cap": 6144
+      },
+      "uncertainty": "level-5 math only; openo1's overall correctness may differ",
+      "boundary": "91% is on level-5 math at cap 6144, not on the openo1 seed set and not at other caps. Do not cite the 64% as measured correctness -- it was a lower bound.",
+      "status": "measured"
     }
   ]
 }
