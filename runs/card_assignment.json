@@ -143,7 +143,7 @@
   },
   "cards": {
     "0": "tileRL (user order 2026-09-06, '0,6 tileRL'); short aupai lane jobs only by explicit grant while tileRL is not using it. Current: tilerl-48 levers arm 3, released on exit",
-    "6": "GRANTED 2026-09-09 00:30Z-00:45Z -> b0: domain_loss on .step28500/29000/29500; lend by tilerl-0a. Card 6 is tileRL's (user order 2026-09-06 '0,6 tileRL').",
+    "6": "GRANTED 2026-09-08 00:30Z-00:45Z -> b0: domain_loss on .step28500/29000/29500; lend by tilerl-0a. Card 6 is tileRL's (user order 2026-09-06 '0,6 tileRL').",
     "1-4": "2026-09-05T05:54Z: 1,2 -> MoE arm E1 (world 2, b0+tilerl) when (c)+(d) merge. 3 -> see key \"3\"; 4 -> see key \"4\": SFT p04/p16 cancelled, ladder checkpoints unrecoverable; experiment 2 rides on the MoE round's step checkpoints.",
     "5": "GRANTED 2026-09-05T08:11Z -> e1: experiment 1 (runs/prereg.jsonl#conversion_rate_0905 @amended_4, 44 review 11:05Z): five world-2 arms SEQUENTIAL on cards 5+7 (n1, n8, n64, n256, control_arm), 500 steps each, via harness launch --training --cards 5,7 --class incremental; one arm at a time",
     "7": "GRANTED 2026-09-05T08:11Z -> e1: paired with card 5 for experiment 1's world-2 arms (see 5)",
