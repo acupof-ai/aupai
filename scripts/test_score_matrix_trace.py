@@ -197,12 +197,12 @@ got = set((ent or {}).get("changed", {}))
 # .s is a string -- not tracked, by design. .same did not move. .gone and .added exist on
 # one side only, so there is no old-vs-new pair to record. .flag is a bool, excluded.
 want = {".f", ".deep.a.b", ".lst[1]"}
-# EXACT SET, NOT `changed != {}`, AND THAT IS MEASURED. Mutating _supersede_entry four ways
-# (skip list elements, count bools, descend one dict level only, report string changes) kills
-# all four against this line. A "non-empty" assertion survives ALL FOUR: M6 under-reports and
-# M9 over-reports, and both leave `changed` non-empty. So the exact set is not a strictness
-# preference -- it is the boundary those four mutants fall on, and a boundary is something
-# that can be killed.
+# EXACT SET, NOT `changed != {}`, AND THAT IS MEASURED -- BY THE BLOCK BELOW, NOT BY PROSE.
+# This line used to name the four mutants in a sentence ("skip list elements, count bools,
+# descend one dict level only, report string changes"). A sentence is not a record: a reader
+# rebuilding a mutant from it may build a different one that dies for a different reason, and
+# the reproduction then confirms nothing about the original. The four are pinned below as the
+# exact substitutions, and re-running this file re-runs them.
 check("_supersede_entry reports EXACTLY the moved numeric leaves",
       got == want,
       f"got {sorted(got)}, want {sorted(want)} -- a missed leaf class is missed by the "
@@ -213,6 +213,99 @@ check("_supersede_entry returns None when nothing numeric moved",
 check("_supersede_entry does not treat a bool as a number",
       ".flag" not in got,
       "True == 1 in Python; a status flag flipping is not a measurement moving")
+
+
+# --- 7. THE FOUR MUTANTS, PINNED BY NAME AND RUN -------------------------------------
+# Each mutant replaces sm._numeric_leaves (the real _supersede_entry still runs on top of
+# it, so the substitution is the only difference). The claim being made is TWO-SIDED and
+# both sides are asserted per mutant:
+#   (a) the exact-set line above goes RED   -> the boundary is what kills them
+#   (b) a `changed != {}` line stays GREEN  -> the weaker assertion catches none of them
+# (b) is the whole reason the exact set exists, and it is also where a mutant can be
+# wrong: an over-broad mutant that empties `changed` fails BOTH lines and so proves
+# nothing about the boundary. M6 must drop SOME leaves and keep others -- it drops
+# .lst[1] and keeps .f and .deep.a.b. A mutant whose non-empty side goes red is rejected
+# by this block rather than counted, which is what the `survives_weak` assertion is for.
+_real_leaves = sm._numeric_leaves
+
+
+def _m6_skip_list_elements(obj, prefix=""):
+    """M6: the `isinstance(obj, (list, tuple))` branch deleted. Under-reports: .lst[1]."""
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.update(_m6_skip_list_elements(v, f"{prefix}.{k}"))
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        out[prefix] = obj
+    return out
+
+
+def _m7_count_bools(obj, prefix=""):
+    """M7: `and not isinstance(obj, bool)` deleted. Over-reports: .flag."""
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.update(_m7_count_bools(v, f"{prefix}.{k}"))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            out.update(_m7_count_bools(v, f"{prefix}[{i}]"))
+    elif isinstance(obj, (int, float)):
+        out[prefix] = obj
+    return out
+
+
+def _m8_one_dict_level(obj, prefix=""):
+    """M8: dict recursion guarded by `if prefix == ""`. Under-reports: .deep.a.b."""
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            if isinstance(v, dict) and prefix != "":
+                continue
+            out.update(_m8_one_dict_level(v, f"{prefix}.{k}"))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            out.update(_m8_one_dict_level(v, f"{prefix}[{i}]"))
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        out[prefix] = obj
+    return out
+
+
+def _m9_report_strings(obj, prefix=""):
+    """M9: `(int, float)` widened to `(int, float, str)`. Over-reports: .s."""
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.update(_m9_report_strings(v, f"{prefix}.{k}"))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            out.update(_m9_report_strings(v, f"{prefix}[{i}]"))
+    elif isinstance(obj, str) or (isinstance(obj, (int, float)) and not isinstance(obj, bool)):
+        out[prefix] = obj
+    return out
+
+
+for _name, _mut in (("M6 skip list elements", _m6_skip_list_elements),
+                    ("M7 count bools", _m7_count_bools),
+                    ("M8 descend one dict level only", _m8_one_dict_level),
+                    ("M9 report string changes", _m9_report_strings)):
+    sm._numeric_leaves = _mut
+    try:
+        _got = set((sm._supersede_entry(old, new, "w", "t") or {}).get("changed", {}))
+    finally:
+        sm._numeric_leaves = _real_leaves
+    check(f"{_name}: the EXACT-SET assertion kills it",
+          _got != want,
+          f"mutant produced {sorted(_got)}, which equals `want` -- this mutant is not a "
+          f"mutation of anything the exact-set line reads")
+    check(f"{_name}: a non-empty assertion would NOT kill it",
+          bool(_got),
+          "mutant produced an EMPTY changed set, so `changed != {}` kills it too and it "
+          "says nothing about the boundary; a separating mutant drops some leaves and "
+          "keeps others")
+
+# The real function is back; assert it, or every case after this block runs on a mutant.
+check("the mutants were reverted", sm._numeric_leaves is _real_leaves,
+      "a leaked monkey-patch turns every later assertion into a measurement of the mutant")
 
 print(f"\n{'ALL OK' if not fails else 'FAILED: ' + ', '.join(fails)}")
 sys.exit(1 if fails else 0)
