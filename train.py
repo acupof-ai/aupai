@@ -343,6 +343,25 @@ class Cfg:
     # per position by 3*sigmoid over the residual's first 12 dims. One table, not three: three
     # would be +48.9% parameters at 200M against +16.3% (1e's ruling 2026-09-03).
     value_embed = False
+    # b0-35: CSA -- compressed coarse attention + top-k block selection + a sliding window,
+    # replacing the dense branch INSIDE GatedMLA. Off by default, and off means the module is
+    # not constructed: no parameters, no state_dict keys, forward bit-identical to the code
+    # before this flag existed (asserted in scripts/test_arch_compat.py against the pre-CSA
+    # model.py, not against a hand-typed reference).
+    #
+    # FROZEN (scripts/harness.py _FROZEN_KEYS): it changes what a block computes and, when on,
+    # the parameter count -- two segments of one run that disagree on it are two models under
+    # one name. csa_compress/csa_topk/csa_window are frozen for the same reason: they change
+    # what the attention can see, not how fast it sees it.
+    #
+    # REFUSES doc-packed input (`cu is not None`). A compressed block straddling a document
+    # boundary pools two documents into one entry and the top-k can then select across them --
+    # cross-document attention with no downstream mask able to undo it, and nothing in the loss
+    # showing it. eff.kda_document_isolation_violated is that failure in the KDA short_conv.
+    csa = False
+    csa_compress = 16    # positions pooled into one coarse entry
+    csa_topk = 8         # coarse blocks re-read at full resolution
+    csa_window = 256     # sliding-window width, always exact
     # b0-17: untie the LM head from the token embedding, and give it its own AdamW lr.
     # untie_head acts only at __init__ (model.py:359), so it is in harness's _FROZEN_KEYS beside
     # value_embed -- a resume silently ignores it and the arm's weights, not the flag, carry the
