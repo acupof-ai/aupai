@@ -32,7 +32,7 @@ Goal, stated so it can be judged: a corpus build is a pure function of source by
 
 | finding | consequence |
 |---|---|
-| `filters_fp` hashes exactly three files: `filters/pass{1,2,3}_garbage.py` | 14 of 49 domains can say the garbage filters were identical. **Zero of 49 are demonstrated byte-reproducible from the stamp.** The tier label "reproducible" is what made me issue a wrong instruction |
+| `filters_fp` hashes exactly three files: `filters/pass{1,2,3}_garbage.py` | 15 of 50 domains can say the garbage filters were identical. **Zero of 50 are demonstrated byte-reproducible from the stamp.** The tier label "reproducible" is what made me issue a wrong instruction. The count was 14/49 here until 2026-09-08: the fact's `value` predated `rp1t_arxiv_papers`, and e1 recorded the drift as `config.count_drifted` rather than rewriting `value` |
 | 2,010 shard files have link count above one | Domains are not disjoint. Disk holds 248.93 GB while per-domain sizes sum to 348.30 GB. A per-domain rebuild double-counts, and rebuilding drops the hardlinks |
 | One frozen batch excludes inputs that no longer exist | A build whose inputs are gone is unreproducible by definition — a fourth answer in the table, not a special case of "no" |
 | A frozen batch has 40,000 rows against a program cap of 1,200 | **The recorded command is not the command that ran.** This outranks reproducibility: it makes every recorded command unreliable as evidence |
@@ -53,6 +53,18 @@ In the first route the seed prompt set is the whole design — what the teacher 
 | `answer_present` at three demos | retired as a primary readout: 0.1147–0.5433 within one recipe, standard deviation 9.2× the binomial floor |
 | Held-out row drift | latent, no observed instance. All nine caches stamped before both scorings |
 | SFT packs | 21 packs, 17 with no holdout stamp, 4 stamped against two different superseded holdout sets, zero current. Stale is a reporting defect, not a training hazard — both cases refuse today |
+
+## Corrections I owe, made 2026-09-08
+
+| what I said | what is true | who caught it |
+|---|---|---|
+| ".venv is 94% of what a scan walks" — stated about the repository | It is a property of the integration tree only. `/Users/bytedance/code/aupai` holds 13,665 `.py`/`.sh` of which 537 are the repo's own; every session worktree has no `.venv` and is 537 files. The same scanner meets two worlds 24x apart with no code change and no report of which one it walked | b0 |
+| "the shared-config guard window is the 55 s hook" | The window is `pre-commit:2430` to `:2444` and wraps one selftest subprocess. `harness check`'s 55.48 s is entirely outside it. Zero selftests is zero window, which is why e1's five-file facts commit landed in 42 s with no refusal | b0's measurement, my misreading of it |
+| "the facts commit went through the `_ledger_only` exemption" | No facts file is in `.gitattributes`, so `_ledger_only` was False. It went through the earlier condition: `_clash = _main_touched_staged(...)` was empty. **Being behind main does not matter; whether main touched the files you stage does.** That is checkable with one command, `git log HEAD..main -- <file>`, and nobody runs it because `git status` shows the other number for free | e1 |
+
+## Open, unowned
+
+**What in `harness check` has anything to say about a union ledger row.** Every commit pays 55.48 s of it, including one that appends a single line to `runs/*.jsonl`. The selftest half is already proven to have nothing to say — the exemption path runs zero of them and the row is still correct. The check half has never been examined. Method: for a commit staging only one `runs/*.jsonl` line, which of the 71 checks have an input set that intersects that line. My expectation is single digits, and an expectation is not a measurement. Unassigned on purpose — nobody is under the WIP cap tonight.
 
 ## Open user decisions
 
