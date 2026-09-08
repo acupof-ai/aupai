@@ -1,174 +1,406 @@
 {
-  "facts": [
+ "facts": [
+  {
+   "id": "tok.fingerprint",
+   "value": "0bce3584bc24f255",
+   "measured": "2026-08-30",
+   "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer.json'))",
+   "config": {
+    "file": "data/tokenizer.json",
+    "frozen": "2026-08-29",
+    "backup": "data/tokenizer_k8.json on the pod"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "tok.vocab_size",
+   "value": 32773,
+   "unit": "tokens",
+   "measured": "2026-08-30",
+   "source": "len(Tokenizer.from_file('data/tokenizer.json').get_vocab())",
+   "config": {
+    "composition": "32,768 BPE merges including <unk>/<eos>, 4 chat specials, [NUM]"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "tok.padded_vocab",
+   "value": 32832,
+   "measured": "2026-09-03",
+   "source": "model.py:340 self.padded_vocab = ((cfg.vocab + 63) // 64) * 64, with cfg.vocab from Cfg.vocab; verified by constructing HybridLM(d=768,heads=6,ffn=2304,L=12) on the pod: tok.weight is (32832, 768)",
+   "config": {
+    "vocab": 32784,
+    "vocab_real": 32773,
+    "multiple": 64,
+    "note": "adding [NUM] resized nothing",
+    "three_widths": "32773 = tok.vocab_size, the frozen tokenizer's real size (32,768 BPE merges incl <unk>/<eos>, 4 chat specials, [NUM]). 32784 = Cfg.vocab, the LIVE compute width: a multiple of 16 so the cuBLAS aligned kernel is reached (32773 fell back and cost 215.6 ms/step against 96.8, eff.vocab_align_parity) and so the fp8 head stays possible; the 11 columns above vocab_real are alignment padding, never targets, zero-initialized since 06d52cd. 32832 = model.py:340, the EMBEDDING AND HEAD WIDTH, ceil(Cfg.vocab/64)*64. AGENTS.md's '32,784-slot vocabulary' is Cfg.vocab and is correct; it is not the tokenizer's size and not the head's.",
+    "tied": "model.py:374 head = Linear(d, padded_vocab, bias=False) and its weight IS tok.weight (verified `m.head.weight is m.tok.weight` -> True), so this width is paid once, not twice: 25.215M of the 122.30M at d=768"
+   },
+   "uncertainty": "the previous version of this entry named train.py as the source (the formula is in model.py:340) and recorded config.vocab as 32773 (the formula reads Cfg.vocab = 32784). BOTH INPUTS RETURN 32832 -- ceil(32773/64)*64 and ceil(32784/64)*64 land in the same 64-block -- so the wrong input was invisible in the output and no check could have caught it. Corrected 2026-09-03 from the source lines.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_correctness",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256"
+   },
+   "measured": "2026-08-30",
+   "source": "scripts/tokenizer_eval.py gates; harness check_tokenizer_roundtrip",
+   "config": {
+    "probe": "NUL, tab, hanzi, digits"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_thresholds",
+   "value": {
+    "hanzi_whole_char": 0.9913,
+    "ref_fertility": 1.429,
+    "never_used_frac": 0.007,
+    "never_used_naive_counting": 0.0087,
+    "never_used_cost": "234K params = 0.1% of the model"
+   },
+   "measured": "2026-08-29",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json",
+   "config": {
+    "domains": "web_hq,textbook,wiki,math,chat,code,en",
+    "per_domain": 3000,
+    "shards": 8,
+    "clip": "whole document",
+    "note": "exact flags of the recorded run were not logged; values are the script defaults. never_used excludes the by-design-unreachable entries (byte-fallback alphabet, chat specials, [NUM]); the naive counting includes them"
+   },
+   "uncertainty": null,
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval, arXiv 2608.18062).\n\nEVERY NUMBER HERE IS ONE DRAW, and two of them are now known to depend on the draw more than on the vocabulary. never_used_frac 0.007 lies inside the 0.0043-0.0156 spread measured on 2026-09-08 (see tok.never_used_not_decidable), so it recorded a draw that landed under the threshold rather than a vocabulary that passes. hanzi_whole_char 0.9913 was taken on this row's config -- the tool's OLD default domain list -- whose order happened to put a Chinese directory inside the flattened 600-row prefix that utf8_integrity sampled; PR #67 (5422ddf8) removed that dependence, and on the v2 composition the same vocabulary reads 0.1594 before the fix and 0.9890 after (tok.gates_v2_composition). The row is kept, not retracted: it is an accurate record of what that run produced, and it is the evidence that the gate's answer moved with the composition.",
+   "status": "recorded"
+  },
+  {
+   "id": "tok.frontier",
+   "value": [
     {
-      "id": "tok.fingerprint",
-      "value": "0bce3584bc24f255",
-      "measured": "2026-08-30",
-      "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer.json'))",
-      "config": {"file": "data/tokenizer.json", "frozen": "2026-08-29", "backup": "data/tokenizer_k8.json on the pod"},
-      "uncertainty": null,
-      "status": "measured"
+     "tokenizer": "ours",
+     "vocab": 32773,
+     "en_fertility": 1.429,
+     "zh_chars_per_token": 1.693
     },
     {
-      "id": "tok.vocab_size",
-      "value": 32773,
-      "unit": "tokens",
-      "measured": "2026-08-30",
-      "source": "len(Tokenizer.from_file('data/tokenizer.json').get_vocab())",
-      "config": {"composition": "32,768 BPE merges including <unk>/<eos>, 4 chat specials, [NUM]"},
-      "uncertainty": null,
-      "status": "measured"
+     "tokenizer": "DeepSeek-V3",
+     "vocab": 128815,
+     "en_fertility": 1.104,
+     "zh_chars_per_token": 1.693
     },
     {
-      "id": "tok.padded_vocab",
-      "value": 32832,
-      "measured": "2026-09-03",
-      "source": "model.py:340 self.padded_vocab = ((cfg.vocab + 63) // 64) * 64, with cfg.vocab from Cfg.vocab; verified by constructing HybridLM(d=768,heads=6,ffn=2304,L=12) on the pod: tok.weight is (32832, 768)",
-      "config": {"vocab": 32784, "vocab_real": 32773, "multiple": 64, "note": "adding [NUM] resized nothing",
-                 "three_widths": "32773 = tok.vocab_size, the frozen tokenizer's real size (32,768 BPE merges incl <unk>/<eos>, 4 chat specials, [NUM]). 32784 = Cfg.vocab, the LIVE compute width: a multiple of 16 so the cuBLAS aligned kernel is reached (32773 fell back and cost 215.6 ms/step against 96.8, eff.vocab_align_parity) and so the fp8 head stays possible; the 11 columns above vocab_real are alignment padding, never targets, zero-initialized since 06d52cd. 32832 = model.py:340, the EMBEDDING AND HEAD WIDTH, ceil(Cfg.vocab/64)*64. AGENTS.md's '32,784-slot vocabulary' is Cfg.vocab and is correct; it is not the tokenizer's size and not the head's.",
-                 "tied": "model.py:374 head = Linear(d, padded_vocab, bias=False) and its weight IS tok.weight (verified `m.head.weight is m.tok.weight` -> True), so this width is paid once, not twice: 25.215M of the 122.30M at d=768"},
-      "uncertainty": "the previous version of this entry named train.py as the source (the formula is in model.py:340) and recorded config.vocab as 32773 (the formula reads Cfg.vocab = 32784). BOTH INPUTS RETURN 32832 -- ceil(32773/64)*64 and ceil(32784/64)*64 land in the same 64-block -- so the wrong input was invisible in the output and no check could have caught it. Corrected 2026-09-03 from the source lines.",
-      "status": "measured"
+     "tokenizer": "GLM-4.5",
+     "vocab": 151365,
+     "en_fertility": 1.13,
+     "zh_chars_per_token": 1.608
     },
     {
-      "id": "tok.gates_correctness",
-      "value": {"roundtrip_lossless": true, "bytes_present": "256/256"},
-      "measured": "2026-08-30",
-      "source": "scripts/tokenizer_eval.py gates; harness check_tokenizer_roundtrip",
-      "config": {"probe": "NUL, tab, hanzi, digits"},
-      "uncertainty": null,
-      "status": "measured"
+     "tokenizer": "Qwen3-0.6B",
+     "vocab": 151669,
+     "en_fertility": 1.13,
+     "zh_chars_per_token": 1.494
     },
     {
-      "id": "tok.gates_thresholds",
-      "value": {"hanzi_whole_char": 0.9913, "ref_fertility": 1.429, "never_used_frac": 0.007, "never_used_naive_counting": 0.0087, "never_used_cost": "234K params = 0.1% of the model"},
-      "measured": "2026-08-29",
-      "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json",
-      "config": {
-        "domains": "web_hq,textbook,wiki,math,chat,code,en",
-        "per_domain": 3000,
-        "shards": 8,
-        "clip": "whole document",
-        "note": "exact flags of the recorded run were not logged; values are the script defaults. never_used excludes the by-design-unreachable entries (byte-fallback alphabet, chat specials, [NUM]); the naive counting includes them"
-      },
-      "uncertainty": null,
-      "boundary": "intrinsic gates; they screen, they do not rank (TokEval, arXiv 2608.18062)",
-      "status": "recorded"
+     "tokenizer": "SmolLM3-3B",
+     "vocab": 128256,
+     "en_fertility": 1.13,
+     "zh_chars_per_token": 1.134
     },
     {
-      "id": "tok.frontier",
-      "value": [
-        {"tokenizer": "ours", "vocab": 32773, "en_fertility": 1.429, "zh_chars_per_token": 1.693},
-        {"tokenizer": "DeepSeek-V3", "vocab": 128815, "en_fertility": 1.104, "zh_chars_per_token": 1.693},
-        {"tokenizer": "GLM-4.5", "vocab": 151365, "en_fertility": 1.13, "zh_chars_per_token": 1.608},
-        {"tokenizer": "Qwen3-0.6B", "vocab": 151669, "en_fertility": 1.13, "zh_chars_per_token": 1.494},
-        {"tokenizer": "SmolLM3-3B", "vocab": 128256, "en_fertility": 1.13, "zh_chars_per_token": 1.134},
-        {"tokenizer": "Phi-4-mini", "vocab": 200029, "en_fertility": 1.143, "zh_chars_per_token": 1.144},
-        {"tokenizer": "gpt2", "vocab": 50257, "en_fertility": 1.156, "zh_chars_per_token": 0.465}
-      ],
-      "measured": "2026-08-29",
-      "source": "tokenizers/from_pretrained on the same three passages",
-      "config": {"passages": "one English, one Chinese, one code passage, identical across tokenizers", "context": "2026 frontier models"},
-      "uncertainty": null,
-      "boundary": "fertility and chars/token are intrinsic proxies, not downstream performance; the extrinsic test (two pretrains differing only in vocabulary) was never run",
-      "status": "recorded"
+     "tokenizer": "Phi-4-mini",
+     "vocab": 200029,
+     "en_fertility": 1.143,
+     "zh_chars_per_token": 1.144
     },
     {
-      "id": "tok.scaling_law_optimum",
-      "value": "12-20K vocab for a 166M non-embedding model",
-      "measured": "2026-08-29",
-      "source": "arXiv 2407.13623 (N_v proportional to N_nv^0.83)",
-      "config": {"model_nonembedding_params_M": 166},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.vocab_sweep_32k_64k",
-      "value": {"compression_gain": "+2.8%", "extra_params_M": 33.6, "extra_compute_per_char": "+14%", "output_matmul_share_of_flops_at_32k": 0.17},
-      "measured": "2026-08-29",
-      "source": "measured sweep on this corpus; summary recorded in scripts/tokenizer_report.py; no sweep artifact located",
-      "config": {"sweep": "32K vs 64K", "note": "tying halves the parameters, not the FLOPs; the d x V output matmul runs every forward pass"},
-      "uncertainty": null,
-      "boundary": "intrinsic compression and cost only; no downstream comparison was run",
-      "status": "recorded"
-    },
-    {
-      "id": "tok.en_share_sweep",
-      "value": {"en_share": ["14%", "33%", "50%"], "en_fertility": [1.87, 1.911, 1.988]},
-      "measured": "2026-08-29",
-      "source": "scripts/build_tokenizer.py --weights sweep; no artifact located",
-      "config": {"vocab_budget": "32K fixed", "note": "fertility moved the wrong way: at a fixed budget the two languages compete for slots"},
-      "uncertainty": null,
-      "boundary": "fertility is a proxy; the sweep measured no downstream metric",
-      "status": "recorded"
-    },
-    {
-      "id": "tok.sample_size_sweep",
-      "value": {"sample_docs": [25000, 395000], "chars_per_token": [2.6093, 2.6296], "hanzi_occurrence_coverage": [0.9951, 0.9962], "hanzi_tier_5k_10k_whole_tokens": [0, 0]},
-      "measured": "2026-08-29",
-      "source": "scripts/build_tokenizer.py runs; no artifact located",
-      "config": {"sample": "stratified per domain", "note": "16x data, 6x time; sample balance matters, sample size barely does"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.hanzi_distribution",
-      "value": {"distinct_hanzi_in_sample": 7825, "hanzi_with_whole_tokens": "~1000", "occurrence_coverage_of_top_1000": 0.996},
-      "measured": "2026-08-29",
-      "source": "scripts/build_tokenizer.py analysis; no artifact located",
-      "config": {"vocab": "the frozen 32,773-token vocabulary"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.stratified_vs_all",
-      "value": {
-        "all_9.4M_docs": "web-drowned: web at 1.04 chars/token, no whole token for common traditional characters",
-        "stratified_112K_docs": "5 min instead of 45+ min; 12.5% fewer tokens on held-out text (1.484 vs 1.299 chars/token), better on every domain",
-        "single_char_tokens": [3175, 4706],
-        "five_plus_char_tokens": [4312, 7817]
-      },
-      "measured": "2026-08-29",
-      "source": "scripts/build_tokenizer.py comparison; no artifact located",
-      "config": {"contrast": "all 9.4M documents vs 112K-document stratified equal-byte sample", "note": "every pretrain before 2026-08-28, k5 included, used the weaker vocabulary"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.faster_libraries",
-      "value": {"tokens": "9.49B", "throughput": "2.3M tok/s", "wallclock": "~66 min", "rust_share": 0.75, "cores": "90-143", "gigatoken": "refuses: no single-byte vocab entry for byte 0x00 (needs a complete 256-byte base)", "fastokens": "matches ids on short strings, raises 'character not in vocabulary' on real corpus text instead of falling back to <unk>", "tiktoken": "different regex pretokenizer, cannot reproduce ByteLevel BPE ids"},
-      "measured": "2026-08-28",
-      "source": "evaluation session 2026-08-28 (2.3M tok/s, 9.49B tokens, ~66 min on 90-143 cores)",
-      "config": {"vocab": "the frozen 32,773-token vocabulary", "note": "adopting any of them means retraining the vocabulary, which changes every id; the real win is incremental tokenization, not a faster library"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.byte_alphabet_incident",
-      "value": {"byte_chars_surviving_without_initial_alphabet": "193/256"},
-      "measured": "2026-08-28",
-      "source": "incident during vocabulary builds; scripts/build_tokenizer.py",
-      "config": {"missing_flag": "initial_alphabet=ByteLevel.alphabet()", "consequence": "NUL silently dropped, every fast tokenizer library breaks"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.metric_proxies",
-      "value": {"chars_per_token_correlation_with_downstream": "[-0.77, -0.09] depending on task", "renyi_efficiency_correlation_vs_BPB": -0.8, "compression_rate_correlation": -0.51},
-      "measured": "2026-08-29",
-      "source": "arXiv 2506.03101; TokEval, arXiv 2608.18062",
-      "config": {"note": "TokEval's own conclusion: intrinsic metrics screen but do not rank"},
-      "uncertainty": null,
-      "status": "recorded"
-    },
-    {
-      "id": "tok.k6_vocab_fingerprint",
-      "value": "d191af789cdbe597",
-      "measured": "2026-08-30",
-      "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer_k6.json'))",
-      "config": {"file": "data/tokenizer_k6.json", "note": "the vocabulary ckpt_k6_fone was trained on; overwritten in place by the corpus-v3 rebuild, so a size check passed while the scores were noise"},
-      "uncertainty": null,
-      "status": "measured"
+     "tokenizer": "gpt2",
+     "vocab": 50257,
+     "en_fertility": 1.156,
+     "zh_chars_per_token": 0.465
     }
-  ]
+   ],
+   "measured": "2026-08-29",
+   "source": "tokenizers/from_pretrained on the same three passages",
+   "config": {
+    "passages": "one English, one Chinese, one code passage, identical across tokenizers",
+    "context": "2026 frontier models"
+   },
+   "uncertainty": null,
+   "boundary": "fertility and chars/token are intrinsic proxies, not downstream performance; the extrinsic test (two pretrains differing only in vocabulary) was never run",
+   "status": "recorded"
+  },
+  {
+   "id": "tok.scaling_law_optimum",
+   "value": "12-20K vocab for a 166M non-embedding model",
+   "measured": "2026-08-29",
+   "source": "arXiv 2407.13623 (N_v proportional to N_nv^0.83)",
+   "config": {
+    "model_nonembedding_params_M": 166
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.vocab_sweep_32k_64k",
+   "value": {
+    "compression_gain": "+2.8%",
+    "extra_params_M": 33.6,
+    "extra_compute_per_char": "+14%",
+    "output_matmul_share_of_flops_at_32k": 0.17
+   },
+   "measured": "2026-08-29",
+   "source": "measured sweep on this corpus; summary recorded in scripts/tokenizer_report.py; no sweep artifact located",
+   "config": {
+    "sweep": "32K vs 64K",
+    "note": "tying halves the parameters, not the FLOPs; the d x V output matmul runs every forward pass"
+   },
+   "uncertainty": null,
+   "boundary": "intrinsic compression and cost only; no downstream comparison was run",
+   "status": "recorded"
+  },
+  {
+   "id": "tok.en_share_sweep",
+   "value": {
+    "en_share": [
+     "14%",
+     "33%",
+     "50%"
+    ],
+    "en_fertility": [
+     1.87,
+     1.911,
+     1.988
+    ]
+   },
+   "measured": "2026-08-29",
+   "source": "scripts/build_tokenizer.py --weights sweep; no artifact located",
+   "config": {
+    "vocab_budget": "32K fixed",
+    "note": "fertility moved the wrong way: at a fixed budget the two languages compete for slots"
+   },
+   "uncertainty": null,
+   "boundary": "fertility is a proxy; the sweep measured no downstream metric",
+   "status": "recorded"
+  },
+  {
+   "id": "tok.sample_size_sweep",
+   "value": {
+    "sample_docs": [
+     25000,
+     395000
+    ],
+    "chars_per_token": [
+     2.6093,
+     2.6296
+    ],
+    "hanzi_occurrence_coverage": [
+     0.9951,
+     0.9962
+    ],
+    "hanzi_tier_5k_10k_whole_tokens": [
+     0,
+     0
+    ]
+   },
+   "measured": "2026-08-29",
+   "source": "scripts/build_tokenizer.py runs; no artifact located",
+   "config": {
+    "sample": "stratified per domain",
+    "note": "16x data, 6x time; sample balance matters, sample size barely does"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.hanzi_distribution",
+   "value": {
+    "distinct_hanzi_in_sample": 7825,
+    "hanzi_with_whole_tokens": "~1000",
+    "occurrence_coverage_of_top_1000": 0.996
+   },
+   "measured": "2026-08-29",
+   "source": "scripts/build_tokenizer.py analysis; no artifact located",
+   "config": {
+    "vocab": "the frozen 32,773-token vocabulary"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.stratified_vs_all",
+   "value": {
+    "all_9.4M_docs": "web-drowned: web at 1.04 chars/token, no whole token for common traditional characters",
+    "stratified_112K_docs": "5 min instead of 45+ min; 12.5% fewer tokens on held-out text (1.484 vs 1.299 chars/token), better on every domain",
+    "single_char_tokens": [
+     3175,
+     4706
+    ],
+    "five_plus_char_tokens": [
+     4312,
+     7817
+    ]
+   },
+   "measured": "2026-08-29",
+   "source": "scripts/build_tokenizer.py comparison; no artifact located",
+   "config": {
+    "contrast": "all 9.4M documents vs 112K-document stratified equal-byte sample",
+    "note": "every pretrain before 2026-08-28, k5 included, used the weaker vocabulary"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.faster_libraries",
+   "value": {
+    "tokens": "9.49B",
+    "throughput": "2.3M tok/s",
+    "wallclock": "~66 min",
+    "rust_share": 0.75,
+    "cores": "90-143",
+    "gigatoken": "refuses: no single-byte vocab entry for byte 0x00 (needs a complete 256-byte base)",
+    "fastokens": "matches ids on short strings, raises 'character not in vocabulary' on real corpus text instead of falling back to <unk>",
+    "tiktoken": "different regex pretokenizer, cannot reproduce ByteLevel BPE ids"
+   },
+   "measured": "2026-08-28",
+   "source": "evaluation session 2026-08-28 (2.3M tok/s, 9.49B tokens, ~66 min on 90-143 cores)",
+   "config": {
+    "vocab": "the frozen 32,773-token vocabulary",
+    "note": "adopting any of them means retraining the vocabulary, which changes every id; the real win is incremental tokenization, not a faster library"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.byte_alphabet_incident",
+   "value": {
+    "byte_chars_surviving_without_initial_alphabet": "193/256"
+   },
+   "measured": "2026-08-28",
+   "source": "incident during vocabulary builds; scripts/build_tokenizer.py",
+   "config": {
+    "missing_flag": "initial_alphabet=ByteLevel.alphabet()",
+    "consequence": "NUL silently dropped, every fast tokenizer library breaks"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.metric_proxies",
+   "value": {
+    "chars_per_token_correlation_with_downstream": "[-0.77, -0.09] depending on task",
+    "renyi_efficiency_correlation_vs_BPB": -0.8,
+    "compression_rate_correlation": -0.51
+   },
+   "measured": "2026-08-29",
+   "source": "arXiv 2506.03101; TokEval, arXiv 2608.18062",
+   "config": {
+    "note": "TokEval's own conclusion: intrinsic metrics screen but do not rank"
+   },
+   "uncertainty": null,
+   "status": "recorded"
+  },
+  {
+   "id": "tok.k6_vocab_fingerprint",
+   "value": "d191af789cdbe597",
+   "measured": "2026-08-30",
+   "source": "loader.vocab_fingerprint(Tokenizer.from_file('data/tokenizer_k6.json'))",
+   "config": {
+    "file": "data/tokenizer_k6.json",
+    "note": "the vocabulary ckpt_k6_fone was trained on; overwritten in place by the corpus-v3 rebuild, so a size check passed while the scores were noise"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_v2_composition",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "hanzi_whole_char": 0.989,
+    "ref_fertility": 1.4286,
+    "never_used_frac": null
+   },
+   "unit": "gate readings",
+   "measured": "2026-09-08",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains math_owm_stage2,en_c4_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,code_py_starcoder,code_py_rp1t, run on the pod against main at 5422ddf8 (PR #67 merged); tokenizer_report.py md5 8102c0355a9c65f07d550f243c5d707f identical in tree and on pod",
+   "config": {
+    "domains": "the nine directories of the v2 composition (= resume 1's), passed explicitly. NOT the tool's default list, which names dirs this mix does not use.",
+    "per_domain": 3000,
+    "shards": 8,
+    "clip": "whole document",
+    "tool": "main at 5422ddf8"
+   },
+   "uncertainty": "The three gate readings above are single-draw values at the stated setting. never_used has no value here on purpose -- see tok.never_used_not_decidable.",
+   "status": "measured",
+   "boundary": "AGENTS.md:12 pre-fetch gate for the v2 composition. Screens; does not rank.",
+   "note_hanzi": "0.9890 is only obtainable with PR #67. The identical run against the pre-#67 tool read 0.1594 and FAILED the >=0.95 veto: utf8_integrity sampled a flattened dict-ordered prefix, so its 600 rows were entirely math_owm_stage2. Same corpus, same vocabulary; the difference is the sampling fix.",
+   "note_en_fertility": "The ungated `en fertility` column moved 1.2408 -> 1.3704 in the same fix. english_metrics falls back to the shared draw whenever no domain is literally named `en`, which is every real composition, so the old figure was math_owm's fertility under an English label."
+  },
+  {
+   "id": "tok.never_used_not_decidable",
+   "value": "threshold 0.01 not decidable at any measured setting",
+   "claim": "whether the vocabulary's unreachable-slot fraction is above or below the 0.01 gate threshold -- the reading that decides whether never_used is a rebuild trigger",
+   "unit": "claim",
+   "measured": "2026-09-08",
+   "source": "scripts/tokenizer_eval.py never_used over scripts/tokenizer_report.py sample_corpus, on the pod, v2 composition; probes /tmp/e1_nu_shards.py and /tmp/e1_nu2.py",
+   "config": {
+    "threshold": 0.01,
+    "rule": "4c 2026-09-08: decidable means the three-seed range at a fixed (per_domain, shards) setting is under a third of the threshold, i.e. <0.0033"
+   },
+   "data": {
+    "seed_range_at_9000x16": {
+     "per_domain": 9000,
+     "shards": 16,
+     "tokens_mean": 85997872,
+     "seeds": {
+      "7": 0.0061,
+      "13": 0.0103,
+      "29": 0.0073
+     },
+     "range": 0.0042
+    },
+    "seed_range_at_20000x24": {
+     "per_domain": 20000,
+     "shards": 24,
+     "tokens_mean": 171984954,
+     "seeds": {
+      "7": 0.0156,
+      "13": 0.0046,
+      "29": 0.0066
+     },
+     "range": 0.011
+    },
+    "shard_axis_at_seed_7": {
+     "per_domain": 20000,
+     "seed": 7,
+     "by_shards": {
+      "16": 0.0043,
+      "24": 0.0156,
+      "32": 0.0057
+     },
+     "range": 0.0113
+    },
+    "nested_prefixes_one_draw": {
+     "note": "monotone decreasing, as a coverage statistic must be: the metric itself is sound",
+     "by_tokens": {
+      "24935923": 0.589,
+      "38458279": 0.5705,
+      "71052369": 0.0495,
+      "174507229": 0.0156
+     }
+    }
+   },
+   "uncertainty": "NO SINGLE VALUE IS RECORDED, deliberately. Both fixed settings are given because their ranges disagree by 2.6x and naming one as the value would assert a precision the measurement does not have.",
+   "status": "unmeasured",
+   "finding": "Neither axis dominates: varying only the SEED at fixed 20000x24 moves never_used by 0.0110, and varying only SHARDS at fixed seed 7 moves it by 0.0113. Both exceed the whole 0.01 threshold. Fixing (per_domain, shards) as constants therefore does not make the gate decidable, and the larger settings are further from decidable than the smaller one, not closer.",
+   "supersedes_reading": "tok.gates_thresholds records never_used_frac 0.007 (2026-08-29) as a passing value. 0.007 lies inside the 0.0043-0.0156 spread measured here, so that reading was one draw that happened to land under the threshold, not a demonstration that the vocabulary passes. Its hanzi 0.9913 is likewise a single draw on the tool's OLD default domain list, which happened to put a Chinese directory inside the flattened prefix -- the same luck PR #67 removed the dependence on.",
+   "boundary": "About the GATE's decidability, not about the vocabulary: whether 32,773 slots carry unreachable entries is a separate question this measurement cannot answer.\n\nTHE 0.01 THRESHOLD WAS A DELIBERATE CHOICE, NOT A PLACEHOLDER, AND THAT MAKES THIS WORSE. It enters at 143f5d4a (2026-08-29, 'tokenizer: gates green, and the two failures were both instrument or class errors'), whose message records the calibration: 'never used 0.0070 <=0.01 ok (regression guard: 234K params, 0.1% of the model)' over '106 tokens with zero occurrences in 142M'. So the guard was set 0.003 above a measured 0.0070 -- and 142M is essentially the scale at which the three-seed range measured here is 0.0110 (20000x24, 172M) and 0.0113 (shards axis, 167-187M). The threshold was placed INSIDE its own measurement noise on the day it was written, and one draw could not have shown that. The defect is not a missing calibration and not the wrong size: it is that a single draw at 142M does not determine the value to the precision the threshold needs.\n\nTWO CONSEQUENCES, raised by 3b 2026-09-08 and recomputed here.\n\n(1) THE 0.1% COST FIGURE IS PRICED AGAINST THE SAME SINGLE DRAW and inherits its uncertainty. 143f5d4a's '234K params, 0.1% of the model' is 229 slots x d_model 1024 = 234,496, and 229 is 0.0070 x 32,773 -- the same draw the threshold was set from. Across the readings in `data` the slot count runs 141 (0.0043) to 511 (0.0156), i.e. 144K to 524K params, a 3.63x band. The cost is real and small at every point in that band, so this does not change the decision to accept it; what it changes is that '0.1%' is one draw's value and not a measured constant.\n\n(2) A GUARD WHOSE MARGIN IS INSIDE THE SEED SPREAD FIRES ON RESEEDING ALONE, which makes it a permanent-red candidate rather than a regression guard -- the failure mode 143f5d4a's own message says it was avoiding ('regression guards with the cost recorded, rather than targets that would be permanently red'). Of the nine readings in `data`, three exceed 0.01: one of the three seeds at 20000x24, and one of the three shard settings at seed 7 (0.0156, the same run, counted under both axes). Those nine are seven distinct settings, not nine independent draws, so treat this as 'it fires on reseeding at more than one setting', not as an estimated fire rate.",
+   "audit": "Three seeds at each of two fixed (per_domain, shards) settings, plus a shards sweep at fixed seed, on the v2 composition. Ranges 0.0042 (9000x16), 0.0110 (20000x24) and 0.0113 (shards axis) against a 0.01 threshold, so no measured setting separates pass from fail. STOPPED HERE by 4c 2026-09-08 rather than searching further settings: the metric is sound on nested prefixes, both axes move it by more than the threshold, and the deliverable became demoting never_used from regression guard to reported-ungated (e1-52) rather than finding a setting that happens to be quiet.",
+   "refuted_by": "a setting whose three-seed range is under 0.0033, which would make the gate decidable and give this fact a value; or a calibration of the 0.01 threshold on a corpus of this size, which would say what the gate should be testing in the first place"
+  }
+ ]
 }
