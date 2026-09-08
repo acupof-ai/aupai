@@ -2516,6 +2516,81 @@ def _mix_anneal_frac(mix, cfg_path, is_main):
     )
 
 
+def _assert_mix_derived_against(mix, cfg_path, row_cursor, cursor_srcfp, cursor_seed):
+    """A resume mix names the cursor state it was derived against; refuse a different one.
+
+    A mix written under --resume-cursor is correct for exactly one resume point: its `epochs`
+    values are TOTALS, cursor + this plan, so the same file against a different cursor counts
+    rows that were never drawn. Nothing in the file said which cursor until _derived_against,
+    and nothing read it until this function -- a recorded field nobody compares is a comment.
+
+    THE TRIPLE, because rows alone do not identify a prefix. The same row count over a
+    re-fingerprinted corpus, or over the same corpus shuffled at a different sample seed, is a
+    different set of rows: `epochs` would then be arithmetic over a prefix that no longer
+    exists, and the answer would look reasonable. Two checkpoints with an EQUAL triple are
+    substitutable and this passes them, which is why the field is not a checkpoint path or
+    hash (4c's ruling 2026-09-07).
+
+    NO FIELD, NO OPINION. Every mix committed before this existed carries nothing, and a fresh
+    start has no cursor to compare -- refusing either would refuse 24 working files and every
+    from-scratch run. The refusal fires only where both sides made a claim.
+    """
+    da = mix.get("_derived_against")
+    if not da:
+        return
+    if not row_cursor:
+        raise RuntimeError(
+            f"{os.path.basename(cfg_path)} was derived against a resume cursor "
+            f"({len(da.get('row_cursor') or {})} domains) but this run has no cursor -- it is a "
+            f"fresh start, or --resume names a checkpoint carrying no row_cursor. Every `epochs` "
+            f"in that file is a TOTAL that already counts rows this run would draw again. Use a "
+            f"fresh-start mix, or resume the checkpoint it was written for.")
+    want_rows = {k: int(v) for k, v in (da.get("row_cursor") or {}).items()}
+    got_rows = {k: int(v) for k, v in row_cursor.items()}
+    bad = []
+    # EVERY DOMAIN THE MIX NAMES, not dict equality. A checkpoint legitimately carries cursor
+    # entries this mix does not use: mix_30b_stage2 renames en_c4 -> en_c4_stage2 and
+    # math_owm -> math_owm_stage2, so its cursor names 5 domains against the checkpoint's 7,
+    # and `want != got` would refuse the one resume the file was written for. A domain the mix
+    # claims and the checkpoint lacks IS a mismatch -- that direction is a claim about a prefix
+    # that does not exist.
+    miss = [f"{n} mix {want_rows[n]} vs checkpoint {got_rows.get(n, 'absent')}"
+            for n in sorted(want_rows) if want_rows[n] != got_rows.get(n)]
+    if miss:
+        bad.append("rows differ: " + "; ".join(miss)[:400])
+    want_fp = {k: str(v) for k, v in (da.get("row_cursor_srcfp") or {}).items()}
+    got_fp = {k: str(v) for k, v in (cursor_srcfp or {}).items()}
+    # ONLY THE DOMAINS BOTH SIDES RECORD. A checkpoint predating a domain carries no
+    # fingerprint for it, and calling that a mismatch would refuse on the absence of evidence
+    # rather than on evidence of a change.
+    for n in sorted(set(want_fp) & set(got_fp)):
+        if want_fp[n] != got_fp[n]:
+            bad.append(f"{n} corpus fingerprint {want_fp[n]} -> {got_fp[n]}: the same row "
+                       f"numbers name different documents")
+    if "row_cursor_seed" in da and da.get("row_cursor_seed") != cursor_seed:
+        bad.append(f"sample seed {da.get('row_cursor_seed')!r} -> {cursor_seed!r}: the corpus "
+                   f"is shuffled differently, so the cursor's prefix is a different set of rows")
+    if bad:
+        raise RuntimeError(
+            f"refusing to start: {os.path.basename(cfg_path)} was derived against a different "
+            f"resume state than this checkpoint's. {' | '.join(bad)}. That mix's `epochs` values "
+            f"are totals computed against the state it names, so they are wrong for this resume. "
+            f"Regenerate it with --resume-cursor pointing at the checkpoint you are resuming.")
+    # THE ACCEPT PATH SAYS WHAT IT COMPARED (4c's ruling 2026-09-08). Accepting a checkpoint
+    # superset is right for the rename case -- mix_30b_stage2 names 5 domains against a
+    # checkpoint's 7 -- but the residual is a mix that UNDER-ACCOUNTS by naming fewer domains
+    # and passes in silence. A count on each side turns that into something a log reader can
+    # see: the refusal is not the only outcome worth evidence.
+    extra = sorted(set(got_rows) - set(want_rows))
+    print(f"cursor check: mix names {len(want_rows)} domain(s), checkpoint carries "
+          f"{len(got_rows)}, compared {len(set(want_rows) & set(got_rows))}"
+          + (f"; the checkpoint's {', '.join(extra)} are NOT accounted for by this mix"
+             if extra else "; every checkpoint domain is accounted for")
+          + f". srcfp compared over {len(set(want_fp) & set(got_fp))} domain(s), "
+          + ("seed compared" if "row_cursor_seed" in da else "seed not claimed by the mix"),
+          flush=True)
+
+
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
               cursor_srcfp=None, cursor_seed=None):
     """Domain mix -> (this rank's train rows in schedule order, val rows). mix.json:
@@ -2545,6 +2620,7 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
             "(eval/cache_guard.set_vocab_id) before calling build_mix."
         )
     mix = json.load(open(cfg_path, encoding="utf-8"))
+    _assert_mix_derived_against(mix, cfg_path, row_cursor, cursor_srcfp, cursor_seed)
     rows = mix["total_tokens"] / Cfg.seq
     anneal_frac = _mix_anneal_frac(mix, cfg_path, is_main)
     phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]

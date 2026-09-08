@@ -244,5 +244,15 @@
    "status": "LANDED: data/corpus/wiki_chat stamped, fp b864d32f9452a7c8, supply 283903257 tokens covers the want of 99540992 at 1 epoch(s) by 185.21%. epochs 1 is still measured on the STAGE-1 pool; re-derive it against the stage-2 pool once a token cache exists."
   }
  },
- "_blocked": {}
+ "_blocked": {},
+ "_derived_against": {
+  "row_cursor": {
+   "code_rp1t": 1338744,
+   "cot": 290401,
+   "zh_web": 395865,
+   "textbook_30b": 119947,
+   "wiki_chat": 24003
+  },
+  "_note": "stage-1 row cursor from ckpt_pretrain_15b_s1.pt.step16000, transcribed; no srcfp or seed because this writer reads no checkpoint"
+ }
 }
