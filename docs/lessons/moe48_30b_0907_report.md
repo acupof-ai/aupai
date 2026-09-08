@@ -60,7 +60,7 @@ Total 6,528,000 rows × 4096 = 26.7387B tokens. No domain crossed the 4.0 line: 
 
 ## 3. The val curve and the deliberate stop at .step22500
 
-Val is the mean CE over the same fixed 160 rows at every reading (seed-42 prefix of the 35,941-row val set; the val set is identical across both mixes, amendment 9). Series from the pod log:
+Val is the mean CE over the same fixed 160 rows at every reading (seed-42 prefix of the 35,941-row val set; the val set is identical across both mixes, amendment 9). Series from the pod log, now also a tree artifact: runs/b0_e48_30b_val_series.jsonl (125 distinct steps 9200-34000, deduped on step; the two logs overlap on 58 steps and agree on all 58).
 
 | window | val | shape |
 |---|---|---|
@@ -102,7 +102,7 @@ Ruling (amendment 12, 4c, 2026-09-07): the 4.0-epoch cap stays for the remainder
 
 ## 5. The 26-29k excursion and its falsified hypotheses
 
-The aggregate val rose a second time: 1.846 at 23600 to a peak of 1.884 at 29600, then ten consecutive descents to 1.845 at 31600. b0's fit of the reversal: −0.01015/1k at t=−10.92 over 29800-31600 at full stable lr, refit without the extreme point.
+The aggregate val rose a second time: 1.846 at 23600 to a peak of 1.884 at 29600, then ten consecutive descents to 1.845 at 31600. The reversal fit reproduces from the series artifact (runs/b0_e48_30b_val_series.jsonl): −0.01015/1k at t=−10.92 over 29800-31600 at full stable lr, refit without the extreme point. The run's actual minimum is 1.807 at step 22400 (leg-1 log; the resume-1 log begins at 22600, so 1.812 is that file's first reading, not the series' low).
 
 The three hypotheses b0 falsified for this excursion exist only as peer messages to 4c on 2026-09-08 — no ledger row, no prereg amendment, no artifact. b0 confirmed this by check (message to 98, 2026-09-08) and asked that they be reported as unpersisted. They are:
 
@@ -110,7 +110,7 @@ The three hypotheses b0 falsified for this excursion exist only as peer messages
 2. **Epoch wrap** (a domain's cursor wrapped its pool and began re-reading): none occurred.
 3. **Repetition** (re-reading rows degrades them): the per-domain repetition correlation was r=+0.43, but zh_web — at 0.033 epochs, effectively unrepeated — rose second-fastest, which kills the repetition account.
 
-Two of these are negative results, the class that vanishes when it is not written down, and they were not written down. The excursion closed on its own before the stop, with no intervention applied (b0, same message). The first excursion's decomposition (section 4) is the only one with a ledger row; the second has none, and no per-domain read was run for it.
+Two of these are negative results, the class that vanishes when it is not written down, and they were not written down. The excursion closed on its own before the stop, with no intervention applied (b0, same message). The excursion's shape is now persisted in the series artifact; its decomposition is not. The first excursion's decomposition (section 4) is the only one with a ledger row; no per-domain read was run for the second.
 
 ## 6. The early stop at .step34000
 
