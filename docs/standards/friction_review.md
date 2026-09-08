@@ -254,3 +254,16 @@ Top two unfixed causes are unchanged from 09-06:
 | defect: push protection + bare update-ref discarded commit | 1 | n/r | fix carried (1/1 rows) |
 | check: 601 commits in 24h, 98 single ledger rows | 1 | n/r | fix carried (1/1 rows) |
 | defect: bare train.py takes no claim | 1 | ~8 | fix carried (1/1 rows) |
+
+## 2026-09-08 (29 rows, 8 mechanisms; ran 09:0xZ)
+
+| cause | count | minutes | resolution |
+|---|---|---|---|
+| merge: push refused — local main advanced, origin did not | 20 | n/r | **task #49** (18 fb, 1 de, 1 3b-ledger; stop pushing local main) |
+| hook: pre-commit selftest guard false positive on b0-34 | 2 | ~50 | **fixed** (2/2 rows) |
+| near_miss: controller wrote 2026-09-08 for 2026-09-07 events | 2 | ~30 | **task #49** (folded: controller date assertion) |
+| check: cache_guard prices every caller at the whole cache file | 1 | ~25 | unfixed (b0) |
+| process_failure: mixed merge semantics staged in one commit | 1 | ~6 | unfixed (b0) |
+| launch: `setsid` not on macOS (AGENTS.md prescription is pod-only) | 1 | ~4 | unfixed (de) |
+| defect: merge_main.sh exited 0 after lock wait without merging | 1 | ~3 | unfixed (de) |
+| ?: pod_push refused a branch-divergent file | 1 | n/r | unfixed |
