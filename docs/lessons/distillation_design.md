@@ -83,7 +83,14 @@ problems per subset. If difficulty collapses: stratified sampling by length terc
 (boundaries from the full seed distribution), accept within tercile, per-tercile
 consensus rates reported; if the longest tercile cannot fill its share within the service
 budget, the consensus leg drops and openo1-math shrinks to the symbolic-verifiable subset
-only. No silent drop, no post-hoc threshold. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
+only. No silent drop, no post-hoc threshold. The standing condition rules only if the
+symbolic-verifiable intersection yields both subsets with n ≥ 100 each (a 15pp
+correctness gap needs ≈120 per subset for 80% power at α=0.05); below that the leg is
+**unmeasured**, not passed, and the check re-runs on a larger dedicated sample. The
+intersection's instruction-length distribution (median, p90) is reported alongside the
+population's; if the intersection median is < 0.7× the population median, the slice is
+systematically easier and the verdict is again unmeasured. A number is valid only on the
+population it was measured on, and that population is written down. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
 facts/distillation.json#distill.openo1_answer_extractability): 81.0% of openo1 rows
 carry an `<Output>` tag; of those, 78.3% yield an extractable numeric answer (last
 number), so the answer-extraction population is 63.4% of the file. 19.0% have no
