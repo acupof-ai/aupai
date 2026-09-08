@@ -495,6 +495,29 @@ Neither survivor is a hole. Both clauses are kept with the unreachability commen
 
 The real directory is clean — 387 names both ways, sources disjoint because `b2v2_dd` was deduped against `dd09`. b0's line on that: "safe by accident of the numbering rather than by construction, which is worth a line in the script if a third source is ever added." The check is that line.
 
+### §273 (2026-09-08, R2)
+A new gate makes a NEGATIVE assertion pass by firing first, so the world that asserts a refusal is the one that goes silently green. `_refuse_committing_on_main` landed in `scripts/hooks/pre-commit` (PR #55) and refuses a commit whose HEAD is the branch `main`. Three of `harness.py`'s own `_demo` fixtures `git init -b main` and install the real hook. One of them asserts the hook PASSES on a small allowed data file, so it broke main's CI at `60a6f0af` and was reported within the hour. **The other two were not equally visible, and that asymmetry is the entry.**
+
+| fixture | asserts | after the gate landed |
+|---|---|---|
+| allowed data file (~22084) | hook passes | FAILs — this is the CI red |
+| pre-merge-commit (~21884) | merge is **refused** | **still green, for the wrong reason** |
+| manifest regeneration (~21908) | commit succeeds | FAILs, but only when reached |
+
+The pre-merge-commit world exists to prove the `data/` allow-list stops a non-fast-forward merge carrying an unlisted path — a real defect that landed in main through a merge on 2026-08-31. Its assertion is `rc != 0`. The on-main refusal satisfies that, so the world keeps passing while the allow-list has stopped being the cause of anything it observes. Nothing in the artifact shows the difference: the assertion is true, the exit code is right, the world is green.
+
+The general form: **a positive assertion breaks loudly when a new gate fires early, and a negative assertion absorbs it.** So after adding any refusal, the fixtures to audit are not the ones that failed — they are the ones asserting a refusal, which cannot fail. `rc != 0` collapses "the gate under test fired", "some other gate fired", and "the process died before reaching it"; the fix is to assert the refusal's own string, which the three fixtures here do not.
+
+**The scan matters more than the traceback.** 62's advice was to grep for the class rather than fix the world CI named, and it found two more. Two corrections came out of doing it:
+- **The predicate is "installs the REAL hook", not "inits on main".** `harness.py:21954` inits on main deliberately, to exercise `git commit-tree --with-tree=main`, and installs no hook; its own comment records a CI break from getting that branch name wrong — green on every dev box, red in CI, because the default branch name is a property of the environment. A rule phrased as "no fixture on main" sends the next reader to change it.
+- **A fixture that writes its own two-line stub reaches no gate.** Two of the three functions a name-based first cut flagged wrote `#!/bin/sh` printing `GIT_INDEX_FILE`, or a file holding only `SELFTEST_FILES`.
+
+**No check for the class, and the absence is the honest outcome.** Three attempts, each wrong in a different direction: a function-level escape test let the broken world read as clean, because `_demo` is ~900 lines and one `-b fixture` anywhere in it excused every world; per-init with function-level hook attribution flagged the `--with-tree=main` fixture; per-init with per-repo-variable attribution produced 26 hits across 20 functions that install no hook while `_demo`, the only true subject, disappeared. A scan that misses the one instance that matters is worse than no scan, because it certifies.
+
+**For a hook change, "main is green" and "your commits work" are independent in BOTH directions.** `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` resolves to the integration tree's copy, so a session's commits run main's hook while the edit under test sits in their worktree: main green does not imply your commits work, and your commits working does not imply main is green, because the hook you run and the hook you edited are different files. Verified by running `--selftest` directly; there is no other available evidence.
+Evidence: main CI red at `60a6f0af` (run 34167159575), `AssertionError: allowed data file must pass`; the three fixtures at `scripts/harness.py` `_demo`; `/tmp/de_scan_worlds.py` and its three superseded versions; `scripts/test_on_main_refusal.py` for the gate itself.
+open: nothing distinguishes a fixture that passes from one that passes because a new gate fired first. The machine-checkable form is narrower than the class: for every fixture asserting `rc != 0` against a real hook, require the assertion to name the refusal string it expects — then a gate firing early fails the fixture instead of satisfying it.
+
 ### §268 (2026-09-08, R2)
 A shared broken world cannot test a check whose verdict its mutation cannot move. `_broken_facts` is the world for `facts_well_formed`, and it is a good one: real files, four mutations, each a copy-then-break of a real artifact. Adding a fifth predicate to that check, three mutations were added to the same world — a source naming only `/tmp`, one naming `/tmp` beside a tracked script, one naming `/tmp` beside `path@rev` — and all four mutants of the new predicate SURVIVED.
 
