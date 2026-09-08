@@ -1,3 +1,9 @@
+---
+question: What is the whole-machine disk inventory of the pod on 2026-09-04?
+status: measured
+source: pod df -h /work, du -sb, stat; 2026-09-04 08:4xZ
+---
+
 # Whole-machine disk inventory (pod), for tilerl
 
 Measured 2026-09-04 08:4xZ on the pod, `/work` at **96% full: 1.9T used, 87G available** of 2.0T
