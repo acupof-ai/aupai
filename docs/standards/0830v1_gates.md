@@ -1,4 +1,25 @@
+---
+question: What gates does the controller drive for the 0830v1 six-budget plan, in what order, and what evidence opens each?
+status: recorded
+source: this document; runs/controller_board.md
+---
+
 # 0830v1 gates
+
+**Round closed 2026-09-08.** The six-point ladder is complete; the 30B leg was closed at step 34,000 of 38,146 by user ruling (runs/controller_board.md:31). What survives into v2 and what expires:
+
+| survives into v2 | expires with this round |
+|---|---|
+| the gate discipline: a gate opens when its evidence artifact exists, not when someone reports it done | six-points — the ladder itself |
+| harness-green: no GPU pretrain while `harness check` is red | scaling-curve and fit-protocol as gates — the objective changed 2026-08-30, the scaling law is no longer the deliverable |
+| the frozen eval panel + known-answer-runner practice (the panel contents expire: v2 targets reasoning, and LAMBADA measures expression, not reasoning) | the run-config table (7 cards, batch 16/2, the six token budgets, the v1 mix) |
+| step-time-profile as a standing instrument | the GPU 1-7 sequential ladder lanes |
+| corpus-ready machinery: holdout excluded, fingerprint stamped, `corpus_fp_matches` | the v1 roster below |
+| warmup=20 absolute steps | |
+| the pre-registration practice | |
+| every rule in "Rules this round does not bend" — all incident-bought, none round-specific | |
+
+σ̂ = 0.0516 survives as method, not as number (4c ruling 2026-09-08, stronger than the first draft): it was measured on KDA + MLA + AttnRes, and v2 removes KDA and adds MoE — the seed variance of a different architecture is not a prior, it is an unrelated measurement. **The remeasurement is a prerequisite of the first v2 MDE claim, not a footnote.** Anyone quoting an MDE off the old σ̂ is quoting a number from a model we no longer build.
 
 The controller session (aupai-fb) drives these in order. A gate opens only when its
 evidence exists as an artifact — not when someone reports it done. Update the status
