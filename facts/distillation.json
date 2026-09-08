@@ -1,0 +1,45 @@
+{
+  "facts": [
+    {
+      "id": "distill.teacher_vocab",
+      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, no added tokens; auxiliary tokenizer.arle.bin 7,207,591 bytes. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x.",
+      "measured": "2026-09-08",
+      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587), vocab.json (248044)",
+      "config": {
+        "teacher_dir": "/work/Qwen3.8-27B-NVFP4",
+        "ours": "data/tokenizer.json"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "distill.vocab_mismatch_blocks_logits_kl",
+      "value": "Sequence-level distillation is the only vocabulary-agnostic route: with a 7.57x vocab ratio there is no token-level probability alignment, so logits KL is not a tuning problem, it is undefined. Cross-vocab logits distillation by aligned character spans is research, not engineering. Rebuilding our vocab to the teacher's invalidates every checkpoint and is a user-owned decision under the 2026-08-29 freeze (docs/lessons/scale_36b_plan.md#词表解冻条件-2).",
+      "measured": "2026-09-08",
+      "source": "derived from distill.teacher_vocab + facts/tokenizer.json#tok.vocab_size + the freeze record",
+      "config": {
+        "teacher_vocab": 248044,
+        "ours_vocab": 32773,
+        "freeze_date": "2026-08-29"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "distill.seed_inventory",
+      "value": "Seed prompts already on the pod: openo1_sft.jsonl 77,685 instruction/reasoning pairs (mean output 5,832 chars, long-CoT), gsm8k_sft.jsonl 7,471 math word problems, sft_expanded.jsonl 442,206 rows. data/sft/code_with_tests/0000_mined.jsonl is EMPTY (0 lines) — the verifiable-code seed lane has no supply. Eval sets math-500/code-500 stay out of training.",
+      "measured": "2026-09-08",
+      "source": "wc -l and a 5,000-row sample on the pod: /work/aupai/data/openo1_sft.jsonl, gsm8k_sft.jsonl, sft_expanded.jsonl, /work/aupai/data/sft/code_with_tests/0000_mined.jsonl",
+      "config": {
+        "pod_paths": [
+          "/work/aupai/data/openo1_sft.jsonl",
+          "/work/aupai/data/gsm8k_sft.jsonl",
+          "/work/aupai/data/sft_expanded.jsonl",
+          "/work/aupai/data/sft/code_with_tests/0000_mined.jsonl"
+        ]
+      },
+      "uncertainty": "openo1 mean output length is from the first 5,000 rows, not the whole file",
+      "status": "measured"
+    }
+  ]
+}
