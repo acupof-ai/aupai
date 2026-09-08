@@ -229,7 +229,7 @@ scripts/e1_28_clean_score.sh                                88  c4acb6a2 2026-09
 scripts/e1_28_leak_scan.py                                 323  73482ca5 2026-09-03   docs:docs/lessons/gate_failure_shapes.md       
 scripts/e1_28_matched.py                                   229  ba8d2b27 2026-09-03   none                                           KEEP (e1-28 open; test_e1_28_matched.py is its test)
 scripts/e1_29_floor_by_class.py                            435  abd5d3aa 2026-09-03   docs:docs/audits/control_pythia160m_vs_ours.md  
-scripts/e1_30_case_table.py                                241  33b59463 2026-09-03   none                                           KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)
+scripts/e1_30_case_table.py                                241  33b59463 2026-09-03   none                                           KEEP (e1-30 open, N5 row; docs/audits/e1_30_case_table.md is its output)
 scripts/embed_norm_sdr.py                                  380  9c8f30a2 2026-09-03   ENTRY                                          
 scripts/env_fp.py                                           54  6ef7e7a4 2026-08-30   import:algorithms/rlvr.py                      
 scripts/eqcheck.py                                          61  9176f859 2026-08-30   ENTRY                                          
@@ -378,7 +378,7 @@ Unreachable (deletion candidates):
   scripts/e1_27_score.sh                                  KEEP (produces the log e1_27_read.py reads; keeping the reader without the producer is recomputable downgraded to re-readable)
   scripts/e1_28_clean_score.sh                            KEEP (sole producer of control_pythia160m_vs_ours.md:562's clean-subset verdict -- 10,105 ids, sha 7231156c5698c210, floor 2.0243x, lead 16.6290%; its docstring also carries the 1e scope ruling on WHICH three of the nine points were recomputed, which lives nowhere else)
   scripts/e1_28_matched.py                                KEEP (e1-28 open; test_e1_28_matched.py is its test)
-  scripts/e1_30_case_table.py                             KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)
+  scripts/e1_30_case_table.py                             KEEP (e1-30 open, N5 row; docs/audits/e1_30_case_table.md is its output)
   scripts/logit_dist.py                                   KEEP (docs/standards/structure_experiments.md:529 cites scripts/_logit_dist.py, which has never existed on any branch -- `git log --all` is empty for it. The underscore belongs to the OUTPUT: this file's :112 writes runs/_logit_dist.json, whose head_row_norm_med 76.61315 and cos_to_argmax_row_mean 0.22061723 are that doc table's 76.61 and 0.2206, field names identical)
   scripts/test_attn_res_fp32_logits.py                    KEEP (green from repo root; the only check that --attn_res_fp32_logits is not inert)
   scripts/test_e1_28_leak_scan.py                         KEEP (green; e1-28 open; gram width + refuse-on-missing-field)

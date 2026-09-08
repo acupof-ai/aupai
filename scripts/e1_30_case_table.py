@@ -60,7 +60,7 @@ def main():
     ap.add_argument("--per_item", default="runs/e1_29_per_item.jsonl")
     ap.add_argument("--text", default="data/sft/control_sft_text_heldout.jsonl")
     ap.add_argument("--out", default="runs/e1_30_case_table.json")
-    ap.add_argument("--md_out", default="runs/e1_30_case_table.md")
+    ap.add_argument("--md_out", default="docs/audits/e1_30_case_table.md")
     ap.add_argument("--chars", type=int, default=180)
     a = ap.parse_args()
 

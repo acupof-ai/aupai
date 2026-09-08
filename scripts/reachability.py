@@ -76,7 +76,7 @@ FATE = {
     # KEEP: named by an owner's open task or an N row, so deleting it deletes work in flight.
     "datagen/build_code_tests_v1.py": "KEEP (3b's N4 code_tests Phase A, committed today with a wip marker)",
     "scripts/e1_28_matched.py": "KEEP (e1-28 open; test_e1_28_matched.py is its test)",
-    "scripts/e1_30_case_table.py": "KEEP (e1-30 open, N5 row; runs/e1_30_case_table.md is its output)",
+    "scripts/e1_30_case_table.py": "KEEP (e1-30 open, N5 row; docs/audits/e1_30_case_table.md is its output)",
     "datagen/numma_to_jsonl.py": "KEEP (cited by data/PROVENANCE.md as the numina converter)",
     "datagen/code_dedup_build.py": "KEEP (3b ruled 2026-09-03: the executing half of N4's MinHash 0.8 cross-source dedup; 3b-10's code_dedup08 is its output, near_dedup_scale.py is its report side)",
     "datagen/rl_task_exercism.py": "KEEP (3b ruled 2026-09-03: the exercism RL task-set source, 3b-9; RL is scheduled after N5, which retires the schedule slot and not the task set)",
