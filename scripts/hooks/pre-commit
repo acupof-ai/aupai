@@ -1455,6 +1455,10 @@ def main():
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
+        # The score-matrix rewrite trace: the writer half (eval/score_matrix.py) and the
+        # check half (harness.py) must stay in step, and the test asserts they share ONE
+        # comparison rather than two copies of it.
+        "scripts/test_score_matrix_trace.py",
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
