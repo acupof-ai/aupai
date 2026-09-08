@@ -52,6 +52,7 @@
         "extraction": "last number in <Output>"
       },
       "uncertainty": "500-row sample; +/-4.4pp at 95% on the 63.4% proportion",
+      "boundary": "63.4% is the answer-EXTRACTION rate (last number inside <Output>), NOT the symbolic re-derivation coverage. Most extracted answers are word problems that cannot be re-derived independently; symbolic coverage is a pilot measurement, currently unmeasured. Cite this as extraction coverage only. Precedent: eff.depth_is_not_the_mfu_gap.",
       "status": "measured"
     }
   ]
