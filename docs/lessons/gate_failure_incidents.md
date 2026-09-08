@@ -455,6 +455,28 @@ The general form: a property true of every pair is not true of the transitive cl
 Evidence: `runs/dedup_b2v2.py` and `runs/why_refuse.py` on the pod, `runs/dedup_b2v2.log` (`REFUSE: 8355 code_rp1t_dd09 document(s) would be deleted`), `runs/why_refuse.log` (`dd09-dd09 0 ... TRANSITIVE 8355 ... MISSED it 0`).
 open: nothing asserts that a keep-whole or hold-out set is enforced as a predicate rather than inferred from ordering. The class is one grep — a dedup or partition that relies on `min()`/sort position to protect a subset — and it would have fired here before the run.
 
+### §272 (2026-09-08, R2)
+
+A property whose POPULATION is computed with the predicate the defect breaks cannot see the defect, and the green it produces is byte-identical to a green earned by passing.
+
+b0-32 made a lend of another team's card expire. Property (7) asserts that a lend is a window: ours inside it, theirs outside, and a note claiming a lend without a readable window refuses. It read
+
+    _lends = {c: n for c, n in cmap.items() if c in _base and _parse_lend_window(n) is not None}
+
+and **three of its four planted defects PASSED** -- `25:99-26:88Z`, a backwards window `21:34-21:32Z`, and the lend timestamps deleted outright. Each makes `_parse_lend_window` return None, which removes the card from the set the property then quantifies over. The loop body never runs, so no assertion is evaluated and nothing is even reached to fail. The fix is one word of scope: the population is now what CLAIMS a lend (`_mentions_lend`), which the defect cannot shrink, and the unreadable-window refusal moved inside the loop where it is reachable.
+
+**Second instance on the same function in two days, and I did not recognise it the second time.** §266's half of the 09-07 card fix is the same disease at the other end: with the pre-fix classifier `ours=[0..7]` and `theirs=[]` SATISFIES both "the three sets partition the listed cards" and "every not-ours card refuses", because the second quantifies over `theirs` and the defect empties it. Once as a partition, once as a window parse. The recognisable signature is a comprehension whose filter and whose assertion call the same function.
+
+**A mutant that does not mutate reads exactly like a surviving defect.** My harness disabled property (7) by rewriting `_claimed = {...}` as `_claimed = {} or {...}`. A non-empty dict is truthy, so `or` returns the original and the mutant was not a mutant; I read the resulting RED as the guard failing its paired prediction and went looking for a fault in the guard. Emptying the LOOP (`for c, n in sorted({}.items())`) is the mutation that was intended. Two rules, both cheap: mutate the iteration, not the expression that feeds it, and assert the mutant's behaviour actually changed before believing its verdict.
+
+The delivery standard that caught all of this is the paired prediction, not the count: 26 worlds, and for each defect the prediction is three-way -- defect alone RED, defect plus ITS OWN property removed GREEN, defect plus a DIFFERENT property removed still RED. The middle leg is what a vacuous property fails: mine went GREEN with property (7) removed AND green with it present, so the pair disagreed with itself and named the vacuity. A pass count alone would have read 8/12 as "mostly working".
+
+Rule: write the population from the CLAIM and the assertion from the PROOF. Before trusting a suite, ask which planted defect changes the SIZE of the set the property iterates over; any defect that does is invisible to it.
+
+Cost: caught in the mutation pass before review, so nothing shipped. The property was written, run, and green on 3 of the 4 worlds it exists for.
+Evidence: `_assert_card_ownership` properties (6) and (7) in `scripts/harness.py`, `_selftest_card_lend_expires` (registered as a direct selftest, proven to run by a planted raise surfacing as "direct selftest: _selftest_card_lend_expires raised AssertionError"); PR #58; the three mutation suites at 12/12, 10/10 and 4/4.
+open: no check finds a comprehension whose filter predicate is also called in the assertion beneath it. That is the machine-checkable signature of this class and it is one AST walk over harness.py's properties -- it would have fired on both this instance and §266's.
+
 ### §270 (2026-09-08, R2)
 
 A surviving mutant has two causes that demand opposite fixes: the check is weak, or the clause the mutation touched is dead. Reading the survival as the first when it is the second adds a check that cannot fire.

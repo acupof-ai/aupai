@@ -28,6 +28,7 @@ caller -- including board.py's `from harness import refuse_in_integration_tree` 
 """
 
 import ast
+import datetime
 import functools
 import json
 import os
@@ -108,8 +109,94 @@ _NOT_OURS_RE = re.compile(r"^\s*(tile[ _-]?rl|rl[ _-]?team)\b", re.I)
 # with a bare timestamp and an arrow. Both are recognised; anything else is unclassified.
 _OURS_RE = re.compile(r"^\s*(granted\b|\d{4}-\d{2}-\d{2})", re.I)
 
+# A LEND WINDOW on a card another team owns by standing order. Three things about this pattern are
+# corrections, each measured against a note the controller actually wrote:
+#
+#   1. NO `lent` REQUIREMENT. The first version anchored on `\blent\b`, and 4c's real note for the
+#      only lend that has ever happened does not contain the word: it reads "GRANTED 2026-09-08
+#      21:30Z-21:45Z -> b0: domain_loss ... Card 6 is tileRL's". A window is a window whatever verb
+#      introduces it, and requiring a vocabulary word made the mechanism depend on prose style.
+#   2. `Z` ON EITHER TIME OR BOTH. 4c writes `21:30Z-21:45Z`; my fixture wrote `21:32-21:34Z`. The
+#      first version required the Z only after the second time, so the controller's own form failed
+#      to parse -- the instrument fit the example I invented rather than the one in the file.
+#   3. THE DATE MAY FOLLOW THE TIMES as well as precede them, since "21:30Z-21:45Z on 2026-09-08"
+#      and "2026-09-08 21:30Z-21:45Z" are both natural and both appear in this repo's prose.
+#
+# What stays required is a full date and both clock times. "lent to b0 earlier" parses as NO window
+# rather than as one that happens to be open, which is what makes the refusal branch reachable.
+_LEND_TIMES = r"(?P<h1>\d{1,2}):(?P<m1>\d{2})\s*Z?\s*-\s*(?P<h2>\d{1,2}):(?P<m2>\d{2})\s*Z?"
+_LEND_TIMES_B = r"(?P<h1b>\d{1,2}):(?P<m1b>\d{2})\s*Z?\s*-\s*(?P<h2b>\d{1,2}):(?P<m2b>\d{2})\s*Z?"
+_LEND_RE = re.compile(
+    r"(?P<date>\d{4}-\d{2}-\d{2})[\sT]+" + _LEND_TIMES
+    + r"|" + _LEND_TIMES_B + r"[^.\d]{0,20}(?P<date2>\d{4}-\d{2}-\d{2})",
+    re.I)
+# Does the note claim a time-bounded handover at all? This is the population the expiry properties
+# quantify over, so it must not be narrowed by the same thing that makes a window unparseable (see
+# the population note in harness.py's property (7)).
+#
+# A CLAIMED HANDOVER, NOT A MENTIONED ONE, and the difference is card 0's live note. It reads
+# "short aupai lane jobs only by explicit grant while tileRL is not using it" -- a statement that a
+# grant WOULD BE REQUIRED, not that one was made. My first widening matched a bare `grant`, so card 0
+# read as "claims a lend with no readable window" and refused a card whose note is doing its job.
+# The verbs are therefore split: `lent`/`lend`/`loan`/`granted` assert a completed act, while a bare
+# `grant` (noun, or "by explicit grant") asserts a requirement. A hypothetical is not a claim.
+_LEND_WORD_RE = re.compile(r"\b(lent|lend|loaned|granted)\b", re.I)
 
-def _classify_card_note(note):
+
+def _parse_lend_window(note):
+    """(start, end) as UTC datetimes for a lend note, or None when there is no parseable window.
+
+    THREE OUTCOMES, NOT TWO, and the caller must keep them apart: no mention of a lend at all,
+    a lend whose window cannot be parsed, and a parsed window. This returns None for the first
+    two and the caller distinguishes them by _mentions_lend, because "the controller wrote a
+    lend and I cannot read its window" is the state where guessing is most expensive -- it is
+    exactly what a drifting wording produces -- and it must refuse rather than fall back to
+    either owner.
+    """
+    m = _LEND_RE.search(str(note or ""))
+    if not m:
+        return None
+    try:
+        d = datetime.datetime.strptime(m.group("date") or m.group("date2"), "%Y-%m-%d").date()
+        t1 = datetime.time(int(m.group("h1") or m.group("h1b")),
+                           int(m.group("m1") if m.group("h1") else m.group("m1b")))
+        t2 = datetime.time(int(m.group("h2") or m.group("h2b")),
+                           int(m.group("m2") if m.group("h2") else m.group("m2b")))
+    except ValueError:
+        return None                      # 25:99Z and 2026-02-30 land here, not in an open window
+    utc = datetime.timezone.utc
+    start = datetime.datetime.combine(d, t1, tzinfo=utc)
+    end = datetime.datetime.combine(d, t2, tzinfo=utc)
+    if end <= start:
+        return None                      # a window that ends before it opens is unparseable, not open
+    return start, end
+
+
+def _mentions_lend(note):
+    """Whether the note claims a time-bounded handover at all, independent of whether it parses."""
+    return bool(_LEND_WORD_RE.search(str(note or "")))
+
+
+def _theirs_baseline(root=None):
+    """The cards another team owns by standing order, read from the file's own top-level key.
+
+    READ, NOT HARD-CODED, so the controller can move a card without editing this module -- and
+    PINNED by the check that consumes it, for the reason recorded there: a baseline this module
+    merely reads is a baseline a lend can quietly shrink.
+    """
+    root = ROOT if root is None else root
+    try:
+        with open(os.path.join(root, "runs", "card_assignment.json"), encoding="utf-8") as fh:
+            a = json.load(fh)
+    except (OSError, ValueError):
+        return []
+    out = []
+    for spec in (a.get("theirs_baseline") or []):
+        out.extend(_expand_cards(str(spec)))
+    return sorted(set(out))
+
+
+def _classify_card_note(note, baseline_theirs=False, now=None):
     """'theirs' | 'ours' | 'unclassified' for one cards[] note.
 
     NOT-OURS IS TESTED FIRST and that order is load-bearing: card 0's note reads
@@ -117,8 +204,68 @@ def _classify_card_note(note):
     which names a conditional aupai use inside a note whose subject is tileRL's ownership. A
     rule that looked for our vocabulary first would read that card as ours on the strength of a
     sentence saying the opposite.
+
+    `baseline_theirs` MAKES A LEND EXPIRE (b0-32). Card 6 is another team's by standing order and
+    was lent to aupai for 13 minutes; the note recording that lend outlives it by design, because
+    the file is the record of what happened as well as of who owns what. Without an expiry the
+    lend note reads as a grant forever, so the day after a 13-minute loan the card still looks
+    like aupai's. On a baseline-theirs card the ONLY thing that makes it ours is a lend whose
+    window is parseable AND currently open:
+
+      window open now      -> ours       (the lend is in force)
+      window closed/future -> theirs     (expired, or not yet opened -- both are "not now")
+      lend claimed, window unreadable    -> unclassified, which refuses
+      no lend claimed      -> theirs     (the standing order)
+
+    THE BASELINE DECIDES BEFORE THE NOTE IS READ, and this ordering is the fix for the defect
+    tilerl-0a found in my first version (2026-09-08, PR #58). I had put the expiry branch INSIDE
+    `if _NOT_OURS_RE.search(s)`, so it only ran on a note that opens with the other team's name.
+    4c's real note for the only lend that has ever happened opens with `GRANTED`:
+
+        GRANTED 2026-09-08 21:30Z-21:45Z -> b0: domain_loss ... Card 6 is tileRL's (user order ...)
+
+    `_NOT_OURS_RE` misses that, so it fell through to `_OURS_RE`, matched `granted\\b`, and returned
+    `ours` -- during the window AND three days after it closed. `harness launch --cards 6` was
+    ACCEPTED. The expiry did not fire on the one note form the controller actually writes.
+
+    Three separate escapes, all in the same direction: the branch was gated on the note's opening
+    token, `_LEND_RE` required the literal word "lent" which that note does not contain, and it
+    required `Z` only after the second time while 4c writes `21:30Z-21:45Z`. Each one alone was
+    enough. The docstring's own table was false as written -- it says a live lend is the ONLY thing
+    that makes a baseline-theirs card ours, and a `GRANTED` prefix was a second thing.
+
+    THE POPULATION WAS THE DEFECT AGAIN, third instance on this function in two days. What should
+    be quantified over is "cards in the baseline"; what was effectively quantified over was "cards
+    in the baseline whose note begins with the owner's name". A note form that dodges the classifier
+    removes the card from the set the expiry covers -- the same disease as `theirs=[]` satisfying
+    "every not-ours card refuses" (09-07) and as property (7)'s parseable-window population. This
+    one was worse than both because it sat in the CLASSIFIER rather than in a property: the check
+    and the launch read different code, so the check could go red while the launch said yes, and
+    only the launch gates a card.
+
+    `now` IS INJECTABLE so the worlds below can pin a time. A check whose verdict depends on the
+    wall clock cannot be tested: the same fixture passes this hour and fails next hour, and the
+    failure looks like a defect in the classifier.
+
+    STANDING GRANTS ON aupai's OWN CARDS ARE UNTOUCHED. Cards 1-5 and 7 carry "GRANTED <when> ->
+    <who>" with no end time, and they are not lends -- they are the controller allocating aupai's
+    own cards, so no migration and no expiry applies to them. That is why the expiry is gated on
+    baseline_theirs rather than on the presence of a date or a grant word.
     """
     s = str(note or "")
+    if baseline_theirs:
+        # THE STANDING OWNER IS KNOWN FROM THE BASELINE. Nothing the note says can transfer the
+        # card except a window that is open right now, so this runs before either regex: what the
+        # prose opens with must not be able to override a user order.
+        win = _parse_lend_window(s)
+        if win is None:
+            # Distinguish "no handover claimed" from "one I cannot read". The second must refuse:
+            # it is what a drifting wording produces, and that is when a wrong answer is least
+            # visible. Requiring a PARSEABLE WINDOW rather than just the word is load-bearing --
+            # otherwise a note merely mentioning a lend reads as ours.
+            return "unclassified" if _mentions_lend(s) else "theirs"
+        now = datetime.datetime.now(datetime.timezone.utc) if now is None else now
+        return "ours" if win[0] <= now <= win[1] else "theirs"
     if _NOT_OURS_RE.search(s):
         return "theirs"
     if _OURS_RE.search(s):
@@ -1028,7 +1175,7 @@ def _card_map(root=None):
             out[c] = note
     return out
 
-def _aupai_cards(root=None):
+def _aupai_cards(root=None, now=None):
     """(ours, theirs, cards_map) from the grant file's cards[] map.
 
     ours = every listed card whose note reads as an aupai grant. theirs = every card the note
@@ -1039,15 +1186,19 @@ def _aupai_cards(root=None):
     A card absent from the map is in neither set either: the map is the only statement of
     ownership there is, and "not mentioned" is not a grant (idle is not a grant, silence is not
     a grant, and prose the parser cannot read is not a grant).
+
+    `now` is forwarded to the classifier so a lend's expiry can be pinned by a test.
     """
     m = _card_map(root)
-    cls = {c: _classify_card_note(note) for c, note in m.items()}
+    base = set(_theirs_baseline(root))
+    cls = {c: _classify_card_note(note, baseline_theirs=(c in base), now=now)
+           for c, note in m.items()}
     ours = sorted(c for c, k in cls.items() if k == "ours")
     theirs = sorted(c for c, k in cls.items() if k == "theirs")
     return ours, theirs, m
 
 
-def _unclassified_cards(root=None):
+def _unclassified_cards(root=None, now=None):
     """{card: note} for every listed card whose owner the parser cannot determine.
 
     Separate from _aupai_cards so a caller can REFUSE on it rather than infer. Returning these
@@ -1055,8 +1206,9 @@ def _unclassified_cards(root=None):
     file lands in whenever the wording drifts, which is exactly when a wrong answer is most
     likely and least visible.
     """
+    base = set(_theirs_baseline(root))
     return {c: note for c, note in _card_map(root).items()
-            if _classify_card_note(note) == "unclassified"}
+            if _classify_card_note(note, baseline_theirs=(c in base), now=now) == "unclassified"}
 
 def _close_row(name, status, result, finding, decision, root=None, writer=""):
     """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
