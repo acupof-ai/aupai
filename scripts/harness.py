@@ -3223,7 +3223,7 @@ def check_main_advances_by_ancestry(root):
         # returncode >1 means a sha this clone cannot resolve -- pruned or never fetched. Not a
         # jump and not evidence of one; saying nothing is correct, since the check cannot see it.
     if jumps:
-        detail = "; ".join(f"{o[:8]} -> {n[:8]}" for o, n in jumps[:4])
+        detail = "; ".join(_describe_jump(root, o, n) for o, n in jumps[:4])
         return FAIL, (
             f"{len(jumps)} sideways move(s) of refs/heads/main -- the previous value is NOT an "
             f"ancestor of the new one, so whatever was on main was discarded rather than built "
@@ -3256,6 +3256,167 @@ def check_main_advances_by_ancestry(root):
         )
     return PASS, (f"main advanced by ancestry in all {len(lines)} recorded move(s), each "
                   f"written by a signed merge_main CAS or a normal git command")
+
+
+def _describe_jump(root, old, new):
+    """One sideways move, rendered so the reader does not have to run a second command.
+
+    MEASURED 2026-09-08 (e1): the FAIL for `a2375098 -> 12ecbf52` printed the sha pair and
+    nothing else, and the three questions a reader actually has -- what did I lose, how much,
+    can I still get it back -- each needed their own `git log`. I ran them by hand and found 2
+    commits and 10 lines across two ledgers, one of which was the friction row RECORDING THIS
+    VERY INCIDENT. None of that is derivable from the pair.
+
+    THE LINE COUNTS COME FROM `log --numstat` OVER THE DISCARDED COMMITS, NOT FROM A TWO-POINT
+    `diff new old`, and this is the whole correctness argument for the function. Measured on the
+    real pair: the two-point diff reports THREE ledgers including `runs/prereg.jsonl 0/1`, but
+    `git log 12ecbf52..a2375098 -- runs/prereg.jsonl` is EMPTY -- the discarded side never
+    touched that file. The 0/1 is a line MAIN added (c9f612f8), read backwards by the diff's
+    direction and printed as if the jump had deleted it. A two-point diff answers "how do these
+    two trees differ", which includes everything the surviving side did; the question here is
+    "what did the discarded commits carry", and only the log-walk asks it. Over-reporting a loss
+    is the specific failure that sends someone hunting for a file that was never in danger.
+
+    BRANCH CONTAINMENT IS THE FIRST THING THE READER WANTS and it decides the urgency: `still on
+    fb` and `on no branch` are different emergencies. It is also the slowest probe here (0.252s
+    against 0.018-0.031s for the rest, measured), so it runs only inside this function -- i.e.
+    only on the FAIL path, never on the PASS/WARN walk that every commit pays for.
+
+    Fails soft, by design. Every probe is decoration on a FAIL that has already been decided by
+    ancestry; a git call that errors here must not turn a real finding into a crash, so anything
+    it cannot resolve is simply left out of the sentence.
+    """
+    def _git(*a):
+        r = subprocess.run(["git", *a], cwd=root, capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    bits = [f"{old[:8]} -> {new[:8]}"]
+    n = _git("rev-list", "--count", f"{new}..{old}")
+    if n and n != "0":
+        bits.append(f"{n} commit(s) discarded")
+    # Ledger rows are the losses nothing else can reconstruct: code comes back from a branch,
+    # but an append-only jsonl row that never reached main is simply gone from main's history.
+    stats = {}
+    for ln in _git("log", "--numstat", "--format=", f"{new}..{old}", "--", "runs/").splitlines():
+        parts = ln.split("\t")
+        if len(parts) == 3 and parts[0].isdigit():
+            stats[parts[2]] = stats.get(parts[2], 0) + int(parts[0])
+    if stats:
+        bits.append("added lines lost: " + ", ".join(
+            f"{os.path.basename(f)} +{c}" for f, c in sorted(stats.items())))
+    # RECOVERABILITY LAST, because it is the one that changes what the reader does next.
+    heads = [b for b in _git("branch", "--format=%(refname:short)",
+                             "--contains", old).split() if b != "main"]
+    if heads:
+        bits.append(f"still reachable from {', '.join(heads[:3])} -- merge_main it back")
+    else:
+        bits.append("on NO branch -- recover from the reflog before it expires")
+    return " (" .join([bits[0], "; ".join(bits[1:]) + ")"]) if len(bits) > 1 else bits[0]
+
+
+def _selftest_sideways_move_names_what_it_discarded():
+    """The FAIL text must answer what was lost, how much, and whether it is recoverable.
+
+    TWO WORLDS, and the second is the one that keeps this from becoming noise:
+      A  a real sideways move -- the sentence names the commit count, the ledger lines, and
+         the branch still holding them
+      B  a normal fast-forward -- NOT ONE WORD of any of that appears
+
+    B exists because every probe here is a git subprocess and the obvious wrong implementation
+    runs them on the walk rather than on the FAIL. A check that prints a git-log excerpt on
+    every merge is one people stop reading, which costs more than the sentence buys.
+
+    THE THIRD ASSERTION IS THE ONE WITH TEETH: world A gives the discarded side a ledger row
+    AND lets main add its own row to a DIFFERENT ledger. A two-point `diff new old` reports
+    both files; only a log-walk over the discarded commits reports one. Asserting the surviving
+    ledger's name is ABSENT is what distinguishes the two implementations -- without it, the
+    over-reporting version passes this selftest.
+    """
+    import shutil
+
+    def _world(sideways):
+        d = _tmp_repo()
+        os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+        open(os.path.join(d, "scripts", "harness.py"), "w").close()
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        open(os.path.join(d, "runs", "friction.jsonl"), "w").write('{"who":"base"}\n')
+        g("add", "-A")
+        g("commit", "-q", "-m", "base")
+        base = g("rev-parse", "HEAD").stdout.strip()
+        # THE DISCARDED SIDE IS `old`, NOT `new` -- the reflog pair is (previous, current), so a
+        # sideways move discards what main was ALREADY on. The real incident had it this way
+        # round (a2375098, fb's two commits, was the previous value). Build it the same way or
+        # the fixture measures the surviving side and the log-walk points backwards.
+        #
+        # These commits are ALSO left on a branch, because that is what makes the recoverability
+        # probe answerable; the no-branch case is the check's other output and is not this world.
+        g("checkout", "-q", "-b", "sidebr")
+        with open(os.path.join(d, "runs", "friction.jsonl"), "a") as f:
+            f.write('{"who":"lost"}\n')
+        g("add", "-A")
+        g("commit", "-q", "-m", "friction row")
+        with open(os.path.join(d, "runs", "controller_board.md"), "w") as f:
+            f.write("lost line 1\nlost line 2\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "board")
+        lost = g("rev-parse", "HEAD").stdout.strip()
+        # main is moved onto sidebr's work first, so that work is what a sideways move discards.
+        g("checkout", "-q", "main")
+        g("merge", "-q", "--ff-only", "sidebr")
+        # MAIN'S OWN ADVANCE, on a different ledger, descending from `base` rather than from
+        # `lost`. This is the c9f612f8 shape: a two-point `diff new old` attributes prereg.jsonl
+        # to the jump; a log-walk over the discarded commits does not.
+        g("checkout", "-q", "-b", "mains-own", base)
+        open(os.path.join(d, "runs", "prereg.jsonl"), "w").write('{"row":"mains own"}\n')
+        g("add", "-A")
+        g("commit", "-q", "-m", "main advances")
+        survivor = g("rev-parse", "HEAD").stdout.strip()
+        g("checkout", "-q", "main")
+        if sideways:
+            g("update-ref", "refs/heads/main", survivor)
+        else:
+            g("merge", "-q", "--no-ff", "-m", "merge_main: mains-own", "mains-own")
+        assert lost  # the discarded tip, kept alive on sidebr
+        return d
+
+    d = _world(True)
+    try:
+        state, ev = check_main_advances_by_ancestry(d)
+        assert state == FAIL, f"A: a real sideways move must FAIL, got {state}: {ev}"
+        assert "2 commit(s) discarded" in ev, f"A: commit count missing: {ev}"
+        assert "friction.jsonl +1" in ev, f"A: the lost ledger row is not named: {ev}"
+        assert "controller_board.md +2" in ev, f"A: the lost board lines are not named: {ev}"
+        # The over-reporting implementation fails HERE and nowhere else.
+        assert "prereg.jsonl" not in ev, (
+            f"A: prereg.jsonl is MAIN's own line, not a loss -- a two-point `diff new old` "
+            f"attributes it to the jump and sends the reader after a file that was never in "
+            f"danger. The count must come from `log --numstat` over the discarded commits: {ev}")
+        assert "sidebr" in ev, f"A: the branch still holding the commits is not named: {ev}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    d = _world(False)
+    try:
+        state, ev = check_main_advances_by_ancestry(d)
+        assert state != FAIL, f"B: a normal merge is not a sideways move: {ev}"
+        for noise in ("commit(s) discarded", "added lines lost", "still reachable from",
+                      "on NO branch"):
+            assert noise not in ev, (
+                f"B: a clean advance printed {noise!r} -- the loss report belongs on the FAIL "
+                f"path only, or every merge pays for four git subprocesses and the reader "
+                f"learns to skip the line: {ev}")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  ancestry FAIL names the discarded commit count, the ledger lines lost (log-walk, "
+          "not a two-point diff, so main's own rows are not reported as losses) and the branch "
+          "still holding them; a clean advance prints none of it")
 
 
 def _broken_main_advances_by_ancestry():
@@ -22906,6 +23067,7 @@ def _demo(only=None):
         _selftest_merge_cherry_pick_not_a_drop,
         _selftest_content_restored_read_failure,
         _selftest_unsigned_fast_forward_warns,
+        _selftest_sideways_move_names_what_it_discarded,
         _selftest_tasks_read_from_index,
         _selftest_root_durable_backup_ack,
         _selftest_merge_reverted_content,
