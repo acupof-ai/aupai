@@ -1,4 +1,4 @@
-# Controller board (fb) — updated 2026-09-08T22:20Z, rewritten every tick
+# Controller board (fb) — updated 2026-09-07T22:20Z (dates in this file corrected 2026-09-08 00:3xZ: the 09-07 evening had been written as 09-08), rewritten every tick
 
 Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in the process. The memory-layers program (2026-09-05) is closed: all three arms stopped on readout 4 (key-usage collapse), facts in facts/memory_layers.json, every entry from a STOPPED arm.
 
@@ -6,7 +6,7 @@ Percent = share of the deliverable landed on main and verified by a second reade
 
 | item | owner | % | delivered | quality / evidence | next gate |
 |---|---|---|---|---|---|
-| Resume 1 on cards 1,2,3,4,5,7 | b0 | running | launched 18:33Z 09-08 at step 22500; step ~27,000/38,146 at 22:20Z; 2.83 s/step, 45-46K tok/s/gpu, peak 44.1 GiB; log runs/1.5b-a0.2b-e48_30b_resume1.log | de measured 1,179 steps/h over the segment; ends ~07:50Z 09-09 | stop trigger: two consecutive vals > 1.91 (amendment 2), max so far 1.846 |
+| Resume 1 on cards 1,2,3,4,5,7 | b0 | running | launched 18:33Z 09-07 at step 22500; step ~27,000/38,146 at 22:20Z; 2.83 s/step, 45-46K tok/s/gpu, peak 44.1 GiB; log runs/1.5b-a0.2b-e48_30b_resume1.log | de measured 1,179 steps/h over the segment; ends ~07:1xZ 09-08 | stop trigger: two consecutive vals > 1.91 (amendment 2), max so far 1.846 |
 | Val rise after the cot/chat cap | b0 | 100 | amendments 9-12; runs/b0_domain_loss_resume1.jsonl, runs/b0_domain_loss_cap.jsonl (main 99f5f226) | registered discriminator FLATTENS: cot +0.0093/1k vs +0.0729 window 1 (|d|/se 4.70); chatml 0.17x, chat_qa 0.19x; control floor flat | cap on cot/chatml/chat_qa at 4.0 epochs stays for resume 1; fresh cot supply is a resume-2 prereg question (user decision) |
 | MFU print 202-279% (dense-priced denominator) | de | 90 | PR #40 approved by 3b (review row 80993127); latent 3-D short_conv false-match filed de-74 | six mutants red | merges at the freeze lift ~07:50Z, order #24, #23, #40, de-74; merger pushes the pod |
 | Resume 2 corpus: code_rp1t_dd09_full | 3b | 100 | 9,837,521,903 tok, 5,537,807 docs, 387 shards, fp 6bfa756cc1b7a965 (PR #39) | zero new bytes, hardlink union | user decision: flip CODE_RP1T_DOMAIN to dd09_full for resume 2 |
@@ -17,7 +17,7 @@ Percent = share of the deliverable landed on main and verified by a second reade
 | item | owner | % | delivered | quality / evidence | next gate |
 |---|---|---|---|---|---|
 | Card guard was inert (theirs=[]) | b0 | 100 | PR #45 f145ce4c; live file ours [1,2,3,4,5,7] theirs [0,6]; pod `harness launch --cards 0` RC=2 | tilerl-0a case #45#issuecomment-5575429861, four mutants incl. the original regex | — |
-| Card 6 lend for the cap read | fb | 100 | grant note 21:30-21:45Z (main 38c8e935), used 21:32-21:34Z, reverted c58e693d, verified by tilerl-0a on main and pod | guard exercised end to end on a real job | — |
+| Card 6 lend for the cap read | fb | 100 | grant note 21:30-21:45Z (main 38c8e935), used 21:32-21:34Z 09-07, reverted c58e693d, verified by tilerl-0a on main and pod | guard exercised end to end on a real job | — |
 | Grants carry an expiry the classifier reads | b0 | 0 | task b0-32 | rulings: theirs_baseline pinned {0,6} in the check citing the 09-06 order; agreement property (baseline-theirs = theirs or valid lend; baseline-ours = not theirs); not-yet-open lend reads theirs; unparseable expiry refuses; now= injectable; paired mutations | reviewer tilerl-0a; after resume 1 |
 | AGENTS.md:50 said all 8 cards are ours | fb | 90 | PR #53 (one line + ledger rows), approved by tilerl-0a, MERGEABLE at 3bd3cf15 | tilerl-0a verified the four claims against artifacts; old line from 08471eec superseded not corrected | merge + pod push by tilerl-0a |
 | AGENTS.md:52-56 lane doctrine for a six-card world | fb | 0 | task fb-7 | — | after resume 1, reviewer 44 |
@@ -46,4 +46,4 @@ Percent = share of the deliverable landed on main and verified by a second reade
 
 ## Standing rules restated
 
-Cards 0 and 6 are tileRL's (user order 2026-09-06); lends are a GRANTED note with a window and are reverted by hand until b0-32. train.py/model.py/hooks frozen while the block is held; window opens ~07:50Z 09-09. Code goes through a PR from a branch holding no ledger files; ledger rows through merge_main. No attribution trailers; commit subjects end with the session marker.
+Cards 0 and 6 are tileRL's (user order 2026-09-06); lends are a GRANTED note with a window and are reverted by hand until b0-32. train.py/model.py/hooks frozen while the block is held; window opens ~07:1xZ 09-08. Code goes through a PR from a branch holding no ledger files; ledger rows through merge_main. No attribution trailers; commit subjects end with the session marker.
