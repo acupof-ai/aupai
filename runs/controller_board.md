@@ -14,23 +14,15 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 | Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
 | Never delete without a named target | every removal names its files and runs each first |
 
-## Queue state, 2026-09-08 11:30Z
+## Queue state, 2026-09-08 12:05Z
 
-19 PRs open, all opened today, CI green on every one. **16 of them carry no review at all.** Production has outrun merging; the bottleneck is review, not work. Reviewers assigned by roster, and reviewing does not count against the two-item cap.
+28 PRs merged today, 18 still open, CI green. **Reviews are now being picked up without dispatch** — de cleared 44's four, e1 cleared 98's three, b0 and tilerl are on the rest. The standing rule changed at 11:50Z: **a PR's roster pair reviews it without waiting to be assigned.** The earlier version made me watch the queue faster; de's correction is the right one — the bottleneck was not that only I could see it, it was that only I was looking.
 
-| reviewer | PRs | note |
-|---|---|---|
-| 44 | #99 (ready, merging), #85 | #85 waits behind #81 and #96 |
-| b0 | #88 #93 (rows already on main, mergeable now), #95 #97 #103 | |
-| tilerl | #81 #96 #94 #102 #80 | |
-| de | #75 #83 #89 #98 | |
-| e1 | #92 #100 #101 | |
+Merge order still binds three: **#81 (§276-278) → #96 (§279-282) → #85 (§283)**, and **#98, #100 before #101** (its two fact references are forward references that no check would catch — `_commit_delivers` parses `facts/<f>.json#<id>` only from `runs/tasks.jsonl` evidence, never from prose).
 
-**Merge order is a hard constraint for three of them: #81 (§276-278) → #96 (§279-282) → #85 (§283).** Each branch numbered from main's maximum at the time; whichever jumps the queue hits `shapes_table_covers_doc`'s duplicate refusal at `harness.py:2390`.
+## Critical path — cleared 2026-09-08 11:45Z
 
-## Critical path
-
-**de's shared-config guard onto main.** Committed locally on `de-agents-clean` (`f223e560` + a `wip:` commit), not pushed, sharing a branch with PR #85. The hook everyone executes is the integration tree's symlink, so a commit that has not reached main is not running anywhere: e1 has been refused nine times, naming eight different innocent files. Split onto a branch cut from main, squash the wip (it was committed with `--no-verify`, so the hook never ran on it), open a PR, 44 reviews.
+The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
 
 ## Seven tracks
 
