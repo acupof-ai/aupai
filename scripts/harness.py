@@ -14131,9 +14131,91 @@ def _selftest_launch_closes_its_orphaned_row():
         assert rc == 127, (
             f"the negative control assumes bash reports a missing command as 127, got {rc}; if this "
             f"changes, 4c's nonexistent-path world may become a real raise and belongs above")
+
+        # DE-77: A COMMAND THAT REFUSED. The process DID exist and exited nonzero without ever
+        # opening a device, so neither the raise guard above nor the monitor covers it: the guard
+        # never fires, and section 5 was the SUCCESS path by construction. 4c hit it as a phantom
+        # running row for a script that never launched.
+        #
+        # THE PREDICATE IS THE WRAPPER'S OWN .rc AND NOT THE ABSENCE OF A CLAIM, and this world is
+        # what makes that checkable: a fast eval that legitimately never holds a card writes rc 0,
+        # and closing on "no claim" alone would close its row as a failure too. Both cases are built
+        # here, from the same wrapper the launcher uses, so the discriminator is exercised in both
+        # directions rather than asserted in a comment.
+        # _launch_after_row, not cmd_launch: the Popen and everything after it live in the
+        # guarded half, and section 5 is there. Reading the wrong function made this assertion
+        # fire on a correct fix -- which is the assertion working, and worth naming so the next
+        # reader does not re-point it at the outer function.
+        src_launch = inspect.getsource(_launch_after_row)
+        assert "_refused_rc" in src_launch, (
+            "the de-77 closer is gone from _launch_after_row: a wrapped command that exits nonzero "
+            "without holding a device leaves its row running forever")
+        # THE WHOLE FUNCTION, not a slice starting at the closer. Slicing from '_refused_rc =
+        # None' put everything ABOVE the closer outside the window, so an _arm_monitor call
+        # inserted before it was invisible and M3 survived twice -- a criterion cannot see what its
+        # own slice excludes.
+        _guard = src_launch
+        assert 'not in (None, "", "0")' in _guard, (
+            "the refusal predicate no longer excludes rc 0 -- a short successful job that never "
+            "opened a device would be closed as a failure (de-47's fast-eval path)")
+        # THE REAL CALL, not the first mention. An earlier version compared indexes of the bare
+        # string "_arm_monitor", which the mutation sweep defeated: inserting a reference to it
+        # ABOVE the closer left the first occurrence where it was, so the ordering read as correct
+        # while the monitor was armed first. Anchor on the assignment that actually arms it.
+        assert _guard.index("_refused_rc = None") < _guard.index("monitor_pid = _arm_monitor("), (
+            "the closer must run BEFORE the monitor is armed: a monitor watching a process that "
+            "already exited reports it as vanished")
+
+        for label, exit_code, want_closed in (("refused", 2, True), ("fast success", 0, False)):
+            name = "de77_" + label.split()[0]
+            rc_file = os.path.join(d, f"{name}.rc")
+            wrapped = ["bash", "-c",
+                       'set -o pipefail; "$@"; rc=$?; printf %s "$rc" > "$0"; exit "$rc"',
+                       rc_file, "bash", "-c", f"exit {exit_code}"]
+            with open(os.path.join(d, "runs", f"{name}.log"), "w") as lf:
+                p = subprocess.Popen(wrapped, stdout=lf, stderr=subprocess.STDOUT,
+                                     stdin=subprocess.DEVNULL)
+            got_rc = p.wait()
+            assert got_rc == exit_code, f"{label}: wrapper returned {got_rc}, want {exit_code}"
+            assert os.path.exists(rc_file), (
+                f"{label}: the wrapper wrote no .rc, so the launcher's predicate has no input and "
+                f"this world tests nothing")
+            with open(rc_file) as _f:
+                written = _f.read().strip()
+            assert written == str(exit_code), f"{label}: .rc holds {written!r}"
+
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+                 "--name", name, "--cmd", "x", "--hypothesis", "y"],
+                check=True, capture_output=True)
+            assert any(r.get("name") == name for r in open_rows()), (
+                f"{label}: sanity -- exp.py start must leave an open row")
+
+            # The launcher's predicate, applied to this world's real .rc.
+            if written not in ("", "0"):
+                assert _close_row(
+                    name, "fail",
+                    f"refused: wrapped command exited {written} without holding a device",
+                    "the command exited before any descendant opened a GPU device",
+                    "read the log and fix what the command refused on, then relaunch",
+                    root=d), f"{label}: _close_row reported failure"
+
+            still_open = [r for r in open_rows() if r.get("name") == name]
+            if want_closed:
+                assert not still_open, (
+                    f"{label}: the row is STILL OPEN for a command that exited {exit_code} without "
+                    f"holding a device -- this is 4c's phantom row, and no_stale_running refuses "
+                    f"every commit in the repository once it is a day old")
+            else:
+                assert still_open, (
+                    f"{label}: rc 0 must NOT be closed as a failure here -- a 3-second eval that "
+                    f"never opened a device is a job that came and went (de-47), and its row is "
+                    f"closed by the monitor, not by the refusal path")
+
         print("  launch: a death before the process exists closes its own row (2 raise sites); "
               "a nonexistent command path is NOT such a death -- bash exits 127 with the process "
-              "alive, so that world cannot test this")
+              "alive, so that world cannot test this; a REFUSED command (rc 2, no device) closes "
+              "its row while a fast success (rc 0, no device) does not (de-77)")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -24700,6 +24782,47 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             return 1
 
     # 5. Arm monitor
+    #
+    # BEFORE ARMING: a wrapped command that REFUSED closes its own row here (de-77, 4c 2026-09-08).
+    # `exp.py start` appends status=running before the command runs, and a command that exits
+    # nonzero without ever opening a device left that row running forever -- a phantom for a script
+    # that never launched. The two `return 1` paths above close their rows; this path did not,
+    # because it is the SUCCESS path by construction and a guarded refusal reaches it.
+    #
+    # THE PREDICATE IS THE WRAPPER'S OWN .rc, not the absence of a claim. The wrapper writes that
+    # file itself, so its presence means the command ran to completion and its content is the
+    # command's verdict -- which is exactly what separates the two cases the block above already
+    # distinguishes in prose: a 3-second eval that came and went (rc 0, cards legitimately never
+    # observed) from a command that refused (rc != 0, nothing ran). Closing on "no claim" alone
+    # would close the fast-eval row too, and closing on rc alone would close a successful short
+    # job's row as a failure.
+    #
+    # No monitor is armed for a command that has already exited: the monitor exists to notice a
+    # live job going quiet, and arming it here would make it report a process that ended before it
+    # started watching.
+    _refused_rc = None
+    if not claim_name and os.path.exists(rc_path):
+        try:
+            with open(rc_path) as _f:
+                _refused_rc = _f.read().strip()
+        except OSError:
+            _refused_rc = None
+    if _refused_rc not in (None, "", "0"):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"),
+             "done", "--name", args.name,
+             "--result", f"refused: wrapped command exited {_refused_rc} without holding a device",
+             "--finding", f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
+                          f"any descendant opened a GPU device, so nothing ran under this row",
+             "--decision", "read the log and fix what the command refused on, then relaunch",
+             "--status", "fail"],
+            capture_output=True,
+        )
+        print(f"REFUSED: {args.name} exited {_refused_rc} without holding a device; the row is "
+              f"closed as fail and no monitor was armed. Log: {log_path}", file=sys.stderr)
+        _release_cards(claim_name)
+        return 1
+
     monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
                                started=launch_started)
 
