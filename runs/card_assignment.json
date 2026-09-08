@@ -118,6 +118,16 @@
       "what": "block_cards 2,3,4,5,6,7 -> 1,2,3,4,5,7 for resume 1 of 1.5b-a0.2b-e48_30b at .step22500. Card 6 returns to tileRL under the 09-06 user order, which note_resume1_cards already recorded and block_cards still contradicted -- the stopped run held 2-7, so the field described a world that ended at the stop. Card 1 enters the block: it is aupai's under the 09-05 status line, was tilerl-48's tilerl-kvfp8-27b-s3 for ~10 min, and 4c confirmed the claim released at 0 MiB. Re-read runs/claims/ and nvidia-smi -i 1 immediately before torchrun; a grant is not a reading. World 6, CUDA_VISIBLE_DEVICES=1,2,3,4,5,7."
     }
   ],
+  "_theirs_baseline_comment": [
+    "Cards another team owns by STANDING ORDER (user order 2026-09-06, '0,6 tileRL').",
+    "A lend note on one of these expires: it is ours only while its window is open.",
+    "harness pins this list to {0,6} citing that order -- see _assert_card_ownership,",
+    "property (6). Changing it needs a user order, not an edit."
+  ],
+  "theirs_baseline": [
+    0,
+    6
+  ],
   "granted": "2026-09-03",
   "launch_block_granted": true,
   "block_cards": "1,2,3,4,5,7",
