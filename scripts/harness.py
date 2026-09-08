@@ -22927,6 +22927,17 @@ _FROZEN_KEYS = (
     # segment and it silently becomes the MoE-24 arm at the same parameter count.
     "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
     "moe_latent", "moe_shared_ffn",
+    # FROZEN, and NOT beside `seed` in the allow-list even though it is a seed. `seed` is there
+    # as "the quantity that is supposed to vary"; this one decides WHICH ROWS the run reads, so
+    # two ladder points that disagree on it differ in their data and not only in D -- which is
+    # the one thing the ladder exists to isolate. train.py's `_build_row_cursor` already refuses
+    # a resume whose cursor was written at another sample_seed (the pool is shuffled differently,
+    # so the row count indexes other documents), but that covers one run in two halves; nothing
+    # compares two SEPARATE points, and ladder_cfg_consistent is what does.
+    #   The flag exists so a seed sweep can pin it: unset, `_sample_seed` follows Cfg.seed, so
+    # --seed alone reshuffles the corpus and folds row-order variance into what was meant to be
+    # an init-variance measurement (de-7; the anneal N1/N2 arms, 09-08).
+    "sample_seed",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
