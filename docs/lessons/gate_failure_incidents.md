@@ -789,5 +789,29 @@ A deletion target list named tracked repository content, and nothing on the dele
 The general form: a deletion candidate's tracked status is a property of the repository, not of the directory it sits in, so a list built by looking at the filesystem cannot see it. Check `git ls-files` for every candidate BEFORE the list is broadcast, not before the `rm` -- by then the list is what people are agreeing to.
 open: a check that no path on a deletion-candidate list is tracked in main; none exists. It is one `git ls-tree` per candidate and would have fired here.
 
+### §275 (2026-09-08, R9)
+
+A deletion listing is a claim about its own predicates, not about the files. Mine scored "protected" as pinned OR hardlinked OR named-by-an-open-row, and under those three `ckpt_1.5b-a0.2b-e48_8b.pt.step9000` came out UNPROTECTED -- 6.1 GB, no pin, `nlink` 1, no open row. It is the RESUME SOURCE of the entire 30B trajectory and the baseline row of the endpoint comparison I had filed an hour earlier. The listing would have offered for deletion the one checkpoint the endpoint is compared against.
+
+**A resume source carries none of those three marks once the run it seeded has finished**, which is exactly when it stops looking needed: the pin was never taken because nothing was at risk while the run held it, the hardlink was never made, and the row closed. The three predicates are each correct and together they are not a partition.
+
+The two that were missing:
+
+    CITED BY A RESULTS ARTIFACT   basenames grepped out of score_matrix.jsonl, the domain_loss
+                                  ledgers, review.jsonl, prereg.jsonl -- a scored checkpoint is
+                                  the only way to re-derive or dispute the score
+    RESUME SOURCE OF A RECORDED   the --resume argument of any experiments row, CLOSED ROWS
+    RUN                           INCLUDED -- a closed row is the case that needs it
+
+Protection went 125 GB -> 178 GB, candidates 232 GB -> 179 GB. The 53 GB difference is entirely files something in the tree cites.
+
+**The listing was not wrong about the file, it was wrong about itself.** Every row was well-formed; the omission had no representation anywhere in the output, so nothing in "no protection found" hinted that a fourth predicate existed. Same disease as a property whose population is emptied by the defect it is written for (§272) and as a suite whose aggregate discards which assertion fired (§270): the artifact is internally consistent and the missing thing is invisible *in it*. 4c's sentence is the one to keep -- "unprotected" meant "no protection my predicates could see".
+
+Fix: the predicates live in `scripts/deletion_candidates.py`, not in whoever runs it. A listing is regenerated; a rule that existed only in the operator's head is not. Delivery is a paired prediction rather than a green run -- with the two predicates the target is protected by name, and with exactly those two removed it goes unprotected again, so the near-miss reproduces on demand.
+
+Cost: none realised. Nothing was deleted at any point; the user had named no target, and 4c's instruction was explicitly to list and broadcast rather than delete. What it cost was a listing that, if acted on, would have destroyed the baseline of a finished run.
+Evidence: `scripts/deletion_candidates.py`; the paired-prediction check (protected with the predicates, `None` without); `runs/friction.jsonl` kind `near_miss`, 2026-09-08.
+open: nothing checks that a deletion-candidate generator's protection rule covers the ways a checkpoint can be depended on. The machine-checkable half is narrower and worth having on its own: no candidate may be a basename appearing in any `runs/*.jsonl`. That single grep would have fired here.
+
 ## R10. What happened only on the pod did not happen
 

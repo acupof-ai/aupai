@@ -278,8 +278,9 @@ Cannot see: whether a non-card shared resource (disk, network, host DRAM) is co-
 - §39: a deletion candidate was judged without running it; the candidate was a live process, not a stale file.
 - §41: a deletion list was broadcast and deleted within the 24h window; an unclaimed candidate was still in use.
 - §255: a deletion list named 143 tracked files; a filesystem-built list cannot see tracked status, and no pod-side gate would have flagged the removal.
+- §275: a deletion listing is a claim about its own PREDICATES, not about the files. Scoring "protected" as pinned OR hardlinked OR named-by-an-open-row put `ckpt_..._8b.pt.step9000` in the candidate pool — the resume source of the whole 30B trajectory and the baseline of an endpoint comparison filed an hour earlier. A resume source carries none of those three marks once the run it seeded finishes, which is exactly when it stops looking needed. Two predicates were missing (cited-by-a-results-artifact; resume-source-of-a-recorded-run, closed rows included) and adding them moved 53 GB from candidate to protected. The listing was not wrong about the file, it was wrong about itself: every row well-formed, the omission with no representation in the output — same disease as §272's emptied population and §270's discarded assertion identity. Put the predicates in the script so the next person inherits the rule rather than the output, and deliver a paired prediction (protected with them, unprotected with exactly those two removed) rather than a green run.
 
-Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live, or whether a listed path is tracked in main.
+Cannot see: whether a non-checkpoint deletion candidate (a process, a lease, a temp file) is live; whether a listed path is tracked in main; or whether the protection rule that built the list covers the ways a candidate can be depended on (§275 — the narrow machine-checkable half is "no candidate basename may appear in any `runs/*.jsonl`").
 
 ## Design cause: integration happens in a shared writable working tree
 
