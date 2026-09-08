@@ -24,6 +24,19 @@ Scope is the whole tree: 473 Python files, 193,890 lines, 113 docs, 368 tracked 
 
 Deletion rule for every track: propose the list, run each candidate before judging it, the owner confirms each file by name, and the removal lands in a reviewed PR. The standing "no deletion without a named target" order is satisfied by the owner naming each file, not by skipping the step.
 
+## Track progress
+
+| track | owner | measured so far | next |
+|---|---|---|---|
+| Scripts | b0 | 14 unreached candidates, 2 proposed for removal, 12 kept with a named reason. 8 of the 12 are reached by edges `reachability.py` cannot see: a citation inside a code comment, a friction row's evidence field, a fact's provenance | teach `reachability.py` those three edge types and re-run — that, not a longer delete list, is the deliverable. `scripts/test_sft_holdout_gate.py` fails 5 of 9 cases on the pod and is being chased first: an inert holdout gate would let an unstamped pack train silently |
+| AGENTS.md | de | 439 lines, 11,769 words, 74,275 characters. The duplication is the coverage table, which repeats each rule's text as a row key, so every rule's wording exists twice and drifts independently | compress the coverage table, not the incidents; drop line 339's written rule count, which the file itself says should come from `harness check` |
+| Docs | 44 | — | frontmatter, citations, duplicate questions |
+| Facts | e1 | 489 facts across 12 files. `facts_well_formed` PASS zero WARN; `ckpt_facts_sources_present` WARN on 12 sources across 7 entries. No `retracted_value` rot in any of 21 entries. 53 boundary-flagged entries hand-read: 27 correct scoping, 22 negate a different claim than their own, 4 need action | restate `be.degeneration_rate` as bounds with status superseded; rename `eff.grad_ckpt_300m_two_arm`'s claim to a two-variable ratio; give `eff.pa_split_206m_438m` an explicit claim; add the `retracted_value` check |
+| Ledgers | 3b | 43 scripts inventoried; all 20 under `runs/audit_0904/` run, 18 green, 2 refuse for a stated reason, 1 has no selftest. None is dead | the proposed list with per-file evidence, then the 77 unregistered `.py` on the pod |
+| Eval | fb | 71 files, 20,443 lines. All 31 selftests pass on CPU. The divisor defect is isolated to `eval/domain_bpb.py`: `humaneval_bpb.py` truncates the prompt and never the solution, divides by the solution's own bytes, and its selftest asserts exactly that; `math_bpb.py` calls that function rather than reimplementing it and asserts its divisor against a literal. So the HumanEval gold bpb numbers are unaffected, and the correct pattern already existed in the same directory | 16 metrics compute a rate with no known-answer case: `arc`, `code_fewshot`, `code_zh`, `gsm8k`, `hellaswag`, `l1_2x2_diagnose`, `l1_fewshot`, `math_hard`, `math_zh`, `mmlu`, `piqa`, `ppl`, `run_eval`, `test_l1_fewshot_2x2`, `winogrande`, `probes/profile_step`. Each gets a CPU case so it runs in CI instead of waiting for a card |
+| Data generation | 98 | — | starts when PR #82 merges |
+
+
 ## What is finished and stays finished
 
 | item | state |
