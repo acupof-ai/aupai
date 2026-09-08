@@ -25,6 +25,7 @@ file whose checks are its module body is exactly where that happens silently.
 import contextlib
 import copy
 import os
+import subprocess
 import sys
 
 import torch
@@ -1616,3 +1617,126 @@ else:
 print(f"_n_active_params: dense denominator identical ({_pa_old}); MoE {_CfgPaMoE.moe_experts} "
       f"experts top_k {_CfgPaMoE.moe_top_k} counts "
       f"{_pa_act} of {_pa_total} ({_pa_routed} routed); top_k == experts is the full total OK")
+
+
+# ---------------------------------------------------------------------------------------------
+# b0-35 CSA: compressed coarse attention + top-k block selection + sliding window.
+#
+# FOUR CASES, and the first is the one that protects every existing run: with the flag off the
+# forward must be BIT-IDENTICAL to model.py as it stood before CSA existed. Not "close", and not
+# compared against a reference I typed -- compared against the real previous file, read out of
+# git, so the assertion cannot drift into agreeing with my own new code.
+#
+# THE GIT CALL BELOW RUNS WITH GIT_* STRIPPED, and that is not hygiene. This file is run by the
+# pre-commit hook, which exports GIT_DIR and GIT_INDEX_FILE for the commit it is checking. An
+# inherited GIT_DIR makes `git show HEAD:model.py` resolve HEAD in whatever repository the
+# caller is holding: the read still succeeds, so the case still runs, and it compares my new
+# model.py against SOME OTHER TREE's file. That failure has no skip and no error -- it is a
+# green bit-identity assertion made against the wrong reference. Measured: with GIT_DIR pointed
+# at a scratch repo holding a 50-byte model.py, the old `cd repo && git show` form returned that
+# stub with rc=0 and the case would have compared against it; the form below returns the real
+# 118142 bytes. -C pins the repository and the scrubbed env stops the caller from redirecting
+# it (same rule as pod_drift.py:61-66).
+_csa_pre = os.path.join("/tmp", f"_csa_pre_model_{os.getpid()}.py")
+_csa_repo = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_csa_env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+try:
+    _csa_blob = subprocess.run(
+        ["git", "-C", _csa_repo, "show", "HEAD:model.py"],
+        env=_csa_env, capture_output=True, timeout=60)
+    _csa_have_pre = _csa_blob.returncode == 0 and len(_csa_blob.stdout) > 0
+    if _csa_have_pre:
+        with open(_csa_pre, "wb") as _fh:
+            _fh.write(_csa_blob.stdout)
+except (OSError, subprocess.SubprocessError):
+    _csa_have_pre = False
+
+
+class _CfgCsaOff:
+    d, heads, value_embed, csa = 64, 4, False, False
+
+
+class _CfgCsaOn(_CfgCsaOff):
+    csa, csa_compress, csa_topk, csa_window = True, 4, 2, 8
+
+
+# 1. FLAG OFF IS THE OLD CODE, BIT FOR BIT.
+if not _csa_have_pre:
+    print("CSA parity: HEAD:model.py unavailable, the bit-identity case did NOT run")
+else:
+    import importlib.util as _ilu
+    _spec = _ilu.spec_from_file_location("_csa_pre_model", _csa_pre)
+    _pre = _ilu.module_from_spec(_spec)
+    sys.modules["_csa_pre_model"] = _pre
+    _spec.loader.exec_module(_pre)
+    torch.manual_seed(7); _a = _pre.GatedMLA(_CfgCsaOff)
+    torch.manual_seed(7); _b = model.GatedMLA(_CfgCsaOff)
+    assert set(_a.state_dict()) == set(_b.state_dict()), (
+        f"flag-off changed the state_dict: {set(_a.state_dict()) ^ set(_b.state_dict())}. Every "
+        f"existing checkpoint loads through these keys")
+    _x = torch.randn(3, 17, 64)
+    with torch.no_grad():
+        _ya, _yb = _a(_x), _b(_x)
+    assert torch.equal(_ya, _yb), (
+        f"flag-off is NOT bit-identical to the pre-CSA forward: max delta "
+        f"{(_ya - _yb).abs().max().item():.3e}. The one `if` was supposed to be the only change "
+        f"on this path; something above it moved")
+    print(f"CSA parity: flag off is bit-identical to HEAD:model.py "
+          f"({sum(p.numel() for p in _b.parameters())} params, keys unchanged)")
+
+# 2. OFF CONSTRUCTS NOTHING. A skipped-in-forward module would still put tensors in every
+#    checkpoint of every run that does not use CSA.
+_off, _on = model.GatedMLA(_CfgCsaOff), model.GatedMLA(_CfgCsaOn)
+assert _off.csa is None, "flag off still built the CSA module; its parameters would be checkpointed"
+assert not [k for k in _off.state_dict() if "csa" in k], "flag off leaked csa keys into state_dict"
+_added = sorted(set(_on.state_dict()) - set(_off.state_dict()))
+assert _added == ["csa.branch_gate.bias", "csa.branch_gate.weight"], (
+    f"CSA on adds unexpected parameters: {_added}")
+
+# 3. CAUSALITY, BY PERTURBATION AT EVERY POSITION. This is the case that caught the real defect:
+#    the first version made a compressed block visible from its FIRST position, so with m=4 a
+#    query at t=5 read mean(k[4..7]) and saw tokens 6 and 7. Measured k[5] += 7 moving positions
+#    0..4 by 1.44 while the window branch moved 0.0, which is what localised it to the compress
+#    branch. A causal leak makes training loss BETTER and only surfaces as generation collapse,
+#    so it must be asserted here rather than watched for.
+_csa = model.CompressedSparseAttention(_CfgCsaOn, 4, 16).double()
+_T = 20
+torch.manual_seed(3)
+_q, _k, _v = (torch.randn(1, _T, 4, 16, dtype=torch.double) for _ in range(3))
+_y0 = _csa(_q, _k, _v)
+assert torch.isfinite(_y0).all(), "CSA produced non-finite output on a clean input"
+_leaks = []
+for _t in range(1, _T):
+    _k2, _v2 = _k.clone(), _v.clone()
+    _k2[:, _t] += 7.0
+    _v2[:, _t] += 7.0
+    _d = (_csa(_q, _k2, _v2)[:, :_t] - _y0[:, :_t]).abs().max().item()
+    if _d > 1e-12:
+        _leaks.append((_t, _d))
+assert not _leaks, (
+    f"CSA leaks the future: perturbing position t moved outputs BEFORE t at {_leaks[:4]}. "
+    f"Check the compressed-block visibility mask -- a block is attendable only when its LAST "
+    f"member is at or before the query")
+
+# 3b. THE LEAK IS REACHABLE, i.e. case 3 can fail. Restoring the original first-position mask
+#     must reproduce it, or case 3 is asserting over a world where no leak was possible.
+_m, _nb = _CfgCsaOn.csa_compress, (_T + _CfgCsaOn.csa_compress - 1) // _CfgCsaOn.csa_compress
+_ar_b, _ar_t = torch.arange(_nb), torch.arange(_T)[:, None]
+_first_vis = (_ar_b * _m)[None, :] <= _ar_t          # the mask that leaked
+_last_vis = (_ar_b * _m + _m - 1)[None, :] <= _ar_t  # the mask now in model.py
+assert bool((_first_vis & ~_last_vis).any()), (
+    f"at T={_T} m={_m} the first-position and last-position visibility masks agree, so case 3 "
+    f"is asserting over a world where the leak it was written for cannot occur -- pick a T and "
+    f"m where an incomplete block is visible to some query")
+
+# 4. DOC-PACKED INPUT IS REFUSED, NOT SILENTLY MISHANDLED. A compressed block straddling a `cu`
+#    boundary pools two documents and the top-k can select across them; nothing downstream can
+#    undo it and the loss does not show it.
+_refused = False
+try:
+    _csa(_q, _k, _v, cu=torch.tensor([0, 10, 20], dtype=torch.int32))
+except NotImplementedError as _e:
+    _refused = "document" in str(_e).lower()
+assert _refused, "CSA accepted doc-packed input instead of refusing; it would train cross-document attention"
+print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all {_T - 1} "
+      f"perturbed positions; doc-packed input refused")
