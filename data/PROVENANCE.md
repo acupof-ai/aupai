@@ -54,8 +54,10 @@ answer verification) is the only source that controls length, difficulty and cor
 
 `cd mathbank && python3 run_math_short.py 100000 ../data/synthetic/math_short_v8.jsonl --ratios 0,0,0.6,0.4 --seed 28`
 
-97,771 rows (L3 57,771 + L4 40,000; L3 stalls at 57,771 — 509 programs x the 150
-instance cap). sha256 7e45bc95d0aa3226823a7a493a4df525a611ee7287712a7e28bec4ed217830e8
+97,771 rows (L3 57,771 + L4 40,000; L3 stalls below its 60,000 target — the
+generator's all-programs-at-cap-or-rejecting stall, run_math_short.py:225-228,
+not 509x150, which is 76,350; facts/corpus_supply.json#cs.math_short_v8_cap_audit).
+sha256 7e45bc95d0aa3226823a7a493a4df525a611ee7287712a7e28bec4ed217830e8
 
 Built after the external survey above found nothing usable. Every property is
 matched to `data/synthetic/math_hard_eval_1k.jsonl` rather than inherited:
@@ -519,6 +521,11 @@ guess answers it wrongly with no marker.
 - Source: `data/corpus/chat/` re-rendered, NOT a fetch. Same conversations as chat_qa
 - Build: `python3 datagen/build_chatml.py` (SRC /work/aupai/data/corpus/chat), filters
   `chatml-render`, 2 shards, near_dedup False
+- Rerun 2026-09-08: rebuilt to a temp dir with the live code; 2/2 content shards
+  byte-identical (cmp), content-only fingerprint 0a213669868c62e1 both sides. The
+  stamp fingerprint moves on a rerun only because the holdout slice embeds the
+  holdout-rule version (0 held out both times); filters_fp moves with the filter
+  code. facts/corpus_supply.json#cs.reproducibility_table_0908
 - Note: chatml and chat_qa are two renders of ONE set of 160,414 conversations, ~4 epochs
   each, so the content is seen 8-10 times. fb ruled keep: the purchase is two formats
   in-distribution, and formats are cheap. See the role strings in scripts/write_mix_500m.py
@@ -530,6 +537,10 @@ guess answers it wrongly with no marker.
   six data/mix_scale_*.json name it and depend on its fingerprint
 - Build: `python3 datagen/build_chat_qa.py` (SRC /work/aupai/data/corpus/chat), filters
   `chat-original`, 2 shards, near_dedup False
+- Rerun 2026-09-08: rebuilt to a temp dir with the live code; 2/2 content shards
+  byte-identical (cmp), content-only fingerprint 4267b504fb972bbf both sides.
+  Same metadata-only drift as chatml.
+  facts/corpus_supply.json#cs.reproducibility_table_0908
 - Note: named chat_qa rather than chat because the LADDER_DIRS guard in
   scripts/write_mix_500m.py refuses a domain named after a frozen ladder directory
 
