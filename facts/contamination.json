@@ -1461,7 +1461,34 @@
     "predicate": "datagen.holdout.is_holdout on the whole document and then per line at <=500 chars, the same two passes build_corpus.reject_holdout uses"
    },
    "uncertainty": "a sample, not a census: 2,668-4,002 rows per domain against pools of 160,414 (chatml, chat_qa) and 851,965 (cot) documents. The predicate is exact-hash containment after normalisation, so it cannot see a paraphrased or reformatted holdout item.",
-   "boundary": "CONTROLS WERE REQUIRED TO MAKE THE ZERO READABLE AND THE FIRST ONE WAS WRONG. holdout.load() returns HASHES, so feeding one back to is_holdout returns False -- a 'positive control' built that way reports the guard broken while it is fine. The controls that stand take a real question string from a registry eval file (control_sft_text_heldout True, humaneval_164 True) with a negative control (plain Python source, False), and the script now exits rather than printing a number if either fails. Says nothing about the other five domains of the 30B mix, and nothing about the 21 SFT packs.",
+   "boundary": "CONTROLS WERE REQUIRED TO MAKE THE ZERO READABLE AND THE FIRST ONE WAS WRONG. holdout.load() returns HASHES, so feeding one back to is_holdout returns False -- a 'positive control' built that way reports the guard broken while it is fine. The controls that stand take a real question string from a registry eval file (control_sft_text_heldout True, humaneval_164 True) with a negative control (plain Python source, False), and the script now exits rather than printing a number if either fails. Says nothing about the other five domains of the 30B mix, and nothing about the 21 SFT packs. The fingerprint this entry quotes (26984613941ab5a2) is holdout._fingerprint, a hash of the registry files; a pack's holdout_fp stamp uses prepare_sft._fp_file, a hash of the hash file's content (ff6553a210b4f56a for the same set on 2026-09-08). Both correct, different questions -- do not cross-cite.",
+   "status": "measured"
+  },
+  {
+   "id": "cont.sft_clean_pack",
+   "value": {
+    "path": "/work/aupai/data/sft/sft_all_clean.pt (pod)",
+    "size_mb": 1548.8,
+    "tokens_m": 193.6,
+    "loss_tokens_m": 153.56,
+    "loss_share": "79.3%",
+    "examples": 498924,
+    "holdout_fp": "ff6553a210b4f56a",
+    "holdout_hits": "0 of 498,920 prompt spans hashed (census; 4 of the pack's 498,924 prompt spans were truncated at 4096-token row boundaries and not hashed, 8 all-pad runs excluded)",
+    "excluded_at_build": 14517,
+    "survival": "97.28% of 533,734 source rows",
+    "anneal_window_share": "6.45% of the 3B-token anneal window at one exposure"
+   },
+   "measured": "2026-09-08",
+   "source": "built on the pod by datagen/prepare_sft.py (guard at :141, is_holdout on the question string); build log self-reports excluded 14517, matching the independent dry-run; acceptance: all 498,924 prompt spans decoded (skip_special_tokens=False), ChatML wrapper stripped, qhash re-checked against the holdout set",
+   "config": {
+    "holdout_set": "data/eval/holdout_hashes.txt, 29,923 hashes, content fp ff6553a210b4f56a",
+    "controls": "positive = real math_test_500 instruction -> is_holdout True; negative = 'def f(x): return x+1' -> False; both required to pass before any number printed",
+    "guard": "prepare_sft.py:141, same predicate as the acceptance re-check",
+    "distribution_check": "excluded vs kept question-length distributions per source: same shape in all 10 sources (school_math_r1_zh kept median 39 / p10-90 27-61 vs excluded 31 / 24-55); 2.7% spread across all sources, no band emptied"
+   },
+   "uncertainty": "The 4 truncated spans' full questions were guarded before packing, so they are not an escape path. The census covers prompt spans; an answer string could in principle contain a holdout question -- unmeasured, same as every prior pack.",
+   "boundary": "THE 21 OLDER PACKS, WHY EACH IS UNUSABLE (inventory 2026-09-08, pod /work/aupai/data/sft/): (a) 17 unstamped, and sft_math.py refuses unstamped packs since 2026-09-03: arith_tr_{bpe,fone,se_fone,tag_fone} and arith_v1_fone (6.9-8.6M tok, pre-vocab: no vocab_id), proc_v1, proc_v1_replay, sft_all (192.3M, the former main pack -- its sources carry 500/500 math-500 questions verbatim), sft_all_contaminated (217.6M, the pre-carve original), sft_mix_{fone,k5vocab,plain}, sft_real_fone, sft_v8_fone, sft_v9_k5vocab, sft_v10_k5vocab, sft_v11_k5vocab (the last nine also pre-vocab: no vocab_id); (b) 4 stamped against SUPERSEDED sets, refused on stamp mismatch: control_sft_ours + control_sft_ours_heldout (fp 23427f4e7087a8b7; control_sft_ours is ALSO control-arm data by role), sft_all_family_clean + sft_all_v5 (fp 0fa8026b334b5909). Disposition of the 21 waits for the user to name the target (fb's no-delete ruling). NOT FOR THE 2026-09-08 anneal arms: those test quality-domain reweighting (N1/N2 noise floor, R reweight); adding SFT data moves two variables before the noise floor exists -- this pack is the fourth arm, designed after N1/N2/R have numbers. The 6.45% anneal-window share is single-exposure; MiniCPM's ablation mixed SFT data as a fraction of the anneal, not the whole.",
    "status": "measured"
   }
  ]
