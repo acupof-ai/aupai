@@ -903,7 +903,7 @@ open: nothing requires a probe that recomputes a quantity an artifact already re
 
 ### §279 (2026-09-08, R12)
 
-**Three assertions, each green, each certifying something its name did not describe. Running the suite cannot find any of them: the suite is green exactly when the assertion is wrong.**
+**Three lines, each green, each certifying something its name did not describe, plus a fourth written up under R11. Running the suite cannot find any of them: the suite is green exactly when the assertion is wrong.**
 
 This is not R2. R2 tests the wrong property and a known-answer world catches it. Here the world that would turn the assertion red is the world in which the code is CORRECT, so there is no input to supply.
 
@@ -916,12 +916,16 @@ This is not R2. R2 tests the wrong property and a known-answer world catches it.
 
 **Instance 2 -- the vocab-mismatched probe.** A run to answer "does the unstamped-pack gate refuse" printed `REFUSED: False`, read as "the guard is broken". The pack's `vocab_id` did not match the checkpoint's, so the assert at `sft_math.py:239` fired first -- before the holdout gate at `:265`. The process refused for a reason the probe was not asking about, and the readout collapsed both refusals into one boolean named for only one of them. The decisive run needed a pack that is unstamped AND vocab-matching, so the guard under test is the only one left standing; `sft_all.pt` supplied it and the gate refused with its own message. **The guard was intact; the test was broken.** General form: when several guards sit on one path, a boolean named for one of them means nothing unless every other guard is satisfied.
 
-**Instance 3 -- §278's probe** is the same shape one level up and is written up there.
+**Instance 3 -- an exclusion that has never been triggered.** `reachability.py`'s directory walk skips `.venv`, and that entry read as obviously correct in review. It had never once executed: no worktree in this repo contains a `.venv`, and the only tree that does is the integration tree, where it holds **13,128 `.py/.sh` against the 537 the repo owns** -- 96% of the paths a walk from the root would visit. The scanner had never been run there. So the line was green for the whole of its life for a reason unrelated to its correctness, and it inherited that greenness from a list I copied rather than from any judgement I made. **An exclusion that has never been triggered and a correct exclusion are the same source text**, and only the second one survives someone editing the list. The fix is not a better exclusion but a printed one: the run now states its tree, its population, and its exclusions, so a reader sees which of the two worlds the number was taken over.
+
+This one is filed here rather than under R14 deliberately, and the first filing was wrong. R14's signature is "the tool's own source appears as a source in its own output"; `.venv` never executing has nothing to do with the tool searching itself. It belongs with the other two above because the failure is identical: **it passed, and its passing carried no information.**
+
+**Instance 4 -- §278's probe** is the same shape one level up and is written up there.
 
 **The layer 4c added, and it is the one that survives being on alert for the others: a mutation run's own summary line can mislead.** A mutation reported one failing assertion. Two assertions were meant to cover that guard and only one did; the summary named the one that fired and said nothing about the one that did not, and "1 assertion caught it" was read as "the guard is covered". **The count of red assertions is not the identity of the red assertions.** Reading WHICH assertion fired, per mutant, is the only form that answers the question -- and it is why the mutation runs in this session report per-mutant which named assertion died, rather than a count.
 
 Cost: ~2h across the three, and one wrong report to a peer that a guard was broken when the test was.
-Evidence: `scripts/test_sft_holdout_gate.py` as landed; `sft_math.py:239` and `:265`; §278.
+Evidence: `scripts/test_sft_holdout_gate.py` as landed; `sft_math.py:239` and `:265`; `scripts/reachability.py`'s EXCLUDED_DIRS and the population line its output now prints; §278.
 open: no check can find an assertion anti-correlated with its own name in general. The machine-checkable half is per-suite: every mutation run must print the NAME of each assertion that fired, never only a count.
 
 ## R13. Information already present, but not in a form that can be treated as a conclusion
