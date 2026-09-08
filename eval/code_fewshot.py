@@ -73,13 +73,22 @@ def continuation_code(gen_ids, vals, tok, num_id, fone_on):
 
     generate_batch RETURNS ONLY THE GENERATED IDS -- its last statement slices
     x[i, lengths[i]:ends[i]] per row, and its docstring says "Returns generated ids".
-    Until
-    2026-09-08 this file sliced `ids[len(prompt):]` on top of that, cutting the
-    prompt off a SECOND time: 319-335 tokens at 3-shot, longer than any reference
-    solution in this set (26-71 tokens), so every continuation decoded to the empty
-    string and every number this tool ever produced was 0.0% at a 100% empty rate.
-    Found by 4c; eval/l1_fewshot.py:596 always decoded `ids` directly and is the
-    pattern followed here.
+    Until 2026-09-08 this file sliced `ids[len(prompt):]` on top of that, cutting the
+    prompt off a SECOND time. Found by 4c; eval/l1_fewshot.py always decoded `ids`
+    directly and is the pattern followed here.
+
+    WHAT THAT DID TO THE RUNS ALREADY PUBLISHED, read off the surviving predictions on
+    the pod (data/eval/preds_code_fewshot{,_0shot,_1shot}.jsonl, 497 rows each) rather
+    than derived: it BEHEADED the generation, it did not empty it. The runs used
+    max_new=512 with rep_stop off, so decoding ran to 512 tokens and subtracting a
+    319-335 token prompt still left 177-193. The stored 3-shot generation has a median
+    of 124 tokens and starts mid-statement -- the first row begins `x % i == 0:` --
+    and 460 of 497 fail ast.parse (0-shot 430, 1-shot 440). The empty-continuation rate
+    was 2.2% at 0-shot and 1.6% at 3-shot, exactly as the logs recorded.
+
+    That is the dangerous shape: 0/497 with almost everything a syntax error reads
+    exactly like "the model cannot write code", which is the conclusion those runs drew.
+    An empty string would have been noticed in a day.
 
     Split out of main()'s batch loop so --selfcheck can drive it. The defect
     survived because the decode lived inline where no case could reach it, and it
@@ -119,15 +128,19 @@ def selfcheck():
     #
     # continuation_code is fed exactly what generate_batch returns: the tokens of the
     # continuation, prompt already stripped by generate_batch. Six reference solutions
-    # round-tripped through the real tokenizer must come back byte-identical, and the
-    # empty rate must be 0.
+    # round-tripped through the real tokenizer must come back byte-identical.
     #
     # Under the defect this file carried until 2026-09-08 -- a second
     # `ids[len(prompt):]` on top of generate_batch's own slice -- this same case reads
-    # 0/6 with a 100% empty rate, because a 3-shot prompt is 319-335 tokens and no
-    # reference solution here exceeds 71. So it needs no separate broken-world fixture:
-    # the numbers it prints ARE the difference between the two versions, and 6/6 is
-    # unreachable for the code that was here before.
+    # 0/6. So it needs no separate broken-world fixture: the number it prints IS the
+    # difference between the two versions, and 6/6 is unreachable for the old code.
+    #
+    # ROUND TRIP, NOT "NON-EMPTY", and that distinction is the whole case. The empty
+    # rate is reported but is NOT the criterion: on the real published runs the defect
+    # beheaded rather than emptied (max_new=512, so subtracting a 335-token prompt still
+    # left ~180), and 460 of 497 stored 3-shot generations fail ast.parse while the
+    # empty rate stayed at 1.6%. A non-empty assertion passes on every one of those rows,
+    # and non-empty is exactly what the caller reads as success.
     #
     # It runs BEFORE the two execution cases and needs no sandbox and no GPU, so it is
     # a defence that works on a laptop. The defect survived precisely because the decode
