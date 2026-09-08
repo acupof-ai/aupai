@@ -1,49 +1,57 @@
-# Controller board (fb) — updated 2026-09-07T22:20Z (dates in this file corrected 2026-09-08 00:3xZ: the 09-07 evening had been written as 09-08), rewritten every tick
+# Controller board (fb) — updated 2026-09-08T04:50Z, rewritten every tick
 
-Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in the process. The memory-layers program (2026-09-05) is closed: all three arms stopped on readout 4 (key-usage collapse), facts in facts/memory_layers.json, every entry from a STOPPED arm.
+Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in the process. Memory-layers program (2026-09-05) closed; facts in facts/memory_layers.json.
 
-## 1.5b-a0.2b-e48_30b: resume 1 (prereg runs/prereg.jsonl#moe48_30b_0907, amendments 1-12)
-
-| item | owner | % | delivered | quality / evidence | next gate |
-|---|---|---|---|---|---|
-| Resume 1 on cards 1,2,3,4,5,7 | b0 | running | launched 18:33Z 09-07 at step 22500; step ~27,000/38,146 at 22:20Z; 2.83 s/step, 45-46K tok/s/gpu, peak 44.1 GiB; log runs/1.5b-a0.2b-e48_30b_resume1.log | de measured 1,179 steps/h over the segment; ends ~07:1xZ 09-08 | stop trigger: two consecutive vals > 1.91 (amendment 2), max so far 1.846 |
-| Val rise after the cot/chat cap | b0 | 100 | amendments 9-12; runs/b0_domain_loss_resume1.jsonl, runs/b0_domain_loss_cap.jsonl (main 99f5f226) | registered discriminator FLATTENS: cot +0.0093/1k vs +0.0729 window 1 (|d|/se 4.70); chatml 0.17x, chat_qa 0.19x; control floor flat | cap on cot/chatml/chat_qa at 4.0 epochs stays for resume 1; fresh cot supply is a resume-2 prereg question (user decision) |
-| MFU print 202-279% (dense-priced denominator) | de | 90 | PR #40 approved by 3b (review row 80993127); latent 3-D short_conv false-match filed de-74 | six mutants red | merges at the freeze lift ~07:50Z, order #24, #23, #40, de-74; merger pushes the pod |
-| Resume 2 corpus: code_rp1t_dd09_full | 3b | 100 | 9,837,521,903 tok, 5,537,807 docs, 387 shards, fp 6bfa756cc1b7a965 (PR #39) | zero new bytes, hardlink union | user decision: flip CODE_RP1T_DOMAIN to dd09_full for resume 2 |
-| Stale row code_rp1t_fetch8_0907 | fb | 100 | closed ok 20:1xZ: 8/8 files, 19 GB, b2v2 4,891,752,636 tok | it had blocked every pre-commit hook for 40 h | 3b may amend |
-
-## Cards and guard
+## 1.5b-a0.2b-e48_30b: resume 1 — STOPPED at step 34000 by user order (04:03Z)
 
 | item | owner | % | delivered | quality / evidence | next gate |
 |---|---|---|---|---|---|
-| Card guard was inert (theirs=[]) | b0 | 100 | PR #45 f145ce4c; live file ours [1,2,3,4,5,7] theirs [0,6]; pod `harness launch --cards 0` RC=2 | tilerl-0a case #45#issuecomment-5575429861, four mutants incl. the original regex | — |
-| Card 6 lend for the cap read | fb | 100 | grant note 21:30-21:45Z (main 38c8e935), used 21:32-21:34Z 09-07, reverted c58e693d, verified by tilerl-0a on main and pod | guard exercised end to end on a real job | — |
-| Grants carry an expiry the classifier reads | b0 | 0 | task b0-32 | rulings: theirs_baseline pinned {0,6} in the check citing the 09-06 order; agreement property (baseline-theirs = theirs or valid lend; baseline-ours = not theirs); not-yet-open lend reads theirs; unparseable expiry refuses; now= injectable; paired mutations | reviewer tilerl-0a; after resume 1 |
-| AGENTS.md:50 said all 8 cards are ours | fb | 90 | PR #53 (one line + ledger rows), approved by tilerl-0a, MERGEABLE at 3bd3cf15 | tilerl-0a verified the four claims against artifacts; old line from 08471eec superseded not corrected | merge + pod push by tilerl-0a |
-| AGENTS.md:52-56 lane doctrine for a six-card world | fb | 0 | task fb-7 | — | after resume 1, reviewer 44 |
+| Stop at .step34000 | b0 | 100 | save 04:01Z 6,059,092,240 B, torch.load step=34000; TERM then KILL by exact PID, eight cards 0 MiB; row re-closed ok (monitor had written fail/vanished; exp.py logged the reclassification); pinned ckpt_1.5b-a0.2b-e48_26.7b_0908.pt (same inode) | val 1.824@34000, run min 1.812@22600, 26.74B tok; never warmed down (warmdown_start 34332) | — |
+| Endpoint score_matrix on card 1 | b0 | 90 | runs/b0_score_matrix_final_0908.log: lambada acc 0.3221 (±0.0128), nll/byte 0.675; humaneval gold bpb mean 0.561, byte-weighted 0.433; domain_bpb mean 0.359 (rp1t 0.193, starcoder 0.229, textbook 0.240, cot 0.247, math 0.338, chatml 0.402, chat_qa 0.416, en_c4 0.521, zh_web 0.643) | vs 8B .step9000 (full-lr, like-for-like): lambada 0.2354→0.3221, humaneval 0.593→0.561 / 0.472→0.433. vs own step20000 domain_bpb: code/math/textbook/en/zh improve 0.006-0.010; cot 0.217→0.247, chatml 0.317→0.402, chat_qa 0.332→0.416 WORSE after the 4.0-epoch cap | generative metrics still running; 8B .step9000 domain_bpb rerun next on the same card; row to runs/score_matrix.jsonl |
+| Resume-1 mix in the tree | b0 | 50 | PR #65 open, md5 c12ba979 both sides; not regenerable (.step22500 deleted, deriver refuses to guess a cursor) | — | reviewer 44 |
+| Full report | 98 | 50 | docs/lessons/moe48_30b_0907_report.md on branch 98 (3aa21736); score cells pending | fact_refs_resolve green | PR after scores; reviewer 44 |
+| Excursion 26-29k negatives (composition, epoch wrap, repetition) | b0 | 0 | exist only as messages | b0 declined to back-file prereg amendments (correct) | rows to runs/review.jsonl tonight |
 
-## Repository mechanics (tonight's incidents)
+## v2 program (user order 2026-09-08 ~03:4xZ: loop + sparse MoE + CSA/HCA + partial RoPE, KDA out)
 
 | item | owner | % | delivered | quality / evidence | next gate |
 |---|---|---|---|---|---|
-| main checked out in aupai-b0; hand write of refs/heads/main | b0 / de | 100 | PR #52 main_in_no_worktree (WARN); PR #54 records the pair 484a9528 -> b8b39618; b0's commit recovered via merge_main b0 (99f5f226) | de: check FAIL on main, WARN at PR head, broken world still FAILs; b0 branch created in the same second as the reset (a recovered loss) | de: behind-main hook refuses a commit when HEAD is main and main != origin/main (separate PR) |
-| GitHub merge ignores merge=union | fb | 100 | friction row 22:1xZ; fix: code PRs from a branch with no ledger files | tilerl-0a three-way without attributes: tasks.jsonl 1 marker | — |
-| Hook runs the committing worktree's harness.py | de | 0 | b0 friction row | a fix on main does nothing for a branch until merged there | de owns |
-| runs/ scripts have no route to the pod | 44 | 0 | task #45; friction row | restamp ran as inline heredoc | one-off pod scripts live under scripts/ |
-| pod/local ledger classifier: monitor rows | de | 100 | PR #47 f4cacde6 monitor_state_only + _MONITOR_FAILED split | 44 two rounds, four wiring mutants red | — |
-| pod ledger rows home | de | 100 | de-72, 23 rows; 5 differing keys are process-state vs measurement | — | — |
-| doc_flags_parse check | 3b | 100 | PR #41 bfb5e9ee, 308/428 | broken world was green twice; _tracked_py empty-git fix | task #90 subparser walking |
-| DeepSeek-V4 facts + loop design doc | 44 | 100 | PR #44 67d32d96: facts/deepseek_v4.json (9), docs/lessons/next_version_v4_loop.md (open) | tilerl-48 two rounds, 7 numeric errors caught in round one | user: next-version architecture after resume 1 |
-| cot_open_thoughts restamp | 44 | 100 | PR #43 7aa4c0b2, tokens_kept 776,084,377 | — | — |
-| Unified token counter | fb/de | 100 | PR #36; eight cs.* facts restated | — | — |
+| Spec + prereg | 44 | 30 | PR #66 open | rulings: loop builds by user order; repo.loop_not_adopted_equal_compute stays measured with a boundary line; prereg names what retires looping (equal-FLOP arm loses on val nats and humaneval bpb) | review #67 first; cite tokenizer_eval only after it |
+| CSA-with-SWA attention | b0 | 0 | task b0-35 | — | after score_matrix |
+| Loop + schedule in train.py | de | 5 | flag plumbing started 04:1xZ; no model.py until 44's spec | numerics-parity gate before any schedule change (tilerl-0a ask, granted) | #24 merged bf2cd0ef; #23 open; de-74 after #40 (merged 9e69ea34) |
+| Data / mix | e1 | 60 | recounts: math_owm_stage2 6,528,546,115 (+0.234% vs extrapolated), textbook_30b unchanged (e1 d5866f7d); tokenizer_eval: round-trip pass, hanzi 0.9890 (after #67), ref fertility 1.4286; never-used gate not decidable (seed range 0.0042 vs threshold 0.01) → e1-52 | ruling: v2 mix = resume-1 weights byte-for-byte except math_owm supply restated; open_thoughts is a later arm | PR #67 (tokenizer_report per-domain sampling) reviewer 44; facts/tokenizer.json after #67 |
+| Deriver: shrink branch discards cursor; cursor_used_rows unread | 3b | 10 | task #91: refuse --total<default with --resume-cursor; mix records derived_against={row_cursor,srcfp,seed}; launcher refuses a differing triple; stage2 writer too | 24 committed mixes scanned, none self-contradictory | one PR, reviewer de; pod run arbitrates the reading |
+| Compat tests per module | 3b | 0 | — | — | in each module PR |
+| Reviewer | tilerl-0a | — | — | — | — |
+
+## Cards
+
+| item | state |
+|---|---|
+| 0, 6 | tileRL (user order 2026-09-06) |
+| 1 | lane: GRANTED 04:07Z → b0 score_matrix + 8B domain_bpb, one job at a time; released when scores land |
+| 2,3,4,5,7 | block held for v2's first launch; no launch before 44's prereg row and #67 |
+
+## Repository mechanics
+
+| item | owner | % | delivered | next gate |
+|---|---|---|---|---|
+| Grants carry an expiry | b0 | 100 | PRs #58, #61 | — |
+| coresident_cache_refusal dead world | b0 | 100 | PR #64 | — |
+| Approval form (PR comment artifact:/case: + review row) | fb | 100 | PR #57 | — |
+| AGENTS.md:50 card split; board in ledger set; dates corrected | fb | 100 | PRs #53, #60 | — |
+| GitHub push from this laptop | fb | — | 04:2xZ: connect timeout 75 s to github.com, then ok; merge_main REFUSING push twice, retried by hand | — |
+| Merge queue reviews: #24 no row, #23 no row, #40 by 3b | 3b | 50 | ruled: 3b merges #40 (done 9e69ea34), reviews+merges #24 (done bf2cd0ef) and #23 | #23 |
+| Hook runs the committing worktree's harness.py | de | 0 | friction row | de |
+| runs/ scripts have no route to the pod | 44 | 0 | task #45 | — |
 
 ## Open user decisions
 
-1. cot/chatml/chat_qa 4.0-epoch cap: keep for resume 1 (controller recommendation, forgetting saturates: cot rate 1/8 of window 1); fresh cot supply for resume 2?
-2. Resume 2: flip CODE_RP1T_DOMAIN to code_rp1t_dd09_full (9.84B; starcoder share of code rows 95.4% -> 58.4%)?
-3. /mnt/data02/aupai_backup holds 99 GB of backed-up checkpoints; a backup is a copy, not a move, and facts cite the files. Not deleted.
-4. Next version: loop (SMELT) + sparse MoE + CSA-with-SWA + HCA (DeepSeek-V4); NoPE->RoPE breaks checkpoint compatibility. Design doc open.
+1. 30B composition: code+math at ≤1.0 epoch takes 83.8% of 30B (dd09_full 9.84B + starcoder 8.79B + math 6.51B), leaving 16.2% for en/textbook/zh/cot/chat vs 32.9% tonight. Halve those, grow the budget, or cap code below supply. Not needed for v2 (keeps tonight's weights).
+2. cot/chat 4.0-epoch cap: endpoint domain_bpb says cot +0.030, chatml +0.085, chat_qa +0.084 worse than step 20000 while every other domain improved. Keep for v2 (same mix as control) or lift in the open_thoughts arm.
+3. Resume 2 / dd09_full flip: moot for the stopped run; part of decision 1.
+4. /mnt/data02/aupai_backup 99 GB of checkpoints: not deleted.
 
 ## Standing rules restated
 
-Cards 0 and 6 are tileRL's (user order 2026-09-06); lends are a GRANTED note with a window and are reverted by hand until b0-32. train.py/model.py/hooks frozen while the block is held; window opens ~07:1xZ 09-08. Code goes through a PR from a branch holding no ledger files; ledger rows through merge_main. No attribution trailers; commit subjects end with the session marker.
+Cards 0 and 6 are tileRL's; lends are a GRANTED note with a window. Code through a PR from a branch holding no ledger files; ledger rows through merge_main. Approval = PR comment with artifact:/case: plus review.jsonl row; the reviewer merges and pushes the pod. No attribution trailers; commit subjects end with the session marker.
