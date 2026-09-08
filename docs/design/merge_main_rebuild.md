@@ -1,3 +1,9 @@
+---
+question: How does merge_main integrate a reviewed branch without a shared mutable integration tree?
+status: recorded
+source: scripts/merge_main.sh; this design; 4c's ruling 2026-09-05 (cutover after E1's step-30 readout)
+---
+
 # merge_main rebuild: integrate in your own worktree, advance main by CAS
 
 Status: design, verified on a fixture. Cutover after E1's step-30 readout (4c's ruling
