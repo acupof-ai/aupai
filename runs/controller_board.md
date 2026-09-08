@@ -14,6 +14,20 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 | Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
 | Never delete without a named target | every removal names its files and runs each first |
 
+## Queue state, 2026-09-08 11:30Z
+
+19 PRs open, all opened today, CI green on every one. **16 of them carry no review at all.** Production has outrun merging; the bottleneck is review, not work. Reviewers assigned by roster, and reviewing does not count against the two-item cap.
+
+| reviewer | PRs | note |
+|---|---|---|
+| 44 | #99 (ready, merging), #85 | #85 waits behind #81 and #96 |
+| b0 | #88 #93 (rows already on main, mergeable now), #95 #97 #103 | |
+| tilerl | #81 #96 #94 #102 #80 | |
+| de | #75 #83 #89 #98 | |
+| e1 | #92 #100 #101 | |
+
+**Merge order is a hard constraint for three of them: #81 (§276-278) → #96 (§279-282) → #85 (§283).** Each branch numbered from main's maximum at the time; whichever jumps the queue hits `shapes_table_covers_doc`'s duplicate refusal at `harness.py:2390`.
+
 ## Critical path
 
 **de's shared-config guard onto main.** Committed locally on `de-agents-clean` (`f223e560` + a `wip:` commit), not pushed, sharing a branch with PR #85. The hook everyone executes is the integration tree's symlink, so a commit that has not reached main is not running anywhere: e1 has been refused nine times, naming eight different innocent files. Split onto a branch cut from main, squash the wip (it was committed with `--no-verify`, so the hook never ran on it), open a PR, 44 reviews.
