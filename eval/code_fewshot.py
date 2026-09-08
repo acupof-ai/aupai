@@ -77,14 +77,21 @@ def continuation_code(gen_ids, vals, tok, num_id, fone_on):
     prompt off a SECOND time. Found by 4c; eval/l1_fewshot.py always decoded `ids`
     directly and is the pattern followed here.
 
-    WHAT THAT DID TO THE RUNS ALREADY PUBLISHED, read off the surviving predictions on
-    the pod (data/eval/preds_code_fewshot{,_0shot,_1shot}.jsonl, 497 rows each) rather
-    than derived: it BEHEADED the generation, it did not empty it. The runs used
-    max_new=512 with rep_stop off, so decoding ran to 512 tokens and subtracting a
-    319-335 token prompt still left 177-193. The stored 3-shot generation has a median
-    of 124 tokens and starts mid-statement -- the first row begins `x % i == 0:` --
-    and 460 of 497 fail ast.parse (0-shot 430, 1-shot 440). The empty-continuation rate
-    was 2.2% at 0-shot and 1.6% at 3-shot, exactly as the logs recorded.
+    WHAT THAT DID TO THE RUNS ALREADY PUBLISHED, and what the surviving artifacts can
+    and cannot establish. The predictions on the pod
+    (data/eval/preds_code_fewshot{,_0shot,_1shot}.jsonl, 497 rows each) were written as
+    `cont[-300:]` -- A TAIL WINDOW, so they are not the cut continuation and cannot be
+    read as one. 491 of 497 sit at exactly the 300-char cap, and a control on a file
+    written by another tool shows the window ALONE moves parseability, so any statement
+    about mid-statement starts or parse rates from these files is confounded.
+
+    What they do establish: NOT EMPTY. An empty continuation stores as empty, and 0 of
+    497 are, in every arm -- matching the logs' own 2.2% at 0-shot and "non-empty 98.4%"
+    at 3-shot. So the runs did NOT decode to the empty string.
+
+    What the arithmetic establishes: the runs used max_new=512 with rep_stop off, and a
+    3-shot prompt is 319-335 tokens, so the cut removed roughly the first two thirds of
+    what was generated and scoring saw the tail. Head absent, tail present.
 
     That is the dangerous shape: 0/497 with almost everything a syntax error reads
     exactly like "the model cannot write code", which is the conclusion those runs drew.
@@ -138,8 +145,8 @@ def selfcheck():
     # ROUND TRIP, NOT "NON-EMPTY", and that distinction is the whole case. The empty
     # rate is reported but is NOT the criterion: on the real published runs the defect
     # beheaded rather than emptied (max_new=512, so subtracting a 335-token prompt still
-    # left ~180), and 460 of 497 stored 3-shot generations fail ast.parse while the
-    # empty rate stayed at 1.6%. A non-empty assertion passes on every one of those rows,
+    # left ~180 tokens), and 0 of 497 stored continuations are empty in any arm. A
+    # non-empty assertion passes on every one of those rows,
     # and non-empty is exactly what the caller reads as success.
     #
     # It runs BEFORE the two execution cases and needs no sandbox and no GPU, so it is
