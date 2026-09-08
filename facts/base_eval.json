@@ -448,7 +448,8 @@
     "demo_gain_prediction": "higher baseline present-rate => smaller demo gain; math dose-response 25.4->53.5->63.6 is the evidence, code 97.8-100% ceiling-pinned (no range, cannot confirm/falsify); next test needs a 30-70% baseline domain"
    },
    "uncertainty": "single greedy run per prompt, no seed variance estimated; the 1/497 correct item is within noise of zero",
-   "status": "measured"
+   "status": "measured",
+   "boundary": "A RERUN TODAY READS LOWER THAN THESE NUMBERS, AND THE MODEL IS NOT THE REASON. Measured 2026-08-30, before 8ab15148 (2026-09-03) put the ASCII period into eval/l1_fewshot.py's ANS_RE terminator class, where it is also the decimal point: the non-greedy capture stopped inside the number, so a verbatim-correct decimal answer scored 0.0. The values here predate the regression and stand as recorded; 4c found it and it is fixed 2026-09-08 (e1-67), with the two-language decimal case in eval/test_l1_fewshot_2x2.py. Any run between those two dates under-counts correctness by up to the decimal share of the gold set, 23/500 = 4.6% of math_test_500 times the fraction of generations that reach the ANS_RE fallback rather than emitting \\boxed. THE EXPOSURE IS ONE-DIRECTIONAL AND HITS ONE METRIC ONLY: answer_present (0.254 / 0.535 / 0.636 here) counts the marker, not the extracted value, so it does not move. Correctness falls while answer-present holds, which reads as 'the model finds the form but not the answer' -- a plausible sentence about a base model, and the reason this survived five days. Without this note the next rerun's mismatch is attributable to the checkpoint."
   },
   {
    "id": "be.degeneration_rate",
