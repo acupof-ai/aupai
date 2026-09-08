@@ -57,7 +57,24 @@ N_DEMOS = 3  # the pinned default only; --demos sizes the pool (see split_rows)
 # generation that answers "The answer is: 42" as having produced NO answer -- scoring the
 # --demo_lang en arm lower for a reason that is purely the scorer's vocabulary. The measured
 # quantity would then be "did the model answer in Chinese", reported as "did the model answer".
-ANS_RE = re.compile(r"(?:答案是|[Tt]he answer is)[:：]?\s*(.+?)(?:[。.\n]|$)")
+#
+# THE ASCII PERIOD IS ALSO THE DECIMAL POINT, so it terminates only where it is not between
+# digits. The terminator class was `[。.\n]` from 8ab15148 (the commit that added the English
+# marker) until 2026-09-08, and the non-greedy capture stopped at the first `.`: `答案是 3.5。`
+# yielded "3", which reward_fn scores 0.0 against a 3.5 gold while answer_marker still counts
+# the line as answer-present. Correctness under-counts, answer-present does not, so the two
+# metrics move in opposite directions -- and under-counting reads as "the model is not there
+# yet", which is why it survived five days. Bound: 23/500 decimal golds in math_test_500.
+#
+# NOT `[。\n]`, the form eval/math_zh.py:35 uses. That file is Chinese-only and never had to
+# terminate an English sentence, so copying it drops the English period entirely and the
+# capture runs past the answer: `The answer is 1.5. Next sentence.` takes the whole tail.
+# Measured over 12 cases scored end to end: `[。.\n]` 4, `[。\n]` 11, this form 12. The lone
+# difference is that trailing-sentence case -- normalize_answer's `rstrip("。.,，")` at
+# algorithms/rlvr_reward.py:46 already absorbs a bare trailing dot, so the two forms agree
+# everywhere else. This does not lean on that rstrip: the terminator means the same thing in
+# both languages here, rather than being correct only because another module cleans up after it.
+ANS_RE = re.compile(r"(?:答案是|[Tt]he answer is)[:：]?\s*(.+?)(?:[。\n]|(?<!\d)\.|\.(?!\d)|$)")
 
 
 EX_OPEN = "题目："  # kept: the zh opener, still referenced by the model_turn docstring's

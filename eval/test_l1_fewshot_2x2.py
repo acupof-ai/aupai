@@ -87,6 +87,39 @@ def main():
         if L.score(gen, gold, lang) != 0.0:
             fails.append(f"score({gen!r}, lang={lang}) != 0.0 -- a wrong answer marked correct")
 
+    # 4b. A DECIMAL ANSWER SURVIVES THE MARKER, in both languages. The ASCII period is also the
+    #     decimal point, and from 8ab15148 until 2026-09-08 it was in ANS_RE's terminator class,
+    #     so the non-greedy capture stopped inside the number: `答案是 3.5。` scored as "3".
+    #
+    #     ASSERT score(), NOT THE CAPTURED STRING. The two disagree, and the string is the more
+    #     tempting thing to look at because a bad capture is visible on sight. Measured
+    #     2026-09-08: on captures, `[。\n]` fails 2 of 12 (it takes `'3.5.'` and `'42.'`) while
+    #     the live form passes 12 -- a difference that reads as 100 points. On scores the two
+    #     differ on ONE case, because normalize_answer rstrips a trailing dot
+    #     (algorithms/rlvr_reward.py:46). A capture-string assertion here would have reported a
+    #     defect five times larger than the one that exists.
+    #
+    #     THE en ROWS ARE THE LOAD-BEARING HALF. Chinese passes under `[。\n]` too, since 。 was
+    #     never the problem, so a Chinese-only version of this block goes 10/10 against a form
+    #     that still truncates after an English sentence.
+    for gen, gold_d, lang, want in (
+            ("答案是 3.5。", "\\boxed{3.5}", "zh", 1.0),
+            ("答案是 3.5", "\\boxed{3.5}", "zh", 1.0),
+            ("答案是 -0.25。", "\\boxed{-0.25}", "zh", 1.0),
+            ("答案是 3.5。后面还有话。", "\\boxed{3.5}", "zh", 1.0),
+            ("答案是 12。", "\\boxed{12}", "zh", 1.0),
+            ("The answer is 3.5.", "\\boxed{3.5}", "en", 1.0),
+            ("The answer is 3.5", "\\boxed{3.5}", "en", 1.0),
+            ("The answer is 1.5. Next sentence.", "\\boxed{1.5}", "en", 1.0),
+            ("The answer is 42.", "\\boxed{42}", "en", 1.0),
+            ("The answer is 42", "\\boxed{42}", "en", 1.0),
+            # Negative controls: the decimal must still have to be RIGHT.
+            ("答案是 3.6。", "\\boxed{3.5}", "zh", 0.0),
+            ("The answer is 3.6.", "\\boxed{3.5}", "en", 0.0)):
+        if L.score(gen, gold_d, lang) != want:
+            fails.append(f"score({gen!r}, gold={gold_d!r}, lang={lang}) != {want} -- the answer "
+                         f"marker truncated or mis-scored a decimal")
+
     # 5. THE PRESENT-RATE TEST IS DERIVED FROM ANS_RE, NOT RESTATED. The two were separately
     #    hardcoded to 答案是 and drifted apart the moment English was added -- two lines apart
     #    in the same file. Grepped because the counter lives inside main()'s batch loop.
