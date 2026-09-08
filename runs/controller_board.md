@@ -4,7 +4,7 @@ User order, this supersedes every plan below it: hand the cards back, then clean
 
 ## Cards
 
-All eight released. No training, no eval, no probe, no launch. `runs/card_assignment.json` says so on every card. b0's `domain_bpb` re-score is the only GPU job queued and it waits with the rest.
+aupai's six cards (1,2,3,4,5,7) released. No aupai training, eval, probe or launch. Cards 0 and 6 are tileRL's by user order 2026-09-06 and this order never reached them. `runs/card_assignment.json` says so on every card. b0's `domain_bpb` re-score is the only GPU job queued and it waits with the rest.
 
 ## Cleanup program — one track per session
 
