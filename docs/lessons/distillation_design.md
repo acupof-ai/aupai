@@ -52,12 +52,24 @@ instruction sets are already prompt-shaped and already cover the reasoning regis
 **Why not eval prompts:** math-500 and code-500 are held-out. Training on them
 contaminates the only falsification instrument we have.
 
-**Acceptance filter:** math — answer string match against the gold (gsm8k has golds;
-openo1's instructions need a gold extracted from its own output, which is circular —
-flag: openo1 acceptance needs either a verifier or a second-checker pass, decided in the
-pilot). code — test execution, once the mining lane supplies tests. The acceptance rate
-is measured on the first 1,000 generations before any scaling; it decides the dataset
-size, not an assumption.
+**Acceptance filter — resolved 2026-09-08 (4c's question, measured the same day).**
+Both seed files carry only `instruction`/`output` and no independent golds (openo1 keys =
+`[instruction, output]`; gsm8k keys = `[instruction, output, source]`). Filtering new
+generations against answers extracted from the seed file's own output is circular: it
+measures agreement with the original teacher, not correctness, and a wrong original answer
+inverts the filter. The filter is therefore per-domain, and every path is independent of
+the seed file's output:
+
+| domain | filter | independence |
+|---|---|---|
+| gsm8k (7,471) | answer match against the ORIGINAL GSM8K golds (`#### N`), re-fetched with the dataset — the golds our file dropped | fully independent |
+| openo1-math | two-stage: (a) symbolic/numeric re-derivation where the problem permits (arithmetic, determinate algebra); (b) consensus — keep generations where ≥3 of K=4 agree — for the rest. Consensus measures confidence, not correctness; the acceptance rate is labelled a consensus rate | independent of the original output |
+| code | execute the teacher's code against the tests the problem embeds (openo1 code problems carry unittest assertions in the instruction) | execution is independent of any model output |
+
+The filter may NOT extract an answer from the seed file's output and call a match
+"correct". The pilot measures each filter's acceptance rate separately; a domain whose
+rate is too low to fill its share drops out, and the dataset composition follows the
+measured rates.
 
 ## 3. Teacher generation cost
 
