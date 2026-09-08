@@ -17,6 +17,21 @@ from those numbers -- trace the 6, stay silent on the other 38.
 
 Each case below asserts a property with its own negative control where the passing state
 could be reached by the machinery not running.
+
+NO TWO ASSERTIONS HERE ARE REDUNDANT, and that is measured rather than believed. Nine
+mutants were run and each assertion's kill set recorded; all eleven sets are DISTINCT, so
+the cases are facets of one property, not copies of it. Four are killed by exactly one
+mutant each and are the only thing standing between that mutant and a green suite:
+
+    the SAME change written through write_records passes   <- M1 (writer never traces)
+    a rewrite that only ADDS a field leaves no trace       <- M3 (traces any change)
+    the SKIP names the pod                                 <- M4 (pod branch removed)
+    _supersede_entry does not treat a bool as a number     <- M7 (bools counted)
+
+One mutant killing many assertions is not evidence of duplication: M8 (descend one dict
+level only) kills six, because almost every case here uses a nested metrics dict, so
+breaking descent breaks the input to all of them. The signature that WOULD mean duplication
+is two assertions with the same kill set, and there are none.
 """
 import json
 import os
@@ -182,6 +197,12 @@ got = set((ent or {}).get("changed", {}))
 # .s is a string -- not tracked, by design. .same did not move. .gone and .added exist on
 # one side only, so there is no old-vs-new pair to record. .flag is a bool, excluded.
 want = {".f", ".deep.a.b", ".lst[1]"}
+# EXACT SET, NOT `changed != {}`, AND THAT IS MEASURED. Mutating _supersede_entry four ways
+# (skip list elements, count bools, descend one dict level only, report string changes) kills
+# all four against this line. A "non-empty" assertion survives ALL FOUR: M6 under-reports and
+# M9 over-reports, and both leave `changed` non-empty. So the exact set is not a strictness
+# preference -- it is the boundary those four mutants fall on, and a boundary is something
+# that can be killed.
 check("_supersede_entry reports EXACTLY the moved numeric leaves",
       got == want,
       f"got {sorted(got)}, want {sorted(want)} -- a missed leaf class is missed by the "
