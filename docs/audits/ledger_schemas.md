@@ -1,7 +1,7 @@
 ---
 question: For each ledger under runs/, what is every field, which values are legal, and what is the row's primary key?
 status: measured
-source: read of the 14 multi-commit runs/*.jsonl on main, 2026-09-08; population from git, field presence and value domains computed per file, not transcribed
+source: read of the 14 top-level multi-commit runs/*.jsonl on main, 2026-09-08; population from git, field presence and value domains computed per file, not transcribed
 ---
 
 # The ledgers under `runs/`
@@ -12,15 +12,26 @@ Written for someone who has not seen this repository. Each ledger is one JSON ob
 
 ## Which files this covers, and by what criterion
 
-`runs/` holds **32 tracked top-level `.jsonl`** (`git ls-tree --name-only HEAD runs/`; a `git ls-files 'runs/*.jsonl'` pathspec answers 54 because git's `*` crosses directories and a shell glob does not — the extra 22 are under `runs/audit_0904/`).
+`runs/` holds **32 tracked top-level `.jsonl`** (`git ls-tree --name-only HEAD runs/`). The same-looking `git ls-files 'runs/*.jsonl'` answers **54**, because a git pathspec's `*` crosses directory boundaries and a shell glob's does not; the extra 22 sit under five subdirectories — `n7c_prefix` 6, and 4 each in `audit_0904`, `l1_2x2`, `n7_2x2`, `n7c_2x2`. Two evaluators, one string, two predicates, and nothing in the output says which one ran.
 
-The criterion is **appended by more than one commit**, taken from git rather than from a remembered list: **14 files**. The other 18 are single-commit dumps written by one run and never touched again — `b0_final_he_EC.preds.jsonl`, `self_repeat_dump.jsonl` and the like. They are per-experiment data, not coordination ledgers, and a merge cannot damage a file nobody appends to twice.
+The criterion is a conjunction, and both halves are load-bearing: **top-level, and appended by more than one commit** — taken from git rather than from a remembered list. **14 files.**
+
+The 18 excluded by the second clause are single-commit dumps written by one run and never touched again (`b0_final_he_EC.preds.jsonl`, `self_repeat_dump.jsonl`); a merge cannot damage a file nobody appends to twice. **Four files are excluded by the first clause alone** and would otherwise qualify: `runs/audit_0904/rulings.jsonl` (18 commits), `findings.jsonl` (14), `cleanup.jsonl` (11), `cleanup_paircheck_44.jsonl` (4). They are the 0904 audit's own ledgers, live while that audit is open, read by `scripts/audit_render.py` rather than by the coordination tooling. Excluding them is a scope choice, not a property of the files.
 
 Two criteria that look equivalent and are not. **`.gitattributes` has a merge driver for 14 paths, and it is a different 14**: `artifact_refs.jsonl` and `policy_metrics.jsonl` are appended by several commits and have no driver at all, so the opening claim "merged by union" was false for 2 of the files this document covers. `novel_ops_4way.jsonl`, `memory_diag.jsonl` and `moe_diag.jsonl` have `merge=union` while only the last is multi-commit. The git-derived criterion is the one used below because it names what actually happens to the file.
 
 ## Why the primary key matters more than it looks
 
-Union merge keeps every line either side has and drops exact duplicates. It has no idea what a row *is*. So for a ledger with no stable key, two branches can each append a row describing the same event with one field different, and the merge keeps both, silently, with nothing reporting it.
+Union merge keeps every line either side has. It has no idea what a row *is*. So for a ledger with no stable key, two branches can each append a row describing the same event with one field different, and the merge keeps both, silently, with nothing reporting it.
+
+**It does not reliably drop duplicates either, and that is worth knowing before relying on it.** `git merge-file --union` concatenates conflicting *hunks*; it is not a set union over lines. When both sides append the same line in the same place, the hunks align and one copy survives — which is the common case, and why union reads as deduplicating. When the two sides append it at different offsets, the hunks do not align and both copies land. Minimal case, run:
+
+```
+base   a b        one side   a b X P        other   a b Q X
+union  a b X P Q X          -- X twice
+```
+
+Measured on the real ledger the same day: merging `origin/main` into a branch produced `runs/friction.jsonl` at 286 lines / 285 distinct, the extra copy being one `kind: gate` row. So a duplicate row in a ledger is not evidence that someone appended twice.
 
 **Two of the fourteen have no field present in every row: `friction.jsonl` and `milestones.jsonl`.** Under the weaker reading — some field *of the key* is missing somewhere — it is four: those two plus `tasks.jsonl` and `review.jsonl`. Both numbers are below; they answer different questions and only the first is a statement about the file as a whole.
 
