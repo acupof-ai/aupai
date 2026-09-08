@@ -579,9 +579,14 @@ def main():
             #     and the event folds onto that row. On a retracted row fold() then DISCARDS it
             #     (`retracted` is terminal by kind): success printed, nothing changed.
             #   a later minute -> TWO folded rows for one run: the original keeping its result,
-            #     and a new row carrying this one with cmd='', hypothesis='' and no commit -- a
-            #     result orphaned from the run that produced it. EXPERIMENTS.md then shows a row
-            #     whose command is blank, which reads as a ledger defect rather than a misuse.
+            #     and a new row carrying this one with cmd='' and hypothesis='' -- a result
+            #     orphaned from the run that produced it. EXPERIMENTS.md then shows a row whose
+            #     command is blank, which reads as a ledger defect rather than a misuse.
+            #     IT DOES CARRY A commit: the fabrication literal twenty lines below states
+            #     `"commit": git_commit()`, and git_commit's own contract is `Never ""`. This
+            #     comment said "no commit" until 2026-09-08 and 4c nearly derived a defect
+            #     classifier from it -- "has a commit, therefore hand-written" is false, and
+            #     the code two screens down is what says so.
             #
             # The fabrication is legitimate for a name with NO row: closing a run whose start
             # event was lost is the case it was written for, and run_sft.sh/run_pretrain.sh call
