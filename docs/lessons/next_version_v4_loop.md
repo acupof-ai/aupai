@@ -199,22 +199,26 @@ Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908`.
 
 Warmdown 0.3: the cosine anneal starts at 70% of total steps. Basis, corrected
 after review (tilerl-0a, 2026-09-08): the 30B run used warmdown 0.1 (anneal at
-90%, `runs/prereg.jsonl#moe48_30b_0907@amended_8`) and val rose at the resume
-join — parent 21400-22400 falling -0.01757/1k against resume 22600-23600 rising
-+0.02971/1k, t=+6.179 (`@amended_9`) — at ~22,500 steps = 59.0% of the
-corrected 38,146 total. The 26-29k window the earlier draft cited was never
-measured (the 28500/29000/29500 checkpoints are pinned for 2026-09-09). The
-rise is 78.1% cot+chatml+chat_qa — the three domains whose resume-1 weights
-fell to 0.076-0.078x — on 19.4% of scored rows, with the primary prediction
-falsified (`@amended_10`); the three flattened to 0.13x/0.17x/0.19x by 25-26k
-(`@amended_11`): starved-domain forgetting at the resume join, self-decaying,
-not a monotone schedule problem. The onset is confounded with the resume join;
-v2 has no resume join and trains the resume-1 mix from scratch, so the 30B
-episode transfers no schedule prescription. Warmdown 0.3 is earlier than the
-30B's 0.1 and WSD-conventional; the val_rise stop rule with the amendment-10
-per-domain instrument is the registered net. Warmdown 0.4 (anneal at 60%,
-before the 59% onset) was considered and rejected as over-fitting a confounded,
-self-decaying signal.
+90%, `runs/prereg.jsonl#moe48_30b_0907@amended_8`) and val rose twice. The
+first rise sits at the resume join (~22,500 steps = 59.0% of the corrected
+38,146 total; parent 21400-22400 falling -0.01757/1k against resume 22600-23600
+rising +0.02971/1k, t=+6.179, `@amended_9`): 78.1% of it is cot+chatml+chat_qa,
+the three domains whose resume-1 weights fell to 0.076-0.078x, on 19.4% of
+scored rows, primary prediction falsified (`@amended_10`), and the three
+flattened to 0.13x/0.17x/0.19x by 25-26k (`@amended_11`) — starved-domain
+forgetting, self-decaying. The second rise (26.4-29.6k, peak 1.884 at 29600)
+took all nine domains up (runs/b0_domain_loss_valrise.jsonl); its three
+hypotheses — composition, epoch wrap, repetition — are all falsified
+(runs/review.jsonl, 2026-09-08T04:1xZ rows), and it reversed at full LR before
+warmdown: -0.01041/1k, t=-28.67 over 29800-34000 — a 3200-step excursion, not a
+regime change. Neither rise settles "peak LR held too long" as its cause: the
+first is mix-driven, the second self-corrected without any lr change. v2 has no
+resume join and trains the resume-1 mix from scratch, so the 30B episode
+transfers no schedule prescription. Warmdown 0.3 is earlier than the 30B's 0.1
+and WSD-conventional; the val_rise stop rule with the amendment-10 per-domain
+instrument is the registered net. Warmdown 0.4 (anneal at 60%) was considered
+and rejected: it over-fits the first rise's confounded onset and would truncate
+a self-correcting excursion.
 
 ### Stop rules
 
