@@ -1,3 +1,9 @@
+---
+question: What gates does the controller drive for the 0830v1 six-budget plan, in what order, and what evidence opens each?
+status: recorded
+source: this document; runs/controller_board.md
+---
+
 # 0830v1 gates
 
 The controller session (aupai-fb) drives these in order. A gate opens only when its

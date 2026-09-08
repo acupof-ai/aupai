@@ -1,3 +1,9 @@
+---
+question: What are the daily friction causes by row count and minutes lost, and which top-two fixes landed each day?
+status: open
+source: runs/friction.jsonl; `harness friction`; owner 44, reviewer de
+---
+
 # Friction review
 
 Daily summary of `harness friction` (runs/friction.jsonl), ranked by count then minutes lost. Top two causes get a fix commit or a task; one line per cause. Owner: 44. Reviewer: de.
