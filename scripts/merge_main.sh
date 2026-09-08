@@ -719,7 +719,9 @@ if [ "$1" = "--selftest" ]; then
   # 2026-09-02 core.bare flip, and de's 2026-09-07 pod_push near-miss that wrote the
   # shared config the same way (friction near_miss row). The hook strips GIT_* before
   # invoking this; a manual run does not. Strip at the entry, once, for every world.
-  unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_PREFIX
+  # The list is pod_drift._GIT_ENV_VARS plus GIT_PREFIX: GIT_CONFIG names the file
+  # `git config` writes directly, bypassing repo resolution (4c, measured).
+  unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_GLOBAL GIT_PREFIX
   _fails=0
   _t=$(mktemp -d)
   _case() {  # $1=name $2=want dead|alive
@@ -795,18 +797,19 @@ time.sleep(20)
   # reimplementation of the predicate. Both directions: a gate that only ever refuses passes
   # every negative case, and one that only ever accepts is the prose rule it replaced.
   _g=$(mktemp -d)
-  # GUARD THE STRIP ABOVE, before any fixture write. Under a leaked GIT_DIR, git in a
-  # temp dir resolves to the SHARED repo (GIT_DIR overrides -C and cwd), so this reads
-  # the shared gitdir and refuses -- mutant-tested: drop the unset at the entry and
-  # this FAILs. The probe writes no config; the `git config user.name T` in the world
-  # below is what an unguarded leak would land on the shared repo.
+  # GUARD THE STRIP ABOVE, on the property that matters: a config write to a temp world
+  # must land in THAT world's .git/config. GIT_DIR redirects repo resolution and GIT_CONFIG
+  # names the output file directly, so a leaked var of either kind makes the write land
+  # elsewhere while `rev-parse --absolute-git-dir` still reads the temp world (4c,
+  # measured) -- the probe below writes a sentinel and greps the file it must land in.
+  # Mutant-tested: drop the unset at the entry and this FAILs.
   _probe=$(mktemp -d)
   git -C "$_probe" init -q . >/dev/null 2>&1
-  # pwd -P, not $_probe: on macOS /var is a symlink to /private/var, so rev-parse's
-  # absolute path and the mktemp path differ as strings while naming the same dir.
+  git -C "$_probe" config probe.guard sentinel >/dev/null 2>&1
   _probe_real=$(cd "$_probe" && pwd -P)
-  [ "$(git -C "$_probe" rev-parse --absolute-git-dir)" = "$_probe_real/.git" ] \
-    || { echo "  FAIL git-env guard: a temp-dir git resolved to $(git -C "$_probe" rev-parse --absolute-git-dir), not the temp world -- GIT_* leaked into the shared repo" >&2; _fails=$((_fails + 1)); }
+  # git config stores probe.guard as a [probe] section, so grep the value, not the dotted key.
+  grep -q "sentinel" "$_probe_real/.git/config" 2>/dev/null \
+    || { echo "  FAIL git-env guard: a config write to the temp world did not land in its own .git/config -- GIT_* leaked (GIT_DIR or GIT_CONFIG redirects it)" >&2; _fails=$((_fails + 1)); }
   rm -rf "$_probe"
   (
     cd "$_g" && git init -q . && git config user.email t@t && git config user.name T
