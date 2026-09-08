@@ -133,7 +133,7 @@ def _commits_on_main(date):
                 "log",
                 "main",
                 "--format=%cd",
-                "--date=short",
+                "--date=short-local",
                 f"--since={date}T00:00:00Z",
                 f"--until={date}T23:59:59Z",
             ],
@@ -141,6 +141,9 @@ def _commits_on_main(date):
             text=True,
             cwd=ROOT,
             timeout=30,
+            # --since/--until below are stated in Z, so the rendered %cd must be UTC too or the
+            # window and the label disagree by the machine's offset (+08:00 here).
+            env={**os.environ, "TZ": "UTC"},
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
