@@ -40,6 +40,19 @@
       },
       "uncertainty": "openo1 mean output length is from the first 5,000 rows, not the whole file",
       "status": "measured"
+    },
+    {
+      "id": "distill.openo1_answer_extractability",
+      "value": "81.0% of openo1_sft rows carry an <Output> tag (405/500); of tagged rows, 78.3% yield an extractable numeric answer (last number in the tag), so the answer-extraction population is 63.4% of the file. 19.0% have no tag, 7.0pp of the total code-like. Instruction length median 222 chars, p90 463.",
+      "measured": "2026-09-08",
+      "source": "500-row random sample (seed 42) of /work/aupai/data/openo1_sft.jsonl on the pod; regex <Output>...</Output> + last-number extraction",
+      "config": {
+        "sample_size": 500,
+        "seed": 42,
+        "extraction": "last number in <Output>"
+      },
+      "uncertainty": "500-row sample; +/-4.4pp at 95% on the 63.4% proportion",
+      "status": "measured"
     }
   ]
 }
