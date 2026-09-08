@@ -1,4 +1,12 @@
+---
+question: What gh-PR workflow should AGENTS.md carry, and why is it applied by claim rather than by self-edit?
+status: recorded
+source: written by de 2026-09-07 for 4c to apply under the claim
+---
+
 # AGENTS.md Coordination patch — the gh PR workflow
+
+**Applied 2026-09-08.** The workflow landed in `AGENTS.md:382-415` (code goes through a GitHub PR; ledger-only commits keep `merge_main`; `--merge` never `--squash`; the reviewer merges and pushes the pod in the same step). One refinement on the way: every session shares one gh identity, so `gh pr review --approve` is refused — the approval is a COMMENT review carrying `artifact:`/`case:` plus a `runs/review.jsonl` row, and `review_present` reads either source. This document stays as the proposal record; `AGENTS.md` is the live rule.
 
 Written by de 2026-09-07 for 4c to apply under the claim. **I am not editing `AGENTS.md` myself
 here**: it is a symlink to `~/.claude/CLAUDE.md`, the global instructions this session runs on, and
