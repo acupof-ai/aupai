@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-08, 19:0xZ
+# Controller board (fb) — 2026-09-08, 21:5xZ
 
 **The night's one sentence: N1 is 20% through its 7,629 steps on four cards with val falling 2.577 -> 2.348 -> 2.256, and the two silent-push defects that killed its first launch are now fixed on main and on the pod.**
 
@@ -19,26 +19,64 @@
 
 3b declined to route around the gate with `CUDA_VISIBLE_DEVICES`, on a better ground than the rule: **that fall-through means "a human specified these", not "the controller granted these"** — it would have run, and nothing would have recorded that it was ever authorised.
 
-## Running now — N1, cards 2,4,5,7
+## Running now — N2, cards 2,4,5,7
 
 | | |
 |---|---|
-| run | N1, the anneal-arms control, `runs/anneal_n1_0908.log` |
-| launched | 2026-09-08 17:00Z, alive since |
-| progress | step 6110 / 7629 (80%), 3.20B tok |
-| val | 2.577 / 2.348 / 2.256 / 2.193 / 2.147 / 2.114 / 2.068 / 2.045 / 1.991 / 1.950 / 1.910 / **1.876** at steps 500..6000, monotone, no reversal |
-| train loss | 5.010 (70) -> 1.822 (6110) |
-| phase | still `[main]`; the anneal tail starts at step 6866 (`anneal_frac 0.10` of 7629) |
-| throughput | 51-77K tok/s/gpu, MFU 21-32%, peak 49.5 GiB/card |
-| ETA | 0.7h remaining; **~3.6h per arm, ~10.8h serial for N1+N2+R** |
-| cfg proof | `sample_seed 42 (pinned)`, `retokenizing` appears **0 times** in the log |
+| run | N2, noise-floor arm B, `runs/anneal_n2_0908.log` |
+| launched | 2026-09-08 21:35Z **by fb**, not 3b — see below |
+| differs from N1 in | `--seed 1338` vs `1337` only. `--sample_seed 42` pinned on both, so one corpus order; verified `retokenizing` count **0** and the cfg line reads `seed 1338 sample_seed 42 (pinned)` |
+| progress | step 1060 / 7629, 0.56B tok, 77K tok/s/gpu |
+| val so far | 2.665 (500), 2.431 (1000) — against N1's 2.577 and 2.348, a gap of 0.088 and 0.083 |
+| ETA | ~3.7h |
 
-**The ETA number to use is 3.6h/arm, not the 2h13m in the proposal.** That reference was
-p200m_4b_0902 on eight cards; this is four cards and 7,629 steps. The difference is card
-count, not efficiency.
+**The step-500 and step-1000 gaps are NOT the noise floor.** The floor is `|N1 - N2|` at the
+same point the effect is read, i.e. final val. Early gaps run larger than late ones, so quoting
+0.088 against an effect measured at the end would inflate the floor and hide a real effect.
+N1's final val is **1.823**.
 
-**Monitor `bdy8b3rxc`** fires on val lines, every 500th step, arm transitions and failure
-signatures. N2 starts when N1 ends (3b owns the launch), R last.
+**Why fb launched it.** Cards 2,4,5,7 went idle at 21:20Z when N1's scoring finished and were
+still idle at 21:35Z; 3b, who owns the arms, had not answered two messages. Idle cards with a
+pre-registered arm ready is the mainline stalling, and "chase only runs that produce numbers" is
+the standing order. Launched through the same path N1 used — `harness launch anneal_n2_0908
+--training --class confirmatory --hypothesis "..." -- bash runs/anneal_arms.sh n2` — so the exp
+row was written before the run started. The arms stay 3b's; this filled a window.
+
+## N1 — complete and scored
+
+| | |
+|---|---|
+| final val | **1.823** (`ep 1/1 train 1.734 val 1.823 13427s`) |
+| budget | 7,629 steps, 4.00B tok, 3.73h on four cards |
+| val curve | 2.577 / 2.348 / 2.256 / 2.193 / 2.147 / 2.114 / 2.068 / 2.045 / 1.991 / 1.950 / 1.910 / 1.876 / 1.854 / 1.843 / 1.839 at steps 500..7500, then 1.823 final — monotone, no reversal |
+| anneal tail | started step 6866 (`anneal_frac 0.10`); bought 0.016 val over its last 1,129 steps |
+| exp row | closed, status ok, `--started "2026-09-08 16:59"` |
+| score matrix | 10 metrics recorded, 6 SKIPPED by design |
+
+Score matrix, and how each number may be read:
+
+| metric | value | reading |
+|---|---|---|
+| minimal_pairs | 0.801 | grammaticality discrimination, well above the 0.5 floor |
+| lambada_zh | two-way 0.920, open_acc1 0.259 | strong forced choice, weak open generation |
+| lambada_en | 0.247 | open completion |
+| humaneval_bpb | 0.616 per-task, 0.490 byte-weighted | likelihood of the canonical solution; **not** pass@k, and the metric says so in its own output |
+| l1_fewshot | 0.040 | generative |
+| **math_v2_like** | **0.971** | **not a capability reading**: 14 of 18 families sit at exactly 1.000, and the problems come from the same generators as the training data — the shape that retired math-hard v1 |
+| SKIPPED | mc_full, code_500_v2, code_500, pass_at_k, math_hard, math_500 | generative metrics on a base checkpoint; **SKIP is not 0**, which is a distinction this repo bought with an incident |
+
+**The arms script's own post-run scoring is broken and will fire again on N2.** After training it
+looks for a lane card, and this allocation has none by construction (`block_cards` 2,4,5,7,
+`lane_card` ""), so it waits the full 30 minutes and exits nonzero:
+
+```
+no lane card in the allocation
+FATAL: no free lane card in 30min -- ckpt_anneal_n1_0908.pt unscored, training succeeded but this run produced NO metrics
+FATAL: scoring failed for ckpt_anneal_n1_0908.pt (rc=1) -- exiting nonzero
+```
+
+Training and the checkpoint are unaffected. fb scored N1 by hand on card 2 in the gap and will do
+the same for N2. The fix belongs in the arms script or the allocation, not in a habit.
 
 ## Landed tonight
 
