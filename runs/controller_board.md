@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-08, 18:1xZ
+# Controller board (fb) — 2026-09-08, 19:0xZ
 
 **The night's one sentence: N1 is 20% through its 7,629 steps on four cards with val falling 2.577 -> 2.348 -> 2.256, and the two silent-push defects that killed its first launch are now fixed on main and on the pod.**
 
@@ -25,11 +25,12 @@
 |---|---|
 | run | N1, the anneal-arms control, `runs/anneal_n1_0908.log` |
 | launched | 2026-09-08 17:00Z, alive since |
-| progress | step 2310 / 7629 (30%), 1.21B tok |
-| val | 2.577 (500) -> 2.348 (1000) -> **2.256 (1500)** |
-| train loss | 5.010 (70) -> 2.700 (500) -> 2.056 (1000) -> 1.955 (1500) -> **2.222 (2310)** |
+| progress | step 6110 / 7629 (80%), 3.20B tok |
+| val | 2.577 / 2.348 / 2.256 / 2.193 / 2.147 / 2.114 / 2.068 / 2.045 / 1.991 / 1.950 / 1.910 / **1.876** at steps 500..6000, monotone, no reversal |
+| train loss | 5.010 (70) -> 1.822 (6110) |
+| phase | still `[main]`; the anneal tail starts at step 6866 (`anneal_frac 0.10` of 7629) |
 | throughput | 51-77K tok/s/gpu, MFU 21-32%, peak 49.5 GiB/card |
-| ETA | 2.5h remaining; **~3.6h per arm, ~10.8h serial for N1+N2+R** |
+| ETA | 0.7h remaining; **~3.6h per arm, ~10.8h serial for N1+N2+R** |
 | cfg proof | `sample_seed 42 (pinned)`, `retokenizing` appears **0 times** in the log |
 
 **The ETA number to use is 3.6h/arm, not the 2h13m in the proposal.** That reference was
@@ -45,6 +46,7 @@ signatures. N2 starts when N1 ends (3b owns the launch), R last.
 |---|---|---|
 | #112 (`df5ffd98`) | merge_main stamps the session marker into both commit messages it generates | reviewed and merged by 44; `merge_main.sh --selftest` green |
 | #113 (`3b292330`) | `pod_drift`'s runs/ predicate split by extension; both `pod_push.sh` copies now call one `--ship-paths` | merged + `--all` in the same step; pod stamp `3b292330`, dirty=0; the 25 formerly-absent scripts verified present |
+| #115 (`7b26bc77`) | the selftest `GIT_*` leak class: strip at `merge_main.sh --selftest`'s entry, plus `shared_config_not_fixture_identity` as the backstop | reviewed by fb, blocked once, merged and pod-pushed by fb; guard verified under clean / `GIT_DIR` / `GIT_CONFIG` with the sentinel's destination checked, not just the verdict |
 | #114 (`eb33534a`) | 44's active-params gate: `train.py --build_only` + `scripts/active_params.py` | blocked by fb on a deleted flag, restored in `cc9a5b7f`, **approved and merged**; pod pushed to `eb33534a` dirty=0 |
 
 **The marker census, corrected.** My first count said 203 of 644 commits today lacked a
@@ -92,6 +94,67 @@ numbers was an artifact of a broken command. The same class appeared twice more 
 diff that reads as "nothing changed". Both were caught by the result being implausible, not by the
 command failing. **Verification must name refs explicitly and never route a tree sha through a
 shell variable followed by `:path`.**
+
+## The git identity was a fixture signature, and 558 commits carry it
+
+The shared `.git/config` held `user.name=t`, `user.email=t@t` — a test fixture's identity,
+against the user's order of 2026-09-02 that it be `cklxx <q1293822641@gmail.com>`. On
+`origin/main`: 6181 commits authored `cklxx`, **558 authored `t <t@t>`**, first `4b9f0a77`
+on 2026-09-08.
+
+Mechanism, as 44 measured it after refuting my first two accounts: a fixture's
+`git -C <tmpdir> config user.name t` writes into `$GIT_DIR/config` when `GIT_DIR` is
+inherited, because `-C` changes directory while `GIT_DIR` still names the repo. **The
+pre-commit hook was NOT the vector** — its selftest loop has stripped `GIT_*` since
+`f3123fc4` and carries a config-digest guard. The vector was a MANUAL
+`bash scripts/pod_push.sh --selftest` with `GIT_DIR` exported (de, 2026-09-07 17:26Z),
+fixed in `83194cb3`; the only remaining unstripped selftest entry was `merge_main.sh`,
+closed by #115.
+
+**Config restored to `cklxx`. The 558 commits are untouched — a history rewrite is the
+user's decision, and the 2026-09-02 one was theirs too.**
+
+Two errors of mine in this thread, both worth keeping:
+
+1. I asserted the hook was the vector without reading `f3123fc4`.
+2. I published a census of 90 `git config user.*` call sites as the affected population. It
+   measured "does this line write config", not "does this call site run with an inherited
+   `GIT_DIR`" — the property that matters — and I read none of the helpers. Several of those
+   files strip inline. **A predicate set answers the question it enumerates, not the one it
+   is named for.**
+
+## Queue — 8 open, all CI-green, frozen ~1.5h
+
+| PR | owner | state |
+|---|---|---|
+| #100 | 98 | **approved by de 13:28Z, review row in `runs/review.jsonl`, still open 6h later** — the merge and the same-step pod push are the reviewer's |
+| #23 | tilerl | **changes requested** by 3b at 04:31Z, 14h — waiting on tilerl, not on a merge |
+| #109 | e1 | waiting on 3b |
+| #106 | 44 | waiting on de |
+| #102 #105 | b0 | waiting on tilerl |
+| #103 | 3b | waiting on b0 |
+| #92 | 98 | waiting on a reviewer |
+
+**e1, 98 and tilerl have zero landed commits in 6h and are NOT stalled** — their output is
+in this queue. The bottleneck is the review-and-merge step, not the producers.
+
+**Third instance of the same error class in one evening, mine:** I first read this table as
+"#23 approved, needs merging" because I counted comments containing `artifact:` or `case:`.
+That set enumerates *comments that look like reviews*; a changes-requested comment carries
+both words. I had corrected two other sessions with this exact rule hours earlier.
+
+## N1 -> N2 handover, decided in advance
+
+N1 ends -> close the `anneal_n1_0908` row (`started 2026-09-08 16:59`; the 14:49 row of the
+same name is the death, and row identity is `(name, started)`) -> run
+`eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` **in the gap, before N2
+launches** -> 3b launches N2.
+
+The gap, not co-residency, and the reason is not that score_matrix is cheap: there is no lane
+card, so once N2 holds all four there is nowhere to put a small job; and
+`eval/cache_guard.assert_not_co_resident` refuses on the size of the domains a tool READS, so
+whether it refuses turns on the one metric of fourteen that touches a token cache, not on the
+tool's average cost. In the gap the question does not arise.
 
 ## N1's first death — 14:49Z, and what it cost
 
