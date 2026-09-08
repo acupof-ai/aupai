@@ -32,7 +32,7 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 
 ## The night's single finding
 
-Ten instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
+Eleven instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
 
 | instrument | question asked | question answered |
 |---|---|---|
@@ -46,6 +46,7 @@ Ten instruments each answered a question narrower than the one asked, and none r
 | unreachable total 79 → 56 | did the new edges help | yes, and it concealed 12 self-rescues moving the same direction |
 | `exp.py:582` comment | what does the fabricated row carry | correct on `hypothesis`, wrong on `commit`, 20 lines from the code |
 | mutation sweep "ALL KILLED" | did the mutants die on assertions | they died on `FileNotFoundError`, twice |
+| my own "40,000 rows vs a cap of 1,200" | can this batch's recorded command have produced it | how many programs the library holds -- a different unit, never checked |
 
 Two derived rules, both adopted: **an unusually tight cluster is a systematic instrument offset until shown otherwise — a real effect has spread** (3b, from 18 samples all inside 7.1–8.0h, which was a timezone constant); and **rewrite the question into a form that reads bytes directly** (3b: hash the file, compare UTC to UTC, run the target copy itself).
 
@@ -56,7 +57,7 @@ Shapes R12–R14 are PR #96, stacked on #81. A never-triggered exclusion belongs
 | item | owner | why it matters |
 |---|---|---|
 | A writer outside `exp.py` hand-appends rows to `runs/experiments.jsonl` | 3b | a refusal only guards the path through it; `pod_pull_ledgers` is cleared by time order and by reading `append_rows` |
-| One frozen batch has 40,000 rows against a program cap of 1,200 | 44 | if the recorded command is not the command that ran, "re-run the recorded command" is not a reproducibility plan |
+| ~~40,000 rows against a cap of 1,200~~ REFUTED 2026-09-08 | 44 | the units did not match: 1,302 is the count of PROGRAMS in the library, the run's cap is 100,000 rows, and 40,000 is the recorded L4 target (100,000 x 0.4) to the row. pod holds 97,771 rows with sha256 matching PROVENANCE. `facts/corpus_supply.json#cs.math_short_v8_cap_audit`, PR #98 |
 | `score_matrix.jsonl` has 1 dedicated watcher against `tasks.jsonl`'s 6 | b0 | its fold key makes rewrite legal, so append-only checks cannot see a changed value; a wrong factor table sat on main for hours |
 | Mutation sweeps need a positive control | de | "all killed" cannot distinguish a working sweep from one that ran nothing |
 
@@ -69,7 +70,7 @@ A corpus build should be a pure function of source bytes, pipeline version and s
 | `filters_fp` hashes exactly three files: `filters/pass{1,2,3}_garbage.py` | 15 of 50 domains can say the garbage filters were identical. **Zero of 50 are demonstrated byte-reproducible.** Was 14/49 here until 2026-09-08; e1 recorded the drift as `config.count_drifted` rather than rewriting `value` |
 | 2,010 shard files have link count above one | domains are not disjoint. Disk holds 248.93 GB against a per-domain sum of 348.30 GB; a per-domain rebuild double-counts and drops the hardlinks |
 | One frozen batch excludes inputs that no longer exist | unreproducible by definition — a fourth answer, not a special case of "no" |
-| A frozen batch has 40,000 rows against a program cap of 1,200 | **the recorded command is not the command that ran.** This outranks reproducibility |
+| ~~A frozen batch has 40,000 rows against a program cap of 1,200~~ | **REFUTED.** I compared rows to programs. No constant `1200` exists in `mathbank/`; the figure came from a scheduling note. The recorded command IS the command that ran, to the row. What survives: `PROVENANCE.md:57`'s own arithmetic is wrong (509 x 150 = 76,350, not 57,771) -- the stall is real, its recorded explanation is not |
 
 ## Distillation — designed, paused
 
