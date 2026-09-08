@@ -16159,6 +16159,62 @@ def _broken_fixture_not_live_state():
     return d
 
 
+def check_shared_config_not_fixture_identity(root):
+    """The shared repo's git identity is not a test-fixture signature.
+
+    A selftest that runs `git config user.name t` under a leaked GIT_DIR writes the SHARED
+    .git/config instead of its temp world -- GIT_DIR overrides both -C and cwd. It flipped
+    this repo's author identity to t <t@t> on 2026-09-07 (de's manual pod_push.sh --selftest
+    run, friction near_miss row), and 558 commits landed as t before anyone read
+    `git log --format=%an`. The hook strips GIT_* before the selftests it invokes, and the
+    hook's config-digest guard brackets only that loop -- a manual `--selftest` run is
+    outside it, which is the path that fired. This check is the backstop: whatever vector
+    flips the config, the next `harness check` (every commit's hook, plus CI) goes red.
+
+    THE FIXTURE SIGNATURES, NOT THE COMMANDED IDENTITY. The repo's identity is one human's
+    and may legitimately change; the fixture literals are the values that are never
+    legitimate. Census of the tree's fixture identities, 2026-09-09 (grep user.name/email
+    literals across *.py and *.sh): name=t (42), email=t@t (38), email=t@example.invalid
+    (15), name=T (14, merge_main.sh's fixtures), email=t@t.t (2), email=a@b (1). A new
+    fixture identity must be added here or it leaks past this check. An unset identity
+    (the pod) passes.
+    """
+    _FIXTURE_NAMES = {"t", "T"}
+    _FIXTURE_EMAILS = {"t@t", "t@example.invalid", "t@t.t", "a@b"}
+    name = subprocess.run(["git", "-C", root, "config", "user.name"],
+                          capture_output=True, text=True).stdout.strip()
+    email = subprocess.run(["git", "-C", root, "config", "user.email"],
+                           capture_output=True, text=True).stdout.strip()
+    if name in _FIXTURE_NAMES or email in _FIXTURE_EMAILS:
+        return FAIL, (f"the shared git identity is a fixture signature ({name} <{email}>). "
+                      f"A selftest wrote .git/config under a leaked GIT_DIR -- the manual "
+                      f"--selftest path is outside the hook's digest guard. Find the selftest "
+                      f"that ran last and restore the identity the repo used before it")
+    return PASS, (f"shared git identity is {name or '<unset>'} <{email or '<unset>'}>, "
+                  f"not a fixture signature")
+
+
+def _broken_shared_config_not_fixture_identity():
+    """A repo whose config was flipped to the merge_main fixture identity must FAIL.
+
+    The world holds the real scripts/merge_main.sh -- the file whose fixtures write
+    T/t@t -- so it is repo-real rather than invented from the check's assumptions, and
+    it exercises the name=T branch that a t/t@t-only signature would have missed.
+    """
+    import shutil
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    sh("init", "-q", "-b", "main")
+    sh("config", "user.name", "T")
+    sh("config", "user.email", "t@t")
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "merge_main.sh"),
+                os.path.join(d, "scripts", "merge_main.sh"))
+    sh("add", "-A")
+    sh("commit", "-qm", "base")
+    return d
+
+
 CHECKS = [
     (
         "fixture_not_live_state",
@@ -16170,6 +16226,17 @@ CHECKS = [
         "believe the test is isolated",
         check_fixture_not_live_state,
         _broken_fixture_not_live_state,
+    ),
+    (
+        "shared_config_not_fixture_identity",
+        "the shared repo's git identity is not the t <t@t> fixture signature",
+        "2026-09-07: a manual pod_push.sh --selftest with GIT_DIR exported wrote the fixture "
+        "identity into the shared .git/config (GIT_DIR overrides -C and cwd), and 558 commits "
+        "landed as t <t@t> before anyone read git log --format=%an. The hook's config-digest "
+        "guard brackets only the selftests the hook itself runs; a manual --selftest is "
+        "outside it. This check is the backstop that fires on the next commit after any flip",
+        check_shared_config_not_fixture_identity,
+        _broken_shared_config_not_fixture_identity,
     ),
     (
         "no_hardcoded_cache_path",
