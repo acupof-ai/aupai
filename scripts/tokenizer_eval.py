@@ -41,14 +41,6 @@ DIMENSIONS = {
 # the full mix, not a slice.
 GATES = {
     # name: (threshold, higher_is_better, why it is a veto and not a preference)
-    # NEVER used, not "<=1 use": the <=1 rate is a function of how much text you counted
-    # (4.0% at 1.6M tokens, 0.43% at 142M, same vocabulary), so it cannot carry a fixed
-    # threshold. Zero occurrences in 142M tokens of the training distribution is a glitch
-    # token by the Fishing-for-Magikarp definition; no training reaches it.
-    # Regression guard at 0.01, not a hard gate: the measured 0.70% is a known cost (229
-    # slots, 0.1% of the model), and a permanent red is the same as no signal. The fragment
-    # population must not grow.
-    "never used frac": (0.01, False, "glitch tokens: unreachable slots, and training cannot fix them"),
     # On REF_EN, not on whatever English the corpus sample holds: the same vocabulary reads
     # 1.429 on REF_EN and 1.870 on our own `en` domain.
     # 1.55 is the price of bilingual-at-32K -- the bilingual frontier (DeepSeek-V3 1.104,
@@ -57,6 +49,45 @@ GATES = {
     "ref fertility": (1.55, False, "regression guard: English must not get worse than it is"),
     "hanzi whole-char": (0.95, True, "byte-fragmented hanzi is worse than one token per character"),
 }
+
+#: REPORTED, NOT GATED, and the reason is a measurement rather than a preference.
+#:
+#: `never used frac` was a regression guard at 0.01 until 2026-09-08. It is not one now
+#: because the reading is not decidable at that threshold: on the v2 composition, three
+#: seeds at a FIXED (per_domain, shards) setting span
+#:
+#:     9000 x 16   0.0061 / 0.0103 / 0.0073   range 0.0042
+#:     20000 x 24  0.0156 / 0.0046 / 0.0066   range 0.0110
+#:
+#: and varying only `shards` at a fixed seed spans 0.0043 / 0.0156 / 0.0057, range 0.0113.
+#: Two of those three ranges exceed the whole 0.01 threshold, so the seed alone decides pass
+#: or fail on the same corpus at the same setting. Fixing the setting as a constant does not
+#: help -- neither axis dominates, and the larger setting is further from decidable than the
+#: smaller one.
+#:
+#: THE THRESHOLD WAS SET INSIDE ITS OWN NOISE. 143f5d4a (2026-08-29) records "never used
+#: 0.0070 <=0.01 ok (regression guard: 234K params, 0.1% of the model)" over "106 tokens with
+#: zero occurrences in 142M" -- a deliberate guard 0.003 above a measured value, at
+#: essentially the scale where the range measured above is 0.0110. One draw could not have
+#: shown that, and the comment below it already knew the metric was scale-bound.
+#:
+#: THE METRIC IS SOUND; only the threshold is not. On strictly nested prefixes of one draw it
+#: is monotone decreasing (0.5890 / 0.5705 / 0.0495 / 0.0156 at 24.9M / 38.5M / 71.1M /
+#: 174.5M tokens), reproduced on a second draw by 3b. It stays in the RAW table, where a
+#: reader can watch the fragment population across runs at a fixed setting without a
+#: threshold asserting a precision the sampling does not have.
+#:
+#: NEVER used, not "<=1 use": the <=1 rate is a function of how much text you counted (4.0%
+#: at 1.6M tokens, 0.43% at 142M, same vocabulary). Zero occurrences in 142M tokens of the
+#: training distribution is a glitch token by the Fishing-for-Magikarp definition.
+#:
+#: facts/tokenizer.json#tok.never_used_not_decidable carries the data. To restore the gate,
+#: find a setting whose three-seed range is under a third of the threshold and record it
+#: there; do not re-add the entry on a single passing draw.
+REPORTED_NOT_GATED = {
+    "never used frac": "unreachable slots; reported, not gated -- see the note above",
+}
+
 
 
 def gates(tok, corpus):
@@ -77,7 +108,10 @@ def gates(tok, corpus):
 
 
 def threshold_gates(metrics):
-    """(name, value, threshold, ok) for each GATES entry present in `metrics`."""
+    """(name, value, threshold, ok) for each GATES entry present in `metrics`.
+
+    A name in REPORTED_NOT_GATED is NOT here by construction, whatever its value: it is
+    printed from the RAW table and never reaches `failed`."""
     rows = []
     for k, (thr, higher, _why) in GATES.items():
         if k not in metrics:
@@ -285,6 +319,10 @@ def main():
             if not good:
                 failed.append(f"{name}:{k}")
                 print(f"  {'':<24}  -> {GATES[k][2]}")
+    for k, why in REPORTED_NOT_GATED.items():
+        if any(k in m for _, m in ok):
+            vals = " ".join(f"{m[k]:.4f}" for _, m in ok if k in m)
+            print(f"  {'(not gated)':<24}{k:<20}{vals:>10}   {why}")
 
     print(f"\n{'=' * 78}\nRAW")
     keys = [k for k in METRICS if any(k in m for _, m in ok)] + ["embed params (M)"]
@@ -350,7 +388,23 @@ def _demo():
     assert abs(sum(DIMENSIONS.values()) - 1.0) < 1e-9, "weights must sum to 1"
     ts = [_byte_token(b) for b in range(256)]
     assert len(set(ts)) == 256, "byte table collides"
-    print("tokenizer_eval self-test OK (tie threshold, direction, weights, byte table)")
+
+    # never-used is REPORTED, not gated (2026-09-08). 0.9 is 90x the retired 0.01 threshold,
+    # so this world crosses any threshold anyone could re-add; the positive control below is
+    # what keeps that from being vacuous.
+    m = {"never used frac": 0.9, "ref fertility": 1.4286, "hanzi whole-char": 0.9890}
+    rows = threshold_gates(m)
+    assert not any(k == "never used frac" for k, *_ in rows), f"never-used must not be gated: {rows}"
+    assert all(good for _, _, _, good in rows), f"the other two must pass at these values: {rows}"
+    # positive control: the same call DOES fail a metric that is still a gate, so the
+    # assertion above is about never-used and not about threshold_gates returning nothing.
+    bad = threshold_gates({**m, "ref fertility": 9.9})
+    assert [(k, good) for k, _, _, good in bad if not good] == [("ref fertility", False)], bad
+    # and it is reported somewhere: a name in neither table is silently dropped from the run.
+    assert "never used frac" in REPORTED_NOT_GATED and "never used frac" in METRICS
+    assert not (set(GATES) & set(REPORTED_NOT_GATED)), "a metric is gated or reported, not both"
+
+    print("tokenizer_eval self-test OK (tie threshold, direction, weights, byte table, never-used ungated)")
 
 
 if __name__ == "__main__":
