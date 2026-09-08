@@ -104,7 +104,7 @@ Ruling (amendment 12, 4c, 2026-09-07): the 4.0-epoch cap stays for the remainder
 
 The aggregate val rose a second time: 1.846 at 23600 to a peak of 1.884 at 29600, then ten consecutive descents to 1.845 at 31600. The reversal fit reproduces from the series artifact (runs/b0_e48_30b_val_series.jsonl): −0.01015/1k at t=−10.92 over 29800-31600 at full stable lr, refit without the extreme point. The run's actual minimum is 1.807 at step 22400 (leg-1 log; the resume-1 log begins at 22600, so 1.812 is that file's first reading, not the series' low).
 
-The per-domain read at 28500/29000/29500 — inside the rise — exists (runs/b0_domain_loss_valrise.jsonl, e6ee15d0): all nine domains rose, +0.007 to +0.021 per 1k steps. The three capped domains rose (cot +0.0154, chatml +0.0193, chat_qa +0.0202), but so did every control — zh_web, at 0.038 epochs and effectively unrepeated, rose second-fastest (+0.0208). The rise is broad-based, not carried by the weight-cut domains.
+The per-domain read at 28500/29000/29500 — inside the rise — exists (runs/b0_domain_loss_valrise.jsonl, e6ee15d0): all nine domains rose, +0.007 to +0.021 per 1k steps. The three capped domains rose (cot +0.0154, chatml +0.0193, chat_qa +0.0202), but so did every control — zh_web, at 0.038 epochs and effectively unrepeated, rose fastest over the full window (+0.0208; second-fastest only in the 29000-29500 half). The rise is broad-based, not carried by the weight-cut domains.
 
 b0's three falsified hypotheses for this excursion are persisted in runs/review.jsonl (2026-09-08T04:1xZ, reviewer b0):
 
