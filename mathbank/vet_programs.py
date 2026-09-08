@@ -32,7 +32,8 @@ json.dump({"clean": clean, "fail": fail}, sys.stdout, ensure_ascii=False)
 '''
 
 def main():
-    mods = ["math_programs_l1", "math_programs_l2", "math_programs_l3", "math_programs_l4"] + \
+    mods = ["math_programs_l1", "math_programs_l2", "math_programs_l3", "math_programs_l4",
+            "math_programs_short_l3", "math_programs_short_l4"] + \
            [os.path.splitext(os.path.basename(f))[0] for f in
             sorted(glob.glob(os.path.join(os.path.dirname(os.path.abspath(__file__)), "math_programs_l*_ext*.py")))]
     for stem in mods:

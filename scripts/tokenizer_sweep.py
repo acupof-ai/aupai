@@ -34,11 +34,24 @@ DOMAINS = "web_hq,textbook,wiki,math,chat,code,en"
 
 
 def load_text(domains, n_train=3000, n_eval=800, seed=11):
-    """Held-out characters are identical for every candidate; only segmentation differs."""
+    """Held-out characters are identical for every candidate; only segmentation differs.
+
+    REFUSES a short held-out set rather than returning one. Until 2026-09-08 a corpus dir's
+    non-shard artifacts were sampled as if they were data: `holdout_slice_<domain>.jsonl` is
+    one row of `{phase, rule_fp, n}` with no `content` key, and `.get("content", "")` made it
+    an empty string instead of an error. Because this function takes 2 files per domain, a
+    small domain draws the slice often, and the shortfall lands on the TAIL of the shuffled
+    list -- which is `eval_rows`. Measured on the pod: the v2 composition got 0 of 800 eval
+    rows and bits/char died on ZeroDivisionError; the resume-1 composition got 105 of 800 and
+    reported a number. tokenizer_report.shard_paths is the fix; this refusal is the check that
+    the next such artifact cannot quietly shrink the held-out set again.
+    """
+    from tokenizer_report import shard_paths
+
     rng = random.Random(seed)
     rows = []
     for d in domains:
-        fs = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", d, "*.jsonl")))
+        fs = shard_paths(d)
         if not fs:
             continue
         for f in rng.sample(fs, min(2, len(fs))):
@@ -48,7 +61,16 @@ def load_text(domains, n_train=3000, n_eval=800, seed=11):
             for x in rng.sample(lines, min(k, len(lines))):
                 rows.append(json.loads(x).get("content", "")[:1500])
     rng.shuffle(rows)
-    return rows[:n_train], rows[n_train : n_train + n_eval]
+    train, ev = rows[:n_train], rows[n_train : n_train + n_eval]
+    if len(ev) < n_eval:
+        raise SystemExit(
+            f"REFUSING: {len(rows)} rows over {len(domains)} domains gives {len(ev)} held-out "
+            f"rows, not {n_eval}. bits/char divides by the characters in this set, so a short "
+            f"one is a quieter version of the ZeroDivisionError at zero. Each domain yields at "
+            f"most 2 x {(n_train + n_eval) // (len(domains) * 2) + 1} rows: either raise "
+            f"--n_train's domain count, lower n_train, or find the domain that came up short."
+        )
+    return train, ev
 
 
 def bits_per_char(tok, train_rows, eval_rows, order=3, lam=(0.55, 0.30, 0.15)):
@@ -134,5 +156,79 @@ def main():
         )
 
 
+def _demo():
+    """load_text's two properties. This file had NO selftest until 2026-09-08, which is why
+    the non-shard artifact reached the held-out set for as long as it did: three mutations of
+    tokenizer_report's samplers went red on its selftest and the two aimed at THIS file
+    survived, because nothing here ran."""
+    import tempfile
+
+    _root = ROOT
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            # FOUR domains, each with exactly ONE real shard beside its artifact. Both
+            # numbers are forced by load_text's own arithmetic, not chosen for looks:
+            #   - 2 files per dir, so `rng.sample(fs, min(2, len(fs)))` draws BOTH every
+            #     time. With a third file the artifact is drawn only 2/3 of the time and
+            #     the case would pass on the broken version by luck.
+            #   - k = (n_train + n_eval) // (2 * D) + 1 = 2 at D=4 and 6+2 rows, so four
+            #     domains supply exactly the 8 rows asked for. Fewer domains cannot: the
+            #     formula hands each one about half of what a 2-shard domain would give.
+            doms = [f"dd{i}" for i in range(4)]
+            for dom in doms:
+                d = os.path.join(td, "data", "corpus", dom)
+                os.makedirs(d)
+                with open(os.path.join(d, f"{dom}_000.jsonl"), "w", encoding="utf-8") as fh:
+                    for j in range(10):
+                        fh.write(json.dumps({"content": f"{dom} row {j}\n"}) + "\n")
+                with open(os.path.join(d, f"holdout_slice_{dom}.jsonl"), "w", encoding="utf-8") as fh:
+                    fh.write(json.dumps({"phase": dom, "rule_fp": "0" * 16, "n": "0"}) + "\n")
+            globals()["ROOT"] = td
+            sys.modules.pop("tokenizer_report", None)
+            import tokenizer_report as R
+
+            R.ROOT = td
+
+            # 1. The artifact is not in the held-out set, and the request is satisfiable, so
+            #    a short return would mean a file was misread rather than that the fixture
+            #    is too small.
+            train, ev = load_text(doms, 6, 2)
+            assert len(train) == 6 and len(ev) == 2, (len(train), len(ev))
+            assert not any(r == "" for r in train + ev), (
+                f"{sum(1 for r in train + ev if r == '')} empty rows: the non-shard artifact "
+                f"is still being sampled"
+            )
+            # NEGATIVE CONTROL: the same world read the old way DOES yield empty rows.
+            # Without this the assertion above would also hold on a fixture containing no
+            # defect at all.
+            old = sorted(glob.glob(os.path.join(td, "data", "corpus", "*", "*.jsonl")))
+            empties = sum(
+                1 for f in old
+                if json.loads(next(open(f, encoding="utf-8"))).get("content", "") == ""
+            )
+            assert len(old) == 8 and empties == 4, (
+                f"the fixture does not contain the defect ({empties} of {len(old)} files "
+                f"contentless); this case would prove nothing"
+            )
+
+            # 2. A short held-out set REFUSES rather than returning quietly. 208 rows cannot
+            #    come out of 40, and the shortfall lands on `ev` -- the silent form of the
+            #    ZeroDivisionError the v2 composition hit.
+            try:
+                load_text(doms, 200, 8)
+            except SystemExit as e:
+                assert "held-out" in str(e), e
+            else:
+                raise AssertionError("load_text returned a short held-out set instead of refusing")
+    finally:
+        globals()["ROOT"] = _root
+        sys.modules.pop("tokenizer_report", None)
+
+    print("tokenizer_sweep self-test OK (shard selection with a negative control, short held-out refuses)")
+
+
 if __name__ == "__main__":
-    main()
+    if "--selftest" in sys.argv:
+        _demo()
+    else:
+        main()
