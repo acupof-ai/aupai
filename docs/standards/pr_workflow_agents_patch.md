@@ -1,3 +1,9 @@
+---
+question: What gh-PR workflow should AGENTS.md carry, and why is it applied by claim rather than by self-edit?
+status: recorded
+source: written by de 2026-09-07 for 4c to apply under the claim
+---
+
 # AGENTS.md Coordination patch — the gh PR workflow
 
 Written by de 2026-09-07 for 4c to apply under the claim. **I am not editing `AGENTS.md` myself
