@@ -54,6 +54,21 @@
       "uncertainty": "500-row sample; +/-4.4pp at 95% on the 63.4% proportion",
       "boundary": "63.4% is the answer-EXTRACTION rate (last number inside <Output>), NOT the symbolic re-derivation coverage. Most extracted answers are word problems that cannot be re-derived independently; symbolic coverage is a pilot measurement, currently unmeasured. Cite this as extraction coverage only. Precedent: eff.depth_is_not_the_mfu_gap.",
       "status": "measured"
+    },
+    {
+      "id": "distill.teacher_throughput_nvfp4",
+      "value": "Qwen3.8-27B NVFP4 generation throughput on the pod: 130.3 tok/s per H20 (batch 8, tp=1, measured 2026-09-08 by tilerl-0a); 105.0 tok/s incl. load+JIT is a lower bound. 469k token/hr/card. At measured mean 1400 token/sample (cap 2048): 335 samples/hr/card; at cap 6144 mean 3331: 141 samples/hr/card. 8 cards = 1042 tok/s is an UNVERIFIED linear extrapolation. cap 2048 truncates 32% of level-5 math generations; 84% of those cut off were correct answers.",
+      "measured": "2026-09-08",
+      "source": "tilerl-0a measurement 2026-09-08, relayed by 4c; not re-measured by 44",
+      "config": {
+        "gpu": "H20",
+        "quant": "NVFP4",
+        "batch": 8,
+        "tp": 1
+      },
+      "uncertainty": "8-card number is unverified extrapolation; single-card numbers are one-day measurements",
+      "boundary": "Generation throughput, not forward. The 335/hr figure assumes the 1400-token mean, which is contaminated by 32% truncation at cap 2048; the 141/hr figure (cap 6144, mean 3331) is the uncontaminated planning number. Do not cite 335/hr as achievable.",
+      "status": "measured"
     }
   ]
 }

@@ -1,7 +1,7 @@
 ---
 question: How should the next version train by distillation from Qwen3.8-27B — which route, which seeds, what cost, what would falsify it?
 status: open
-source: facts/distillation.json (teacher vocab, seed inventory, measured 2026-09-08); teacher throughput pending tilerl-0a's measurement
+source: facts/distillation.json (teacher vocab, seed inventory, throughput — all measured 2026-09-08); cards pending user decision
 ---
 
 # Distillation pipeline design (Qwen3.8-27B teacher)
@@ -90,7 +90,21 @@ correctness gap needs ≈120 per subset for 80% power at α=0.05); below that th
 intersection's instruction-length distribution (median, p90) is reported alongside the
 population's; if the intersection median is < 0.7× the population median, the slice is
 systematically easier and the verdict is again unmeasured. A number is valid only on the
-population it was measured on, and that population is written down. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
+population it was measured on, and that population is written down.
+
+**Cap-hit rate is a third pre-registered quantity (4c, 2026-09-08; tilerl-0a measurement
+the same day).** Truncation is a second difficulty filter and it is aligned with the
+consensus filter: long-reasoning problems hit the cap more, and high-consensus problems
+skew easy — both drop hard problems, and they stack. cap 2048 truncated 32% of level-5
+math generations, and 84% of those cut off were correct answers. Rules: (a) cap-hit rate
+is a mandatory reported quantity per domain; (b) truncated samples (finish_reason=length
+or output tokens == cap) are removed BEFORE any subset comparison — post-comparison
+removal leaves a truncation-rate difference inside the correctness difference; (c) a
+calibration batch of 200 problems at cap 6144 runs before the big batch, and its cap-hit
+rate decides the big-batch cap: the smallest cap whose calibration cap-hit is < 5%. If no
+cap up to model context reaches < 5%, the domain is reported cap-bound and its share is
+renegotiated. A batch run at cap 2048 that looks fine is a batch where 32% of rows are
+half-answers. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
 facts/distillation.json#distill.openo1_answer_extractability): 81.0% of openo1 rows
 carry an `<Output>` tag; of those, 78.3% yield an extractable numeric answer (last
 number), so the answer-extraction population is 63.4% of the file. 19.0% have no
@@ -102,11 +116,25 @@ math; the remaining 12.0pp is discarded as unjudgeable — cheaper than rescuing
 
 ## 3. Teacher generation cost
 
-**PENDING.** The NVFP4 27B service's throughput (tok/s), concurrency ceiling, and
-per-sample cost are tilerl-0a's measurements, asked 2026-09-08. The bf16 copy is broken
-(MMLU 0.0%) and is not a fallback. Route feasibility is decided by "how many accepted
-samples per service-day", not by the algorithm — this section gets the measured numbers
-before the pilot, and the pilot's own first 1,000 generations re-check them.
+Measured 2026-09-08 by tilerl-0a, relayed by 4c
+(facts/distillation.json#distill.teacher_throughput_nvfp4): **130.3 tok/s per H20**,
+NVFP4, batch 8, tp=1 — generation throughput, not forward. 105.0 tok/s incl. load and
+JIT is a lower bound. That is 469k token/hr/card.
+
+The planning number is the cap-6144 one: mean 3331 token/sample → **141 samples/hr/card**.
+(At cap 2048 the mean is 1400 → 335/hr, but that rate is contaminated — cap 2048
+truncates 32% of level-5 math and 84% of the cut-offs were correct answers, section 2.)
+
+Full-scale openo1: 310,740 generations (77,685 × K=4) at 141/hr = **2,204 card-hours ≈
+92 card-days** on one card; ≈ 12 days on 8 cards, where the 8-card figure is an
+unverified linear extrapolation (multi-process interference unmeasured). gsm8k adds
+29,884 generations, expected shorter.
+
+Pilot: 1,000 generations ≈ 7.1 card-hours. Cap calibration batch (section 2): 200
+problems × 4 = 800 generations ≈ 5.7 card-hours.
+
+Cards are tileRL's by user grant; the pilot needs cards back — a user decision 4c is
+reporting with this budget. The bf16 copy is broken (MMLU 0.0%) and is not a fallback.
 
 ## 4. Falsification criterion
 
