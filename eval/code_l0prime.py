@@ -258,10 +258,12 @@ def freeze_hard(model, tok, rows, device, k=8, temperature=0.8, max_new=512):
                                  temperature, rep_stop=False)
         for gen_ids in out:
             # generate_batch returns ONLY the generated ids -- see its docstring in train.py.
-            # `gen_ids[len(ids):]` cut the prompt a second time and left
-            # the empty string on every sample, so freeze_hard recorded nothing and every
-            # problem counted as no_failing_sample. Fixed 2026-09-08 (4c), same defect as
-            # code_fewshot.py:178.
+            # `gen_ids[len(ids):]` cut the prompt a second time, BEHEADING the sample rather
+            # than emptying it: the 0-shot prompt here is 15-32 tokens, so over the first 60
+            # problems 15 came back empty and 45 came back as fragments -- and all 45 fail
+            # ast.parse. freeze_hard keeps whatever FAILS execution, so every fragment was a
+            # valid distractor by this function's own criterion. Fixed 2026-09-08 (4c), same
+            # defect as the one in eval/code_fewshot.py's batch loop.
             cont = tok.decode(gen_ids)
             end = cont.find("```")
             code = cont[:end] if end >= 0 else cont

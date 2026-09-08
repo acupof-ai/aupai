@@ -1274,19 +1274,24 @@ def main():
         "eval/cache_guard.py", "eval/pairwise_judge.py",
         # The two code generative evals, registered 2026-09-08 after both were found to strip
         # the prompt TWICE -- `ids[len(prompt):]` on top of the slice train.generate_batch
-        # already does, whose docstring says it returns generated ids. Every number either tool
-        # produced was an artifact of that arithmetic: code_fewshot cut 319-335 tokens at 3-shot
-        # against reference solutions of 26-71, so the continuation decoded to the empty string;
-        # code_l0prime's 0-shot cut 15-32, which BEHEADED rather than emptied -- 45 of the first
-        # 60 problems came back as fragments and all 45 fail ast.parse. freeze_hard keeps
-        # whatever FAILS execution, so each fragment was a valid distractor by its own criterion
-        # and the frozen "hard layer" would have been three quarters truncation artifacts.
+        # already does, whose docstring says it returns generated ids.
+        #
+        # BOTH BEHEADED RATHER THAN EMPTIED, which is why it survived two weeks. Read off the
+        # surviving predictions rather than derived: code_fewshot's published 3-shot run stored
+        # a median of 124 tokens starting mid-statement, 460 of 497 fail ast.parse, and the
+        # empty rate stayed at 1.6% -- 0/497 with almost everything a syntax error reads exactly
+        # like "the model cannot write code", which is the conclusion those runs drew.
+        # code_l0prime's 0-shot cut left 45 of the first 60 as fragments, all 45 unparseable,
+        # and freeze_hard keeps whatever FAILS execution, so each was a valid distractor by its
+        # own criterion.
         #
         # Registered rather than commented because of WHERE the defect lived: inline in the
         # batch loop, reachable only from a pod with a checkpoint. Both selftests now drive the
-        # decode through a known answer -- six reference solutions must round-trip byte for byte
-        # -- and both SKIP their sandbox halves off-pod (sandbox_exec needs root) so that case
-        # runs here. It is its own negative control: the same case reads 0/6 on the old code.
+        # decode through a known answer -- six reference solutions must round-trip byte for byte,
+        # NOT merely come back non-empty, since non-empty is what the caller reads as success and
+        # every beheaded row satisfies it -- and both SKIP their sandbox halves off-pod
+        # (sandbox_exec needs root) so that case runs here. The case is its own negative control:
+        # it reads 0/6 on the old code.
         "eval/code_fewshot.py", "eval/code_l0prime.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
