@@ -1,7 +1,7 @@
 ---
 question: "v2 architecture spec: SMELT loop + sparse MoE + CSA/HCA hybrid attention + partial RoPE, and the prereg that governs its first run"
 status: recorded
-source: "facts/smelt_deeploop.json, facts/deepseek_v4.json; runs/prereg.jsonl#moe48_30b_0907; 4c's 2026-09-08 brief"
+source: "facts/smelt_deeploop.json, facts/deepseek_v4.json; runs/prereg.jsonl#moe48_30b_0907@amended_12; 4c's 2026-09-08 brief"
 ---
 
 # v2: loop transformer + sparse MoE + CSA/HCA hybrid attention
@@ -185,7 +185,7 @@ are trained together from the same init.
 
 ## Prereg
 
-Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908`.
+Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_1`.
 
 ### Val-set definition
 
@@ -199,7 +199,7 @@ Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908`.
 
 Warmdown 0.3: the cosine anneal starts at 70% of total steps. Basis, corrected
 after review (tilerl-0a, 2026-09-08): the 30B run used warmdown 0.1 (anneal at
-90%, `runs/prereg.jsonl#moe48_30b_0907@amended_8`) and val rose twice. The
+90%, `runs/prereg.jsonl#moe48_30b_0907@amended_12`) and val rose twice. The
 first rise sits at the resume join (~22,500 steps = 59.0% of the corrected
 38,146 total; parent 21400-22400 falling -0.01757/1k against resume 22600-23600
 rising +0.02971/1k, t=+6.179, `@amended_9`): 78.1% of it is cot+chatml+chat_qa,
