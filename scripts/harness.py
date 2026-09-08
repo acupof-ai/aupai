@@ -17021,6 +17021,10 @@ EVIDENCE = {
     "mutation_asserted_took": "repo",
     # repo: it reads tracked test files with ast and answers the same anywhere.
     "fixture_not_live_state": "repo",
+    # repo: it reads the shared .git/config's user.name/email, which every worktree of this
+    # repository shares and CI's checkout carries. Green here IS green on main. On the pod the
+    # identity is unset, which the check passes by design.
+    "shared_config_not_fixture_identity": "repo",
     # repo: the subject is git ls-files joined against pod_drift.SCOPE, both of which are the
     # checkout's. On the pod git ls-files is empty, so the check degrades to its own SKIP before
     # the auth rule is ever consulted.
