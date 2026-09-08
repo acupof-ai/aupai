@@ -899,5 +899,86 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
+## R12. An assertion whose result is anti-correlated with its own name
+
+### §279 (2026-09-08, R12)
+
+**Three lines, each green, each certifying something its name did not describe, plus a fourth written up under R11. Running the suite cannot find any of them: the suite is green exactly when the assertion is wrong.**
+
+This is not R2. R2 tests the wrong property and a known-answer world catches it. Here the world that would turn the assertion red is the world in which the code is CORRECT, so there is no input to supply.
+
+**Instance 1 -- the ordering assertion, `scripts/test_sft_holdout_gate.py`. STILL LIVE ON MAIN at `test_sft_holdout_gate.py:64`; the rebuild is task #33 (branch b0-40), and this paragraph is written in the present tense because the defect is present.** The line is named "gate is upstream of the ckpt load" and asserts `"nonexistent_ckpt" in o or "No such file" in o`, on the reasoning that reaching the checkpoint error proves the gate let the pack through. That string appears whenever the script reaches the model load at all -- including when the gate sits BELOW it and the checkpoint error fired first, before the gate ran. Green in both orderings, and *greener* in the broken one: move the gate after the load and the message arrives sooner.
+
+Reading `sft_math.py` to write the replacement turned up a second finding the assertion had been hiding: **the name is false as well as the method.** `torch.load(args.resume, ...)` is at `sft_math.py:199`; the holdout gate is at `:265` (stale branch) and `:274` (unstamped branch). The load is UPSTREAM of the gate, not downstream of it, so the property the line claims to certify does not hold and never did. A test that cannot go red also cannot report that the thing it is named for is backwards. The replacement therefore asserts the order that is actually true, read out of the source rather than out of a message, with both indices asserted non-None so a rename goes red instead of vacuously green:
+
+    _load = next((i for i, L in enumerate(_src) if "torch.load(args.resume" in L), None)
+    _gate = next((i for i, L in enumerate(_src) if '"holdout_fp" not in d' in L), None)
+    check("ckpt load is upstream of the gate (order read from sft_math.py)",
+          _load is not None and _gate is not None and _load < _gate, ...)
+
+**Instance 2 -- the vocab-mismatched probe.** A run to answer "does the unstamped-pack gate refuse" printed `REFUSED: False`, read as "the guard is broken". The pack's `vocab_id` did not match the checkpoint's, so the assert at `sft_math.py:239` fired first -- before the holdout gate at `:265`. The process refused for a reason the probe was not asking about, and the readout collapsed both refusals into one boolean named for only one of them. The decisive run needed a pack that is unstamped AND vocab-matching, so the guard under test is the only one left standing; `sft_all.pt` supplied it and the gate refused with its own message. **The guard was intact; the test was broken.** General form: when several guards sit on one path, a boolean named for one of them means nothing unless every other guard is satisfied.
+
+**Instance 3 -- an exclusion that has never been triggered.** `reachability.py`'s directory walk skips `.venv`, and that entry read as obviously correct in review. It had never once executed: no worktree in this repo contains a `.venv`, and the only tree that does is the integration tree, where it holds **13,128 `.py/.sh` against the 537 the repo owns** -- 96% of the paths a walk from the root would visit. The scanner had never been run there. So the line was green for the whole of its life for a reason unrelated to its correctness, and it inherited that greenness from a list I copied rather than from any judgement I made. **An exclusion that has never been triggered and a correct exclusion are the same source text**, and only the second one survives someone editing the list. The fix is not a better exclusion but a printed one: the run now states its tree, its population, and its exclusions, so a reader sees which of the two worlds the number was taken over.
+
+This one is filed here rather than under R14 deliberately, and the first filing was wrong. R14's signature is "the tool's own source appears as a source in its own output"; `.venv` never executing has nothing to do with the tool searching itself. It belongs with the other two above because the failure is identical: **it passed, and its passing carried no information.**
+
+**Instance 4 -- §278's probe** is the same shape one level up and is written up there.
+
+**The layer 4c added, and it is the one that survives being on alert for the others: a mutation run's own summary line can mislead.** A mutation reported one failing assertion. Two assertions were meant to cover that guard and only one did; the summary named the one that fired and said nothing about the one that did not, and "1 assertion caught it" was read as "the guard is covered". **The count of red assertions is not the identity of the red assertions.** Reading WHICH assertion fired, per mutant, is the only form that answers the question -- and it is why the mutation runs in this session report per-mutant which named assertion died, rather than a count.
+
+Cost: ~2h across the three, and one wrong report to a peer that a guard was broken when the test was.
+Evidence: `scripts/test_sft_holdout_gate.py` as landed; `sft_math.py:239` and `:265`; `scripts/reachability.py`'s EXCLUDED_DIRS and the population line its output now prints; §278.
+open: no check can find an assertion anti-correlated with its own name in general. The machine-checkable half is per-suite: every mutation run must print the NAME of each assertion that fired, never only a count.
+
+## R13. Information already present, but not in a form that can be treated as a conclusion
+
+### §280 (2026-09-08, R13)
+
+**Four times in one session, the fact needed was already written down, already measured, and already in the file being read -- and was read past every time.** The failure is not missing information. It is information whose form does not make it usable as a conclusion.
+
+**Instance 1 -- a measured conclusion sitting in a comment.** `scripts/merge_main.sh` carries, in a comment: *"main moves faster than a commit takes on a repo with six sessions"* -- with the measurement behind it, a tree that went one commit behind BETWEEN a clean `git merge main` and the commit two seconds later. That sentence rules out "merge first, then commit" as a convergent strategy. Two sessions read that file the same night and both treated the deadlock as a state they could retry into: five attempts and four attempts respectively. **A measured conclusion nobody treats as a conclusion is worth the same as no conclusion.**
+
+**Instance 2 -- "nothing cites it" impersonating evidence.** The deletion sweep ran on the criterion "no doc, ledger, script or fact names this file". That is a fact about today which one added line reverses. The stronger criterion -- RUN it and find it does nothing, `already done; skipping`, `appended 0` -- is a property of the file that no future caller can change. Both look like grounds for deletion in a PR body. Of ~270 scripts, exactly 2 could produce fixed-point evidence; everything else was resting on the weaker one while being read as the stronger. **3b's boundary on this, which is the part that makes it usable: fixed-point beats unreferenced only when the target set is CLOSED.** Verified by `ast`, not assumed: `e1_close_open_rows.py`'s `CLOSE` and `e1_drop_reasons.py`'s `REASONS` are literal dicts of 9 and 5 keys, so no future `e1-38` can wake them. Where a script derives its targets from a ledger, `appended 0` is a fact about today's ledger and tomorrow's row revives it -- there the zero says nothing about the file.
+
+**Instance 3 -- a half-correct comment, the hardest form.** `scripts/exp.py:582` describes a fabricated row as carrying `cmd=''`, `hypothesis=''` **and no commit**. The code 81 lines later at `:663` writes `"hypothesis": "", "commit": git_commit()`, and `git_commit`'s docstring at `:142` opens `Never ""`. The comment is RIGHT about `hypothesis` and wrong about `commit`, in one sentence, in one file. A peer nearly derived a wrong criterion from it. **Two claims joined in one sentence share credit: verifying the half that matches invites trusting the half that does not.** This one never even moved contexts -- it sits 81 lines from its own contradiction.
+
+**Instance 4 -- a count read as a different count.** A controller answered "how many harness check items are there" with 71, taken from a run's `71 PASS` line. That is the number that PASSED. The total is 109, read from source with `ast`. The output line was correct about what it reported and said nothing about being narrower than the question. Same family as the monotone-aggregate case in §281: **a number entirely correct in its own context becomes wrong under a different question, and neither side raises an error.**
+
+Cost: ~3h across the four, one wrong strategy pursued nine times between two sessions, one nearly-published wrong criterion.
+Evidence: `scripts/merge_main.sh` (the six-sessions comment); `scripts/exp.py:142`, `:582`, `:663`; PR #91's body; the 109-vs-71 count from `ast` over `harness.py`'s `CHECKS`.
+open: the machine-checkable slice is narrow but real -- a comment naming a field ("no commit") beside code assigning that field is a source-level contradiction a scanner can find. The rest is manual.
+
+### §281 (2026-09-08, R13)
+
+**A monotone improvement in an aggregate hid a defect that per-item output made obvious in one line.**
+
+Adding three edge kinds to `reachability.py` moved unreachable files from 79 to 56. Direction correct, magnitude plausible: more edges, fewer orphans. **Any review reading only the total would have passed it, and so would I.**
+
+Printing WHICH files were rescued and BY WHAT showed 12 of the 23 rescued by comments in `reachability.py` itself -- see §282. The aggregate could not show it, because a defect that rescues files moves the total in exactly the direction a correct fix does.
+
+The counterfactual is the whole point: **there is no threshold on the total that separates the two.** 79 to 56 is as consistent with the fix working as with the tool vouching for its own annotations. Only the per-item source column distinguishes them.
+
+Cost: caught before commit, ~20 min. Would have been permanent: the rescued files could never appear on a candidate list again.
+Evidence: `scripts/reachability.py` as landed, and its per-item `REACHED FROM` column.
+open: `report an aggregate without per-item attribution` is not checkable in general. Per-instance it is: a tool whose output is a list must print, for each item, the reason it is on the list.
+
+## R14. An instrument searching a space that contains its own text
+
+### §282 (2026-09-08, R14)
+
+**Detectable signature: the tool's own source file appears as a SOURCE in its own output.** That is the check, and it is why this is a rule rather than a story.
+
+Separate from R13 because the fix differs. R13's fix moves a conclusion somewhere it gets executed. This one's fix removes the instrument from its own search space -- no amount of restating the conclusion helps, because the tool is reading itself correctly.
+
+**Instance 1 -- my own, `scripts/reachability.py`.** `comment_edges()` reads every file's comments for path citations. `FATE` names 47 paths in prose. On the first run the tool rescued 12 files from its own deletion-candidate list -- every path it had ever ruled `KEEP` on -- purely because it had annotated them. A past verdict is not a citation. **With the self-exclusion: 70 unreachable, 15 of them carrying a KEEP ruling. Without it: 56, and those 15 could never appear on the list again.** The tool would have permanently vouched for exactly the files it had previously reported as candidates.
+
+**Instance 2 -- `pgrep -f` matching its own command line.** A pattern searching the process table finds the process running the search. Same signature: the instrument is a member of the population it enumerates.
+
+**Instance 3 -- `harness.py:1755` copying `runs/mem_probe_base.sh` to build a broken world.** Verified by reading it: the selftest copies that file into a temp tree and strips `--anneal_frac` from it to construct the violation. A name-based reachability scan reads that as no citation at all -- and deleting the file turns a green check into no check. The inverse of instance 1: there the name's presence was not evidence of use, here the name's absence is not evidence of disuse. **A name is not a call, in either direction.**
+
+Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
+Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
+open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
+
 ## R10. What happened only on the pod did not happen
 
