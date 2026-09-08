@@ -1262,6 +1262,41 @@
     "preds_l1_d3_ckpt_p200m_4b_0902.pt.en.jsonl": "57ec261edaac799cd8be1fdc29cec1c265d101e859bd98b2cbebbe6ea0cee65c",
     "preds_l1_d3_ckpt_p200m_4b_0902.pt.jsonl": "79cfa697dfc459dacbe3cb622448d5040f5acd0a25a0f33979e9387779a65866"
    }
+  },
+  {
+   "id": "be.answer_present_within_recipe_variance",
+   "value": {
+    "within_recipe_sd": 0.1852,
+    "within_recipe_range": 0.4286,
+    "cv": 0.53,
+    "binomial_sd_at_n497": 0.0201,
+    "ratio_observed_to_binomial": 9.2,
+    "sd_95ci": [
+     0.1049,
+     0.6902
+    ],
+    "checkpoints_per_arm_for_2sigma_at_1p42x": {
+     "sd_low": 3,
+     "sd_point": 7,
+     "sd_high": 94
+    }
+   },
+   "unit": "answer_present_rate (l1_fewshot, 3 demos, zh, 497 items)",
+   "measured": "2026-09-08",
+   "claim": "whether answer_present_rate at 3 demos can resolve a 1.42x manipulation between two arms",
+   "source": "runs/score_matrix.jsonl, the four scored checkpoints of data_leg_206m_8b -- ONE recipe, one mix (data/mix_200m_8b.json), 15,258 steps, save_every 500. step7000 0.3018 / step7500 0.5433 / step10000 0.1147 / final(15258) 0.4386, each acc 0.0322 / 0.0503 / 0.0101 / 0.0523. No new run; these rows were already in the ledger.",
+   "config": {
+    "metric": "l1_fewshot answer_present_rate",
+    "demos": 3,
+    "demo_lang": "zh",
+    "items": 497,
+    "target_effect": "1.42x, the marker-exposure ratio between mix_200m_8b and the resume-1 mix"
+   },
+   "status": "measured",
+   "finding": "NO, not at any affordable checkpoint count. The four readings span 0.1147-0.5433 inside a single recipe -- the entire cross-run range of the ledger's eleven zh rows (0.0986-0.6700) reproduced within one run. Step-to-step sd is 0.1852 against a binomial-only 0.0201 at n=497, a factor of 9.2, so the scatter is the model's generative behaviour moving between checkpoints and not sampling error in the item set. It is not a training trend either: the sequence goes +0.2415, -0.4286, +0.3239. A 1.42x manipulation moves the rate by 0.1428, which is 0.77 within-recipe sd, so two arms at one checkpoint each give 0.55 sigma. Reaching 2 sigma needs 7 checkpoints per arm at the point estimate -- and the sd is itself estimated from n=4, whose 95% chi-square interval is 0.1049-0.6902, putting the requirement anywhere from 3 to 94 checkpoints per arm. Each scoring is 497 generative items.",
+   "boundary": "About the METRIC's resolving power, not about any arm and not about the model. It says nothing about whether cot/chatml/chat_qa weight affects answer format -- that question is untouched and would need a readout that can carry it. One recipe at 206M params; the variance is not shown to be the same at 1.5B, and the four checkpoints are the only ones scored, not a designed sample. answer_present and l1_fewshot acc move together across these four (r = 0.9618, n=4, |r|_crit 0.950), which locates the instability in the model's generation rather than in the ANS_RE marker regex -- but at n=4 that correlation is one point past the critical value and is offered as a direction, not a result.",
+   "uncertainty": "sd from n=4 checkpoints. The 95% CI on sd spans a factor of 6.6 and the per-arm requirement spans 3 to 94, so the headline is the DIRECTION -- within-recipe scatter dwarfs the target effect -- and not the specific checkpoint count. Refuted by: a designed sample of >=10 checkpoints from one recipe whose sd comes in under 0.05, which would make the metric usable at a few checkpoints per arm.",
+   "retires": "answer_present_rate at 3 demos as a primary readout for any mix-composition arm at this effect size. Two such arms were proposed on 2026-09-08 (restoring cot/chatml/chat_qa to their 8B weights; a math-side lever) and both were killed before preregistration -- first because the observation they rested on did not hold (0.340 is the 4th-lowest of 11 zh rows, not the lowest, and the three below it trained on the very weights the arm would restore, one-sided permutation p = 0.40), and now because the readout could not have settled them either way."
   }
  ]
 }

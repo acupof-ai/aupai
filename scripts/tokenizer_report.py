@@ -29,6 +29,39 @@ DEFAULT_DOMAINS = "web_hq,textbook,wiki,math,chat,code,en"
 
 
 # ---------------------------------------------------------------- corpus
+#: A shard is NAMED like one: `<prefix>_<NNN>.jsonl`, the only thing ShardWriter emits.
+#: Same pattern as train.py's SHARD_RE, and it must stay the same: a tokenizer gate that
+#: samples files training never reads is not measuring the training distribution.
+#:
+#: WHY A WHITELIST AND NOT A `holdout_slice_` BLACKLIST. Every corpus dir may hold artifacts
+#: written beside its shards. Today that is five one-row `holdout_slice_<domain>.jsonl`
+#: headers -- `{phase, rule_fp, n}`, no `content` key -- and a blacklist would have to name
+#: each new artifact type before it can be excluded. train.py chose the whitelist direction
+#: for this exact reason (its own comment: a blacklist reads an unknown new file as DATA).
+#:
+#: WHAT IT COST HERE, measured on the pod 2026-09-08. `load_text` samples 2 files per domain
+#: out of `sorted(glob(*.jsonl))`, so a domain with few files draws the slice with high
+#: probability, and `.get("content", "")` turns it into an empty string rather than an error:
+#:
+#:     v2 composition       train 11394/12000   eval    0/800   -> bits/char ZeroDivisionError
+#:     resume-1 composition train 12000/12000   eval  105/800   -> ran, on 13% of its eval set
+#:
+#: With this filter both compositions read 12000/800. So the failure is not new to v2; v2 is
+#: where it stopped being silent. Every recorded bits/char figure was computed against a
+#: truncated held-out set, and the resume-1 gate readings in
+#: facts/tokenizer.json#tok.gates_v2_composition were taken with 105 of 800 eval rows.
+#: `sample_corpus` was hit more weakly -- one empty row each in chatml and chat_qa -- because
+#: it samples 8 files per domain, not 2.
+SHARD_RE = re.compile(r"_\d{3,}\.jsonl$")
+
+
+def shard_paths(domain):
+    """Every real shard of `domain`, in sorted order. The one place either sampler asks
+    the filesystem what a domain contains."""
+    fs = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", domain, "*.jsonl")))
+    return [f for f in fs if SHARD_RE.search(os.path.basename(f))]
+
+
 def sample_corpus(domains, per_domain=400, seed=7, shards=3, clip=2000):
     """Documents per domain. `shards` and `clip` are part of every metric's DEFINITION,
     not tuning knobs: the same vocabulary reads 4.0% undertrained on the 1.6M-token
@@ -38,7 +71,7 @@ def sample_corpus(domains, per_domain=400, seed=7, shards=3, clip=2000):
     rng = random.Random(seed)
     out = {}
     for d in domains:
-        fs = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", d, "*.jsonl")))
+        fs = shard_paths(d)
         if not fs:
             continue
         rows = []
@@ -584,10 +617,52 @@ def _demo():
         "threshold was measured on the old passage and no longer means what it says"
     )
 
+    # 6. SHARD SELECTION. A corpus dir holds artifacts beside its shards, and both samplers
+    #    used to read them as data: holdout_slice_<domain>.jsonl is one row of
+    #    {phase, rule_fp, n} with no `content`, which .get("content", "") turns into an empty
+    #    string instead of an error. Built on disk rather than asserted from the pattern:
+    #    the defect is about which FILES the sampler reaches, and a regex assertion would
+    #    hold on a version that still globs *.jsonl.
+    import tempfile
+
+    _root = ROOT
+    try:
+        with tempfile.TemporaryDirectory() as td:
+            d = os.path.join(td, "data", "corpus", "dd")
+            os.makedirs(d)
+            for i in range(3):
+                with open(os.path.join(d, f"dd_{i:03d}.jsonl"), "w", encoding="utf-8") as fh:
+                    for j in range(50):
+                        fh.write(json.dumps({"content": f"row {i} {j}\n"}) + "\n")
+            # the real artifact, byte for byte: one row, no `content` key
+            with open(os.path.join(d, "holdout_slice_dd.jsonl"), "w", encoding="utf-8") as fh:
+                fh.write(json.dumps({"phase": "dd", "rule_fp": "0" * 16, "n": "0"}) + "\n")
+            # globals(), not `global ROOT`: this function reads ROOT above, and a global
+            # declaration has to come first in the body.
+            globals()["ROOT"] = td
+            got = [os.path.basename(p) for p in shard_paths("dd")]
+            assert got == ["dd_000.jsonl", "dd_001.jsonl", "dd_002.jsonl"], got
+            # and the sampler that consumes it yields no empty row from any of the 4 files
+            rows = sample_corpus(["dd"], per_domain=120, shards=4)["dd"]
+            assert rows and not any(r == "" for r in rows), (
+                f"sample_corpus returned {sum(1 for r in rows if r == '')} empty rows of "
+                f"{len(rows)}: it is still reading the non-shard artifact"
+            )
+            # NEGATIVE CONTROL: the same world, globbed the old way, DOES produce the empty
+            # row -- otherwise the assertion above would pass on a fixture with no defect
+            # in it (three of my fixtures this week proved nothing that way).
+            old = sorted(glob.glob(os.path.join(d, "*.jsonl")))
+            assert len(old) == 4 and any(
+                json.loads(next(open(f, encoding="utf-8"))).get("content", "") == ""
+                for f in old
+            ), "the fixture does not contain the defect; this case would prove nothing"
+    finally:
+        globals()["ROOT"] = _root
+
     print(
         f"tokenizer_report self-test OK ({len(SCALE_STABLE)} scale-stable metrics checked, "
         f"{len(SCALE_BOUND)} declared scale-bound, 3 known-answer cases including the "
-        f"two-domain sample-coverage world, REF_EN pinned)"
+        f"two-domain sample-coverage world, REF_EN pinned, shard selection on a built dir)"
     )
 
 
