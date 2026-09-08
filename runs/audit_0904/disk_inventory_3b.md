@@ -1,3 +1,9 @@
+---
+question: What does /work/aupai/data + /data00 hold on 2026-09-04, by bytes, files and owner?
+status: measured
+source: du -sb + stat on the pod, 2026-09-04; partial draft for runs/audit_0904/disk_inventory.md
+---
+
 # Disk inventory — /work/aupai/data + /data00 (3b partial, 2026-09-04)
 
 Partial draft for tilerl to merge into `runs/audit_0904/disk_inventory.md`. Read-only;
