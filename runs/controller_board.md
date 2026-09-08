@@ -93,6 +93,20 @@ Reproduce their known answer, with the divisor and the alignment pinned analytic
 
 **Why this audit existed:** `eval/domain_bpb.py` truncated its input while dividing by the untruncated length and reported 5.460 where the true value is 8.000. One known-answer case found it. These 16 metrics had no such case. **Six of the seven defects are in the same family — a value computed over one population and divided, compared, or sliced against another.**
 
+## A criterion a degenerate input also satisfies — three instances in one hour, 2026-09-08
+
+`non-empty`, `not-all-identical`, `no error raised`: garbage satisfies each of them, so none of them can fail on the input they exist to catch. The fix is the same every time — assert the value, not a property that a broken value also has.
+
+| where | the criterion that could not fail | what it became |
+|---|---|---|
+| `eval/code_l0prime.py` (b0) | `non-empty` — and under the double-strip 45 of 60 truncated fragments ARE non-empty, all 45 failing `ast.parse`. `freeze_hard` keeps the first execution failure, so every fragment qualified as a distractor **by that tool's own criterion, inside a world truncation had built** | round-trip byte-identical |
+| pass@k degeneration guard (tilerl) | `at least one sample differs` | record the `distinct` count itself |
+| a tileRL test's seed assertion (tilerl) | the assertion **copied production's seed formula**, so it changed whenever production changed and could never fail | read the seed the engine actually submitted; mutation (step by `rows` instead of `group`) now turns it red, and was green before |
+
+**And the mirror of it, from the same hour:** `pod_drift` reports that two sides differ and never which side has the evidence. Those are different pieces of information, and only the second one tells you which way to fix. Two sessions each picked a direction — b0 aligned the pod to git, tilerl aligned git to the callers — and **both could say they had fixed it**. The criterion (all three call sites invoke it as `python3 runs/count_dir.py`, so the executable bit was never read) was not in the red, not in the hint, and not in the file. Resolved at `5bf7eb38`, pod `chmod 644`, stamp on, 836 files match.
+
+So the fix to that report is three items, and the third is the one that matters: the hint must not name a command that cannot work (`pod_push.sh` only ADDs content); it must print `sha256 identical (…)` rather than the bare assertion `content matches`; and **it must say where the criterion is found** — for a mode drift, grep the call sites. The first two save one wasted command and one repeated investigation. **Only the third stops two people fixing the same drift in opposite directions.**
+
 ## Unowned, ready to pick up
 
 **A check that `facts/<f>.json#<id>` references in prose resolve.** Today only `runs/tasks.jsonl` evidence is parsed (`_commit_delivers`); a reference in a doc dangles silently. e1 measured the real population: **493 references repo-wide, 2 genuinely dangling** — `runs/controller_board.md` → `cs.math_short_v8_cap_audit` (resolves once #98 lands) and `runs/tasks.jsonl` → `dq.t24`, whose closing row put a bare file path in `evidence`, so the id was never parsed at all.
