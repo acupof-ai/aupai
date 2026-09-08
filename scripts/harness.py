@@ -5524,11 +5524,23 @@ def _broken_coresident_call_removed():
     p = os.path.join(ed, "cache_guard.py")
     with open(p, encoding="utf-8") as fh:
         s = fh.read()
-    old = "    assert_not_co_resident(domains, root=root)\n"
-    if old not in s:
-        raise SelftestSkip("the chokepoint no longer calls assert_not_co_resident this way")
+    # MATCH THE CALL, NOT ONE SPELLING OF IT. This was the literal
+    # `"    assert_not_co_resident(domains, root=root)\n"`, and on 2026-09-07 21:09 (226564c9)
+    # the chokepoint gained a `head_rows=head_rows` argument. The literal stopped matching, the
+    # world raised SelftestSkip, and `harness self-test OK` kept printing with this guard dead --
+    # for 4.5 hours, over an argument added to the very line it watches. A world keyed to an
+    # exact source string is a world that any refactor of its subject silently retires, and the
+    # skip is indistinguishable in the summary from the environmental ones (no nvidia-smi, no
+    # lane card). Regex on the CALL, so adding or reordering keyword arguments cannot kill it;
+    # what must still fail loudly is the call disappearing, which is the defect under test.
+    m = re.search(r"^[ \t]*assert_not_co_resident\(domains[^)]*\)[ \t]*\n", s, re.M)
+    if m is None:
+        raise SelftestSkip(
+            "eval/cache_guard.py's chokepoint no longer calls assert_not_co_resident(domains, "
+            "...) on its own line -- if that call was deliberately moved, re-point this world at "
+            "its new site; a SKIP here means nothing checks that the chokepoint asks")
     with open(p, "w", encoding="utf-8") as fh:
-        fh.write(s.replace(old, "", 1))
+        fh.write(s[:m.start()] + s[m.end():])
     return d
 
 
@@ -20709,9 +20721,24 @@ def _selftest_card_lend_expires():
       unreadable note on a block card      -> PASS   4c's ruling: per-card refusal, never repo-wide
       block card handed to another team    -> FAIL   the permissive drift (4) exists for
 
-    THE CLOCK IS PINNED IN EVERY WORLD. A verdict that depends on the wall clock cannot be
-    tested: the same fixture passes this hour and fails next hour, and the failure reads as a
-    defect in the classifier rather than in the test.
+    THE CARD-7 WORLD IS UNREACHABLE TODAY, AND THAT IS A PROPERTY OF PROPERTY (6), NOT OF THE
+    CODE (tilerl-0a's follow-up to PR #58). "card 7 becomes unclassified" cannot happen while
+    (6) pins the baseline to exactly [0, 6]: the pin is what keeps card 7 out of the baseline,
+    so the branch that would misread its standing GRANTED note as a lend is never entered.
+    Recorded because the cost is deferred, not absent -- the day (6) is relaxed to accept a
+    baseline read from the file, this world stops being hypothetical and card 7 starts failing
+    for real. It is kept as a FAIL case so that relaxation has to confront it.
+
+    THE CLOCK IS DERIVED FROM THE NOTE, NOT PINNED (PR #61, and the docstring above said
+    "pinned in every world" until it broke main's CI for four merges -- §274). A verdict
+    depending on the wall clock cannot be tested, but pinning the clock while READING the live
+    note is worse than pinning neither: the pair agreed for three hours, then the controller
+    wrote a second lend at different times and the constant fell outside it, failing in a way
+    that read as a defect in the classifier. So the three clocks are computed from whatever
+    window the note carries -- midpoint inside BY CONSTRUCTION, a day either side outside BY
+    CONSTRUCTION -- which holds for every note that can be written, including the next one.
+    Every other input this function compares against live text is derived the same way, for
+    the same reason: a literal that agreed with the file once is a defect with a delay on it.
     """
     import copy
     import shutil as _sh
@@ -22909,6 +22936,11 @@ _UNFROZEN_ALLOWLIST = {
     # stops instead of reporting a number at a precision nobody chose.
     "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
+    # UNFROZEN, not frozen: a step-time breakdown is a diagnostic, not a recipe key. Freezing it
+    # would mean every resume of a once-profiled run must keep passing it or be refused, which
+    # is backwards -- a resume that drops it should simply run unprofiled. Note the completeness
+    # check passes with the flag in EITHER set, so green here would not have caught the choice.
+    "profile_step_every",
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg

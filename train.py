@@ -559,6 +559,51 @@ def _is_mem_fqn(fqn):
     return fqn == "memory" or fqn.startswith("memory.") or ".memory." in fqn
 
 
+def _n_active_params(model, cfg):
+    """Parameters a single token actually multiplies -- the denominator `6 * N * tokens` needs.
+
+    de-71, 62's filing. Two sparse structures break the dense-FLOPs premise and only one was
+    handled: `_is_mem_fqn` excludes the memory table, and routed MoE experts were counted in full.
+    MEASURED on 1.5b-a0.2b-e48_30b at step 22500 -- total 1.4807B, routed 1.3590B, so the line
+    priced 7.2x the FLOPs a token performs and printed **276%** at 46K tok/s/gpu against bf16 peak
+    148 (the log says 278%; the gap is its rounded tok/s). Active is 0.2067B and the honest figure
+    is 38.6%.
+
+    THE PREDICATE IS THE TENSOR'S SHAPE, NOT ITS NAME, and the difference is a trap worth stating
+    because a name test looks equivalent and is not. model.FFN gives the DENSE FFN
+    parameters called `w13` and `w2`; model.MoEFFN gives its routed stacks the same two
+    names. A test on the last path component happens to separate them today -- nn.Linear appends
+    `.weight`, a bare nn.Parameter does not -- but that is a fact about nn.Linear's internals, not
+    about which parameters are routed, and it breaks the moment an expert stack becomes a module.
+    The substring spelling is worse and measured: on a mixed model (moe_layers "0-1" of 12 layers,
+    the real arm's shape) `"w13" in n` charges all 12 blocks, 344064 against the routed 98304.
+    A routed stack is (E, ..., ...) with E == cfg.moe_experts; a dense weight is 2-D. Verified
+    against both checkpoints: the dense arm excludes 0.0000B either way, the MoE arm 1.3590B.
+
+    THE DENSE ARM MUST BE BIT-IDENTICAL, which is 62's acceptance criterion and the reason this
+    subtracts rather than recomputing an active count from config. With moe_experts 0 the loop
+    matches nothing, so `n_active == n_dense` exactly -- not "within rounding". A fix that changed
+    the shared denominator would lower the MoE number and be indistinguishable from the right
+    change by reading only the MoE line.
+
+    What is NOT counted, stated rather than hidden: the router's own matmul (d x E per token, 0.03%
+    of active here), the memory's key dot products, and attention's sequence-dependent term -- all
+    already omitted by `6 * N * tokens`, whose approximation this stays inside. An MFU that
+    undercounts a small named term is honest; one that overcounts by 7x is not a fraction of peak.
+    """
+    n_total = sum(p.numel() for p in model.parameters())
+    n_mem = sum(p.numel() for n, p in model.named_parameters() if _is_mem_fqn(n))
+    e = int(getattr(cfg, "moe_experts", 0) or 0)
+    k = int(getattr(cfg, "moe_top_k", 0) or 0)
+    n_routed = 0
+    if e > 0:
+        n_routed = sum(p.numel() for p in model.parameters()
+                       if p.dim() == 3 and p.shape[0] == e)
+    # k >= e would mean every expert is reached: subtract nothing rather than add.
+    n_inactive = n_routed - n_routed * min(k, e) // e if e > 0 else 0
+    return n_total - n_mem - n_inactive
+
+
 _FP8_WSCALE = {}  # id(weight) -> scale, cleared per step; the head weight is constant within a
                   # step and reused across all 64 FLCE chunks, so recomputing its absmax 64 times
                   # is 64 reductions over 32784x1024 for one value (b0). FP8LinearFunction caches
@@ -1338,6 +1383,128 @@ def set_schedule(optimizers, step, total, cfg, lr_scale=1.0):
                 # docs/lessons/warmup_momentum_interaction.md has the table and the reasoning.
                 g["momentum"] = 0.85 + 0.10 * min(1.0, step / 150)
                 g["weight_decay"] = g["initial_wd"] * max(0.0, 1.0 - step / total)
+
+
+class StepProfiler:
+    """Step-time breakdown from cuda events. Off unless --profile_step_every N is passed.
+
+    WHY THE DDP REDUCE IS A DIFFERENCE AND NOT A TIMED REGION (tilerl 2026-09-07, tilerl-33).
+    There is no reduce call to wrap: DDP launches the all-reduce from backward hooks as buckets
+    fill, so it is fused into the LAST micro-batch's loss.backward() and overlaps the backward
+    compute by design, while the other accum-1 micro-batches suppress it under model.no_sync().
+    A timer around that region would price the overlapped part too and report more than the
+    reduce actually costs. What the accum structure gives instead is a differential on identical
+    work: accum-1 backwards without the reduce, one with it, so
+
+        bwd_last_excess = backward_last - mean(backward_nolast)
+
+    THE FIELD IS NAMED FOR WHAT IT MEASURES, NOT FOR THE REDUCE. The reduce's non-overlapped
+    remainder is the largest term in that excess and the reason to look at it, but it is not the
+    only one: the last backward also runs outside no_sync(), which under static_graph carries
+    DDP's end-of-iteration bookkeeping, and it is a different micro-batch from the ones it is
+    compared against. Calling the field `reduce` would put an interpretation into every log and
+    spreadsheet it reaches. Both terms are printed, so a reader sees the subtraction.
+
+    n, the mean and the spread print beside it, and there is NO per-step verdict on whether the
+    excess is resolvable. A range grows with n on its own, so a `spread >= excess` test fires
+    more often at accum 8 than at accum 4 on identical hardware -- a threshold moving with a
+    nuisance parameter. At accum 4 n is 3, where the range IS the sample; no per-step test is
+    worth having there, so the instrument prints its inputs and a reader accumulates across
+    printed steps. At accum 1, or with DDP off, no no-sync arm runs at all; the line names which
+    arm was missing rather than printing a zero that would read as "the reduce is free".
+
+    ONE SYNC PER PRINT, not per region: cuda events are recorded on the stream and read once, at
+    the end of a profiled step. Synchronising per region would serialise the very overlap this
+    is trying to measure. The cost of that one sync is what the on/off control measures.
+    """
+
+    REGIONS = ("fwd", "bwd_nolast", "bwd_last", "opt", "balance")
+
+    def __init__(self, every, torch_mod, bucket_view=True):
+        # ROUNDED UP TO A MULTIPLE OF 10, because line() is only reached inside
+        # `if is_main and step % 10 == 0` -- the step-time denominator dt/10 comes from that same
+        # block. `--profile_step_every 25` would arm on 25, 50, 75 and print on none of them: the
+        # events get recorded, the sync is paid, and nothing is ever emitted. Silently profiling
+        # into a void is worse than refusing, so the cadence is snapped to one that can print.
+        every = int(every or 0)
+        self.every = every and max(10, -(-every // 10) * 10)
+        self.requested = every
+        self.torch = torch_mod
+        # WHAT THE DIFFERENTIAL ACTUALLY CONTAINS depends on a flag no log reader can see.
+        # Under gradient_as_bucket_view (the default) grads ARE the bucket storage, so the last
+        # backward's extra work is essentially the reduce. With --no_bucket_view it also copies
+        # 1.48B params grad->bucket, and the same field would silently mean a different quantity.
+        # The label carries the difference rather than the number changing meaning underneath it.
+        self.reduce_label = "bwd_last_excess" if bucket_view else "bwd_last_excess+bucket"
+        self._ev = {}
+        self._acc = {}
+        self.active = False
+
+    def step_begins(self, step):
+        self.active = self.every > 0 and step % self.every == 0
+        if self.active:
+            self._acc = {}
+
+    def _mk(self):
+        return self.torch.cuda.Event(enable_timing=True)
+
+    def start(self, name):
+        if not self.active:
+            return
+        e = self._mk()
+        e.record()
+        self._ev[name] = e
+
+    def stop(self, name):
+        if not self.active or name not in self._ev:
+            return
+        e = self._mk()
+        e.record()
+        self._acc.setdefault(name, []).append((self._ev.pop(name), e))
+
+    def line(self, step_s):
+        """Read the events (one sync) and format the breakdown. None when not profiling."""
+        if not self.active or not self._acc:
+            return None
+        self.torch.cuda.synchronize()
+        ms = {}
+        for name, pairs in self._acc.items():
+            ms[name] = sum(a.elapsed_time(b) for a, b in pairs)
+        nolast = sorted(a.elapsed_time(b) for a, b in self._acc.get("bwd_nolast", ()))
+        self._acc = {}
+        self.active = False
+        parts = [f"{k} {ms[k]:.1f}" for k in self.REGIONS if k in ms]
+        parts.append(self._reduce_field(ms, nolast))
+        # NAMED FOR ITS DENOMINATOR, because the denominator is not this step. step_s is dt/10,
+        # a ten-step WALL mean that carries val passes and checkpoint writes, while ms is one
+        # step's GPU regions -- and val_every is a multiple of the log cadence, so a profiled
+        # step CAN be the one right after a val. The difference is signed and can exceed the
+        # thing being attributed in either direction. "rest" would claim it is unattributed step
+        # time, which is a claim this subtraction does not support.
+        total_ms = sum(ms.values())
+        parts.append(f"rest_vs_10step_mean {step_s * 1000.0 - total_ms:.1f}")
+        return "step_profile ms | " + " | ".join(parts)
+
+    def _reduce_field(self, ms, nolast):
+        """The excess, or the reason there isn't one. Never a number it cannot support."""
+        # NAMED FOR WHAT IT MEASURES, not for what it is evidence of. This is "the last backward
+        # cost this much more than the mean of the others". The DDP reduce is the largest term in
+        # it and the reason to look, but it is not the only one: the last backward also runs
+        # outside no_sync(), which under static_graph carries DDP's end-of-iteration bookkeeping,
+        # and the last micro-batch is a different micro-batch. `reduce` in a field name would put
+        # an interpretation into every spreadsheet this is ever pasted into.
+        if not nolast or "bwd_last" not in ms:
+            return "bwd_last_excess unmeasurable — no no-sync backward ran (accum 1, or DDP off)"
+        mean = sum(nolast) / len(nolast)
+        diff = ms["bwd_last"] - mean
+        spread = nolast[-1] - nolast[0]
+        # n, mean AND spread, with NO per-step verdict. A range grows with n on its own, so a
+        # `spread >= diff` test fires more often at accum 8 than at accum 4 on identical
+        # hardware -- a threshold moving with a nuisance parameter. At n=3 the range IS the
+        # sample and no per-step test is worth having, so the instrument prints its inputs and
+        # a reader accumulates across printed steps.
+        return (f"{self.reduce_label} {diff:+.1f} "
+                f"(n={len(nolast)} mean {mean:.1f} spread {spread:.1f})")
 
 
 def opt_snapshot(optimizers):
@@ -2827,6 +2994,15 @@ def main():
     parser.add_argument("--profile", action="store_true", help="export a chrome trace of N steps (measurement only, no behavior change)")
     parser.add_argument("--profile_warmup", type=int, default=15)
     parser.add_argument("--profile_steps", type=int, default=20)
+    # NOT --profile. That one exports a chrome trace once (torch.profiler, repeat=1) and prints
+    # no timings; this prints a line every N steps for the whole run and costs one sync per
+    # print. The two answer different questions and neither replaces the other.
+    parser.add_argument("--profile_step_every", type=int, default=0,
+                        help="print a step-time breakdown every N steps (0 = off; rounded up to "
+                             "a multiple of 10, the log cadence). Measurement only: forward, "
+                             "backward with and without the DDP reduce (bwd_last_excess ~ the "
+                             "reduce's non-overlapped part), optimizer.step, the MoE balance "
+                             "block, and this step's regions against the ten-step wall mean")
     parser.add_argument(
         "--allow_corpus_drift", action="store_true",
         help="train even if a domain's live bytes mismatch its build-time fingerprint; never pardons symlinks",
@@ -3255,8 +3431,14 @@ def main():
         # approximated: an MFU that undercounts a known small term by a stated amount is honest,
         # while one that overcounts by 6x is not a fraction of peak at all. `params` in the line
         # below still reports the TOTAL, because that is the model's size.
-        n_dense = n_params - sum(p.numel() for n, p in raw_model.named_parameters()
-                                 if _is_mem_fqn(n))
+        #
+        # ROUTED MoE EXPERTS ARE THE SECOND INSTANCE of exactly this, and were counted in full
+        # until de-71: the paragraph above was written for the memory table and its closing
+        # sentence -- "a smaller table would have produced an inflated figure UNDER 100% and
+        # nothing would have looked wrong" -- is the reason to generalise the exclusion rather
+        # than special-case 48 experts. _n_active_params carries the arithmetic and the dense
+        # no-op; `n_dense` keeps its name because the FORMULA is still the dense approximation.
+        n_dense = _n_active_params(raw_model, Cfg)
         # dense peak per GPU for MFU; override with PEAK_TFLOPS (H20: 296 FP8 / 148 bf16)
         peak_tflops = float(os.environ.get("PEAK_TFLOPS", 296 if fp8 else 148))
         # runlog, not print: an unrecorded batch size once cost 90 minutes of regression-chasing
@@ -3469,6 +3651,13 @@ def main():
             f"warmdown starts at step {warmdown_start(total_steps, Cfg)}"
         )
     n_skip = 0  # consecutive optimizer steps skipped for non-finite gradients
+    _sp = StepProfiler(getattr(args, "profile_step_every", 0), torch,
+                       bucket_view=not args.no_bucket_view)
+    if _sp.every != _sp.requested and is_main:
+        # Said out loud, or a user who asked for 25 reads "step 30" in the log and spends twenty
+        # minutes on it. Rounding beats refusing for a diagnostic flag; rounding silently does not.
+        runlog(f"--profile_step_every {_sp.requested} rounded up to {_sp.every}: the breakdown "
+               f"prints from the every-10-steps log block, so a non-multiple would never print")
     _prof = None
     if getattr(args, "profile", False):
         import torch.profiler as _tp
@@ -3535,6 +3724,11 @@ def main():
         # this segment's intervals with the previous one's, at a different shape and world size.
         _eta_win = []
         for i in range(i0, len(Xtr) - Cfg.batch + 1, Cfg.batch):
+            # ARMED ON THE FIRST MICRO-BATCH OF THE WINDOW, so a profiled step captures all
+            # accum micro-batches. `step` has not been incremented yet inside the window -- the
+            # line printed at the boundary belongs to step+1, which is what step_begins is told.
+            if (i // Cfg.batch) % Cfg.accum == 0:
+                _sp.step_begins(step + 1)
             idx = perm[i : i + Cfg.batch]
             xb_pin, yb_pin, ev, vb_pin, wb_pin = pin[(i // Cfg.batch) % 2]
             if ev is not None:
@@ -3552,6 +3746,7 @@ def main():
             if ev is not None:
                 ev.record()
             cu = doc_cu_seqlens(xb, eos_id) if Cfg.doc_mask else None
+            _sp.start("fwd")
             with torch.autocast(device_type="cuda", dtype=amp_dtype, enabled=amp):
                 hidden, _ = model(xb, yb, cu, vb)  # targets given so compile traces the hidden branch
             B, T, D = hidden.shape
@@ -3568,11 +3763,17 @@ def main():
                     ntgt = fone.digit_targets(wb[nmask])
                     loss = loss + Cfg.fone_loss_w * F.cross_entropy(nlog.reshape(-1, 10), ntgt.reshape(-1))
             loss = loss / Cfg.accum
+            _sp.stop("fwd")
             if ddp and Cfg.accum > 1 and (i // Cfg.batch + 1) % Cfg.accum != 0:
+                _sp.start("bwd_nolast")
                 with model.no_sync():
                     loss.backward()
+                _sp.stop("bwd_nolast")
             else:
+                # The reduce rides this one: DDP's bucket hooks fire during it.
+                _sp.start("bwd_last")
                 loss.backward()
+                _sp.stop("bwd_last")
 
             # THE MoE TOKEN COUNTERS ADVANCE HERE, once per micro-batch (b0-27, 2026-09-06).
             # MoEFFN.forward only ASSIGNS its counts to a scratch buffer, because gradient
@@ -3657,9 +3858,11 @@ def main():
                              [(m, m.detach().clone()) for _, m in master.pairs] if master else None)
                 for _m in _masters:
                     _m.pull_grads()
+                _sp.start("opt")
                 for opt in optimizers:
                     opt.step()
                     opt.zero_grad(set_to_none=True)
+                _sp.stop("opt")
                 # THE AUX-LOSS-FREE BALANCER'S STEP (arXiv:2412.19437 section 2.1.2), once per
                 # OPTIMIZER step. Until 2026-09-06 MoEFFN.update_bias had no caller outside its
                 # unit test, so every MoE arm so far trained with expert_bias identically zero and
@@ -3688,12 +3891,17 @@ def main():
                 # the identical update on the identical reduced counts -- the bias is a buffer, not
                 # a Parameter, so DDP never synchronises it and the ranks would otherwise diverge.
                 if _moe_balance_layers:
+                    # The BLOCK, not the collective: update_bias and zero_ are inside the timed
+                    # region because the balancer's cost is what a step-time reader is after, and
+                    # the field is named "balance" rather than "reduce" to say so.
+                    _sp.start("balance")
                     for _bl in _moe_balance_layers:
                         _c = _bl.step_tokens_per_expert
                         if ddp:
                             dist.all_reduce(_c, op=dist.ReduceOp.SUM)
                         _bl.update_bias(_c)
                         _c.zero_()
+                    _sp.stop("balance")
                 for _m in _masters:
                     _m.push()
                 if probe is not None and is_main:
@@ -3850,6 +4058,13 @@ def main():
                         # looked richer. test_step_line_parses covers exactly that.
                         f" | s/step {dt / 10:.4f}"
                     )
+                    # A SEPARATE LINE, never appended to the one above. RunLog._STEP_RE ends at
+                    # `MFU (\d+)%` and matches on ADJACENCY, so a field added to that line can
+                    # silently stop every trackio metric on it; and this one appears only every
+                    # N steps, so a parser keyed to the step line would see it come and go.
+                    _pl = _sp.line(dt / 10)
+                    if _pl:
+                        runlog(f"step {step}/{total_steps} | {_pl}")
                 # MEMORY DIAGNOSTICS, charter readout 4. OUTSIDE the `is_main` block above, and
                 # that placement is the whole correctness argument: the fraction the stop rule
                 # reads must be the GLOBAL one, each rank's `touched` counts only the rows its own
