@@ -1,3 +1,9 @@
+---
+question: What makes a corpus domain rebuildable, so the next loss costs a command rather than a day?
+status: recorded
+source: fineweb2 web_hq loss, 2026-08-30
+---
+
 # Rebuilding a corpus domain
 
 fineweb2 `web_hq` was lost on 2026-08-30 and could not be rebuilt: the shards were
