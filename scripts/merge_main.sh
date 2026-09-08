@@ -1711,7 +1711,7 @@ for _ in $(seq 1 120); do
     _carry_out=$(_carry_stage "$1") || { echo "  main is unmoved at ${_old:0:8}." >&2; exit 1; }
     _carry=$(printf '%s\n' "$_carry_out" | head -1)
     _carry_paths=$(printf '%s\n' "$_carry_out" | tail -n +2)
-    if ! git merge --no-edit main; then
+    if ! git merge --no-edit -m "merge main into $1 ($1)" main; then
       # WHY `git merge` FAILED, WHICH IS TWO DIFFERENT THINGS. A content conflict leaves
       # unmerged index entries and no commit. A merge that resolved cleanly and then had its
       # COMMIT refused by the pre-commit hook leaves MERGE_HEAD set, ZERO unmerged paths, and
@@ -1806,7 +1806,7 @@ for _ in $(seq 1 120); do
     if [ -s "$_rows" ]; then
       _rn=$(grep -c . "$_rows" 2>/dev/null || echo 0)
       if cat "$_rows" >> "$_wt_self/runs/friction.jsonl" \
-         && git -C "$_wt_self" commit -q -m "friction: $_rn queued row(s) from $1" \
+         && git -C "$_wt_self" commit -q -m "friction: $_rn queued row(s) ($1)" \
               -- runs/friction.jsonl >/dev/null 2>&1; then
         : > "$_rows"
         echo "merge_main: drained $_rn queued friction row(s) into one commit" >&2
