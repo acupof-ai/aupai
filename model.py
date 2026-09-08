@@ -224,6 +224,121 @@ class DeltaRecurrence(nn.Module):
         return self.o(out.reshape(B, T, self.d).to(x.dtype))
 
 
+class CompressedSparseAttention(nn.Module):
+    """CSA: coarse attention over compressed KV blocks, top-k selection, plus a sliding window.
+
+    b0-35. Three branches over the SAME q/k/v the dense path builds, summed by a learned gate:
+
+      compress  every `m` positions of K/V are pooled into one entry, so a query attends to
+                T/m entries instead of T and sees the whole prefix at reduced resolution
+      select    the compressed scores pick the top-k BLOCKS, and the query attends to those
+                blocks at FULL resolution -- coarse scores choosing where to look closely
+      window    the last `n_win` tokens at full resolution, unconditionally
+
+    Shape follows the NSA/DSA family (arXiv 2502.11089 §3). The window branch is what makes the
+    other two safe to sparsify: local structure is where a missed token hurts most, and it is
+    the branch that costs nothing to keep exact.
+
+    WHY A REFERENCE IMPLEMENTATION AND NOT A KERNEL. This is O(T^2) in the select branch's
+    gather and materialises the coarse score matrix; it is for deciding whether the ARCHITECTURE
+    is worth a kernel, not for training at speed. b0-35 asks whether CSA-with-SWA replaces gated
+    MLA at 200M active, and that question is answered by loss at matched tokens, not by tok/s.
+    The per-step cost goes in facts/efficiency.json so the trade is on the record before anyone
+    proposes a kernel. A fast wrong answer to the architecture question would cost more than the
+    slow right one.
+
+    DOCUMENT ISOLATION IS NOT IMPLEMENTED HERE AND IS REFUSED, NOT IGNORED. `cu` marks document
+    boundaries in the packed stream; a compressed block straddling a boundary would pool tokens
+    from two documents into one entry, and the top-k could then select a block belonging to
+    another document -- cross-document attention that no mask downstream can undo, invisible in
+    the loss. eff.kda_document_isolation_violated is the same failure in the KDA short_conv and
+    it went unnoticed for days. So `cu is not None` raises: the packed-training path must not
+    silently train a model whose attention crosses documents.
+    """
+
+    def __init__(self, cfg, h, hd):
+        super().__init__()
+        self.h, self.hd = h, hd
+        self.m = int(getattr(cfg, "csa_compress", 16))       # positions per compressed entry
+        self.topk = int(getattr(cfg, "csa_topk", 8))         # compressed blocks attended at full res
+        self.n_win = int(getattr(cfg, "csa_window", 256))    # sliding-window width
+        if self.m < 1 or self.topk < 1 or self.n_win < 1:
+            raise ValueError(f"csa needs positive csa_compress/csa_topk/csa_window, got "
+                             f"{self.m}/{self.topk}/{self.n_win}")
+        self.scale = hd ** -0.5
+        # The branch gate. Zero-init so all three branches start at sigmoid(0)=0.5 and none is
+        # born dominant; the model discovers the mixture rather than inheriting my guess of it.
+        self.branch_gate = nn.Linear(hd, 3, bias=True)
+        nn.init.zeros_(self.branch_gate.weight)
+        nn.init.zeros_(self.branch_gate.bias)
+
+    def forward(self, q, k, v, cu=None):
+        if cu is not None:
+            raise NotImplementedError(
+                "CSA has no document-boundary handling: a compressed block straddling a `cu` "
+                "boundary pools two documents into one entry and the top-k can select across "
+                "them, which is cross-document attention that leaves no trace in the loss. "
+                "Refusing rather than training it silently -- run CSA with doc packing off, or "
+                "implement per-document blocks first.")
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)                                # B,H,T,D
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+
+        # --- compress: mean-pool K/V over blocks of m -------------------------------------
+        # A BLOCK IS VISIBLE ONLY WHEN IT IS COMPLETE AND PAST, and this is where my first
+        # version leaked. I gated on the block's FIRST position (`blk_first <= t`), reasoning
+        # that a query should see a block it is inside. But the pooled entry is a mean over all
+        # m members, so a query at t=5 with m=4 read block 1 = mean(k[4..7]) and thereby saw
+        # tokens 6 and 7 -- its own future. Measured by perturbation: k[5] += 7 moved outputs at
+        # positions 0..4 by 1.44 (max|delta|), which is a causal leak, not a rounding artifact.
+        # The window branch was clean at 0.0 in the same test, which is what localised it.
+        # A leak here is invisible in the loss: it makes the model BETTER at training time and
+        # only shows up as a generation-time collapse nobody can attribute.
+        # So the mask is `blk_last <= t`: every member of a visible block is at or before the
+        # query. The prefix a query cannot see coarsely is covered exactly by the window branch.
+        nb = (T + self.m - 1) // self.m
+        pad = nb * self.m - T
+        kp = F.pad(kh, (0, 0, 0, pad))
+        vp = F.pad(vh, (0, 0, 0, pad))
+        # count the REAL positions per block so the last, partly-padded block is a mean over
+        # what it holds rather than a mean diluted by zeros
+        cnt = F.pad(torch.ones(T, device=q.device), (0, pad)).view(nb, self.m).sum(-1)
+        kc = kp.view(B, H, nb, self.m, D).sum(3) / cnt[None, None, :, None]
+        vc = vp.view(B, H, nb, self.m, D).sum(3) / cnt[None, None, :, None]
+        sc = (qh @ kc.transpose(-1, -2)) * self.scale          # B,H,T,nb
+        blk_last = (torch.arange(nb, device=q.device) * self.m + self.m - 1)[None, :]
+        vis = blk_last <= torch.arange(T, device=q.device)[:, None]            # T,nb
+        sc = sc.masked_fill(~vis, float("-inf"))
+        # the first m-1 queries see NO complete block: all -inf -> NaN. They are covered by the
+        # window branch, so this branch must contribute zero rather than poison the sum.
+        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+
+        # --- select: top-k compressed blocks, attended at full resolution ------------------
+        kk = min(self.topk, nb)
+        idx = sc.topk(kk, dim=-1).indices                       # B,H,T,kk
+        sel = torch.zeros(B, H, T, nb, dtype=torch.bool, device=q.device)
+        sel.scatter_(-1, idx, True)
+        sel &= vis[None, None]                    # a -inf block can still be picked when kk>visible
+        # expand block selection to positions, then intersect with the causal mask
+        pos_sel = sel.repeat_interleave(self.m, dim=-1)[..., :T]
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        m_sel = pos_sel & causal[None, None]
+        y_sel = torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh
+        # a query whose selected set is empty produces all -inf -> NaN; such a row contributes
+        # nothing rather than poisoning the sum
+        y_sel = torch.nan_to_num(y_sel, nan=0.0)
+
+        # --- window: the last n_win tokens, exact -----------------------------------------
+        ar = torch.arange(T, device=q.device)
+        m_win = causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        y_win = torch.softmax(full.masked_fill(~m_win[None, None], float("-inf")), dim=-1) @ vh
+
+        g = torch.sigmoid(self.branch_gate(q)).transpose(1, 2).unsqueeze(-1)   # B,H,T,3,1
+        y = g[..., 0, :] * y_cmp + g[..., 1, :] * y_sel + g[..., 2, :] * y_win
+        return y.transpose(1, 2)                                # B,T,H,D
+
+
 class GatedMLA(nn.Module):
     """Gated MLA: latent KV compression + full causal attention (NoPE, KDA handles position).
 
@@ -269,6 +384,12 @@ class GatedMLA(nn.Module):
             self.ve_gate = nn.Linear(12, self.d, bias=True)
         else:
             self.ve_gate = None
+        # CSA (b0-35), OFF by default and None when off. A submodule that is None registers no
+        # parameters, so a flag-off model's state_dict and parameter count are unchanged and every
+        # existing checkpoint loads without a shim. Constructing it unconditionally and skipping it
+        # in forward would add tensors to the checkpoint of every run that does not use it.
+        self.csa = CompressedSparseAttention(cfg, self.h, self.hd) if getattr(
+            cfg, "csa", False) else None
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
@@ -299,6 +420,15 @@ class GatedMLA(nn.Module):
         q = q.view(B, T, self.h, self.hd)
         q = F.rms_norm(q, (self.hd,))
         k = F.rms_norm(k, (self.hd,))
+        # CSA (b0-35). ONE `if` ON THE UNCHANGED PATH, placed after q/k/v are built and normed
+        # so that with the flag off every tensor below is bit-for-bit what it was before this
+        # branch existed -- no reordering, no re-association, nothing recomputed. The parity
+        # case in scripts/test_arch_compat.py asserts that against a saved reference, because
+        # "I did not mean to change the default" is not a measurement.
+        if self.csa is not None:
+            y = self.csa(q, k, v, cu)
+            y = y.reshape(B, T, self.d)
+            return self.o(y * torch.sigmoid(gate))
         if HAS_FA and cu is not None:
             q, k, v = (t.reshape(B * T, self.h, self.hd) for t in (q, k, v))
             y = flash_attn_varlen_func(q, k, v, cu_seqlens_q=cu, cu_seqlens_k=cu,
