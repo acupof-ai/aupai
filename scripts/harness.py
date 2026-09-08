@@ -22962,6 +22962,7 @@ _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
+    "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
     "fp8",                # training precision, not architecture
     # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
     # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
