@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-08, 17:4xZ
+# Controller board (fb) — 2026-09-08, 18:1xZ
 
 **The night's one sentence: N1 is 20% through its 7,629 steps on four cards with val falling 2.577 -> 2.348 -> 2.256, and the two silent-push defects that killed its first launch are now fixed on main and on the pod.**
 
@@ -25,11 +25,11 @@
 |---|---|
 | run | N1, the anneal-arms control, `runs/anneal_n1_0908.log` |
 | launched | 2026-09-08 17:00Z, alive since |
-| progress | step 1500 / 7629 (20%), 0.79B tok |
+| progress | step 2310 / 7629 (30%), 1.21B tok |
 | val | 2.577 (500) -> 2.348 (1000) -> **2.256 (1500)** |
-| train loss | 5.010 (70) -> 2.700 (500) -> 2.056 (1000) -> **1.955 (1500)** |
+| train loss | 5.010 (70) -> 2.700 (500) -> 2.056 (1000) -> 1.955 (1500) -> **2.222 (2310)** |
 | throughput | 51-77K tok/s/gpu, MFU 21-32%, peak 49.5 GiB/card |
-| ETA | 3.0h remaining; **~3.6h per arm, ~10.8h serial for N1+N2+R** |
+| ETA | 2.5h remaining; **~3.6h per arm, ~10.8h serial for N1+N2+R** |
 | cfg proof | `sample_seed 42 (pinned)`, `retokenizing` appears **0 times** in the log |
 
 **The ETA number to use is 3.6h/arm, not the 2h13m in the proposal.** That reference was
@@ -45,7 +45,7 @@ signatures. N2 starts when N1 ends (3b owns the launch), R last.
 |---|---|---|
 | #112 (`df5ffd98`) | merge_main stamps the session marker into both commit messages it generates | reviewed and merged by 44; `merge_main.sh --selftest` green |
 | #113 (`3b292330`) | `pod_drift`'s runs/ predicate split by extension; both `pod_push.sh` copies now call one `--ship-paths` | merged + `--all` in the same step; pod stamp `3b292330`, dirty=0; the 25 formerly-absent scripts verified present |
-| #114 | 44's active-params gate | **BLOCKED by fb** — see below |
+| #114 (`eb33534a`) | 44's active-params gate: `train.py --build_only` + `scripts/active_params.py` | blocked by fb on a deleted flag, restored in `cc9a5b7f`, **approved and merged**; pod pushed to `eb33534a` dirty=0 |
 
 **The marker census, corrected.** My first count said 203 of 644 commits today lacked a
 `(session)` marker. The regex was wrong: it required the subject to END with `(name)` and
@@ -80,7 +80,18 @@ runs `parser.add_argument(f"--{name}", ...)` over its `.items()`.
 
 So the merge takes the deletion; it is not merge-base noise. `984bce9a` (3b) added the flag.
 `runs/anneal_arms.sh` passes `--sample_seed 42` on all three arms, so N2 and R would die at
-`unrecognized arguments` — the `--rg_mod` shape of 2026-08-30. One line restores it.
+`unrecognized arguments` — the `--rg_mod` shape of 2026-08-30. 44 confirmed it as a stale-worktree
+edit and restored it in `cc9a5b7f`; the merged tree `edb31b4d` holds the entry and introduces only
+the two `--build_only` blocks. Approved, merged as `eb33534a`, review row `c9cf7288`.
+
+**Correction I owe on that table: the `merge-tree` row read 0 and was not measured.** zsh parsed
+`:t` in `"$T:train.py"` as a history modifier, `git cat-file` errored, and `grep -c` over empty
+input printed 0. The other three rows were real and the conclusion held, but one of four published
+numbers was an artifact of a broken command. The same class appeared twice more in the recheck —
+`FETCH_HEAD` overwritten by a second `git fetch`, so a main-vs-main comparison printed an empty
+diff that reads as "nothing changed". Both were caught by the result being implausible, not by the
+command failing. **Verification must name refs explicitly and never route a tree sha through a
+shell variable followed by `:path`.**
 
 ## N1's first death — 14:49Z, and what it cost
 
