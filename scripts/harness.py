@@ -22936,6 +22936,11 @@ _UNFROZEN_ALLOWLIST = {
     # stops instead of reporting a number at a precision nobody chose.
     "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
+    # UNFROZEN, not frozen: a step-time breakdown is a diagnostic, not a recipe key. Freezing it
+    # would mean every resume of a once-profiled run must keep passing it or be refused, which
+    # is backwards -- a resume that drops it should simply run unprofiled. Note the completeness
+    # check passes with the flag in EITHER set, so green here would not have caught the choice.
+    "profile_step_every",
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
