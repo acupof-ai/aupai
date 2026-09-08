@@ -2557,6 +2557,19 @@ def _assert_mix_derived_against(mix, cfg_path, row_cursor, cursor_srcfp, cursor_
             f"resume state than this checkpoint's. {' | '.join(bad)}. That mix's `epochs` values "
             f"are totals computed against the state it names, so they are wrong for this resume. "
             f"Regenerate it with --resume-cursor pointing at the checkpoint you are resuming.")
+    # THE ACCEPT PATH SAYS WHAT IT COMPARED (4c's ruling 2026-09-08). Accepting a checkpoint
+    # superset is right for the rename case -- mix_30b_stage2 names 5 domains against a
+    # checkpoint's 7 -- but the residual is a mix that UNDER-ACCOUNTS by naming fewer domains
+    # and passes in silence. A count on each side turns that into something a log reader can
+    # see: the refusal is not the only outcome worth evidence.
+    extra = sorted(set(got_rows) - set(want_rows))
+    print(f"cursor check: mix names {len(want_rows)} domain(s), checkpoint carries "
+          f"{len(got_rows)}, compared {len(set(want_rows) & set(got_rows))}"
+          + (f"; the checkpoint's {', '.join(extra)} are NOT accounted for by this mix"
+             if extra else "; every checkpoint domain is accounted for")
+          + f". srcfp compared over {len(set(want_fp) & set(got_fp))} domain(s), "
+          + ("seed compared" if "row_cursor_seed" in da else "seed not claimed by the mix"),
+          flush=True)
 
 
 def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,

@@ -55,7 +55,7 @@ def _mix(tmp, derived):
     return p
 
 
-def _run(train, path, cursor, fp, seed):
+def _run(train, path, cursor, fp, seed, want_log=False):
     """build_mix far enough to reach the guard, as one of three outcomes.
 
     tok=None touches no cache, and the call dies further down on a missing corpus, so "the
@@ -66,10 +66,21 @@ def _run(train, path, cursor, fp, seed):
       the refusal string -- the guard refused
       None              -- the guard passed and the call died later, as expected
       a "CRASH: ..." string -- something raised inside the guard
+
+    want_log returns the guard's own stdout instead of the verdict, for the accept-path line:
+    an accepted comparison has to be visible too, and nothing else here would notice if that
+    print were deleted.
     """
+    import contextlib
+    import io
+
+    buf = io.StringIO()
     try:
-        train.build_mix(path, None, False, False, row_cursor=cursor, cursor_srcfp=fp, cursor_seed=seed)
+        with contextlib.redirect_stdout(buf):
+            train.build_mix(path, None, False, False, row_cursor=cursor, cursor_srcfp=fp, cursor_seed=seed)
     except RuntimeError as e:
+        if want_log:
+            return buf.getvalue()
         if "derived against" in str(e):
             return str(e)
         return None
@@ -84,8 +95,8 @@ def _run(train, path, cursor, fp, seed):
         if "_assert_mix_derived_against" in "".join(traceback.format_exc()):
             FAILS.append(f"the guard itself raised {type(e).__name__}: {e}")
             return f"CRASH: {type(e).__name__}: {e}"
-        return None
-    return None
+        return buf.getvalue() if want_log else None
+    return buf.getvalue() if want_log else None
 
 
 def main():
@@ -280,6 +291,30 @@ def main():
         seed == SEED,
         f"_read_cursor discarded row_cursor_seed: {seed!r} -- the mix would claim None and the "
         f"reader skips a key that is absent, so the shuffle half would go unenforced",
+    )
+
+    # 16. THE ACCEPT PATH SAYS WHAT IT COMPARED (4c's ruling 2026-09-08). Accepting a checkpoint
+    #     superset is right for the rename case, but the residual is a mix that under-accounts by
+    #     naming fewer domains and passes in silence. The counts are the evidence, and the
+    #     unaccounted domain must be named -- a bare "compared 2" would not distinguish the
+    #     rename from a mix that quietly dropped a domain.
+    log = _run(
+        train,
+        _mix(tmp, full),
+        dict(CUR, en_c4=755_274),
+        dict(FP, en_c4="05e0fc6f14704056"),
+        SEED,
+        want_log=True,
+    )
+    check("cursor check:" in log, f"the accept path printed no comparison at all: {log!r}")
+    check(
+        "mix names 2" in log and "checkpoint carries 3" in log,
+        f"the accept line must carry the count on each side: {log!r}",
+    )
+    check(
+        "en_c4" in log and "NOT accounted for" in log,
+        f"the accept line must NAME the checkpoint domain this mix does not account for, or a "
+        f"silently under-accounting mix reads the same as the rename case: {log!r}",
     )
 
     for f in FAILS:
