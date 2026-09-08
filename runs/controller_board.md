@@ -8,6 +8,8 @@ aupai's six cards (1,2,3,4,5,7) released. No aupai training, eval, probe or laun
 
 ## Cleanup program — one track per session
 
+tilerl-0a is out: its critical path is tileRL's own P1 gate, and cards 0 and 6 are tileRL's, so I hold the eval track myself. Seven tracks, seven sessions.
+
 Scope is the whole tree: 473 Python files, 193,890 lines, 113 docs, 368 tracked files under `runs/`, 14 fact files, AGENTS.md at 439 lines. Every track ends in a PR reviewed by its pair.
 
 | track | owner | scope | acceptance test |
@@ -17,7 +19,7 @@ Scope is the whole tree: 473 Python files, 193,890 lines, 113 docs, 368 tracked 
 | Docs | 44 | `docs/` 113 files | frontmatter on every file; every `facts/` and `runs/prereg.jsonl` citation resolves and is current; no two documents answering the same question; `docs_root_clean` |
 | Facts | e1 | `facts/` 14 files | `facts_well_formed` and `ckpt_facts_sources_present` green with zero WARN; every `retracted_value` list matches its entry; no source naming an absent checkpoint |
 | Ledgers | 3b | `runs/` 368 tracked, 43 of them `.py`/`.sh` | no script under `runs/` unless a doc cites it; one schema per ledger; no stale `running` row; the 77 unregistered `.py` on the pod resolved |
-| Eval and filters | tilerl-0a | `eval/` 54, `filters/` 4, `probes/` 13 | every metric divides by exactly what it scored; every metric has a known-answer test that CALLS the shipped function rather than reimplementing it |
+| Eval and filters | fb | `eval/` 54, `filters/` 4, `probes/` 13 | every metric divides by exactly what it scored; every metric has a known-answer test that CALLS the shipped function rather than reimplementing it |
 | Data generation | 98 | `datagen/` 87, `mathbank/` 40 | no duplicate generator; the `vet_programs.py` glob registry reaches every live generator and nothing dead; then one index page saying where everything lives |
 
 Deletion rule for every track: propose the list, run each candidate before judging it, the owner confirms each file by name, and the removal lands in a reviewed PR. The standing "no deletion without a named target" order is satisfied by the owner naming each file, not by skipping the step.
