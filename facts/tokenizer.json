@@ -341,6 +341,34 @@
    "note_en_fertility": "The ungated `en fertility` column moved 1.2408 -> 1.3704 in the same fix. english_metrics falls back to the shared draw whenever no domain is literally named `en`, which is every real composition, so the old figure was math_owm's fertility under an English label."
   },
   {
+   "id": "tok.gates_v2_composition_fixed_sampler",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "hanzi_whole_char": 0.9793,
+    "ref_fertility": 1.4286,
+    "never_used_frac": 0.0141,
+    "bits_per_char": 3.8214,
+    "chars_per_token": 2.5992,
+    "en_fertility": 1.4056
+   },
+   "unit": "gate readings",
+   "measured": "2026-09-08",
+   "claim": "whether the frozen vocabulary passes AGENTS.md's pre-fetch gates on the v2 composition, measured with samplers that read only real shards",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains math_owm_stage2,en_c4,cot,textbook_30b,chatml,chat_qa,zh_web,code_py_starcoder,code_rp1t_dd09_full --per_domain 3000 --shards 8, run on the pod against the PR #77 samplers staged in /work/aupai/_e1tmp (tokenizer_report b8451abd, tokenizer_sweep b8451abd, tokenizer_eval 5e901bdd). The runner asserts sys.modules holds the fixed modules before calling main(): tokenizer_eval inserts ROOT/scripts at path position 0 at import time, so importing it first silently shadows the staged copies -- that assertion caught exactly that on the first attempt.",
+   "config": {
+    "domains": "the nine v2 role directories. Differs from tok.gates_v2_composition in two names: code_rp1t_dd09_full replaces code_py_rp1t (9.84B vs 0.42B) and en_c4 replaces en_c4_stage2 (4.81B vs 2.40B, cs.en_c4_landed). cot_open_thoughts is NOT here -- see boundary.",
+    "per_domain": 3000,
+    "shards": 8,
+    "clip": "whole document",
+    "tool": "tokenizer_eval at 5e901bdd + tokenizer_report/tokenizer_sweep at b8451abd (PR #77, not yet merged)"
+   },
+   "status": "measured",
+   "boundary": "AGENTS.md pre-fetch gate for the v2 composition. Screens; does not rank.\n\nTWO DOMAINS ARE ABSENT AND NEITHER IS AN OVERSIGHT. cot_open_thoughts (0.776B) holds rows keyed {answer, chain, problem, src, tokens} with NO `content` field, so it contributes zero bytes to any sample and parity() divides by zero on it -- the first v2 gate attempt died there. It is also unreachable by train.py for an independent reason: its shards are named cot_open_thoughts_0.jsonl, one digit, and SHARD_RE requires three, so _domain_seqs would refuse the whole domain. Both are real defects in that directory, not in the gate, and both are filed separately; a mix naming that domain cannot launch today. code_py_rp1t is absent because dd09_full supersedes it.\n\nnever_used 0.0141 IS ABOVE the retired 0.01 threshold and that is not a failure: the threshold was demoted to reported-ungated in PR #69 for the reason tok.never_used_not_decidable records. The value is one draw inside a spread that is wider than the threshold.",
+   "uncertainty": "Single draw at the stated setting. hanzi 0.9793 here against 0.9890 on tok.gates_v2_composition's nine domains: both are single draws on DIFFERENT domain sets (this one swaps en_c4_stage2 for en_c4 and code_py_rp1t for code_rp1t_dd09_full), so the gap is not attributable to the sampler fix alone and no claim is made that it is.",
+   "supersedes_reading": "tok.gates_v2_composition (same day, same vocabulary). That row's readings were taken with a load_text held-out set of 105 of 800 rows -- the non-shard artifact defect PR #77 fixes. Its three gate values do not consume bits/char, so they are not wrong; they were measured on a different domain set and with a truncated held-out set, and this row is the one to cite for v2. The earlier row is kept, not retracted: it is the evidence that the hanzi gate's answer moves with the composition."
+  },
+  {
    "id": "tok.never_used_not_decidable",
    "value": "threshold 0.01 not decidable at any measured setting",
    "claim": "whether the vocabulary's unreachable-slot fraction is above or below the 0.01 gate threshold -- the reading that decides whether never_used is a rebuild trigger",
