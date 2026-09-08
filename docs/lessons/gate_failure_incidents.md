@@ -982,3 +982,32 @@ open: implemented for this one tool. The general check -- any scanner whose sear
 
 ## R10. What happened only on the pod did not happen
 
+### §283 (2026-09-08, R2)
+
+**A verification tool's failure mode is isomorphic to what it verifies, so its breakage reads as a pass.** Three instances in one hour, on one mutation sweep over the pre-commit shared-repo guard:
+
+    CRASH LEFT THE MUTANT IN     the sweep mutated scripts/hooks/pre-commit in place and
+                                 restored in a finally. Killed mid-run, the finally never
+                                 fired, and M2 -- "hash nothing", the mutant that makes the
+                                 guard measure nothing -- stayed resident. `pre-commit
+                                 --selftest` then printed ok (14 worlds), because it was
+                                 testing the mutated copy.
+    ENVIRONMENT ERROR READ AS    rewritten to mutate a copy under /tmp, where the copy could
+    "ALL MUTANTS KILLED"         not resolve its own ROOT. All five mutants died on
+                                 FileNotFoundError, none reached an assertion, and the sweep
+                                 printed ALL MUTANTS KILLED.
+    AN ANCHOR THAT NEVER         M5's search string was mis-escaped, so the mutation was never
+    MATCHED READ AS A PASS       applied and the unmutated file passed.
+
+Each one produces the reading "verified" from the fact of not working. That is the same shape as the guard under test: a shared-repo digest that hashes nothing cannot fire, and a check that cannot fire is indistinguishable from a check that found nothing. **The tool and its subject fail the same way, which is why running the tool cannot detect it.**
+
+The first instance is the dangerous one, because it leaves active evidence pointing the wrong way. A green selftest is normally the strongest signal available; here it was produced BY the defect. Related to b0's observation the same night -- an exclusion that never executes and a correct exclusion are identical in code -- but worse: that one is silent, this one testifies.
+
+Fixes, in the order they were tried, and only the last is durable:
+
+- Mutate a copy, never the tree. Removes instance 1. A crash can no longer disarm the subject.
+- Require the assertion, not a nonzero exit. `rc != 0` collapses "the property failed" with "the process died"; the sweep now demands `pre-commit selftest: FAIL` in the output. Removes instance 2 as it presented, and nothing more -- it is a patch for one spelling of the failure.
+- **A positive control that MUST SURVIVE.** M0 is a behaviour-preserving comment edit; if it is reported killed, the sweep is measuring something other than the property. Without one, "all mutants killed" cannot distinguish a working sweep from a sweep that ran nothing, since both print the same line. This is 4c's ruling and it is the general form: every all-negative suite needs one case that must come back negative, or the aggregate has no discriminating power.
+
+Cost: none realised, and that is luck rather than design. The resident M2 was found by grepping the file for the fix's own string before committing; had that commit landed, the guard would have been silently inert on main with every gate green. The `--no-verify` this session used minutes earlier to escape an unrelated deadlock would have carried it in without a hook run.
+
