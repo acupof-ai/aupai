@@ -1,19 +1,59 @@
-# Controller board (fb) — 2026-09-08
+# Controller board (fb) — 2026-09-08, 14:5xZ
 
-Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU job.
-**13:20Z, measured: cards 1,2,4,5,6,7 read 0 MiB / 0%; only 0 (100%) and 3 (94%) are working.** tilerl-27 answered the schedule question directly: **four needed tonight** (card 0 level-5 eval; card 3 GSM8K steps_to_score to 16:00Z; one for the 1x8 vs 2x4 arm; one conditional reserve, confirmed or released at 16:00Z), **four can come back**. Their own reading, quoted unedited: aupai's zero cards are not tileRL queueing, they are scheduling -- people held on measurement arguments that need no card. The same sentence is truer of me: eight sessions, 28 PRs merged today, zero new numbers.
+**The night's one sentence: aupai went from zero cards and zero running jobs to a granted four-card block with a serial three-arm experiment cleared to launch. Nothing has produced a number yet.**
 
-## User orders in force
+## Cards
 
-| order | state |
+| | |
 |---|---|
-| Clean the whole repository, not one redundant word | seven tracks, below |
-| Any file readable by someone who has never seen the repo | folded into every track, no separate renaming round |
-| Worktrees cut to the live working set | 32 → 14; owners remove their own |
-| At most two open tasks per person | held all night; the count is work in progress, not work awaiting someone else's review |
-| Corpus reproducible byte-for-byte from zero | 98 leads; blocked behind the 40,000-vs-1,200 finding below |
-| Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
-| Never delete without a named target | every removal names its files and runs each first |
+| aupai | **2, 4, 5, 7** — granted by the user 2026-09-08 ("做呗"), machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`), on the pod at stamp `5c2a091c` |
+| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 ("0,6 tileRL"), which today's four-card grant names no index for and therefore does not override |
+| running | 0 (level-5 eval) and 3 (GSM8K steps_to_score) at ~100%; 1, 2, 4, 5, 6, 7 at 0 MiB as of the last read |
+
+**No lane card, on purpose.** All four go to one serial chain, one arm at a time, so no small job may run beside it.
+
+**Two grant defects, both mine, both caught by someone else before a launch:**
+
+1. **The grant was written into `granted_by` prose and the machine fields were left untouched** — `launch_block_granted` stayed `false` and `block_cards` stayed `""`, which is what `_allocation_cards(block=True)` actually reads. The human half of the file said one thing and the machine half said the opposite, **inside a file whose own comment reads "A STALE GRANT IS WORSE THAN NO GRANT"** (3b caught it).
+2. **The first corrected version took 4,5,6,7** and `allocation_reads_the_grant` refused it, correctly: card 6 is tileRL's by standing order, and a grant of "four cards" that names no index does not supersede an order that names two.
+
+3b declined to route around the gate with `CUDA_VISIBLE_DEVICES`, on a better ground than the rule: **that fall-through means "a human specified these", not "the controller granted these"** — it would have run, and nothing would have recorded that it was ever authorised.
+
+## Running now
+
+| what | state |
+|---|---|
+| **3b's anneal arms** — N1 → N2 → R, four cards each, serial | cleared to launch; last read shows no claim and no log yet, asked, not yet answered |
+| tileRL 1x8 vs 2x4 | smoke passed (`tied 0.00`, `tok 391` clear of cap 1024), 10-step双臂 on card 1 |
+
+**Read order for the arms is fixed before the data exists:** N1 vs N2 first, then R. **If |R − N1| falls inside |N1 − N2| the answer is "reweighting has no measurable effect at this budget" — that is a result, not a failed run.**
+
+**Serial, not 2+2 concurrent, and the reason is not throughput** (3b, measured): two arms started together share host IO and the same machine state, which makes them MORE alike and **understates the very seed-noise floor the experiment exists to measure**. An understated floor makes any later R difference look significant — the error direction that manufactures a false positive. 154.8 GiB of token cache at 0.39 GiB/s effective, ~6.6 min startup per arm.
+
+## The v2 model, decomposed
+
+15 agents, 7 dimensions each surveyed then adversarially verified. **The headline is that three of the four architecture components do not exist in the tree**, and one of them has an unresolved specification.
+
+| package | size | today's failing acceptance |
+|---|---|---|
+| `csa-doc-cu` | large | CSA raises `NotImplementedError` on packed input (`model.py:277`) while `train.py:3843` passes exactly that `cu` |
+| `hca-module` | medium | HCA appears **0 times in any .py on all 318 branches** |
+| `partial-rope` | large, **scope unknown** | 473 .py searched; the only rope string is an error message at `model.py:1564` |
+| `v2-cfg-surface` | small | 6 of the v2 knobs are unreachable from any launch line |
+
+**`partial-rope`'s scope is unknown for a reason worth stating: the spec says "the last 64 dimensions" without saying 64 of what** — per query head, per compressed-KV latent, or per residual channel — and gives no theta. Three readings, three different position resolutions. **That is a design decision nobody has made, not implementation work.**
+
+**`csa-doc-cu` is a design decision too, not a port:** our rows pack ~10 documents per 4096 tokens, so the residual tokens at each block boundary need a rule, and a rule that differs per branch brings back the causal-leak class — the previous version leaked 1.44 max|delta| and it was invisible in the loss.
+
+**What must NOT be rebuilt:** MoE and the rest of the 1.5b-a0.2b-e48 stack trained to 26.74B tokens at val 1.824. It works end to end.
+
+## Open decisions that are the user's
+
+| question | consequence of deferring |
+|---|---|
+| **Tokenizer unfreeze** (non-hanzi slots 11,487 vs MiniCPM5's 103,883 = 9.04x; our code fertility 1.248x worse; ref fertility 1.4286 vs 1.0519) | a rebuild invalidates every checkpoint, so it must be decided BEFORE a v2 pretrain, not after. Deferring silently chooses "do not rebuild" |
+| **`partial-rope`'s 64 dimensions of what** | the package cannot be scoped, let alone started |
+| **Cards for a production v2 run** | the last 30B run used six; four cannot host it |
 
 ## Queue state, 2026-09-08 13:20Z
 
