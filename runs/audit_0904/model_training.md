@@ -1,8 +1,7 @@
 ---
 question: Do model.py / train.py / sft_math.py and the efficiency + smelt_deeploop facts say what
   their artifacts say, on 2026-09-04?
-status: pass 1 (source existence) and pass 2 (40 values recomputed, seed 904) complete;
-  named gaps in §5
+status: measured (pass 1 source-existence and pass 2 40 values recomputed, seed 904, complete; named gaps in section 5)
 source: user order 2026-09-04 (whole-team audit); charter docs/standards/audit_0904.md
 ---
 
