@@ -71,19 +71,27 @@ The filter may NOT extract an answer from the seed file's output and call a matc
 rate is too low to fill its share drops out, and the dataset composition follows the
 measured rates.
 
-**Pilot readout — consensus vs difficulty (4c, 2026-09-08).** The ≥3/4 consensus leg
-selects teacher-stable problems, and teacher-stable may mean easy. The pilot must
-compare the consensus subset against the filtered-out subset on (a) correctness via the
-symbolic path, (b) difficulty (problem length, reasoning-step count). If the consensus
-subset is higher-correctness with no difficulty collapse, the leg stands; if difficulty
-collapses, it filters difficulty rather than correctness, and the openo1-math share is
-renegotiated. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
+**Pilot readout — consensus vs difficulty, pre-registered 2026-09-08 before any pilot
+data (4c order).** The ≥3/4 consensus leg selects teacher-stable problems, and
+teacher-stable may mean easy. Fixed in advance: (a) correctness via the symbolic path on
+the symbolic-verifiable intersection — the leg stands only if the consensus subset's
+correctness is above the filtered-out subset's (point estimate, CI reported); (b) the
+difficulty proxy is instruction length in chars (problem-side, no parser; step count
+rejected because its parser definition would itself be a degree of freedom); collapse =
+consensus-subset median length < 0.7× the filtered-out subset's median, with ≥100
+problems per subset. If difficulty collapses: stratified sampling by length terciles
+(boundaries from the full seed distribution), accept within tercile, per-tercile
+consensus rates reported; if the longest tercile cannot fill its share within the service
+budget, the consensus leg drops and openo1-math shrinks to the symbolic-verifiable subset
+only. No silent drop, no post-hoc threshold. Offline baseline (measured 2026-09-08, 500-row sample seed 42,
 facts/distillation.json#distill.openo1_answer_extractability): 81.0% of openo1 rows
 carry an `<Output>` tag; of those, 78.3% yield an extractable numeric answer (last
 number), so the answer-extraction population is 63.4% of the file. 19.0% have no
-`<Output>` tag (7.0pp of the total are code-like). The symbolic path's true coverage —
+`<Output>` tag. The symbolic path's true coverage —
 problems whose answer can be re-derived independently — is smaller than the extraction
-population and is a pilot measurement, not this baseline.
+population and is a pilot measurement, not this baseline. Of the 19.0% no-tag rows, the
+7.0pp that are code-like belong to the code domain (embedded-unittest execution), not
+math; the remaining 12.0pp is discarded as unjudgeable — cheaper than rescuing.
 
 ## 3. Teacher generation cost
 
