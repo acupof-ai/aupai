@@ -69,6 +69,14 @@ Shapes R12–R14 are PR #96, stacked on #81. A never-triggered exclusion belongs
 | `score_matrix.jsonl` has 1 dedicated watcher against `tasks.jsonl`'s 6 | b0 | its fold key makes rewrite legal, so append-only checks cannot see a changed value; a wrong factor table sat on main for hours |
 | Mutation sweeps need a positive control | de | DONE in PR #99: M0 survives, and the new died-for-the-right-reason criterion caught M2 dying on `FileNotFoundError` on its first run |
 
+## Unowned, ready to pick up
+
+**A check that `facts/<f>.json#<id>` references in prose resolve.** Today only `runs/tasks.jsonl` evidence is parsed (`_commit_delivers`); a reference in a doc dangles silently. e1 measured the real population: **493 references repo-wide, 2 genuinely dangling** — `runs/controller_board.md` → `cs.math_short_v8_cap_audit` (resolves once #98 lands) and `runs/tasks.jsonl` → `dq.t24`, whose closing row put a bare file path in `evidence`, so the id was never parsed at all.
+
+**The value is not the 2. It is the path to them: 24 → 20 → 11 → 2, false positives at ten times the real defects.** The middle step is the instructive one — a two-segment regex truncated every three-segment id (`mlm.ratio.sub1b_optimum` → `mlm.ratio`) and then reported that the truncated prefix did not exist. All 20 carried a complete evidence shape: the reference really is in the file, the prefix really is absent.
+
+Acceptance conditions, from e1 and not negotiable, because without them it reports 20 false rows on day one and gets turned off (a permanent red is the same as no signal): positive assertions for three- and four-segment ids; fixture ids whitelisted or excluded by directory (`_broken_*` worlds contain deliberately absent ids); one case for a reference split across a line break.
+
 ## Corpus reproducibility
 
 A corpus build should be a pure function of source bytes, pipeline version and seed.
