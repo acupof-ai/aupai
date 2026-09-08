@@ -1,3 +1,9 @@
+---
+question: What population does `harness sweep` scan, and what does it do to the five classes?
+status: measured
+source: container view via ~/bin/pod, 2026-09-04; correction at the top invalidates the first conclusion
+---
+
 # `harness sweep`: the measured population, and what it does to the five classes
 
 Container view (`~/bin/pod`, `/work/aupai`), 2026-09-04.
