@@ -14664,13 +14664,43 @@ def _assert_card_ownership(root):
     #     than deriving the list from anything in the repo. That is the one place a card number
     #     belongs in this function: properties (1)-(5) are deliberately number-free because they
     #     guard a mechanism, and this one guards a decision only the user can change.
+    #
+    #     THE CITATION IS NOW A LINE IN main, not a conversation (tilerl-0a, reviewing #58).
+    #     AGENTS.md's GPUs bullet states it: "Cards 1,2,3,4,5,7 belong to this repo; cards 0 and 6
+    #     are tileRL's (user order 2026-09-06, '0,6 tileRL'; the earlier all-8 grant of 2026-08-30
+    #     is superseded)." Before aupai #53 landed that line, every trace of the ruling was a
+    #     citation inside a row citing it, while AGENTS.md asserted the opposite ("All 8 cards
+    #     belong to this repo" -- true when written 08-30, superseded without an edit). Cited by
+    #     the bullet's own words rather than by line number: this file is edited constantly and a
+    #     line number in a citation rots on the next unrelated commit (§271's third half).
     _base = _theirs_baseline(root)
     if sorted(_base) != [0, 6]:
         return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. Cards "
-                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'); this list is what "
-                f"makes a lend on them EXPIRE, so removing a card from it silently stops the "
-                f"expiry check while every other property still passes -- the mechanism cannot see "
-                f"its own removal. Changing this needs a user order, not an edit")
+                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'), recorded in "
+                f"AGENTS.md's GPUs bullet; this list is what makes a lend on them EXPIRE, so "
+                f"removing a card from it silently stops the expiry check while every other "
+                f"property still passes -- the mechanism cannot see its own removal. Changing this "
+                f"needs a user order, not an edit")
+    #     AND THE CITED LINE MUST STILL SAY IT. A pin citing a document that has changed under it is
+    #     the §271 shape: the citation reads as authority while the authority has moved. AGENTS.md
+    #     said "All 8 cards belong to this repo" for a week after the 09-06 order superseded it, so
+    #     this is not hypothetical -- it is the state this repo was actually in. Asserted against
+    #     the bullet's own text rather than a line number, and SKIPPED rather than failed when the
+    #     file is absent, because a fixture tree legitimately has no AGENTS.md.
+    _ag = os.path.join(root, "AGENTS.md")
+    if os.path.isfile(_ag):
+        try:
+            with open(_ag, encoding="utf-8") as _fh:
+                _agtxt = _fh.read()
+        except OSError:
+            _agtxt = ""
+        if _agtxt and "cards 0 and 6 are tileRL's" not in _agtxt:
+            return ("AGENTS.md no longer states that cards 0 and 6 are tileRL's, but "
+                    "theirs_baseline still pins [0, 6] and this check still cites that order. One "
+                    "of the two moved: either the user changed the split and the pin is stale, or "
+                    "AGENTS.md lost the line. AGENTS.md asserted 'All 8 cards belong to this repo' "
+                    "for a week after the 2026-09-06 order superseded it, so a pin citing a "
+                    "document that has drifted is the measured failure here, not a hypothetical")
     # (7) A LEND IS A WINDOW, AND A NOTE CLAIMING ONE WITHOUT A READABLE WINDOW REFUSES. The
     #     natural shortcut is to accept the word "lent" as the grant and read the dates as
     #     decoration; measured on card 6's real note, that shortcut makes a 13-minute loan
@@ -20746,6 +20776,42 @@ def _selftest_card_lend_expires():
     assert verdict(lambda d: d.__setitem__("theirs_baseline", [6, 0])) is None, (
         "theirs_baseline [6, 0] FAILED -- the pin compares a SET of cards, not a written order")
 
+    # THE PIN'S CITATION MUST STILL HOLD. Three worlds, because the interesting one is the middle.
+    # AGENTS.md asserted "All 8 cards belong to this repo" for a week after the 2026-09-06 order
+    # superseded it, so a pin citing a document that has drifted under it is this repo's measured
+    # state, not a hypothetical. The third world matters for a different reason: a fixture tree
+    # legitimately has no AGENTS.md, and a citation check that FAILs on its absence would refuse
+    # every such tree.
+    _ag_src = os.path.join(ROOT, "AGENTS.md")
+    if os.path.isfile(_ag_src):
+        with open(_ag_src, encoding="utf-8") as _fh:
+            _ag_txt = _fh.read()
+        assert "cards 0 and 6 are tileRL's" in _ag_txt, (
+            "AGENTS.md does not carry the 09-06 split, so the pin cites nothing in main. Either "
+            "the user changed the split or the line was lost; both need a person")
+
+        _t_ag = world(lambda d: None)
+        try:
+            with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
+                _fh.write(_ag_txt)
+            assert _assert_card_ownership(_t_ag) is None, (
+                "the world with AGENTS.md's real text FAILED -- the citation assertion must pass "
+                "on the file it cites, or the FAIL below proves nothing")
+            with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
+                _fh.write(_ag_txt.replace("cards 0 and 6 are tileRL's",
+                                          "All 8 cards belong to this repo"))
+            assert _assert_card_ownership(_t_ag) is not None, (
+                "replacing AGENTS.md's split line with the SUPERSEDED 08-30 wording PASSED. That "
+                "is the exact drift that stood for a week: the pin keeps citing an order the "
+                "document no longer states, and the citation reads as authority while the "
+                "authority has moved")
+            os.remove(os.path.join(_t_ag, "AGENTS.md"))
+            assert _assert_card_ownership(_t_ag) is None, (
+                "a tree with NO AGENTS.md FAILED -- a fixture tree has none, and a citation check "
+                "that refuses on absence refuses every fixture")
+        finally:
+            _sh.rmtree(_t_ag, ignore_errors=True)
+
     # A LEND MUST BE A WINDOW. The population is "claims a lend", not "has a parseable window":
     # my first version quantified over the latter, and all three unparseable worlds passed because
     # the defect removes the card from the set the property loops over.
@@ -20794,7 +20860,9 @@ def _selftest_card_lend_expires():
             "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
             "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
             "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
-            "while a card handed to another team still FAILs")
+            "while a card handed to another team still FAILs; and the pin's citation is verified "
+            "against AGENTS.md's own text -- present PASSes, replaced with the superseded 08-30 "
+            "wording FAILs, absent PASSes")
 
 
 def _selftest_facts_ephemeral_only_source():
