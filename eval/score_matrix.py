@@ -825,6 +825,85 @@ def _errored(record, name):
     return isinstance(m, dict) and "error" in m
 
 
+def _writer_id():
+    """WHICH CODE performed the rewrite: the writing tree's HEAD sha, or "" off-git.
+
+    A sha, not a name. A branch name or a roster label is a string chosen at creation
+    time and says nothing verifiable about who wrote a row -- sessions share one git
+    identity here, and branch topology is not authorship. A sha can be checked out and
+    read. Empty string when there is no git (the pod's hand-pushed tree), which is
+    honest: the field then says nothing rather than saying something false.
+    """
+    try:
+        r = subprocess.run(["git", "-C", os.path.dirname(os.path.abspath(__file__)),
+                            "rev-parse", "--short", "HEAD"],
+                           capture_output=True, text=True, timeout=10,
+                           env={k: v for k, v in os.environ.items()
+                                if not k.startswith("GIT_")})
+        return r.stdout.strip() if r.returncode == 0 else ""
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def _numeric_leaves(obj, prefix=""):
+    """Every numeric leaf under obj, as {dotted.path: value}. bool is excluded.
+
+    Numbers only, because they are what a reader acts on and what moved silently in the
+    incident this exists for. A changed string is usually a note or a status and shows up
+    in a diff as prose; a changed float in a nested metrics dict does not.
+    """
+    out = {}
+    if isinstance(obj, dict):
+        for k, v in obj.items():
+            out.update(_numeric_leaves(v, f"{prefix}.{k}"))
+    elif isinstance(obj, (list, tuple)):
+        for i, v in enumerate(obj):
+            out.update(_numeric_leaves(v, f"{prefix}[{i}]"))
+    elif isinstance(obj, (int, float)) and not isinstance(obj, bool):
+        out[prefix] = obj
+    return out
+
+
+def _supersede_entry(old, new, by, at):
+    """The record of what a rewrite overwrote, or None when no number moved.
+
+    WHY THIS EXISTS, and it is the whole design (b0, 2026-09-08). This ledger folds on
+    (ckpt, profile) and this writer REPLACES -- rewriting the value under an existing key
+    is the intended operation, not a violation, so no append-only rule applies here and a
+    check modelled on one would either fire on every legitimate rescore or say nothing.
+
+    What had no answer was "who can see that a value moved". Measured over the 34 commits
+    that touch runs/score_matrix.jsonl: 79 new keys, 44 rewrites of an existing key, and
+    43 of those 44 left `measured` untouched -- because `measured` is the SCORING date,
+    not the write date. The eight domain_bpb retraction rows still read 2026-09-04 while
+    their contents were rewritten twice on 09-08. So nothing in a row moves when the row
+    is edited, and a wrong factor table sat on main for hours: the row was present,
+    well-formed, one line, in the right ledger, and every check that could see the file
+    was satisfied.
+
+    Only 6 of those 44 rewrites changed an existing NUMBER, and two of the six were
+    _wall_s timing fields. That rarity is what makes the guard readable -- one that fires
+    6 times in 34 commits gets read, one that fires 44 times gets worked around. It is
+    also why this records numeric leaves rather than any difference: 30 of the 44 only
+    ADDED fields, changing no existing leaf, and those are not the event anyone needs to
+    see.
+
+    NOT a snapshot comparison, deliberately. A stored copy of the expected values is a
+    second population that needs its own freshness rule, and a stale snapshot check
+    produces exactly the failure that started this: a green check about a number nobody
+    re-derived. The trace goes in the row, so the check can compare the file against its
+    own git history -- a source it cannot drift from.
+
+    This makes CHANGES visible. It does not make VALUES correct: a first write that is
+    wrong has no prior to disagree with, and nothing here compares a number to reality.
+    """
+    a, b = _numeric_leaves(old), _numeric_leaves(new)
+    changed = {k: [a[k], b[k]] for k in a.keys() & b.keys() if a[k] != b[k]}
+    if not changed:
+        return None
+    return {"at": at, "by": by, "changed": changed}
+
+
 def write_records(path, records):
     """Replace same-(ckpt, profile) records, keep others and unparseable lines.
     The matrix is the current state, not a history.
@@ -832,6 +911,11 @@ def write_records(path, records):
     The key is (ckpt, profile), not ckpt: a milestone-profile record must never
     replace a checkpoint's full record (2026-08-31, t39 dry run). A record
     without a profile reads as 'full', so existing rows need no migration.
+
+    A REPLACEMENT THAT MOVES A NUMBER CARRIES `superseded`, appended to whatever the
+    row already had, so the old reading survives the overwrite as data. See
+    _supersede_entry for why the trace rather than a value comparison, and
+    harness.py::check_score_matrix_rewrites_traced for the half that enforces it.
 
     An exclusive lock on path + '.lock' serializes concurrent writers: without
     it, two score_matrix processes on different ckpts can interleave their
@@ -872,6 +956,10 @@ def write_records(path, records):
         try:
             existing = []
             kept = Counter()
+            # The rows this call is about to replace, by key, so a numeric change can be
+            # recorded against what it overwrote. Read inside the lock: outside it, a
+            # concurrent writer's row could be the one compared against.
+            replaced = {}
             if os.path.exists(path):
                 with open(path, encoding="utf-8") as f:
                     for line in f:
@@ -879,6 +967,7 @@ def write_records(path, records):
                             r = json.loads(line)
                             k = (r.get("ckpt"), r.get("profile", "full"))
                             if k in keys:
+                                replaced[k] = r
                                 continue
                             kept[k] += 1
                         except Exception:
@@ -896,6 +985,21 @@ def write_records(path, records):
             with open(path, "w", encoding="utf-8") as f:
                 f.writelines(existing)
                 for r in records:
+                    old = replaced.get((r["ckpt"], r.get("profile", "full")))
+                    if old is not None:
+                        # STAMPED FROM THE CLOCK, not from the row: `measured` is the
+                        # scoring date and does not move when a row is edited, which is
+                        # exactly the hole this closes.
+                        ent = _supersede_entry(
+                            old, r, _writer_id(),
+                            time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()))
+                        if ent is not None:
+                            # APPEND to the row's own history, and carry forward whatever
+                            # the OLD row held: a second rewrite must not erase the first,
+                            # and the caller's record usually has no `superseded` at all
+                            # because it was built from a fresh scoring.
+                            prior = old.get("superseded") or []
+                            r = dict(r, superseded=[*prior, ent])
                     f.write(json.dumps(r, ensure_ascii=False) + "\n")
         finally:
             fcntl.flock(lock_f, fcntl.LOCK_UN)
