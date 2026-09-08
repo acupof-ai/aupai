@@ -831,7 +831,7 @@
       "unit": "dimensionless correlation; sd and SE in nat/token",
       "measured": "2026-09-06",
       "status": "measured",
-      "source": "probes/arm_token_corr.py --ckpt_a ckpt_b0_headmix_armA.pt --ckpt_b ckpt_b0_headmix_armB.pt --device cuda:0 --allow_cuda --domain code_py_starcoder --rows 64 --batch 2, on pod card 5; full log runs/arm_corr_p2.log",
+      "source": "runs/arm_corr_p2.log (the full run log, in the repo -- THE SOURCE THAT SURVIVES A PRUNE and the one to read first). Produced by probes/arm_token_corr.py --ckpt_a ckpt_b0_headmix_armA.pt --ckpt_b ckpt_b0_headmix_armB.pt --device cuda:0 --allow_cuda --domain code_py_starcoder --rows 64 --batch 2, on pod card 5. The two checkpoints are named for provenance and for RE-DERIVATION, which is the only thing that dies if they go: the numbers themselves are in the log.",
       "config": {
         "arms": "ckpt_b0_headmix_armA / armB, 206,128,200 dense params, d1024 L12 h8 ffn3072, seed 42",
         "domain": "code_py_starcoder",
@@ -861,7 +861,8 @@
         "paired-BPB",
         "block-paired",
         "corr 0.95"
-      ]
+      ],
+      "claim": "How strongly the two arms' per-token losses move together, and therefore how much block-paired scoring shrinks the noise on their DIFFERENCE. corr = 0.9568 is dimensionless and runs 0 to 1; HIGHER IS BETTER, because a difference between two correlated arms is measured against sd_diff rather than each arm's own spread. What it does NOT say: nothing about which arm is better, and nothing about the size of any effect -- only about the precision an experiment gets for free by scoring both arms on the same blocks."
     }
   ]
 }
