@@ -22855,6 +22855,14 @@ _FROZEN_KEYS = (
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
     # exists to catch (the arm's own weights carry the init; the flag does not).
     "zero_init_out", "muon_shape_lr", "value_embed",
+    # b0-35: CSA replaces the dense branch inside GatedMLA, and when on it adds parameters
+    # (the branch gate), so two segments of one run that disagree on it are two models wearing
+    # one name -- the same argument as head_mixed. The three shape knobs are here for a
+    # DIFFERENT reason than csa itself: they do not change the parameter count, they change
+    # what the attention can SEE (how coarse the pooling is, how many blocks are re-read, how
+    # wide the exact window is), so a resume that moved one would alter the receptive field
+    # mid-run while the loss curve carried a single name.
+    "csa", "csa_compress", "csa_topk", "csa_window",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
