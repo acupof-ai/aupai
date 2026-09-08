@@ -1,6 +1,7 @@
 # Controller board (fb) — 2026-09-08
 
 Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU job.
+**13:20Z, measured: cards 1,2,4,5,6,7 read 0 MiB / 0%; only 0 (100%) and 3 (94%) are working.** tilerl-27 answered the schedule question directly: **four needed tonight** (card 0 level-5 eval; card 3 GSM8K steps_to_score to 16:00Z; one for the 1x8 vs 2x4 arm; one conditional reserve, confirmed or released at 16:00Z), **four can come back**. Their own reading, quoted unedited: aupai's zero cards are not tileRL queueing, they are scheduling -- people held on measurement arguments that need no card. The same sentence is truer of me: eight sessions, 28 PRs merged today, zero new numbers.
 
 ## User orders in force
 
@@ -14,12 +15,21 @@ Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU j
 | Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
 | Never delete without a named target | every removal names its files and runs each first |
 
-## Queue state, 2026-09-08 12:05Z
+## Queue state, 2026-09-08 13:20Z
 
-28 PRs merged today, 18 still open, CI green. **Reviews are now being picked up without dispatch** — de cleared 44's four, e1 cleared 98's three, b0 and tilerl are on the rest. The standing rule changed at 11:50Z: **a PR's roster pair reviews it without waiting to be assigned.** The earlier version made me watch the queue faster; de's correction is the right one — the bottleneck was not that only I could see it, it was that only I was looking.
+**15 open. CI is not the bottleneck and neither is dispatch -- six green PRs are deadlocked behind one unmerged branch that contains the rows unblocking them.**
 
-Merge order still binds three: **#81 (§276-278) → #96 (§279-282) → #85 (§283)**, and **#98, #100 before #101** (its two fact references are forward references that no check would catch — `_commit_delivers` parses `facts/<f>.json#<id>` only from `runs/tasks.jsonl` evidence, never from prose).
+de has already reviewed **#75, #83, #89, #95, #98, #100**. All six review rows sit in commits `a5d530fd` and `6912878b`, which are on `de-agents-clean` -- that is **#85, itself awaiting review**. On main those six PRs read as zero review rows, so `review_present` cannot see work that was actually done, and nobody merges. **A PR awaiting review holds the key to six others.**
 
+Mechanism, and it is the general one: **`runs/review.jsonl` is a ledger and merges by union via `merge_main.sh` in seconds; riding a code branch makes a reviewer's latency equal to that code PR's review latency.** Today that was six PRs times several hours. de writes the row on a ledger-only branch and merges it immediately from now on; 44 is reviewing #85 to drain the six.
+
+Red, one assertion, one fix: **#102 and #105 both fail `EVIDENCE stale: []; undeclared: ['score_matrix_rewrites_traced']`** -- the new check entered `CHECKS` without an entry in `EVIDENCE` (`harness.py:17100`), and #105 contains #102's `0ab846c2`. Chain: b0 adds the line -> #102 green; #96 lands -> #102 merges -> #105 merges.
+
+**#96 is held by tilerl and the hold is correct.** `scripts/test_sft_holdout_gate.py:64` is still live while §279 describes it as fixed, in a PR with no code. An entry naming R12's sharpest instance, leaving that instance in the tree, lets a reader cite §279 as evidence the check is fixed -- which is what R12 condemns, inside the paragraph describing R12. Requirement: a reader cannot take §279 as evidence of a fix. b0 picks the landing.
+
+Landed since the last board: **#81 `c0944b06`, #94 `a50823d4`, #104 `5bf7eb38`** (tilerl merged and pushed the pod in the same step; drift OK, 837 files match, stamp `a50823d4`).
+
+Merge order still binds: **#81 -> #96 -> #85**, and **#98, #100 before #101**.
 ## Critical path — cleared 2026-09-08 11:45Z
 
 The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
@@ -157,3 +167,19 @@ Open for whoever picks this up: at 91% teacher correctness, is the agreement fil
 
 1. Corpus composition for the next full run.
 2. Pod disk at 95%.
+
+## MiniCPM5-2B research — 2026-09-08, 3b + 44, fb reviewing
+
+Two sessions, assigned on the user's order to research it thoroughly. **One finding changes a decision; the rest close doors, which is also worth having.**
+
+**The decision-changing one (3b).** MiniCPM's own ablation (arXiv 2404.06395, Table 1) measures annealing with high-quality and SFT data mixed into the pretraining data against annealing on pretraining data alone: **+8 to 12 points**, with **B-2 as the negative control** -- doubling SFT tokens 6B to 12B moves 40.9 to 41.2, i.e. nothing, so the gain is the mixing and not the token count. **We copied the 10% anneal length (`train.py:406`, comment `(MiniCPM-style)`) and changed no data: all 25 `data/mix_*.json` have `anneal == weight` for every domain.** Our anneal lowers the learning rate over a distribution identical to the one before it.
+
+Cost of the gap, from our own store: the anneal is worth **-6.89%** unweighted mean loss with all nine domains down, at **19x** per-token value against a constant-LR token. That multiplier is what the data change would act on.
+
+Prerequisite before any proposal is executable, and 44 owns it: **do we hold instruction/SFT data we can mix in.** 21 SFT packs exist; **17 carry no holdout stamp, 4 stamp two superseded holdout sets, 0 stamp the current one.** And the contamination side decides whether the proposal is legal at all: **30% of math-500 questions already have a containment hit in the math SFT corpus** (`facts/contamination.json#cont.split`), so mixing that same data into the anneal makes every post-anneal math reading uninterpretable. Answer is three sentences: what we hold, whether it is usable, which readings die if we mix it.
+
+**Transfer caveat, raised by tilerl-27 and adopted before any run.** The +8 to 12 points was measured on *their* mix, not ours; four separate readings failed that way in tileRL today, each a correct number carried onto a different population. **So the first run carries our own control arm, not "do what they did and see how much it moves".** Our baseline is `anneal == weight`, and that baseline is itself the thing under test: if our normal-phase mix is already cleaner than theirs, the headroom the mixing buys may already be spent. **The criterion is written before the run -- how many points count, how wide the noise band, how many seeds** (tileRL lost 171 minutes today to a curve whose criterion was written after).
+
+**Tokenizer (3b).** Non-hanzi slots **11,487 (ours) against 103,883 (theirs) = 9.04x**, not the 4.0x the size ratio suggests; our code fertility is **1.248x worse**; ref fertility **1.4286 against 1.0519**; they carry FIM and tool-call tokens, we carry none. The unfreeze decision is the user's and is open.
+
+**Architecture (44), first-hand from `config.json` and the safetensors index, not the card.** No loop, no weight sharing (42 independent layers, no aliases, `lm_head` separate from `embed`); dense 2.5B; full attention GQA 16/2, head_dim 128; RoPE theta=5M unscaled, 131K context; vocabulary 130,560. **Every row of the transfer column reads "not transferable", and the two strongest rows are strong for different reasons**: MiniCPM4's InfLLM v2 sparse attention (81% sparse) was **dropped in gen 5, and the README's stated reason is deployment compatibility -- no custom kernel, no fork -- not capability**; theta=5M has no published reason in any of five sources checked. **The kernel one is a cost datum we have never priced: a team able to build sparse attention, and that shipped it, gave it up to avoid depending on a custom kernel -- and our v2 is entirely custom kernels (KDA, MoE, CSA).** Recorded in the fact's `boundary`, PR #106. Verdict for v2 architecture: change nothing.
