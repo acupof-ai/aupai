@@ -13,7 +13,13 @@ distribution change plus a third distribution — code — that it has never see
 failure is a rebuild decision that invalidates every existing checkpoint. What survives the
 change and what it supersedes: `docs/standards/0830v1_gates.md`.
 
-Architecture: NoPE throughout — no RoPE, no learned position embeddings; KDA state carries all position information. Attention is gated MLA, full causal over the 4096-token sequence (document-masked). The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training. Attention Residuals are on by default.
+Architecture, in the terms the code uses. Three names carry most of the file, so they are spelled out once here and used bare afterwards.
+
+- **KDA — Kimi Delta Attention** (`model.py:97`): a linear-attention layer with bounded decay, a short convolution and QK-norm, running through `fla.ops.kda.chunk_kda`. Its recurrent state is what carries position.
+- **MLA — Multi-head Latent Attention**, gated (`model.py:342`): compresses keys and values into a lower-dimensional latent before full causal attention over the 4096-token sequence, document-masked so one document cannot attend into another.
+- **AttnRes — Attention Residuals** (`model.py:494`, Kimi, arXiv 2603.15031): a layer may read the values of earlier attention layers directly, weighted by softmax over its own query, rather than only through the residual stream. On by default.
+
+The layers alternate KDA and MLA — that hybrid is what the title means. **NoPE** means no positional encoding of any kind: no RoPE (rotary position embeddings, the usual choice) and no learned position embeddings, because KDA's state already carries position. The 1024-token sliding window was removed 2026-08-30: `infer_local.py` never implemented it, so every generation ran a wider attention than training.
 
 ## Writing rules (all docs, commit messages, register rows, and replies)
 
