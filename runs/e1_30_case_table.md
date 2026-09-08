@@ -1,3 +1,9 @@
+---
+question: For the 12 held-out items in the e1-30 case table, what is each arm's per-item loss and the winner?
+status: measured
+source: scripts/e1_30_case_table.py, seed 20260903; population 10,421 items scored by both arms
+---
+
 # e1-30 case table: 12 held-out items with both arms' per-item loss
 
 Population 10,421 items scored by both arms. Selection fixed in `scripts/e1_30_case_table.py`, seed 20260903. **nll per supervised byte**, each arm over its own formatting.
