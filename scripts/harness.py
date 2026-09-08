@@ -122,6 +122,15 @@ _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
+    # Measured on this laptop 2026-09-08: 4.9s inside the full set, 5.16/6.30/6.16s solo.
+    # It straddles the 5s default, so whether it runs is decided by the machine's mood --
+    # it banked 3 consecutive strikes and FAILed with "has not actually run since" while
+    # passing by hand seconds later, which is the deadline-nothing-can-meet case the
+    # TIMEOUT comment above describes. Its cost is a real scan (431 documented invocations
+    # against 178 argparse parsers), and it grows with the docs, so any value near the
+    # measurement is crossed again. 30s is ~5x the solo worst, the same ratio as the
+    # entries below, and still far under a hang.
+    "doc_flags_parse": 30,
     "eval_sft_template_contamination": 90,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
