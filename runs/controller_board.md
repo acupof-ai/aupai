@@ -19,16 +19,36 @@
 
 3b declined to route around the gate with `CUDA_VISIBLE_DEVICES`, on a better ground than the rule: **that fall-through means "a human specified these", not "the controller granted these"** — it would have run, and nothing would have recorded that it was ever authorised.
 
-## Running now
+## Running now — nothing of ours
 
-| what | state |
-|---|---|
-| **3b's anneal arms** — N1 → N2 → R, four cards each, serial | cleared to launch; last read shows no claim and no log yet, asked, not yet answered |
-| tileRL 1x8 vs 2x4 | smoke passed (`tied 0.00`, `tok 391` clear of cap 1024), 10-step双臂 on card 1 |
+**N1 launched at 14:49Z and was dead by 14:51Z.** `SignalException: Process 1203764 got signal: 15` — killed by `harness launch`'s 120 s startup gate while it was still doing legitimate work: `mix: tokenizing math_owm_stage2 (4,135,793 docs, workers=1)`.
 
-**Read order for the arms is fixed before the data exists:** N1 vs N2 first, then R. **If |R − N1| falls inside |N1 − N2| the answer is "reweighting has no measurable effect at this budget" — that is a result, not a failed run.**
+**The cause was in the first screen of its own log, and I classified it as a side cost:**
 
-**Serial, not 2+2 concurrent, and the reason is not throughput** (3b, measured): two arms started together share host IO and the same machine state, which makes them MORE alike and **understates the very seed-noise floor the experiment exists to measure**. An understated floor makes any later R difference look significant — the error direction that manufactures a false positive. 154.8 GiB of token cache at 0.39 GiB/s effective, ~6.6 min startup per arm.
+```
+mix: math_owm_stage2 cache was shuffled at sample_seed 42, now 1337: retokenizing
+cache read: 158,471 MiB (154.76 GiB) over 9 cache(s)
+```
+
+`Cfg.sample_seed` is `None` (`train.py:317`) and `_sample_seed()` falls back to `Cfg.seed` (`:2069`), so `--seed 1337/1338/1337` gave the three arms **two different corpus orders**:
+
+| arm | seed | sample_seed | corpus order |
+|---|---|---|---|
+| N1 | 1337 | 1337 | A |
+| N2 | 1338 | **1338** | **B** |
+| R | 1337 | 1337 | A |
+
+**`|N1 − N2|` would have carried init variance PLUS corpus-order variance while `|R − N1|` carries only the reweight — the floor measured on a superset of what the comparison holds constant.** Overstated, so the error direction is a false negative: a real effect masked, written up as "no measurable effect at this budget", which reads exactly like a clean null.
+
+**`_sample_seed`'s own docstring already carried this and its remedy**, from de-7: `Cfg.seed` also drives weight init, so binding the cache to it "would change their training data and fold data variance into `ds.seed_variance_0p2b`" — **pin `sample_seed` and a seed sweep shares one cache.**
+
+**Fix (3b, in flight):** add `--sample_seed` to train.py's int-flag dict, leave `Cfg.sample_seed` defaulting to `None` — changing the default would move the corpus order of every run that does not pass the flag, including the p02_s* arms `ds.seed_variance_0p2b` rests on. Arms become `--seed 1337/1338/1337 --sample_seed 42`. **Nothing retokenizes, so the gate cannot fire, and all three arms read the 2026-09-05 cache other runs have already exercised rather than two freshly-cut ones nobody has read** — 3b's addition, and the better half of the argument: an unread cache is itself an untested variable in the experiment.
+
+**My error, and it is the one to keep:** I reported "N1 is up" from cards at 383 MiB, a claim file, and a log that had just been written. **All three are equally consistent with "starting" and "died thirty seconds ago", and I checked none of them against liveness** — I did not `tail` to the end of the log I had already opened. Memory occupancy and a claim file answer "this job existed", never "it is alive now". The two probes that do answer it are the log's last line and `nvidia-smi --query-compute-apps`; 3b ran both, I ran neither.
+
+**Verified after the death:** cards 2,4,5,7 at 0 MiB, `--query-compute-apps` shows only tileRL's two pids, claim released, and **the cache is intact** — `tokens_math_owm_stage2.pt.seed` still 42, `.pt` still the 2026-09-05 03:59 file; it died before writing its tmp.
+
+**Ticket, not blocking:** the 120 s startup gate kills a job for doing legitimate work. It intends to catch a job that never claims a device; what it measures is whether one claimed within 120 s, and a first-time cache build cannot. Pinning the seed hides it tonight — **the next person building a cache for the first time hits it, and the symptom is `signal: 15`, which reads as "somebody killed me".**
 
 ## The v2 model, decomposed
 
