@@ -813,5 +813,91 @@ Cost: none realised. Nothing was deleted at any point; the user had named no tar
 Evidence: `scripts/deletion_candidates.py`; the paired-prediction check (protected with the predicates, `None` without); `runs/friction.jsonl` kind `near_miss`, 2026-09-08.
 open: nothing checks that a deletion-candidate generator's protection rule covers the ways a checkpoint can be depended on. The machine-checkable half is narrower and worth having on its own: no candidate may be a basename appearing in any `runs/*.jsonl`. That single grep would have fired here.
 
+### §276 (2026-09-08, R11)
+
+**The fix for §275 reproduced §275, inside itself, written by the session that had just named the shape.** The predicate added to catch "a recorded result depends on this checkpoint" grepped a hardcoded tuple of seven ledger filenames. The pod holds 78 `runs/*.jsonl`. So the predicate whose entire purpose was to widen a too-narrow population was itself a hand-enumerated population, and it shipped one commit after I wrote "unprotected means no protection my predicates could see."
+
+Found by 3b, not by me. Four checkpoints came out NO PROTECTION FOUND while cited: `ckpt_b0_mem_m2.pt.interrupt.step36` by `experiments.jsonl`, `ckpt_ab_fp32logits_base.pt` by `tasks.jsonl`, `ckpt_b0_moe48_mem.pt` by `friction.jsonl`. The first is the sharpest: **`experiments.jsonl` is a file the script already opened**, for the resume-source predicate, and still did not scan for citations. Reading a file for one purpose does not put it in another predicate's population.
+
+3b's fourth, `ckpt_ab_fp32logits_base.pt.step500`, I could not confirm and it is not cited: across all 78 ledgers the only matching string is `ckpt_ab_fp32logits_base.pt`. What is cited is its base. That distinction became a separate output field rather than a predicate -- see below.
+
+A second instance of the same shape in the same function: the resume regex was `--resume\s+(\S+)`, which does not match `--resume=PATH`. A pattern narrower than the thing it is named for.
+
+Fix: `glob(runs/*.jsonl)`. The population comes from the filesystem, so it cannot drift from what the caller means and nobody has to remember to add a ledger.
+
+**My first selftest for it asserted the wrong invariant, and the tree said so.** I required every predicate's removal to free at least one file, on the theory that a predicate protecting nothing is dead. It fired on predicates 1, 3 and 4. The measurement showed the assertion was wrong rather than the code: predicates 1 and 3 read `milestones.jsonl` and `experiments.jsonl`, which the glob also reads, so they name 33 and 13 files with **0 uniquely protected** -- necessarily, since their ledgers are members of the glob's population. Predicate 4 matches nothing at all while no run is open. That subsumption is not redundancy to delete; it is the invariant worth asserting, and it is exactly what the tuple broke.
+
+Capacity measured against the shipped defect rather than argued: restoring the seven-name tuple leaves 4 files protected only by the resume predicate, and the subsumption assertion fires. **The honest limit, recorded in the file:** it catches that mutant through ONE predicate, because `milestones.jsonl` was inside the seven and predicate 4 is idle. Had `experiments.jsonl` happened to be in the tuple, no assertion would have fired while 71 ledgers went unread. The printed ledger count is what covers that residue -- an output that states the size of the population it scanned is the only thing a reader can compare against the population they meant.
+
+A family annotation, deliberately not a predicate: a free row whose `ckpt_X.pt` base is cited now prints `(family: ckpt_X.pt)`. 19 of the 44 free files carry it, which is why it must not protect -- promoting it would protect 19 of 44 and leave a listing nobody can act on, and an intermediate step of a scored run usually IS deletable. "Nothing names this file" and "nothing names this STEP of a run that is named" are different claims and only the second is safe to act on without asking.
+
+Pod after: 78 ledgers scanned, 88 checkpoints, 196 GB protected against 178 GB under the tuple.
+
+Cost: none realised, same as §275 -- 4c's standing ruling held that no deletion may be proposed from this script's output until the follow-up lands, so the defective listing was never acted on. The ruling was what made a second wrong listing free.
+Evidence: `scripts/deletion_candidates.py` (`ledgers()`, `_selftest`), registered in `SELFTEST_FILES`; the mutant run restoring the tuple; PR follow-up to #76.
+open: whether a hand-enumerated population is complete is not checkable in general. Per instance it is: assert that no member of a sub-population is missed by the predicate that should subsume it, and print the population size.
+
+### §277 (2026-09-08, R11)
+
+`eval/domain_bpb.py::text_bpb` truncated `ids` to `max_ctx=2048`, summed loss over that prefix, and set the divisor from the **whole** text's bytes. Our held-out rows are 4,097 tokens. So the numerator covered 2,047 tokens and the denominator covered roughly twice that, and **every absolute bits-per-byte figure this project has published is about half its true value** -- `facts/`, `runs/score_matrix.jsonl`, the prereg bar 0.334243, and 98's report.
+
+Found by 4c on origin/main, not by me, though the function is mine.
+
+Measured rather than estimated, over the real val rows of all nine domains of `mix_1.5b-a0.2b-e48_20b_launch.json` through `val_seqs`:
+
+    domain             rows  trunc    whole_B   scored_B   ratio
+    math_owm_stage2      64     64     852456     428341  1.9901
+    en_c4_stage2         64     64     927217     461585  2.0088
+    cot                  64     64     747706     380103  1.9671
+    textbook_30b         64     64    1302881     654148  1.9917
+    chatml               64     64    1051614     522022  2.0145
+    chat_qa              64     64    1067117     528244  2.0201
+    zh_web               64     64    1088748     541363  2.0111
+    code_py_starcoder    64     64     834004     418778  1.9915
+    code_py_rp1t         64     64     879592     440679  1.9960
+    ALL                              8751335    4375263  2.0002
+
+64 of 64 rows truncated in every domain: the truncation was not an edge case, it was the entire population. The per-domain ratios span 2.7%, so a single 2x applied uniformly would slightly reorder the domains; each needs its own factor.
+
+**No comparison moves.** Both arms of every contrast carry the same per-domain factor, so deltas, signs, ratios and correlations are unaffected and only levels change. That is also why it survived: every comparison anyone ran came out right.
+
+**Why nothing caught it.** The selftest had five cases and every one was a handful of tokens, so `ids[:max_ctx]` never fired -- the world in which the two quantities disagree had no input. The numerator and the denominator were each correct about their own quantity, and nothing in the output named the population they disagreed about. The docstring asserted the property the code did not have, which is the same relationship as a listing that cannot show the predicate it lacks (§275, §276).
+
+Fix: the divisor comes from the kept `ids`, not from `text`. Computed as `decode(ids) - decode(ids[0])` and **not** `decode(ids[1:])`: on a byte-level codec `ids[1:]` can begin mid-character and decode to replacement characters LONGER than the bytes they stand for -- measured on the CJK case, 9 real bytes came back as 15.
+
+Two cases added, both mutation-proven. A known answer: 3,000 tokens against a uniform-256 model reads exactly 8.0 bits/byte by construction wherever it is cut, and the defect gives `8 * 2047/2999 = 5.46`. Tolerance 1e-7, not 1e-9, because 2,047 float32 terms accumulate 2.2e-8 -- the defect sits two and a half bits away, so no plausible tolerance hides it. And an invariance case: bits/byte must not move between `max_ctx` 1024 and 2048, with a non-vacuity assert that the two cuts really do score different amounts.
+
+`rows_truncated` and `max_ctx` now appear in every preds row and in the printed line. When truncation is non-zero the figure is the bpb of each row's first `max_ctx` tokens, which is an EASIER quantity than the bpb of the rows -- every scored token has full context and none sits past the cut -- and a reader has to see that rather than infer it.
+
+Cost: ~2h to find, fix, measure the factor and restate. The larger cost is that every absolute bpb in the record needs a restatement with retraction fields, and any external reading of those numbers was wrong for as long as they stood.
+Evidence: `eval/domain_bpb.py::text_bpb` and `_selftest`; PR #79. The factor table first filed with this incident was WRONG -- see §278; the corrected ratios are 1.9712 (cot) to 2.0634 (chatml), 2.0088 overall.
+open: no gate requires a metric's selftest to include an input that exercises every truncation or cutoff branch the metric has. The narrow machine-checkable half: any function taking a `max_*` bound must have one selftest input exceeding it.
+
+### §278 (2026-09-08, R11)
+
+**The probe I wrote to measure §277's correction factor had §277's shape, and it manufactured a defect that had not occurred.** Fourth instance of R11 in one night, and the only one where the flawed population was in the instrument rather than in the code under test.
+
+To price the divisor error I needed, per domain, the bytes of the whole row against the bytes of the first 2048 tokens. I computed both by reimplementing what `text_bpb` does. Two differences from the real function, each one token wide:
+
+    plain tok.decode(ids)          the metric passes skip_special_tokens=False (domain_bpb.py:379),
+                                   because the delimiter is part of the held-out bytes
+    first token of enc(dec(ids))   the code subtracts the ORIGINAL ids' first token
+
+The first produced a 5.20% disagreement with the recorded `scored_bytes` on chatml -- the domain with the most special tokens per row -- against 0.06 to 0.53% elsewhere. **I read that as evidence that chatml's held-out row set had drifted**, built a whole theory on it (`val_seqs` takes a seed-42 prefix sized `min(max(1,int(pool*0.05)),5000)`, chatml's pool is below the cap, so the prefix moves when the pool grows), reported it to 4c as outranking the divisor in what it invalidated, and got a ruling back agreeing it was the bigger finding. It was an artefact of my decode call.
+
+The second produced a 29-byte residue on chatml after the first was fixed. That one found a real curiosity and still was not the data's fault: two chatml rows do not round-trip token-for-token, 4097 ids re-encoding to 4099 because a U+FFFD fragment splits into three tokens. **Byte identity holds** -- `dec(enc(text)) == text` -- which is the property the metric's gate actually requires, so those rows are legitimately scored. But the re-encoded first token differs from the original's, and I was subtracting the wrong one.
+
+Calling the shipped `text_bpb` instead of reimplementing it reproduces the recorded `scored_bytes` **exactly, all nine domains, zero bytes of difference**. That comparison was free and available from the first minute, and it is the one that fails first.
+
+Corrected factors, shipped numerator over the b0-37 divisor on the same rows: math_owm_stage2 1.9916, en_c4_stage2 2.0131, cot 1.9712, textbook_30b 1.9938, chatml 2.0634, chat_qa 2.0286, zh_web 2.0122, code_py_starcoder 1.9929, code_py_rp1t 1.9968, all 2.0088. My probe's values were low by up to 2.4%.
+
+**And the row sets never moved.** All nine token caches under `/mnt/data02/tokens` are stamped 2026-09-05 03:49-04:01, before both the 09-07 and 09-08 scorings, so every cross-run comparison in that window scored identical rows and the -6.89% anneal pair is clean. The val-prefix mechanism is real as arithmetic -- 50 documents added give 16.3% val overlap at chatml's scale and 19.0% at cot's, and the 5000 cap holds the COUNT while turning over 4049 of 5000 members -- but it is a latent defect with no observed instance. Prevention, filed as b0-38, not repair.
+
+Why this is the sharpest instance: the probe's every intermediate number was well-formed, its disagreement with the artifact read as a finding ABOUT THE ARTIFACT rather than about itself, and being on alert for the shape did not help -- I had written R11 hours earlier. A reimplementation creates a second population by construction, and when two populations disagree the natural reading is that the world moved.
+
+Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 4c and one to the ledger, plus a peer's ruling issued on a false premise. No number reached a report: the retraction rows were corrected in place before anything shipped, and 4c's "publish no rescaled level" ruling meant the wrong factors were never going to be printed as values anyway.
+Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
+open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
+
 ## R10. What happened only on the pod did not happen
 

@@ -97,8 +97,13 @@ def selftest():
     tmp = tempfile.mkdtemp(prefix="itree_pred_")
     try:
         def g(d, *a):
+            # GIT_* stripped: `git init` under a leaked GIT_DIR writes the SHARED repo, and
+            # with GIT_DIR at a worktree gitdir it flips core.bare (2026-09-02, twice).
+            # Pattern from test_behind_main_overlap.py:55-56.
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True,
-                                  timeout=60)
+                                  timeout=60, env=env)
 
         solo = os.path.join(tmp, "solo")
         os.makedirs(solo)
