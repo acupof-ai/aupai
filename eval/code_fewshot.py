@@ -68,6 +68,39 @@ def extract_code(cont):
     return cont[:end] if end >= 0 else cont
 
 
+def continuation_code(gen_ids, vals, tok, num_id, fone_on):
+    """generate_batch's ids for one row -> the code to execute.
+
+    generate_batch RETURNS ONLY THE GENERATED IDS -- its last statement slices
+    x[i, lengths[i]:ends[i]] per row, and its docstring says "Returns generated ids".
+    Until
+    2026-09-08 this file sliced `ids[len(prompt):]` on top of that, cutting the
+    prompt off a SECOND time: 319-335 tokens at 3-shot, longer than any reference
+    solution in this set (26-71 tokens), so every continuation decoded to the empty
+    string and every number this tool ever produced was 0.0% at a 100% empty rate.
+    Found by 4c; eval/l1_fewshot.py:596 always decoded `ids` directly and is the
+    pattern followed here.
+
+    Split out of main()'s batch loop so --selfcheck can drive it. The defect
+    survived because the decode lived inline where no case could reach it, and it
+    needs no GPU and no sandbox to check -- only the tokenizer.
+    """
+    if fone_on:
+        import fone  # local, as in main(): the module pulls torch in
+        cont = fone.decode_text(gen_ids, vals, tok, num_id)
+    else:
+        cont = tok.decode(gen_ids)
+    return cont, extract_code(cont)
+
+
+def score_row(gen_ids, vals, expected_output, tok, num_id, fone_on):
+    """One row -> (continuation text, scored, empty). Executes; pod only."""
+    cont, code = continuation_code(gen_ids, vals, tok, num_id, fone_on)
+    if not code.strip():
+        return cont, False, True
+    return cont, score_code(code, expected_output), False
+
+
 def selfcheck():
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     demos = [(r["instruction"], r["reference_code"], r["expected_output"])
@@ -81,6 +114,50 @@ def selfcheck():
     assert code == "def f():\n    return 1\n", f"extraction drift: {code!r}"
     assert extract_code("print(1)\n") == "print(1)\n", "no-fence extraction drift"
     print("prompt/extraction contract: OK")
+
+    # THE KNOWN ANSWER FOR THE DECODE PATH, and its own negative control.
+    #
+    # continuation_code is fed exactly what generate_batch returns: the tokens of the
+    # continuation, prompt already stripped by generate_batch. Six reference solutions
+    # round-tripped through the real tokenizer must come back byte-identical, and the
+    # empty rate must be 0.
+    #
+    # Under the defect this file carried until 2026-09-08 -- a second
+    # `ids[len(prompt):]` on top of generate_batch's own slice -- this same case reads
+    # 0/6 with a 100% empty rate, because a 3-shot prompt is 319-335 tokens and no
+    # reference solution here exceeds 71. So it needs no separate broken-world fixture:
+    # the numbers it prints ARE the difference between the two versions, and 6/6 is
+    # unreachable for the code that was here before.
+    #
+    # It runs BEFORE the two execution cases and needs no sandbox and no GPU, so it is
+    # a defence that works on a laptop. The defect survived precisely because the decode
+    # lived inline in main()'s batch loop, where --selfcheck could not reach it and the
+    # only way to run it was a pod with a checkpoint.
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_file(TOK_PATH)
+    ka = evals[:6]
+    ka_ok = ka_empty = 0
+    for r in ka:
+        # what generate_batch hands back for a perfect greedy continuation:
+        # the reference solution followed by the closing fence
+        gen_ids = tok.encode(r["reference_code"] + "\n```\n").ids
+        _, code = continuation_code(gen_ids, None, tok, None, False)
+        if not code.strip():
+            ka_empty += 1
+        elif code.strip() == r["reference_code"].strip():
+            ka_ok += 1
+        else:
+            print(f"  KNOWN-ANSWER FAIL: {r['instruction'][:36]} -> {code[:60]!r}")
+    print(f"decode known-answer: {ka_ok}/{len(ka)} recovered, "
+          f"empty-continuation rate {ka_empty / len(ka):.0%}")
+    ka_fails = (len(ka) - ka_ok) + ka_empty
+    if os.geteuid() != 0:
+        # The two cases below execute code, and datagen/sandbox_exec.py:169 refuses without
+        # root. Skipping them off-pod is what lets the decode case above run in the hook on a
+        # laptop -- the defect it guards was a decode defect, and gating a decode check behind
+        # a sandbox is how it stayed unchecked for a week of runs.
+        print("gold round-trip / wrong-solution: SKIPPED (sandbox_exec needs root; pod only)")
+        return ka_fails
 
     fails = 0
     for i, r in enumerate(evals):
@@ -96,7 +173,8 @@ def selfcheck():
     ]
     wfails = sum(1 for code, exp in wrong if score_code(code, exp))
     print(f"wrong-solution zero: {len(wrong) - wfails}/{len(wrong)} pass")
-    return fails + wfails
+
+    return fails + wfails + ka_fails
 
 
 def main():
@@ -172,18 +250,10 @@ def main():
                 out = generate_batch(model, prompts, args.max_new, args.device,
                                      args.temperature, pvals, rep_stop=False)
             out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
-            for r, ids, vs, pr in zip(batch, out_ids, out_vals, prompts):
-                # slice the continuation off the prompt BEFORE decode: the
-                # demos contain ```python blocks, and token_len != char_len
-                cont_ids = ids[len(pr):]
-                cont = (fone.decode_text(cont_ids, vs[len(pr):], tok, num_id)
-                        if fone_on else tok.decode(cont_ids))
-                code = extract_code(cont)
-                if not code.strip():
-                    no_fence += 1
-                    ok = False
-                else:
-                    ok = score_code(code, r["expected_output"])
+            for r, ids, vs in zip(batch, out_ids, out_vals):
+                cont, ok, empty = score_row(ids, vs, r["expected_output"],
+                                            tok, num_id, fone_on)
+                no_fence += int(empty)
                 correct += int(ok)
                 total += 1
                 fout.write(json.dumps({"q": r["instruction"], "gen": cont,

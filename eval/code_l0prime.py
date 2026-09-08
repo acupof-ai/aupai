@@ -180,7 +180,50 @@ def score_pairs(model, tok, pairs, device, batch=8):
     return out
 
 
+def _decode_known_answer():
+    """freeze_hard's decode, driven with a known answer. No GPU, no sandbox.
+
+    generate_batch returns ONLY the generated ids -- it slices
+    x[i, lengths[i]:ends[i]] per row and its docstring says "Returns generated ids".
+    Until 2026-09-08
+    freeze_hard sliced `gen_ids[len(ids):]` on top of that, cutting the prompt off a
+    SECOND time. The 0-shot prompt here is 15-32 tokens, so the cut did not usually
+    empty the string -- it BEHEADED it. Measured over the first 60 problems: 15 came
+    back empty and 45 came back as fragments, and all 45 fail `ast.parse`. freeze_hard
+    keeps the first sample that FAILS execution, so every one of those fragments was a
+    valid distractor by its criterion. The frozen hard layer would have been 45/60
+    truncation artifacts wearing the label "the model's own failing solutions", and the
+    win rate scored against it would have measured tokenizer arithmetic.
+
+    This is why the case asserts the ROUND TRIP and not "non-empty": under the defect
+    three quarters of the rows were non-empty, and non-empty is exactly what the caller
+    treats as success.
+    """
+    from tokenizers import Tokenizer
+    tok = Tokenizer.from_file(os.path.join(ROOT, "data", "tokenizer.json"))
+    rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")][:6]
+    bad = 0
+    for d in rows:
+        # what generate_batch hands back for a perfect greedy sample
+        gen_ids = tok.encode(d["reference_code"] + "\n```\n").ids
+        cont = tok.decode(gen_ids)
+        end = cont.find("```")
+        code = cont[:end] if end >= 0 else cont
+        if code.strip() != d["reference_code"].strip():
+            bad += 1
+            print(f"  DECODE FAIL: {d['instruction'][:36]} -> {code[:60]!r}")
+    print(f"decode known-answer: {len(rows) - bad}/{len(rows)} recovered")
+    assert bad == 0, "freeze_hard's decode does not round-trip a reference solution"
+
+
 def _selftest():
+    _decode_known_answer()
+    if os.geteuid() != 0:
+        # build_pairs executes mutants, and datagen/sandbox_exec.py:169 refuses without root.
+        # Skipping here is what lets the decode case above run in the pre-commit hook on a
+        # laptop: gating a decode check behind a sandbox is how the defect it guards survived.
+        print("mutant build/invariants: SKIPPED (sandbox_exec needs root; pod only)")
+        return
     rows = [json.loads(l) for l in open(TEST_PATH, encoding="utf-8")]
     pairs, stats = build_pairs(rows)
     # Determinism: same pairs twice.
@@ -214,7 +257,12 @@ def freeze_hard(model, tok, rows, device, k=8, temperature=0.8, max_new=512):
             out = generate_batch(model, [ids] * k, max_new, device,
                                  temperature, rep_stop=False)
         for gen_ids in out:
-            cont = tok.decode(gen_ids[len(ids):])
+            # generate_batch returns ONLY the generated ids -- see its docstring in train.py.
+            # `gen_ids[len(ids):]` cut the prompt a second time and left
+            # the empty string on every sample, so freeze_hard recorded nothing and every
+            # problem counted as no_failing_sample. Fixed 2026-09-08 (4c), same defect as
+            # code_fewshot.py:178.
+            cont = tok.decode(gen_ids)
             end = cont.find("```")
             code = cont[:end] if end >= 0 else cont
             if not code.strip():
