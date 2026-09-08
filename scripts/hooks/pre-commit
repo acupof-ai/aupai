@@ -1528,6 +1528,10 @@ def main():
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
+        # Guards the EDGE KINDS, where test_reachability_fresh.py guards the listing's
+        # freshness. Both are needed and neither substitutes: a listing regenerated on the
+        # hour from a scan reading one ledger of 32 is fresh and wrong.
+        "scripts/test_reachability_edges.py",
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
