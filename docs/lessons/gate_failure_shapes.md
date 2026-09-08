@@ -6,9 +6,9 @@ source: derived from docs/lessons/gate_failure_incidents.md (133 model-project i
 
 # Gate failure rules
 
-Eleven rules, ranked by incidents × cost (rough hours lost per incident). Each rule: statement, count, cost, the check that enforces it (or `manual:` with the reason), one or two canonical incidents, and what the check cannot see. Incidents live in `gate_failure_incidents.md` (model-project) and `infra_incidents.md` (pod/infra). The top 5 by product are checks to write; the rest are rules people read.
+Fourteen rules, ranked by incidents × cost (rough hours lost per incident). Each rule: statement, count, cost, the check that enforces it (or `manual:` with the reason), one or two canonical incidents, and what the check cannot see. Incidents live in `gate_failure_incidents.md` (model-project) and `infra_incidents.md` (pod/infra). The top 5 by product are checks to write; the rest are rules people read.
 
-Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false greens, some cost days); R1/R3/R4/R10 ~3-4h; R5/R6/R7/R8/R11 ~2h; R9 ~1h.
+Cost is an estimate: R2 (criterion) ~4h/incident (wrong measurements, false greens, some cost days); R1/R3/R4/R10 ~3-4h; R5/R6/R7/R8/R11/R12/R13 ~2h; R9/R14 ~1h.
 
 ## Closed incidents (33/33 confirmed machine-gated, 2026-09-04)
 
@@ -305,6 +305,48 @@ Adjacent, filed elsewhere: §272 (R2) computes a property's population with the 
 Also the reason a selftest is built from the real tree rather than a fixture wherever it can be: a fixture is a population the author chooses, and the author is the person who already chose wrong once.
 
 Cannot see: whether a hand-enumerated population is complete, in general. What IS checkable, per instance, is that no member of a sub-population is missed by the predicate that should subsume it, and that the output states the size of the population it scanned — 78 ledgers, 64 of 64 rows truncated — so a reader can compare it to the one they meant.
+
+## R12. A green line whose result is anti-correlated with its own name; assert the property, not a message that accompanies it, and never a line that can pass by not running
+
+1 incident (3 instances, 2026-09-08), ~2h. `manual:` — the defect cannot be found by running the suite, because the suite is green exactly when the assertion is wrong. The machine-checkable half is about mutation runs, not about the assertion: every mutant must report the NAME of the assertion that died, never a count.
+
+The shape: a line's name states property P; what it does is something that holds when P is false, or holds regardless of P, or does not run at all. Distinguishing it from R2 and R11 — R2 tests the wrong property, and a known-answer world catches it; R11 tests the right property over the wrong population, and a known-answer world catches it if the input comes from the omitted part; R12's result is anti-correlated with its name, and **the world that would turn it red is the world in which the code is correct**, so there is no input to supply.
+
+The three forms seen, all in §279. A message asserted in place of the property: "gate is upstream of the ckpt load" tested for the checkpoint error's text, which appears in both orderings and *sooner* in the broken one — **still live on main at `scripts/test_sft_holdout_gate.py:64`**, and reading `sft_math.py` to write the replacement showed the name is false as well: the load is at `:199`, the gate at `:265`/`:274`, so the load is upstream of the gate and the asserted property does not hold. A line that cannot go red also cannot report that its own name is backwards. A boolean named for one guard on a path carrying several: `REFUSED: False` was read as "the holdout gate did not fire" when a vocab assert 26 lines earlier had refused first; a boolean named for one guard means nothing unless every other guard on that path is satisfied. And a line that is green because it never ran: `reachability.py` excluded `.venv` from its walk and the exclusion looked correct in review, but no worktree contains a `.venv` — that entry had never once been exercised, and the tree where it matters (the integration tree, 13,128 `.py/.sh` under `.venv` against 537 the repo owns) is one the scanner had never been run in. **An exclusion that has never been triggered and a correct exclusion are the same source text.**
+
+All three are one failure: the line passed, and its passing carries no information. The fix is to assert the property directly — read the ordering out of the source rather than inferring it from output, construct an input where the guard under test is the only one that can fire, and state the population and its exclusions in the output so a reader can see which tree the run was taken over. Where the property is read from source, assert that the read SUCCEEDED (both line numbers non-None), or a rename turns the check vacuously green.
+
+**And the layer that survives being on alert for the rest: a mutation run's summary line can itself mislead.** A run reported one failing assertion; two were meant to cover that guard and only one did. The count of red assertions is not the identity of the red assertions.
+
+**A mutation record must let someone else construct the SAME mutant, not merely reach the same verdict.** "4/4 killed" and a prose sketch of each edit are not a record: a reader who rebuilds the mutant from the sketch may build a different one that dies for a different reason, and the reproduction then confirms nothing about the original. The record is the exact edit — file, symbol, the byte-level substitution — pinned by name in the test so re-running names the same four. This bites hardest when a mutant is over-broad: an edit that empties a collection kills every assertion downstream of it, including a `bool(got)` control, so it certifies the guard under test without ever exercising it. The separating mutant must keep some of the population and drop the rest.
+
+Cannot see: an assertion anti-correlated with its own name, in general — no scanner compares a check's name to what it tests. Checkable per suite: each mutant names the assertion that died, so "4/4 mutants killed" cannot hide two of them dying on the same control.
+
+## R13. Information already present, but not in a form that can be treated as a conclusion
+
+2 incidents (2026-09-08), ~3h and ~20min. `manual:`, with two narrow checkable slices: a comment naming a field beside code assigning that field is a source-level contradiction a scanner can find, and a tool whose output is a list must print, per item, the reason it is on the list.
+
+The shape: the fact needed is already written down, already measured, already in the file being read — and is read past, because its form does not present it as a conclusion. Four forms, all in §280.
+
+A measured conclusion in a comment. `merge_main.sh` states, with the measurement behind it, that main moves faster than a commit takes with six sessions — which rules out "merge first, then commit". Two sessions read that file the same night and made nine attempts between them at the strategy it rules out.
+
+A weaker criterion wearing a stronger one's clothes. "Nothing cites it" is a fact about today that one added line reverses; "I ran it and it does nothing" is a property of the file. Both read as grounds for deletion. **3b's boundary makes the strong one usable: fixed-point beats unreferenced only when the target set is CLOSED** — verified by `ast`, not assumed. Where a script derives its targets from a ledger, `appended 0` is a fact about today's ledger.
+
+A half-correct comment, the hardest form, because it never moves context at all — it sits 81 lines from its own contradiction, and is right about one of the two fields it names. **Two claims joined in one sentence share credit: verifying the half that matches invites trusting the half that does not.**
+
+A number correct in its own context, wrong under a different question, with no error on either side: `71 PASS` answering "how many checks are there" when the answer is 109. Its sibling is §281's aggregate — 79 unreachable files became 56, the direction a correct fix produces and also the direction the defect produced, with **no threshold on the total separating them.** Only per-item attribution did: 12 of 23 rescues came from the tool's own comments.
+
+Cannot see: whether a reader will treat a written conclusion as one. Checkable: the two slices named above.
+
+## R14. An instrument searching a space that contains its own text
+
+1 incident (3 instances, 2026-09-08), ~20min caught, unbounded if not. `manual:` for now, but it has a **detectable signature, which is why it is a rule and not a story: the tool's own source file appears as a SOURCE in its own output.**
+
+Separate from R13 because the fix differs. R13's fix moves a conclusion somewhere it gets executed; this one's fix removes the instrument from its own search space. Restating the conclusion does not help — the tool is reading itself correctly.
+
+`reachability.py::comment_edges` read its own `FATE` prose and rescued 12 files from its own deletion-candidate list, every path it had ever ruled KEEP on. A past verdict is not a citation. With the exclusion, 70 unreachable including 15 with a KEEP ruling; without it, 56, and those 15 could never be listed again. `pgrep -f` matching its own command line is the same signature. (The `.venv` exclusion that had never executed is NOT this shape and is filed under R12 — it went green by never running, not by finding itself; the first filing put it here and that was wrong.) And `harness.py:1755`, which copies `runs/mem_probe_base.sh` to build a broken world, is its inverse: a name-based scan sees no citation, and deleting the file turns a green check into no check. **A name is not a call, in either direction** — its presence is not evidence of use, its absence is not evidence of disuse.
+
+Cannot see: any scanner whose search space includes its own source, in general. Implemented for one tool: `test_reachability_edges.py` asserts no edge is sourced from `reachability.py` itself, with a negative control, because `comment_edges` returning `{}` would satisfy that assertion vacuously.
 
 ## Design cause: integration happens in a shared writable working tree
 
