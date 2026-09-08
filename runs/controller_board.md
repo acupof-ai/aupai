@@ -1,4 +1,4 @@
-# Controller board (fb) — updated 2026-09-08T04:50Z, rewritten every tick
+# Controller board (fb) — updated 2026-09-08T05:25Z, rewritten every tick
 
 Percent = share of the deliverable landed on main and verified by a second reader; "quality" names what the reviewer opened, or the defect the owner caught in the process. Memory-layers program (2026-09-05) closed; facts in facts/memory_layers.json.
 
@@ -7,7 +7,7 @@ Percent = share of the deliverable landed on main and verified by a second reade
 | item | owner | % | delivered | quality / evidence | next gate |
 |---|---|---|---|---|---|
 | Stop at .step34000 | b0 | 100 | save 04:01Z 6,059,092,240 B, torch.load step=34000; TERM then KILL by exact PID, eight cards 0 MiB; row re-closed ok (monitor had written fail/vanished; exp.py logged the reclassification); pinned ckpt_1.5b-a0.2b-e48_26.7b_0908.pt (same inode) | val 1.824@34000, run min 1.812@22600, 26.74B tok; never warmed down (warmdown_start 34332) | — |
-| Endpoint score_matrix on card 1 | b0 | 90 | runs/b0_score_matrix_final_0908.log: lambada acc 0.3221 (±0.0128), nll/byte 0.675; humaneval gold bpb mean 0.561, byte-weighted 0.433; domain_bpb mean 0.359 (rp1t 0.193, starcoder 0.229, textbook 0.240, cot 0.247, math 0.338, chatml 0.402, chat_qa 0.416, en_c4 0.521, zh_web 0.643) | vs 8B .step9000 (full-lr, like-for-like): lambada 0.2354→0.3221, humaneval 0.593→0.561 / 0.472→0.433. vs own step20000 domain_bpb: code/math/textbook/en/zh improve 0.006-0.010; cot 0.217→0.247, chatml 0.317→0.402, chat_qa 0.332→0.416 WORSE after the 4.0-epoch cap | generative metrics still running; 8B .step9000 domain_bpb rerun next on the same card; row to runs/score_matrix.jsonl |
+| Endpoint score_matrix + 8B .step9000 domain_bpb on card 1 | b0 | 100 | both rows in runs/score_matrix.jsonl (pod, 05:1xZ); card 1 released, eight cards 0 MiB | 30B vs 8B (both full-lr): lambada 0.3221 vs 0.2354, nll/byte 0.675 vs 0.807; humaneval bpb 0.561/0.433 vs 0.593/0.472; domain_bpb mean 0.359 vs 0.359 — 30B better on six domains (math 0.338/0.365, en_c4 0.521/0.544, textbook 0.240/0.258, zh 0.643/0.671, starcoder 0.229/0.246, rp1t 0.193/0.209), worse on the three capped domains (cot 0.247/0.226, chatml 0.402/0.347, chat_qa 0.416/0.363); mc_ceval 26.1 (chance); lambada_zh open_acc1 0.314 | rows to main via pod_push --all; 98 cites them |
 | Resume-1 mix in the tree | b0 | 50 | PR #65 open, md5 c12ba979 both sides; not regenerable (.step22500 deleted, deriver refuses to guess a cursor) | — | reviewer 44 |
 | Full report | 98 | 50 | docs/lessons/moe48_30b_0907_report.md on branch 98 (3aa21736); score cells pending | fact_refs_resolve green | PR after scores; reviewer 44 |
 | Excursion 26-29k negatives (composition, epoch wrap, repetition) | b0 | 0 | exist only as messages | b0 declined to back-file prereg amendments (correct) | rows to runs/review.jsonl tonight |
@@ -29,7 +29,7 @@ Percent = share of the deliverable landed on main and verified by a second reade
 | item | state |
 |---|---|
 | 0, 6 | tileRL (user order 2026-09-06) |
-| 1 | lane: GRANTED 04:07Z → b0 score_matrix + 8B domain_bpb, one job at a time; released when scores land |
+| 1 | lane; b0 grant spent 05:1xZ, idle |
 | 2,3,4,5,7 | block held for v2's first launch; no launch before 44's prereg row and #67 |
 
 ## Repository mechanics
