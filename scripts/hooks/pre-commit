@@ -1440,6 +1440,9 @@ def main():
         "scripts/ckpt_info.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
+        # tokenizer_sweep: its selftest builds four corpus dirs in tempfile and checks
+        # which FILES load_text reaches -- no tokenizer, no data dir, no card.
+        "scripts/tokenizer_sweep.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
         "mathbank/emit_novel_ops.py",
