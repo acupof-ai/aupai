@@ -2949,6 +2949,8 @@ def main():
         "val_batches": "val batches per periodic check",
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
+        "sample_seed": "corpus-shuffle seed; unset follows --seed. Pin it across a seed sweep so "
+                       "the arms share one token cache and differ only in init (de-7)",
         "attn_every": "one attention layer every N blocks",
         # "heads %% (N+1)": argparse formats every help string with `% params`, so a
         # literal percent must be doubled. It was not, and --help has raised
