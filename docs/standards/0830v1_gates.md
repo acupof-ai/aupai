@@ -19,7 +19,7 @@ source: this document; runs/controller_board.md
 | the pre-registration practice | |
 | every rule in "Rules this round does not bend" — all incident-bought, none round-specific | |
 
-σ̂ = 0.0516 survives as method, not as number: it was measured on the v1 arch (KDA+MLA+AttnRes), and v2 changes the arch (KDA out, MoE in), so v2 re-measures seed variance before quoting an MDE.
+σ̂ = 0.0516 survives as method, not as number (4c ruling 2026-09-08, stronger than the first draft): it was measured on KDA + MLA + AttnRes, and v2 removes KDA and adds MoE — the seed variance of a different architecture is not a prior, it is an unrelated measurement. **The remeasurement is a prerequisite of the first v2 MDE claim, not a footnote.** Anyone quoting an MDE off the old σ̂ is quoting a number from a model we no longer build.
 
 The controller session (aupai-fb) drives these in order. A gate opens only when its
 evidence exists as an artifact — not when someone reports it done. Update the status
