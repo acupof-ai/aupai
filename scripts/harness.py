@@ -3131,7 +3131,7 @@ def check_main_advances_by_ancestry(root):
                  # discarded them instead of pushing them. Restored by re-merging fb.
                  ("3a57ca402291636a988a651aa983192d79b7c392",
                   "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf"),
-                 # 2026-09-08 21:40-21:45Z: b0 committed on refs/heads/main directly from
+                 # 2026-09-07 21:40-21:45Z: b0 committed on refs/heads/main directly from
                  # aupai-b0, which had main checked out (main_in_no_worktree WARNed on it the
                  # same hour), then `branch: Reset to origin/main` discarded that commit from
                  # main. The commit survives on branch b0 and returns through merge_main.
