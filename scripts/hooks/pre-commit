@@ -1678,6 +1678,13 @@ def main():
         # the subject is build_mix, not this file. Two reverts of the fix were run in real
         # worktrees and each fails this test at its own assertion. ~4s, no card.
         "scripts/test_mix_anneal_and_cursor.py",
+        # A resume mix names the cursor state it was derived against, and build_mix refuses a
+        # different one. THREE trigger lists, not one, because the property spans three files:
+        # write_mix_500m writes the field, write_mix_stage2 writes its own rows-only form, and
+        # train.py compares it -- an edit to any of the three can make the guard vacuous, and
+        # none of them is this file. 13 mutations run, all red. ~35s (case 13 runs the mix
+        # writer twice as a subprocess), no card.
+        "scripts/test_mix_derived_against.py",
         # build_mix states the cache bytes it is about to read BEFORE the first torch.load, so a
         # launch's own log carries the number instead of it being computed offline (the 166.2 GB
         # for the E1 mix appeared in no log, and the 101 GB RSS was found in /proc afterwards).
@@ -2191,6 +2198,13 @@ def main():
         # the readout that scores them or the pinned hash goes stale silently.
         "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
+        # The two mix writers produce _derived_against; train.py consumes it. Each writer
+        # gets the test on its own trigger list because a writer that stops emitting the
+        # field leaves the reader guarding nothing, and the reader lives elsewhere -- the
+        # registered-guard-never-asked gap. write_mix_500m also owns the shrinking --total
+        # refusal the test exercises as a subprocess.
+        "scripts/write_mix_500m.py": {"scripts/test_mix_derived_against.py"},
+        "scripts/write_mix_stage2.py": {"scripts/test_mix_derived_against.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
         # behaviour is split across them: the selection lives in model.ProductKeyMemory.forward
@@ -2214,6 +2228,10 @@ def main():
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
                      "scripts/test_mix_anneal_and_cursor.py",
+                     # build_mix compares the mix's _derived_against triple with the resuming
+                     # checkpoint's; a change here can make that guard vacuous, and the writers
+                     # that produce the field are in another file.
+                     "scripts/test_mix_derived_against.py",
                      "scripts/test_cache_read_line.py",
                      "scripts/test_cache_mmap.py",
                      "scripts/test_moe_diag_rank.py",
