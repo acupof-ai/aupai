@@ -80,19 +80,38 @@
   },
   {
    "id": "cs.math_owm_landed",
-   "value": 6513304690,
+   "value": 6528546115,
    "unit": "tokens",
-   "measured": "2026-09-03",
-   "source": "/work/aupai/data/corpus/math_owm_stage2/build_corpus_stats.json",
+   "measured": "2026-09-08",
+   "source": "/work/aupai/data/corpus/math_owm_stage2 (206 shards, 4,135,793 docs): scripts/count_dir.py, full population, no sampling",
    "config": {
-    "note": "math_owm_stage2/ dir; filters=light; tokens over 3/206 shard byte-extrapolated"
+    "note": "EXACT full-pass count. Corrects 6,513,304,690, which the stamp derived from a 3-of-206 shard byte extrapolation. NOT the <eos> defect: the stamp's tokens_config already named the training convention, and the delta 15,241,425 over 4,135,793 docs is 3.69 tokens/doc, not 1. This is byte-extrapolation error and the extrapolation read LOW by 0.234%.",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "counter": "scripts/count_dir.py",
+    "shards": 206,
+    "docs": 4135793,
+    "text_bytes": 21553841303,
+    "packed_rows": 1593494,
+    "fingerprint": "1e687e4b5ce37598",
+    "wall_s": 251.5,
+    "why_recounted": "This value is math_owm_stage2's supply_tokens_one_epoch in the 30B mix, and write_mix_500m.py:2059-2073 reads that field to enforce EPOCH_SOFT_CEILING. An epoch ceiling computed against an extrapolated denominator is not a ceiling. Epochs move 1.3305 -> 1.3274, both far under 4, so nothing crosses."
    },
-   "uncertainty": "sample extrapolation not exact; stage2 build for the 200m-era mix, may need a fresh 30b-linkable stamp (stats tokens field is a 3/N-shard byte-extrapolation, NOT exact (the source stats file mislabels it 'measured' 2026-09-03, tilerl catch))",
+   "uncertainty": "Full population, no extrapolation, under the convention named in config. Exact for the current math_owm_stage2/ dir.",
    "status": "measured",
-   "guard_phrases": [
-    "math_owm is unfetched"
+   "tokens_status": "measured",
+   "retracted_value": [
+    6513304690
    ],
-   "tokens_status": "extrapolated"
+   "supersedes": {
+    "value": 6513304690,
+    "measured": "2026-09-03",
+    "counter": "build_corpus stamp, 3/206-shard byte extrapolation",
+    "cause": "byte extrapolation from 3 of 206 shards read 0.234% low; the <eos> convention was already correct here"
+   },
+   "guard_phrases": [
+    "math_owm is unfetched",
+    "the math supply is 6.513B"
+   ]
   },
   {
    "id": "cs.en_c4_landed",
@@ -166,14 +185,25 @@
    "id": "cs.textbook_landed",
    "value": 1610210330,
    "unit": "tokens",
-   "measured": "2026-09-03",
-   "source": "/work/aupai/data/corpus/textbook_30b/build_corpus_stats.json",
+   "measured": "2026-09-08",
+   "source": "/work/aupai/data/corpus/textbook_30b (79 shards, 920,692 docs): scripts/count_dir.py, full population, no sampling",
    "config": {
-    "note": "textbook_30b/ dir; filters=light"
+    "note": "EXACT full-pass count. The value is UNCHANGED: the recount agrees with the stamp to the token, delta 0. Recorded because the previous row could not support that claim -- its uncertainty field said 'sample extrapolated' and the stamp's tokens_config was null, so neither the convention nor the method was on record. A missing label is not evidence of a wrong number, only evidence that nobody can tell without recounting.",
+    "convention": "ids + one <eos> per document (train.py encode)",
+    "counter": "scripts/count_dir.py",
+    "shards": 79,
+    "docs": 920692,
+    "text_bytes": 8119279340,
+    "packed_rows": 393021,
+    "fingerprint": "3f237c5191cb8571",
+    "wall_s": 47.3
    },
-   "uncertainty": "sample extrapolated; ladder-named textbook dir is frozen, restamp into a new dir for 30b",
+   "uncertainty": "Full population, no extrapolation, under the convention named in config. Exact for the current textbook_30b/ dir. Epochs in the 30B mix unchanged at 1.8881.",
    "status": "measured",
-   "guard_phrases": []
+   "tokens_status": "measured",
+   "guard_phrases": [
+    "textbook was extrapolated"
+   ]
   },
   {
    "id": "cs.wiki_chat_landed",

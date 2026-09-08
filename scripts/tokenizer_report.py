@@ -105,6 +105,37 @@ def digit_consistency(tok):
     }
 
 
+def _even_rows(corpus, total):
+    """`total` rows drawn EVENLY over the domains present, not off a flattened prefix.
+
+    THE PREFIX FORM WAS A DEFECT IN A VETO. Every caller below used to write
+    `[r for v in corpus.values() for r in v][:N]`, which reads whichever domains happen to
+    come first in dict order and calls the result "the corpus". With the nine-domain v2
+    composition at ~3000 rows each, the 600 rows utf8_integrity took were ENTIRELY
+    math_owm_stage2 -- an English/LaTeX corpus -- so `hanzi whole-char` measured 0.1594 and
+    FAILED its 0.95 veto. Measured on the same tokenizer over zh_web alone: 0.9895.
+
+    The gate had been right only by luck: the old default domain list happened to put a
+    Chinese directory inside the first 600 rows. Changing the composition, which is exactly
+    what this gate exists to evaluate, silently changed what the metric measured. A veto
+    whose answer depends on dict order can fire a rebuild that invalidates every checkpoint.
+
+    Quota, not proportion: each domain contributes total//len(corpus) rows (remainder to the
+    first domains), so the metric is defined by the composition's DOMAIN SET and not by how
+    many rows each directory happened to yield. A domain with fewer rows than its quota
+    contributes all of them and the shortfall is not redistributed -- redistribution would
+    make the answer depend on row counts again.
+    """
+    doms = [d for d in corpus if corpus[d]]
+    if not doms:
+        return []
+    per, extra = divmod(total, len(doms))
+    out = []
+    for i, d in enumerate(doms):
+        out.extend(corpus[d][: per + (1 if i < extra else 0)])
+    return out
+
+
 def utf8_integrity(tok, corpus):
     """Fraction of hanzi in whole-character tokens rather than ByteLevel fragments.
 
@@ -112,7 +143,7 @@ def utf8_integrity(tok, corpus):
     token per character, which chars/token alone underreports."""
     # ByteLevel BPE token strings are byte-mapped (今天 stored as 'ä»Ĭå¤©'), so a
     # literal-hanzi search fires on every correct vocabulary. Decode each token first.
-    rows = [r for v in corpus.values() for r in v][:600]
+    rows = _even_rows(corpus, 600)
     frag = whole = 0
     for e in tok.encode_batch(rows):
         for tid in e.ids:
@@ -130,12 +161,22 @@ def utf8_integrity(tok, corpus):
 
 def roundtrip(tok, corpus):
     """encode -> decode must return the input. A vocabulary trained without the
-    full 256-byte alphabet silently drops bytes (NUL and tab)."""
-    rows = [r for v in corpus.values() for r in v][:400]
+    full 256-byte alphabet silently drops bytes (NUL and tab).
+
+    DECODE WITH skip_special_tokens=False, which is not the default. The default strips
+    the four chat specials, so any corpus row containing a literal `<|im_start|>` fails a
+    round-trip that is working exactly as designed. Measured when _even_rows first let
+    this reader reach chatml: 361/405, with all 44 failures in chatml and 0 in the other
+    eight domains, and `<|im_start|>user\\n...` decoding to `user\\n...`. That is the
+    stripping, not a lost byte -- with skip_special_tokens=False the same rows are exact.
+    A gate that fails on a domain merely because that domain uses the chat format would
+    fire a rebuild for a formatting convention.
+    """
+    rows = _even_rows(corpus, 400)
     extra = ["NUL\x00byte", "emoji 🚀 ok", "tab\tnewline\n", "混合 mixed 123", "  双空格  "]
     bad = []
     for s in rows + extra:
-        if tok.decode(tok.encode(s, add_special_tokens=False).ids) != s:
+        if tok.decode(tok.encode(s, add_special_tokens=False).ids, skip_special_tokens=False) != s:
             bad.append(s[:40])
     return {"lossless": f"{len(rows) + len(extra) - len(bad)}/{len(rows) + len(extra)}", "failures": bad[:3]}
 
@@ -158,8 +199,12 @@ def english_metrics(tok, corpus):
     """Fertility and word-splitting: chars/token's analogue for an alphabetic script.
 
     Matters beyond `en`: every MC benchmark in eval/ except C-Eval is English."""
-    rows = corpus.get("en") or [r for v in corpus.values() for r in v]
-    rows = rows[:400]
+    # THE FALLBACK MATTERS MORE THAN IT LOOKS. `en` is a literal directory name, and the
+    # v2 composition's English domain is `en_c4_stage2`, so this falls through on every
+    # real mix and the flattened prefix used to make it math_owm_stage2's fertility.
+    # ref_fertility (the gated one) reads a fixed text and was never affected; this
+    # ungated `en fertility` column was.
+    rows = corpus.get("en") or _even_rows(corpus, 400)
     words = n_tok = split = 0
     for r in rows:
         for w in WORD.findall(r):
@@ -380,6 +425,113 @@ def _demo():
     # 2. KNOWN ANSWER. Round-trip on text this vocabulary was trained on must be lossless.
     assert roundtrip(tok, corpus)["lossless"], "round-trip lost bytes on its own training text"
 
+    # 2a. AND A ROW CARRYING A LITERAL CHAT SPECIAL MUST STILL ROUND-TRIP. tok.decode's
+    #     default strips them, so before this the gate failed every chatml row -- 44 of 405
+    #     when _even_rows first let it reach that domain, 0 failures in the other eight.
+    #     A lost byte and a stripped special are different findings and only the first is
+    #     what this gate exists for.
+    #
+    #     THE SPECIALS MUST BE ADDED TO THE FIXTURE OR THIS CASE IS VACUOUS. _tiny_tokenizer
+    #     has no chat specials, so `<|im_start|>` is ordinary text to it, nothing is ever
+    #     stripped, and the assertion passes on the broken decode too -- measured: the
+    #     mutation reverting to the stripping default SURVIVED until these two lines existed.
+    _sp_tok, _ = _tiny_tokenizer(merges=3000)
+    _sp_tok.add_special_tokens(["<|im_start|>", "<|im_end|>"])
+    _sp = {"s": ["<|im_start|>user\nhi<|im_end|>\n"]}
+    assert "<|im_start|>" in _sp_tok.get_vocab(), (
+        "the fixture has no chat special, so this case cannot distinguish a stripping "
+        "decode from a correct one"
+    )
+    assert roundtrip(_sp_tok, _sp)["failures"] == [], (
+        f"a row containing a literal chat special fails round-trip: "
+        f"{roundtrip(_sp_tok, _sp)['failures']}; decode must pass skip_special_tokens=False"
+    )
+
+
+    # 2b. THE SAMPLE MUST COVER EVERY DOMAIN, NOT THE FIRST ONES IN DICT ORDER. Every case
+    #     above uses a ONE-domain corpus, which is why none of them could see the defect
+    #     this checks: the readers took `[r for v in corpus.values() for r in v][:N]`, and
+    #     with one domain a flattened prefix and an even draw are the same thing.
+    #
+    #     The world here is two domains, sized so the flattened prefix cannot reach the
+    #     second: 600 rows of latin first, then the hanzi text. Under the old prefix form
+    #     utf8_integrity saw no hanzi at all; under _even_rows it sees 300 rows of each.
+    #     Measured on the real corpus, the same defect read `hanzi whole-char` 0.1594
+    #     against 0.9895 on zh_web alone and FAILED a veto that invalidates checkpoints.
+    _latin = ["the quick brown fox jumps over the lazy dog\n"] * 600
+    _two = {"a_latin": _latin, "z_hanzi": text if isinstance(text, list) else [text]}
+
+    _prefix = [r for v in _two.values() for r in v][:600]
+    assert not any(HAN.search(r) for r in _prefix), (
+        "the world does not establish the defect: the flattened 600-row prefix already "
+        "contains hanzi, so the old form and the fixed form cannot be told apart here"
+    )
+    _even = _even_rows(_two, 600)
+    assert any(HAN.search(r) for r in _even), (
+        "_even_rows drew 600 rows from a two-domain corpus and reached no hanzi; the "
+        "quota is not covering every domain"
+    )
+    assert len(_even) <= 600, f"_even_rows returned {len(_even)} rows for a 600 quota"
+    _hz_two = float(utf8_integrity(big, _two)["hanzi in whole-char tokens"].rstrip("%"))
+    assert _hz_two > 80, (
+        f"utf8_integrity reports {_hz_two}% whole-char hanzi on a corpus whose second "
+        f"domain is entirely hanzi; the sample is reading domain order, not the corpus"
+    )
+
+    # EVERY reader that samples must cover every domain, not just utf8_integrity. roundtrip
+    # and english_metrics take their own draws, and reverting either to a flattened prefix
+    # survived the case above -- it only watches the hanzi metric. These two assert on the
+    # DRAW each reader takes, so the coverage property is checked where each one reads.
+    #
+    # A domain the prefix cannot reach is given text only that domain can answer for:
+    # `_two`'s second domain is the hanzi text, so a reader that misses it sees no hanzi.
+    #
+    # roundtrip's OWN COVERAGE IS NOT ASSERTED, AND THAT IS DELIBERATE. Two fixtures were
+    # tried and the mutation reverting its line to a flattened prefix survived both:
+    # a ByteLevel BPE is lossless on ANY text by construction, so this metric returns
+    # 405/405 whichever domains it reads and no world can make its verdict depend on
+    # coverage. The line is still changed to _even_rows -- the `failures` list it prints
+    # should quote whatever domain is failing, not whichever sorts first -- but the
+    # protection is utf8_integrity's case above and _even_rows' own two cases, not a
+    # roundtrip assertion that cannot fail. Do not add one; check it did not become
+    # coverage-sensitive first.
+    assert any(HAN.search(r) for r in _even_rows(_two, 400)), (
+        "roundtrip's draw size reaches no hanzi on this world; if roundtrip ever becomes "
+        "coverage-sensitive, this is the world its case would need"
+    )
+
+
+
+    # english_metrics falls back to the same draw whenever no domain is literally named
+    # `en` -- which is every real composition, since the English dir is en_c4_stage2.
+    # ITS WORLD CANNOT BE THE HANZI ONE: WORD is [A-Za-z]+, so hanzi rows contribute no
+    # words and both draws return the same fertility whether or not the reader got there.
+    # The second domain here is long latin words the first domain does not contain, so
+    # reaching it must move tokens/word.
+    assert "en" not in _two, "the fallback path is what this checks; do not name a domain `en`"
+    _long = ["antidisestablishmentarianism incomprehensibilities\n"] * 600
+    _w2 = {"a_short": ["a b c\n"] * 600, "z_long": _long}
+    assert not any(len(w) > 6 for r in [x for v in _w2.values() for x in v][:400] for w in WORD.findall(r)), (
+        "the world does not establish the defect: the flattened 400-row prefix already "
+        "reaches the long-word domain"
+    )
+    _em_two = english_metrics(big, _w2)["fertility (tokens/word)"]
+    _em_first = english_metrics(big, {"a_short": _w2["a_short"]})["fertility (tokens/word)"]
+    assert _em_two > _em_first + 0.1, (
+        f"english_metrics returns {_em_two:.4f} on a two-domain corpus and {_em_first:.4f} "
+        f"on the first domain alone; a long-word second domain must raise tokens/word, so "
+        f"equality means the reader never got past the flattened prefix"
+    )
+
+
+    # A domain shorter than its quota contributes all it has, and the shortfall is NOT
+    # redistributed -- redistribution would put row counts back into the metric's answer.
+    _short = _even_rows({"a": ["x"] * 2, "b": ["y"] * 500}, 100)
+    assert _short.count("x") == 2 and _short.count("y") == 50, (
+        f"short-domain handling changed: got {_short.count('x')} x and {_short.count('y')} y, "
+        f"want 2 and 50 (quota 50 each, `a` has only 2, no redistribution)"
+    )
+
     # 3. SCALE STABILITY. Ten times the text, same characters: a per-character or per-word
     #    ratio must not move. `utilised` and the frequency tail MUST move, which is why
     #    they are SCALE_BOUND and carry their corpus size instead of a bare threshold.
@@ -434,7 +586,8 @@ def _demo():
 
     print(
         f"tokenizer_report self-test OK ({len(SCALE_STABLE)} scale-stable metrics checked, "
-        f"{len(SCALE_BOUND)} declared scale-bound, 2 known-answer cases, REF_EN pinned)"
+        f"{len(SCALE_BOUND)} declared scale-bound, 3 known-answer cases including the "
+        f"two-domain sample-coverage world, REF_EN pinned)"
     )
 
 
