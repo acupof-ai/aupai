@@ -1,48 +1,57 @@
-# Controller board (fb) — updated 2026-09-08T07:20Z, rewritten every tick
+# Controller board (fb) — 2026-09-08T08:5xZ
 
-Percent = share landed on main and verified by a second reader. Every row re-verified against origin/main f98f9c66 and the pod this tick.
+User order, this supersedes every plan below it: hand the cards back, then clean the whole codebase until there is not one redundant word or mark left. Nothing else runs until that is signed off.
 
-## The 30B leg: verdict, corrected after adversarial review
+## Cards
 
-| item | owner | % | delivered | quality / evidence | next gate |
-|---|---|---|---|---|---|
-| **domain_bpb divisor defect** | b0 | 0 | eval/domain_bpb.py:117 text_bpb truncates to max_ctx=2048 (line 127) and divides by the whole 4097-token row's bytes (line 135) | every published domain_bpb, the prereg bar 0.334243 and 98's report are ~2x low. Confirmed twice: in-row byte split 1.9944-2.0274 across nine domains, and domain_loss nats/token reproduces 0.7227 against the published 0.3588 scaled to 0.7195. The docstring claims the property the code lacks. Deltas, signs and ratios are unaffected | fix + known-answer selftest + restate facts and score rows, reviewer 3b |
-| Verdict on the leg | fb | 100 | reported to the user 07:0xZ, corrected from the 06:5xZ version | **flat on the metric of record** (mean domain_bpb -0.00018 over 18.7B tokens); real wins are lambada_en +0.0340 vs the annealed 8B at ~3.9 sigma and nll/byte -0.0321; HumanEval tie unbroken against the annealed 8B (estimators disagree in sign) | — |
-| Token efficiency, the leg's real yield | b0 | 0 | measured by review, to be filed as facts | on the six weight-stable domains 18.7B tokens bought ~0.0216 bpb; the 8B leg's 1,172-step warmdown (~0.92B tokens) bought ~0.0198 on the same six. Constant-LR tokens are worth about a twentieth of the decay per token | facts rows after the divisor fix |
-| Token-only contrast EXISTS | b0 | 0 | steps 9,000-22,500 all ran mix_..._20b_launch.json, so .step9000/.step14000/.step20000 share bit-identical weights; .step20000 is already bpb-scored | my earlier "this leg cannot say what tokens bought" was wrong; the cut to cot/chatml/chat_qa happened at 22,500, not at the resume | write it up; optionally score .step14000 (~85 s, lane card 1) |
-| r = -0.945 framing | fb | — | withdrawn from anything unmerged | the log weight ratio takes three distinct values over nine domains; Spearman -0.417; dropping the three starved domains flips the sign. Two-group difference (n=3 vs 6), not a dose-response. Mix and missing anneal are each individually sufficient to explain the whole bar miss | 44 and 98 drop it from unmerged text |
-| Forgetting cost, measured | b0 | 100 | b0_domain_loss_{resume1,cap,valrise}.jsonl on main | the RATE saturates (cot +0.073 -> +0.009 nats/1k, chatml and chat_qa 0.30 -> 0.02; half-life 400-1000 steps) but the LEVEL is permanent: those three end 9-16% worse in bpb | — |
-| Report | 98 | 100 | PR #70 + fixes in #74 | three defects filed and fixed | needs the divisor restatement when it lands |
+aupai's six cards (1,2,3,4,5,7) released. No aupai training, eval, probe or launch. Cards 0 and 6 are tileRL's by user order 2026-09-06 and this order never reached them. `runs/card_assignment.json` says so on every card. b0's `domain_bpb` re-score is the only GPU job queued and it waits with the rest.
 
-## v2 program
+## Cleanup program — one track per session
 
-| item | owner | % | delivered | next gate |
-|---|---|---|---|---|
-| Spec + prereg | 44 | 90 | PR #66, head 54b36b54, CI green, APPROVED by tilerl-0a (review row 7d6c260d on main) | **tilerl-0a merges it** — AGENTS.md:387 says the reviewer merges; this is the only blocker on the launch path |
-| CSA attention | b0 | 40 | PR #78 open | reviewer tilerl-0a |
-| Loop + schedule | de | 10 | flag plumbing | de-74, then the loop blocks |
-| Data / mix | e1 | 80 | total ruled 30B, weights = resume-1 byte-for-byte except math_owm supply +0.234%; gates pass on the v2 composition (hanzi 0.9793, ref fertility 1.4286) | write the mix; PR #77 (both tokenizer samplers read non-shard artifacts) with 3b |
-| Cursor identity | 3b | 80 | PR #72, 15 mutants red, accept-path prints the compared domain set | de reviews |
-| Answer-format arm (new) | e1 | 0 | preregister: restore cot/chatml/chat_qa to their 8B weights, readout answer_present and l1_fewshot | the endpoint's answer_present 0.340 is the lowest zh three-demo row in the ledger; the run cut those domains ~13x, so "needs SFT" is confounded and this is the cheaper test |
+tilerl-0a is out: its critical path is tileRL's own P1 gate, and cards 0 and 6 are tileRL's, so I hold the eval track myself. Seven tracks, seven sessions.
 
-## Cards, repo, infrastructure
+Scope is the whole tree: 473 Python files, 193,890 lines, 113 docs, 368 tracked files under `runs/`, 14 fact files, AGENTS.md at 439 lines. Every track ends in a PR reviewed by its pair.
+
+| track | owner | scope | acceptance test |
+|---|---|---|---|
+| Scripts and entry points | b0 | `scripts/` 270 files, root entry points | every surviving file is reached from an entry point or a check; `scripts/reachability.py` clean; each candidate ran once before it was judged, with a per-file grep for `glob`/`importlib` |
+| AGENTS.md | de | 439 lines | every rule maps to a check or a stated reason none can; `agents_rules_covered` green; no count in prose that a check already regenerates |
+| Docs | 44 | `docs/` 113 files | frontmatter on every file; every `facts/` and `runs/prereg.jsonl` citation resolves and is current; no two documents answering the same question; `docs_root_clean` |
+| Facts | e1 | `facts/` 14 files | `facts_well_formed` and `ckpt_facts_sources_present` green with zero WARN; every `retracted_value` list matches its entry; no source naming an absent checkpoint |
+| Ledgers | 3b | `runs/` 368 tracked, 43 of them `.py`/`.sh` | no script under `runs/` unless a doc cites it; one schema per ledger; no stale `running` row; the 77 unregistered `.py` on the pod resolved |
+| Eval and filters | fb | `eval/` 54, `filters/` 4, `probes/` 13 | every metric divides by exactly what it scored; every metric has a known-answer test that CALLS the shipped function rather than reimplementing it |
+| Data generation | 98 | `datagen/` 87, `mathbank/` 40 | no duplicate generator; the `vet_programs.py` glob registry reaches every live generator and nothing dead; then one index page saying where everything lives |
+
+Deletion rule for every track: propose the list, run each candidate before judging it, the owner confirms each file by name, and the removal lands in a reviewed PR. The standing "no deletion without a named target" order is satisfied by the owner naming each file, not by skipping the step.
+
+## Track progress
+
+| track | owner | measured so far | next |
+|---|---|---|---|
+| Scripts | b0 | 14 unreached candidates, 2 proposed for removal, 12 kept with a named reason. 8 of the 12 are reached by edges `reachability.py` cannot see: a citation inside a code comment, a friction row's evidence field, a fact's provenance | teach `reachability.py` those three edge types and re-run — that, not a longer delete list, is the deliverable. `scripts/test_sft_holdout_gate.py` fails 5 of 9 cases on the pod and is being chased first: an inert holdout gate would let an unstamped pack train silently |
+| AGENTS.md | de | 439 lines, 11,769 words, 74,275 characters. The duplication is the coverage table, which repeats each rule's text as a row key, so every rule's wording exists twice and drifts independently | compress the coverage table, not the incidents; drop line 339's written rule count, which the file itself says should come from `harness check` |
+| Docs | 44 | — | frontmatter, citations, duplicate questions |
+| Facts | e1 | 489 facts across 12 files. `facts_well_formed` PASS zero WARN; `ckpt_facts_sources_present` WARN on 12 sources across 7 entries. No `retracted_value` rot in any of 21 entries. 53 boundary-flagged entries hand-read: 27 correct scoping, 22 negate a different claim than their own, 4 need action | restate `be.degeneration_rate` as bounds with status superseded; rename `eff.grad_ckpt_300m_two_arm`'s claim to a two-variable ratio; give `eff.pa_split_206m_438m` an explicit claim; add the `retracted_value` check |
+| Ledgers | 3b | 43 scripts inventoried; all 20 under `runs/audit_0904/` run, 18 green, 2 refuse for a stated reason, 1 has no selftest. None is dead | the proposed list with per-file evidence, then the 77 unregistered `.py` on the pod |
+| Eval | fb | 71 files, 20,443 lines. All 31 selftests pass on CPU. The divisor defect is isolated to `eval/domain_bpb.py`: `humaneval_bpb.py` truncates the prompt and never the solution, divides by the solution's own bytes, and its selftest asserts exactly that; `math_bpb.py` calls that function rather than reimplementing it and asserts its divisor against a literal. So the HumanEval gold bpb numbers are unaffected, and the correct pattern already existed in the same directory | 16 metrics compute a rate with no known-answer case: `arc`, `code_fewshot`, `code_zh`, `gsm8k`, `hellaswag`, `l1_2x2_diagnose`, `l1_fewshot`, `math_hard`, `math_zh`, `mmlu`, `piqa`, `ppl`, `run_eval`, `test_l1_fewshot_2x2`, `winogrande`, `probes/profile_step`. Each gets a CPU case so it runs in CI instead of waiting for a card |
+| Data generation | 98 | — | starts when PR #82 merges |
+
+
+## What is finished and stays finished
 
 | item | state |
 |---|---|
-| Cards | all eight at 0 MiB, no claims; 0 and 6 are tileRL's; 2,3,4,5,7 held for v2's first launch; 1 is the lane |
-| CI / main | completed success on f98f9c66; stash empty |
-| Pod | stamped 86e5014b, behind origin f98f9c66 — push due this tick |
-| Deletion listing | #76 merged: globs 78 ledgers, --resume both spellings, selftest registered. 44 files / 161 GB free, 19 carry a family annotation. Ruling: may PROPOSE candidates, family-annotated rows excluded, owner confirms each; deletion still needs a user instruction naming targets. Disk 95%, 109 GB free |
-| Open PRs | #78 b0 (tilerl-0a), #77 e1 (3b), #75 44 (3b), #72 3b (de), #66 44 (tilerl-0a, approved), #23 tilerl (changes requested) |
-| Shape of the night | a predicate set answering a narrower question than the one asked, invisible in its own well-formed output: §275, then reproduced inside its own fix, then again in the tokenizer samplers and in domain_bpb's divisor |
+| 30B leg | CLOSED at step 34,000 of 38,146 by user ruling. Recorded as an incomplete schedule, not an advance. Third on HumanEval gold bpb per task at 0.5609, behind `ckpt_0.2b_8b_b192` 0.5559 and its own annealed 8B sibling 0.5590; below two dense models on minimal pairs at 0.7653 against 0.8014; only clear win LAMBADA-en 0.3221 |
+| What the anneal was worth | −6.89% unweighted mean `domain_bpb`, same run and same held-out rows: `ckpt_..._8b.pt.step9000` 0.35897 against `ckpt_..._8b.pt` 0.33424, all nine domains down, −4.0% to −12.4%. All nine token caches are stamped 2026-09-05, before both scorings, so the rows did not move |
+| `domain_bpb` divisor defect | real, ~2×, known-answer test 8.000 true against 5.460 reported. Eight rows retracted in place. Fix is PR #79 with 3b. No rescaled level published; the prereg bar 0.334243 gets re-measured, never multiplied |
+| Val prefix | latent defect, no observed instance. `train.py:2204` shuffles the whole document list before packing, so a pool that grows re-draws the held-out set: 50 added documents give 16–19% overlap, and the 5,000 cap holds the count, not the membership |
+| `answer_present` at 3 demos | retired as a primary readout. Within one recipe it spans 0.1147–0.5433 across four checkpoints, sd 0.1852 against binomial 0.0201, so it cannot resolve a 1.42× effect. Both restoration arms are dead |
+| v2 spec and prereg | merged, on main and on the pod. Amendment 1 carries the two CSA divergences from the DeepSeek-V4 reference and the 1.21× gate note |
+| CSA attention | merged at 8c2308b7. Flag off is exact equality at 15,360 parameters; flag on differs at 0.154; 16 positions perturbed in k and v with no leaks; three mutants red |
+| Repo and pod | main, origin/main and the pod stamp all at 8eecbd36. 738 files in sync, no refusing line. CI green on b134b88d |
+| Pod disk | 95%, 109 GB free. Nothing deleted |
 
 ## Open user decisions
 
-1. **Finish the 4,146 remaining steps to anneal the endpoint** (~3.5 h on six idle cards). Recommended: the 8B leg's 1,172-step decay bought 92% of what 25,000 constant-LR steps bought, and only an annealed endpoint is comparable to the registered bar.
-2. 30B composition for the next full run: code+math at <=1.0 epoch takes 83.8% of a 30B budget. Not needed for v2, which keeps the control's weights.
-3. cot/chat 4.0-epoch cap: keep for v2 as the control, test the restore in e1's new arm.
-4. Pod disk at 95%; nothing deleted.
-
-## Standing rules restated
-
-Cards 0 and 6 are tileRL's. Code through a PR from a branch with no ledger files; ledger rows through merge_main. Approval is a PR comment with artifact: or case: plus a review row, and the reviewer merges and pushes the pod. No attribution trailers; subjects end with the session marker. Nothing is deleted without a user instruction naming the target.
+1. 30B composition for the next full run, once the cleanup is signed off.
+2. Pod disk at 95%.
