@@ -2898,9 +2898,31 @@ def check_timestamps_are_utc(root):
                 bad.append(f"{os.path.relpath(p, root)}:{n}")
             elif re.search(r"""(?<!["'])time\.localtime\(""", s):
                 bad.append(f"{os.path.relpath(p, root)}:{n}")
+            # THE READ SIDE, added 2026-09-08 (e1-65). The rule above makes every timestamp we
+            # WRITE be UTC, and that half was guarded while the other half was not: a git date
+            # read back for COMPARISON against one of those UTC strings renders in the machine's
+            # zone unless told otherwise, and `%ad` / `--date=short` never says so in its own
+            # name. Every commit in this repo carries +08:00, so the offset is one-sided and
+            # stable, which is what makes it look like a signal instead of an instrument.
+            #
+            # Two hits in one evening, from opposite ends. 3b read a 7-8 hour gap between
+            # exp.py's gmtime rows and `%ad` as evidence about how the values were written --
+            # 18 samples on one value, a cluster too tight to be an effect. I compared fact
+            # `measured` dates (UTC by the rule above) against `--date=short` and had 42 of 145
+            # artifact paths render one day late, all in the same direction, which put 15 false
+            # pairs into check_fact_older_than_its_source before it shipped.
+            #
+            # THE FIX IS A ZONE, NOT A FORMAT: `--date=short-local` with TZ=UTC in the env, or
+            # `%aI` / `--date=iso-strict`, which carry their offset. `format-local:` also passes,
+            # since it honours TZ. Reverting check_fact_older_than_its_source to `--date=short`
+            # is this rule's ready-made broken world: it must report those 15 pairs again.
+            if re.search(r"--date=(?:short|format):", s) and "TZ" not in s:
+                bad.append(f"{os.path.relpath(p, root)}:{n} (git date in the machine's zone; "
+                           f"use --date=short-local with TZ=UTC, or %aI)")
     if bad:
         return FAIL, f"{len(bad)} naive local-clock call(s): {bad[:3]}"
-    return PASS, f"every strftime in {scanned} tracked .py passes time.gmtime()"
+    return PASS, (f"every strftime in {scanned} tracked .py passes time.gmtime(), and every "
+                  f"git date read for comparison names its zone")
 
 
 def _broken_timestamps_are_utc():
@@ -4261,6 +4283,39 @@ def _parse_ckpt_listing(path):
     return date, keep, cands
 
 
+def _deletion_protections(root):
+    """{basename: [reason, ...]} from scripts/deletion_candidates.py, or {} if unavailable.
+
+    THE TWO TOOLS ANSWER DIFFERENT QUESTIONS AND BOTH ANSWERS WERE RIGHT (4c's authority
+    ruling, e1-65, 2026-09-08). deletion_candidates.py is authoritative on whether a file may
+    be DELETED; this check is authoritative on whether a fact's PROVENANCE is intact. On
+    2026-09-08 they disagreed out loud about ckpt_b0_headmix_armA/B.pt: this check called them
+    unclaimed deletion-candidates while deletion_candidates.py listed armA as protected six
+    ways over -- cited by score_matrix.jsonl, review.jsonl and prereg.jsonl, and the RESUME
+    SOURCE of all five experiment-1 arms. Neither was wrong. The file is protected AND its
+    fact's source names a file on a candidate list.
+
+    So this does not defer. It adds a tier: a candidate that something in the tree depends on
+    is DISCLOSED, not warned about. A KEEP line is a person's promise and can be forgotten;
+    a resume-source edge is a fact about the repository, and it is the stronger signal of the
+    two -- armA's KEEP claim did not exist while five arms could not be rebuilt without it.
+
+    FAILS OPEN, deliberately. The script reads /work/aupai by default and is absent from older
+    trees, so an ImportError or a bad root must not turn this check red -- it would fire on
+    every checkout that predates the script, which is a refusal about the harness rather than
+    about any fact. Returning {} restores the pre-2026-09-08 behaviour exactly.
+    """
+    try:
+        sys.path.insert(0, os.path.join(root, "scripts"))
+        import deletion_candidates
+        return deletion_candidates.protections(root)
+    except Exception:
+        return {}
+    finally:
+        if sys.path and sys.path[0] == os.path.join(root, "scripts"):
+            sys.path.pop(0)
+
+
 def _noted_gone(entry, name, tier=None):
     """Whether the entry's uncertainty/boundary already names this checkpoint as
     deleted/pruned. A stale source with an honest note is a WARN, not a FAIL:
@@ -4646,7 +4701,8 @@ def check_ckpt_facts_sources_present(root):
     if not listings:
         return FAIL, "no runs/pod_ckpt_candidates_*.txt -- the facts side of this check is empty"
     date, keep, cands = _parse_ckpt_listing(listings[-1])
-    bad, warned, n_facts = [], [], 0
+    prot = _deletion_protections(root)
+    bad, warned, disclosed, n_facts = [], [], [], 0
     for fp in sorted(glob.glob(os.path.join(root, "facts", "*.json"))):
         try:
             obj = json.load(open(fp))
@@ -4680,16 +4736,28 @@ def check_ckpt_facts_sources_present(root):
                     msg = f"[absent] {fid} -> {name} (not in pod listing {date}; pruned, misnamed, or newer than the snapshot)"
                 else:
                     continue
+                # A CANDIDATE SOMETHING DEPENDS ON IS A DISCLOSURE, NOT A WARNING. Only the
+                # deletion-candidate tier: a file on the prune plan that a ledger cites or a run
+                # resumes from is not going to be pruned, and calling it unclaimed sends someone
+                # to write a KEEP line for a file already protected. `zeroed` and `absent` are
+                # about a file that is ALREADY gone, which no protection undoes, so they keep
+                # their tier -- protecting a deleted file is not a thing that can be true.
+                if tier == "deletion-candidate" and prot.get(name):
+                    why = "; ".join(sorted(set(prot[name])))
+                    disclosed.append(f"[protected] {fid} -> {name} ({why})")
+                    continue
                 (warned if _noted_gone(e, name, tier) else bad).append(msg)
+    tail = f" {len(disclosed)} protected source(s): " + "; ".join(disclosed) if disclosed else ""
     if bad:
         both = "; ".join(bad + warned)
         return FAIL, f"{len(bad)} FAIL + {len(warned)} WARN: fact source(s) name doomed/gone " \
-                     f"checkpoints (listing {date}): {both}"
+                     f"checkpoints (listing {date}): {both}." + tail
     if warned:
         return WARN, f"{n_facts} fact(s) cite checkpoints; {len(warned)} source(s) name a gone " \
-                     f"checkpoint already disclosed in uncertainty/boundary (listing {date}): " + "; ".join(warned)
-    return PASS, (f"{n_facts} fact(s) cite checkpoints; every name is KEEP-claimed or "
-                  f"resolves against the listing ({date}, {len(cands)} candidates)")
+                     f"checkpoint already disclosed in uncertainty/boundary (listing {date}): " \
+                     + "; ".join(warned) + "." + tail
+    return PASS, (f"{n_facts} fact(s) cite checkpoints; every name is KEEP-claimed, protected, or "
+                  f"resolves against the listing ({date}, {len(cands)} candidates)." + tail)
 
 
 def _broken_ckpt_facts_sources():
@@ -7750,6 +7818,30 @@ FACT_NEEDS_CLAIM = {"unmeasured", "retracted"}
 # values, which is worse than not checking: it spends the reader's trust in everything the tool
 # says (§159's addendum, de and e1, 2026-09-04).
 #
+# A `boundary` SAYING "RETRACTED" IS NOT A RETRACTION OF THE ENTRY, and this is the reading a
+# future sweep will get wrong. Counted 2026-09-08 over all 489 facts (e1-65, 4c's ruling): 241
+# carry a boundary, and 44 of those boundaries contain a negation word (retract|supersed|refut|
+# withdraw|not quotable|do not quote|wrong -- the predicate a sweep would plausibly use). Only
+# FOUR of the 44 negate the entry's OWN value. The rest scope an adjacent question or retract
+# something DOWNSTREAM while the entry's own value stands and is quotable:
+# cs.cot_open_thoughts_landed's boundary says the cot shortfall is wrong everywhere it is quoted,
+# and its own 776,084,377 is a live measurement. So a sweep that greps facts/ for a negation word
+# and flips status would kill 40 live measurements.
+#
+# The 4 that DID negate their own claim were restated instead, each under 4c's approval, and none
+# by changing `status`: the value or the boundary was rewritten to say what the entry actually
+# supports, and what it used to say is kept in a `supersedes_reading` field (be.degeneration_rate
+# additionally keeps its pre-restatement value verbatim in `superseded_value`, because that one
+# was long enough that a diff is the only readable form of it). There is no `superseded` status
+# and none was added -- FACT_STATUS's four values are read by exp.py, launch_gate.py and
+# harness_core.py, and a fifth would reach all three as an unknown.
+#
+# THE MACHINE-CHECKABLE HALF is the cross-check in check_facts_well_formed: a number listed in
+# `retracted_value` must be findable in its own entry. That is what "what is retracted is named"
+# can be encoded as. WHICH of an entry's prose claims a boundary retracts cannot be, and is not
+# attempted -- all 44 read identically to a regex, which is why the split is written down here
+# instead of being left for the next reader to re-derive.
+#
 # WHY A LIST AND NOT A FLAG, from reading all nine retracted entries rather than pattern-matching
 # them: FIVE of the nine retract a CONCLUSION while their numbers stand. be.l1_3shot_retracted's
 # rerun reproduced 0.2/63.6/8.9; cont.sft_all_code_holdout_leak's v2 2.2% and v3 40.0% are
@@ -8602,10 +8694,10 @@ def check_facts_well_formed(root):
                 for k in ("claim", "audit", "refuted_by"):
                     if not e.get(k):
                         errors.append(f"{tag}: {e['status']} fact needs {k}")
-            # RETRACTED ONLY, and `[]` counts as present -- the absence of the KEY is the defect,
-            # not an empty list. Five of nine retracted entries have no dead number (see
-            # FACT_RETRACTED_VALUE), so requiring a non-empty list would force someone to invent
-            # one. `is None` rather than a falsy test for exactly that reason.
+            # `[]` counts as present -- the absence of the KEY is the defect, not an empty list.
+            # Five of nine retracted entries have no dead number (see FACT_RETRACTED_VALUE), so
+            # requiring a non-empty list would force someone to invent one. `is None` rather than
+            # a falsy test for exactly that reason.
             if e["status"] == "retracted":
                 rv = e.get(FACT_RETRACTED_VALUE)
                 if rv is None:
@@ -8613,21 +8705,67 @@ def check_facts_well_formed(root):
                         f"{tag}: retracted fact needs {FACT_RETRACTED_VALUE} -- the list of values "
                         f"that are WRONG, as data. Use [] when the conclusion was retracted but "
                         f"its numbers stand (5 of 9 entries), which is a statement, not a gap")
-                elif not isinstance(rv, list) or any(not isinstance(x, str) for x in rv):
-                    errors.append(f"{tag}: {FACT_RETRACTED_VALUE} must be a list of strings, "
+            # THE CROSS-CHECK RUNS ON EVERY ENTRY THAT CARRIES THE KEY, not only on
+            # status=="retracted". Measured 2026-09-08: 21 entries carry retracted_value and 11 of
+            # them are status=="measured" -- a corrected supply figure keeps its status and records
+            # the superseded number -- so the version gated on the status skipped more than half
+            # the population, including every cs.*_landed correction. It would also have REJECTED
+            # them: those lists hold ints, and the string-only rule below was never reached.
+            #
+            # `retracted_value` is hand-maintained and rots when someone edits `value` without it.
+            # This is the one thing that makes that rot loud, so it is deliberately not gated on
+            # anything.
+            if (rv := e.get(FACT_RETRACTED_VALUE)) is not None:
+                if not isinstance(rv, list):
+                    errors.append(f"{tag}: {FACT_RETRACTED_VALUE} must be a list, "
                                   f"got {type(rv).__name__}")
+                elif any(not isinstance(x, (str, int, float)) or isinstance(x, bool) for x in rv):
+                    errors.append(f"{tag}: {FACT_RETRACTED_VALUE} entries must be strings or "
+                                  f"numbers, got {[type(x).__name__ for x in rv]}")
                 else:
-                    # A value listed as dead must appear in the entry, or the two disagree about
-                    # what was retracted and neither can be trusted. Checked against value+claim
-                    # because a retraction rewrites `value` into narration and the original number
-                    # often survives only in `claim`.
-                    hay = f"{e.get('value', '')} {e.get('claim', '')}"
+                    # A value listed as dead must appear SOMEWHERE in the entry, or the two
+                    # disagree about what was retracted and neither can be trusted.
+                    #
+                    # THE HAYSTACK IS THE WHOLE ENTRY MINUS THIS KEY. A hand-picked field list was
+                    # written twice and was wrong both times: value+claim missed the eight
+                    # cs.*_landed corrections, which explain themselves in `uncertainty` and
+                    # `supersedes`; adding those still missed cs.code_rp1t_landed, whose two dead
+                    # counts are narrated in `config.note`. The population decides where a
+                    # retraction is written, and it does not agree with any list. Excluding
+                    # `retracted_value` itself is the one exclusion that matters -- without it the
+                    # list is its own evidence and the check is vacuous.
+                    #
+                    # KNOWN WEAKNESS, stated rather than designed around: a dead number equal to a
+                    # live number elsewhere in the entry (a doc count, a threshold) passes. That
+                    # is a weaker check, not a wrong one -- the rot it exists to catch is someone
+                    # editing `value` and leaving the list behind, and a stale number surviving
+                    # only by colliding with an unrelated field is not that.
+                    hay = json.dumps({k: v for k, v in e.items() if k != FACT_RETRACTED_VALUE},
+                                     ensure_ascii=False)
+                    # A number is matched NUMERICALLY, not as a substring, and a magnitude suffix
+                    # counts: cs.code_rp1t_markup_composition lists both 2790000000 and 2.79 for
+                    # one retraction whose prose says "~2.79B", so a digits-substring test calls
+                    # the first one missing and reds a consistent entry. Both the bare reading and
+                    # the scaled one go in, because "2.79B" states both.
+                    _MAG = {"k": 1e3, "m": 1e6, "b": 1e9, "t": 1e12}
+                    hay_nums = set()
+                    for num, suf in re.findall(r"([0-9][0-9,]*\.?[0-9]*)\s*([kKmMbBtT])?", hay):
+                        v = float(num.replace(",", ""))
+                        hay_nums.add(v)
+                        if suf:
+                            hay_nums.add(v * _MAG[suf.lower()])
                     for x in rv:
-                        if x not in hay:
+                        if isinstance(x, str):
+                            found = x in hay
+                        else:
+                            found = float(x) in hay_nums
+                        if not found:
                             errors.append(
-                                f"{tag}: {FACT_RETRACTED_VALUE} lists {x!r}, which appears in "
-                                f"neither value nor claim -- a dead value nobody can find is not "
-                                f"a retraction anyone can act on")
+                                f"{tag}: {FACT_RETRACTED_VALUE} lists {x!r}, which appears in no "
+                                f"field of this entry -- a dead value nobody can find is not a "
+                                f"retraction anyone can act on. Either the entry was edited "
+                                f"without updating this list, or the list names another entry's "
+                                f"number")
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
@@ -21140,6 +21278,100 @@ def _selftest_facts_ephemeral_only_source():
           "path@rev, or baselined does not")
 
 
+def _selftest_facts_retracted_value_names_what_died():
+    """A number listed in `retracted_value` must be findable in its own entry, on entries of
+    ANY status, and the ones that are findable must not red.
+
+    e1-65, 4c's ruling 2026-09-08: "if facts_well_formed can encode 'what is retracted is
+    named', encode it". The field is hand-maintained, so it rots the moment someone rewrites
+    `value` and leaves the list behind, and until this ran the cross-check was gated on
+    `status == "retracted"`. Measured on the real tree the same day: 21 entries carry the key
+    and 11 are `status: "measured"` -- every cs.*_landed supply correction keeps its measured
+    status and records the count it replaced -- so more than half the population was never
+    cross-checked. Those 11 hold ints, and the string-only rule the gate protected would have
+    called all 11 malformed had the gate simply been widened.
+
+    ISOLATED ONE-FACT WORLDS, not three more mutations in `_broken_facts`. That world already
+    carries four and reports 42 errors of which five are shown, so its verdict is FAIL before
+    this predicate runs and no mutation of this predicate can move it -- the same reason
+    _selftest_facts_ephemeral_only_source exists. Nor can the clean tree serve: it PASSes, so
+    deleting the whole cross-check leaves it PASSing.
+
+    Six worlds. The three POSITIVE ones are the load-bearing half, because the two readings
+    this check got wrong were both false alarms on honest entries, not misses:
+      1 measured + a dead number nowhere in the entry     -> FAIL. The subject.
+      2 measured + the dead number in `config.note`       -> PASS. cs.code_rp1t_landed narrates
+        both its dead counts there; a value+claim haystack reds it. The haystack is now the
+        whole entry minus the key itself.
+      3 measured + "2.79B" prose against a 2790000000 entry -> PASS. cs.code_rp1t_markup_
+        composition lists the expanded and the spoken form of ONE retraction; a digits
+        substring test reds it. Matching is numeric with a magnitude suffix.
+      4 measured + a float written with thousands separators -> PASS. 6,513,304,690 in prose
+        against 6513304690 in the list.
+      5 retracted + key absent                            -> FAIL, the pre-existing half, kept
+        here so widening the gate cannot silently drop it.
+      6 measured + key absent                             -> PASS. The key is required of
+        retracted entries only; requiring it everywhere would red 468 facts.
+    """
+    import shutil
+
+    real = json.load(open(os.path.join(FACTS_DIR, "data_scaling.json"), encoding="utf-8"))
+    base = next((e for e in real["facts"] if e.get("status") == "measured"), None)
+    if base is None:
+        raise SelftestSkip("facts/data_scaling.json holds no measured entry to build worlds on")
+
+    # (label, mutate(entry), want, want_named)
+    cases = [
+        ("1 dead number nowhere in the entry",
+         lambda e: e.update(retracted_value=[8675309.0]), FAIL, True),
+        ("2 dead number only in config.note",
+         lambda e: (e["config"].update(note="corrects 7,565,334,396, which omitted <eos>"),
+                    e.update(retracted_value=[7565334396])), PASS, False),
+        ("3 expanded and spoken form of one retraction",
+         lambda e: (e.update(uncertainty="retracted: ~2.79B tokens of generated markup"),
+                    e.update(retracted_value=[2790000000, 2.79])), PASS, False),
+        ("4 thousands separators in the prose",
+         lambda e: (e.update(uncertainty="supersedes 6,513,304,690 (one-epoch supply)"),
+                    e.update(retracted_value=[6513304690])), PASS, False),
+        ("5 retracted entry with no key",
+         lambda e: (e.update(status="retracted", claim="c", audit="a", refuted_by="r"),
+                    e.pop("retracted_value", None)), FAIL, True),
+        ("6 measured entry with no key",
+         lambda e: e.pop("retracted_value", None), PASS, False),
+    ]
+    bad = 0
+    for label, mutate, want, want_named in cases:
+        d = _tmp_repo_shaped()
+        try:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+            if os.path.islink(os.path.join(d, "facts")):
+                os.remove(os.path.join(d, "facts"))
+            os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+            e = json.loads(json.dumps(base))
+            # The world must FAIL for the subject alone, so every other predicate is satisfied
+            # first: a source the tree can open, and no guard_phrases to be checked against docs.
+            e["source"] = "scripts/harness.py"
+            e.pop("guard_phrases", None)
+            mutate(e)
+            json.dump({"facts": [e]}, open(os.path.join(d, "facts", "data_scaling.json"), "w"))
+            json.dump({}, open(os.path.join(d, "facts", "source_baseline.json"), "w"))
+            with open(os.path.join(d, "AGENTS.md"), "w") as fh:
+                fh.write("facts/data_scaling.json is the scaling fact file.\n")
+            got, ev = check_facts_well_formed(d)
+            # NAMED, not just FAILed. Both FAIL worlds must fail on THIS predicate -- a world
+            # that goes red for an unrelated reason is the shared world's defect again.
+            named = FACT_RETRACTED_VALUE in ev and e["id"] in ev
+            ok = got == want and named == want_named
+            bad += 0 if ok else 1
+            print(f"  {'ok  ' if ok else 'BUG '} {label}: {got}"
+                  + ("" if ok else f" (wanted {want}, named={want_named}) -- {ev[:240]}"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    assert bad == 0, f"{bad} of {len(cases)} retracted_value worlds wrong"
+    print("  retracted_value: a dead number absent from its entry FAILs at any status; "
+          "config.note, a magnitude suffix and thousands separators all count as naming it")
+
+
 def _selftest_exp_reclassify_monitor_close():
     """A monitor-closed row can be re-closed by hand WITH a reason and not without it, and
     the monitor's event survives.
@@ -22648,6 +22880,7 @@ def _demo(only=None):
         _selftest_main_in_no_worktree_discriminates,
         _selftest_card_lend_expires,
         _selftest_facts_ephemeral_only_source,
+        _selftest_facts_retracted_value_names_what_died,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
         _selftest_merge_fix_not_deadlocked,
