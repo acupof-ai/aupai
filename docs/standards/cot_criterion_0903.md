@@ -1,3 +1,9 @@
+---
+question: Which open sources supply the cot role's 4.5B long-CoT tokens, and what fetch criterion keeps them out of ladder-mix dirs?
+status: recorded
+source: criterion written 2026-09-03 before reading any source row (aupai-6e)
+---
+
 # cot fetch criterion (0903) — OpenThoughts-114k + Skywork-OR1-RL-Data
 
 Written 2026-09-03, **before** reading any source row (aupai-6e: criterion before reading). The cot role in `mix_30b` targets 4.5B tokens of long CoT. Two open sources on hf-mirror: `open-thoughts/OpenThoughts-114k` (6 parquet, 1.08 GB) and `Skywork/Skywork-OR1-RL-Data` (4 parquet, 0.82 GB). Each is a mirror-chain fetch into a NEW dir (`data/corpus/cot_open_thoughts/` and `data/corpus/cot_skywork_or1/`), never a ladder-mix dir.
