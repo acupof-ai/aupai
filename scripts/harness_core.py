@@ -196,8 +196,49 @@ def _theirs_baseline(root=None):
     return sorted(set(out))
 
 
-def _classify_card_note(note, baseline_theirs=False, now=None):
+def _classify_card_entry(entry, probe_holds):
+    """The object form of a cards[] note: {"owner": ..., "note": ..., "observed_block": ...}.
+
+    Decision and observation are separate fields because they expire differently (4c's
+    schema, 2026-09-09). `owner` is a decision with no shelf life -- only a grant changes
+    it. `observed_block` is a fact ("another container holds this card") that must carry a
+    re-runnable probe, and it expires the moment the probe no longer holds. The 09:0xZ
+    "HELD BY ANOTHER CONTAINER, 97 GiB" note outlived the ARLE serve by hours because the
+    observation was written into prose nobody could re-check; tilerl-27 under-used card 5
+    on the strength of a file that was wrong.
+
+    Three states, and the third is the one that must not be guessed:
+      no owner                            -> unclassified  (nothing decided -> refuse)
+      owner, no block / block expired     -> the owner     (ignore the observation and fall
+                                                           BACK to the owner, never to
+                                                           unclassified)
+      owner=aupai, block live/unmeasured  -> theirs        (not available to aupai right now;
+                                                           unmeasured fails closed)
+
+    `probe_holds` is the measured verdict, supplied by a caller that ran the probe
+    (check_card_observed_blocks runs each one per commit). None means unmeasured, and the
+    block stands: a block nobody re-ran is a block that has not expired. A live block on a
+    tileRL card changes nothing -- the card was never ours.
+    """
+    owner = str(entry.get("owner") or "").strip().lower()
+    if owner not in ("aupai", "tilerl"):
+        return "unclassified"
+    if owner == "tilerl":
+        return "theirs"
+    if not entry.get("observed_block") or probe_holds is False:
+        return "ours"
+    return "theirs"
+
+
+def _classify_card_note(note, baseline_theirs=False, now=None, probe_holds=None):
     """'theirs' | 'ours' | 'unclassified' for one cards[] note.
+
+    A note may be the OLD prose string or the NEW object form (4c's schema, 2026-09-09):
+    {"owner": "aupai"|"tilerl", "note": <prose>, "observed_block": {asserted_at, probe,
+    expect, target?}}. The object form is handled by _classify_card_entry, which see for
+    the owner/observation split and the `probe_holds` verdict; the prose path below is
+    unchanged, because tilerl-27's reader still parses prose entries and the two copies
+    must not drift.
 
     NOT-OURS IS TESTED FIRST and that order is load-bearing: card 0's note reads
     "tileRL ...; short aupai lane jobs only by explicit grant while tileRL is not using it",
@@ -252,6 +293,8 @@ def _classify_card_note(note, baseline_theirs=False, now=None):
     own cards, so no migration and no expiry applies to them. That is why the expiry is gated on
     baseline_theirs rather than on the presence of a date or a grant word.
     """
+    if isinstance(note, dict):
+        return _classify_card_entry(note, probe_holds)
     s = str(note or "")
     if baseline_theirs:
         # THE STANDING OWNER IS KNOWN FROM THE BASELINE. Nothing the note says can transfer the
@@ -729,6 +772,30 @@ def refuse_in_integration_tree(what, path=None):
           f"  Run this in your own worktree; the ledgers merge by union, so nothing is lost.",
           file=sys.stderr)
     return True
+
+def append_ledger(path, row, what=None):
+    """One guarded event to any runs/*.jsonl ledger: refuse in the integration tree, append.
+
+    The shared write path for every session-facing ledger writer (de-98): tasks and friction
+    reach disk through harness._append_task, board through board.append, and review,
+    ledger_resolutions, milestones, msg_log, prereg, experiments and retro through their own
+    writers -- each calling this or refuse_in_integration_tree before the write. A writer that
+    does not is exactly what test_integration_tree_guard.py's enumeration world is for.
+
+    O_APPEND, one write() of one complete line: concurrent appends under a page-sized payload
+    do not interleave, and no reader observes a partial row. Building the line first matters --
+    f.write() of a str can flush at a buffer boundary. Lifted from harness._append_task, which
+    now delegates here."""
+    if refuse_in_integration_tree(what or f"appending to {os.path.basename(path)}", path=path):
+        raise SystemExit(1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
 
 def fold_by_id(rows, key="id"):
     """Last event per key wins, in first-insertion order. THE fold for every runs/*.jsonl ledger.

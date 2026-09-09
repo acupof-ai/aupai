@@ -344,14 +344,17 @@
    "config": {
     "tool": "scripts/corpus_snapshot.py",
     "output": "runs/corpus_snapshot.json",
-    "tier_rule": "build_corpus_stats.json: filters_fp present -> reproducible; fingerprint only -> detectable; no stats file -> none",
+    "tier_rule": "build_corpus_stats.json: filters_fp present -> `filters_known`; fingerprint only -> `content_only`; no stats file -> `none`. RENAMED 2026-09-08 from `reproducible`/`detectable` (e1, 4c's ruling), in scripts/corpus_snapshot.py._tier and here together. `reproducible` was read at face value and produced a wrong instruction -- 14 domains were called rebuildable when the stamp cannot support that. A label a reader acts on has to survive being taken literally.",
     "shard_line": "name:size:sha256(first 64KB):sha256(last 64KB) -- datagen/corpus_fingerprint._shard_line, so the snapshot cannot diverge from the guard that reads it",
     "corpus_dir": "/work/aupai/data/corpus",
-    "taken_at": "2026-09-03 07:23Z"
+    "taken_at": "2026-09-03 07:23Z",
+    "what_filters_fp_covers": "EXACTLY THREE FILES: filters/pass1_garbage.py, pass2_garbage.py, pass3_garbage.py, hashed by datagen/corpus_fingerprint.fp_filters over the PIPELINE_FILTERS tuple at :53. NOT covered: the tokenizer, build_corpus.py itself, the source snapshot, worker count, shard ordering, and whether the near-dedup pass ran (a separate `near_dedup` stamp field; code_rp1t carries False). filters/secrets.py is deliberately outside the hash because build_corpus.py does not import it. So a matching filters_fp proves the garbage filters were identical and nothing more, and NO domain in any tier is shown byte-reproducible by its stamp alone.",
+    "count_drifted": "The 49/14/30/5 split in `value` is the 07:23Z snapshot. runs/corpus_snapshot.json in the repo was regenerated later the same day (9cb89c17) and reads 50 domains, 15 filters_known, 30 content_only, 5 none -- the added domain is rp1t_arxiv_papers. Read the artifact for the live count; this entry's value is the reading at its measured time."
    },
    "uncertainty": "The snapshot fixes the bytes as of 2026-09-03 07:23Z; it does not recover lost provenance and must not be read as making the 35 non-reproducible domains reproducible. Head+tail 64KB per shard catches truncation, replacement and same-size head/tail edits; a rewrite confined to a shard's interior is not covered.",
    "status": "measured",
-   "boundary": "Says what each domain IS and whether it changes from now on. Says nothing about what produced it for 35 of the 49, and nothing about content quality for any of them."
+   "boundary": "Says what each domain IS and whether it changes from now on. Says nothing about what produced it for 35 of the 49, and nothing about content quality for any of them.",
+   "claim": "WHAT EACH CORPUS DOMAIN'S BUILD STAMP CAN PROVE about where its bytes came from, and how much disk they occupy once hardlinks are counted. Three tiers, ordered by how much a stamp settles: filters_known > content_only > none. Read it before planning any rebuild; do NOT read any tier as a promise that a rebuild reproduces the bytes."
   },
   {
    "id": "cs.arxiv_landed",
@@ -752,6 +755,598 @@
    "uncertainty": "Sizes are exact (stat vs content-length, all 8 equal). The elapsed time is wall clock for the whole batch on a shared host, so the 11.4 MB/s aggregate is this run's, not a property of the link.",
    "status": "measured",
    "boundary": "Bytes on disk, not tokens: these are raw jsonl and nothing has been cleaned, filtered or tokenized. It says nothing about how much code survives filters or what the domain contributes to the mix. Two things it DOES pin. (1) 29 chunk restarts across 8 files, with 6 chunks throttled a second time and trigger rates spanning 25-390 KB/s, so per-connection throttling on this host is the normal case rather than the exception -- a single stream at the 40 KB/s observed on 2026-09-07 04:0xZ would have needed 137 h for these bytes. (2) File filtered_28106e66... completed with ZERO restarts because its seven surviving chunks were resumed in place after a kill that preserved them; that is the measurement of the sibling-preservation fix (gate_failure_incidents 263), and it exists only because the kill went to the parent first."
+  },
+  {
+   "id": "cs.reproducibility_table_0908",
+   "value": "62 corpus domains on the pod, measured 2026-09-08. Rerun verdicts: {'not_tried': 59, 'yes': 2, 'no': 1}. The two yes domains (chatml, chat_qa) were rerun to a temp dir with the live code and matched byte-for-byte on every content shard; web_hq is no (producer unrecoverable); the other 59 are not_tried -- the stamp tier says what each directory proves, not that a rerun was attempted. Stamp tiers: {'detectable': 39, 'reproducible': 17, 'none': 6} (filters_known=carries the content hash of the filters that produced it, content_only=carries a content fingerprint only, none=no stats file). This is a LOWER BOUND: the two yes results prove only those two domains; the 59 not_tried rows are ignorance, not failure.",
+   "table": [
+    {
+     "domain": "chat",
+     "tier": "detectable",
+     "shards": 3,
+     "bytes": 163274168,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build recorded (data/PROVENANCE.md:393); frozen sources; source of chatml/chat_qa, itself unrerun"
+    },
+    {
+     "domain": "chat_qa",
+     "tier": "reproducible",
+     "shards": 3,
+     "bytes": 163274228,
+     "tokens": 38187650,
+     "verdict": "yes",
+     "basis": "reran 2026-09-08 with live code to a temp dir: 2/2 content shards cmp-identical, 160414 rows / 69437198 chars exact; same metadata-only drift as chatml. Block: data/PROVENANCE.md:526"
+    },
+    {
+     "domain": "chatml",
+     "tier": "reproducible",
+     "shards": 3,
+     "bytes": 171134513,
+     "tokens": 38995846,
+     "verdict": "yes",
+     "basis": "reran 2026-09-08 with live code to a temp dir: 2/2 content shards cmp-identical, content-only fingerprint 0a213669868c62e1 both sides, 160414 rows / 78259968 chars exact. Only the holdout-slice rule_fp and filters_fp moved, with the filter/holdout code drift since 2026-09-01, zero content effect. Block: data/PROVENANCE.md:516"
+    },
+    {
+     "domain": "code",
+     "tier": "detectable",
+     "shards": 3,
+     "bytes": 232706891,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build recorded (data/PROVENANCE.md:387); frozen source"
+    },
+    {
+     "domain": "code_dedup08",
+     "tier": "detectable",
+     "shards": 299,
+     "bytes": 30161005801,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_py_rp1t",
+     "tier": "reproducible",
+     "shards": 16,
+     "bytes": 1514846729,
+     "tokens": 421239303,
+     "verdict": "not_tried",
+     "basis": "built 2026-09-01 by e1, block data/PROVENANCE.md:546"
+    },
+    {
+     "domain": "code_py_starcoder",
+     "tier": "reproducible",
+     "shards": 284,
+     "bytes": 29576272230,
+     "tokens": 8744830156,
+     "verdict": "not_tried",
+     "basis": "built 2026-09-01 by 3b, block data/PROVENANCE.md:536"
+    },
+    {
+     "domain": "code_rp1t",
+     "tier": "reproducible",
+     "shards": 235,
+     "bytes": 24542369187,
+     "tokens": 7569415401,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_b2",
+     "tier": "none",
+     "shards": 152,
+     "bytes": 15870668200,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_b2v2",
+     "tier": "reproducible",
+     "shards": 153,
+     "bytes": 15870668255,
+     "tokens": 4891752636,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_b2v2_dd",
+     "tier": "detectable",
+     "shards": 152,
+     "bytes": 11770693449,
+     "tokens": 3601818840,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_dd09",
+     "tier": "detectable",
+     "shards": 235,
+     "bytes": 20365823615,
+     "tokens": 6235703063,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_dd09_full",
+     "tier": "detectable",
+     "shards": 387,
+     "bytes": 32136517064,
+     "tokens": 9837521903,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "code_rp1t_rest",
+     "tier": "none",
+     "shards": 0,
+     "bytes": 0,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "empty directory, 0 shards"
+    },
+    {
+     "domain": "cot",
+     "tier": "reproducible",
+     "shards": 13,
+     "bytes": 1325493480,
+     "tokens": 424056227,
+     "verdict": "not_tried",
+     "basis": "block data/PROVENANCE.md:475"
+    },
+    {
+     "domain": "cot_open_thoughts",
+     "tier": "detectable",
+     "shards": 6,
+     "bytes": 2415588865,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "cot_seed",
+     "tier": "none",
+     "shards": 0,
+     "bytes": 0,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "empty directory, 0 shards"
+    },
+    {
+     "domain": "en",
+     "tier": "detectable",
+     "shards": 9,
+     "bytes": 811934904,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build recorded (data/PROVENANCE.md:375); frozen sources with sha256 anchors 2026-08-27"
+    },
+    {
+     "domain": "en_c4",
+     "tier": "reproducible",
+     "shards": 167,
+     "bytes": 17437847967,
+     "tokens": 4809069283,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "en_c4_30b",
+     "tier": "reproducible",
+     "shards": 23,
+     "bytes": 2338044189,
+     "tokens": 646669989,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "en_c4_stage2",
+     "tier": "reproducible",
+     "shards": 83,
+     "bytes": 8694064348,
+     "tokens": 2403694865,
+     "verdict": "not_tried",
+     "basis": "build not recorded (data/PROVENANCE.md:464)"
+    },
+    {
+     "domain": "math",
+     "tier": "detectable",
+     "shards": 5,
+     "bytes": 335034579,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build recorded (data/PROVENANCE.md:381) but its synthetic input set changed: math_short_v6/v7 were deleted after the build, so a rerun draws from a different math_short_v* set"
+    },
+    {
+     "domain": "math_owm",
+     "tier": "reproducible",
+     "shards": 128,
+     "bytes": 13356465585,
+     "tokens": 4034824812,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "math_owm_stage2",
+     "tier": "reproducible",
+     "shards": 206,
+     "bytes": 21553841303,
+     "tokens": 6513304690,
+     "verdict": "not_tried",
+     "basis": "build reconstructed by 3b (data/PROVENANCE.md:447); finemath source recoverable via fetch_corpus.py manifest"
+    },
+    {
+     "domain": "math_seed",
+     "tier": "reproducible",
+     "shards": 5,
+     "bytes": 335034579,
+     "tokens": 81681834,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "p_format",
+     "tier": "detectable",
+     "shards": 2,
+     "bytes": 321255,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "rp1t_arxiv_papers",
+     "tier": "reproducible",
+     "shards": 97,
+     "bytes": 9432976137,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "s_inject_n1",
+     "tier": "detectable",
+     "shards": 2,
+     "bytes": 352456,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "s_inject_n256",
+     "tier": "detectable",
+     "shards": 2,
+     "bytes": 90553220,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "s_inject_n64",
+     "tier": "detectable",
+     "shards": 2,
+     "bytes": 22592034,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "s_inject_n8",
+     "tier": "detectable",
+     "shards": 2,
+     "bytes": 2817520,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "sample",
+     "tier": "detectable",
+     "shards": 302,
+     "bytes": 8464359,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "textbook",
+     "tier": "detectable",
+     "shards": 79,
+     "bytes": 8119279340,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build unrecorded, pre-0830v1 (data/PROVENANCE.md:365)"
+    },
+    {
+     "domain": "textbook_30b",
+     "tier": "reproducible",
+     "shards": 79,
+     "bytes": 8119279340,
+     "tokens": 1610210330,
+     "verdict": "not_tried",
+     "basis": "block data/PROVENANCE.md:491"
+    },
+    {
+     "domain": "web_cci3_p0",
+     "tier": "none",
+     "shards": 43,
+     "bytes": 4330096286,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p1",
+     "tier": "detectable",
+     "shards": 41,
+     "bytes": 4136499942,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p10",
+     "tier": "detectable",
+     "shards": 35,
+     "bytes": 3453285451,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p11",
+     "tier": "detectable",
+     "shards": 37,
+     "bytes": 3680770100,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p12",
+     "tier": "detectable",
+     "shards": 33,
+     "bytes": 3318497663,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p13",
+     "tier": "detectable",
+     "shards": 32,
+     "bytes": 3239526418,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p14",
+     "tier": "detectable",
+     "shards": 33,
+     "bytes": 3207456148,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p15",
+     "tier": "detectable",
+     "shards": 33,
+     "bytes": 3228083299,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p16",
+     "tier": "detectable",
+     "shards": 31,
+     "bytes": 3081802321,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p17",
+     "tier": "detectable",
+     "shards": 29,
+     "bytes": 2822954875,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p18",
+     "tier": "detectable",
+     "shards": 30,
+     "bytes": 2993684692,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p19",
+     "tier": "detectable",
+     "shards": 20,
+     "bytes": 1857525184,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p2",
+     "tier": "detectable",
+     "shards": 40,
+     "bytes": 3952462294,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p20",
+     "tier": "detectable",
+     "shards": 32,
+     "bytes": 3132875944,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p21",
+     "tier": "detectable",
+     "shards": 20,
+     "bytes": 1894386690,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p22",
+     "tier": "none",
+     "shards": 47,
+     "bytes": 4659807153,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p23",
+     "tier": "none",
+     "shards": 43,
+     "bytes": 4318878023,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p3",
+     "tier": "detectable",
+     "shards": 40,
+     "bytes": 3996635957,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p4",
+     "tier": "detectable",
+     "shards": 38,
+     "bytes": 3800344124,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p5",
+     "tier": "detectable",
+     "shards": 38,
+     "bytes": 3781793510,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p6",
+     "tier": "detectable",
+     "shards": 41,
+     "bytes": 4147046030,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p7",
+     "tier": "detectable",
+     "shards": 38,
+     "bytes": 3722855544,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p8",
+     "tier": "detectable",
+     "shards": 37,
+     "bytes": 3591785774,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_cci3_p9",
+     "tier": "detectable",
+     "shards": 36,
+     "bytes": 3582903828,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "web_hq",
+     "tier": "detectable",
+     "shards": 62,
+     "bytes": 5914966151,
+     "tokens": null,
+     "verdict": "no",
+     "basis": "original build unrecorded (pre-0830v1, data/PROVENANCE.md:365); the 2026-08-30 rebuild raw input /data00/fw2raw is gone (checked 2026-09-08). The domain bytes exist; their producer is not recoverable"
+    },
+    {
+     "domain": "wiki",
+     "tier": "detectable",
+     "shards": 9,
+     "bytes": 910063292,
+     "tokens": null,
+     "verdict": "not_tried",
+     "basis": "build unrecorded, pre-0830v1 (data/PROVENANCE.md:370)"
+    },
+    {
+     "domain": "wiki_chat",
+     "tier": "reproducible",
+     "shards": 12,
+     "bytes": 1073337460,
+     "tokens": 283903257,
+     "verdict": "not_tried",
+     "basis": "stamp only; no rerun, no PROVENANCE block"
+    },
+    {
+     "domain": "zh_web",
+     "tier": "reproducible",
+     "shards": 909,
+     "bytes": 89846923401,
+     "tokens": 21293403945,
+     "verdict": "not_tried",
+     "basis": "block data/PROVENANCE.md:503; assembled from web_cci3_p* partitions (hardlinked pairs)"
+    }
+   ],
+   "measured": "2026-09-08",
+   "source": "python3 scripts/corpus_snapshot.py --out /tmp/snap_0908.json on the pod (live directory state); chatml/chat_qa reruns via datagen/build_chatml.py and build_chat_qa.py with DST overridden to /tmp; web_hq source check ls /data00/fw2raw",
+   "config": {
+    "snapshot_taken_at": "2026-09-08 (pod local time)",
+    "tier_rule": "snapshot's own tier field: reproducible (stats carries filters_fp) -> filters_known; detectable (content fingerprint only) -> content_only; none (no build_corpus_stats.json)",
+    "verdict_rule": "yes = reran to a temp dir and every content shard cmp-identical; no = producer unrecoverable (build unrecorded AND inputs gone); not_tried = no rerun attempted",
+    "shard_count_note": "shards counts every non-stats file, incl. holdout_slice_*.jsonl, so chatml/chat_qa show 3 (2 content + 1 slice)",
+    "supersedes_counts": "cs.provenance_tiers_0903 measured 49 domains 14/30/5 on 2026-09-03; the domain set has since grown to 62 and this entry is the new count. e1 recorded that drift in config rather than rewriting value; this entry does the same by adding, not editing",
+    "hardlinks": "2010+ shard files have link count >1 (e1, 2026-09-03): web_cci3_p*<->zh_web, wiki<->wiki_chat, math<->math_seed are same-bytes pairs; bytes column sums double-count them"
+   },
+   "uncertainty": "The snapshot fixes the bytes as of 2026-09-08; head+tail 64KB per shard misses interior-only rewrites. The chatml/chat_qa reruns used TODAYs code against sources unchanged since 2026-08-28, so they prove the current pipeline is deterministic on those domains, not that the 2026-09-01 builds were deterministic then (the code in between was not exercised). not_tried is a statement about what was done, not about what would happen.",
+   "status": "measured",
+   "boundary": "Answers \"can a rerun produce the same bytes\" per domain as of 2026-09-08. Says nothing about rebuild cost, source availability for the 59 not_tried domains beyond the noted few, or content quality. The tier is a property of the stamp, not of the bytes."
+  },
+  {
+   "id": "cs.math_short_v8_cap_audit",
+   "value": "math_short_v8's 40,000 L4 rows are exactly the recorded command's L4 target (N=100,000 x --ratios 0,0,0.6,0.4 -> L4 40,000, L3 60,000). The generator has NO 1,200 cap: its caps are 100,000 total (CLI arg) and 150 instances per program (MAX_INST, run_math_short.py:27). The ~1,300 figure is the bank's PROGRAM count (1,302 programs: L1 166, L2 189, L3 509, L4 434, L5 4, run_math_short.py --list), a different unit -- programs, not rows. The pod file matches the recorded command exactly: 97,771 rows = L3 57,771 (stalled below the 60,000 target, the generator's documented all-programs-at-cap-or-rejecting stall) + L4 40,000 (target met); sha256 7e45bc95d0aa3226823a7a493a4df525a611ee7287712a7e28bec4ed217830e8 matches data/PROVENANCE.md:58. Of the three hypotheses: (1) the cap is not 1,200 -- confirmed, unit confusion; (2) recorded command != what ran -- NOT supported; (3) rows are not one verified instance each -- not supported.",
+   "measured": "2026-09-08",
+   "source": "mathbank/run_math_short.py read in full (caps at lines 27, 184-185, stall at 225-228); python3 run_math_short.py --list (program counts); pod: wc -l + sha256sum + level distribution of /work/aupai/data/synthetic/math_short_v8.jsonl; data/PROVENANCE.md:55-58",
+   "config": {
+    "file": "/work/aupai/data/synthetic/math_short_v8.jsonl",
+    "command": "run_math_short.py 100000 --ratios 0,0,0.6,0.4 --seed 28",
+    "max_inst": 150,
+    "programs_total": 1302
+   },
+   "uncertainty": null,
+   "boundary": "The '1,200' under audit was supplied in dispatch, not read from any file; no 1,200 constant exists in mathbank/ (the only 1200s are arithmetic parameters in math_programs_l3_ext6.py). The provenance line's '509 programs x 150 = 57,771' justification is arithmetically wrong (509x150=76,350); the stall is real but its recorded explanation is not.",
+   "status": "measured"
   }
  ]
 }

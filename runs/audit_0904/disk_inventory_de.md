@@ -1,3 +1,9 @@
+---
+question: What is the disk inventory of runs/ and the non-data caches on 2026-09-04?
+status: measured
+source: pod via ~/bin/pod + laptop worktree, 2026-09-04 ~07:0xZ; du -sb + stat -c %y
+---
+
 # Disk inventory — `runs/` and non-data caches (de's section)
 
 Read-only. Measured on the pod in the container (`~/bin/pod`, `/work/aupai`) and on the laptop
