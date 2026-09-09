@@ -84,7 +84,10 @@ for dom in DOMAINS:
 manifest["_total"] = grand
 manifest["_cut"] = CUT
 manifest["_elapsed_s"] = time.time() - t0
-manifest["_dedup08_status"] = "pre_decontamination: 169561 overlapping docs not yet deleted (138.6K on the 15 rp1t shards + 31.0K on the 283 starcoder shards, b0 pod count 2026-09-10); code_dedup08 rows above are pre-deletion and MUST be recomputed by the deletion pass"
+manifest["_dedup08_status"] = ("pre_decontamination: 169561 deletable dedup08 docs not yet deleted "
+    "(= 157684 dd09-intersection + 12120 b2v2-intersection - 243 already decontaminated; "
+    "b0 pod count 2026-09-10: 138.6K on the 15 rp1t shards + 31.0K on the 283 starcoder shards); "
+    "code_dedup08 rows above are pre-deletion and MUST be recomputed by the deletion pass")
 with open(os.path.join(OUT, "manifest.json"), "w") as f:
     json.dump(manifest, f, indent=1)
 gk, gs_ = grand["kept"], grand["scored"]
