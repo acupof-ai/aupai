@@ -986,6 +986,12 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The function-interface SFT pair extractor (3b-18). Registered because its two
+        # acceptance properties are only checkable on a known-answer world: the output must
+        # run to the function's LAST source line (a cut one statement early still parses and
+        # still looks like a body), and a HumanEval-vendored function must be dropped by the
+        # contamination scan. The selftest builds both worlds and asserts on them.
+        "datagen/extract_code_if_pairs.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
