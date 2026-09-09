@@ -168,10 +168,22 @@ EXCLUDE_DIRS = ("workflows",)
 # dropped from one of them (b0 2026-09-03).
 PUSHED_RUNS = ("runs/card_assignment.json",)
 
+# A DIRECTORY NAME CANNOT ANSWER "WHO WROTE THIS FILE". The predicate below used to be
+# the directory alone plus a one-file allowlist, so every hand-written script under runs/
+# read as pod-produced and `pod_push.sh --all` skipped it -- exit 0, zero `refusing`, the
+# stamp advanced, and the pod kept an older copy. Measured 2026-09-08: 45 tracked .sh/.py
+# under runs/, 44 of them silently unshippable; 25 were absent from the pod entirely and
+# the 20 present were byte-identical only because someone had pushed each one by name.
+# runs/anneal_arms.sh was one of them, and N1 died on the stale copy. The extension is
+# what separates the two populations: the pod writes .jsonl rows and .log output, the
+# laptop writes .sh and .py.
+_LAPTOP_WRITTEN_SUFFIXES = (".sh", ".py")
+
 
 def _pod_written(path):
     """Is this a runs/ file the pod produces, so drift is expected and pushes skip it?"""
-    return path.startswith("runs/") and path not in PUSHED_RUNS
+    return (path.startswith("runs/") and path not in PUSHED_RUNS
+            and not path.endswith(_LAPTOP_WRITTEN_SUFFIXES))
 
 # git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
 # to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
@@ -686,6 +698,15 @@ def selftest():
     manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
     assert found == ["probe.py"], found
+
+    # _pod_written: the two populations under runs/, and the allowlist exception. Asserted
+    # in both directions -- a predicate that answered True for everything would pass a
+    # one-sided check, and that is exactly the defect it replaces.
+    for _p in ("runs/experiments.jsonl", "runs/friction.jsonl", "runs/x.log", "runs/claims/7"):
+        assert _pod_written(_p), _p
+    for _p in ("runs/anneal_arms.sh", "runs/restamp_cot_ot.py", "runs/audit_0904/dead_worlds.py",
+               "runs/card_assignment.json", "scripts/harness.py", "train.py"):
+        assert not _pod_written(_p), _p
     with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest.items()))
     ok, evidence = check_pod(d)
@@ -1201,6 +1222,13 @@ def main():
             ctx = contextlib.nullcontext()
         with ctx:
             selftest()
+    elif mode == "--ship-paths":
+        # The manifest paths that flow MAIN -> POD, i.e. everything _pod_written rejects.
+        # pod_push.sh had two hand-rolled `grep -v '^runs/'` copies of this and neither
+        # carried the PUSHED_RUNS exception, which is the drift the comment on PUSHED_RUNS
+        # predicted. One definition, read by both languages.
+        print("\n".join(p for p in (l.split()[1] for l in open(MANIFEST) if l.split())
+                         if not _pod_written(p)))
     elif mode == "--list-scoped":
         print("\n".join(scoped_paths()))
     elif mode == "--check":
