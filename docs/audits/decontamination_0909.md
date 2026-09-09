@@ -26,14 +26,16 @@ dd09 <-> b2v2 exact overlap is 0 while MinHash near-overlap participation
 versions/formatting, so bytes differ and content largely matches. "Exact
 overlap handled" must not be read as "cross-domain duplication handled".
 
-## Why the deletion concentrated on seven shards
+## Why the deletion concentrated on the 15 rp1t shards
 
 dedup08 is a union build: 283 starcoder shards + 15 `code_py_rp1t` shards.
 The 15 are by construction a third copy of dd09/b2v2 content, so the 169,561
 exact-overlap docs landed almost entirely on them: 138,564 (82%) on the 15
 rp1t shards, 30,997 (18%) on the 283 starcoder shards — an ~84x per-shard
 rate difference (9,238 vs 110 docs/shard, b0 pod count 2026-09-10). Seven
-shards were left with 4-81 rows. This also explains the dd09<->b2v2
+shards ended with 4-81 rows in the clean copies (both channels; the
+exact-overlap channel alone leaves six — the seventh was cut from 99 to 81
+by the decontamination channel). This also explains the dd09<->b2v2
 near-overlap: exact overlap between them is 0 (different versions/
 formatting), while both overlap dedup08 exactly because dedup08 holds their
 third copy.
