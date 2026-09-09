@@ -33,6 +33,23 @@ fi
 user_cmd="${*:-bash -l}"
 pod_name="${POD_NAME:-sglang-test}"
 
+# REFUSAL: non-ASCII in the command string. tn exec passes UTF-8 through, but the
+# crictl/printf-%q leg of this wrapper mangles it (measured 2026-09-08: the same
+# echo that tn exec delivers intact comes back as garbage through the wrapper).
+# The failure is silent: a mangled grep pattern returns zero hits with no error,
+# a clean-looking false negative. File bytes are unaffected; only argv is.
+# Workarounds: write the command to a file and run the file, or build the
+# non-ASCII inside the command (python3 chr() escapes). POD_ALLOW_NONASCII=1
+# overrides, for the case that has verified its bytes end to end.
+if [ -z "${POD_ALLOW_NONASCII:-}" ] && \
+   printf '%s' "$user_cmd" | LC_ALL=C tr -d '[:space:]' | LC_ALL=C grep -q '[^ -~]'; then
+  echo "pod: refusing non-ASCII in the command string -- the transport mangles it silently" >&2
+  echo "  (a Chinese grep pattern returns zero hits, no error). Write the command to a" >&2
+  echo "  file and run the file, or build the non-ASCII inside the command (python3 chr()" >&2
+  echo "  escapes). POD_ALLOW_NONASCII=1 overrides after an end-to-end byte check." >&2
+  exit 1
+fi
+
 # REFUSAL: `cd X && ... &` — the cd does not survive into the background chain.
 # Measured (shape 166, e1 2026-09-04): three inline background forms produce NO
 # log file at all, not an empty one, so the redirect never ran. The container's
