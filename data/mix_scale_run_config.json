@@ -18,6 +18,7 @@
   "value_embed": false,
   "untie_head": false,
   "loop": null,
+  "sample_seed": null,
   "seq": 4096,
   "grad_ckpt": false,
   "fone": false,

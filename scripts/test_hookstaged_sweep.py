@@ -28,6 +28,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 HOOK = os.path.join(ROOT, "scripts", "hooks", "pre-commit")
 PROBE = ".hookstaged_probe_leftover.py"
+LIVE_PROBE = ".hookstaged_live_probe.py"
 
 
 def selftest_dirs(src):
@@ -80,6 +81,74 @@ def sweep_is_before_every_refusal(src):
                        f"commit refused by any of them never cleans up the previous run's "
                        f"leftovers: " + "; ".join(f"line {n}: {t[:60]}" for n, t in before[:5]))
     return True, f"the sweep is reached before every exit path in main() (line {src[:i_sweep].count(chr(10)) + 1})"
+
+
+
+def run_sweep(block, dirs, live=()):
+    """exec the lifted sweep with AUPAI_HOOK_LIVE_COPIES set to `live`; return its stderr."""
+    import glob as _glob
+    import io
+    from contextlib import redirect_stderr
+    ns = {"os": os, "glob": _glob, "sys": sys,
+          "repo_root": lambda: ROOT,
+          "_registered_selftest_paths": lambda: [f"{d}/x.py" for d in dirs]}
+    saved = os.environ.get("AUPAI_HOOK_LIVE_COPIES")
+    os.environ["AUPAI_HOOK_LIVE_COPIES"] = os.pathsep.join(os.path.abspath(p) for p in live)
+    buf = io.StringIO()
+    try:
+        with redirect_stderr(buf):
+            exec(compile(block, "sweep", "exec"), ns)
+    finally:
+        if saved is None:
+            os.environ.pop("AUPAI_HOOK_LIVE_COPIES", None)
+        else:
+            os.environ["AUPAI_HOOK_LIVE_COPIES"] = saved
+    return buf.getvalue()
+
+
+def live_copy_worlds(block, dirs, tracked):
+    """The skip has to hold in BOTH directions, on the same file in the same directory.
+
+    The incident it exists for: 2026-09-09, a merge staging scripts/hooks/pre-commit had its
+    own .hookstaged_pre-commit unlinked by a NESTED hook run's sweep, and the outer selftest
+    died reading its own __file__ after all fourteen worlds had passed. Asserting only the
+    survival half would pass against a sweep that deletes nothing at all, which is why the
+    same path is swept again with the environment unset and must not survive that.
+    """
+    fails = []
+    slot = None
+    for d in dirs:
+        rel = os.path.join(d, LIVE_PROBE)
+        if rel not in tracked and not os.path.exists(os.path.join(ROOT, rel)):
+            slot = (rel, os.path.join(ROOT, rel))
+            break
+    if slot is None:
+        return [f"no directory of {len(dirs)} could take {LIVE_PROBE}, so the live-copy skip "
+                f"was never exercised -- this is a FAILURE and not a skip, because a guard "
+                f"whose test cannot reach it is a guard nobody is checking"]
+    rel, path = slot
+    try:
+        with open(path, "w") as fh:
+            fh.write("# the copy an OUTER hook run is executing right now\n")
+        run_sweep(block, dirs, live=[path])
+        if not os.path.exists(path):
+            fails.append(f"{rel} was DECLARED in AUPAI_HOOK_LIVE_COPIES and the sweep deleted it "
+                         f"anyway -- this is the 2026-09-09 incident: a nested run unlinks the "
+                         f"source the outer run is mid-execution on")
+
+        if not os.path.exists(path):  # restore for the negative half
+            with open(path, "w") as fh:
+                fh.write("# not declared by anyone\n")
+        announced = run_sweep(block, dirs, live=[])
+        if os.path.exists(path):
+            fails.append(f"{rel} SURVIVED a sweep with AUPAI_HOOK_LIVE_COPIES unset -- the skip "
+                         f"is unconditional, so it protects every leftover and the sweep is dead")
+        elif os.path.basename(rel) not in announced and rel not in announced:
+            fails.append(f"{rel} was removed silently in the undeclared world")
+    finally:
+        if os.path.exists(path):
+            os.unlink(path)
+    return fails
 
 
 def main():
@@ -146,6 +215,8 @@ def main():
     # THE POSITION, read from the file rather than exercised. Every world above exec's the lifted
     # block and therefore reaches it unconditionally -- they all passed while the sweep sat behind 26
     # refusals and never ran on the commits that needed it. Only this assertion sees that.
+    fails += live_copy_worlds(block, dirs, tracked)
+
     ok_pos, why_pos = sweep_is_before_every_refusal(src)
     if not ok_pos:
         fails.append(why_pos)
@@ -158,7 +229,8 @@ def main():
     print(f"test_hookstaged_sweep ok: {len(planted)} planted .hookstaged_* leftover(s) at real "
           f"selftest directories are removed on hook entry and each removal is announced, and "
           f"{why_pos} -- so a killed run cannot refuse the next commit, and a commit refused for any "
-          f"other reason still cleans up")
+          f"other reason still cleans up; and a .hookstaged_* named in "
+          f"AUPAI_HOOK_LIVE_COPIES survives the same sweep that removes it when it is not named")
     return 0
 
 

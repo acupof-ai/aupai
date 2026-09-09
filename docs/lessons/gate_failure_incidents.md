@@ -646,6 +646,14 @@ open: unenforceable by a repo scan — the failing form is a shell command in a 
 
 RENUMBERED FROM §248, and the renumber is its own instance of the same rule. This text was written and staged as §248, then LOST: it was carried aside to /tmp during a behind-main merge and never restored afterwards, so nothing was committed while I reported to the user that it had landed. tilerl filed a different §248 in the gap. The hand-carry that dropped it is exactly what the tilerl-31 staged-index carry in `scripts/merge_main.sh` now automates -- the fix and the loss met in the same hour.
 
+### §291 (2026-09-08, R4)
+A wall-clock gate samples a PHASE of the operation it interrupts, and the phase decides what state the kill leaves. N1 (the anneal N arm) first launched 2026-09-08 14:49Z from the pod's `anneal_arms.sh`, in the version before PR #111: `--seed 1337`, no `--sample_seed`, so `_sample_seed()` fell back to `Cfg.seed` = 1337 while the nine caches were stamped 42. `same_seed` was False for every domain, so the launch retokenized the whole mix; the 120s startup gate SIGTERMed it while `math_owm_stage2` was tokenizing. The write order in `_domain_seqs` is `_encode_domain` -> `torch.save(data, cache)` -> `.vocab` -> `.srcfp` -> `.seed` (train.py:2225-2244), and the kill landed before `torch.save`, so no durable state changed at all: all nine caches stayed stamped 42. The 16:59Z relaunch carried `--sample_seed 42` (PR #111's pin, in the train.py pushed to the pod that afternoon), `same_seed` held, nothing retokenized, and the run finished at final val 1.823. **The gate that killed the run also saved the caches, by accident.** The counterfactual is one duration away: had `math_owm_stage2` tokenized inside the deadline, the same gate fires after `torch.save` and before the `.seed` write, and the window holds THREE distinct partial states, not one -- kill before `.vocab` leaves new-cache/old-vocab, kill before `.srcfp` leaves new-cache/new-vocab/old-srcfp, kill before `.seed` leaves new-cache/new-vocab/new-srcfp/old-seed. The last is the silent one: the next launch's `fresh` is True (same vocab, same source, same seed, mtime fresh), so it trains on the wrong-order cache in silence. The resume-cursor misinterpretation the `.seed` stamp exists to prevent (de-7) would arrive through the stamp's own write window. The loud kill -- timeout reported, run dead, launch nonzero -- was the benign one; the silent one needs only a shorter tokenize. A deadline measured from launch knows nothing about the interrupted operation's intermediate state, and nothing in the gate's output says which world it left behind.
+
+The same shape one level up, in the gate's sizing: `_derive_gate_timeout` sizes the deadline from cache bytes on disk, and a cache that EXISTS but is stale -- seed, vocabulary, or source mismatch -- is bytes on disk. It is sized as a warm load while the job does a cold one's work. The all-cold case already refuses rather than falls back (2026-08-31); the stale-cache case is the remaining hole, and closing it needs the gate to read the stamps, not the bytes: the seed and vocabulary comparisons are cheap file reads against the launch's own flags, and only the source fingerprint needs a recompute.
+
+Evidence: de's independent pod-log check (2026-09-09): launch times 14:49Z and 16:59Z from the pod experiments ledger, final val 1.823 from the arm log, nine `.seed` stamps read as 42. The 14:49Z log was overwritten before it could be checked, so the domain in flight at the SIGTERM (`math_owm_stage2`) is INFERRED from tokenize order, not read; the counterfactual needs only that some domain was mid-tokenize, which the retokenize plus the timeout establish on their own. `train.py:2132` (`seedfp = cache + ".seed"`), `:2172` (`same_seed`), `:2225-2244` (the write order); PR #111 (`--sample_seed`); `scripts/harness.py` `_derive_gate_timeout` and `_wait_for_startup`.
+open: (a) one commit point between cache and stamps in `_domain_seqs` -- write the cache to a tmp name and rename after the stamps, or write the stamps before `torch.save` so a kill during the save leaves old-cache/new-stamp, a mismatch the next launch detects and redoes (cost: one redundant tokenize, no silent window); (b) the gate counts a stale cache as warm -- read the stamps alongside the bytes. Neither exists.
+
 ## R5. State the vision before the number
 
 ### §30 (2026-09-01, R5)
@@ -760,6 +768,95 @@ Evidence: `runs/delta.py` output at cutoff, `runs/count_en_c4_30b.json`, and the
 
 **§268 and §269 share one line, and it is the one to carry away: an aggregate is CHOSEN, so it cannot report what the choice discarded.** A verdict discards which mutation failed; a magnitude discards which kind of error it was. In both cases the discarded thing was the finding, and in both cases nothing in the artifact records that anything was discarded — which is why neither is detectable by reading the artifact and both are detectable by asking what the aggregate cannot represent.
 open: no check reads a grouped report and asks whether a per-row predicate would separate its members. The machine-checkable half here is narrow and real — a recount delta equal to the domain's document count is an `<eos>` defect, not noise — and `facts_well_formed` could assert it wherever both numbers are in the fact store.
+
+### §285 (2026-09-09, R6)
+
+**Three aggregates over the same held-out set ranked two arms three different ways, so the noise
+floor is not a scalar.** Two null arms differing only in `Cfg.seed` (`--sample_seed 42` pinned, so one
+corpus order; init and dropout are the whole difference) were scored on the full matrix:
+
+    final val (nats/token)          N1 1.8230   N2 1.8710   N1 better by 0.0480
+    domain_loss unweighted mean     N1 2.0241   N2 1.9956   N2 better by 0.0285
+    domain_bpb  unweighted mean     N1 0.77209  N2 0.76323  N2 better by 0.00886
+
+Same two checkpoints, same nine domains, three readings of held-out likelihood, and the SIGN is not
+stable. An arm separated from a control at this scale can be declared better or worse by choosing
+which aggregate to quote, with no error on either side and nothing to flag it.
+
+Two more from the same pair. **`mc_ceval` moved 23.1 to 27.7 -- a 4.6-point floor on pure init**,
+larger than most gaps ever quoted on that metric at this scale. And **`domain_loss`'s aggregate
+movement is 93% two domains**: per-domain init noise runs from 0.0001 (`code_py_rp1t`) to 0.1394
+(`chatml`), a factor of 1,400, and the two loudest -- `chatml` 0.1394 and `chat_qa` 0.0988 -- are the
+two smallest slices in the mix. `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, the field both
+null arms read: chatml **9,043** and chat_qa **8,854**, against code_py_rp1t 97,722 and
+code_py_starcoder 2,139,719 -- 11x and 237x larger. (0.1394 + 0.0988) / 9 = 0.0265 of the
+aggregate's 0.0285. An arm compared on that mean is compared on those two domains with seven along
+for the ride.
+
+The generalisation is not "aggregates hide variance", which was already known. It is that **a noise
+floor has to be measured per metric on the metric the effect will be read on**, because a floor
+measured on one aggregate does not bound another aggregate over the same data, and can point the
+other way. A single scalar "the floor is 0.048" is a category error the moment more than one metric
+is in the report.
+
+Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
+`runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3`. 44 recomputed both means from the raw rows and
+got 0.0285 and 0.0089.
+open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
+a reported arm-vs-control delta was placed against a floor on the SAME metric.
+
+### §286 (2026-09-09, R6)
+
+**The same metric name over two estimators put the noise floor 50% apart.** `train.py:408-409`:
+
+    val_batches      = 20
+    val_batches_full = 100   # fixed prefix, so the epoch-end number is comparable across runs
+
+Both print as `val`. The periodic `step N val` line is the 20-batch estimate; the epoch-end
+`ep 1/1 ... val` line is the 100-batch one, and the code's own comment says which of the two is
+comparable across runs. The same-step gap between the two null arms, read off the periodic series,
+ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.088, mean 0.076, no
+trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
+**0.048**.
+
+**Reading the floor off the periodic series would have published it ~50% too large and buried any
+true effect between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have
+made it convincing. A series that agrees with itself is evidence about the estimator's stability, not
+about its agreement with the quantity being estimated.
+
+CORRECTED 2026-09-09, and the correction is the sharper half. This entry first said "five times the
+data, so roughly half the sampling noise, and the whole of the difference". **There is no sampling
+noise in either read.** `Xva` is built once (`train.py:3361`) and never reshuffled, and `validate`
+iterates `for j in range(0, len(Xva), batch)` breaking at `max_batches` (`:979-980`), so both are
+FIXED PREFIXES of one split: the periodic read is the first 20 batches, the epoch-end read the first
+100, and the first is a strict SUBSET of the second. Both are deterministic given the model. So the
+two numbers are not a noisier and a cleaner estimate of one quantity -- **they are measurements over
+different populations**, and subtracting one from the other is a category error rather than a
+precision mismatch. The 0.072-on-160-rows against 0.048-on-800-rows is a real statement about where
+the two arms differ, not noise averaging out. The entry's conclusion is unchanged and its reason is
+stronger: an estimator's name has to travel with its population, not just its precision.
+
+The cost of the wrong reason was real and paid the same day. Amendment 4 of
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_5` used it to call D an UPPER BOUND on
+the replicate drift, concluding the verdict was conservative and over-penalised the treatment arm.
+D bounds nothing: it is the drift on rows 1-160, and the drift on rows 1-800 could be larger.
+Retracted in amendment 5, twenty minutes after the verdict, with the direction restated as unknown.
+**A wrong mechanism under a right conclusion is not harmless -- it was reused, and it produced a
+directional claim in the arm's favour that nothing supported.**
+
+The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
+the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
+presentation -- here the digits are honest and the SAMPLE SIZE is the unstated basis.
+
+Nothing was published: the 0.077 reached this session's messages and the controller board, both
+corrected in the same commit that measured 0.048, and 44 verified it reached no other repo artifact.
+Evidence: `train.py:408-409`; `runs/anneal_null_val_series_0908.tsv`, both arms' fifteen periodic
+reads and both epoch-end reads, committed here; board at `31b3d360`. The arm logs themselves are
+pod-only and are not in this repository -- 44's R10 finding on PR #117, which is why the series was
+extracted and committed rather than cited in place.
+open: no check. A metric name that resolves to two estimators is not detectable from the log line;
+the fix would be to print the batch count beside the number, which edits `train.py` (frozen).
 
 ## R7. Retractions travel as wide as the ruling
 
@@ -899,5 +996,359 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
+### §290 (2026-09-08, R11)
+
+**A check's population is a filename regex, and the regex is narrower than the check's name.** `check_deletion_list_no_tracked` (`scripts/harness.py::check_deletion_list_no_tracked`) refuses a deletion list that names a tracked file -- the rm would remove what a fresh checkout ships, with every gate green. Its population comes from one line:
+
+    re.search(r"(deletion_candidates|ckpt_candidates).*\.(md|txt)$", n)
+
+over `runs/`. Measured on the tree at `6bc6f0a4`: **6 files match, 3 deletion lists do not** -- `pod_disk_candidates_20260903.txt`, `pod_only_code_candidates_0906.txt`, `tilerl_22_prune_list.md`. The check is named for deletion lists and enumerates files whose names contain two specific strings. Nobody chose to exclude those three; they were never in the population, and nothing says so. This is R11's exact shape and the fourth-plus instance: **a predicate set answers the question it enumerates, not the one it is named for.**
+
+**The ordering constraint, and it is the part worth keeping.** The obvious fix -- widen the regex -- is the wrong first move, and I measured what it does rather than guessing. Running the check's own criterion over the three unmatched files: two produce zero hits, and `tilerl_22_prune_list.md` produces **7**:
+
+    runs/ab_base_a_first.log, runs/t57_recompile.log, runs/data_leg_206m_8b.log,
+    runs/pretrain_15b_s1.log, runs/b0_17_readout.log, runs/t57_steady.log, runs/t56_profile.log
+
+All 7 are tracked, all 7 sit in a markdown table -- and the table is titled **"The 7 stale snapshots, refreshed 2026-09-04"**, with columns `was` and `now`. It is a REFRESH record, not a deletion list. Every one of those files was made *more* complete; `ab_base_a_first.log` went from 8,359 bytes to 3,819,506. Widening the population first therefore produces seven FAILs that are all wrong, on the document that records work being done correctly.
+
+**And a wrong FAIL is not a neutral cost, it is how a check dies.** The operator who hits seven false refusals on a correct document does not narrow the criterion; they turn the check off, or add the file to an exclusion list, and the widening that was supposed to increase coverage ends by decreasing it. So: **fix the criterion before widening the population.** The criterion here needs to distinguish "this table lists files to delete" from "this table lists files that changed", which the current cell-shape test cannot -- it reads any bare path in any table cell as a candidate.
+
+That the check already contains a comment about exactly this class ("prose naming a file is not a deletion target ... a check that flagged it would be turned off") and still cannot tell a refresh table from a deletion table is the measurement: the author saw the failure mode, wrote the reason down, and the criterion still does not implement it.
+
+Cost: ~40 min, no defect shipped -- the narrow population meant the wrong FAIL never fired. That is the uncomfortable part: **the two defects were cancelling.** A too-narrow population hid a too-weak criterion, and fixing either one alone makes the check worse than leaving both.
+Evidence: `scripts/harness.py::check_deletion_list_no_tracked` (the regex and the cell test); `runs/tilerl_22_prune_list.md` under the heading "The 7 stale snapshots, refreshed 2026-09-04"; the three unmatched filenames under `runs/`, listed above; hit counts from running the check's own cell criterion over each.
+open: no check asserts that a population built from a filename pattern covers the files a human would put in that category. The cheap half is per-check: a check whose population comes from a pattern must print the count it matched AND the count it skipped in the same directory, so a reader sees the population rather than inferring it from the check's name.
+
+## R12. An assertion whose result is anti-correlated with its own name
+
+### §279 (2026-09-08, R12)
+
+**Three lines, each green, each certifying something its name did not describe, plus a fourth written up under R11. Running the suite cannot find any of them: the suite is green exactly when the assertion is wrong.**
+
+This is not R2. R2 tests the wrong property and a known-answer world catches it. Here the world that would turn the assertion red is the world in which the code is CORRECT, so there is no input to supply.
+
+**Instance 1 -- the ordering assertion, `scripts/test_sft_holdout_gate.py`. STILL LIVE ON MAIN at `test_sft_holdout_gate.py:64`; the rebuild is task #33 (branch b0-40), and this paragraph is written in the present tense because the defect is present.** The line is named "gate is upstream of the ckpt load" and asserts `"nonexistent_ckpt" in o or "No such file" in o`, on the reasoning that reaching the checkpoint error proves the gate let the pack through. That string appears whenever the script reaches the model load at all -- including when the gate sits BELOW it and the checkpoint error fired first, before the gate ran. Green in both orderings, and *greener* in the broken one: move the gate after the load and the message arrives sooner.
+
+Reading `sft_math.py` to write the replacement turned up a second finding the assertion had been hiding: **the name is false as well as the method.** `torch.load(args.resume, ...)` is at `sft_math.py:199`; the holdout gate is at `:265` (stale branch) and `:274` (unstamped branch). The load is UPSTREAM of the gate, not downstream of it, so the property the line claims to certify does not hold and never did. A test that cannot go red also cannot report that the thing it is named for is backwards. The replacement therefore asserts the order that is actually true, read out of the source rather than out of a message, with both indices asserted non-None so a rename goes red instead of vacuously green:
+
+    _load = next((i for i, L in enumerate(_src) if "torch.load(args.resume" in L), None)
+    _gate = next((i for i, L in enumerate(_src) if '"holdout_fp" not in d' in L), None)
+    check("ckpt load is upstream of the gate (order read from sft_math.py)",
+          _load is not None and _gate is not None and _load < _gate, ...)
+
+**Instance 2 -- the vocab-mismatched probe.** A run to answer "does the unstamped-pack gate refuse" printed `REFUSED: False`, read as "the guard is broken". The pack's `vocab_id` did not match the checkpoint's, so the assert at `sft_math.py:239` fired first -- before the holdout gate at `:265`. The process refused for a reason the probe was not asking about, and the readout collapsed both refusals into one boolean named for only one of them. The decisive run needed a pack that is unstamped AND vocab-matching, so the guard under test is the only one left standing; `sft_all.pt` supplied it and the gate refused with its own message. **The guard was intact; the test was broken.** General form: when several guards sit on one path, a boolean named for one of them means nothing unless every other guard is satisfied.
+
+**Instance 3 -- an exclusion that has never been triggered.** `reachability.py`'s directory walk skips `.venv`, and that entry read as obviously correct in review. It had never once executed: no worktree in this repo contains a `.venv`, and the only tree that does is the integration tree, where it holds **13,128 `.py/.sh` against the 537 the repo owns** -- 96% of the paths a walk from the root would visit. The scanner had never been run there. So the line was green for the whole of its life for a reason unrelated to its correctness, and it inherited that greenness from a list I copied rather than from any judgement I made. **An exclusion that has never been triggered and a correct exclusion are the same source text**, and only the second one survives someone editing the list. The fix is not a better exclusion but a printed one: the run now states its tree, its population, and its exclusions, so a reader sees which of the two worlds the number was taken over.
+
+This one is filed here rather than under R14 deliberately, and the first filing was wrong. R14's signature is "the tool's own source appears as a source in its own output"; `.venv` never executing has nothing to do with the tool searching itself. It belongs with the other two above because the failure is identical: **it passed, and its passing carried no information.**
+
+**Instance 4 -- §278's probe** is the same shape one level up and is written up there.
+
+**The layer 4c added, and it is the one that survives being on alert for the others: a mutation run's own summary line can mislead.** A mutation reported one failing assertion. Two assertions were meant to cover that guard and only one did; the summary named the one that fired and said nothing about the one that did not, and "1 assertion caught it" was read as "the guard is covered". **The count of red assertions is not the identity of the red assertions.** Reading WHICH assertion fired, per mutant, is the only form that answers the question -- and it is why the mutation runs in this session report per-mutant which named assertion died, rather than a count.
+
+Cost: ~2h across the three, and one wrong report to a peer that a guard was broken when the test was.
+Evidence: `scripts/test_sft_holdout_gate.py` as landed; `sft_math.py:239` and `:265`; `scripts/reachability.py`'s EXCLUDED_DIRS and the population line its output now prints; §278.
+open: no check can find an assertion anti-correlated with its own name in general. The machine-checkable half is per-suite: every mutation run must print the NAME of each assertion that fired, never only a count.
+
+## R13. Information already present, but not in a form that can be treated as a conclusion
+
+### §280 (2026-09-08, R13)
+
+**Four times in one session, the fact needed was already written down, already measured, and already in the file being read -- and was read past every time.** The failure is not missing information. It is information whose form does not make it usable as a conclusion.
+
+**Instance 1 -- a measured conclusion sitting in a comment.** `scripts/merge_main.sh` carries, in a comment: *"main moves faster than a commit takes on a repo with six sessions"* -- with the measurement behind it, a tree that went one commit behind BETWEEN a clean `git merge main` and the commit two seconds later. That sentence rules out "merge first, then commit" as a convergent strategy. Two sessions read that file the same night and both treated the deadlock as a state they could retry into: five attempts and four attempts respectively. **A measured conclusion nobody treats as a conclusion is worth the same as no conclusion.**
+
+**Instance 2 -- "nothing cites it" impersonating evidence.** The deletion sweep ran on the criterion "no doc, ledger, script or fact names this file". That is a fact about today which one added line reverses. The stronger criterion -- RUN it and find it does nothing, `already done; skipping`, `appended 0` -- is a property of the file that no future caller can change. Both look like grounds for deletion in a PR body. Of ~270 scripts, exactly 2 could produce fixed-point evidence; everything else was resting on the weaker one while being read as the stronger. **3b's boundary on this, which is the part that makes it usable: fixed-point beats unreferenced only when the target set is CLOSED.** Verified by `ast`, not assumed: `e1_close_open_rows.py`'s `CLOSE` and `e1_drop_reasons.py`'s `REASONS` are literal dicts of 9 and 5 keys, so no future `e1-38` can wake them. Where a script derives its targets from a ledger, `appended 0` is a fact about today's ledger and tomorrow's row revives it -- there the zero says nothing about the file.
+
+**Instance 3 -- a half-correct comment, the hardest form.** `scripts/exp.py:582` describes a fabricated row as carrying `cmd=''`, `hypothesis=''` **and no commit**. The code 81 lines later at `:663` writes `"hypothesis": "", "commit": git_commit()`, and `git_commit`'s docstring at `:142` opens `Never ""`. The comment is RIGHT about `hypothesis` and wrong about `commit`, in one sentence, in one file. A peer nearly derived a wrong criterion from it. **Two claims joined in one sentence share credit: verifying the half that matches invites trusting the half that does not.** This one never even moved contexts -- it sits 81 lines from its own contradiction.
+
+**Instance 4 -- a count read as a different count.** A controller answered "how many harness check items are there" with 71, taken from a run's `71 PASS` line. That is the number that PASSED. The total is 109, read from source with `ast`. The output line was correct about what it reported and said nothing about being narrower than the question. Same family as the monotone-aggregate case in §281: **a number entirely correct in its own context becomes wrong under a different question, and neither side raises an error.**
+
+Cost: ~3h across the four, one wrong strategy pursued nine times between two sessions, one nearly-published wrong criterion.
+Evidence: `scripts/merge_main.sh` (the six-sessions comment); `scripts/exp.py:142`, `:582`, `:663`; PR #91's body; the 109-vs-71 count from `ast` over `harness.py`'s `CHECKS`.
+open: the machine-checkable slice is narrow but real -- a comment naming a field ("no commit") beside code assigning that field is a source-level contradiction a scanner can find. The rest is manual.
+
+### §281 (2026-09-08, R13)
+
+**A monotone improvement in an aggregate hid a defect that per-item output made obvious in one line.**
+
+Adding three edge kinds to `reachability.py` moved unreachable files from 79 to 56. Direction correct, magnitude plausible: more edges, fewer orphans. **Any review reading only the total would have passed it, and so would I.**
+
+Printing WHICH files were rescued and BY WHAT showed 12 of the 23 rescued by comments in `reachability.py` itself -- see §282. The aggregate could not show it, because a defect that rescues files moves the total in exactly the direction a correct fix does.
+
+The counterfactual is the whole point: **there is no threshold on the total that separates the two.** 79 to 56 is as consistent with the fix working as with the tool vouching for its own annotations. Only the per-item source column distinguishes them.
+
+Cost: caught before commit, ~20 min. Would have been permanent: the rescued files could never appear on a candidate list again.
+Evidence: `scripts/reachability.py` as landed, and its per-item `REACHED FROM` column.
+open: `report an aggregate without per-item attribution` is not checkable in general. Per-instance it is: a tool whose output is a list must print, for each item, the reason it is on the list.
+
+## R14. An instrument searching a space that contains its own text
+
+### §282 (2026-09-08, R14)
+
+**Detectable signature: the tool's own source file appears as a SOURCE in its own output.** That is the check, and it is why this is a rule rather than a story.
+
+Separate from R13 because the fix differs. R13's fix moves a conclusion somewhere it gets executed. This one's fix removes the instrument from its own search space -- no amount of restating the conclusion helps, because the tool is reading itself correctly.
+
+**Instance 1 -- my own, `scripts/reachability.py`.** `comment_edges()` reads every file's comments for path citations. `FATE` names 47 paths in prose. On the first run the tool rescued 12 files from its own deletion-candidate list -- every path it had ever ruled `KEEP` on -- purely because it had annotated them. A past verdict is not a citation. **With the self-exclusion: 70 unreachable, 15 of them carrying a KEEP ruling. Without it: 56, and those 15 could never appear on the list again.** The tool would have permanently vouched for exactly the files it had previously reported as candidates.
+
+**Instance 2 -- `pgrep -f` matching its own command line.** A pattern searching the process table finds the process running the search. Same signature: the instrument is a member of the population it enumerates.
+
+**Instance 3 -- `harness.py:1755` copying `runs/mem_probe_base.sh` to build a broken world.** Verified by reading it: the selftest copies that file into a temp tree and strips `--anneal_frac` from it to construct the violation. A name-based reachability scan reads that as no citation at all -- and deleting the file turns a green check into no check. The inverse of instance 1: there the name's presence was not evidence of use, here the name's absence is not evidence of disuse. **A name is not a call, in either direction.**
+
+Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
+Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
+open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
+
+### §284 (2026-09-09, R3)
+
+**A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
+`api_cloze` metric was run on both anneal null arms. Its `bounds` field came out byte-identical on
+the two arms:
+
+    mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+
+The arms are `mix_200m_4b_annealN.json`, seed **1337** and **1338**, world **4**, 7,629 steps. Those
+bounds are the memory-layers program's reference run (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`). Identical bounds across two checkpoints with different seeds is the
+proof it is a fixed reference rather than a per-checkpoint derivation -- one checkpoint alone could
+not have shown it.
+
+The metric partitions its items into rows the model has SEEN and rows it has not, and reports the
+accuracy gap as a memorisation readout. Here the partition was drawn on a run neither checkpoint is,
+so "seen" is rows these checkpoints never saw. **The number that produced was `within_region_gap`
+0.0008 on N1 and exactly 0.0000 on N2** -- no signal, which is what a meaningless partition produces
+and exactly what a clean result looks like. Nothing in the output says the split does not apply.
+
+This is not §4's shape. There the identity was MISSING and the artifact was rebuilt. Here the
+identity is present, correct, and stamped into the output by a tool that did its job -- and is then
+read past at the point of use. `vocab_id` and `.srcfp` both close this loop: they are compared at the
+read and refuse on mismatch. `api_cloze`'s bounds are compared to nothing.
+
+Found by reading two score-matrix rows side by side while computing a seed-only noise floor; the
+metric was not under suspicion. What made it visible was having two arms: one row's bounds look like
+provenance, two identical rows from different runs look like a constant.
+
+Evidence: `runs/score_matrix.jsonl`, rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`,
+field `metrics.api_cloze.bounds`; `runs/experiments.jsonl` row `anneal_n2_0908_score`. Confirmed
+independently by 44, who also noted the same rows' `domain_bpb` metadata self-reports
+`mix_200m_4b_annealN` -- the two metrics in one record disagree about which run produced the
+checkpoint.
+open: de-84 -- `score_matrix` must SKIP a metric whose stamped bounds do not describe the checkpoint
+being scored, rather than print a number. Filed by 44 at `d819a9ab`.
+
 ## R10. What happened only on the pod did not happen
 
+### §283 (2026-09-08, R2)
+
+**A verification tool's failure mode is isomorphic to what it verifies, so its breakage reads as a pass.** Three instances in one hour, on one mutation sweep over the pre-commit shared-repo guard:
+
+    CRASH LEFT THE MUTANT IN     the sweep mutated scripts/hooks/pre-commit in place and
+                                 restored in a finally. Killed mid-run, the finally never
+                                 fired, and M2 -- "hash nothing", the mutant that makes the
+                                 guard measure nothing -- stayed resident. `pre-commit
+                                 --selftest` then printed ok (14 worlds), because it was
+                                 testing the mutated copy.
+    ENVIRONMENT ERROR READ AS    rewritten to mutate a copy under /tmp, where the copy could
+    "ALL MUTANTS KILLED"         not resolve its own ROOT. All five mutants died on
+                                 FileNotFoundError, none reached an assertion, and the sweep
+                                 printed ALL MUTANTS KILLED.
+    AN ANCHOR THAT NEVER         M5's search string was mis-escaped, so the mutation was never
+    MATCHED READ AS A PASS       applied and the unmutated file passed.
+
+Each one produces the reading "verified" from the fact of not working. That is the same shape as the guard under test: a shared-repo digest that hashes nothing cannot fire, and a check that cannot fire is indistinguishable from a check that found nothing. **The tool and its subject fail the same way, which is why running the tool cannot detect it.**
+
+The first instance is the dangerous one, because it leaves active evidence pointing the wrong way. A green selftest is normally the strongest signal available; here it was produced BY the defect. Related to b0's observation the same night -- an exclusion that never executes and a correct exclusion are identical in code -- but worse: that one is silent, this one testifies.
+
+Fixes, in the order they were tried, and only the last is durable:
+
+- Mutate a copy, never the tree. Removes instance 1. A crash can no longer disarm the subject.
+- Require the assertion, not a nonzero exit. `rc != 0` collapses "the property failed" with "the process died"; the sweep now demands `pre-commit selftest: FAIL` in the output. Removes instance 2 as it presented, and nothing more -- it is a patch for one spelling of the failure.
+- **A positive control that MUST SURVIVE.** M0 is a behaviour-preserving comment edit; if it is reported killed, the sweep is measuring something other than the property. Without one, "all mutants killed" cannot distinguish a working sweep from a sweep that ran nothing, since both print the same line. This is 4c's ruling and it is the general form: every all-negative suite needs one case that must come back negative, or the aggregate has no discriminating power.
+
+Cost: none realised, and that is luck rather than design. The resident M2 was found by grepping the file for the fix's own string before committing; had that commit landed, the guard would have been silently inert on main with every gate green. The `--no-verify` this session used minutes earlier to escape an unrelated deadlock would have carried it in without a hook run.
+
+
+### §287 (2026-09-09, R2)
+
+**A pre-registered criterion that fires on a known-answer negative world: the control arm was
+silently a replicate of the arm it is compared against.** Caught while the arm was at step 2000 of
+7,629, before its number existed.
+
+The design: three arms at the 4B point. N1 and N2 share a mix and differ only in `Cfg.seed`, so
+`F = |N1 - N2|` is the noise floor. R shares N1's seed (1337) and carries the reweighted mix, so
+`|R - N1|` was registered as carrying "the reweight and nothing else". The criterion:
+`|R - N1| <= F` means the reweight had no measurable effect.
+
+**The premise "same seed, so only the reweight differs" was never checked against `build_mix`.**
+When it was, `train.py:2791-2810` says:
+
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
+    g = torch.Generator().manual_seed(Cfg.seed)
+    for frac, key in phases:
+        want = int(rows * frac * d.get(key, d["weight"]))
+        idx  = torch.arange(used[name], used[name] + want) % len(pool)
+        plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+
+The MAIN phase is built first, from `d["weight"]`. A structural diff of the two mixes shows they
+are byte-identical outside the `_comment` and nine `anneal` values -- `total_tokens`, `epochs` and
+every `weight` agree to the last digit. `used[]` starts at 0, so `idx` and `ph` match, and
+`randperm` draws from one generator seeded with 1337 in both runs. **N1 and R therefore consume the
+same rows in the same order for the first 6,866 steps, and the reweight cannot act until step
+6,866.**
+
+Confirmed in the logs rather than only in the code, which is what makes it a measurement:
+
+    step   N1      R
+      10   6.615   6.616
+      20   5.683   5.683      <- identical
+      30   5.587   5.587      <- identical
+      50   5.220   5.215
+     100   4.811   4.817
+
+Two runs from the same state, separating by floating-point nondeterminism.
+
+**So `|R - N1|` at the read point is drift over 7,629 steps plus the reweight over the last 763,
+and the criterion cannot tell them apart.** The drift term measured on the arms themselves:
++0.001, -0.001, +0.011, +0.016, -0.010 at steps 500/1000/1500/2000/2500, with the reweight inactive
+throughout -- no trend, and it changes sign twice. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
+`F` carries a drift term of its own, and two samples give a range rather than an upper bound on a
+third run's drift.
+
+This is R2's defining shape. R's first 6,866 steps are a **known-answer negative world** -- a
+region where the effect is zero by construction -- and the criterion fires there, reading 0.016 and
+climbing. The R1 cause sits underneath it: a premise stated in the arms table ("differs from N1
+only in the mix") was carried into a decision rule without being checked against the code that
+builds the thing it describes.
+
+**The fix, and it costs nothing because the data is already being produced.** The criterion is
+unchanged; a companion number becomes required. `D = |R - N1|` at step 6500, the last periodic read
+before the anneal begins, is the same-seed drift measured on these very arms. A verdict that the
+reweight moved val requires `|R - N1|` to exceed **both** `F` and `D`.
+
+**Two limitations, stated rather than left to be found.** `D` is read on the 20-batch periodic
+estimator and the final gap on the 100-batch epoch-end one, so `D` bounds the drift's *scale* and
+is **not subtractable** from the final number -- §286's estimator trap, one entry later and in the
+same experiment. And one same-seed pair is one drift sample, not a distribution.
+
+**The residual, and why no extrapolation of it is available.** Drift can still grow between step
+6500 and 7629, so "exceed both" keeps a false-positive path. Two models were put on the table and
+**both are dead, one of them mine.**
+
+44 first estimated the drift as `sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path.
+Fitted through the last point it back-predicted +0.008 at step 500 against an actual +0.001, and
++0.011 at 1000 against an actual -0.001, so it missed the shape. I corrected it with a linear fit
+over the points from 1000, which tracked all three (+0.000 / +0.009 / +0.017 against -0.001 /
++0.011 / +0.016) and extrapolated to 0.113, over `F`, and I concluded the false-positive path was
+"not demonstrated to be narrow".
+
+**The next read killed both.** At step 2500 the sqrt model predicted +0.018 and the linear model
++0.026; the actual is **-0.010**. My rebuttal rested on a line through three points that the fourth
+point destroyed, and I had stated its consequence more strongly than 44 stated theirs. Recorded
+here rather than quietly fixed, because the failure is the entry's own subject one level up: a
+model fitted to a handful of points, believed because it fit them.
+
+44's mechanism, supplied when asked for one and worth keeping even though its specific reading did
+not survive: the exponent is an interval, not a point. The parameter difference is a random walk,
+so `|dtheta| ~ sqrt(t)`. The val difference is `dL ~= grad_L . dtheta + 1/2 dtheta^T H dtheta`,
+whose linear term goes as `sqrt(t)` and **carries a sign**, dominating early while `grad_L` is
+large, and whose quadratic term goes as `t` and is **always positive**, taking over once
+`grad_L -> 0`. So the true exponent lies in [0.5, 1] and the observed shape says which regime you
+are in. 44 read the 500/1000 sign flip followed by growth as the quadratic taking over -- the
+`t`-linear regime. **The step-2500 reversal falsifies that reading**: a term that is always
+positive cannot produce it, so the sign-carrying linear term is still dominant at 2500 and the
+crossover has not happened.
+
+What five reads support, and nothing more: `|R - N1|` stays within [-0.010, +0.016], with no trend
+and two sign changes. That is consistent with near-zero true same-seed drift plus the periodic
+estimator's own sampling noise -- and that noise is known to be large on exactly this comparison,
+since the N1/N2 same-step gaps ran 0.067-0.088 on 20 batches against 0.048 on 100. **No
+extrapolation to step 7629 is supported by this series, including the comfortable one that the
+drift stays small.**
+
+That is the argument for `D` rather than a weakness in it. `D` is *measured* at step 6500, not
+extrapolated to it, and extrapolation is precisely what five points have now shown cannot be done
+here. The verdict rule stands and rests on no model of how drift grows.
+
+The measurement that settles it is a fourth arm -- an exact rerun of N1 at seed 1337 on
+`mix_200m_4b_annealN` -- which is not scheduled. It is named in the prereg amendment so its absence
+is visible rather than implied.
+
+Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707 s/step, about 2.7
+hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
+asking why two arms that should track each other were diverging at all.
+Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values). The
+boundary the code computes -- 0.9 x 7629 = 6866 -- was later confirmed at RUNTIME by the arm's own
+phase label, `step 6800 [main]` then `step 6900 [anneal]`, which is the independent check the entry
+originally lacked: every claim here was read off the source, and a phase built from a different
+field would have produced the same reading of the same lines;
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3` (amendment 1 `e24268fd`, corrected at
+`c29d6cc0`; amendment 3 redefines D as the spread rather than one draw);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column, and `runs/anneal_r_vs_n1_drift_0909.tsv`
+for R against it -- committed at step 5500 with the arm still running, not at close, because the
+drift it records is what the criterion reads and a series that arrives after the verdict cannot
+constrain it. §286's fix applied before the fact this time.
+open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
+one thing; the assertion would be over the built plan, not over the mix files.
+
+
+### §288 (2026-09-09, R4)
+
+**A socket field accepts a dead address and every writer takes it: two sessions independently
+wrote a "socket" built from a listagents ref within one hour.**
+
+de's de-85 rows (`runs/tasks.jsonl`, ids de-85) carry `"socket": "uds:/tmp/cc-socks/4e353c.sock"`
+-- `4e353c` is de's listagents ref, not a socket; no such file ever existed. One row knows it:
+"Note the socket in this row is a placeholder built from de's listagents ref, not read from
+runs/roster.json -- correct it before relying on it." fb made the identical substitution
+dispatching de-85 the same hour. The field's grammar admits any `uds:...` string and no writer
+checks the file exists, so a value that looks like an address is accepted as one, and anything
+sent to it reaches nobody.
+
+Why the field invites it: a listagents ref is a hex string of the same shape as a socket suffix,
+and the roster prints both in adjacent columns (`listagents_ref` beside `socket`). The fix is a
+check at the write: a socket row whose path does not exist refuses, the way a card claim refuses
+a held card. R13 is the secondary reading -- the ref was resolvable information stored in a field
+that cannot use it -- but the failure that bit is R4: the write never failed.
+
+Evidence: `runs/tasks.jsonl` de-85 rows (2026-09-09 02:05); the roster note corrected in #119
+("A ref is not a socket, and a row carrying one addresses nobody"). Cost: not measured -- no
+message is known to have been lost, because a lost message leaves no trace; that is the shape.
+
+### §289 (2026-09-09, R11)
+
+**A rebuild from the register answers "what work is registered", not "what work was assigned" --
+two real items were silently absent from a complete-looking assignment.**
+
+The 2026-09-09 03:3xZ rebuild of the six-person assignment enumerated `runs/tasks.jsonl`. Two
+items assigned in conversation had no row: b0 named `b0-48` as ready to push (zero rows in
+tasks.jsonl), and e1's "spec-close package" -- `prereg_registers_recipe_values` -- appears zero
+times in tasks.jsonl and zero times in harness.py. Neither existed to be rebuilt, so the rebuild
+dropped both while looking complete.
+
+The population the rebuild needed is "work a session is actually doing", which lives in messages
+and branch heads; the population it enumerated was "work with a ledger row". R11's fix is
+structural: the population must come from the source, not a list -- here, asking each owner
+"what are you doing that has no row" before declaring the assignment complete, or requiring
+assignment to exist only when registered. The register cannot show the work it does not contain,
+and a rebuild that asserts completeness against the register asserts against a list.
+
+Evidence: `grep b0-48 runs/tasks.jsonl` -> 0 rows (2026-09-09); `grep prereg_registers_recipe_values`
+-> 0 in tasks.jsonl and 0 in harness.py; the rebuild is `runs/controller_board.md`'s assignment
+section (b397eb97). Cost: none realised -- both surfaced in the same hour's conversation and were
+re-attached; the cost that did occur is that the rebuild's completeness was unverifiable from its
+own output.
+
+### §292 (2026-09-09, R3)
+A symlinked artifact deploys from a working copy nobody owns, so its live version is decided by a checkout rather than by the branch everyone reads. `.git/hooks/pre-commit` is a symlink resolved against the INTEGRATION tree's worktree, so every session's commit runs `/Users/bytedance/code/aupai/scripts/hooks/pre-commit` -- that tree's working FILE, not main's tip. Two failures follow from the one fact, an hour apart, and the second is the one nobody had written down.
+
+FIRST HALF, already in AGENTS.md: an edit made in a branch worktree does not run until it is merged. `eval/code_fewshot.py` was added to the hook's `SELFTEST_FILES` on `b0-47-code-decode` while the file accepts `--selfcheck`, not `--selftest`. Every commit on that branch ran main's older hook, which had no such registration, so the mismatch could not fire. It went live the instant PR #105 merged: argparse exits 2, the hook reads that as the selftest failing, and **every commit that stages the file is refused -- which is every `git merge origin/main` into a branch**. Measured minutes after the merge. It does not catch a cherry-pick, which is why b0's own rebuild escaped it and the block looked narrower than it was.
+
+SECOND HALF, and the new shape: **merging the fix does not deploy it.** PR #136 landed the `SELFTEST_FLAG` entry on main at `bb44710b`, and the identical refusal reproduced afterwards, because the integration tree's checkout was still at `839400c0`. `grep -c` on the deployed file returned 0 while main held the entry. The tree's files advance only when a `merge_main` runs against a CLEAN tree -- earlier runs had printed "the integration tree is dirty, so its files were NOT advanced" -- so main and the running hook drift apart on a condition nobody watches. Both halves are invisible from where a session stands: nothing reports that the running hook is not main's, and **the check that would notice cannot run, because the thing that is stale IS the checker**.
+
+What made it recoverable rather than worse: the tree had DIVERGED, not merely fallen behind -- it carried de's `48ff83d9` review row, absent from main -- so advancing it by hand would have discarded another session's commit from the checkout. The fix was the normal merge of that row, which advanced the tree's files in the same step.
+
+Evidence: `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` resolving into the integration tree; `.hookstaged_code_fewshot.py: error: unrecognized arguments: --selftest` reproduced after `bb44710b`; `grep -c 'code_fewshot.py": "--selfcheck"'` returning 0 on the deployed file and 1 on main; `git log --oneline origin/main..839400c0` showing the two-commit divergence; hook line 1298 (`SELFTEST_FILES`), line 2225 (`SELFTEST_FLAG`), `eval/code_fewshot.py:209`. Verified by 3b end to end on a worktree at `7d314fcd`, running the patched hook directly with the file staged: clean tree green and `--selfcheck` 6/6 rc=0, against a one-token mutation of the known-answer comparison giving REFUSING 0/6 rc=1 -- red in both directions, which is what says the selftest discriminates rather than merely passes. **It had never run under the hook before this.**
+
+open: no check compares the deployed hook against the hook on main. It is one `git diff origin/main -- scripts/hooks/pre-commit` in the integration tree, reported rather than enforced, since a session cannot fix another tree's checkout; the value is that the gap becomes visible instead of being discovered by a refused commit. None exists.
