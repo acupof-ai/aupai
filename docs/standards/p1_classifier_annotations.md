@@ -172,10 +172,19 @@ model is downloaded to the pod; no suitable small embedder exists there today
 (pod-local models are the retired hybrid checkpoints and the 27B teacher). The
 27B's hidden states were the alternative (phi-1 used a codegen model's
 embeddings) and are rejected on inference cost: the classifier must score the
-full corpus (~11.8M docs at the head truncation), and a 110M embedder does that
-in hours on one card where the 27B takes days on five. The classifier scores
-the same 350-char head the teacher labeled, so train and inference see the same
-truncation.
+full corpus (~11.8M docs at the head truncation), and a small embedder does
+that in hours on one card where the 27B takes days on five. The classifier
+scores the same 350-char head the teacher labeled, so train and inference see
+the same truncation.
+
+Model as built: `Snowflake/snowflake-arctic-embed-l` (335M, 1024-dim, CLS
+pooling per its 1_Pooling/config.json), fetched from ModelScope. The 110M v1
+(`Snowflake/snowflake-arctic-embed`) does not exist on ModelScope and
+hf-mirror returns "Repository not found" for it, and huggingface.co is
+unreachable from the pod (errno 99); the -l is the same family and recipe and
+was the only reachable member. Measured: 100K heads in 163s on one card
+(~613 docs/s, batch 256, fp16), so the full 11.8M-doc corpus is ~5.3h on one
+card -- the "hours on one card" estimate holds at 335M.
 
 Evaluation (acceptance in `p1_data_recipe.md`): held-out AUC against the
 teacher labels, reported POOLED and PER DOMAIN (4c, 2026-09-09) -- the three
@@ -210,3 +219,61 @@ docs overlap dd09|b2v2 (4c ruled them deleted, separate pass, 2026-09-09);
 the token count is re-measured after the deletion, not ratio-extrapolated.
 The gross pool is 18.25B tokens and near-unique (starcoder body overlap
 0.3-0.75%).
+
+## Threshold ablation results (e1, 2026-09-10)
+
+Embeddings: 100K heads x 1024, L2-normalized, 163s on card 7. Head: logistic
+regression per cut (>=2/>=3/>=4), 80/20 stratified split seed 42, 300 Adam
+steps. AUC is rank-sum with ties averaged (self-test: perfect separation
+1.000, random 0.500 +- 0.03). Test n = 19,998.
+
+AUC, held out:
+
+| cut | pooled | dd09 | b2v2_dd | rp1t_dd09 | <2KB | 2-10KB | >10KB |
+|---|---|---|---|---|---|---|---|
+| >=2 | 0.909 | 0.909 | 0.898 | 0.891 | 0.916 | 0.894 | 0.884 |
+| >=3 | 0.902 | 0.904 | 0.883 | 0.879 | 0.910 | 0.887 | 0.876 |
+| >=4 | 0.945 | 0.939 | 0.936 | 0.920 | 0.938 | 0.908 | 0.942 |
+
+The acceptance criterion (held-out AUC vs teacher labels) is met at all three
+cuts. No domain collapses (min 0.879). The length-as-proxy check passes in
+the direction that matters: the >10KB bucket is not above the <2KB bucket at
+any cut (it is lower for >=2/>=3, level for >=4), so the classifier did not
+learn length as a proxy.
+
+Operating-point sweep on the test set, doc and byte keep rate with precision
+and recall against the teacher cut:
+
+| cut | doc keep | byte keep | precision | recall |
+|---|---|---|---|---|
+| >=2, ~17% doc | 0.170 | 0.091 | 0.866 | 0.484 |
+| >=2, ~25% doc | 0.250 | 0.142 | 0.790 | 0.650 |
+| >=3, ~17% doc | 0.170 | 0.097 | 0.806 | 0.521 |
+| >=3, ~25% doc | 0.250 | 0.151 | 0.714 | 0.679 |
+| >=4, ~3% doc | 0.030 | 0.007 | 0.457 | 0.446 |
+
+Two structural findings:
+
+1. **doc and byte keep rates diverge by ~2x.** At 17% doc keep, byte keep is
+   9-10%. The classifier's kept set skews to short docs (long docs in this
+   corpus are mostly boilerplate/config-heavy and score low). Any keep rate
+   quoted against phi-1's ~17% must say which口径: phi-1's 35M files -> 6B
+   tokens is a file-count keep with a token result, and our byte口径 at a
+   comparable doc keep is roughly half.
+2. **The >=4 head cannot mine the textbook tail.** At the teacher's own >=4
+   rate (3.07%) the head's precision is 0.457: the top 3% by classifier
+   score is less than half score-4. The >=3 -> >=4 cliff is real in the
+   teacher labels (the corpus holds ~3% textbook-clean code) but the head
+   embedding does not separate that 3%; >=4 is not an operating point, it is
+   a ceiling on what this classifier can deliver.
+
+The operating point is a quality decision, not reverse-engineered to a token
+target (4c, 2026-09-09): the table above is the input to it. The >=2 vs >=3
+choice is the prior's (score-2 is "glue code, nothing to learn", exactly what
+the filter exists to remove; score-3 is real logic), and the sweep says >=3
+costs ~6 points of precision at 17% doc keep (0.866 -> 0.806) for a stricter
+quality floor.
+
+Per-domain tok/byte, measured (330MB sample per domain, tokenizer.json, +1
+eos/doc): dd09 0.306557, b2v2_dd 0.306274, dedup08 0.278723. These convert
+byte keep to token keep; the stats-file ratios are not used.
