@@ -7,7 +7,8 @@ import glob, json, multiprocessing as mp, os, sys
 ROOT = "/work/aupai"
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 DOM = os.environ.get("COUNT_DOMAIN", "code_dedup08")
-SHARDS = sorted(glob.glob(os.path.join(ROOT, "data", "corpus", DOM, "*.jsonl")))
+BASE = os.environ.get("COUNT_BASE", os.path.join(ROOT, "data", "corpus"))
+SHARDS = sorted(glob.glob(os.path.join(BASE, DOM, "*.jsonl")))
 _TOK = None
 
 def tok():
@@ -40,7 +41,7 @@ def count_shard(shard):
     return kept, tokens, tb
 
 def main():
-    assert SHARDS, f"no shards under data/corpus/{DOM}"
+    assert SHARDS, f"no shards under {BASE}/{DOM}"
     with mp.Pool(int(os.environ.get("COUNT_WORKERS", "16"))) as pool:
         counts = pool.map(count_shard, SHARDS)
     kept = sum(c[0] for c in counts)
