@@ -223,7 +223,7 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-16 incidents (10 infra, 5 model), ~3h each, 45h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+17 incidents (11 infra, 5 model; one incident uncategorised -- the split has never summed, 10+5=15 against a stated 16, and this line keeps that defect visible rather than inventing the missing element), ~3h each, 51h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
@@ -231,9 +231,12 @@ Cannot see: whether a number's population matches the vision it is reported unde
 - §256: a broken world was red for a reason other than its mutation — built on a non-git directory, so it failed on absent git and stayed red with its planted row deleted. The selftest counts such a world as coverage while the check it guards is never exercised. `156 of 156` was the second tell: failures equal to the total is an absent comparison side, not N defects.
 - §265: a GREEN pull request turned the base RED, and every other open PR then failed on a defect none of them contained. PR CI runs on the merge of the PR into the base as it stands at that moment; nothing re-runs the base's own selftest against the base afterwards. PR #7 was green when merged and carried a `globals()["ROOT"]` patch into main, where the core-reexport guard flags that pattern by name; the fix was on a separate branch, because the guard first fired on CI for a LATER PR. #4 and #5 each burned two rounds on a message naming a file they do not touch, so the reader's first hypothesis is their own change. Until a post-merge job reads the base: a PR failing on code it does not touch is a base failure until proven otherwise, and merging main into it is the test.
 
-Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204); whether a loud failure was READ correctly by the command that checked for it (§251); whether a broken world is red for its own mutation or for something else (§256) — checkable by running each `_broken_*` twice, priced out at 104 worlds.
-
 - §288: a socket field accepts any `uds:...` string and no writer checks the file exists; two sessions wrote a "socket" built from a listagents ref within one hour (de-85's rows, and the dispatch of them). The ref is the same shape as a socket suffix and the roster prints them in adjacent columns. Anything sent to the placeholder reaches nobody; the write must refuse a path that does not exist.
+
+- §291: a wall-clock gate samples a PHASE of the operation it interrupts, and the phase decides what state the kill leaves. N1's first launch retokenized (caches stamped 42, `--seed 1337` with no `--sample_seed`); the 120s startup gate SIGTERMed it mid-tokenization, before `torch.save`, so every cache stayed stamped 42 and the pinned relaunch ran clean. Had the domain tokenized inside the deadline, the same gate fires after the save and before the `.seed` write, leaving a cache shuffled at 1337 stamped 42 -- which the next launch reads as fresh and trains on in silence. The loud kill was the benign one, and the gate's output says nothing about which world it left behind. The same blindness in the sizing: `_derive_gate_timeout` counts a stale cache's bytes on disk as a warm load.
+
+Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204); whether a loud failure was READ correctly by the command that checked for it (§251); whether a broken world is red for its own mutation or for something else (§256) — checkable by running each `_broken_*` twice, priced out at 104 worlds; whether a kill landed before or after the interrupted operation's durable state transition (§291) — the gate knows the deadline, not the phase.
+
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
