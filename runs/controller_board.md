@@ -58,7 +58,7 @@ exits 0 with a socket for a member and non-zero with the reason for anyone else.
 | 1, 3 | **lent** by tilerl-27 to de's serve | `released_at: null`; recallable on one message; **measured idle at 14:5xZ** |
 | 2 | b0 lane | sampled HumanEval, 24-47% |
 | 4, 5, 7 | de's serve | 91-99% |
-| 6 | **not aupai's; asked tilerl-27, unresolved on their side** | host pid 1171892, `target/release-fast/arle serve --model-path /mnt/data02/Qwen3.8-27B-NVFP4 --spec-type auto --mtp-draft-tokens 2`, cgroup `pod95a05e32...` -- a different pod from ours, a Rust binary where aupai runs python, and none of our six host pids (546404/546405/381933/419114/419115/416358). The earlier row here said "tileRL, their spec prefill profile" and that was **inferred** from "card 6 is theirs" plus "52 runs spec tonight", not read. tilerl-27 has no ledger row for it either and their own session OOM'd on this card twice |
+| 6 | **agent-infer's** (a third project), resolved by tilerl-27 | host pid 1171892, `target/release-fast/arle serve --model-path /mnt/data02/Qwen3.8-27B-NVFP4 --spec-type auto --mtp-draft-tokens 2`. The binary is the identity: `agent-infer/Cargo.toml:78,122` declare `name = "arle"` and `:134` declares `[profile.release-fast]`, so `target/release-fast/arle` is that crate's default output path exactly. tileRL has no Rust artifacts at all. tilerl-27 is reclaiming the card |
 
 ## Global
 
