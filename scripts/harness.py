@@ -97,6 +97,7 @@ from harness_core import (  # noqa: E402
     pod_reachable,
     read_mix,
     refuse_in_integration_tree,
+    append_ledger,
     tree_provenance,
     _theirs_baseline,
     _unclassified_cards,
@@ -12157,19 +12158,9 @@ def _append_task(row, path=None):
     reopen/drop`, `friction add/resolved`, and whatever op is added next -- a guard per op is
     a guard the next op forgets. See refuse_in_integration_tree for why the branch is the
     predicate and why it fails open."""
-    p = path or TASKS_PATH
-    if refuse_in_integration_tree(f"appending to {os.path.basename(p)}", path=p):
-        raise SystemExit(1)
-    os.makedirs(os.path.dirname(p), exist_ok=True)
-    # One write() of one complete line, O_APPEND: concurrent appends under a page-sized
-    # payload do not interleave, and no reader observes a partial row. Building the
-    # line first matters -- f.write() of a str can flush at a buffer boundary.
-    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
-    fd = os.open(p, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
-    try:
-        os.write(fd, line)
-    finally:
-        os.close(fd)
+    # The write itself lives in harness_core.append_ledger (de-98): one guarded append
+    # shared by every session-facing ledger writer, so the guard cannot be per-writer.
+    append_ledger(path or TASKS_PATH, row, f"appending to {os.path.basename(path or TASKS_PATH)}")
 
 
 
@@ -12230,6 +12221,91 @@ def _resolve_shas(root, shas):
     return out
 
 
+
+
+def _require_repo_tree():
+    """The ledger writers refuse outside a repo tree: os.path.exists, not isdir, because in a
+    linked worktree .git is a FILE (same shape as cmd_task's guard)."""
+    if not os.path.exists(os.path.join(ROOT, ".git")):
+        print("refusing: the ledger lives in the repo; run this in the tree", file=sys.stderr)
+        return False
+    return True
+
+
+def cmd_review(argv):
+    """harness review add --reviewer 44 --pr 126 --task "..." --artifact "..." --verdict approved
+                        [--owner de] [--finding "..."]
+
+    The guarded writer for runs/review.jsonl. Reviewers used to append by hand, and a
+    cwd-relative append landed in the integration tree (de-98). --owner is optional and is
+    never checked against --reviewer: reviewing a PR that is not yours is the normal case.
+    """
+    if not _require_repo_tree():
+        return 1
+    ap = argparse.ArgumentParser(prog="harness review")
+    sub = ap.add_subparsers(dest="op", required=True)
+    a = sub.add_parser("add")
+    a.add_argument("--reviewer", required=True,
+                   help=f"who reviewed; a roster member {sorted(set(REVIEW_PAIRS))}")
+    a.add_argument("--pr", type=int, default=None, help="the PR number, for a PR review")
+    a.add_argument("--task", default=None,
+                   help="task id for a task review; for a PR review, what was reviewed")
+    a.add_argument("--artifact", required=True,
+                   help="what the reviewer actually opened: path @ sha, or a failing case")
+    a.add_argument("--verdict", required=True,
+                   choices=["approved", "changes-requested", "legacy-unreviewed"])
+    a.add_argument("--owner", default=None,
+                   help="the PR author or task owner; optional and may be anyone, including the reviewer")
+    a.add_argument("--finding", default=None,
+                   help="what the review found; absent means no review finding is recorded")
+    args = ap.parse_args(argv)
+    if args.reviewer not in REVIEW_PAIRS:
+        print(f"refusing: {args.reviewer} is not on the roster {sorted(set(REVIEW_PAIRS))}", file=sys.stderr)
+        return 1
+    if not args.pr and not args.task:
+        print("refusing: a review row names --pr or --task so review_present can match it", file=sys.stderr)
+        return 1
+    row = {"ts": time.strftime("%Y-%m-%dT%H:%MZ", time.gmtime()), "reviewer": args.reviewer,
+           "task": args.task or f"PR #{args.pr}", "artifact": args.artifact, "verdict": args.verdict}
+    if args.pr is not None:
+        row["pr"] = args.pr
+    if args.owner is not None:
+        row["owner"] = args.owner
+    if args.finding is not None:
+        row["finding"] = args.finding
+    append_ledger(os.path.join(ROOT, "runs", "review.jsonl"), row, "appending to review.jsonl")
+    print(f"review: {row['verdict']} row appended for {row['task']}")
+    return 0
+
+
+def cmd_ledger_append(argv):
+    """harness ledger append --path runs/retro.jsonl --row '<json>'
+
+    The guarded writer for hand-maintained ledgers (retro, ledger_resolutions, any future
+    union ledger). The guard population is enumerated from .gitattributes at test time, so a
+    new ledger needs no registration here -- this writer covers it by path (de-98).
+    """
+    if not _require_repo_tree():
+        return 1
+    ap = argparse.ArgumentParser(prog="harness ledger append")
+    ap.add_argument("--path", required=True, help="ledger path under runs/, e.g. runs/retro.jsonl")
+    ap.add_argument("--row", required=True, help="the row as a JSON object string")
+    args = ap.parse_args(argv)
+    norm = os.path.normpath(args.path)
+    if not norm.startswith("runs/") or not norm.endswith(".jsonl") or norm == "runs/.jsonl":
+        print(f"refusing: {args.path!r} is not a runs/*.jsonl ledger path", file=sys.stderr)
+        return 1
+    try:
+        row = json.loads(args.row)
+    except json.JSONDecodeError as e:
+        print(f"refusing: --row is not valid JSON: {e}", file=sys.stderr)
+        return 1
+    if not isinstance(row, dict):
+        print("refusing: --row must be a JSON object, one ledger row", file=sys.stderr)
+        return 1
+    append_ledger(os.path.join(ROOT, norm), row, f"appending to {os.path.basename(norm)}")
+    print(f"ledger: one row appended to {norm}")
+    return 0
 
 
 def cmd_task(argv):
@@ -24253,6 +24329,8 @@ def cmd_sync(rest):
             return 1
         pod_text = base64.b64decode(r.stdout).decode("utf-8")
         repo_path = os.path.join(ROOT, relpath)
+        if refuse_in_integration_tree(f"syncing {relpath} from the pod", path=repo_path):
+            return 1
         repo_text = open(repo_path, encoding="utf-8").read() if os.path.exists(repo_path) else ""
         merged, err = _merge_jsonl(pod_text.splitlines(), repo_text.splitlines(), idfn, label)
         if err:
@@ -24701,6 +24779,8 @@ def cmd_prereg(argv):
     if hits > 1:
         print(f"prereg amend: {hits} rows carry id {a.id!r}; one row per id is the invariant "
               f"(prereg_one_row_per_id). Not writing.", file=sys.stderr)
+        return 1
+    if refuse_in_integration_tree("amending runs/prereg.jsonl", path=p):
         return 1
     open(p, "w", encoding="utf-8").write("\n".join(out))
     print(f"{a.id}: amendment {n} written (amended_{n} + amendment_{n})")
@@ -26550,8 +26630,8 @@ def cmd_milestone(argv):
             "readout": f"runs/readout_{stem}.txt", "metrics_moved": moved,
             "measured": time.strftime("%Y-%m-%d", time.gmtime()),
         }
-        with open(os.path.join(ROOT, "runs", "milestones.jsonl"), "a", encoding="utf-8") as f:
-            f.write(json.dumps(row, ensure_ascii=False) + "\n")
+        append_ledger(os.path.join(ROOT, "runs", "milestones.jsonl"), row,
+                      "appending a milestone row")
         facts_path = os.path.join(ROOT, "facts", "base_eval.json")
         facts = json.load(open(facts_path, encoding="utf-8"))
         facts["facts"] = [e for e in facts["facts"] if e.get("id") != f"be.milestone_{stem}"]
@@ -26895,6 +26975,11 @@ def main():
         return cmd_task(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "friction":
         return cmd_friction(sys.argv[2:])
+    if len(sys.argv) > 1 and sys.argv[1] == "review":
+        return cmd_review(sys.argv[2:])
+    if len(sys.argv) > 2 and sys.argv[1] == "ledger" and sys.argv[2] == "append":
+        # bare `harness ledger` (the checkpoint display) keeps its argparse path below
+        return cmd_ledger_append(sys.argv[3:])
     if len(sys.argv) > 1 and sys.argv[1] == "sync":
         return cmd_sync(sys.argv[2:])
     if len(sys.argv) > 1 and sys.argv[1] == "install-hooks":
