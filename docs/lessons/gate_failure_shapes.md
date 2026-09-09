@@ -223,7 +223,7 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-17 incidents (11 infra, 6 model), ~3h each, 51h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+17 incidents (11 infra, 5 model; one incident uncategorised -- the split has never summed, 10+5=15 against a stated 16, and this line keeps that defect visible rather than inventing the missing element), ~3h each, 51h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
