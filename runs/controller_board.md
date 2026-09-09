@@ -1,198 +1,149 @@
-# Controller board (fb) — 2026-09-08, 21:5xZ
+# Controller board (fb) — 2026-09-09, 01:2xZ
 
-**The night's one sentence: N1 is 20% through its 7,629 steps on four cards with val falling 2.577 -> 2.348 -> 2.256, and the two silent-push defects that killed its first launch are now fixed on main and on the pod.**
+**The night's one sentence: the noise floor is measured — N1 1.823, N2 1.871, so `F = |N1 - N2| = 0.048` on the epoch-end val, and every same-step gap quoted earlier tonight (0.067-0.088) was measured on a 20-batch estimator, not the 100-batch one the criterion reads.**
+
+## The number this round exists to produce
+
+| arm | seed | final val (epoch-end, 100 batches) | steps | tokens |
+|---|---|---|---|---|
+| N1 | 1337 | **1.823** | 7,629 | 4.00B |
+| N2 | 1338 | **1.871** | 7,629 | 4.00B |
+| R | 1337 | not launched | — | — |
+
+**F = 0.048.** Everything else about the two arms is identical: same mix
+(`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
+isolates weight init and dropout.
+
+**The correction that matters, and it lands against my own reporting.** I quoted the same-step
+gaps all night — 0.088 at step 500, 0.071 at 7000, 0.072 at 7500, "mean 0.077, no trend" — and
+treated them as the floor's scale. They are not the same quantity. `train.py:408-409`:
+
+```
+val_batches = 20
+val_batches_full = 100  # fixed prefix, so the epoch-end number is comparable across runs
+```
+
+The periodic `step N val` line is a **20-batch** estimate. The `ep 1/1 ... val` line is a
+**100-batch** one, and train.py's own comment says which of the two is comparable across runs.
+Five times the data, so roughly half the sampling noise — which is the whole of the drop from
+0.072 at step 7500 to 0.048 at the end. **Had I read the floor off the periodic series, I would
+have published a floor ~50% too large and buried any true effect between 0.048 and 0.077.**
+The criterion in `runs/anneal_arms.sh` said "final val" and was right for a reason nobody had
+stated: it names the estimator, not just the time.
+
+**What the floor means for R.** N1's entire anneal tail moved val 1.854 -> 1.823 = **0.031**,
+which is *below* the 0.048 floor. So a reweight of the anneal phase whose effect is the same
+order as the phase's own contribution cannot be read at this budget by construction. If
+`|R - N1| <= 0.048`, that is the answer — a bound, reported as a bound — and the reweight does
+not enter the 30B mix on this evidence.
+
+**What two points cannot say.** F is a range over two draws, not a standard deviation. Any sigma,
+p-value, or confidence interval quoted off this pair is fabricated. Written into the prereg row's
+`will_not_claim` before R has a number.
+
+## Pre-registration — written before R, honest about N1 and N2
+
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`, registered 2026-09-09T01:15Z by fb.
+
+**It does not claim to pre-register N1 and N2.** Both had finished when it was written; the row
+says so in `registered_before`. What genuinely predates every arm is the *reading criterion*,
+committed verbatim in `runs/anneal_arms.sh` at **`1e91d8da`, 2026-09-08T14:10Z — 39 minutes
+before N1's first launch attempt at 14:49Z**:
+
+> READ N1 vs N2 BEFORE LOOKING AT R. |N1 - N2| is the noise floor; if |R - N1| falls inside it,
+> the reweight had no measurable effect at this budget, which is a result and not a failed run.
+
+The row moves that criterion into the ledger where `prereg_citations_current` can see it, and
+fixes R's decision rule while R's number does not yet exist. The three arms had been running with
+no prereg row at all — the criterion was real and dated, but it lived only in a shell script's
+header comment, where no check reads it.
 
 ## Cards
 
 | | |
 |---|---|
-| aupai | **2, 4, 5, 7** — granted by the user 2026-09-08 ("做呗"), machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`), on the pod at stamp `5c2a091c` |
-| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 ("0,6 tileRL"), which today's four-card grant names no index for and therefore does not override |
-| running | 0 (level-5 eval) and 3 (GSM8K steps_to_score) at ~100%; 1, 2, 4, 5, 6, 7 at 0 MiB as of the last read |
+| aupai | **2, 4, 5, 7** — granted by the user 2026-09-08, machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`) |
+| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 |
+| now | 0 at 32.8 GiB / 100% (tileRL level-5 eval, claim `tilerl-l5eval.0.json`); **2 running N2's score matrix**, claim taken; 1, 3, 4, 5, 6, 7 at 0 MiB |
 
-**No lane card, on purpose.** All four go to one serial chain, one arm at a time, so no small job may run beside it.
+**N2 released its cards cleanly.** All four went to 0 MiB and `runs/claims/anneal_n2_0908.2-4-5-7.json`
+is gone — no orphan, no reparented grandchild holding memory.
 
-**Two grant defects, both mine, both caught by someone else before a launch:**
+## Running now — N2's score matrix, card 2
 
-1. **The grant was written into `granted_by` prose and the machine fields were left untouched** — `launch_block_granted` stayed `false` and `block_cards` stayed `""`, which is what `_allocation_cards(block=True)` actually reads. The human half of the file said one thing and the machine half said the opposite, **inside a file whose own comment reads "A STALE GRANT IS WORSE THAN NO GRANT"** (3b caught it).
-2. **The first corrected version took 4,5,6,7** and `allocation_reads_the_grant` refused it, correctly: card 6 is tileRL's by standing order, and a grant of "four cards" that names no index does not supersede an order that names two.
+`/work/aupai/runs/score_n2.sh`, log `runs/score_n2.log`, launched 01:17Z. `domain_loss` running.
 
-3b declined to route around the gate with `CUDA_VISIBLE_DEVICES`, on a better ground than the rule: **that fall-through means "a human specified these", not "the controller granted these"** — it would have run, and nothing would have recorded that it was ever authorised.
-
-## Running now — N2, cards 2,4,5,7
-
-| | |
-|---|---|
-| run | N2, noise-floor arm B, `runs/anneal_n2_0908.log` |
-| launched | 2026-09-08 21:35Z **by fb**, not 3b — see below |
-| differs from N1 in | `--seed 1338` vs `1337` only. `--sample_seed 42` pinned on both, so one corpus order; verified `retokenizing` count **0** and the cfg line reads `seed 1338 sample_seed 42 (pinned)` |
-| progress | step 1060 / 7629, 0.56B tok, 77K tok/s/gpu |
-| val so far | 2.665 (500), 2.431 (1000) — against N1's 2.577 and 2.348, a gap of 0.088 and 0.083 |
-| ETA | ~3.7h |
-
-**The step-500 and step-1000 gaps are NOT the noise floor.** The floor is `|N1 - N2|` at the
-same point the effect is read, i.e. final val. Early gaps run larger than late ones, so quoting
-0.088 against an effect measured at the end would inflate the floor and hide a real effect.
-N1's final val is **1.823**.
-
-**Why fb launched it.** Cards 2,4,5,7 went idle at 21:20Z when N1's scoring finished and were
-still idle at 21:35Z; 3b, who owns the arms, had not answered two messages. Idle cards with a
-pre-registered arm ready is the mainline stalling, and "chase only runs that produce numbers" is
-the standing order. Launched through the same path N1 used — `harness launch anneal_n2_0908
---training --class confirmatory --hypothesis "..." -- bash runs/anneal_arms.sh n2` — so the exp
-row was written before the run started. The arms stay 3b's; this filled a window.
-
-## N1 — complete and scored
-
-| | |
-|---|---|
-| final val | **1.823** (`ep 1/1 train 1.734 val 1.823 13427s`) |
-| budget | 7,629 steps, 4.00B tok, 3.73h on four cards |
-| val curve | 2.577 / 2.348 / 2.256 / 2.193 / 2.147 / 2.114 / 2.068 / 2.045 / 1.991 / 1.950 / 1.910 / 1.876 / 1.854 / 1.843 / 1.839 at steps 500..7500, then 1.823 final — monotone, no reversal |
-| anneal tail | started step 6866 (`anneal_frac 0.10`); bought 0.016 val over its last 1,129 steps |
-| exp row | closed, status ok, `--started "2026-09-08 16:59"` |
-| score matrix | 10 metrics recorded, 6 SKIPPED by design |
-
-Score matrix, and how each number may be read:
-
-| metric | value | reading |
-|---|---|---|
-| minimal_pairs | 0.801 | grammaticality discrimination, well above the 0.5 floor |
-| lambada_zh | two-way 0.920, open_acc1 0.259 | strong forced choice, weak open generation |
-| lambada_en | 0.247 | open completion |
-| humaneval_bpb | 0.616 per-task, 0.490 byte-weighted | likelihood of the canonical solution; **not** pass@k, and the metric says so in its own output |
-| l1_fewshot | 0.040 | generative |
-| **math_v2_like** | **0.971** | **not a capability reading**: 14 of 18 families sit at exactly 1.000, and the problems come from the same generators as the training data — the shape that retired math-hard v1 |
-| SKIPPED | mc_full, code_500_v2, code_500, pass_at_k, math_hard, math_500 | generative metrics on a base checkpoint; **SKIP is not 0**, which is a distinction this repo bought with an incident |
-
-**The arms script's own post-run scoring is broken and will fire again on N2.** After training it
-looks for a lane card, and this allocation has none by construction (`block_cards` 2,4,5,7,
-`lane_card` ""), so it waits the full 30 minutes and exits nonzero:
+**Its auto-scoring had already failed, exactly as predicted.** `run_ddp.sh` chains a score pass
+after training, it needs a lane card, and this grant deliberately has none — so it spun 30 minutes
+and exited:
 
 ```
-no lane card in the allocation
-FATAL: no free lane card in 30min -- ckpt_anneal_n1_0908.pt unscored, training succeeded but this run produced NO metrics
-FATAL: scoring failed for ckpt_anneal_n1_0908.pt (rc=1) -- exiting nonzero
+FATAL: no free lane card in 30min -- ckpt_anneal_n2_0908.pt unscored, training succeeded
+       but this run produced NO metrics.
+FATAL: scoring failed for ckpt_anneal_n2_0908.pt (rc=1) -- exiting nonzero
 ```
 
-Training and the checkpoint are unaffected. fb scored N1 by hand on card 2 in the gap and will do
-the same for N2. The fix belongs in the arms script or the allocation, not in a habit.
+The checkpoint is unaffected and the training row is real; only the chained scoring died. The
+pod's exp row auto-closed as `status=error` with `result="val 1.871, scoring FAILED rc=1 -- no
+metrics"` and `finding="chained close by run_ddp.sh; finding pending a human reading"`. That row
+is being replaced with the human reading now that the score matrix is running by hand in the gap.
 
-## Landed tonight
+**This is a design fault, not an incident, and it will fire again on R.** A four-card grant with
+no lane card guarantees that every arm's own scoring step deadlocks for 30 minutes and exits
+nonzero. Two fixes exist and neither has been chosen: score in the inter-arm gap by hand (what I
+am doing, costs ~10 min of three idle cards per arm), or give the chain permission to use one of
+the four cards it just released. The second is correct and needs a one-line change in
+`run_ddp.sh`, which is frozen. Logged rather than worked around silently.
 
-| PR | what | evidence |
-|---|---|---|
-| #112 (`df5ffd98`) | merge_main stamps the session marker into both commit messages it generates | reviewed and merged by 44; `merge_main.sh --selftest` green |
-| #113 (`3b292330`) | `pod_drift`'s runs/ predicate split by extension; both `pod_push.sh` copies now call one `--ship-paths` | merged + `--all` in the same step; pod stamp `3b292330`, dirty=0; the 25 formerly-absent scripts verified present |
-| #115 (`7b26bc77`) | the selftest `GIT_*` leak class: strip at `merge_main.sh --selftest`'s entry, plus `shared_config_not_fixture_identity` as the backstop | reviewed by fb, blocked once, merged and pod-pushed by fb; guard verified under clean / `GIT_DIR` / `GIT_CONFIG` with the sentinel's destination checked, not just the verdict |
-| #114 (`eb33534a`) | 44's active-params gate: `train.py --build_only` + `scripts/active_params.py` | blocked by fb on a deleted flag, restored in `cc9a5b7f`, **approved and merged**; pod pushed to `eb33534a` dirty=0 |
+## Next gate — R
 
-**The marker census, corrected.** My first count said 203 of 644 commits today lacked a
-`(session)` marker. The regex was wrong: it required the subject to END with `(name)` and
-so rejected `(b0-37)`, `(e1, PR #67)`, `(3b, §267)`, `(de; reviewed 44)`, `(#45)`. Recounted:
-449 marked, 57 gh default merge titles, 99 git default merge messages, 36 friction drains,
-**3 written by a person**. The population was machine-written, so the fix was the generators
-(#112), not the history.
+Launch `bash runs/anneal_arms.sh r` on 2,4,5,7 the moment the score matrix releases card 2.
+`--seed 1337`, same as N1, so `|R - N1|` carries the reweight and nothing else. ~3.7h.
+Read at the epoch-end val line, against F = 0.048.
 
-**The `runs/` push defect, measured.** `_pod_written` was `startswith("runs/")` plus a
-one-file allowlist, so 44 of 45 tracked `runs/*.sh|*.py` were unshippable by
-`pod_push.sh --all` — exit 0, zero `refusing`, stamp advanced, pod kept the old copy.
-Against the live pod: 25 absent entirely, 20 byte-identical (each pushed by name), 0
-differing. `runs/anneal_arms.sh` was one of the 20 and N1 died on the stale copy.
-**A directory name answers where a file is, not who wrote it.** Second defect, same root:
-`pod_push.sh:124` and `:538` each carried a `grep -v '^runs/'` without the `PUSHED_RUNS`
-exception, so `--all` also dropped `runs/card_assignment.json` — latent only because it had
-been pushed by name. This is the drift b0 predicted in that constant's own comment on
-2026-09-03.
+## Queue — 8 open PRs, all CI-green, and only one is actually mergeable
 
-## #114 blocked — the merge deletes a flag
+Measured 01:12Z by reading each PR's reviews *and* comments for a qualifying `artifact:` / `case:`
+body, not by counting comments that contain the token:
 
-44's active-params gate is correct in its own terms; merging it removes `--sample_seed`
-from `train.py`'s parser. That dict is the flag registry, not a help table — `train.py:2981`
-runs `parser.add_argument(f"--{name}", ...)` over its `.items()`.
+| PR | branch | qualifying review | state |
+|---|---|---|---|
+| #100 | fact-repro-table (98) | **yes** — de: "Approved. artifact: facts/corpus_supply.json#cs.reproducibility_table_0908, the full 62-row table" | **mergeable now; de has not merged for 6h+** |
+| #23 | tilerl-cache-sidecar | yes, but it is a **changes-requested** body from 3b | correctly blocked |
+| #109 | e1-tokshards | no | waiting on reviewer |
+| #106 | 44-minicpm5-arch | no | waiting on reviewer |
+| #105 | b0-47-code-decode | no | waiting on reviewer |
+| #103 | 3b-runsmove | no | waiting on reviewer |
+| #102 | b0-46-score-matrix-trace | no | waiting on reviewer |
+| #92 | 98 (pod non-ASCII argv) | no | waiting on reviewer |
 
-| | `"sample_seed":` in train.py |
-|---|---|
-| merge-base `100f9b6f` | 1 |
-| branch `44-active-params-gate` | 0 |
-| `origin/main` | 1 |
-| `git merge-tree --write-tree` (tree `a0c12835`) | **0** |
+**The trap this table exists to avoid is one I fell into two ticks ago.** I told tilerl #23 was
+approved and ready to merge. It was changes-requested by 3b 14 hours earlier. My proxy counted
+comment bodies containing `artifact:` or `case:` — and a changes-requested comment carries those
+tokens too, because a good rejection names the artifact it read. **The token says a reader opened
+something; only the state says what they concluded.** Both are now read on every pass.
 
-So the merge takes the deletion; it is not merge-base noise. `984bce9a` (3b) added the flag.
-`runs/anneal_arms.sh` passes `--sample_seed 42` on all three arms, so N2 and R would die at
-`unrecognized arguments` — the `--rg_mod` shape of 2026-08-30. 44 confirmed it as a stale-worktree
-edit and restored it in `cc9a5b7f`; the merged tree `edb31b4d` holds the entry and introduces only
-the two `--build_only` blocks. Approved, merged as `eb33534a`, review row `c9cf7288`.
+`scripts/review_row_lookup.py --pr <n>` does not take a bare PR number — the usage is
+`[--pr] <sha> <branch>`. Eight calls returned usage text, which is not a "no review found" answer
+and was not read as one.
 
-**Correction I owe on that table: the `merge-tree` row read 0 and was not measured.** zsh parsed
-`:t` in `"$T:train.py"` as a history modifier, `git cat-file` errored, and `grep -c` over empty
-input printed 0. The other three rows were real and the conclusion held, but one of four published
-numbers was an artifact of a broken command. The same class appeared twice more in the recheck —
-`FETCH_HEAD` overwritten by a second `git fetch`, so a main-vs-main comparison printed an empty
-diff that reads as "nothing changed". Both were caught by the result being implausible, not by the
-command failing. **Verification must name refs explicitly and never route a tree sha through a
-shell variable followed by `:path`.**
+## The peers are all asleep
 
-## The git identity was a fixture signature, and 558 commits carry it
+`peer_stalled`: 6 members with an open task and nothing in the repo for 2h+ — 3b 544m, 44 284m,
+b0 554m, de 285m, e1 651m, fb 184m. `owner_queue_depth`: tilerl idle with no open unblocked task.
+It is 09:1x local. Nothing is being dispatched into that; the queue above is the whole ask, and
+#100 is the one item where a single click by de unblocks another session's landed work.
 
-The shared `.git/config` held `user.name=t`, `user.email=t@t` — a test fixture's identity,
-against the user's order of 2026-09-02 that it be `cklxx <q1293822641@gmail.com>`. On
-`origin/main`: 6181 commits authored `cklxx`, **558 authored `t <t@t>`**, first `4b9f0a77`
-on 2026-09-08.
+## Harness — 0 FAIL, 14 WARN
 
-Mechanism, as 44 measured it after refuting my first two accounts: a fixture's
-`git -C <tmpdir> config user.name t` writes into `$GIT_DIR/config` when `GIT_DIR` is
-inherited, because `-C` changes directory while `GIT_DIR` still names the repo. **The
-pre-commit hook was NOT the vector** — its selftest loop has stripped `GIT_*` since
-`f3123fc4` and carries a config-digest guard. The vector was a MANUAL
-`bash scripts/pod_push.sh --selftest` with `GIT_DIR` exported (de, 2026-09-07 17:26Z),
-fixed in `83194cb3`; the only remaining unstripped selftest entry was `merge_main.sh`,
-closed by #115.
+`no_ghost_close, ckpt_facts_sources_present, pod_stamp_is_main, pod_ledger_rows_home,
+keep_claim_reasons_live, owner_queue_depth, peer_stalled, one_deliverable_per_owner,
+review_present, entrypoints_ran, prereg_citations_current, score_matrix_present,
+selftest_counts_computed, tasks_stale`. 83 repo checks, 27 pod checks. CI green on main and on
+all 8 PR heads.
 
-**Config restored to `cklxx`. The 558 commits are untouched — a history rewrite is the
-user's decision, and the 2026-09-02 one was theirs too.**
-
-Two errors of mine in this thread, both worth keeping:
-
-1. I asserted the hook was the vector without reading `f3123fc4`.
-2. I published a census of 90 `git config user.*` call sites as the affected population. It
-   measured "does this line write config", not "does this call site run with an inherited
-   `GIT_DIR`" — the property that matters — and I read none of the helpers. Several of those
-   files strip inline. **A predicate set answers the question it enumerates, not the one it
-   is named for.**
-
-## Queue — 8 open, all CI-green, frozen ~1.5h
-
-| PR | owner | state |
-|---|---|---|
-| #100 | 98 | **approved by de 13:28Z, review row in `runs/review.jsonl`, still open 6h later** — the merge and the same-step pod push are the reviewer's |
-| #23 | tilerl | **changes requested** by 3b at 04:31Z, 14h — waiting on tilerl, not on a merge |
-| #109 | e1 | waiting on 3b |
-| #106 | 44 | waiting on de |
-| #102 #105 | b0 | waiting on tilerl |
-| #103 | 3b | waiting on b0 |
-| #92 | 98 | waiting on a reviewer |
-
-**e1, 98 and tilerl have zero landed commits in 6h and are NOT stalled** — their output is
-in this queue. The bottleneck is the review-and-merge step, not the producers.
-
-**Third instance of the same error class in one evening, mine:** I first read this table as
-"#23 approved, needs merging" because I counted comments containing `artifact:` or `case:`.
-That set enumerates *comments that look like reviews*; a changes-requested comment carries
-both words. I had corrected two other sessions with this exact rule hours earlier.
-
-## N1 -> N2 handover, decided in advance
-
-N1 ends -> close the `anneal_n1_0908` row (`started 2026-09-08 16:59`; the 14:49 row of the
-same name is the death, and row identity is `(name, started)`) -> run
-`eval/score_matrix.py --ckpt <ckpt> --json runs/score_matrix.jsonl` **in the gap, before N2
-launches** -> 3b launches N2.
-
-The gap, not co-residency, and the reason is not that score_matrix is cheap: there is no lane
-card, so once N2 holds all four there is nowhere to put a small job; and
-`eval/cache_guard.assert_not_co_resident` refuses on the size of the domains a tool READS, so
-whether it refuses turns on the one metric of fourteen that touches a token cache, not on the
-tool's average cost. In the gap the question does not arise.
+`one_deliverable_per_owner` names the real shape of the stall: b0 holds 9 open tasks, de holds 9,
+e1 holds 3, 3b holds 2. Nine open tasks is not a queue, it is a list nobody is working from.
 
 ## N1's first death — 14:49Z, and what it cost
 
