@@ -258,11 +258,34 @@ def liveness(root=ROOT, now=None):
     return out
 
 
+def _who_one(r, name):
+    """Resolve one name to its socket, or exit nonzero. The eye-scan of the table below is
+    what failed on 2026-09-09: four lines were dispatched by name, and `lessons-e1` had been
+    listed as not-on-this-team since 2026-09-02 in the very table nobody read."""
+    key = name.strip().lstrip("@")
+    bare = key.split()[0] if key else key
+    for m in r["members"]:
+        if key in (m["name"], m.get("listagents_name", "")) or bare == m.get("listagents_name", ""):
+            print(m["socket"])
+            return 0
+    for m in r["not_on_this_team"]:
+        if bare == m["name"].split()[0] or key == m["name"]:
+            sys.exit(f"NOT ON THIS TEAM: {m['name']} -- {m['why']}")
+    for m in r.get("departed", []):
+        n = m["name"] if isinstance(m, dict) else m
+        if bare == str(n).split()[0]:
+            sys.exit(f"DEPARTED: {n}")
+    sys.exit(f"UNKNOWN: {name} is in no section of runs/roster.json. "
+             f"Do not dispatch to it; find out who it is first.")
+
+
 def cmd_who(a):
     p = os.path.join(ROOT, "runs", "roster.json")
     if not os.path.exists(p):
         sys.exit("no runs/roster.json")
     r = json.load(open(p, encoding="utf-8"))
+    if getattr(a, "name", ""):
+        return _who_one(r, a.name)
     owner = {}
     for m in r["members"]:
         for t in m["topics"]:
@@ -338,6 +361,7 @@ def main():
     q.set_defaults(fn=cmd_open)
 
     q = sub.add_parser("who")
+    q.add_argument("name", nargs="?", default="")
     q.set_defaults(fn=cmd_who)
 
     q = sub.add_parser("topics")

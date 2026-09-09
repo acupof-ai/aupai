@@ -342,6 +342,57 @@ def _alive(pid):
     return True
 
 
+def _start_time(pid):
+    """The process's start time as a comparable string, or None if unreadable.
+
+    /proc/<pid>/stat field 22 (clock ticks since boot) on Linux, `ps -o lstart=` on macOS.
+    A PID that exits and is recycled reads alive via _alive but is a different process;
+    the start time is the only reader that distinguishes them.
+    """
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            stat = fh.read()
+        rest = stat[stat.rindex(")") + 2 :].split()
+        return rest[19]
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
+        return r.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _pid_ns():
+    """The PID namespace inode of the calling process, or None if unreadable (macOS).
+
+    A start time read in one PID namespace is meaningless in another: a container PID
+    that happens to match a host PID of a different process would compare unequal and
+    flip a live claim to stale -- the unsafe direction. Recorded at claim time so the
+    reader can skip the comparison when namespaces differ (4c, 2026-09-10).
+    """
+    try:
+        return os.stat("/proc/self/ns/pid").st_ino
+    except OSError:
+        return None
+
+
+def _pid_reused(pid, recorded_start, recorded_ns=None):
+    """True when pid is alive but its start time differs from what was recorded.
+
+    Returns False when no start time was recorded (older claims), the current start
+    time is unreadable, or the reader is in a different PID namespace from the writer
+    -- the safe direction, same rule _cvd and nvidia_fds follow.
+    """
+    if not recorded_start:
+        return False
+    cur_ns = _pid_ns()
+    if recorded_ns is not None and cur_ns is not None and recorded_ns != cur_ns:
+        return False
+    cur = _start_time(pid)
+    return cur is not None and cur != recorded_start
+
+
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "-bash", "-sh", "-zsh"}
 # The pod's tree is wrapper bash -> torchrun -> 4 ranks. 6 is that plus slack, and it is a cap
 # rather than a guess: a cycle in a ppid table would otherwise loop forever (CLAUDE.md's
@@ -475,8 +526,15 @@ def claims():
         if c is None:
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
-        if not _alive(int(c.get("pid", -1))):
+        try:
+            pid = int(c.get("pid", -1))
+        except (TypeError, ValueError):
+            stale.append(dict(c, why=f"pid {c.get('pid')!r} is not an integer", file=nm))
+            continue
+        if not _alive(pid):
             stale.append(dict(c, why=f"pid {c.get('pid')} is gone", file=nm))
+        elif _pid_reused(pid, c.get("start_time"), c.get("pid_ns")):
+            stale.append(dict(c, why=f"pid {c.get('pid')} reused (start time changed)", file=nm))
         else:
             # `file` ON EVERY ROW, live as well as stale. acquire excludes its OWN claim from the
             # clash check by filename now, not by name, so a live row without this field would be
@@ -949,6 +1007,8 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 "cards": list(cards),
                 "pid": holder,
                 "cmdline": _cmdline(holder),
+                "start_time": _start_time(holder),
+                "pid_ns": _pid_ns(),
                 "acquired": _now(),
                 "note": note,
             }
@@ -1027,8 +1087,11 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 existing = _read(mine)
-                old = int(existing.get("pid", -1)) if existing else -1
-                if existing and _alive(old):
+                try:
+                    old = int(existing.get("pid", -1)) if existing else -1
+                except (TypeError, ValueError):
+                    old = -1
+                if existing and _alive(old) and not _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
                     # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
                     # for, so the ask is already satisfied and refusing it is refusing a fact that is
                     # true. de-55, 2026-09-05: the fix for the claim-coverage gap puts one acquire on
@@ -1268,6 +1331,24 @@ def status():
     dup = {c: n for c, n in held.items() if len(n) > 1}
     for c, names in dup.items():
         lines.append(f"CONFLICT card {c} claimed by {names} -- acquire should have refused")
+    # ACTIVE LOANS: granted_by entries with released_at=null. `note` is the current-state
+    # authority, but a reader should not need to open the JSON to see which cards are lent --
+    # 4c read 0 MiB as unowned three times on 2026-09-09 because nothing in this output said
+    # otherwise (tilerl-27's rule: absence of a release entry is not a release).
+    _ap = os.path.join(FOREIGN_ROOT, "runs", "card_assignment.json")
+    try:
+        with open(_ap, encoding="utf-8") as _af:
+            _ao = json.load(_af)
+        for _g in _ao.get("granted_by") or []:
+            if not isinstance(_g, dict) or "released_at" not in _g:
+                continue
+            if _g.get("released_at") is None:
+                lines.append(
+                    f"LOAN  {_g.get('when', '?')} by {_g.get('by', '?')}: "
+                    f"{str(_g.get('what', '?'))[:120]} -- STILL HELD (released_at=null)"
+                )
+    except (OSError, ValueError):
+        pass
     orphans = []
     # ROOT, not a path derived from CLAIM_DIR: the selftest swaps CLAIM_DIR to a temp directory,
     # and deriving the repo root from it would look for card_assignment.json under /tmp and find
@@ -1421,6 +1502,17 @@ def _selftest():
     good = r3.returncode == 0
     _case(good, f"and the original holder can release it ({r3.stdout.strip() or r3.stderr.strip()})")
 
+    # CLI RELEASE --CARDS: must release only the named card, not every claim under the name.
+    # 2026-09-10: the CLI path called release(a.name) without passing a.cards, freeing all
+    # claims under the name -- including cards still in use.
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "7", "--wait", "0"], capture_output=True, text=True, env=env)
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "8", "--wait", "0"], capture_output=True, text=True, env=env)
+    r4 = _sp.run([sys.executable, here, "release", "--name", "cliMulti", "--cards", "7"], capture_output=True, text=True, env=env)
+    live_m = [c for c in claims()[0] if c.get("name") == "cliMulti"]
+    good = r4.returncode == 0 and [c.get("cards") for c in live_m] == [["8"]]
+    _case(good, f"CLI release --cards frees only that card ({r4.stdout.strip() or r4.stderr.strip()}; left {[c.get('cards') for c in live_m]})")
+    _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, env=env)
+
     # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
     # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
     # refused. Disjoint cards, no possible contention, mutual exclusion by filename, because the
@@ -1507,6 +1599,60 @@ def _selftest():
     live, _ = claims()
     good = ok5 and "runD" not in [c["name"] for c in live]
     _case(good, "release removes the claim")
+
+    # PID REUSE: a claim whose pid is alive but whose start time changed is stale.
+    # _alive alone cannot distinguish a recycled pid from the original process.
+    acquire("reuseTest", ["0"], wait=0, pid=me)
+    p = os.path.join(d, claim_file("reuseTest", ["0"]))
+    c = _read(p)
+    real_st = c.get("start_time")
+    c["start_time"] = "fake-start-time"
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    live, stale = claims()
+    good = any(
+        s.get("name") == "reuseTest" and "reused" in s.get("why", "") for s in stale
+    ) and not any(x.get("name") == "reuseTest" for x in live)
+    _case(good, f"a claim whose pid was reused reads as stale ({[s.get('why') for s in stale if s.get('name') == 'reuseTest']})")
+
+    c["start_time"] = real_st
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    live, stale = claims()
+    good = any(x.get("name") == "reuseTest" for x in live) and not any(
+        s.get("name") == "reuseTest" for s in stale
+    )
+    _case(good, "a claim whose start time matches stays live")
+    release("reuseTest")
+
+    # CROSS-NAMESPACE: a claim written in a different PID namespace is not compared.
+    # Container PID colliding with a host PID would otherwise flip a live claim to
+    # stale -- the unsafe direction (4c, 2026-09-10).
+    acquire("nsTest", ["0"], wait=0, pid=me)
+    p = os.path.join(d, claim_file("nsTest", ["0"]))
+    c = _read(p)
+    c["start_time"] = "fake-start-time"
+    c["pid_ns"] = 99999
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    global _pid_ns
+    _real_ns = _pid_ns
+    _pid_ns = lambda: 12345
+    live, stale = claims()
+    good = any(x.get("name") == "nsTest" for x in live) and not any(
+        s.get("name") == "nsTest" for s in stale
+    )
+    _case(good, "a claim from a different PID namespace stays live (no opinion)")
+    _pid_ns = _real_ns
+    release("nsTest")
+
+    # NULL PID: a claim with pid=null must not crash claims() -- one bad row must not
+    # take down the whole ledger (4c, 2026-09-10, pod outage).
+    with open(os.path.join(d, "nullPid.json"), "w") as fh:
+        json.dump({"name": "nullPid", "cards": ["0"], "pid": None, "cmdline": "test"}, fh)
+    live, stale = claims()
+    good = any(s.get("name") == "nullPid" and "not an integer" in s.get("why", "") for s in stale)
+    _case(good, f"a claim with pid=null reads as stale, not crash ({[s.get('why') for s in stale if s.get('name') == 'nullPid']})")
 
     ok6, msg6 = release("never_existed")
     good = not ok6
@@ -2514,6 +2660,33 @@ def _selftest():
         )
         globals()["card_memory"] = real
 
+        # ACTIVE LOANS: a granted_by entry with released_at=null must print STILL HELD,
+        # not blank -- 4c read 0 MiB as unowned three times on 2026-09-09 because nothing
+        # in the status output said the cards were lent (tilerl-27's rule: absence of a
+        # release entry is not a release).
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump(
+                {
+                    "cards": {},
+                    "granted_by": [
+                        {"when": "2026-09-09T14:2xZ", "by": "fb + tilerl-27",
+                         "released_at": None,
+                         "what": "LOAN: cards 1 and 3 -> b0's p1 teacher serve"},
+                        {"when": "2026-09-09T13:3xZ", "by": "fb",
+                         "released_at": "2026-09-09T14:2xZ",
+                         "what": "superseded entry"},
+                        "old string entry, no released_at",
+                    ],
+                },
+                fh,
+            )
+        _o, _d, loan_lines = status()
+        loan_said = [x for x in loan_lines if x.startswith("LOAN")]
+        _case(
+            len(loan_said) == 1 and "STILL HELD" in loan_said[0] and "cards 1 and 3" in loan_said[0],
+            f"a granted_by entry with released_at=null prints STILL HELD: {loan_said}",
+        )
+
         # ---------------------------------------------------------- grant_lane (de, 2026-09-04)
         # The four fields must move together, and the gate that reads them must go GREEN on the
         # result. Both halves are asserted here because the writer's whole purpose is to be
@@ -3108,7 +3281,8 @@ def main():
     if not a.name:
         ap.error(f"--name is required for {a.action}")
     if a.action == "release":
-        ok, msg = release(a.name)
+        cards = [c.strip() for c in a.cards.split(",") if c.strip()] if a.cards else None
+        ok, msg = release(a.name, cards)
         print(msg, file=sys.stderr if not ok else sys.stdout)
         return 0 if ok else 1
     if not a.cards:

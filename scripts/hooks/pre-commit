@@ -512,10 +512,21 @@ def main():
     # NO COUNTER: scripts/test_hookstaged_sweep.py lifts these lines verbatim from `_sweep_dirs = `
     # onward and exec's them, so any name bound ABOVE that line is a NameError in the test. Every
     # name this block uses is bound inside it, and each removal already prints its own line.
+    #
+    # LIVE COPIES ARE NOT STALE. The scope above holds the directory of every registered selftest
+    # file, which includes scripts/hooks/ -- so this sweep can reach the copy an OUTER run is at
+    # that moment executing as its own __file__. It did: 2026-09-09, a merge staging this file had
+    # its .hookstaged_pre-commit unlinked by a nested run's sweep, and the outer selftest died
+    # reading its own source after every world had passed. The parent exports the paths it owns in
+    # AUPAI_HOOK_LIVE_COPIES and nested runs inherit it, so "in use" is read from the process that
+    # created the file rather than guessed from an mtime.
     _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in _registered_selftest_paths()}
     _sweep_dirs.add(repo_root())
+    _live = {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}
     for _dir in _sweep_dirs:
         for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
+            if os.path.abspath(_stale) in _live:
+                continue
             try:
                 os.unlink(_stale)
                 print(f"hook: removed stale {os.path.relpath(_stale, repo_root())} (a killed hook "
@@ -986,6 +997,12 @@ def main():
     # is not run here, because "not in the map" and "cannot run here" are different
     # facts and only the second is acceptable.
     SELFTEST_FILES = {
+        # The function-interface SFT pair extractor (3b-18). Registered because its two
+        # acceptance properties are only checkable on a known-answer world: the output must
+        # run to the function's LAST source line (a cut one statement early still parses and
+        # still looks like a body), and a HumanEval-vendored function must be dropped by the
+        # contamination scan. The selftest builds both worlds and asserts on them.
+        "datagen/extract_code_if_pairs.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
@@ -1654,6 +1671,13 @@ def main():
         # union world and overwrite somebody's amendment without saying so.
         "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # The p1 attention path: partial RoPE, HCA, and the pool_per_doc lift out of CSA. CPU,
+        # ~2s. Registered in the same commit as the file, the same deadlock check_sft_ready
+        # below records. Every world is a perturbation test because all three ways this path
+        # breaks are silent -- a causal or cross-document leak makes training loss BETTER and
+        # only surfaces later as a generation collapse, which is how the CSA compress branch's
+        # own leak survived until someone perturbed a key and watched earlier outputs move.
+        "scripts/test_v4_attn.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
         # been red until the file landed, and landing the file first is red the other way.
@@ -2570,6 +2594,9 @@ def main():
             flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             _env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
             _env["TMPDIR"] = _env["TEMP"] = _env["TMP"] = st_tmp
+            _env["AUPAI_HOOK_LIVE_COPIES"] = os.pathsep.join(
+                sorted({os.path.abspath(p) for p in staged_copies}
+                       | {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}))
             # INTERPRETER BY EXTENSION. This was sys.executable unconditionally, which is correct
             # for every .py in the map and silently wrong for the first .sh added to it: python3
             # would run the shell script, exit 1 on the first line, and the hook would report the
@@ -3476,10 +3503,20 @@ def _selftest():
     # coverage it was printed to describe -- the same shape as a selftests timing line that
     # includes zero files. Counts the `# WORLD <n>` markers, so a world added without a marker
     # is the only way to be miscounted now.
-    _n = len({w for pair in re.findall(r"#\s*WORLDS?\s+([0-9]+[a-z]?)(?:/([0-9]+[a-z]?))?",
-                                       open(__file__, encoding="utf-8").read())
-              for w in pair if w})
-    print("pre-commit selftest: %s (%d worlds)" % ("FAIL" if fails else "ok", _n),
+    # try/except, because this read is ACCOUNTING and the verdict above it is already decided.
+    # Measured 2026-09-09: a merge that staged this file ran the staged copy as
+    # scripts/hooks/.hookstaged_pre-commit, a NESTED run's top-of-main sweep unlinked it mid-flight,
+    # and this line raised FileNotFoundError on its own __file__ -- refusing a commit whose worlds
+    # had all passed, with a traceback that named no world. A count that cannot be read is reported
+    # as unknown; it never converts a green verdict into a refusal.
+    try:
+        _n = len({w for pair in re.findall(r"#\s*WORLDS?\s+([0-9]+[a-z]?)(?:/([0-9]+[a-z]?))?",
+                                           open(__file__, encoding="utf-8").read())
+                  for w in pair if w})
+        _worlds = "%d worlds" % _n
+    except OSError as e:
+        _worlds = "world count unavailable (%s: %s)" % (type(e).__name__, __file__)
+    print("pre-commit selftest: %s (%s)" % ("FAIL" if fails else "ok", _worlds),
           file=sys.stderr)
     return 1 if fails else 0
 
