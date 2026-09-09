@@ -15,8 +15,9 @@
   {
    "when": "2026-09-09T14:2xZ",
    "by": "fb + tilerl-27",
-   "released_at": null,
-   "what": "LOAN, recallable on one message: cards 1 and 3 -> b0's p1 teacher serve (five cards with 4,5,7). Reconciled with tilerl-27, whose record was correct: fb had quoted a superseded 2026-09-08 `granted_by` string, while `note` in this same file already matched them. tileRL = 0,1,3,6; aupai = 2,4,5,7. tilerl-27 lends rather than recalls, having costed it themselves: serialising their two jobs onto card 6 turns 45 minutes into an hour, where aupai losing two cards turns classifier labels from 5.3h into 8h and the gate from 2 days into 3. `released_at` null means still held -- see _current_state_field."
+   "released_at": "2026-09-09T15:5xZ",
+   "what": "LOAN, recallable on one message: cards 1 and 3 -> b0's p1 teacher serve (five cards with 4,5,7). Reconciled with tilerl-27, whose record was correct: fb had quoted a superseded 2026-09-08 `granted_by` string, while `note` in this same file already matched them. tileRL = 0,1,3,6; aupai = 2,4,5,7. tilerl-27 lends rather than recalls, having costed it themselves: serialising their two jobs onto card 6 turns 45 minutes into an hour, where aupai losing two cards turns classifier labels from 5.3h into 8h and the gate from 2 days into 3. `released_at` null means still held -- see _current_state_field.",
+   "released_note": "card 3 only. de tore down serve pid 546405 (a HOST pid, killed from the host -- not reachable from inside the container) and nvidia-smi reads GPU-79c28ebe with 0 compute apps and 3 MiB. Card 1 remains lent and is OFFERED BACK: the annotation it was borrowed for finished at 100,000/100,000, and exercise generation is blocked behind e1's threshold ablation, so the card would sit idle for hours."
   },
   {
    "when": "2026-09-09T13:3xZ",
@@ -141,6 +142,12 @@
    "when": "2026-09-09T08:5xZ",
    "who": "fb",
    "what": "card 2 -> e1 for eval/code_fewshot.py on the 30B production checkpoint (ckpt_1.5b-a0.2b-e48_30b.pt / _26.7b_0908.pt, same weights). ONE job, minutes-level, 3-shot greedy, sandboxed execution against oracle stdout. THIS IS AN EVAL, NOT A TRAINING RELAUNCH: the user stopped the flagship's training on 2026-09-08 and that order is untouched. Why it is worth a card now: the generative CODE capability of this checkpoint is a ZERO measurement (e1, 2026-09-09) -- runs/score_matrix.jsonl:90 holds only teacher-forced HumanEval BPB 0.5609, which is the likelihood of predicting reference code, not writing it. The only executing code ruler in the tree, eval/code_fewshot.py (Code-500), has never been run on this checkpoint; its one recorded run is 0/497 on two early ckpts (runs/experiments.jsonl:46, 2026-08-30) and does not extrapolate to a 1.48B model at 26.74B tokens. Caveat recorded BEFORE the run rather than after: code_holdout_500 has NOT been contamination-scanned against the pretraining corpus, so a nonzero score needs that scan before it is quoted. Cards 4,5,7 stay idle; tileRL holds 0,1,3,6 with claims."
+  },
+  {
+   "when": "2026-09-09T15:5xZ",
+   "who": "fb",
+   "what": "card 7 -> e1 for the educational-value THRESHOLD ABLATION on the finished 100K label set. First step is Snowflake-arctic-embed vectors over 100,000 samples: tens of minutes with a card, hours without. e1 asked for 5 or 7 and named 4 as excluded (their SFT card, claimed the moment the merge lands). Card 7 is aupai's own (the note's table: aupai holds 2,4,5,7), so this is an allocation, not a loan. de tears down the card-7 serve endpoint; the serve keeps 1,4,5, the three-card configuration measured at 695 tok/s warm. THIS IS THE CRITICAL PATH: the gate corpus now waits on this one item.",
+   "released_at": null
   }
  ],
  "_theirs_baseline_comment": [
@@ -155,9 +162,9 @@
  ],
  "granted": "2026-09-03",
  "launch_block_granted": false,
- "block_cards": "4,5,7",
+ "block_cards": "1,4,5",
  "lane_card": "2",
- "note": "2026-09-09 14:2xZ (fb), RECONCILED WITH tilerl-27 -- both sides now hold this same table. OWNERSHIP: tileRL holds 0, 1, 3, 6 (0 and 6 by the user's standing order of 2026-09-06 '0,6 tileRL'; 1 and 3 by the user directly in tilerl-27's session 2026-09-08). aupai holds 2, 4, 5, 7. LENT, NOT TRANSFERRED: cards 1 and 3 are lent by tilerl-27 to b0's p1 teacher serve, recallable on one message, at which point b0 falls back to a three-card serve. The distinction is tilerl-27's and it is right: lending is theirs to do, ownership is the user's to move. Card 3 had already been lent to b0 earlier today when the 4/5/7 serve came up and that lend was never written down, which is why fb believed it was taking two cards when it took one. tileRL runs card 6 tonight (52's spec prefill profile and cc's --suite train, serialised). THREE TIMES IN ONE DAY, ALL THE SAME SHAPE: an empty nvidia-smi row read as an allocation. Morning, cards 5 and 7. Midday, format_sft_0909 on cards 1,2,3,4 for ~40 minutes. 13:3xZ, card 1, on the stated ground that it 'carries no grant' -- read out of `granted_by` while this field said otherwise. Each was caught by someone else (b0, b0, 44), never by fb. OWNERSHIP IS READ FROM THIS FIELD AND ONLY THIS ONE: an idle card has an owner, and an absent release record is not a release.",
+ "note": "2026-09-09 15:5xZ (fb), SUPERSEDES the 14:2xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6 (0 and 6 by the user's standing order 2026-09-06 '0,6 tileRL'; 1 and 3 by the user directly in tilerl-27's session 2026-09-08). aupai holds 2, 4, 5, 7. WHAT CHANGED: (a) the 100K classifier annotation finished (100,000/100,000, 0 unparseable), which is what cards 1 and 3 were lent for. (b) CARD 3 RETURNED to tileRL -- de tore down serve pid 546405 from the HOST (not reachable inside the container) and nvidia-smi reads 0 compute apps, 3 MiB on GPU-79c28ebe. (c) CARD 1 IS OFFERED BACK to tilerl-27 and still held pending their answer; it is idle and the work it was lent for is done. (d) CARD 7 -> e1 for the threshold ablation, the only item on the critical path. de's serve drops to 1,4,5. READING THE CARDS RIGHT NOW: 1,4,5,7 hold 51-58 GB at 0% utilization. That is HELD, NOT COMPUTING -- the serve keeps its weights resident while idle. Do not read 0% as free and do not read 58 GB as busy; the owner is this file, never nvidia-smi (R15/§294).",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
