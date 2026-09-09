@@ -1272,6 +1272,30 @@ def main():
         "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
+        # The two code generative evals, registered 2026-09-08 after both were found to strip
+        # the prompt TWICE -- `ids[len(prompt):]` on top of the slice train.generate_batch
+        # already does, whose docstring says it returns generated ids.
+        #
+        # BOTH BEHEADED RATHER THAN EMPTIED, which is why it survived two weeks. The runs used
+        # max_new=512 with rep_stop off, so subtracting a 319-335 token prompt still left ~180
+        # tokens: scoring saw the tail of the generation with its head gone. The surviving
+        # predictions confirm NOT-EMPTY (0 of 497 empty, in every arm, matching the logs' own
+        # 2.2%) but cannot say more -- they were stored as `cont[-300:]`, a tail window, so parse
+        # rates read off them are confounded by the window itself.
+        # code_l0prime is the one measured end to end, because its prompt can be rebuilt: over
+        # the first 60 problems the cut left 15 empty and 45 fragments, all 45 unparseable, and
+        # freeze_hard keeps whatever FAILS execution, so each was a valid distractor by its own
+        # criterion. 0/497 with unparseable output reads exactly like "the model cannot write
+        # code", which is the conclusion those runs drew.
+        #
+        # Registered rather than commented because of WHERE the defect lived: inline in the
+        # batch loop, reachable only from a pod with a checkpoint. Both selftests now drive the
+        # decode through a known answer -- six reference solutions must round-trip byte for byte,
+        # NOT merely come back non-empty, since non-empty is what the caller reads as success and
+        # every beheaded row satisfies it -- and both SKIP their sandbox halves off-pod
+        # (sandbox_exec needs root) so that case runs here. The case is its own negative control:
+        # it reads 0/6 on the old code.
+        "eval/code_fewshot.py", "eval/code_l0prime.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
         # exists to prevent already happened once -- the five gaps were handed to me as the MoE-vs-

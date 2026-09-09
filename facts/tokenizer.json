@@ -477,6 +477,30 @@
    "uncertainty": null,
    "boundary": "the presence of FIM markers says the tokenizer supports the format; it is not evidence that FIM training was done, and the MiniCPM5-2B card says nothing about FIM.",
    "status": "measured"
+  },
+  {
+   "id": "tok.gates_30b_mix_exact",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "hanzi_whole_char": 0.9880,
+    "ref_fertility": 1.4286,
+    "never_used_frac": 0.0188
+   },
+   "unit": "gate readings",
+   "measured": "2026-09-09",
+   "claim": "whether the frozen vocabulary passes AGENTS.md's pre-fetch gates on the 30B v2 mix's EXACT nine domains, closing the gap tok.gates_v2_composition_fixed_sampler named -- it ran on the role directories (en_c4, code_rp1t_dd09_full), a wider composition than data/mix_1.5b-a0.2b-e48_30b_v2.json names",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains math_owm_stage2,en_c4_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,code_py_starcoder,code_py_rp1t, run on the pod 2026-09-09. The three scripts and data/tokenizer.json on the pod were md5-identical to main's merged tree before the run (tokenizer_eval c2dac23d, tokenizer_report 0a51c482, tokenizer_sweep ff8b3cf8, tokenizer.json c86dbe1a), so the reading is reproducible from main with no staged code",
+   "config": {
+    "domains": "the nine domains the 30B v2 mix actually names -- en_c4_stage2 not en_c4, code_py_rp1t not code_rp1t_dd09_full",
+    "per_domain": 3000,
+    "shards": 8,
+    "clip": "whole document",
+    "tool": "main's merged tree (PR #77 samplers)"
+   },
+   "uncertainty": "single-draw values at the stated setting. never_used_frac's three-seed range at a fixed setting exceeds the 0.01 threshold, which is why it is reported and not gated (tok.never_used_not_decidable); the 0.0188 here is one draw and not a pass/fail",
+   "boundary": "AGENTS.md pre-fetch gate for the 30B v2 mix, now by measurement on the exact fetch composition rather than by the wider-composition ruling in the mix file's _comment. ALL THRESHOLD GATES PASS: the 30B build is cleared to fetch. ref fertility is corpus-independent (REF_EN), so 1.4286 matches the role-dir run exactly; hanzi moved 0.9793 -> 0.9880 because the exact mix draws zh_web from 909 shards. NEVER-USED IS LOAD-BEARING FOR THIS CLEARANCE: 0.0188 is nearly twice the retired 0.01 threshold -- if never-used were still gated, this run FAILS and the 30B fetch is blocked. The un-gate decision (tok.never_used_not_decidable) is what makes the clearance possible, not a tidy-up; a reader who does not follow that citation will not see it. The cot supply half of e1-51 needs no new measurement: cs.cot_open_thoughts_landed counts the 776,084,377 unreachable tokens and carries the repair spec (re-render with a content field, rename shards to three digits), and the v2 mix names data/corpus/cot only by 4c's 2026-09-08 ruling -- the repair is a future-mix path, not a v2 one.",
+   "status": "measured"
   }
  ]
 }
