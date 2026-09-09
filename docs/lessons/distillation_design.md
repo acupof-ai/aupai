@@ -258,5 +258,5 @@ the median-ratio ≥ 0.7 collapse check (section 2).
 card-days single-card, ≈ 12 days on 8 (unverified extrapolation). If the budget named
 for the leg can't cover it, stop and report.
 
-The amendment chain (runs/prereg.jsonl#distill_qwen27b_0908, amendments 1–5) carries
+The amendment chain (runs/prereg.jsonl#distill_qwen27b_0908@amended_5, amendments 1–5) carries
 every criterion; this section is the index.
