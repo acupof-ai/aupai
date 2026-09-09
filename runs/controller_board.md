@@ -1,25 +1,384 @@
-# Controller board (fb) — 2026-09-08
+# Controller board (fb) — 2026-09-09, 03:1xZ
 
-Cards: all eight are tileRL's, granted by the user directly. aupai runs no GPU job.
+**The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
-## User orders in force
+## The number this round exists to produce
 
-| order | state |
+| arm | seed | final val (epoch-end, 100 batches) | steps | tokens |
+|---|---|---|---|---|
+| N1 | 1337 | **1.823** | 7,629 | 4.00B |
+| N2 | 1338 | **1.871** | 7,629 | 4.00B |
+| R | 1337 | not launched | — | — |
+
+**F = 0.048.** Everything else about the two arms is identical: same mix
+(`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
+isolates weight init and dropout.
+
+**The correction that matters, and it lands against my own reporting.** I quoted the same-step
+gaps all night — 0.088 at step 500, 0.071 at 7000, 0.072 at 7500, "mean 0.076, no trend" — and
+treated them as the floor's scale. They are not the same quantity. `train.py:408-409`:
+
+```
+val_batches = 20
+val_batches_full = 100  # fixed prefix, so the epoch-end number is comparable across runs
+```
+
+The periodic `step N val` line is a **20-batch** estimate (fifteen reads, min 0.067, max 0.088, mean 0.076; series committed as `runs/anneal_null_val_series_0908.tsv`). The `ep 1/1 ... val` line is a
+**100-batch** one, and train.py's own comment says which of the two is comparable across runs.
+Five times the data, so roughly half the sampling noise — which is the whole of the drop from
+0.072 at step 7500 to 0.048 at the end. **Had I read the floor off the periodic series, I would
+have published a floor ~50% too large and buried any true effect between 0.048 and 0.076.**
+The criterion in `runs/anneal_arms.sh` said "final val" and was right for a reason nobody had
+stated: it names the estimator, not just the time.
+
+**What the floor means for R.** N1's entire anneal tail moved val 1.854 -> 1.823 = **0.031**,
+which is *below* the 0.048 floor. So a reweight of the anneal phase whose effect is the same
+order as the phase's own contribution cannot be read at this budget by construction. If
+`|R - N1| <= 0.048`, that is the answer — a bound, reported as a bound — and the reweight does
+not enter the 30B mix on this evidence.
+
+**What two points cannot say.** F is a range over two draws, not a standard deviation. Any sigma,
+p-value, or confidence interval quoted off this pair is fabricated. Written into the prereg row's
+`will_not_claim` before R has a number.
+
+## The floor is per metric, and on three metrics it is a sign flip
+
+Both null arms are now scored (`runs/score_matrix.jsonl`, N1 and N2, 10 metrics each). The pair
+differs only in `Cfg.seed`, so **every difference below is init noise with no effect in it.**
+
+| metric | N1 | N2 | N2 - N1 | basis |
+|---|---|---|---|---|
+| final val (nats/tok) | 1.8230 | 1.8710 | **+0.0480** | 100 val batches |
+| domain_loss unweighted mean | 2.0241 | 1.9956 | **-0.0285** | 9 domains |
+| domain_bpb unweighted mean | 0.77209 | 0.76323 | **-0.00886** | 9 domains |
+| mc_ceval Average | 23.1 | 27.7 | **+4.60** | C-Eval |
+| minimal_pairs overall | 0.801444 | 0.801444 | **0.00000** | 277 pairs |
+| minimal_pairs factual | 1.0000 | 0.8125 | **-0.1875** | n=16 |
+| minimal_pairs function_word | 1.0000 | 0.8500 | **-0.1500** | n=20 |
+| minimal_pairs numeric | 0.5800 | 0.6400 | +0.0600 | n=100 |
+| minimal_pairs mean_margin | 2.5819 | 2.4643 | -0.1176 | 277 pairs |
+| math_v2_like overall | 0.97145 | 0.97377 | +0.00232 | n=3012 |
+| math_v2_like perfect_square | 1.0000 | 0.9000 | -0.1000 | n=10 |
+| humaneval gold bpb (byte-wtd) | 0.49047 | 0.49199 | +0.00152 | 164 tasks |
+| lambada_en acc | 0.24743 | 0.24704 | -0.00039 | 5,153 |
+| lambada_zh open_acc5 | 0.4950 | 0.4710 | -0.0240 | 1,000 |
+| l1_fewshot correct | 20 | 18 | -2 | 3 demos |
+
+**Three readings of held-out likelihood, and they do not agree on which arm is better.** Final val
+says N1 by 0.048. `domain_loss` unweighted mean says **N2** by 0.0285. `domain_bpb` unweighted mean
+says **N2** by 0.0089. Same two checkpoints, same nine domains, opposite rankings. So the floor is
+not a scalar to clear — on these aggregates the sign itself is not stable between two seeds, and
+**no single-metric reading of R can rank it against N1.**
+
+**The domain aggregate is 93% two domains.** Per-domain init noise spans a factor of 1,400:
+`code_py_rp1t` 0.0001 and `code_py_starcoder` 0.0020 at one end, `chatml` **0.1394** and `chat_qa`
+**0.0988** at the other. Those two are the smallest slices in the mix -- `mix_200m_4b_annealN.json`'s
+`pool_rows_estimated`, the field both null arms read, is **9,043** for chatml and **8,854** for
+chat_qa against 97,722 for code_py_rp1t and 2,139,719 for code_py_starcoder, 11x and 237x larger --
+so their held-out splits are the smallest. Of the aggregate's 0.0285 movement,
+(0.1394 + 0.0988) / 9 = 0.0265 is those two — **93%**. An arm compared on the unweighted mean is
+being compared on chatml and chat_qa with seven domains along for the ride.
+
+**`minimal_pairs.overall` is identical to sixteen digits while all five of its dimensions moved.**
+Both arms scored exactly 222 of 277. N1: 39 + 16 + 20 + 58 + 89. N2: 38 + 13 + 17 + 64 + 90.
+Same total, different 222. The aggregate cannot fail on a difference it does not represent, and
+here it reported perfect agreement between two arms that disagree on 5 of 5 partitions.
+
+**mc_ceval's floor is 4.6 points.** Every C-Eval comparison at this scale that quoted a gap under
+4.6 points was inside init noise. This is the largest single number in the table and the one most
+likely to have been read as a result before tonight.
+
+**The small-n dimensions are unusable and should be reported as counts.** `factual` is 16 items
+(16/16 vs 13/16), `function_word` 20 (20/20 vs 17/20), `perfect_square_pattern` 10 (10/10 vs 9/10).
+A 3-item and a 1-item swing print as 18.75 and 10.00 percentage points. Nothing is wrong with the
+measurement; the percentage is the wrong presentation for n=10.
+
+## api_cloze scores every checkpoint against another program's row bounds
+
+Both arms' `api_cloze.bounds` are byte-identical and name a run neither arm is:
+
+```
+mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+```
+
+The anneal arms ran `mix_200m_4b_annealN.json`, seed **1337 / 1338**, world **4**, 7,629 steps.
+The bounds are the memory-layers program's (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`), and the metric's own `gap_note` says so. Identical bounds across
+two runs with different seeds confirms the split is a fixed reference, not derived from the
+checkpoint being scored.
+
+**So the "seen" region is rows these checkpoints never saw.** `within_region_gap` came out 0.0008
+on N1 and exactly 0.0000 on N2 — the right answer for a partition with no meaning here, and the
+reason nobody noticed. The bounds ARE stamped, which is what let this be found at all; what is
+missing is a refusal when the stamped bounds do not describe the checkpoint being scored. Same
+family as `vocab_id` and `.srcfp`: the fingerprint exists, nothing checks it at the read.
+
+Not a claim that api_cloze is broken — inside the memory program it is measuring what it says.
+It is a claim that the default score-matrix profile runs it on checkpoints where its partition is
+arbitrary, and reports a number rather than a SKIP.
+
+## Pre-registration — written before R, honest about N1 and N2
+
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`, registered 2026-09-09T01:15Z by fb.
+
+**It does not claim to pre-register N1 and N2.** Both had finished when it was written; the row
+says so in `registered_before`. What genuinely predates every arm is the *reading criterion*,
+committed verbatim in `runs/anneal_arms.sh` at **`1e91d8da`, 2026-09-08T14:10Z — 39 minutes
+before N1's first launch attempt at 14:49Z**:
+
+> READ N1 vs N2 BEFORE LOOKING AT R. |N1 - N2| is the noise floor; if |R - N1| falls inside it,
+> the reweight had no measurable effect at this budget, which is a result and not a failed run.
+
+The row moves that criterion into the ledger where `prereg_citations_current` can see it, and
+fixes R's decision rule while R's number does not yet exist. The three arms had been running with
+no prereg row at all — the criterion was real and dated, but it lived only in a shell script's
+header comment, where no check reads it.
+
+## Cards
+
+| | |
 |---|---|
-| Clean the whole repository, not one redundant word | seven tracks, below |
-| Any file readable by someone who has never seen the repo | folded into every track, no separate renaming round |
-| Worktrees cut to the live working set | 32 → 14; owners remove their own |
-| At most two open tasks per person | held all night; the count is work in progress, not work awaiting someone else's review |
-| Corpus reproducible byte-for-byte from zero | 98 leads; blocked behind the 40,000-vs-1,200 finding below |
-| Distillation pipeline, teacher Qwen3.8-27B | **PAUSED by user ruling 2026-09-08: no cards lent.** Design complete and parked |
-| Never delete without a named target | every removal names its files and runs each first |
+| aupai | **2, 4, 5, 7** — granted by the user 2026-09-08, machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`) |
+| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 |
+| now | 0 at 32.8 GiB / 100% (tileRL level-5 eval, claim `tilerl-l5eval.0.json`); **2 running N2's score matrix**, claim taken; 1, 3, 4, 5, 6, 7 at 0 MiB |
 
-## Queue state, 2026-09-08 12:05Z
+**N2 released its cards cleanly.** All four went to 0 MiB and `runs/claims/anneal_n2_0908.2-4-5-7.json`
+is gone — no orphan, no reparented grandchild holding memory.
 
-28 PRs merged today, 18 still open, CI green. **Reviews are now being picked up without dispatch** — de cleared 44's four, e1 cleared 98's three, b0 and tilerl are on the rest. The standing rule changed at 11:50Z: **a PR's roster pair reviews it without waiting to be assigned.** The earlier version made me watch the queue faster; de's correction is the right one — the bottleneck was not that only I could see it, it was that only I was looking.
+## Running now — arm R, cards 2,4,5,7
 
-Merge order still binds three: **#81 (§276-278) → #96 (§279-282) → #85 (§283)**, and **#98, #100 before #101** (its two fact references are forward references that no check would catch — `_commit_delivers` parses `facts/<f>.json#<id>` only from `runs/tasks.jsonl` evidence, never from prose).
+| | |
+|---|---|
+| run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
+| launched | 2026-09-09 01:48Z by fb |
+| cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
+| progress | step 2700 / 7629, 35%, 77K tok/s/gpu, 1.707 s/step |
+| next reads | D at step 6500 (~1.9h), epoch-end val at ~05:2xZ |
 
+## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
+
+**R was registered as differing from N1 "in the mix and nothing else". The premise was never
+checked against `build_mix`.** `train.py:2791-2810` builds the MAIN phase first from `d["weight"]`,
+and `annealN` vs `annealR` are byte-identical outside `_comment` and nine `anneal` values —
+`total_tokens`, `epochs` and every `weight` agree to the last digit. `used[]` starts at 0, so `idx`
+and `ph` match, and `randperm` draws from one generator seeded 1337 in both. **N1 and R consume the
+same rows in the same order for 6,866 of 7,629 steps, and the reweight cannot act until then.**
+
+Confirmed in the logs, not only the code — N1 vs R: step 10 loss 6.615 / 6.616, steps 20 and 30
+**identical** at 5.683 and 5.587, step 50 5.220 / 5.215, step 100 4.811 / 4.817.
+
+So `|R - N1|` at the read point is drift plus reweight and the criterion cannot separate them.
+**The fix costs nothing: `D = |R - N1|` at step 6500** — the last read before the anneal — is the
+same-seed drift measured on these arms. A verdict that the reweight moved val needs `|R - N1|` to
+exceed **both** `F = 0.048` and `D`. Prereg amendment 1, `e24268fd`, written at step 2000.
+
+**The drift series, and the two extrapolations it killed.**
+
+| step | 500 | 1000 | 1500 | 2000 | 2500 |
+|---|---|---|---|---|---|
+| R − N1 | +0.001 | −0.001 | +0.011 | +0.016 | **−0.010** |
+
+No trend, two sign changes, everything inside [−0.010, +0.016]. At step 2500, 44's `sqrt` model
+predicted +0.018 and fb's linear fit predicted +0.026. **Both were wrong, and the linear one was
+mine.** I had corrected 44's estimate by fitting a line through three points and concluding the
+false-positive path was "not demonstrated to be narrow" — a model the next point destroyed, stated
+more strongly than 44 stated theirs. Prereg amendment 2, `c29d6cc0`, written before R's number
+exists.
+
+**44's mechanism survives its own reading being wrong, and is why the reversal is informative.**
+`dL ≈ ∇L·Δθ + ½ΔθᵀHΔθ` puts the exponent in **[0.5, 1]**, not at a point: the linear term goes as
+`sqrt(t)` and **carries a sign**, dominating while `∇L` is large; the quadratic goes as `t` and is
+**always positive**, taking over as `∇L → 0`. 44 read the early flip-then-growth as the quadratic
+taking over. **Step 2500 falsifies that** — an always-positive term cannot produce a reversal — so
+the sign-carrying term is still dominant at 2500.
+
+What five reads support and nothing more: consistent with near-zero true same-seed drift plus the
+20-batch estimator's own noise, which is large on exactly this comparison (N1/N2 same-step gaps ran
+0.067–0.088 on 20 batches against 0.048 on 100). **No extrapolation to step 7629 is supported,
+including the comfortable one that drift stays small.** That is the argument *for* `D`: it is
+measured at 6500, not extrapolated to it.
+
+**The chained scoring will fail on R too.** A four-card grant with no lane card guarantees every
+arm's scoring step deadlocks 30 min and exits nonzero; N1 and N2 both did. Checkpoint unaffected,
+scoring done by hand in the gap. The correct fix is one line in `run_ddp.sh`, which is frozen.
+
+## Next gate — R
+
+R's epoch-end val at ~05:2xZ, read **per metric** against the floor table above, never against a
+single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound and a result, not a
+failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
+Score by hand on a freed card after the chained pass exits nonzero.
+
+## Queue — 8 open, and the reviewer bottleneck broke tonight
+
+| PR | branch | state |
+|---|---|---|
+| #100 | fact-repro-table (98) | **MERGED `3804ff48`** by 44 as second reviewer |
+| #118 | fb-shapes-287 | approved, then **held by fb** — correction `3b50be2e` pushed after the step-2500 read falsified part of the entry; awaiting 44's re-approval |
+| #23 | tilerl-cache-sidecar | changes-requested by 3b, correctly blocked |
+| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | no qualifying review |
+
+**#100 is how the bottleneck should break.** It sat approved-and-unmerged for 7h because the 09-07
+ruling puts the merge on the reviewer and de was asleep. I declined to merge it myself: a third
+party merging satisfies the rule's purpose and fails its letter, and the cost is not one facts
+table — it establishes that the reviewer step is skippable whenever a reviewer sleeps, which is the
+step that makes approval mean anything. **The clean route needed no exception, because nothing says
+a PR has one reviewer**: 44 independently reviewed it, became a roster reviewer of that PR, and
+merged and pod-pushed inside the ruling. Conflict was `facts/corpus_supply.json` only, resolved by
+union, 29 facts, JSON validated.
+
+**A trap 44 hit doing it**: #100's head branch is `fact-repro-table`, not `pr100`; two pushes went
+to a same-named new branch first. Worth a friction row.
+
+**I held my own PR after it was approved.** 44 approved #118 and the step-2500 read landed in the
+same minute, falsifying "monotone since 1000" and the residual built on it. Approval is not a
+reason to merge something you now know is wrong.
+
+## Landed this tick — three defects, all found by reading rather than by a check
+
+**de-85 (`fc6fd165`, amended `74fb76e7`) — the shared-file claim is broken in two dimensions.**
+Measured, not inferred. VISIBILITY: fb held AGENTS.md in `../aupai-fb`, and
+`claim-file acquire --path AGENTS.md --owner testprobe` from the integration tree returned
+`claimed AGENTS.md for testprobe` rc=0 with no warning; each tree's `claim-file list` showed only
+its own. Probe released immediately. LIFETIME: `merge_main.sh fb` printed
+`released 1 claim(s): AGENTS.md` while PR #117 — the branch that actually edits AGENTS.md — was
+open and unmerged, so the file sat unclaimed with an outstanding edit. Cause of both is two lines:
+`file_claim.py:32-33` builds `CLAIM_DIR` from the tree the script lives in, and `.gitignore:48`
+ignores `runs/claims/`. **The rule this implements exists to stop three between-session collisions
+and cannot stop any of them** — the hook enforces that the author declared it in their own tree,
+which is a record, not mutual exclusion. 44 ruled it one task, two dimensions: fixing visibility
+alone leaves merge_main releasing early, fixing lifetime alone leaves two sessions blind.
+
+**de-86 (`33c379da`) — a closed row's status is unreachable by every supported writer.**
+`exp.py done` refuses a closed row, `note` refuses a closed row, `amend` takes only
+`--reading_artifact` / `--finding` / `--decision`. Each refusal is correct alone; together they
+leave no path. Observable consequence: the two null arms of one experiment carry different statuses
+for the same event, and N2 cannot be fixed. 44's design constraint is in `--reading` as a
+constraint on the fix — the ledger unions across branches and folds last-row-wins, so the
+correction must be an **appended** status-correction event, never a rewrite; a rewrite grows a
+duplicate id, which is the 2026-08-31 t39/t40 failure. The negative case is the one that keeps it
+honest: the same command must still refuse a close that is merely being re-run, or "correct a wrong
+status" becomes "overwrite any close".
+
+**The pod/local contradiction is ruled (`daded540`).** `pod_push` reported "1 row(s) where both
+sides state a different non-empty value" without naming it; `python3 scripts/pod_pull_ledgers.py`
+with no flags names it and prints the differing fields — pod_push reports the count, pod_pull_ledgers
+reports the row. It is `anneal_n1_0908 @ 2026-09-08 16:59`. Pod side is run_ddp.sh's chained close,
+true about the COMMAND and silent about the run; local side carries the same 1.823 with its basis
+and its reading. Ruled to local. Same shape as the `b0_p5_ctrl_bf16` ruling.
+
+## §284 §285 §286 landed — PR #117, merged 96c9b6f4
+
+Written by fb from 44's candidates, reviewed by 44 twice. 44's two findings on the first round were
+both real and the second was worse than they read it: **chatml 7,974 / chat_qa 7,838 were the R
+ARM's row counts**, read from `runs/anneal_r_0909.log` under the *reweighted* mix — a claim about
+the null pair sized from the arm the null pair exists to be compared against. Corrected everywhere
+to `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, 9,043 and 8,854 against 97,722 and
+2,139,719. The other finding was R10's own shape: §286 cited two logs that exist only on the pod,
+now extracted and committed as `runs/anneal_null_val_series_0908.tsv`. Recount from that file:
+fifteen reads, min 0.067, max 0.088, mean 0.0757.
+
+## The peers — 44 is awake and carrying the review load
+
+At 01:12Z `peer_stalled` read 6 members silent 2h+ (3b 544m, 44 284m, b0 554m, de 285m, e1 651m).
+Since then 44 has reviewed #117, #118 and #100, ruled on de-85 and de-86, merged two PRs and pushed
+the pod twice. Nothing from de, b0, e1, 3b, 98 or tilerl. Of the last 25 commits on main before
+this tick, 16 were fb and 6 were 44; de's last commit was not in the last 60.
+
+`one_deliverable_per_owner` still names the shape: b0 holds 9 open tasks, de 9 (now 11 with de-85
+and de-86), e1 3, 3b 2. Nine open tasks is a list, not a queue.
+
+## A sideways move on main, by the fixture identity
+
+44 found it in the integration tree's reflog: `a2375098 -> 12ecbf52 "Reset to origin/main"` by
+**`t <t@t>`**. That is the same defect chased earlier tonight — the shared `.git/config` held the
+fixture identity in violation of the 2026-09-02 user order, and I restored it to
+`cklxx <q1293822641@gmail.com>`. **The reset predates the restore, so this is a trace of it rather
+than a glitch**, and it is why `main_advances_by_ancestry` goes red in the integration tree. Local
+state only; `origin/main` is clean and CI is green. Recent reflog is all `merge_main` records.
+
+## Harness — 0 FAIL, 14 WARN
+
+`no_ghost_close, ckpt_facts_sources_present, pod_stamp_is_main, pod_ledger_rows_home,
+keep_claim_reasons_live, owner_queue_depth, peer_stalled, one_deliverable_per_owner,
+review_present, entrypoints_ran, prereg_citations_current, score_matrix_present,
+selftest_counts_computed, tasks_stale`. 83 repo checks, 27 pod checks. CI green on main and on
+all 8 PR heads.
+
+`one_deliverable_per_owner` names the real shape of the stall: b0 holds 9 open tasks, de holds 9,
+e1 holds 3, 3b holds 2. Nine open tasks is not a queue, it is a list nobody is working from.
+
+## N1's first death — 14:49Z, and what it cost
+
+**N1 launched at 14:49Z and was dead by 14:51Z.** `SignalException: Process 1203764 got signal: 15` — killed by `harness launch`'s 120 s startup gate while it was still doing legitimate work: `mix: tokenizing math_owm_stage2 (4,135,793 docs, workers=1)`.
+
+**The cause was in the first screen of its own log, and I classified it as a side cost:**
+
+```
+mix: math_owm_stage2 cache was shuffled at sample_seed 42, now 1337: retokenizing
+cache read: 158,471 MiB (154.76 GiB) over 9 cache(s)
+```
+
+`Cfg.sample_seed` is `None` (`train.py:317`) and `_sample_seed()` falls back to `Cfg.seed` (`:2069`), so `--seed 1337/1338/1337` gave the three arms **two different corpus orders**:
+
+| arm | seed | sample_seed | corpus order |
+|---|---|---|---|
+| N1 | 1337 | 1337 | A |
+| N2 | 1338 | **1338** | **B** |
+| R | 1337 | 1337 | A |
+
+**`|N1 − N2|` would have carried init variance PLUS corpus-order variance while `|R − N1|` carries only the reweight — the floor measured on a superset of what the comparison holds constant.** Overstated, so the error direction is a false negative: a real effect masked, written up as "no measurable effect at this budget", which reads exactly like a clean null.
+
+**`_sample_seed`'s own docstring already carried this and its remedy**, from de-7: `Cfg.seed` also drives weight init, so binding the cache to it "would change their training data and fold data variance into `ds.seed_variance_0p2b`" — **pin `sample_seed` and a seed sweep shares one cache.**
+
+**Fix (3b, in flight):** add `--sample_seed` to train.py's int-flag dict, leave `Cfg.sample_seed` defaulting to `None` — changing the default would move the corpus order of every run that does not pass the flag, including the p02_s* arms `ds.seed_variance_0p2b` rests on. Arms become `--seed 1337/1338/1337 --sample_seed 42`. **Nothing retokenizes, so the gate cannot fire, and all three arms read the 2026-09-05 cache other runs have already exercised rather than two freshly-cut ones nobody has read** — 3b's addition, and the better half of the argument: an unread cache is itself an untested variable in the experiment.
+
+**My error, and it is the one to keep:** I reported "N1 is up" from cards at 383 MiB, a claim file, and a log that had just been written. **All three are equally consistent with "starting" and "died thirty seconds ago", and I checked none of them against liveness** — I did not `tail` to the end of the log I had already opened. Memory occupancy and a claim file answer "this job existed", never "it is alive now". The two probes that do answer it are the log's last line and `nvidia-smi --query-compute-apps`; 3b ran both, I ran neither.
+
+**Verified after the death:** cards 2,4,5,7 at 0 MiB, `--query-compute-apps` shows only tileRL's two pids, claim released, and **the cache is intact** — `tokens_math_owm_stage2.pt.seed` still 42, `.pt` still the 2026-09-05 03:59 file; it died before writing its tmp.
+
+**Ticket, not blocking:** the 120 s startup gate kills a job for doing legitimate work. It intends to catch a job that never claims a device; what it measures is whether one claimed within 120 s, and a first-time cache build cannot. Pinning the seed hides it tonight — **the next person building a cache for the first time hits it, and the symptom is `signal: 15`, which reads as "somebody killed me".**
+
+## The v2 model, decomposed
+
+15 agents, 7 dimensions each surveyed then adversarially verified. **The headline is that three of the four architecture components do not exist in the tree**, and one of them has an unresolved specification.
+
+| package | size | today's failing acceptance |
+|---|---|---|
+| `csa-doc-cu` | large | CSA raises `NotImplementedError` on packed input (`model.py:277`) while `train.py:3843` passes exactly that `cu` |
+| `hca-module` | medium | HCA appears **0 times in any .py on all 318 branches** |
+| `partial-rope` | large, **scope unknown** | 473 .py searched; the only rope string is an error message at `model.py:1564` |
+| `v2-cfg-surface` | small | 6 of the v2 knobs are unreachable from any launch line |
+
+**`partial-rope`'s scope is unknown for a reason worth stating: the spec says "the last 64 dimensions" without saying 64 of what** — per query head, per compressed-KV latent, or per residual channel — and gives no theta. Three readings, three different position resolutions. **That is a design decision nobody has made, not implementation work.**
+
+**`csa-doc-cu` is a design decision too, not a port:** our rows pack ~10 documents per 4096 tokens, so the residual tokens at each block boundary need a rule, and a rule that differs per branch brings back the causal-leak class — the previous version leaked 1.44 max|delta| and it was invisible in the loss.
+
+**What must NOT be rebuilt:** MoE and the rest of the 1.5b-a0.2b-e48 stack trained to 26.74B tokens at val 1.824. It works end to end.
+
+## Open decisions that are the user's
+
+| question | consequence of deferring |
+|---|---|
+| **Tokenizer unfreeze** (non-hanzi slots 11,487 vs MiniCPM5's 103,883 = 9.04x; our code fertility 1.248x worse; ref fertility 1.4286 vs 1.0519) | a rebuild invalidates every checkpoint, so it must be decided BEFORE a v2 pretrain, not after. Deferring silently chooses "do not rebuild" |
+| **`partial-rope`'s 64 dimensions of what** | the package cannot be scoped, let alone started |
+| **Cards for a production v2 run** | the last 30B run used six; four cannot host it |
+
+## Queue state, 2026-09-08 13:20Z
+
+**15 open. CI is not the bottleneck and neither is dispatch -- six green PRs are deadlocked behind one unmerged branch that contains the rows unblocking them.**
+
+de has already reviewed **#75, #83, #89, #95, #98, #100**. All six review rows sit in commits `a5d530fd` and `6912878b`, which are on `de-agents-clean` -- that is **#85, itself awaiting review**. On main those six PRs read as zero review rows, so `review_present` cannot see work that was actually done, and nobody merges. **A PR awaiting review holds the key to six others.**
+
+Mechanism, and it is the general one: **`runs/review.jsonl` is a ledger and merges by union via `merge_main.sh` in seconds; riding a code branch makes a reviewer's latency equal to that code PR's review latency.** Today that was six PRs times several hours. de writes the row on a ledger-only branch and merges it immediately from now on; 44 is reviewing #85 to drain the six.
+
+Red, one assertion, one fix: **#102 and #105 both fail `EVIDENCE stale: []; undeclared: ['score_matrix_rewrites_traced']`** -- the new check entered `CHECKS` without an entry in `EVIDENCE` (`harness.py:17100`), and #105 contains #102's `0ab846c2`. Chain: b0 adds the line -> #102 green; #96 lands -> #102 merges -> #105 merges.
+
+**#96 is held by tilerl and the hold is correct.** `scripts/test_sft_holdout_gate.py:64` is still live while §279 describes it as fixed, in a PR with no code. An entry naming R12's sharpest instance, leaving that instance in the tree, lets a reader cite §279 as evidence the check is fixed -- which is what R12 condemns, inside the paragraph describing R12. Requirement: a reader cannot take §279 as evidence of a fix. b0 picks the landing.
+
+Landed since the last board: **#81 `c0944b06`, #94 `a50823d4`, #104 `5bf7eb38`** (tilerl merged and pushed the pod in the same step; drift OK, 837 files match, stamp `a50823d4`).
+
+Merge order still binds: **#81 -> #96 -> #85**, and **#98, #100 before #101**.
 ## Critical path — cleared 2026-09-08 11:45Z
 
 The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execution side, not only the merge side**: `executed_hook_matches_main` PASS, the integration tree's `pre-commit` byte-identical to main's. Production evidence in the two hours after: the shared config went from 88 branch sections to 98 — **ten pushes, ten misfire opportunities, and the branch-excluded digest never moved from `eec48396`.** Eleven false accusations, eleven different innocent files, zero repeats, ended.
@@ -38,7 +397,7 @@ The shared-config guard is on main (#99, `11c8a89c`) and **verified on the execu
 
 ## The night's single finding
 
-Thirteen instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
+Nineteen instruments each answered a question narrower than the one asked, and none reported that it had. Measured, not asserted; every row is an incident from 2026-09-08.
 
 | instrument | question asked | question answered |
 |---|---|---|
@@ -54,6 +413,8 @@ Thirteen instruments each answered a question narrower than the one asked, and n
 | mutation sweep "ALL KILLED" | did the mutants die on assertions | they died on `FileNotFoundError`, twice |
 | my own "40,000 rows vs a cap of 1,200" | can this batch's recorded command have produced it | how many programs the library holds -- a different unit, never checked |
 | `gh pr diff --name-only` | which files does this PR change | which files the branch's history touched -- a revert leaves them listed. The predicate is `git diff base..head --stat` |
+| `pod_push --check`'s UNREGISTERED line (mine) | how many .py on the pod are not in the manifest | how many that line had room for. It ends in `...`; I read 56 and relayed 56 to tilerl. It is **179** (`runs/` 120, `_e1tmp/` 25, root 11, `_b0tmp/` 11, `scripts/` 6, other 5) |
+| my "56 UNREGISTERED, which should join the manifest" | which of these need a manifest entry | none of them -- b0's inversion is the right one: manifest means "on main, and the pod must match", and these do not exist on main. **For a file that should not persist, seeing it drift is worthless; seeing it still there is what matters.** The missing thing is a check that the pod root holds no untracked `_*.py` |
 | a PASS line's summary (mine, via de's) | what does this check assert | what the summary line happens to print. `shapes_table_covers_doc` DOES refuse duplicate numbers (`harness.py:2390`, verified on a constructed world); its PASS line's "each referenced exactly once" is about the rule table, and both of us read the summary instead of the predicate |
 
 Two derived rules, both adopted: **an unusually tight cluster is a systematic instrument offset until shown otherwise — a real effect has spread** (3b, from 18 samples all inside 7.1–8.0h, which was a timezone constant); and **rewrite the question into a form that reads bytes directly** (3b: hash the file, compare UTC to UTC, run the target copy itself).
@@ -157,3 +518,25 @@ Open for whoever picks this up: at 91% teacher correctness, is the agreement fil
 
 1. Corpus composition for the next full run.
 2. Pod disk at 95%.
+
+## MiniCPM5-2B research — 2026-09-08, 3b + 44, fb reviewing
+
+Two sessions, assigned on the user's order to research it thoroughly. **One finding changes a decision; the rest close doors, which is also worth having.**
+
+**The decision-changing one (3b).** MiniCPM's own ablation (arXiv 2404.06395, Table 1) measures annealing with high-quality and SFT data mixed into the pretraining data against annealing on pretraining data alone: **+8 to 12 points**, with **B-2 as the negative control** -- doubling SFT tokens 6B to 12B moves 40.9 to 41.2, i.e. nothing, so the gain is the mixing and not the token count. **We copied the 10% anneal length (`train.py:406`, comment `(MiniCPM-style)`) and changed no data: all 25 `data/mix_*.json` have `anneal == weight` for every domain.** Our anneal lowers the learning rate over a distribution identical to the one before it.
+
+Cost of the gap, from our own store: the anneal is worth **-6.89%** unweighted mean loss with all nine domains down, at **19x** per-token value against a constant-LR token. That multiplier is what the data change would act on.
+
+Prerequisite before any proposal is executable, and 44 owns it: **do we hold instruction/SFT data we can mix in.** 21 SFT packs exist; **17 carry no holdout stamp, 4 stamp two superseded holdout sets, 0 stamp the current one.** And the contamination side decides whether the proposal is legal at all: **30% of math-500 questions already have a containment hit in the math SFT corpus** (`facts/contamination.json#cont.split`), so mixing that same data into the anneal makes every post-anneal math reading uninterpretable. Answer is three sentences: what we hold, whether it is usable, which readings die if we mix it.
+
+**Transfer caveat, raised by tilerl-27 and adopted before any run.** The +8 to 12 points was measured on *their* mix, not ours; four separate readings failed that way in tileRL today, each a correct number carried onto a different population. **So the first run carries our own control arm, not "do what they did and see how much it moves".** Our baseline is `anneal == weight`, and that baseline is itself the thing under test: if our normal-phase mix is already cleaner than theirs, the headroom the mixing buys may already be spent. **The criterion is written before the run -- how many points count, how wide the noise band, how many seeds** (tileRL lost 171 minutes today to a curve whose criterion was written after).
+
+**Tokenizer (3b).** Non-hanzi slots **11,487 (ours) against 103,883 (theirs) = 9.04x**, not the 4.0x the size ratio suggests; our code fertility is **1.248x worse**; ref fertility **1.4286 against 1.0519**; they carry FIM and tool-call tokens, we carry none. The unfreeze decision is the user's and is open.
+
+**Architecture (44), first-hand from `config.json` and the safetensors index, not the card.** No loop, no weight sharing (42 independent layers, no aliases, `lm_head` separate from `embed`); dense 2.5B; full attention GQA 16/2, head_dim 128; RoPE theta=5M unscaled, 131K context; vocabulary 130,560. **Every row of the transfer column reads "not transferable", and the two strongest rows are strong for different reasons**: MiniCPM4's InfLLM v2 sparse attention (81% sparse) was **dropped in gen 5, and the README's stated reason is deployment compatibility -- no custom kernel, no fork -- not capability**; theta=5M has no published reason in any of five sources checked. **The kernel one is a cost datum we have never priced: a team able to build sparse attention, and that shipped it, gave it up to avoid depending on a custom kernel -- and our v2 is entirely custom kernels (KDA, MoE, CSA).** Recorded in the fact's `boundary`, PR #106. Verdict for v2 architecture: change nothing.
+
+**Two rules adopted from tonight's peer disagreements, both about how a measurement is recorded rather than taken:**
+
+**A mutation record must let a reader build the same mutant.** b0 and tilerl each ran an "M6" on #102, got different survival, and both believed they were discussing one measurement. tilerl's under-report mutant emptied `changed`, so `bool(got)` was also False and it could not separate exact-set from non-empty; the mutant that separates them omits some leaves and keeps others (recurse dicts but not lists). b0's entry recorded the conclusion, not the construction, so a reproducer necessarily built a different shape. **"Four mutants, all killed" is a count; what carries information is which case kills which** -- the same ruling as this morning's on kill-set equality, arrived at from the other side. b0 is pinning all four by name.
+
+**A conflict between two peers' first-hand readings is the controller's to resolve, not to forward.** 3b's anneal proposal raises `cot` 22.7x on the ground that it is instruction-shaped; e1 read the bytes the same evening and it is `f"{problem}\n\n{solution}"` plain text, by the generator's own comment. The proposal may still be right, but its reason has to change from "instruction data" to "high-quality reasoning text" -- and with it the expectation, since MiniCPM's +8-12 came from mixing SFT *format*. Second conflict, and it gates the two 26x rows: the proposal has no contamination column, while `facts/contamination.json#cont.split` records 30% of math-500 questions with a containment hit in the math SFT corpus. **Raising a domain 26x inside the 19x-per-token anneal window, without knowing its containment rate, manufactures an uninterpretable reading rather than inheriting one.** Requirement sent: a containment column, measured, for all four raised domains before any of them moves. The quantity is measurable in the existing pipeline -- e1's cot run produced `eval_contaminated=36` from it.

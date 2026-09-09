@@ -1,0 +1,87 @@
+{
+  "facts": [
+    {
+      "id": "distill.teacher_vocab",
+      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, no added tokens; auxiliary tokenizer.arle.bin 7,207,591 bytes. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x.",
+      "measured": "2026-09-08",
+      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587), vocab.json (248044)",
+      "config": {
+        "teacher_dir": "/work/Qwen3.8-27B-NVFP4",
+        "ours": "data/tokenizer.json"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "distill.vocab_mismatch_blocks_logits_kl",
+      "value": "Sequence-level distillation is the only vocabulary-agnostic route: with a 7.57x vocab ratio there is no token-level probability alignment, so logits KL is not a tuning problem, it is undefined. Cross-vocab logits distillation by aligned character spans is research, not engineering. Rebuilding our vocab to the teacher's invalidates every checkpoint and is a user-owned decision under the 2026-08-29 freeze (docs/lessons/scale_36b_plan.md#词表解冻条件-2).",
+      "measured": "2026-09-08",
+      "source": "derived from distill.teacher_vocab + facts/tokenizer.json#tok.vocab_size + the freeze record",
+      "config": {
+        "teacher_vocab": 248044,
+        "ours_vocab": 32773,
+        "freeze_date": "2026-08-29"
+      },
+      "uncertainty": null,
+      "status": "measured"
+    },
+    {
+      "id": "distill.seed_inventory",
+      "value": "Seed prompts already on the pod: openo1_sft.jsonl 77,685 instruction/reasoning pairs (mean output 5,832 chars, long-CoT), gsm8k_sft.jsonl 7,471 math word problems, sft_expanded.jsonl 442,206 rows. data/sft/code_with_tests/0000_mined.jsonl is EMPTY (0 lines) — the verifiable-code seed lane has no supply. Eval sets math-500/code-500 stay out of training.",
+      "measured": "2026-09-08",
+      "source": "wc -l and a 5,000-row sample on the pod: /work/aupai/data/openo1_sft.jsonl, gsm8k_sft.jsonl, sft_expanded.jsonl, /work/aupai/data/sft/code_with_tests/0000_mined.jsonl",
+      "config": {
+        "pod_paths": [
+          "/work/aupai/data/openo1_sft.jsonl",
+          "/work/aupai/data/gsm8k_sft.jsonl",
+          "/work/aupai/data/sft_expanded.jsonl",
+          "/work/aupai/data/sft/code_with_tests/0000_mined.jsonl"
+        ]
+      },
+      "uncertainty": "openo1 mean output length is from the first 5,000 rows, not the whole file",
+      "status": "measured"
+    },
+    {
+      "id": "distill.openo1_answer_extractability",
+      "value": "81.0% of openo1_sft rows carry an <Output> tag (405/500); of tagged rows, 78.3% yield an extractable numeric answer (last number in the tag), so the answer-extraction population is 63.4% of the file. 19.0% have no tag, 7.0pp of the total code-like. Instruction length median 222 chars, p90 463.",
+      "measured": "2026-09-08",
+      "source": "500-row random sample (seed 42) of /work/aupai/data/openo1_sft.jsonl on the pod; regex <Output>...</Output> + last-number extraction",
+      "config": {
+        "sample_size": 500,
+        "seed": 42,
+        "extraction": "last number in <Output>"
+      },
+      "uncertainty": "500-row sample; +/-4.4pp at 95% on the 63.4% proportion",
+      "boundary": "63.4% is the answer-EXTRACTION rate (last number inside <Output>), NOT the symbolic re-derivation coverage. Most extracted answers are word problems that cannot be re-derived independently; symbolic coverage is a pilot measurement, currently unmeasured. Cite this as extraction coverage only. Precedent: eff.depth_is_not_the_mfu_gap.",
+      "status": "measured"
+    },
+    {
+      "id": "distill.teacher_throughput_nvfp4",
+      "value": "Qwen3.8-27B NVFP4 generation throughput on the pod: 130.3 tok/s per H20 (batch 8, tp=1, measured 2026-09-08 by tilerl-0a); 105.0 tok/s incl. load+JIT is a lower bound. 469k token/hr/card. At measured mean 1400 token/sample (cap 2048): 335 samples/hr/card; at cap 6144 mean 3331: 141 samples/hr/card. 8 cards = 1042 tok/s is an UNVERIFIED linear extrapolation. cap 2048 truncates 32% of level-5 math generations; 84% of those cut off were correct answers.",
+      "measured": "2026-09-08",
+      "source": "tilerl-0a measurement 2026-09-08, relayed by 4c; not re-measured by 44",
+      "config": {
+        "gpu": "H20",
+        "quant": "NVFP4",
+        "batch": 8,
+        "tp": 1
+      },
+      "uncertainty": "8-card number is unverified extrapolation; single-card numbers are one-day measurements",
+      "boundary": "Generation throughput, not forward. The 335/hr figure assumes the 1400-token mean, which is contaminated by 32% truncation at cap 2048; the 141/hr figure (cap 6144, mean 3331) is the uncontaminated planning number. Do not cite 335/hr as achievable.",
+      "status": "measured"
+    },
+    {
+      "id": "distill.teacher_correctness_level5_math",
+      "value": "Qwen3.8-27B NVFP4 correctness on level-5 math: 91% at cap 6144 (measured 2026-09-08 by tilerl-0a). The 64% quoted at cap 2048 was a lower bound, not a point value: the 32 cap-hit samples were unscored, and unscored is unknown rather than wrong. Length-correctness decorrelation in naturally-terminating samples: 0-500 tok 86% correct, 1000-1500 tok 100%; cap-hit samples re-ran to a 3331-token mean vs 1386 for natural ones (2.4x).",
+      "measured": "2026-09-08",
+      "source": "tilerl-0a measurement 2026-09-08, relayed by 4c; not re-measured by 44",
+      "config": {
+        "domain": "level-5 math",
+        "cap": 6144
+      },
+      "uncertainty": "level-5 math only; openo1's overall correctness may differ",
+      "boundary": "91% is on level-5 math at cap 6144, not on the openo1 seed set and not at other caps. Do not cite the 64% as measured correctness -- it was a lower bound.",
+      "status": "measured"
+    }
+  ]
+}
