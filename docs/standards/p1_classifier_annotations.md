@@ -130,10 +130,49 @@ estimate must match the inference distribution.
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
 high-score code, confirming the re-draw. Keep rates on the 18.8B-token base:
 >=2 = 30.4% (~5.7B), >=3 = 26.7% (~5.0B), >=4 = 3.3% (~0.62B). The threshold
-region for the ablation is >=2 vs >=3 -- the two cuts bracketing the recipe's
-~6B slot and straddling phi-1's 17% reference; >=3 is the prior (score-2 is
-"glue code, nothing to learn", exactly what the filter exists to remove;
-score-3 is real logic). The ablation pins the point. Score 5 is nearly dead
-(0.1%) and collapses into 4 at threshold time. The full 100K labeling is
-threshold-independent -- every sample gets a 0-5 label and the cut is applied
-post-hoc -- so it proceeds before the ablation.
+region for the ablation is >=2 vs >=3, with >=3 the prior (score-2 is "glue
+code, nothing to learn", exactly what the filter exists to remove; score-3 is
+real logic). The ablation pins the point. The threshold is the ablation's
+OUTPUT, not a means to a token target (4c, 2026-09-09): the recipe's ~6B is
+phi-1's output at a 17% keep rate, not ours -- 17% of our 18.8B is 3.2B, and
+loosening the cut to hit a copied token number would invert phi-1's
+quality-over-quantity argument. If a strict threshold yields 3B, the gate runs
+on 3B; the acceptance criterion is a 350M model clearing HumanEval 30%, never
+corpus size. Report keep rate and token count against phi-1's 17% with an
+explanation either way. Score 5 is nearly dead (0.1%) and collapses into 4 at
+threshold time. The full 100K labeling is threshold-independent -- every
+sample gets a 0-5 label and the cut is applied post-hoc -- so it proceeds
+before the ablation.
+
+## Classifier architecture (post-labels)
+
+FineWeb-Edu's method, not phi-1's random forest: a frozen Snowflake-arctic-embed
+encoder plus a classification head, trained on the 100K labels. The embedding
+model is downloaded to the pod; no suitable small embedder exists there today
+(pod-local models are the retired hybrid checkpoints and the 27B teacher). The
+27B's hidden states were the alternative (phi-1 used a codegen model's
+embeddings) and are rejected on inference cost: the classifier must score the
+full corpus (~11.8M docs at the head truncation), and a 110M embedder does that
+in hours on one card where the 27B takes days on five. The classifier scores
+the same 350-char head the teacher labeled, so train and inference see the same
+truncation.
+
+Evaluation (acceptance in `p1_data_recipe.md`): held-out AUC against the
+teacher labels, reported POOLED and PER DOMAIN (4c, 2026-09-09) -- the three
+domains have different filtering histories and the classifier must hold on
+each, not just on the pooled mix where dedup08's 53% doc share dominates.
+Keep rate stated against phi-1's ~17%; threshold ablation on our own corpus.
+
+The 50-high/50-low two-reader spot check plants 10 known-bad samples (4c,
+2026-09-09): a 99.5% agreement with kappa=0 is indistinguishable from a reader
+who stopped reading, and planted negatives prove both readers are working
+before the agreement counts. The high/low grouping has structure, but the
+plant still matters -- a reader in the low group scoring low may just be
+echoing the group's label.
+
+## Open measurement
+
+`code_dedup08`'s token count (~8.95B) is 4c's extrapolation from
+docs_kept/docs_in, not a reading -- its stats file has no tokens field. The
+keep-rate-to-token conversions above use it; measure the domain's tokens
+before the ablation reports token counts (4c's instruction, 2026-09-09).
