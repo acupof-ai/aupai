@@ -64,7 +64,7 @@ pick (the DSA top-k), and an exact sliding window of `csa_window` recent
 tokens (SWA).
 
 **This is an NSA/DSA-family attention, NOT DeepSeek-V4's CSA**
-(`runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_3`): the grouping is
+(`runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_4`): the grouping is
 non-overlapping where the reference overlaps 2m neighbours, and there is no
 Lightning Indexer — selection is top-k over the same coarse scores, not a
 separate low-dim indexer. **A null result here must be read as this operator,
@@ -198,7 +198,7 @@ are trained together from the same init.
 
 ## Prereg
 
-Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_3`.
+Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_4`.
 
 ### Val-set definition
 
