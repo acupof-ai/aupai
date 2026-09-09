@@ -111,15 +111,18 @@ def strip_docstring(prompt):
     return prompt[:m.start()] + prompt[end + 3:]
 
 
-def run_control(probs, prompts):
-    """The known-answer pair, on the prompt variant the run uses.
+def run_control(probs):
+    """The known-answer controls, all on the standard prompt composition.
 
     Positive: every canonical solution must pass (exit if under 90%, same
     threshold as the pod runner). Negative: a constant-False body on
     HumanEval/0 must FAIL -- its tests include a True case, so this is a wrong
-    answer that runs clean, not an exception. Plus the strip self-check.
+    answer that runs clean, not an exception. Empty-completion control: "",
+    "\\n" and "    pass\\n" must score wrong on every problem -- the baseline
+    arm is 97.6% empty completions, so a judge that credits them would read
+    the SFT gain off the scorer, not the model. Plus the strip self-check.
     """
-    ok = sum(judge(p, c) for p, c in ((p, p["canonical_solution"]) for p in probs))
+    ok = sum(judge(p, p["canonical_solution"]) for p in probs)
     print(f"CONTROL canonical_solution pass = {ok}/{len(probs)} = "
           f"{100 * ok / len(probs):.1f}%  (must be ~100)", flush=True)
     if ok < len(probs) * 0.9:
@@ -134,6 +137,15 @@ def run_control(probs, prompts):
                  "be indistinguishable from a harness zero")
     print("CONTROL wrong-answer: constant-False on HumanEval/0 -> FAIL "
           "(must FAIL)", flush=True)
+    for label, body in (("empty", ""), ("newline", "\n"), ("pass", "    pass\n")):
+        n = sum(judge(p, body) for p in probs)
+        if n:
+            sys.exit(f"CONTROL FAILED: the {label} completion scores correct on "
+                     f"{n}/{len(probs)} problems. The baseline arm is 97.6% empty "
+                     f"completions, so a scorer that credits them would read the SFT "
+                     f"gain off the judge, not the model.")
+    print("CONTROL empty-completion: empty/newline/pass score 0/164 each "
+          "(must be 0)", flush=True)
     s0 = strip_docstring(p0["prompt"])
     assert s0 != p0["prompt"], "HumanEval/0 has a docstring; strip must change it"
     assert s0.rstrip().endswith(":"), "stripped prompt must end at the def header"
@@ -164,11 +176,14 @@ def main():
           f"{' (sig-only arm)' if args.strip_docstrings else ''}", flush=True)
     prompts = [strip_docstring(p["prompt"]) if args.strip_docstrings else p["prompt"]
                for p in probs]
-    run_control(probs, prompts)
+    run_control(probs)
     if args.control:
         return
     if not args.ckpt:
         ap.error("--ckpt required (unless --control)")
+    if not os.environ.get("CUDA_VISIBLE_DEVICES"):
+        sys.exit("REFUSING: CUDA_VISIBLE_DEVICES is unset, so cuda:0 is physical "
+                 "GPU 0 -- tileRL's card. Set it to your granted card.")
 
     # load_checkpoint claims the card (device names cuda) under this file's stem.
     from scripts.loader import load_checkpoint
