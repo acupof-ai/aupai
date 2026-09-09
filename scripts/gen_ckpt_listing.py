@@ -213,6 +213,25 @@ def _keep_names(keep_lines):
         os.unlink(p)
 
 
+def _claimed_inodes(line):
+    """Inode numbers a KEEP line records for its pins (e.g. "inodes 84187739 / 84199049").
+
+    A claim that pinned by hardlink records the inode so a reader can tell the pinned bytes
+    from a re-save. When the roller takes the claimed NAME, the inode is what survives --
+    under the milestone name -- and the guard must read it the same way. b0's 20:55Z claim
+    hit this on 2026-09-09: the listing refused to regenerate although every claimed byte was
+    present, because the guard matched names and the claim recorded inodes.
+
+    The 'ino' prefix is the discriminator, not the digit count: byte counts (959429383) and
+    step numbers share the digit shape but never the prefix. Separators between inodes are
+    '/', 'and' and '&' only -- a comma would also join a byte count written after the inode.
+    """
+    out = set()
+    for m in re.finditer(r"\bino(?:des?|s)?\s+(\d+(?:\s*(?:/|and|&)\s*\d+)*)", line):
+        out.update(int(x) for x in re.findall(r"\d+", m.group(1)))
+    return out
+
+
 def build(scan, keep_lines, old, now=None):
     """(text, problems). problems non-empty means REFUSE -- do not write."""
     now = now or time.strftime("%Y-%m-%d %H:%M", time.gmtime())
@@ -220,6 +239,8 @@ def build(scan, keep_lines, old, now=None):
     # (mtime, size, name, inode) from the pod, and unpacking by arity broke every caller the
     # moment the inode column arrived. row[2] is the name in both.
     present = {row[2] for row in scan}
+    # Fixture scans carry no inode column; the inode guard below then has nothing to match.
+    present_inodes = {row[3] for row in scan if len(row) > 3}
     problems = []
     claimed = _keep_names([ln for ln in keep_lines if not ln.startswith("# RETIRED")])
     # RETIRED LINES ARE EXCLUDED FROM `claimed` as well, not only from the presence guard.
@@ -256,7 +277,13 @@ def build(scan, keep_lines, old, now=None):
         # SET DIFFERENCE, so a retirement naming two of a claim's three files retires exactly
         # those two and the third is still guarded. A line-level skip would drop the whole claim.
         names -= retired
-        if names and not (names & present):
+        if names and not (names & present) and not (_claimed_inodes(line) & present_inodes):
+            # The inode branch is the pin case: the claimed names rolled away but the claim
+            # recorded its hardlink pin's inode, and the bytes are present under the milestone
+            # name. The milestone file is NOT added to `claimed` here -- its name lives in the
+            # claim's prose, which the listing carries verbatim for a human, and deletion_plan
+            # already skips inode-shared files on its own. A dead claim whose inode is gone too
+            # still refuses, which the selftest pins.
             problems.append(f"KEEP line protects nothing present: {sorted(names)} -- {line[:110]}")
     total = sum(row[1] for row in scan)
     lines = [
@@ -459,6 +486,32 @@ def _selftest():
     )
     _t6, problems6 = build([("2026-09-03_21:55", 1, "ckpt_p_c.pt")], partial, {})
     case(not problems6, f"and the same claim passes once that third file is present ({problems6})")
+
+    # THE PIN CASE. The claimed rolling names are gone -- the roller took them -- but the claim
+    # recorded its hardlink pin's inode and the bytes are present under the milestone name.
+    # b0's 20:55Z claim hit this on 2026-09-09: the guard refused to regenerate although every
+    # claimed byte was present, because it matched names and the claim recorded inodes.
+    pinned_line = [
+        "# KEEP (claim b0 20:55Z): ckpt_p200m_4b_0902.pt.step2500, .pt.step3000 -- the only "
+        "source of some fact. PINNED: pin names ckpt_p200m_4b_0902.milestone_keep_b0_step2500.pt, "
+        "inodes 84187739 / 84199049, nlink 2, hardlinks so zero extra bytes."
+    ]
+    scan_pinned = [
+        ("2026-09-02_15:23", 959_429_383, "ckpt_p200m_4b_0902.milestone_keep_b0_step2500.pt", 84187739),
+        ("2026-09-02_15:38", 959_429_383, "ckpt_p200m_4b_0902.milestone_keep_b0_step3000.pt", 84199049),
+    ]
+    _t8, problems8 = build(scan_pinned, pinned_line, {})
+    case(
+        not problems8,
+        f"a claim whose names rolled away but whose pin inode is present does NOT refuse ({problems8})",
+    )
+    # AND THE NEGATIVE: the same line with neither names nor inode present still refuses -- the
+    # inode branch must not become a second way for a dead claim to pass.
+    _t9, problems9 = build([("2026-09-02_15:23", 959_429_383, "ckpt_other.pt", 111)], pinned_line, {})
+    case(
+        bool(problems9) and any("ckpt_p200m_4b_0902" in x for x in problems9),
+        f"the same claim with the inode absent too still REFUSES ({problems9})",
+    )
 
     # THE REAL LISTING MUST GENERATE (6e's requirement). Uses the live KEEP/RETIRED lines and a
     # scan synthesised from the files those lines name as PRESENT, so the case tests the generator
