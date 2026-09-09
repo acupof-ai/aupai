@@ -859,7 +859,8 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
     # a human notices the mismatch. The pod carried such a row (tilerl-accspf-rerun, pid null,
     # card 3 at 0 MiB); it was hand-written, not acquire's, but a caller passing the wrong type
     # gets a refusal here rather than a claim nobody can probe.
-    if pid is not None and (not isinstance(pid, int) or pid < 0):
+    # isinstance(True, int) is True, so the bool test is explicit: pid=True would bind to pid 1.
+    if pid is not None and (not isinstance(pid, int) or isinstance(pid, bool) or pid < 0):
         return False, (
             f"pid must be a non-negative integer, got {pid!r} (type {type(pid).__name__}): "
             f"a claim must name a process that can be liveness-checked"
@@ -1653,6 +1654,8 @@ def _selftest():
     # be probed can never go stale by liveness, so it holds its cards until a human notices.
     okb, msgb = acquire("badTypePid", ["0"], wait=0, pid="12345")
     _case(not okb and "integer" in msgb, f"a string pid is refused ({msgb[:60]})")
+    okc, msgc = acquire("boolPid", ["0"], wait=0, pid=True)
+    _case(not okc and "integer" in msgc, f"a bool pid is refused -- isinstance(True, int) is True ({msgc[:60]})")
 
     # CROSS-NAMESPACE: a claim written in a different PID namespace is not compared.
     # Container PID colliding with a host PID would otherwise flip a live claim to
