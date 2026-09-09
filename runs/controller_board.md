@@ -28,11 +28,76 @@ trees clean, pod stamp `75eeddcf` with **0 refusing**. **Nothing is blocked on a
 
 Two errors of opposite sign is why neither was visible in the total.
 
+## Ruling 21:0xZ — near-duplicates are NOT deleted
+
+3b's re-measured participation, 50K/domain against the full index at est J>=0.5:
+dd09<->b2v2 **23.27% / 26.21%**, dd09<->dedup08 6.68% / 5.84%, b2v2<->dedup08 4.02% / 3.14%.
+23-26% looks like a defect. It is not one.
+
+**`p1_data_recipe.md:80` records dd09's own dedup as MinHash-J 0.9, and 3b read b2v2's
+cross-dedup threshold off the pod's `build_corpus_stats.json`: `"threshold": 0.9`, 228,283
+cross-domain edges >=0.9 removed. A 0.9 threshold keeps 0.5 <= J < 0.9 by definition.** So the
+23-26% is the band that threshold chose to leave, not a leak. Deleting at J>=0.5 now is
+re-choosing the threshold, which needs a measurement nobody has taken — does training on
+0.5-0.9 near-duplicates hurt. 44 reviewed and gave a stronger form: the burden is on the
+deleting side whether 0.9 was measured or inherited, so the ruling does not rest on intent.
+
+Two things checked before it was fixed, both mine to ask and neither mine to answer:
+
+- **Did `build_corpus.py`'s postpass (jaccard 0.5) already cut this band?** 3b: no — all three
+  domains' stats read `near_dedup: ABSENT`, the postpass is an explicit stage that is not in the
+  default build, and `_near_write_stats` (`:975-995`) would have rewritten the stats had it run.
+- **3b's own finding, sharper than the question:** the postpass judges on exact normalized
+  **word-3-gram** Jaccard, while the domain dedup and 3b's estimator use **char 5-gram**. Both
+  thresholds are called "jaccard 0.5". Same name, same number, two different overlap concepts —
+  so even had it run, it would not have cut the band being measured. §-candidate, 3b's.
+
+**Participation is a LOWER BOUND, not a point estimate.** e1's calibration (MAE 0.003, bias
++0.000, 100/100 at threshold) samples from *flagged* pairs, so it measures precision only; pairs
+LSH banding never surfaced are invisible and recall is unmeasured. The keep-set join still runs
+after the DONE line — it answers a different question, whether the classifier already dropped
+these pairs.
+
+## The 128 I raised, retracted, and had to retract the retraction
+
+Three layers, because the middle one is the part that matters:
+
+1. **96-vs-128 was not invented.** Both are in the tree: `build_corpus.py:155` documents
+   128-perm/16-band, `:424` and `:1019` construct at 128; the three dedup tools
+   (`near_dedup_scale.py:36-37`, `code_dedup_build.py:30-31`, `dedup_keep_whole.py:31`) are 96/12.
+2. **I compared the wrong pair.** p1's domains were built by the 96 tools and the estimator is 96,
+   so for this measurement there is no discrepancy — that half I got right by accident.
+3. **My retraction said "128 has no source", which is false and false in the direction that
+   flatters me** — it converts "I compared the wrong pair" into "I made a number up", which is a
+   cleaner story about a worse mistake. 44 accepted the shape over its own earlier draft: a value
+   carried away from its instrument twice, once into a discrepancy that does not exist and once
+   into a source that does not exist. Same action, opposite directions, both manufacturing a fact
+   neither side held. (44 also corrected two of my citations: the docstring is `:155` not `:158`,
+   and `:1019`'s bands are 64 not 16. Neither is load-bearing.)
+
+## The spot check answers at 1.000 a question it has no sample for
+
+e1 binarised the reader agreement at the >=3 cut on my ask: 98-vs-teacher agreement **1.000**,
+kappa **1.000**; e1-vs-teacher 0.809 / 0.601 with all 21 disagreements one-directional
+(teacher >=3, reader 2 — the conservative direction).
+
+**But the sample is high50 (teacher all >=3) plus low50 (teacher all <3): zero mass near the
+cut.** On such a sample 1.000 measures that the two buckets are separable, not that the raters
+agree at the boundary — any reader who can tell obviously-good from obviously-bad scores 1.000.
+So the binarisation did not rescue the operating-point evidence; it showed the check was never
+positioned to produce any. Cut behaviour still rests on held-out AUC 0.902 alone, and the doc must
+not say "human readers agree perfectly at the operating point". e1 wrote the caveat themselves.
+
+The 21 disagreements are the informative number here: among documents the teacher scored >=3, one
+reader read 21 as 2, all in one direction, while the other reader disagreed zero times. That is a
+calibration difference between raters, not noise, and it says the teacher's >=3 is looser than a
+human's. Stratify by teacher score 2 and 3 to get real cut evidence.
+
 ## Cards — verified on the pod this tick, not inferred
 
 Ownership of record (`runs/card_assignment.json`, note of 16:0xZ): **tileRL 0,1,3,6; aupai 2,4,5,7.**
 Observed: 0 held by `tilerl-l5eval` (claimed) ✓; 4 and 5 by `teacher_serve_0909` (claimed) ✓;
-7 holding 19.3 GB ✓ granted to e1 — **but with no claim row**. 1,3,6 idle (tileRL's), 2 idle
+7 holding 19.3 GB ✓ granted to e1 — the claim row was MISSING and e1 wrote it on the pod at 21:0xZ (`p1_score_corpus.7.json`, pid 2097477). 1,3,6 idle (tileRL's), 2 idle
 (b0's lane). Three claim files for four held cards.
 
 **Card 7 reads FREE to anyone who checks `runs/claims/` and is not.** That is the divergence the
