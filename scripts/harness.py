@@ -41,8 +41,14 @@ ROOT = os.path.dirname(HERE)
 _ORIG_GIT_INDEX_FILE = os.environ.get("GIT_INDEX_FILE") or ""
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
+sys.path.insert(0, os.path.join(ROOT, "eval"))
 import corpus_fingerprint as cfp  # noqa: E402
 import pod_drift  # noqa: E402
+# CALLED, NOT REIMPLEMENTED (R11's own rule, §278). check_score_matrix_rewrites_traced
+# needs the same "did a number move" comparison the writer uses to decide whether to
+# record a trace; a second copy here would be a second population, and the two would
+# disagree on exactly the rows that matter.
+import score_matrix  # noqa: E402
 import tmpworld  # noqa: E402
 
 # ---- the shared predicates, now in harness_core (de-71, 2026-09-07) ----
@@ -10331,6 +10337,88 @@ def _is_probe_mix(root, mix_path):
     return float(obj.get("total_tokens") or 0) < 2e8
 
 
+def check_score_matrix_rewrites_traced(root):
+    """A score-matrix row whose numbers moved since the last commit must say so.
+
+    THE HOLE THIS CLOSES, measured 2026-09-08. Of 109 checks, three read
+    runs/score_matrix.jsonl and only one is dedicated to it -- score_matrix_present,
+    which asserts a row EXISTS. Nothing read a value and asked whether it should have
+    changed, so a wrong domain_bpb factor table sat on main for hours: the row was
+    present, well-formed, one line, in the right ledger, and every check that could see
+    the file was satisfied. (tasks.jsonl has 6 dedicated checks, friction.jsonl 2.)
+
+    WHY NOT AN APPEND-ONLY RULE. This ledger folds on (ckpt, profile) and its writer
+    REPLACES -- rewriting a value under an existing key is the intended operation here,
+    unlike the other eight ledgers where a changed line is a defect. Over the 34 commits
+    touching the file: 79 new keys, 44 rewrites, and only 6 of those changed an existing
+    number (two of the six were _wall_s timings). A rule that fired on all 44 would be
+    worked around; one that fires 6 times in 34 commits gets read.
+
+    WHY NOT A VALUE COMPARISON. A stored snapshot of expected values is a second
+    population needing its own freshness rule, and a stale snapshot check produces
+    exactly the failure that started this: a green check about a number nobody
+    re-derived. So the writer records what it overwrote (score_matrix.write_records ->
+    _supersede_entry) and this compares the file against its own git history, which is a
+    source it cannot drift from.
+
+    `measured` cannot serve as the trace: it is the SCORING date, and 43 of the 44
+    rewrites left it untouched. The eight retraction rows still read 2026-09-04 while
+    their contents were rewritten twice on 09-08.
+
+    Scope: makes CHANGES visible, not values correct. A first write that is wrong has no
+    prior to disagree with, and nothing here compares a number to reality.
+    """
+    rel = os.path.join("runs", "score_matrix.jsonl")
+    p = os.path.join(root, rel)
+    if not os.path.exists(p):
+        return SKIP, f"{rel} not present"
+    # SKIP, NEVER PASS, WHERE THERE IS NO GIT. /work/aupai is a hand-pushed tree with no
+    # .git, so this check's only source of truth is absent there. Passing would be the
+    # R12 shape -- a line green because it never ran -- and one we would have built
+    # ourselves into the check written to catch a silent value change.
+    if pod_drift.is_pod(root):
+        return SKIP, ("pod tree (/work/aupai) has no .git, and this check reads the "
+                      "previous commit's copy of the file; it can only run in a checkout")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    r = subprocess.run(["git", "-C", root, "show", f"HEAD:{rel}"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    if r.returncode != 0:
+        return SKIP, f"{rel} has no committed version at HEAD yet"
+
+    def rows(text):
+        out = {}
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            out[(d.get("ckpt"), d.get("profile", "full"))] = d
+        return out
+
+    before = rows(r.stdout)
+    after = rows(open(p, encoding="utf-8", errors="ignore").read())
+    untraced = []
+    for k in after.keys() & before.keys():
+        moved = score_matrix._supersede_entry(before[k], after[k], "", "")
+        if moved is None:
+            continue
+        # The trace must be NEW, not one carried over from an earlier rewrite: comparing
+        # counts rather than presence is what keeps a row with one old entry from
+        # covering a second, undeclared change.
+        if len(after[k].get("superseded") or []) <= len(before[k].get("superseded") or []):
+            fields = sorted(moved["changed"])[:3]
+            untraced.append(f"{k[0]}/{k[1]}: {', '.join(fields)}")
+    if untraced:
+        return FAIL, (
+            f"{len(untraced)} score-matrix row(s) whose numbers moved since HEAD with no new "
+            f"`superseded` entry: {untraced[:3]}. Rewriting a value here is legal, doing it "
+            f"invisibly is not -- write through eval/score_matrix.py::write_records, which "
+            f"records what it overwrote.")
+    return PASS, f"{len(after)} row(s); every numeric change since HEAD carries its `superseded` trace"
+
+
 def check_score_matrix(root):
     """Every status=ok training run has a score-matrix record for the checkpoint it
     produced. 'Trained but not scored' must be impossible: an ok row with no matrix
@@ -10451,6 +10539,36 @@ def check_score_matrix(root):
                       f"{sorted(set(unverifiable))[:5]} -- add reading_artifact: <path> naming the "
                       f"run's own reading, or a cmd that names its --out")
     return PASS, "every ok training run has a score-matrix record"
+
+
+def _broken_score_matrix_untraced_rewrite():
+    """A committed matrix row whose number is then changed BY HAND, no trace.
+
+    Built as a real git repo with a real commit, because the check's whole source of
+    truth is `git show HEAD:<path>` -- a world without history would make it SKIP, and a
+    SKIP that reads as "not broken" is the failure mode this check was written about.
+
+    The mutation is exactly the incident: a value moves and nothing in the row says so.
+    Writing the same change through score_matrix.write_records must PASS, which is the
+    negative control the selftest asserts alongside this.
+    """
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    p = os.path.join(d, "runs", "score_matrix.jsonl")
+    row = {"ckpt": "a.pt", "profile": "full", "metrics": {"x": {"loss": 1.0}}}
+    with open(p, "w") as f:
+        f.write(json.dumps(row) + "\n")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"],
+                ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "w",
+                 "--no-verify"]):
+        subprocess.run(["git", "-C", d, *cmd], env=env, capture_output=True)
+    with open(p, "w") as f:
+        f.write(json.dumps({"ckpt": "a.pt", "profile": "full",
+                            "metrics": {"x": {"loss": 2.0}}}) + "\n")
+    return d
 
 
 def _broken_score_matrix():
@@ -17008,6 +17126,13 @@ CHECKS = [
         _broken_score_matrix,
     ),
     (
+        "score_matrix_rewrites_traced",
+        "a score-matrix row whose numbers moved since HEAD carries a new `superseded` entry",
+        "the ledger folds on (ckpt, profile) and its writer REPLACES, so a value change is legal here and was therefore invisible -- a wrong domain_bpb factor table sat on main for hours with the row present, well-formed and satisfying every check that could see the file; `measured` is the scoring date and 43 of 44 rewrites left it untouched",
+        check_score_matrix_rewrites_traced,
+        _broken_score_matrix_untraced_rewrite,
+    ),
+    (
         "ladder_config_frozen",
         "every ladder checkpoint's cfg matches data/mix_scale_run_config.json",
         "a silent recipe drift (wrong warmup, wrong bucket) produces a completed point that poisons the curve; the OOM was loud, the wrong-but-valid case is not",
@@ -17418,6 +17543,10 @@ EVIDENCE = {
     "prereg_citations_current": "repo",
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
+    # repo, and the check says so itself: its only source of truth is
+    # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
+    # missing .git. A "pod" declaration would ask it to answer where it cannot run.
+    "score_matrix_rewrites_traced": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
