@@ -8105,8 +8105,10 @@ def check_owner_queue_depth(root):
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
+    # exited members stay in the roster so ledger rows naming them stay resolvable,
+    # but they hold no queue and must not be policed as idle (PR #119, tilerl 2026-09-09)
     members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
-               if m["name"] not in QUEUE_EXEMPT]
+               if m["name"] not in QUEUE_EXEMPT and m.get("state") != "exited"]
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     depth = {m: 0 for m in members}
     for t in rows:
@@ -8151,7 +8153,8 @@ def check_one_deliverable_per_owner(root):
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
-    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]}
+    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
+               if m.get("state") != "exited"}
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     open_by_owner = {}
     for t in rows:

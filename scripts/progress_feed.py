@@ -289,7 +289,9 @@ def queue_section():
     roster_p = os.path.join(REPO, "runs", "roster.json")
     if not (os.path.exists(tasks_p) and os.path.exists(roster_p)):
         return ""
-    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]]
+    # exited members stay resolvable in the roster but are not a live row on the page (PR #119)
+    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
+               if m.get("state") != "exited"]
     exempt = {"fb", "98"}
     tasks = [json.loads(ln) for ln in open(tasks_p, encoding="utf-8") if ln.strip()]
     latest = {}
