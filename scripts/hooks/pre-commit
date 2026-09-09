@@ -1299,12 +1299,16 @@ def main():
         # code", which is the conclusion those runs drew.
         #
         # Registered rather than commented because of WHERE the defect lived: inline in the
-        # batch loop, reachable only from a pod with a checkpoint. Both selftests now drive the
-        # decode through a known answer -- six reference solutions must round-trip byte for byte,
-        # NOT merely come back non-empty, since non-empty is what the caller reads as success and
-        # every beheaded row satisfies it -- and both SKIP their sandbox halves off-pod
-        # (sandbox_exec needs root) so that case runs here. The case is its own negative control:
-        # it reads 0/6 on the old code.
+        # batch loop, reachable only from a pod with a checkpoint. code_l0prime's selftest
+        # drives the decode through a known answer -- six reference solutions must round-trip
+        # byte for byte, NOT merely come back non-empty, since non-empty is what the caller
+        # reads as success and every beheaded row satisfies it -- and SKIPs its sandbox half
+        # off-pod (sandbox_exec needs root) so that case runs here. The case is its own
+        # negative control: it reads 0/6 on the old code.
+        # code_fewshot.py carries the same selftest under --selfcheck (its flag predates the
+        # --selftest convention); the SELFTEST_FLAG map below names it. A grep for "selftest"
+        # missed the flag on 2026-09-09 and the registration was briefly removed; restored
+        # once PR #136 mapped the flag.
         "eval/code_fewshot.py", "eval/code_l0prime.py",
         # e1-42's equal-token gap. 0.1s, CPU, NO POD ACCESS in --selftest: its five fixtures are
         # the real val curves, so the known answers run anywhere. Registered because the mistake it
@@ -2233,6 +2237,15 @@ def main():
     # PARTIAL would have recorded it as data-exempt, which is false and would mislead
     # the next reader of NEEDS_DATA.
     SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict",
+                     # --selfcheck, not --selftest. Same shape as corpus_fingerprint below, but
+                     # this one was BLOCKING THE WHOLE TREE: eval/code_fewshot.py was registered
+                     # with #105 while that branch's commits ran MAIN's hook, which had no such
+                     # entry, so the mismatch was invisible until the merge -- then argparse
+                     # exited 2 on every commit that staged the file, which every merge of main
+                     # into a branch does. Fixed here rather than by renaming the flag, because
+                     # --selfcheck is the convention its siblings use (eval/code_zh.py) and is
+                     # cited twice in docs/lessons/honest_measurement_prereg.md.
+                     "eval/code_fewshot.py": "--selfcheck",
                      # --self-check, not --selftest: the flag predates the convention and
                      # argparse rejects the other spelling, which the hook would read as the
                      # selftest failing rather than as a wrong flag.
