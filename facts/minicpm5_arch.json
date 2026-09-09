@@ -1,0 +1,61 @@
+{
+ "facts": [
+  {
+   "id": "minicpm5.identity_config",
+   "value": "MiniCPM5-2B: standard LlamaForCausalLM, dense. hidden_size 2048, 42 layers, 16 attention heads / 2 KV heads (GQA 8:1), head_dim 128, intermediate_size 6144 (3x), vocab_size 130560, RoPE theta 5,000,000 with rope_scaling null, max_position_embeddings 131072, tie_word_embeddings false, SiLU. No sliding-window or sparse-attention fields. Parameter count 2,516,756,480 (README).",
+   "measured": "2026-09-08",
+   "source": "config.json fetched from huggingface.co/openbmb/MiniCPM5-2B 2026-09-08 (primary, code-facing); param count from the GitHub README",
+   "config": {
+    "source_type": "config-primary"
+   },
+   "uncertainty": null,
+   "status": "measured"
+  },
+  {
+   "id": "minicpm5.no_loop_no_weight_sharing",
+   "value": "No loop, no weight sharing, no recurrence in MiniCPM5-2B. The safetensors index shows 42 distinct layer prefixes (model.layers.0..41), 9 tensors each, no aliased or reused names across depths; lm_head.weight is a separate key from model.embed_tokens.weight (381 entries total, single shard). No modeling code is published: the HF weight repo ships only config.json + safetensors + tokenizer, and the GitHub OpenBMB/MiniCPM repo contains only deployment/finetune cookbooks for MiniCPM5.",
+   "measured": "2026-09-08",
+   "source": "model.safetensors.index.json fetched from huggingface.co/openbmb/MiniCPM5-2B 2026-09-08; HF repo file listing; github.com/OpenBMB/MiniCPM repo listing",
+   "config": {
+    "source_type": "checkpoint-primary"
+   },
+   "uncertainty": "weight names rule out parameter-level tying; a runtime loop that re-enters the same parameters under different names would still show this pattern, but LlamaForCausalLM has no such execution path and no modeling code exists to implement one",
+   "status": "measured"
+  },
+  {
+   "id": "minicpm5.full_attention_no_sparse",
+   "value": "MiniCPM5-2B uses full dense attention. The README describes it as a dense 2B Transformer on 'Standard LlamaForCausalLM' so 'mainstream inference engines can load it directly: no custom kernels, no model-code fork'. InfLLM v2 (the family's trainable sparse attention, 81% sparsity, MiniCPM4 tech report Sec 2.1) appears in the README only under MiniCPM4/4.1 and MiniCPM-SALA sections — it was not carried into the 5th generation. The stated rationale is deployment compatibility, not capability.",
+   "measured": "2026-09-08",
+   "source": "github.com/OpenBMB/MiniCPM README (MiniCPM5-2B section) + config.json (no sliding_window/sparse fields), fetched 2026-09-08",
+   "config": {
+    "source_type": "vendor-declaration"
+   },
+   "uncertainty": "the README is a declaration, not a measurement; the config.json absence of sparse fields is primary",
+   "boundary": "This is evidence about the COST OF CUSTOM KERNELS, not about whether sparse attention works: a team that built InfLLM v2 and shipped it in MiniCPM4 chose to drop it in the next generation rather than depend on custom kernels or a fork. Our v2 prereg is all-in on custom kernels (KDA, MoE, CSA) — the opposite direction. That tradeoff has never been priced on our side. Do not cite this as evidence that sparse/hybrid attention is worse.",
+   "status": "measured"
+  },
+  {
+   "id": "minicpm4.infllm_v2_family_context",
+   "value": "MiniCPM4 (8B, dense) uses InfLLM v2: block-partitioned KV cache, per-query top-k block selection via fine-grained semantic kernels, query heads in a group share the same KV blocks, initial tokens + sliding-window tokens always selected. 81% attention sparsity at comparable long-context quality, no additional parameters for attention output, no short-sequence inference overhead. The report criticizes MoBA (query blocks prevent decoding acceleration) and NSA (three attention components add parameters and 3x KV storage). arXiv 2506.07900.",
+   "measured": "2026-09-08",
+   "source": "MiniCPM4 tech report arXiv 2506.07900 Sec 2.1, PDF read 2026-09-08",
+   "config": {
+    "source_type": "paper-reported"
+   },
+   "uncertainty": "vendor-reported; the linked tech report from the MiniCPM5 model card is this MiniCPM4 report — no MiniCPM5-specific tech report exists in any card-linked source",
+   "status": "recorded"
+  },
+  {
+   "id": "minicpm5.architecture_rationale_absent",
+   "value": "The architecture rationale for MiniCPM5-2B is mostly not public. Checked 2026-09-08: model card (declarations only, no numbers), config.json (parameters, no reasons), GitHub README (deployment-compatibility rationale only; no justification of layer/head counts, no RoPE-theta rationale, no pretraining token count), MiniCPM4 tech report (previous generation only), HF weight repo (no modeling code). Pretraining token count is absent everywhere; only post-training scale is stated (400B-token deep-thinking SFT, RL+OPD +10.96 avg).",
+   "measured": "2026-09-08",
+   "source": "absence across the five listed sources, all checked 2026-09-08",
+   "config": {
+    "source_type": "checked-absence"
+   },
+   "uncertainty": null,
+   "boundary": "Cite as 'the rationale is not public in these five sources', never as 'there is no rationale'. The checked list is the citable artifact.",
+   "status": "measured"
+  }
+ ]
+}
