@@ -1,0 +1,4 @@
+shape: B=16 T=4096 D=1024 heads=8 bf16, packed cu, fwd+bwd, median of 20 after 3 warmup, alternating
+control  median     28.59 ms  mean     28.67 min     28.47  tok/s 2,292,376
+csa      median    233.19 ms  mean    233.19 min    233.07  tok/s 281,041
+ratio csa/control = 8.157
