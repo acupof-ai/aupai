@@ -135,7 +135,7 @@ Token counts (frozen tokenizer, full counts, `datagen/count_domain_tokens.py`):
 | what | tokens | docs |
 |---|---|---|
 | dedup08 clean copy (post-deletion, in place) | 8.509B | 6,060,097 |
-| keep set, post-deletion, exact (2.8828B scored minus the 71.21M deleted-in-keep) | **2.8116B** | 3,011,677 |
+| keep set, post-deletion, exact (2.8828B scored minus the 71.20M deleted-in-keep) | **2.8116B** | 3,011,677 |
 | — dd09 | 0.5113B | 479,502 |
 | — b2v2 | 0.3026B | 298,647 |
 | — dedup08 | 1.9977B | 2,233,528 |
