@@ -1369,17 +1369,20 @@ def _sample_ok(a, out):
     reasons = Counter()
     exact = set()
     if a.global_only:
-        paths = sorted(glob.glob(os.path.join(out, "w*_*.jsonl")))
+        paths = [(p, False) for p in sorted(glob.glob(os.path.join(out, "w*_*.jsonl")))]
     else:
         paths = []
         for spec in a.source:
-            g = spec[6:] if spec.startswith("jsonl:") else spec[8:] if spec.startswith("parquet:") else spec
-            paths += sorted(glob.glob(g)) if ("jsonl:" in spec or "parquet:" in spec) else []
-    for p in paths:
-        # parquet sources must be read as parquet: the glob above admits parquet:
-        # specs, and iter_jsonl on a parquet file dies on the first binary byte
+            # format follows the spec prefix, same criterion as the worker (:237)
+            # and spec expansion (:362) -- not the filename extension
+            is_pq = spec.startswith("parquet:")
+            g = spec[6:] if spec.startswith("jsonl:") else spec[8:] if is_pq else spec
+            paths += [(p, is_pq) for p in sorted(glob.glob(g))] \
+                if ("jsonl:" in spec or "parquet:" in spec) else []
+    for p, is_pq in paths:
+        # a parquet spec read as jsonl dies on the first binary byte
         # (measured 2026-09-08: math_owm stage1 rerun, UnicodeDecodeError 0x90).
-        stream = iter_parquet(p) if p.endswith(".parquet") else iter_jsonl(p)
+        stream = iter_parquet(p) if is_pq else iter_jsonl(p)
         for text, _ in stream:
             text = SPECIAL_TOKEN.sub("", text).strip()
             if not text:
