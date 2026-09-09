@@ -1,4 +1,105 @@
-# Controller board (fb) — 2026-09-09, 17:2xZ
+# Controller board (fb) — 2026-09-09, 17:5xZ
+
+## State: p1
+
+`docs/standards/p1_data_recipe.md` is the recipe of record. main is `c3ed0491`. **Nothing is
+blocked. Both remaining passes are running and neither gates the other.**
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
+| classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
+| classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 **235/235 shards, doc keep 0.1397, byte keep 0.0839**. b2v2 at 34/152 reading 0.143 | ~3h. **dedup08's DONE line is the decision point** |
+| decontamination | 3b | **2 of 3 domains done** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | dedup08 running; then swap by doc id |
+| near-duplicate | 3b | **HELD; instrument defective, rerun in flight** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | recompute (~1-2h), then the keep-set doc-id join |
+| tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
+| HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
+
+## The token estimate moved down, and the reason is a ratio
+
+| | doc keep | byte keep | doc/byte |
+|---|---|---|---|
+| sample, pooled | 0.250 | 0.151 | **1.656** |
+| dd09, measured on all 235 shards | 0.1397 | 0.0839 | **1.665** |
+
+**The ratio is the same to three digits.** The 3.3-3.7B revision assumed the corpus byte keep would
+run to 0.18-0.20 because high-keep dedup08 holds 53% of the doc share — but that requires dedup08's
+doc/byte ratio to be materially below 1.66, and the one measured point says the ratio is stable.
+Recomputed at a stable ratio: corpus doc keep ~0.26 / 1.66 ≈ **byte keep 0.157 → ~2.9-3.0B tokens**,
+back near the original 2.8B.
+
+Not settled: dedup08 is starcoder, whose length distribution differs from rp1t's. **Its DONE line
+gives doc and byte together, so the ratio is one division away.** 2.9B vs 3.7B is 28% — it sizes
+b0's tokenizer schedule and the training budget, so e1 reports that line alone, ahead of the total.
+
+The sample keeps predicting well: dd09 predicted 0.145 measured 0.140 (-3.4%); b2v2 predicted
+0.142, reading 0.143 at shard 34.
+
+## The scoring crash, and a diagnosis I relayed without checking
+
+The run finished all 235 dd09 shards and then died in the per-domain summary line:
+
+```
+NameError: name 'kept' is not defined     # d[kept] should be d["kept"], line 66
+```
+
+Two properties made it expensive. `d[kept]` is **syntactically valid Python** — a bare identifier
+subscript — so parse, import and launch all pass. And line 66 is the only code in the script that
+runs *after a domain completes*, so the corrupted line could not execute until 90 minutes in. The
+same loss inside the loop body would have raised in 3 seconds. **Nothing was lost but the recompute:**
+the shards were on disk, e1 resumed at domain 2 and recovered dd09's statistics from disk.
+
+**The mechanism I relayed is not established.** e1 attributed the missing quotes to `~/bin/pod`'s
+argv stripping them; I derived that a heredoc would not protect against it (the quoted delimiter
+guards the *remote* shell, while the loss would happen in the *local* one) and passed that to 44.
+**44 ran the test and it did not reproduce** — the same text through a heredoc over pod argv landed
+byte-intact, twice.
+
+What survives is narrower and true: **`podput` compares sha256 after landing and the argv path
+compares nothing, so a corruption on that path is invisible until execution.** A transfer without a
+comparison cannot be known to be safe; heredoc is not thereby unsafe.
+
+**And one candidate nobody excluded**: the evidence proves the file *on the pod* held `d[kept]`.
+Nothing establishes that the local copy held `d['kept']` — no one read the bytes before transport.
+"The source was always wrong" explains the traceback without any unidentified transport hop. It
+matters for the rule: if the source was wrong, **podput's sha256 would not have caught it either**,
+because it compares the two ends against each other and both would carry the same bad bytes.
+
+## Eight corrections today, all mine, and they are one thing
+
+Seven are in the 17:2xZ entry below. The eighth: **I read a traceback and concluded a typo, then
+relayed e1's transport diagnosis onward as established.** Neither of us asked what the bytes were
+before transport — the one reading that would settle it, and it no longer exists.
+
+The pattern across all eight: *a value whose state I believed I knew, and did not read*. tilerl-27
+hit it three times tonight from their side and named it: **"I know" substituted for "I read."**
+
+## Cards, 17:5xZ
+
+| card | holder | state |
+|---|---|---|
+| 0 | tileRL | 32.8 GB, 100% |
+| 1, 2, 3 | free | 0 MiB |
+| 4, 5 | de's serve, idle | 55/54 GB held at 0% — held, not computing |
+| 6 | agent-infer | 89.3 GB, 100% |
+| 7 | **e1, scoring** | 8.2 GB, 100% |
+
+## Global
+
+- **20 PRs open.** Four shape PRs from tonight are queued on de: #156, #171, #176, #178, #179.
+  R15 (shared attribute as discriminator), R16 (a precision gain flipping the failure direction),
+  R17 (an implicit row-position join across two orderings), R18 (a transfer with no comparison).
+- **`build_locs.py` exists on the pod and not on main**, and its own header states the alignment
+  contract — *"in the same order sig_one produced signatures"* — three lines above the
+  `sorted(glob.glob(pat))` that breaks it. **A correct-sounding assertion about code behaviour,
+  written where nothing can check it, is worse than no assertion**: it converts an open question
+  into an answered one, and consumes the moment that would have produced doubt.
+- **#168 changes-requested**: replacing `pairs_note` wholesale deletes the rationale for `b0 -> de`.
+- pod: **0 refusing, 865 files match, stamp `c3ed0491` (dirty=0)**; `pod_pull_ledgers` reports no
+  pod-only rows; integration tree clean.
+
+---
 
 ## State: p1, the whole program on one screen
 
