@@ -367,6 +367,16 @@ Separate from R13 because the fix differs. R13's fix moves a conclusion somewher
 
 Cannot see: any scanner whose search space includes its own source, in general. Implemented for one tool: `test_reachability_edges.py` asserts no edge is sourced from `reachability.py` itself, with a negative control, because `comment_edges` returning `{}` would satisfy that assertion vacuously.
 
+## R15. A discrimination must rest on a property the two sides do not share; a shared attribute cannot bear it, and the better the mirror the more confident the wrong call
+
+1 incident, 5 instances (2026-09-09), ~30 min of cross-team uncertainty about a live 88 GB process. `manual:` — no check knows two projects mirror each other. Checkable slice: an attribution between teams must cite a non-shareable field; a scanner can flag an attribution whose evidence is a flag, port, or feature name.
+
+The shape: a discrimination between two candidates rests on a property BOTH candidates share. Occupancy is shared by "free" and "owned-idle", so an empty nvidia-smi row cannot say which. Names are shared by members and lookalikes, so a name cannot say who is on the team. Functional flags are shared by mirror projects, so `--spec-type auto --mtp-draft-tokens` cannot say whose binary is running. In every instance the discriminating field was in hand and was skipped as uninteresting — the ledger note, the socket column, the executable path — while a shared field was read as decisive. The failure direction is confidence, not laxity: the mirror is good precisely because the shared attribute really is present on both sides, so the wrong call arrives with evidence attached.
+
+- §294: an 88 GB process on card 6 attributed to tileRL on `--spec-type auto --mtp-draft-tokens`; the binary path `target/release-fast/arle` is agent-infer's crate profile output character for character, and tileRL has no Rust artifacts at all. Functionality is shared; the binary is not. Same day, same shape: three occupancy-as-allocation readings and a name-dispatch defect with four occurrences.
+
+Cannot see: whether a property is shared by definition — no check knows two projects' relationship is mirroring. Of a cmdline, the first field (executable path) is identity; the flags after it are not.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
