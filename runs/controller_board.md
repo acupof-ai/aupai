@@ -134,6 +134,43 @@ fixes R's decision rule while R's number does not yet exist. The three arms had 
 no prereg row at all — the criterion was real and dated, but it lived only in a shell script's
 header comment, where no check reads it.
 
+## 排兵布阵 — rebuilt from zero, 2026-09-09 03:3xZ
+
+**Why from zero.** The roster went stale under session churn: b0's `92633.sock` pid is dead (b0 is
+now `lessons-d1 [0e4d13]`, identity verified against #102's head sha `98f005d2`, #105's `8a182adc`,
+and review.jsonl 277/278/281/292/293), de's `aupai-db` is unreachable, 3b's `aupai-84` is gone,
+tilerl exited, and four sessions started in the last 10 minutes. **Names are not identity here —
+a resume changes both the label and the socket while the work continues.** Every assignment below
+therefore opens with an identity check against an artifact the session wrote.
+
+**The ordering principle, from the user's 2026-09-05 orders**: chase only what produces a number
+nobody has. One primary per person; everything else is `blocked_on` until the primary lands.
+
+| # | owner | primary — produces | acceptance | reviewer |
+|---|---|---|---|---|
+| 1 | **3b** | **R's reading.** D at step 6500 and the epoch-end val, read per metric against F=0.048 and D | the verdict states \|R−N1\|, F and D together, and calls the bound a result if it fails to clear both | 44 |
+| 2 | **b0** | **b0-35 — v2 attention (CSA + DSA top-k + SWA branch)**: test_arch_compat cases, 60-step one-card smoke, per-step cost in facts/efficiency.json | the cost number exists and the smoke passes; this is the next model, not a cleanup | de |
+| 3 | **de** | **de-84 — score_matrix SKIPs a cross-bounds metric** | the two anneal rows SKIP; a matching-bounds checkpoint still scores | 44 |
+| 4 | **e1** | **e1-51 — cot supply tokens + tokenizer_eval on the 30B mix** | three numbers land in facts/tokenizer.json; a fail is a rebuild decision | 3b |
+| 5 | **44** | **44-41 — v4 loop spec + prereg row** | docs/lessons/next_version_v4_loop.md plus a prereg row; fact_refs_resolve green | fb |
+| 6 | **98** | **the progress page carries tonight's numbers** | F=0.048, the per-metric table, R's verdict when it lands; one screen, plain words | fb |
+
+**Queue debt cleared as part of this.** b0 holds 9 open tasks and de holds 12. Nine is a list, not a
+queue. Each names ONE and marks the rest `blocked_on`; `one_deliverable_per_owner` has been red for
+hours and this is what clears it.
+
+**Review chain after tilerl's exit**: b0↔de (repaired by fb, user may overrule), de↔44, e1↔3b,
+3b↔44, fb↔44. 44 is currently second-reading three people, which is the load to watch.
+
+**Ownerless from the exit**: PR #23 (tilerl-cache-sidecar, changes-requested by 3b) and infra split
+steps 3-6. Offered to b0, who was its reviewer; adopt or close, not left to rot.
+
+**Cards**: 2,4,5,7 hold R until ~05:2xZ. 1, 3, 6 idle. Card 0 holds tileRL's orphaned l5eval
+(32.8 GiB, 100%, pid 3083582, claim 19h old, owning session gone) — not killed, because it is
+another team's job and killing needs an instruction naming it. **Whether cards 0 and 6 return to
+aupai is the user's ruling, not the controller's**: a session exiting does not revoke the standing
+order of 2026-09-06.
+
 ## Cards
 
 | | |
