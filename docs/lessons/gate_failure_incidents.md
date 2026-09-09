@@ -761,6 +761,72 @@ Evidence: `runs/delta.py` output at cutoff, `runs/count_en_c4_30b.json`, and the
 **§268 and §269 share one line, and it is the one to carry away: an aggregate is CHOSEN, so it cannot report what the choice discarded.** A verdict discards which mutation failed; a magnitude discards which kind of error it was. In both cases the discarded thing was the finding, and in both cases nothing in the artifact records that anything was discarded — which is why neither is detectable by reading the artifact and both are detectable by asking what the aggregate cannot represent.
 open: no check reads a grouped report and asks whether a per-row predicate would separate its members. The machine-checkable half here is narrow and real — a recount delta equal to the domain's document count is an `<eos>` defect, not noise — and `facts_well_formed` could assert it wherever both numbers are in the fact store.
 
+### §285 (2026-09-09, R6)
+
+**Three aggregates over the same held-out set ranked two arms three different ways, so the noise
+floor is not a scalar.** Two null arms differing only in `Cfg.seed` (`--sample_seed 42` pinned, so one
+corpus order; init and dropout are the whole difference) were scored on the full matrix:
+
+    final val (nats/token)          N1 1.8230   N2 1.8710   N1 better by 0.0480
+    domain_loss unweighted mean     N1 2.0241   N2 1.9956   N2 better by 0.0285
+    domain_bpb  unweighted mean     N1 0.77209  N2 0.76323  N2 better by 0.00886
+
+Same two checkpoints, same nine domains, three readings of held-out likelihood, and the SIGN is not
+stable. An arm separated from a control at this scale can be declared better or worse by choosing
+which aggregate to quote, with no error on either side and nothing to flag it.
+
+Two more from the same pair. **`mc_ceval` moved 23.1 to 27.7 -- a 4.6-point floor on pure init**,
+larger than most gaps ever quoted on that metric at this scale. And **`domain_loss`'s aggregate
+movement is 93% two domains**: per-domain init noise runs from 0.0001 (`code_py_rp1t`) to 0.1394
+(`chatml`), a factor of 1,400, and the two loudest -- `chatml` 0.1394 and `chat_qa` 0.0988 -- are the
+two smallest slices in the mix at 7,974 and 7,838 rows. (0.1394 + 0.0988) / 9 = 0.0265 of the
+aggregate's 0.0285. An arm compared on that mean is compared on those two domains with seven along
+for the ride.
+
+The generalisation is not "aggregates hide variance", which was already known. It is that **a noise
+floor has to be measured per metric on the metric the effect will be read on**, because a floor
+measured on one aggregate does not bound another aggregate over the same data, and can point the
+other way. A single scalar "the floor is 0.048" is a category error the moment more than one metric
+is in the report.
+
+Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
+`runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`. 44 recomputed both means from the raw rows and
+got 0.0285 and 0.0089.
+open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
+a reported arm-vs-control delta was placed against a floor on the SAME metric.
+
+### §286 (2026-09-09, R6)
+
+**The same metric name over two estimators put the noise floor 50% apart.** `train.py:408-409`:
+
+    val_batches      = 20
+    val_batches_full = 100   # fixed prefix, so the epoch-end number is comparable across runs
+
+Both print as `val`. The periodic `step N val` line is the 20-batch estimate; the epoch-end
+`ep 1/1 ... val` line is the 100-batch one, and the code's own comment says which of the two is
+comparable across runs. The same-step gap between the two null arms, read off the periodic series,
+ran 0.088 at step 500 down to 0.072 at 7500 -- fourteen reads, mean 0.077, no trend, which is exactly
+the shape of a stable measurement. At the read point the criterion actually names, the floor is
+**0.048**.
+
+Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
+the floor off the periodic series would have published it ~50% too large and buried any true effect
+between 0.048 and 0.077** -- and the consistency of the fourteen reads is what would have made it
+convincing. A series that agrees with itself is evidence about the estimator's stability, not about
+its agreement with the quantity being estimated.
+
+The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
+the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
+presentation -- here the digits are honest and the SAMPLE SIZE is the unstated basis.
+
+Nothing was published: the 0.077 reached this session's messages and the controller board, both
+corrected in the same commit that measured 0.048, and 44 verified it reached no other repo artifact.
+Evidence: `train.py:408-409`; `runs/anneal_n1_0908.log` and `runs/anneal_n2_0908.log`; board at
+`31b3d360`.
+open: no check. A metric name that resolves to two estimators is not detectable from the log line;
+the fix would be to print the batch count beside the number, which edits `train.py` (frozen).
+
 ## R7. Retractions travel as wide as the ruling
 
 ### §16 (2026-08-31, R7)
@@ -979,6 +1045,43 @@ Separate from R13 because the fix differs. R13's fix moves a conclusion somewher
 Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
 Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
 open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
+
+### §284 (2026-09-09, R3)
+
+**A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
+`api_cloze` metric was run on both anneal null arms. Its `bounds` field came out byte-identical on
+the two arms:
+
+    mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+
+The arms are `mix_200m_4b_annealN.json`, seed **1337** and **1338**, world **4**, 7,629 steps. Those
+bounds are the memory-layers program's reference run (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`). Identical bounds across two checkpoints with different seeds is the
+proof it is a fixed reference rather than a per-checkpoint derivation -- one checkpoint alone could
+not have shown it.
+
+The metric partitions its items into rows the model has SEEN and rows it has not, and reports the
+accuracy gap as a memorisation readout. Here the partition was drawn on a run neither checkpoint is,
+so "seen" is rows these checkpoints never saw. **The number that produced was `within_region_gap`
+0.0008 on N1 and exactly 0.0000 on N2** -- no signal, which is what a meaningless partition produces
+and exactly what a clean result looks like. Nothing in the output says the split does not apply.
+
+This is not §4's shape. There the identity was MISSING and the artifact was rebuilt. Here the
+identity is present, correct, and stamped into the output by a tool that did its job -- and is then
+read past at the point of use. `vocab_id` and `.srcfp` both close this loop: they are compared at the
+read and refuse on mismatch. `api_cloze`'s bounds are compared to nothing.
+
+Found by reading two score-matrix rows side by side while computing a seed-only noise floor; the
+metric was not under suspicion. What made it visible was having two arms: one row's bounds look like
+provenance, two identical rows from different runs look like a constant.
+
+Evidence: `runs/score_matrix.jsonl`, rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`,
+field `metrics.api_cloze.bounds`; `runs/experiments.jsonl` row `anneal_n2_0908_score`. Confirmed
+independently by 44, who also noted the same rows' `domain_bpb` metadata self-reports
+`mix_200m_4b_annealN` -- the two metrics in one record disagree about which run produced the
+checkpoint.
+open: de-84 -- `score_matrix` must SKIP a metric whose stamped bounds do not describe the checkpoint
+being scored, rather than print a number. Filed by 44 at `d819a9ab`.
 
 ## R10. What happened only on the pod did not happen
 
