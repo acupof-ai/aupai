@@ -2,9 +2,9 @@
   "facts": [
     {
       "id": "distill.teacher_vocab",
-      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, no added tokens; auxiliary tokenizer.arle.bin 7,207,591 bytes. The model's embedding table is 248,320 (248,044 padded to a multiple of 128 = 1940x128), read from model.safetensors; that is the operative output dimension for any logits-level comparison. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x either way.",
+      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, plus 33 added_tokens (248,077 total); auxiliary tokenizer.arle.bin 7,207,591 bytes. The model's embedding table is 248,320 (1940x128), read from model.safetensors -- 243 rows MORE than the tokenizer's 248,077; the padding mechanism is not recorded anywhere we read, so the gap is stated, not explained (de's review 2026-09-09: ceil(248044/128)=1938 -> 248,064, so 'padded to a multiple of 128' did not hold). 248,320 is the operative output dimension for any logits-level comparison. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x either way.",
       "measured": "2026-09-09",
-      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587), vocab.json (248044); model.language_model.embed_tokens.weight [248320, 5120] from model.safetensors header (2026-09-09)",
+      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587, len(added_tokens)=33), vocab.json (248044); model.language_model.embed_tokens.weight [248320, 5120] from model.safetensors header (2026-09-09)",
       "config": {
         "teacher_dir": "/work/Qwen3.8-27B-NVFP4",
         "ours": "data/tokenizer.json"
