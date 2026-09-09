@@ -107,3 +107,18 @@ mostly boilerplate; the upper tail (score >= 3) is 17.0%, coincident with
 phi-1's ~17% keep rate, and the threshold ablation pins the operating point.
 Score 5 never fired; if it stays at zero in the full run it is a dead level
 and collapses into 4 at threshold time, not before.
+
+## Enlarged pilot (4c, 2026-09-09)
+
+The 1K pilot's discriminative mass is the 26% non-1 tail; at candidate
+threshold >=3 it holds ~170 samples, too few to pick the threshold region.
+Before the full run, label a 5,000-sample enlarged pilot drawn from the same
+three domains as the full run, proportional to token share (1,660 / 958 /
+2,382): it is the first-N slice of the full 100K draw (seed 42), so pilot and
+full stay comparable and nothing is re-drawn. At the pilot's >=3 rate (~17%)
+the enlarged pilot holds ~850 positives, a keep-rate half-width of ~1.2pp,
+enough to select the threshold region; the threshold itself is pinned on the
+full 100K ablation (acceptance criterion), not on the pilot. The enlargement
+is drawn from the three deduped domains rather than code_rp1t because the
+deduped distribution may differ from the raw pilot domain's, and the threshold
+estimate must match the inference distribution.
