@@ -1228,7 +1228,11 @@ Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707
 hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
 asking why two arms that should track each other were diverging at all.
 Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
-`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values). The
+boundary the code computes -- 0.9 x 7629 = 6866 -- was later confirmed at RUNTIME by the arm's own
+phase label, `step 6800 [main]` then `step 6900 [anneal]`, which is the independent check the entry
+originally lacked: every claim here was read off the source, and a phase built from a different
+field would have produced the same reading of the same lines;
 `runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3` (amendment 1 `e24268fd`, corrected at
 `c29d6cc0`; amendment 3 redefines D as the spread rather than one draw);
 `runs/anneal_null_val_series_0908.tsv` for the N1 column, and `runs/anneal_r_vs_n1_drift_0909.tsv`
