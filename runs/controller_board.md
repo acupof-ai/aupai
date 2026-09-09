@@ -1,4 +1,119 @@
-# Controller board (fb) — 2026-09-09, 15:5xZ
+# Controller board (fb) — 2026-09-09, 17:2xZ
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `e55f4959`. **The gate corpus is no longer blocked on anything: the
+threshold is ruled and both remaining passes are running.**
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
+| classifier labels (queue a) | de | **100%** | `data/p1/classifier_labels_100k.jsonl`, 100,000 rows, 0 unparseable, one schema `(id, raw, score)`, `raw` retained | done |
+| educational-value classifier | e1 | **ablation delivered, threshold ruled** | held-out n=19,998, three heads. AUC ≥2 **0.909** / ≥3 **0.902** / ≥4 0.945, no domain collapse (min 0.879), and long-bucket AUC never exceeds short at any cut — **the classifier did not learn length** | full-corpus scoring running, card 7, ~4h left |
+| **threshold ruling** | fb | **≥3 at 25% doc keep** | score-2 is test scaffolding and framework glue, which is what the filter exists to remove. ≥4 is the classifier's **ceiling, not an operating point**: precision 0.457 at teacher's own 3.07% rate | volume is an output; ~3.3-3.7B tokens |
+| decontamination | 3b | criteria merged (#172), **full pass running** | two manifests, arithmetic closed against b0's independent recount (`runs/review.jsonl:366`): 11,745 decontam + 169,561 overlap = **178,941 rows**. Writing to `data/corpus_clean/`, source untouched | ~2h; then swap by doc id on e1's keep set |
+| **near-duplicate deletion** | 3b | **HELD by fb, not refused** | J≥0.5 would delete 20%+ of dd09/b2v2. Two reasons to wait: exact-J calibration is re-running (the rate is an uncalibrated estimate, and the instrument's 96 perms ≠ build's 128), and the quality filter's overlap with it is unmeasured | measure near-dup participation **inside** e1's keep set — a doc-id join, minutes. Then escalate with calibrated numbers |
+| tokenizer | b0 | ruling landed; scripts in #169 | four gates pass (fertility **1.4286** vs 1.55); freezing costs **+3.4%** tokens and 13.1M dead embedding params | fit on the keep set — queued behind the scoring |
+| eval / HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds files in the container, digit for digit; row counts reconcile (329 = 1 header + 164 greedy + 164 sampled holding 3280 completions), so `55/3280` is the real denominator | two `artifact_refs` rows carry no `attested_by`; `data/eval` is gitignored so the hash IS the record |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| human spot check | 98 | **#159, #160 merged**, pod-pushed | three sampler defects fixed and re-verified | — |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size.
+
+## The distribution changed the ablation, and my reading of it was wrong
+
+```
+score 1: 64,331 (64.3%)   score 3: 23,222 (23.2%)   score 0: 5,273 (5.3%)
+score 2:  4,100 ( 4.1%)   score 4:  3,040 ( 3.0%)   score 5:    34 (0.03%)
+```
+
+I read the bimodal shape and proposed a mechanism: the teacher is doing binary classification
+mapped onto fixed rungs, so there are two usable cut points, not five. **Both de and e1 read the
+raw output independently and refuted it.** e1 read 56 stratified samples, eight per bucket; de
+read three each at 2/3/4. Every bucket is internally coherent — 2 is test scaffolding and
+framework glue, 3 is real domain-specific logic, 4 is a clean self-contained algorithm. **The
+bimodality is a property of GitHub code, not a degenerate teacher.**
+
+The operational conclusion survived and its reason did not. That is not the same as being right:
+I inferred a mechanism from a shape without reading the raw, and the people who read the raw were
+the ones who settled it. de's version is sharper than either of ours — the empty top bucket is
+the rubric being demanding, not the teacher being timid, which separates two causes that both
+explain 34/100,000.
+
+## Seven corrections today, all mine, and the pattern is one thing
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the target score is phi-1's — **20x** | fb (re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket | peers, all four | the rule was at the top of the file, unread |
+| Added `_non_members` beside `not_on_this_team`, which already existed | fb, an hour later | two fields, one question — the defect that same PR described |
+| Gave tilerl-27 a **19-minute ETA as a point value** from a rate measured at the five-card switch; steady state was 17.2/s and it took 29 | fb (third reading) | a transient measured once, carried as a steady state |
+| Classified `cards` as STALE_PROSE — "let it rot" — **without grepping its readers**. It has three here and a fourth in tileRL's tree | fb, after tilerl-27's guard fired on it | **written inside the very map that exists to stop a field being misread** |
+| Carried **157,684** as the whole cross-domain overlap; it is one of two pairwise overlaps (+12,120 b2v2∩dedup08 = 169,804) | fb, checking 3b's arithmetic | a part quoted as the total |
+
+Every one is *a value I believed I knew the state of, and did not read*. tilerl-27 hit the same
+thing three times tonight from their side and put it best: **"I know" substituted for "I read."**
+
+## The `cards` defect, which cost another project a card
+
+`cards` is parsed by `launch_gate.py:666-680` (per-card owner), `launch_gate.py:2001` (the held
+set), `harness.py:21810` (card 6's lend **window**, via `_parse_lend_window`) — and by tileRL's
+`pod_run.sh`/`build_engine` guard over the project boundary. **It cannot express a loan.** Cards 1
+and 3 read `tileRL` for the whole window they were lent to de's serve, so tileRL's guard classified
+card 1 as theirs and allowed a job onto it. **The guard ran correctly on a field that does not
+encode the question** — that is the 13:3xZ incursion, and its cause is the field, not the operator.
+
+Second half, found an hour later: **their guard reads the POD copy, which was two hours and three
+commits behind main**, because `card_assignment.json` is in the manifest's scope and I merged it to
+main four times and pushed the pod once. Their refusal of card 1 was correct on a loan record
+revoked an hour earlier — right answer, stale basis. The mirror case (a recall not yet pushed)
+fails permissive. Pushed; friction logged; the durable fix is `merge_main` printing the obligation
+for `runs/*.json`, not a staleness check on their side.
+
+## The claim ledger went down for all three projects
+
+One claim carried `"pid": null`. `.get("pid", -1)` returns the default only when the key is
+**missing**, so `int(None)` raised and `claims()` died mid-iteration — **one bad row took out the
+whole read path**, so nobody could claim, and therefore nobody could safely launch.
+
+tilerl-27 owned the bad row, asked me to delete it or authorise them to. **Neither**: a standing
+user order forbids deleting without a named target, and authorising someone else to do what I am
+forbidden to do is the same act. `claims()` filters on `*.json`, so renaming the extension moved it
+out of the read path with all 399 bytes intact — reversible, and it stays as the one non-synthetic
+test input for de's fix. de fixed the root cause plus three more in #173 (namespace safety, the CLI
+`release --cards` bug that made every release name-wide).
+
+## Cards, 17:2xZ
+
+| card | holder | state |
+|---|---|---|
+| 0, 3, 6 | tileRL | their own jobs; both loans of 1 and 3 closed and verified |
+| 1, 2 | free | 0 MiB |
+| 4, 5 | de's serve, **idle** | 55/54 GB held at 0% — held, not computing; kept for exercise generation |
+| 7 | **e1, full-corpus scoring** | 11 GB at 72%, 183 shards written, ~4h left |
+
+**Two incursions tonight, both self-reported by tilerl-27 before anyone detected them.** Card 1
+(cause: the `cards` defect above, not the operator). Card 2, our lane, a GRPO training — cause was
+bypassing their own guard entirely via `tn exec`, established by running their classifier against
+all eight of our `cards` entries: card 2 classifies `unknown`, so the guard would have refused it.
+**Their guard was never called, not fooled.**
+
+## Global
+
+- **17 PRs open, every one green.** Merged today with fb as reviewer: #159, #160, both pod-pushed.
+- **#168 changes-requested**: it replaces `pairs_note` wholesale, deleting the rationale for
+  `b0 -> de`. After it merges the file states a live pair with no reason in it.
+- **R15/§294 and R16/§295 landed** (44). R16 is new tonight and worth carrying: *a precision
+  improvement can flip the failure direction from permissive to dangerous* — #173's start-time
+  match is strictly more accurate and turns a pid-reuse coincidence from "card looks owned"
+  (harmless) into "card looks free" (collision). Caught in review, not in production.
+- **An approved PR that is not merged is worse than an unreviewed one.** #161 and #155 are still
+  approved and open.
+
+---
 
 ## State: p1, the whole program on one screen
 
