@@ -24,9 +24,76 @@ sys.path.insert(0, os.path.join(ROOT, "eval"))
 from scripts.loader import EOS_ID, load_checkpoint, load_tokenizer  # noqa: E402
 
 
+def selftest():
+    """KNOWN ANSWER for the holdout split, on hand-built mixes. No GPU, no caches.
+
+    THE DEFECT THIS EXISTS FOR: until 2026-09-08 this file computed its own split from
+    the global Cfg.val_frac while train.py honoured each domain's `val_frac` key, so on
+    any mix with a per-domain override the two disagreed and ppl.py scored TRAINED rows
+    while its docstring promised held-out ones. Five mixes carry such an override today
+    (data/mix_e1_{control_arm,n1,n8,n64,n256}.json -- p_format in all five, plus each
+    arm's own s_inject_n*), so this is not a hypothetical shape.
+
+    EXACT COUNTS, NOT "SMALLER". The two arms of the bug differ by a handful of rows on
+    a small domain, and an inequality assertion passes on both. Case 1 is the negative
+    control for case 2: same rows, same global val_frac, one key added, and the answer
+    must move 5 -> 0. Case 3 pins the max(1, ...) that a zero GLOBAL val_frac must still
+    produce -- test_plan_length depends on it, and collapsing the two zeroes into one
+    branch shifted every pool by a row.
+    """
+    import train
+
+    fails = []
+
+    def check(name, got, want):
+        ok = got == want
+        print(f"  {'ok  ' if ok else 'FAIL'} {name}: got {got}, want {want}")
+        if not ok:
+            fails.append(name)
+
+    train.Cfg.val_frac = 0.05
+    train.Cfg.val_rows_max = 5000
+    plain = {"domains": {"d": {"weight": 1.0}}}
+    zero = {"domains": {"d": {"weight": 1.0, "val_frac": 0}}}
+    half = {"domains": {"d": {"weight": 1.0, "val_frac": 0.5}}}
+
+    check("no key -> global 5% of 100", train.val_split_n("d", 100, plain), 5)
+    check("val_frac 0 -> exactly 0 rows held out", train.val_split_n("d", 100, zero), 0)
+    check("per-domain 0.5 overrides the global", train.val_split_n("d", 100, half), 50)
+    check("the cap applies to a per-domain frac too",
+          train.val_split_n("d", 10 ** 7, half), 5000)
+
+    train.Cfg.val_frac = 0.0
+    check("global 0.0 still holds back one row (test_plan_length depends on it)",
+          train.val_split_n("d", 100, plain), 1)
+    check("an explicit 0 KEY is not the same as a global 0.0",
+          train.val_split_n("d", 100, zero), 0)
+
+    # The real mixes, so the case dies if a mix stops carrying the override.
+    import glob
+    import json as _json
+    train.Cfg.val_frac = 0.05
+    n_zero = 0
+    for p in sorted(glob.glob(os.path.join(ROOT, "data", "mix_e1_*.json"))):
+        mix = _json.load(open(p, encoding="utf-8"))
+        for name, dcfg in mix["domains"].items():
+            if isinstance(dcfg, dict) and dcfg.get("val_frac") == 0:
+                n_zero += 1
+                got = train.val_split_n(name, 1000, mix)
+                if got != 0:
+                    fails.append(f"{os.path.basename(p)}:{name}")
+                    print(f"  FAIL {os.path.basename(p)}:{name} held out {got} rows")
+    check("the shipped e1 mixes still carry val_frac 0 domains", n_zero >= 5, True)
+    print(f"  ({n_zero} val_frac:0 domain(s) across data/mix_e1_*.json, all held out 0 rows)")
+
+    print(f"\n{'ALL OK' if not fails else 'FAILED: ' + ', '.join(map(str, fails))}")
+    return len(fails)
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--ckpt", required=True)
+    ap.add_argument("--ckpt")
+    ap.add_argument("--selftest", action="store_true")
     ap.add_argument("--tokenizer", default=os.path.join(ROOT, "data", "tokenizer.json"))
     ap.add_argument("--mix", default=os.path.join(ROOT, "data", "mix_scale_3.24b.json"))
     ap.add_argument("--batch", type=int, default=8)
@@ -37,6 +104,11 @@ def main():
                          "ppl figure was taken with (audit_0904 E10). train._domain_seqs "
                          "returns PACKED rows, so the two differ.")
     a = ap.parse_args()
+
+    if a.selftest:
+        sys.exit(1 if selftest() else 0)
+    if not a.ckpt:
+        ap.error("--ckpt required (unless --selftest)")
 
     import json
 
@@ -66,7 +138,14 @@ def main():
     for name in mix["domains"]:
         seqs = train._domain_seqs(name, tok, True, False)
         seqs = seqs[0] if train.Cfg.fone else seqs
-        n_val = min(max(1, int(len(seqs) * train.Cfg.val_frac)), train.Cfg.val_rows_max)
+        # CALL train's split, do not restate it. This line read the GLOBAL Cfg.val_frac
+        # while train.py honours each domain's own `val_frac` key, so for the five
+        # mix_e1_* arms -- every one sets p_format's val_frac to 0, plus its own
+        # s_inject_n* domain -- this scored rows the run TRAINED on and printed them
+        # under a docstring promising "exactly the rows train.py holds out". A domain
+        # with val_frac 0 now yields 0 rows and is skipped by the `if not len(rows)`
+        # below, which is what the run itself did. Found by 4c, 2026-09-08.
+        n_val = train.val_split_n(name, len(seqs), mix)
         rows = seqs[:n_val][: a.rows].long()
         if not len(rows):
             continue

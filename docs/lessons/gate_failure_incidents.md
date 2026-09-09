@@ -646,6 +646,14 @@ open: unenforceable by a repo scan — the failing form is a shell command in a 
 
 RENUMBERED FROM §248, and the renumber is its own instance of the same rule. This text was written and staged as §248, then LOST: it was carried aside to /tmp during a behind-main merge and never restored afterwards, so nothing was committed while I reported to the user that it had landed. tilerl filed a different §248 in the gap. The hand-carry that dropped it is exactly what the tilerl-31 staged-index carry in `scripts/merge_main.sh` now automates -- the fix and the loss met in the same hour.
 
+### §291 (2026-09-08, R4)
+A wall-clock gate samples a PHASE of the operation it interrupts, and the phase decides what state the kill leaves. N1 (the anneal N arm) first launched 2026-09-08 14:49Z from the pod's `anneal_arms.sh`, in the version before PR #111: `--seed 1337`, no `--sample_seed`, so `_sample_seed()` fell back to `Cfg.seed` = 1337 while the nine caches were stamped 42. `same_seed` was False for every domain, so the launch retokenized the whole mix; the 120s startup gate SIGTERMed it while `math_owm_stage2` was tokenizing. The write order in `_domain_seqs` is `_encode_domain` -> `torch.save(data, cache)` -> `.vocab` -> `.srcfp` -> `.seed` (train.py:2225-2244), and the kill landed before `torch.save`, so no durable state changed at all: all nine caches stayed stamped 42. The 16:59Z relaunch carried `--sample_seed 42` (PR #111's pin, in the train.py pushed to the pod that afternoon), `same_seed` held, nothing retokenized, and the run finished at final val 1.823. **The gate that killed the run also saved the caches, by accident.** The counterfactual is one duration away: had `math_owm_stage2` tokenized inside the deadline, the same gate fires after `torch.save` and before the `.seed` write, and the window holds THREE distinct partial states, not one -- kill before `.vocab` leaves new-cache/old-vocab, kill before `.srcfp` leaves new-cache/new-vocab/old-srcfp, kill before `.seed` leaves new-cache/new-vocab/new-srcfp/old-seed. The last is the silent one: the next launch's `fresh` is True (same vocab, same source, same seed, mtime fresh), so it trains on the wrong-order cache in silence. The resume-cursor misinterpretation the `.seed` stamp exists to prevent (de-7) would arrive through the stamp's own write window. The loud kill -- timeout reported, run dead, launch nonzero -- was the benign one; the silent one needs only a shorter tokenize. A deadline measured from launch knows nothing about the interrupted operation's intermediate state, and nothing in the gate's output says which world it left behind.
+
+The same shape one level up, in the gate's sizing: `_derive_gate_timeout` sizes the deadline from cache bytes on disk, and a cache that EXISTS but is stale -- seed, vocabulary, or source mismatch -- is bytes on disk. It is sized as a warm load while the job does a cold one's work. The all-cold case already refuses rather than falls back (2026-08-31); the stale-cache case is the remaining hole, and closing it needs the gate to read the stamps, not the bytes: the seed and vocabulary comparisons are cheap file reads against the launch's own flags, and only the source fingerprint needs a recompute.
+
+Evidence: de's independent pod-log check (2026-09-09): launch times 14:49Z and 16:59Z from the pod experiments ledger, final val 1.823 from the arm log, nine `.seed` stamps read as 42. The 14:49Z log was overwritten before it could be checked, so the domain in flight at the SIGTERM (`math_owm_stage2`) is INFERRED from tokenize order, not read; the counterfactual needs only that some domain was mid-tokenize, which the retokenize plus the timeout establish on their own. `train.py:2132` (`seedfp = cache + ".seed"`), `:2172` (`same_seed`), `:2225-2244` (the write order); PR #111 (`--sample_seed`); `scripts/harness.py` `_derive_gate_timeout` and `_wait_for_startup`.
+open: (a) one commit point between cache and stamps in `_domain_seqs` -- write the cache to a tmp name and rename after the stamps, or write the stamps before `torch.save` so a kill during the save leaves old-cache/new-stamp, a mismatch the next launch detects and redoes (cost: one redundant tokenize, no silent window); (b) the gate counts a stale cache as warm -- read the stamps alongside the bytes. Neither exists.
+
 ## R5. State the vision before the number
 
 ### §30 (2026-09-01, R5)
@@ -969,6 +977,29 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
+### §290 (2026-09-08, R11)
+
+**A check's population is a filename regex, and the regex is narrower than the check's name.** `check_deletion_list_no_tracked` (`scripts/harness.py::check_deletion_list_no_tracked`) refuses a deletion list that names a tracked file -- the rm would remove what a fresh checkout ships, with every gate green. Its population comes from one line:
+
+    re.search(r"(deletion_candidates|ckpt_candidates).*\.(md|txt)$", n)
+
+over `runs/`. Measured on the tree at `6bc6f0a4`: **6 files match, 3 deletion lists do not** -- `pod_disk_candidates_20260903.txt`, `pod_only_code_candidates_0906.txt`, `tilerl_22_prune_list.md`. The check is named for deletion lists and enumerates files whose names contain two specific strings. Nobody chose to exclude those three; they were never in the population, and nothing says so. This is R11's exact shape and the fourth-plus instance: **a predicate set answers the question it enumerates, not the one it is named for.**
+
+**The ordering constraint, and it is the part worth keeping.** The obvious fix -- widen the regex -- is the wrong first move, and I measured what it does rather than guessing. Running the check's own criterion over the three unmatched files: two produce zero hits, and `tilerl_22_prune_list.md` produces **7**:
+
+    runs/ab_base_a_first.log, runs/t57_recompile.log, runs/data_leg_206m_8b.log,
+    runs/pretrain_15b_s1.log, runs/b0_17_readout.log, runs/t57_steady.log, runs/t56_profile.log
+
+All 7 are tracked, all 7 sit in a markdown table -- and the table is titled **"The 7 stale snapshots, refreshed 2026-09-04"**, with columns `was` and `now`. It is a REFRESH record, not a deletion list. Every one of those files was made *more* complete; `ab_base_a_first.log` went from 8,359 bytes to 3,819,506. Widening the population first therefore produces seven FAILs that are all wrong, on the document that records work being done correctly.
+
+**And a wrong FAIL is not a neutral cost, it is how a check dies.** The operator who hits seven false refusals on a correct document does not narrow the criterion; they turn the check off, or add the file to an exclusion list, and the widening that was supposed to increase coverage ends by decreasing it. So: **fix the criterion before widening the population.** The criterion here needs to distinguish "this table lists files to delete" from "this table lists files that changed", which the current cell-shape test cannot -- it reads any bare path in any table cell as a candidate.
+
+That the check already contains a comment about exactly this class ("prose naming a file is not a deletion target ... a check that flagged it would be turned off") and still cannot tell a refresh table from a deletion table is the measurement: the author saw the failure mode, wrote the reason down, and the criterion still does not implement it.
+
+Cost: ~40 min, no defect shipped -- the narrow population meant the wrong FAIL never fired. That is the uncomfortable part: **the two defects were cancelling.** A too-narrow population hid a too-weak criterion, and fixing either one alone makes the check worse than leaving both.
+Evidence: `scripts/harness.py::check_deletion_list_no_tracked` (the regex and the cell test); `runs/tilerl_22_prune_list.md` under the heading "The 7 stale snapshots, refreshed 2026-09-04"; the three unmatched filenames under `runs/`, listed above; hit counts from running the check's own cell criterion over each.
+open: no check asserts that a population built from a filename pattern covers the files a human would put in that category. The cheap half is per-check: a check whose population comes from a pattern must print the count it matched AND the count it skipped in the same directory, so a reader sees the population rather than inferring it from the check's name.
+
 ## R12. An assertion whose result is anti-correlated with its own name
 
 ### §279 (2026-09-08, R12)
@@ -1234,3 +1265,51 @@ Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json`
 runs and is committed at close -- §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
 one thing; the assertion would be over the built plan, not over the mix files.
+
+
+### §288 (2026-09-09, R4)
+
+**A socket field accepts a dead address and every writer takes it: two sessions independently
+wrote a "socket" built from a listagents ref within one hour.**
+
+de's de-85 rows (`runs/tasks.jsonl`, ids de-85) carry `"socket": "uds:/tmp/cc-socks/4e353c.sock"`
+-- `4e353c` is de's listagents ref, not a socket; no such file ever existed. One row knows it:
+"Note the socket in this row is a placeholder built from de's listagents ref, not read from
+runs/roster.json -- correct it before relying on it." fb made the identical substitution
+dispatching de-85 the same hour. The field's grammar admits any `uds:...` string and no writer
+checks the file exists, so a value that looks like an address is accepted as one, and anything
+sent to it reaches nobody.
+
+Why the field invites it: a listagents ref is a hex string of the same shape as a socket suffix,
+and the roster prints both in adjacent columns (`listagents_ref` beside `socket`). The fix is a
+check at the write: a socket row whose path does not exist refuses, the way a card claim refuses
+a held card. R13 is the secondary reading -- the ref was resolvable information stored in a field
+that cannot use it -- but the failure that bit is R4: the write never failed.
+
+Evidence: `runs/tasks.jsonl` de-85 rows (2026-09-09 02:05); the roster note corrected in #119
+("A ref is not a socket, and a row carrying one addresses nobody"). Cost: not measured -- no
+message is known to have been lost, because a lost message leaves no trace; that is the shape.
+
+### §289 (2026-09-09, R11)
+
+**A rebuild from the register answers "what work is registered", not "what work was assigned" --
+two real items were silently absent from a complete-looking assignment.**
+
+The 2026-09-09 03:3xZ rebuild of the six-person assignment enumerated `runs/tasks.jsonl`. Two
+items assigned in conversation had no row: b0 named `b0-48` as ready to push (zero rows in
+tasks.jsonl), and e1's "spec-close package" -- `prereg_registers_recipe_values` -- appears zero
+times in tasks.jsonl and zero times in harness.py. Neither existed to be rebuilt, so the rebuild
+dropped both while looking complete.
+
+The population the rebuild needed is "work a session is actually doing", which lives in messages
+and branch heads; the population it enumerated was "work with a ledger row". R11's fix is
+structural: the population must come from the source, not a list -- here, asking each owner
+"what are you doing that has no row" before declaring the assignment complete, or requiring
+assignment to exist only when registered. The register cannot show the work it does not contain,
+and a rebuild that asserts completeness against the register asserts against a list.
+
+Evidence: `grep b0-48 runs/tasks.jsonl` -> 0 rows (2026-09-09); `grep prereg_registers_recipe_values`
+-> 0 in tasks.jsonl and 0 in harness.py; the rebuild is `runs/controller_board.md`'s assignment
+section (b397eb97). Cost: none realised -- both surfaced in the same hour's conversation and were
+re-attached; the cost that did occur is that the rebuild's completeness was unverifiable from its
+own output.
