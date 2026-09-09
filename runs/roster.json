@@ -72,15 +72,15 @@
   },
   {
    "name": "de",
-   "socket": "uds:/tmp/cc-socks/39861.sock",
+   "socket": "uds:/tmp/cc-socks/62973.sock",
    "role": "implement",
    "topics": [
     "instruments",
     "launch_gate"
    ],
-   "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03. Also pairs b0 from 2026-09-09 (tilerl exited); de now second-reads both 44 and b0.",
-   "listagents_name": "aupai-db",
-   "listagents_ref": "4e353c"
+   "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03. Also pairs b0 from 2026-09-09 (tilerl exited); de now second-reads both 44 and b0. SOCKET CORRECTED 2026-09-09 after a resume; the roster's 4e353c is dead. Identity verified against d49bb673 on main. NOTE de's own warning: rows de wrote before this correction carry a PLACEHOLDER socket built from the listagents ref (47baf0), which is not an address -- the same mistake fb made in de-85. A ref is not a socket, and a row carrying one addresses nobody.",
+   "listagents_name": "aupai-dd",
+   "listagents_ref": "47baf0"
   },
   {
    "name": "44",
