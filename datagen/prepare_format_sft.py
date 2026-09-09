@@ -146,6 +146,11 @@ def main():
     eos = tok.token_to_id("<eos>")
     assert eos is not None, "tokenizer has no <eos>"
 
+    # The experiment rests on this boundary, so the known-answer test runs on
+    # EVERY build, not only under --selftest: a broken split must not ship a pack
+    # (4c review, 2026-09-09).
+    print("known-answer test:", known_answer_test(tok, eos), flush=True)
+
     examples, stats = read_examples(args.source, require_docstring=True)
     random.shuffle(examples)
     if len(examples) > MAX_EXAMPLES:

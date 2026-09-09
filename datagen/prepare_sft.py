@@ -206,7 +206,11 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None,
     split_encode (default OFF): encode prompt and answer separately and
     concatenate the streams, so the inference sequence is a token-by-token
     prefix of the training sequence. Only the raw format-SFT pack opts in;
-    every existing pack keeps its exact bytes. See _encode_pairs.
+    every existing pack keeps its exact bytes. See _encode_pairs. The default
+    path's byte-invariance under this flag is a code-reading judgment (the
+    default branch is untouched; 4c review 2026-09-09), not a golden-pack
+    test. Reversal condition: a future edit that changes the default branch
+    ITSELF -- not adding a branch before it -- needs a golden-pack comparison.
 
     extra_stats: merged into build_stats, for counts only the caller knows
     (e.g. how many pairs its own filter dropped).
@@ -250,13 +254,20 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None,
     pending = deque()
     for i in range(0, len(examples), ENC_BATCH):
         batch = examples[i : i + ENC_BATCH]
-        for ids_p, ids_f, vals_f in _encode_pairs(batch, tok, num_id, split=split_encode):
+        for _ex, (ids_p, ids_f, vals_f) in enumerate(_encode_pairs(batch, tok, num_id, split=split_encode)):
             ids_f = ids_f + [eos]
-            # split_encode: ids_f IS ep+eb, so the prefix holds by construction and this
-            # check is an invariant. Default path: concat-then-encode can merge across the
+            # split_encode: ids_f IS ep+eb, so the prefix holds by construction. A
+            # mismatch there means the pack silently fell back to the common-prefix
+            # mask this flag exists to replace, whose only trace would be a stats
+            # count nobody reads before training -- raise instead (4c review,
+            # 2026-09-09). Default path: concat-then-encode can merge across the
             # boundary, and the common-prefix fallback masks the merged token.
             plen = len(ids_p)
             if ids_f[:plen] != ids_p:
+                if split_encode:
+                    raise RuntimeError(
+                        f"split_encode: prompt is not a token prefix of the packed "
+                        f"sequence at example {i + _ex} -- the boundary invariants broke")
                 n_mismatch += 1
                 plen = 0
                 for a, b in zip(ids_p, ids_f):
