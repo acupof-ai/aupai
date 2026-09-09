@@ -393,6 +393,18 @@ Why it escapes review: "more precise" always sounds like an improvement, and it 
 
 Cannot see: whether a residual error's cost is asymmetric — that lives in what the predicate gates, not in the predicate. The fix is a review question, not a check: when a criterion changes, ask which side the residual lands on BEFORE asking whether the new one is more accurate.
 
+## R17. Two artifacts joined by position must have that position produced by one writer; a cross-process "row i ↔ row i" convention has no owner
+
+1 incident (2026-09-10), caught in review by measurement, not by reading the code. `manual:` — no check knows two files are consumed together by position. Checkable slice: where two artifacts are zipped by row, the ordering must have a single writer or an explicit join key; a scanner could flag positional joins over files with different producers.
+
+The shape: two artifacts must correspond row by row, but each is produced by a different code path with a different ordering guarantee — one stacks in completion order (`imap_unordered`), the other enumerates in sorted-glob order. The correspondence is a convention that exists only in the reader's assumption: no line of code states it, no writer is responsible for it, so no check can fail on it. Both producers are individually correct; the system is wrong by ~85% of rows. What survives is what never depended on the join — the order-independent statistic (participation as set membership); what dies is everything coordinate-dependent (calibration pairs, hit coordinates).
+
+- §296: near_overlap's signatures (completion order) and loc index (sorted-glob order), joined by row position. b0 measured ~85% of rows misaligned in #177's review.
+
+The fix shape is part of the rule: do not make the second producer reproduce the first's order — make the first persist its own ordering and delete the site where the guess happened (3b's choice in #177). And the guard must assert the property, not a proxy: equal lengths passes under any permutation; the #177 guard re-signs the doc at `loc[i]` and compares the signature.
+
+Cannot see: which artifacts are consumed together by position — that lives in the reader's code, not the writers'. A positional join over two files with different producers is the review question.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
