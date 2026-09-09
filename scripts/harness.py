@@ -4166,6 +4166,32 @@ def _broken_stale_run():
     return d
 
 
+def _broken_future_started():
+    """A running row whose started date is in the future: negative age, must FAIL not silently pass."""
+    d = _tmp_repo()
+    subprocess.run(
+        [
+            sys.executable,
+            os.path.join(HERE, "exp.py"),
+            "--root",
+            d,
+            "start",
+            "--name",
+            "future_job",
+            "--cmd",
+            "x",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    p = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
+    rows[0]["started"] = "2099-01-01 00:00"
+    open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    return d
+
+
 def check_mix_not_unfiltered(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -7194,6 +7220,11 @@ def check_no_stale_running(root):
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
+        if age_h < 0:
+            return FAIL, (
+                f"row {r.get('name', '?')!r} has a future `started`: {r.get('started')!r} "
+                f"({-age_h:.0f}h in the future) -- its age cannot be determined"
+            )
         if age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
@@ -7243,6 +7274,62 @@ def check_no_ghost_running(root):
     if ghosts:
         return FAIL, f"running rows with no live process: {', '.join(ghosts[:6])}; close with exp.py done"
     return PASS, "every running row has a live process"
+
+
+def _pid_alive(pid):
+    """os.kill(pid, 0) accepts a zombie: an exited child nobody reaped keeps its pid.
+    /proc state Z is dead. Linux only -- the check that uses it is pod-only."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        with open(f"/proc/{pid}/stat") as sf:
+            return sf.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return True  # no procfs: the signal probe already answered
+
+
+def check_monitor_alive(root):
+    # A running row's monitor releases its cards when the job ends and notices the log go
+    # silent. A dead monitor on a running row does neither, and nothing else says so: the
+    # job can be perfectly alive while its watcher is gone. Pod-only: the pid was read in
+    # the pod's container namespace and is meaningless anywhere else.
+    if not pod_drift.is_pod(root):
+        return SKIP, "dev checkout; monitor pids live on the pod"
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    evs = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            try:
+                evs.append(json.loads(line))
+            except Exception:
+                continue
+    dead = []
+    for r in _exp_fold(evs):
+        if r.get("status") != "running":
+            continue
+        mpid = r.get("monitor_pid")
+        if not mpid:
+            continue  # opened before this field existed, or the arm-time write failed
+        try:
+            mpid = int(mpid)
+        except (TypeError, ValueError):
+            return FAIL, f"row {r.get('name', '?')!r} has a non-integer monitor_pid: {mpid!r}"
+        try:
+            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+        except Exception:
+            return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
+        if (time.time() - t) / 3600 < 2:
+            continue  # grace, matching no_ghost_running: a launch in flight has no monitor yet
+        if not _pid_alive(mpid):
+            dead.append(f"{r.get('name', '?')} (monitor pid {mpid})")
+    if dead:
+        return FAIL, (f"running rows whose monitor is dead: {', '.join(dead[:6])}; "
+                      f"re-arm the monitor or close the row with exp.py done")
+    return PASS, "every running row with a monitor_pid has a live monitor"
 
 
 def check_guard_on_path(root):
@@ -11833,6 +11920,38 @@ def _broken_ghost_running():
     return d
 
 
+def _broken_monitor_alive():
+    """A REAL exp.py start row armed by the REAL exp.py monitor verb with a pid that died
+    immediately, backdated past the 2h grace. Both writers are the real ones; the only
+    hand-mutated bytes are the started stamps, which the grace requires."""
+    import re
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    sp = subprocess.Popen([sys.executable, "-c", ""])
+    dead_pid = sp.pid
+    sp.wait()
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "--root", d,
+         "start", "--name", "mon_dead_xyz", "--cmd", "true"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "--root", d,
+         "monitor", "--name", "mon_dead_xyz", "--pid", str(dead_pid)],
+        check=True, capture_output=True,
+    )
+    lp = os.path.join(d, "runs", "experiments.jsonl")
+    lines = open(lp, encoding="utf-8").read().splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if "mon_dead_xyz" in ln:
+            lines[i] = re.sub(r'"started": "[^"]*"', '"started": "2026-08-29 00:00"', ln, count=1)
+    with open(lp, "w", encoding="utf-8") as f:
+        f.writelines(lines)
+    return d
+
+
 def _broken_pod_drift():
     """Every file the REAL manifest names, copied in, the manifest REGENERATED over
     those copies, then one file mutated. Two bugs made the old world green for free:
@@ -15724,6 +15843,92 @@ def _assert_card_ownership(root):
     return None
 
 
+def check_card_observed_blocks(root=ROOT):
+    """Every cards[] observed_block still holds: its probe re-runs and its expect matches.
+
+    An observed_block is a FACT, not a decision -- "another container holds this card",
+    asserted at a time, carrying a probe a check can re-run. This is the alarm the 2026-09-09
+    incident lacked: the 09:0xZ note "HELD BY ANOTHER CONTAINER, 97 GiB" outlived the ARLE
+    serve by hours and nothing went red, so tilerl-27 under-used card 5 and warmdown planning
+    counted cards from a wrong file. A prose observation cannot be re-checked, so it cannot
+    expire; a probed one can, and this FAILs in the under-use direction -- while the block
+    stands the classifier refuses the card (fail closed), and when the world moves on this
+    names the card the same day so the file gets corrected.
+
+    A probe with target "pod" (the default) runs in the container through the pod wrapper and
+    SKIPs when the pod is unreachable: a dead tunnel is not an expired observation
+    (pod_reachable's lesson). target "local" runs through the local shell; the broken world
+    uses it so the selftest runs anywhere. A probe that errors or times out has stopped
+    holding.
+
+    Malformed entries FAIL too: a block a human cannot re-run is a block that cannot expire,
+    which is the defect this field exists to remove.
+    """
+    blocks = [(c, n["observed_block"]) for c, n in _card_map(root).items()
+              if isinstance(n, dict) and isinstance(n.get("observed_block"), dict)]
+    if not blocks:
+        return PASS, "no observed_block entries"
+    stale, skipped, bad = [], [], []
+    pod_bin = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
+    for c, ob in blocks:
+        probe, expect, asserted = ob.get("probe"), ob.get("expect"), ob.get("asserted_at")
+        if not isinstance(probe, str) or not probe or not isinstance(expect, str) \
+                or not isinstance(asserted, str) or not asserted:
+            bad.append(c)
+            continue
+        target = str(ob.get("target") or "pod").lower()
+        got, holds = "", False
+        try:
+            if target == "pod":
+                ok, _why = pod_reachable()
+                if not ok:
+                    skipped.append(c)
+                    continue
+                r = subprocess.run([pod_bin, probe], capture_output=True, text=True, timeout=30)
+            else:
+                r = subprocess.run(probe, shell=True, capture_output=True, text=True, timeout=30)
+            got = (r.stdout or r.stderr or "").strip()
+            holds = r.returncode == 0 and expect in r.stdout
+        except (OSError, subprocess.TimeoutExpired) as e:
+            got = f"{e.__class__.__name__}"
+        if not holds:
+            stale.append((c, asserted, probe, got[-120:]))
+    if bad:
+        return FAIL, ("cards[] observed_block entries missing asserted_at/probe/expect on "
+                      f"card(s) {_csv(sorted(bad))} -- a block nobody can re-run cannot expire, "
+                      "which is the defect this field exists to remove")
+    if stale:
+        return FAIL, (f"{len(stale)} observed_block(s) outlived the fact they recorded: "
+                      + "; ".join(f"card {c}: asserted {a}, probe {p!r} no longer holds "
+                                  f"(got {got!r})" for c, a, p, got in stale)
+                      + ". The observation is stale, not the card: delete or re-assert the "
+                      "block; the owner field decides who owns it")
+    msg = f"{len(blocks)} observed_block(s) hold"
+    if skipped:
+        msg += f", {len(skipped)} skipped (pod unreachable)"
+    return PASS, msg
+
+
+def _broken_card_observed_blocks():
+    """The REAL grant file with one observed_block whose probe no longer holds."""
+    import shutil
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "runs", "card_assignment.json"),
+                os.path.join(d, "runs", "card_assignment.json"))
+    p = os.path.join(d, "runs", "card_assignment.json")
+    with open(p, encoding="utf-8") as fh:
+        a = json.load(fh)
+    a.setdefault("cards", {})["9"] = {
+        "owner": "aupai",
+        "observed_block": {"asserted_at": "2026-09-09T09:00Z", "probe": "false",
+                           "expect": "x", "target": "local"},
+    }
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(a, fh)
+    return d
+
+
 def check_allocation_reads_the_grant(root):
     """The cards a training launch GETS are the cards the grant file GIVES.
 
@@ -17152,6 +17357,16 @@ CHECKS = [
         _broken_allocation_reads_the_grant,
     ),
     (
+        "card_observed_blocks_fresh",
+        "every cards[] observed_block's probe still holds, and the entry is well-formed",
+        "an observation written into card prose outlived the fact it recorded by hours and "
+        "nothing went red: the 09:0xZ 'HELD BY ANOTHER CONTAINER, 97 GiB' note kept card 5 "
+        "reading as blocked after the ARLE serve was gone, so tilerl-27 under-used it and "
+        "warmdown planning miscounted cards (4c, 2026-09-09)",
+        check_card_observed_blocks,
+        _broken_card_observed_blocks,
+    ),
+    (
         "env_importable",
         "every third-party module the repo imports is installed",
         "a container restart dropped the writable layer; SFT died on ModuleNotFoundError and read as a code bug",
@@ -17321,11 +17536,25 @@ CHECKS = [
         _broken_stale_run,
     ),
     (
+        "no_future_started",
+        "no experiments.jsonl row has a 'started' date in the future",
+        "a future date gives a negative age, always under the stale threshold, so the row never goes stale",
+        check_no_stale_running,
+        _broken_future_started,
+    ),
+    (
         "no_ghost_running",
         "a running row older than 2h has a live process (pod only)",
         "a finished-but-unrecorded run looked alive for up to 24h under no_stale_running alone",
         check_no_ghost_running,
         _broken_ghost_running,
+    ),
+    (
+        "monitor_alive",
+        "a running row's monitor pid is still alive (pod only)",
+        "a dead monitor leaks the run's cards when the job ends and never fires the log-silence alert",
+        check_monitor_alive,
+        _broken_monitor_alive,
     ),
     (
         "corpus_filters_fp",
@@ -17927,7 +18156,7 @@ CHECKS = [
 EVIDENCE = {
     # pod: evidence exists only on the training box
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
-    "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
+    "pinned_ids": "pod", "no_ghost_running": "pod", "monitor_alive": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
     # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
     # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
@@ -17947,6 +18176,7 @@ EVIDENCE = {
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
+    "card_observed_blocks_fresh": "repo",
     # repo: harness.py and the hook are both tracked, so the worlds' shape answers the same
     # anywhere. `auth=?` is not a third value -- an unregistered check prints it and is then
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
@@ -17974,7 +18204,7 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "merge_keeps_parent_paths": "repo",
-    "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
+    "no_stale_running": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "peer_stalled": "repo",
     "one_deliverable_per_owner": "repo",
@@ -18046,6 +18276,16 @@ EVIDENCE = {
     "friction_kinds_cover_ledger": "repo",
     "mix_30b_contract": "repo", "frozen_keys_complete": "repo", "frozen_args_parse": "repo",
 }
+
+
+def assert_evidence_covers_checks():
+    # Equality, not subset: both directions fail loudly. A check added without a declaration
+    # is classified by nobody; a stale name is noise. Cheap enough to run in the hook's
+    # scoped path, where the full _demo() guard never fires for a CHECKS/EVIDENCE-only diff.
+    check_names = {n for n, *_ in CHECKS}
+    assert set(EVIDENCE) == check_names, (
+        f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
+        f"undeclared: {sorted(check_names - set(EVIDENCE))}")
 
 
 # -------------------------------------------------------------------------- stages
@@ -21995,6 +22235,75 @@ def _selftest_card_lend_expires():
             "wording FAILs, absent PASSes")
 
 
+def _selftest_card_observed_blocks():
+    """The object form of a cards[] note: owner decides, an observed_block expires by its probe.
+
+    A SEPARATE FUNCTION from _selftest_card_lend_expires, because that one SKIPS whenever the
+    live file carries no parseable lend -- the usual state -- and these cases depend on the
+    live file only as a world base, not on any lend in it. Folded in, they would run in the
+    one hour a window is open and never otherwise: the registered broken world covers the
+    check's FAIL half, this covers the classifier's third state and the check's PASS half.
+
+    The third state is the one 4c said must not be guessed (2026-09-09): an expired block
+    falls BACK to the owner, never to unclassified. A fact that moved must not read as a card
+    with no owner.
+    """
+    import copy
+    import shutil as _sh
+    import tempfile as _tf
+
+    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(live_p):
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+    with open(live_p, encoding="utf-8") as fh:
+        live = json.load(fh)
+
+    def world(mut):
+        d = copy.deepcopy(live)
+        mut(d)
+        t = _tf.mkdtemp(prefix="oblock_")
+        os.makedirs(os.path.join(t, "runs"), exist_ok=True)
+        with open(os.path.join(t, "runs", "card_assignment.json"), "w") as f:
+            json.dump(d, f)
+        return t
+
+    _block = {"asserted_at": "2026-09-09T09:00Z", "probe": "echo held", "expect": "held",
+              "target": "local"}
+    # THE CLASSIFIER, straight: owner decides; no owner refuses; the block's three verdicts.
+    assert _classify_card_note({"owner": "aupai"}) == "ours"
+    assert _classify_card_note({"owner": "tilerl"}) == "theirs"
+    assert _classify_card_note({}) == "unclassified"
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block}) == "theirs", (
+        "an UNMEASURED block must fail closed: nobody re-ran the probe, so it has not expired")
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block},
+                               probe_holds=True) == "theirs"
+    _expired = _classify_card_note({"owner": "aupai", "observed_block": _block},
+                                   probe_holds=False)
+    assert _expired == "ours", (
+        f"an expired block must fall back to the owner, got {_expired!r} -- the third state "
+        "must never be unclassified, or a fact that moved reads as a card with no owner")
+    # THE CHECK RE-RUNS THE PROBE. A holding block passes; a malformed one FAILs, because a
+    # block nobody can re-run cannot expire (the stale half is the registered broken world).
+    t_hold = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": _block}))
+    try:
+        _st, _ = check_card_observed_blocks(t_hold)
+        assert _st == PASS, f"a holding observed_block FAILED: {_st}"
+    finally:
+        _sh.rmtree(t_hold, ignore_errors=True)
+    t_bad = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": {"asserted_at": "t"}}))
+    try:
+        _st2, _ = check_card_observed_blocks(t_bad)
+        assert _st2 == FAIL, f"a malformed observed_block did not FAIL: {_st2}"
+    finally:
+        _sh.rmtree(t_bad, ignore_errors=True)
+    return ("object-form cards[] entries: owner decides (aupai->ours, tilerl->theirs, "
+            "none->unclassified); an observed_block is theirs while live or unmeasured and "
+            "falls back to the owner when the probe expires, never to unclassified; the check "
+            "passes a holding probe and FAILs a malformed block")
+
+
 def _selftest_facts_ephemeral_only_source():
     """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
     does not.
@@ -23839,6 +24148,7 @@ def _demo(only=None):
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
         _selftest_card_lend_expires,
+        _selftest_card_observed_blocks,
         _selftest_facts_ephemeral_only_source,
         _selftest_facts_retracted_value_names_what_died,
         _selftest_check_timeout_skips,
@@ -23880,11 +24190,8 @@ def _demo(only=None):
 
     # Every check declares where its evidence lives (EVIDENCE); a check added
     # without a declaration would be classified by nobody, and a stale name is
-    # noise. Equality, not subset: both directions fail loudly.
-    check_names = {n for n, *_ in CHECKS}
-    assert set(EVIDENCE) == check_names, (
-        f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
-        f"undeclared: {sorted(check_names - set(EVIDENCE))}")
+    # noise.
+    assert_evidence_covers_checks()
 
     # THE COUNT MUST NOT INCLUDE WHAT WAS SKIPPED. `len(CHECKS)` claimed "81 checks each verified to
     # FAIL on a broken world" while a SelftestSkip meant some of them were never run -- the skip
@@ -26085,6 +26392,20 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
 
     monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
                                started=launch_started)
+    # RECORD THE MONITOR ON THE ROW (44's handoff, de-82). Without this, nothing can ask
+    # whether a running row's watcher is still alive: the pid was printed and dropped. A
+    # failure here must not fail the launch -- the job is already running, it only goes
+    # unwatched -- so it is a WARN, and monitor_alive SKIPs rows with no monitor_pid.
+    _r = subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"),
+         "monitor", "--name", args.name,
+         *(("--started", launch_started) if launch_started else ()),
+         "--pid", str(monitor_pid)],
+        capture_output=True, text=True,
+    )
+    if _r.returncode != 0:
+        print(f"WARN: monitor pid {monitor_pid} not recorded on the exp row: "
+              f"{(_r.stderr or _r.stdout).strip()[:150]}", file=sys.stderr)
 
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")
@@ -27305,6 +27626,10 @@ def main():
         _paths = [p.strip() for p in a.selftest_touching.split(",") if p.strip()]
         _names = _checks_touching(_paths)
         if not _names:
+            # The one global invariant cheap enough to run here: a CHECKS-table or EVIDENCE
+            # edit selects no check function, so without this the guard only exists in the
+            # full ~4min run and a stale/undeclared name sails through the hook (task #84).
+            assert_evidence_covers_checks()
             print(f"no CHECK function is changed by the staged diff of {', '.join(_paths)} -- "
                   f"nothing scoped to verify. THIS IS NOT A PASS for those files: an edit to a "
                   f"shared helper or to the CHECKS table can break any check, and only the full "
