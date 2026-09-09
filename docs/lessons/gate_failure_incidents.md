@@ -1160,8 +1160,8 @@ Two runs from the same state, separating by floating-point nondeterminism.
 
 **So `|R - N1|` at the read point is drift over 7,629 steps plus the reweight over the last 763,
 and the criterion cannot tell them apart.** The drift term measured on the arms themselves:
-+0.001, -0.001, +0.011, +0.016 at steps 500/1000/1500/2000, monotone since 1000, with the reweight
-inactive throughout. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
++0.001, -0.001, +0.011, +0.016, -0.010 at steps 500/1000/1500/2000/2500, with the reweight inactive
+throughout -- no trend, and it changes sign twice. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
 `F` carries a drift term of its own, and two samples give a range rather than an upper bound on a
 third run's drift.
 
@@ -1181,26 +1181,55 @@ estimator and the final gap on the 100-batch epoch-end one, so `D` bounds the dr
 is **not subtractable** from the final number -- §286's estimator trap, one entry later and in the
 same experiment. And one same-seed pair is one drift sample, not a distribution.
 
-**The residual, and why it is not narrow.** Drift can still grow between step 6500 and 7629, so
-"exceed both" keeps a false-positive path. 44's first estimate extrapolated the drift as
-`sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path. **That model does not survive a
-fit check.** Fitted through the last point it back-predicts +0.008 at step 500 against an actual
-+0.001, and +0.011 at 1000 against an actual -0.001. A linear fit over the points from 1000 on
-tracks all three (+0.000 / +0.009 / +0.017 against -0.001 / +0.011 / +0.016) and extrapolates to
-**0.113, well over `F`**. The model that fits worse extrapolates under the floor and the model that
-fits better extrapolates over it, so **the extrapolation is not decidable from four points and
-neither number should be quoted as the answer**. Labelling one of them would be R6's own failure
-inside R2's entry. What is decidable: the false-positive path is not demonstrated to be narrow.
+**The residual, and why no extrapolation of it is available.** Drift can still grow between step
+6500 and 7629, so "exceed both" keeps a false-positive path. Two models were put on the table and
+**both are dead, one of them mine.**
+
+44 first estimated the drift as `sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path.
+Fitted through the last point it back-predicted +0.008 at step 500 against an actual +0.001, and
++0.011 at 1000 against an actual -0.001, so it missed the shape. I corrected it with a linear fit
+over the points from 1000, which tracked all three (+0.000 / +0.009 / +0.017 against -0.001 /
++0.011 / +0.016) and extrapolated to 0.113, over `F`, and I concluded the false-positive path was
+"not demonstrated to be narrow".
+
+**The next read killed both.** At step 2500 the sqrt model predicted +0.018 and the linear model
++0.026; the actual is **-0.010**. My rebuttal rested on a line through three points that the fourth
+point destroyed, and I had stated its consequence more strongly than 44 stated theirs. Recorded
+here rather than quietly fixed, because the failure is the entry's own subject one level up: a
+model fitted to a handful of points, believed because it fit them.
+
+44's mechanism, supplied when asked for one and worth keeping even though its specific reading did
+not survive: the exponent is an interval, not a point. The parameter difference is a random walk,
+so `|dtheta| ~ sqrt(t)`. The val difference is `dL ~= grad_L . dtheta + 1/2 dtheta^T H dtheta`,
+whose linear term goes as `sqrt(t)` and **carries a sign**, dominating early while `grad_L` is
+large, and whose quadratic term goes as `t` and is **always positive**, taking over once
+`grad_L -> 0`. So the true exponent lies in [0.5, 1] and the observed shape says which regime you
+are in. 44 read the 500/1000 sign flip followed by growth as the quadratic taking over -- the
+`t`-linear regime. **The step-2500 reversal falsifies that reading**: a term that is always
+positive cannot produce it, so the sign-carrying linear term is still dominant at 2500 and the
+crossover has not happened.
+
+What five reads support, and nothing more: `|R - N1|` stays within [-0.010, +0.016], with no trend
+and two sign changes. That is consistent with near-zero true same-seed drift plus the periodic
+estimator's own sampling noise -- and that noise is known to be large on exactly this comparison,
+since the N1/N2 same-step gaps ran 0.067-0.088 on 20 batches against 0.048 on 100. **No
+extrapolation to step 7629 is supported by this series, including the comfortable one that the
+drift stays small.**
+
+That is the argument for `D` rather than a weakness in it. `D` is *measured* at step 6500, not
+extrapolated to it, and extrapolation is precisely what five points have now shown cannot be done
+here. The verdict rule stands and rests on no model of how drift grows.
 
 The measurement that settles it is a fourth arm -- an exact rerun of N1 at seed 1337 on
 `mix_200m_4b_annealN` -- which is not scheduled. It is named in the prereg amendment so its absence
 is visible rather than implied.
 
-Cost: none realised. Caught at step 2000 of 7,629, ~5.5 hours before the read point, by asking why
-two arms that should track each other were diverging monotonically.
+Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707 s/step, about 2.7
+hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
+asking why two arms that should track each other were diverging at all.
 Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
 `data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_1` (`e24268fd`);
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_2` (`e24268fd`, corrected at `c29d6cc0`);
 `runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
 runs and is committed at close -- §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
