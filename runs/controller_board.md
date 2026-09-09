@@ -1,4 +1,521 @@
-# Controller board (fb) — 2026-09-09, 11:3xZ
+# Controller board (fb) — 2026-09-09, 19:3xZ
+
+## State: p1
+
+`docs/standards/p1_data_recipe.md` is the recipe of record. main is `49601949`. **Nothing is
+blocked on a decision. The review backlog moved: ten rows landed at 19:3xZ, and every one of
+them says on its face that it is not my read of the diff.**
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
+| classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
+| classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **115/298**, cumulative doc keep **0.360** — **at the preregistered band's upper bound and still rising** (0.349 at 56, 0.358 at 102, 0.360 at 115). Say now, before the DONE line, that this is heading for a MISS on the high side; a band I wrote at 18:5xZ is not worth more than the number | rate 334 docs/s while 3b's re-signing reads the same shards; 3b is 128/298 and ~50 min from finishing, after which the rate returns to 620. So the contention costs ~50 min, not the 3.7h I first wrote. **The DONE line is a VERIFICATION, not a discovery** — the band is preregistered |
+| decontamination | 3b | **DONE, verified** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | the rerun hitlist is **byte-identical** to the approved one (`diff -q` silent) — determinism proven on the same criterion and source. Clean copy 57G, source untouched. Swap waits on e1 |
+| near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 and b2v2 re-signed; dedup08 at 15/298, then the keep-set doc-id join |
+| tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
+| HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
+
+## The token estimate moved down, and the reason is a ratio
+
+| | doc keep | byte keep | doc/byte |
+|---|---|---|---|
+| sample, pooled | 0.250 | 0.151 | **1.656** |
+| dd09, measured on all 235 shards | 0.1397 | 0.0839 | **1.665** |
+
+**The ratio is the same to three digits.** The 3.3-3.7B revision assumed the corpus byte keep would
+run to 0.18-0.20 because high-keep dedup08 holds 53% of the doc share — but that requires dedup08's
+doc/byte ratio to be materially below 1.66, and the one measured point says the ratio is stable.
+Recomputed at a stable ratio: corpus doc keep ~0.26 / 1.66 ≈ **byte keep 0.157 → ~2.9-3.0B tokens**,
+back near the original 2.8B.
+
+Not settled: dedup08 is starcoder, whose length distribution differs from rp1t's. **Its DONE line
+gives doc and byte together, so the ratio is one division away.** 2.9B vs 3.7B is 28% — it sizes
+b0's tokenizer schedule and the training budget, so e1 reports that line alone, ahead of the total.
+
+The sample keeps predicting well: dd09 predicted 0.145 measured 0.140 (-3.4%); b2v2 predicted
+0.142, reading 0.143 at shard 34.
+
+## The scoring crash, and a diagnosis I relayed without checking
+
+The run finished all 235 dd09 shards and then died in the per-domain summary line:
+
+```
+NameError: name 'kept' is not defined     # d[kept] should be d["kept"], line 66
+```
+
+Two properties made it expensive. `d[kept]` is **syntactically valid Python** — a bare identifier
+subscript — so parse, import and launch all pass. And line 66 is the only code in the script that
+runs *after a domain completes*, so the corrupted line could not execute until 90 minutes in. The
+same loss inside the loop body would have raised in 3 seconds. **Nothing was lost but the recompute:**
+the shards were on disk, e1 resumed at domain 2 and recovered dd09's statistics from disk.
+
+**The mechanism I relayed is not established.** e1 attributed the missing quotes to `~/bin/pod`'s
+argv stripping them; I derived that a heredoc would not protect against it (the quoted delimiter
+guards the *remote* shell, while the loss would happen in the *local* one) and passed that to 44.
+**44 ran the test and it did not reproduce** — the same text through a heredoc over pod argv landed
+byte-intact, twice.
+
+What survives is narrower and true: **`podput` compares sha256 after landing and the argv path
+compares nothing, so a corruption on that path is invisible until execution.** A transfer without a
+comparison cannot be known to be safe; heredoc is not thereby unsafe.
+
+**And one candidate nobody excluded**: the evidence proves the file *on the pod* held `d[kept]`.
+Nothing establishes that the local copy held `d['kept']` — no one read the bytes before transport.
+"The source was always wrong" explains the traceback without any unidentified transport hop. It
+matters for the rule: if the source was wrong, **podput's sha256 would not have caught it either**,
+because it compares the two ends against each other and both would carry the same bad bytes.
+
+## Eight corrections today, all mine, and they are one thing
+
+Seven are in the 17:2xZ entry below. The eighth: **I read a traceback and concluded a typo, then
+relayed e1's transport diagnosis onward as established.** Neither of us asked what the bytes were
+before transport — the one reading that would settle it, and it no longer exists.
+
+The pattern across all eight: *a value whose state I believed I knew, and did not read*. tilerl-27
+hit it three times tonight from their side and named it: **"I know" substituted for "I read."**
+
+## The yield is preregistered, not reported afterwards
+
+`runs/prereg.jsonl#p1_keep_yield_0909`, registered at 18:5xZ **before** dedup08's DONE line, three
+falsifiable predictions on one log line:
+
+| prediction | value | basis |
+|---|---|---|
+| dedup08 doc keep | **0.35-0.36** | its 15 rp1t shards read 0.228, its starcoder shards 0.356 per-shard, weighted 75K vs 6.16M docs -> 0.354 |
+| dedup08 doc/byte ratio | **1.65-1.67** | dd09 1.6651, b2v2 1.6562, sample 1.6556 |
+| total token yield | **2.8-3.0B**, centred 2.87B | 18.8B x (0.2538 / 1.66) |
+
+The middle one is load-bearing: it says the ratio is **the classifier's property** — it keeps
+shorter documents at a fixed rate — rather than a per-domain accident. If dedup08's ratio lands
+outside the band, every future sample-based estimate needs its own domain's ratio.
+
+The row exists because the estimate moved **2.8B -> 3.3-3.7B -> 2.9B** across three revisions
+tonight, each from partial data. A band written down before the reading is the difference between a
+prediction and a number described afterwards as expected. At shard 56 the cumulative reads 0.349,
+inside the band and still rising.
+
+A third measurement property fell out: **the 100K sample overestimates keep rate by ~3.5% on every
+domain**, same sign three times (dd09 predicted 0.145 measured 0.140; dedup08 predicted 0.367,
+tracking to 0.354). Usable as a correction, not yet as a fact — it needs the DONE line.
+
+## Cards, 19:0xZ
+
+| card | holder | state |
+|---|---|---|
+| 0 | tileRL | 32.8 GB, 100% |
+| 1, 2, 3 | free | 0 MiB |
+| 4, 5 | de's serve, idle | 55/54 GB held at 0% — held, not computing |
+| 6 | agent-infer | 89.3 GB, 100% |
+| 6 | free | 0 MiB — agent-infer released it |
+| 7 | **e1, scoring** | 19.3 GB, 74% |
+
+## Global
+
+- **20 PRs open.** Four shape PRs from tonight are queued on de: #156, #171, #176, #178, #179.
+  R15 (shared attribute as discriminator), R16 (a precision gain flipping the failure direction),
+  R17 (an implicit row-position join across two orderings), R18 (a transfer with no comparison).
+- **`build_locs.py` exists on the pod and not on main**, and its own header states the alignment
+  contract — *"in the same order sig_one produced signatures"* — three lines above the
+  `sorted(glob.glob(pat))` that breaks it. **A correct-sounding assertion about code behaviour,
+  written where nothing can check it, is worse than no assertion**: it converts an open question
+  into an answered one, and consumes the moment that would have produced doubt.
+- **#168 changes-requested**: replacing `pairs_note` wholesale deletes the rationale for `b0 -> de`.
+
+- **The backlog moved: 16 unrowed PRs are now 6.** Ten rows landed at 19:3xZ (#23 #103 #148 #149
+  #156 #158 #164 #167 #169 #175), all `changes-requested`, 35 blocking findings total. The findings
+  came from a dispatched review agent, each one then put through an independent agent prompted to
+  REFUTE it and defaulting to refuted when uncertain. **I read none of the ten diffs, and every row
+  and every comment says so in its first line.** A row that claimed a read I did not do would be
+  the exact defect the rows are about — so these are findings raised and awaiting the author, and
+  none of them is an approval or satisfies a merge gate.
+  - The sharpest: **#23 breaks on exactly the machine it exists for** — the new `source: "counts"`
+    makes a dead branch reachable at `write_mix_500m.py:1071` (`KeyError: 'note'`), and clearing
+    that leaves it failing `gate_epochs_measured`. **#158** has 7 findings, one of which is that the
+    known-positive control never runs in production. **#149** cites a probe position that exists on
+    neither main nor any of 38 remote branches.
+  - Still parked on their author, correctly: #135 (b0), #168 (98), #174 (b0). The four shape PRs
+    (#171/#176/#178/#179) plus #156 remain queued on de, who spent the evening on the `card_claim`
+    outage; 44 said to take them if de does not.
+- **#151 was `fb:approved` six hours ago and still open** — I approved it and never merged it,
+  while quoting "an approved PR that is not merged is worse than an unreviewed one" at other
+  people three times tonight. Merged (`4cf4b9d0`) and pod-pushed in the same step.
+- **`review_row_lookup.py --pr <n>` is not a valid invocation** (it takes `<sha> <branch>`), and it
+  prints its usage line to stdout and exits 0. Nineteen calls returned the usage string, which read
+  as "no review row" for every PR. Caught by a known-answer check — #174 and #168 have rows I wrote
+  myself, and the tool reported them as bare as the rest. **A tool that answers a question it was
+  not asked, on stdout, at exit 0.**
+- **My own scoring monitor reported SCORING ERROR on a healthy run, then killed itself.** It packed
+  four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'` — and the log
+  line it carries is itself `... | dom 835145/2320870 (0.360) | 334 docs/s`. The data contains the
+  delimiter, so field 2 ("error count") was the word `dom`, non-zero, and the watch broke out.
+  Verified against the pod the same minute: 0 tracebacks, 2 processes alive, 115/298. **An instrument
+  whose parser the data can break reports the failure it cannot distinguish, and then stops
+  watching** — the second half is worse: after the false alarm there was no monitor at all. Re-armed
+  with `P_TAIL:`/`P_ERR:` prefixes and `sed -n 's/^P_ERR://p'`, which no log line can forge.
+  §-candidate for 44.
+- pod: **0 refusing, 865 files match, stamp `4cf4b9d0`**; `pod_pull_ledgers` reports no
+  pod-only rows; integration tree clean.
+
+---
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `e55f4959`. **The gate corpus is no longer blocked on anything: the
+threshold is ruled and both remaining passes are running.**
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
+| classifier labels (queue a) | de | **100%** | `data/p1/classifier_labels_100k.jsonl`, 100,000 rows, 0 unparseable, one schema `(id, raw, score)`, `raw` retained | done |
+| educational-value classifier | e1 | **ablation delivered, threshold ruled** | held-out n=19,998, three heads. AUC ≥2 **0.909** / ≥3 **0.902** / ≥4 0.945, no domain collapse (min 0.879), and long-bucket AUC never exceeds short at any cut — **the classifier did not learn length** | full-corpus scoring running, card 7, ~4h left |
+| **threshold ruling** | fb | **≥3 at 25% doc keep** | score-2 is test scaffolding and framework glue, which is what the filter exists to remove. ≥4 is the classifier's **ceiling, not an operating point**: precision 0.457 at teacher's own 3.07% rate | volume is an output; ~3.3-3.7B tokens |
+| decontamination | 3b | criteria merged (#172), **full pass running** | two manifests, arithmetic closed against b0's independent recount (`runs/review.jsonl:366`): 11,745 decontam + 169,561 overlap = **178,941 rows**. Writing to `data/corpus_clean/`, source untouched | ~2h; then swap by doc id on e1's keep set |
+| **near-duplicate deletion** | 3b | **HELD by fb, not refused** | J≥0.5 would delete 20%+ of dd09/b2v2. Two reasons to wait: exact-J calibration is re-running (the rate is an uncalibrated estimate, and the instrument's 96 perms ≠ build's 128), and the quality filter's overlap with it is unmeasured | measure near-dup participation **inside** e1's keep set — a doc-id join, minutes. Then escalate with calibrated numbers |
+| tokenizer | b0 | ruling landed; scripts in #169 | four gates pass (fertility **1.4286** vs 1.55); freezing costs **+3.4%** tokens and 13.1M dead embedding params | fit on the keep set — queued behind the scoring |
+| eval / HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds files in the container, digit for digit; row counts reconcile (329 = 1 header + 164 greedy + 164 sampled holding 3280 completions), so `55/3280` is the real denominator | two `artifact_refs` rows carry no `attested_by`; `data/eval` is gitignored so the hash IS the record |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| human spot check | 98 | **#159, #160 merged**, pod-pushed | three sampler defects fixed and re-verified | — |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size.
+
+## The distribution changed the ablation, and my reading of it was wrong
+
+```
+score 1: 64,331 (64.3%)   score 3: 23,222 (23.2%)   score 0: 5,273 (5.3%)
+score 2:  4,100 ( 4.1%)   score 4:  3,040 ( 3.0%)   score 5:    34 (0.03%)
+```
+
+I read the bimodal shape and proposed a mechanism: the teacher is doing binary classification
+mapped onto fixed rungs, so there are two usable cut points, not five. **Both de and e1 read the
+raw output independently and refuted it.** e1 read 56 stratified samples, eight per bucket; de
+read three each at 2/3/4. Every bucket is internally coherent — 2 is test scaffolding and
+framework glue, 3 is real domain-specific logic, 4 is a clean self-contained algorithm. **The
+bimodality is a property of GitHub code, not a degenerate teacher.**
+
+The operational conclusion survived and its reason did not. That is not the same as being right:
+I inferred a mechanism from a shape without reading the raw, and the people who read the raw were
+the ones who settled it. de's version is sharper than either of ours — the empty top bucket is
+the rubric being demanding, not the teacher being timid, which separates two causes that both
+explain 34/100,000.
+
+## Seven corrections today, all mine, and the pattern is one thing
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the target score is phi-1's — **20x** | fb (re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket | peers, all four | the rule was at the top of the file, unread |
+| Added `_non_members` beside `not_on_this_team`, which already existed | fb, an hour later | two fields, one question — the defect that same PR described |
+| Gave tilerl-27 a **19-minute ETA as a point value** from a rate measured at the five-card switch; steady state was 17.2/s and it took 29 | fb (third reading) | a transient measured once, carried as a steady state |
+| Classified `cards` as STALE_PROSE — "let it rot" — **without grepping its readers**. It has three here and a fourth in tileRL's tree | fb, after tilerl-27's guard fired on it | **written inside the very map that exists to stop a field being misread** |
+| Carried **157,684** as the whole cross-domain overlap; it is one of two pairwise overlaps (+12,120 b2v2∩dedup08 = 169,804) | fb, checking 3b's arithmetic | a part quoted as the total |
+
+Every one is *a value I believed I knew the state of, and did not read*. tilerl-27 hit the same
+thing three times tonight from their side and put it best: **"I know" substituted for "I read."**
+
+## The `cards` defect, which cost another project a card
+
+`cards` is parsed by `launch_gate.py:666-680` (per-card owner), `launch_gate.py:2001` (the held
+set), `harness.py:21810` (card 6's lend **window**, via `_parse_lend_window`) — and by tileRL's
+`pod_run.sh`/`build_engine` guard over the project boundary. **It cannot express a loan.** Cards 1
+and 3 read `tileRL` for the whole window they were lent to de's serve, so tileRL's guard classified
+card 1 as theirs and allowed a job onto it. **The guard ran correctly on a field that does not
+encode the question** — that is the 13:3xZ incursion, and its cause is the field, not the operator.
+
+Second half, found an hour later: **their guard reads the POD copy, which was two hours and three
+commits behind main**, because `card_assignment.json` is in the manifest's scope and I merged it to
+main four times and pushed the pod once. Their refusal of card 1 was correct on a loan record
+revoked an hour earlier — right answer, stale basis. The mirror case (a recall not yet pushed)
+fails permissive. Pushed; friction logged; the durable fix is `merge_main` printing the obligation
+for `runs/*.json`, not a staleness check on their side.
+
+## The claim ledger went down for all three projects
+
+One claim carried `"pid": null`. `.get("pid", -1)` returns the default only when the key is
+**missing**, so `int(None)` raised and `claims()` died mid-iteration — **one bad row took out the
+whole read path**, so nobody could claim, and therefore nobody could safely launch.
+
+tilerl-27 owned the bad row, asked me to delete it or authorise them to. **Neither**: a standing
+user order forbids deleting without a named target, and authorising someone else to do what I am
+forbidden to do is the same act. `claims()` filters on `*.json`, so renaming the extension moved it
+out of the read path with all 399 bytes intact — reversible, and it stays as the one non-synthetic
+test input for de's fix. de fixed the root cause plus three more in #173 (namespace safety, the CLI
+`release --cards` bug that made every release name-wide).
+
+## Cards, 17:2xZ
+
+| card | holder | state |
+|---|---|---|
+| 0, 3, 6 | tileRL | their own jobs; both loans of 1 and 3 closed and verified |
+| 1, 2 | free | 0 MiB |
+| 4, 5 | de's serve, **idle** | 55/54 GB held at 0% — held, not computing; kept for exercise generation |
+| 7 | **e1, full-corpus scoring** | 11 GB at 72%, 183 shards written, ~4h left |
+
+**Two incursions tonight, both self-reported by tilerl-27 before anyone detected them.** Card 1
+(cause: the `cards` defect above, not the operator). Card 2, our lane, a GRPO training — cause was
+bypassing their own guard entirely via `tn exec`, established by running their classifier against
+all eight of our `cards` entries: card 2 classifies `unknown`, so the guard would have refused it.
+**Their guard was never called, not fooled.**
+
+## Global
+
+- **17 PRs open, every one green.** Merged today with fb as reviewer: #159, #160, both pod-pushed.
+- **#168 changes-requested**: it replaces `pairs_note` wholesale, deleting the rationale for
+  `b0 -> de`. After it merges the file states a live pair with no reason in it.
+- **R15/§294 and R16/§295 landed** (44). R16 is new tonight and worth carrying: *a precision
+  improvement can flip the failure direction from permissive to dangerous* — #173's start-time
+  match is strictly more accurate and turns a pid-reuse coincidence from "card looks owned"
+  (harmless) into "card looks free" (collision). Caught in review, not in production.
+- **An approved PR that is not merged is worse than an unreviewed one.** #161 and #155 are still
+  approved and open.
+
+---
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `bef4f40b`.
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44 ran a mutant: swapping `masked_attend` back to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none; the NaN bug it fixed had been latent since CSA landed |
+| **classifier labels (queue a)** | de | **100% — DONE** | `data/p1/classifier_labels_100k.jsonl`, **100,000 rows, 0 unparseable, one schema `(id, raw, score)`**, `raw` retained so the parse is re-derivable | handed to e1; **this was the 97% of the gate corpus** |
+| educational-value classifier | e1 | spec landed (#164), **ablation is now the only critical-path item** | full-run histogram: **1:64,331 · 3:23,222 · 0:5,273 · 2:4,100 · 4:3,040 · 5:34** | threshold from the ablation; **keep rate and token count are outputs, not inputs** |
+| teacher serve | de | **idle, 5 cards held at 0%** | measured 695 tok/s warm on 3 cards, 1055 on 5; the annotation itself averaged **17.2 labels/s**, not the 30.5 measured at the five-card switch | card 3 returns to tileRL once de tears down pid 546405; 1,4,5,7 held for exercise generation |
+| tokenizer | b0 | ruling landed; scripts in **#169**, open | four gates pass (round-trip, 256 bytes, fertility **1.4286** vs 1.55; hanzi **undefined**, not 0); freezing costs **+3.4%** tokens and 13.1M dead embedding params | fit on the classifier's keep set — blocked on the ablation |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| synthetic textbooks (queue c) | de | 0% | — | 0.8B, ~9 d. Does not block the gate |
+| topic seeds, dedup, decontam | 3b | criteria in **#172**, measurement chain in **#170**, both open | 5,822 topics, 100% English, negative control **kappa 0.9497**, category recall 1.0 vs HumanEval+MBPP | b0's review row, then deletion. **Two passes, `rename` not overwrite.** Not on the critical path |
+| eval harness | b0 | #161 approved, **still OPEN** | greedy reproduction gate (3/164 + 72/164) is what lets a sampled harness self-check | merge it; the gate has no trusted number until it is on main |
+| human spot check | 98 | **#159 merged**, pod-pushed | three sampler defects fixed and re-verified: sheet order interleaved, `REFUSE` + exit 1 on both under-supply cases | — |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size. ~4 days, an estimate.
+
+## The label distribution changes the ablation's design
+
+```
+score 1: 64,331 (64.3%)   score 3: 23,222 (23.2%)   score 0: 5,273 (5.3%)
+score 2:  4,100 ( 4.1%)   score 4:  3,040 ( 3.0%)   score 5:    34 (0.03%)
+```
+
+Two readings handed to e1 and de before either designs a sweep:
+
+- **The top bucket is empty.** 34 rows at score 5, three in ten thousand. `>=5` is not a threshold,
+  it is a subset with n=34.
+- **The distribution is bimodal** — 1 and 3 hold 87.5%, and the 2 between them holds 4.1%. A 0-5
+  scale landing in that shape usually means the teacher is doing binary classification mapped onto
+  fixed rungs. If so there are **two usable cut points, not five**, and a five-threshold sweep
+  measures noise at three of them. `raw` is retained, so reading a few dozen settles it without
+  re-running anything.
+- Keep rates: `>=2` 30.4%, `>=3` 26.3%, `>=4` 3.07% — **an order of magnitude between the last
+  two**, with nothing tunable in between.
+
+`>=2` happens to yield close to phi-1's 6B. **Stated explicitly to e1 as a coincidence and not a
+reason**, because the recipe already says the token count is an output of the ablation, and a
+convenient number is exactly what turns into an unstated target.
+
+## Five corrections today, all mine, none caught by me first
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the score we target is phi-1's — **20x** | fb (on re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket; `lessons-e1` had been listed as not-on-this-team since 2026-09-02 | peers, all four | the rule was at the top of the file and was not read |
+| Added `_non_members` beside `not_on_this_team`, which already existed | fb (an hour later) | two fields, one question — the defect the same PR had just described |
+| Gave tilerl-27 a **19-minute ETA as a point value** from a rate measured at the five-card switch; the steady state was 17.2/s and it took 29 | fb (on the third reading) | a transient measured once, carried as a steady state |
+
+The through-line, now R15/§294 (44, `2a42b2b8`): **a discrimination resting on a property both
+sides share, with the discriminating field in hand and skipped.** The fifth instance adds the axis
+the first four did not have — a rate is shared between warm-up and steady state, and the
+discriminating evidence is a second reading, which costs one command.
+
+R15 carries two fixes, not one, because reading the discriminating field is no protection when
+that field is itself the stale one: `granted_by` was a day older than `note` and both answered the
+same question. `card_assignment.json` now declares `_current_state_field`.
+
+## Cards, 15:5xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | `tilerl-l5eval.0`, 100%; two 566 MiB context-only processes alongside |
+| 1, 4, 5, 7 | de's serve, **idle** | 51-58 GB held at **0% util** — held, not computing. Kept for exercise generation |
+| 2 | b0 lane | sampled HumanEval, 46% |
+| 3 | **returning to tileRL** | de's pid 546405 still holds 58.9 GB at 0%; de tears it down, then tileRL takes it. **Promised on the annotation finishing** |
+| 6 | **agent-infer's** (a third project) | host pid 1171892, `target/release-fast/arle serve ...`. The binary is the identity: `agent-infer/Cargo.toml:78,122` declare `name = "arle"`, `:134` declares `[profile.release-fast]`. Read twice, 88,346 MiB at 100% (15:2xZ) and 88,365 MiB at 0% (15:41Z) — same pid, same UUID, memory flat, utilization the only field that moved |
+
+**tilerl-27 self-reported an incursion**: one of their sessions ran a 100-step training on card 1
+while de's serve held it, and killed it. Reported with the cause (a stale free-card reading), the
+remedy already applied, and the window named — relayed to de the same minute, so a ~10% rate dip
+in that window has an explanation instead of becoming an open investigation.
+
+## Global
+
+- **PRs merged today by fb as reviewer: #159, #160**, both pod-pushed in the same step; pod reads
+  **859 files match, 0 refusing**.
+- **#168 changes-requested** (98): it replaces `pairs_note` wholesale, deleting the rationale for
+  `b0 -> de`. After that merges the file states a live pair with no reason in it, and the next
+  session repairs it back to a dead socket — the state b0 fixed this morning.
+- **3b's five decontamination scripts existed only on the pod**, named by `pod_push`'s drift
+  report. They gate a deletion of 169,428 rows whose criteria **no second reader could open**.
+  Now on #172 (criteria) and #170 (measurement chain), split out of #145 where they had been
+  bundled under a title about format SFT — a reviewer allocates attention by the title, and the
+  irreversible half was under the wrong one.
+- 3b reported #145 as "already merged into main"; it was OPEN with none of the five files on main.
+  **Verified before relaying** (`gh pr view`, `git cat-file -e origin/main:<path>`).
+- **main's `EXPERIMENTS.md` is intact** — a fresh `exp.py render` of main's ledger diffs to 0 lines
+  against main's committed copy. 3b's `ours`-side loss was branch-local.
+- **An approved PR that is not merged is worse than an unreviewed one**, because everyone thinks
+  it is done. #161 and #155 remain approved and open; the reviewer merges and pushes the pod in
+  the same step (ruling 2026-09-07).
+
+---
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `70319eeb`.
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44 enumerated every `sc`/`full` read by line (`:470/:474/:478`, `:516/:517/:522`, HCA `:377`) and ran a mutant: swapping `masked_attend` back to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none; the NaN bug it fixed had been latent since CSA landed |
+| teacher serve | de | running, 5 cards (1,3,4,5,7) | **695 tok/s warm on 3 cards, 1055 on 5**; single-stream 88 vs tileRL's own B=1 bench 92.4; `/health` `running=11`, prefill done in 2 s of a 22 s window | cards 1 and 3 measured idle at 14:5xZ across three samples while 4/5/7 run 91-99% — raised with de |
+| classifier labels (queue a) | de + e1 | running, 20K/100K at 18/s | sample is 100,000 rows, `data/p1/classifier_full_100k.jsonl`; token-weighted across the three domains (dd09 33,210 / b2v2_dd 19,160 / dedup08 47,630, seed 42) | ~74 min at three cards, ~44 at five |
+| educational-value classifier | e1 | spec landed (#164) | 0-5 rubric, base model via completion prefix, 1K pilot first; pilot histogram 0% discard, spread 0-4, **73.8% in bucket 1** | threshold from the ablation; **keep rate and token count are outputs, not inputs** |
+| tokenizer | b0 | **ruling landed**, rebuild at V=20,000 | four gates pass (round-trip, 256 bytes, fertility **1.4286** vs 1.55; hanzi **undefined**, not 0); freezing would cost **+3.4%** tokens on the full mix and 13.1M dead embedding params | fit on the classifier's keep set, held-out measured inside the fitting script |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| synthetic textbooks (queue c) | de | 0% | — | 0.8B, ~9 d. Does not block the gate |
+| topic seeds, dedup, decontam | 3b | CS table v2 delivered | 5,822 topics, 100% English, negative control **kappa 0.9497**, category recall 1.0 against HumanEval+MBPP task text | decontamination list first, then deletion; **11,744 held pending 3b's own re-run** |
+| eval harness | b0 | #161 approved, **still OPEN** | greedy reproduction gate (3/164 + 72/164) is what lets a sampled harness self-check | merge it; the gate has no trusted number until it is on main |
+| human spot check | 98 | #159 **changes-requested** | three sampler defects reproduced: highlow sheet order `LLLLLLLLLLHHHHHHHHHH`, 40 docs labelled both hi and lo at n=50/60, stratified wrote 10 rows for a 20-row request silently | 98 fixes, fb re-reviews |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size. ~4 days, an estimate.
+
+## Today's only capability reading, and the sharper half of it
+
+`format_sft_0909` closed at `8297b9e2`: **pass@1 3/164 = 1.83%**, empty 72/164, artifact
+`runs/he_after_sft_0909.log`. **The preregistered threshold was NOT met** — 3/164 against 0/164 is
+Fisher one-sided p=0.124 where >=5/164 was needed.
+
+The finding is in the empty **split**, not the total: **stop_at_0 collapsed 127 -> 2 while
+eos_first roughly doubled 33 -> 70.** The SFT taught the model where a turn ends and not what to
+put in the body. Reading 160 -> 72 alone calls this a partial success of one mechanism; the split
+says one mechanism was nearly eliminated and a second grew into its place.
+
+## Four corrections today, all mine, none caught by me
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the score we target is phi-1's — **20x** | fb (on re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket; `lessons-e1` had been listed as not-on-this-team since 2026-09-02 | peers, all four | the rule was at the top of the file and was not read |
+| Added `_non_members` beside `not_on_this_team`, which already existed and is already printed by `board.py who` | fb (an hour later) | two fields, one question — the defect the same PR had just described |
+
+The through-line: **a field that answers the right question in the wrong tense, or a signal that
+answers the adjacent question.** `granted_by` correctly said who owned which card, for yesterday.
+`0 MiB` correctly said nobody is computing now. An idle socket correctly said that socket is
+quiet. Each failed toward the permissive reading, which is why none of them looked wrong.
+
+Structural fixes landed rather than more prose: `note` marked the single current-state field in
+`card_assignment.json`; the recipe's owner table carries a **socket column**; `board.py who <name>`
+exits 0 with a socket for a member and non-zero with the reason for anyone else.
+
+## Cards, 14:5xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | `tilerl-l5eval.0`, 100% |
+| 1, 3 | **lent** by tilerl-27 to de's serve | `released_at: null`; recallable on one message; **measured idle at 14:5xZ** |
+| 2 | b0 lane | sampled HumanEval, 24-47% |
+| 4, 5, 7 | de's serve | 91-99% |
+| 6 | **agent-infer's** (a third project), resolved by tilerl-27 | host pid 1171892, `target/release-fast/arle serve --model-path /mnt/data02/Qwen3.8-27B-NVFP4 --spec-type auto --mtp-draft-tokens 2`. The binary is the identity: `agent-infer/Cargo.toml:78,122` declare `name = "arle"` and `:134` declares `[profile.release-fast]`, so `target/release-fast/arle` is that crate's default output path exactly. tileRL has no Rust artifacts at all. tilerl-27 is reclaiming the card |
+
+## Global
+
+- **16 PRs open.** de was reviewer on six while running the critical path; three prioritised
+  (#161, #162, #155), three explicitly deferred (#158, #156, #148). #162 merged.
+- **98 had no reviewer in `pairs` at all** — two PRs with no assigned reader. fb took them (#168).
+- **An approved PR that is not merged is worse than an unreviewed one**, because everyone thinks
+  it is done. #161 and #155 are approved and open; the reviewer merges and pushes the pod in the
+  same step (ruling 2026-09-07).
+
+---
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). Everything below is p1: a new model on a new
+corpus, targeting HumanEval ~60. `docs/standards/p1_data_recipe.md` is the recipe of record.
+
+| line | owner | landed+reviewed | artifact | evidence | next gate |
+|---|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **0%** — PR #157 open, CI green, no reviewer | `96562101` `f3c40adc` `e57561b9` | 9 known-answer worlds in `scripts/test_v4_attn.py`, all perturbation tests; `test_arch_compat` green incl. flag-off bit-identity | 44 reviews; **it blocks merge_main for every model.py commit** |
+| teacher serve | b0 | 100% running, not yet a landed fact | 5 cards (1,3,4,5,7), claims `teacher_serve_0909.*` | **695 tok/s aggregate warm on 3 cards**; single-stream 88 vs tileRL's own B=1 bench 92.4; `/health` shows `running=11`, prefill done in 2 s of a 22 s window | 5-card aggregate; expected ~1160 |
+| classifier labels (queue position a) | b0 + e1 | 0% | — | — | ~0.02B, ~5 h. **Unblocks 97% of the gate corpus** |
+| educational-value classifier | e1 | 0% | — | — | held-out AUC vs teacher labels; **threshold ablated on our corpus, not copied from FineWeb-Edu's 3** |
+| synthetic exercises (queue position b) | 44 | PR #158 open (acceptance checks) | — | — | 0.18B, ~1.8 d. Execution pass rate + discard rate; decontaminated vs HumanEval/MBPP |
+| synthetic textbooks (queue position c) | b0 | 0% | — | — | 0.8B, ~8 d. **Does not block the gate**; runs continuously |
+| topic seeds, dedup, decontam | 3b | 0% | — | — | 20K topic table; decontamination carries a known-positive control |
+| tokenizer + eval harness | d1 | PR #161, #162 open | card 2, `humaneval_sample.2` running | V=20,000 confirmed: 20K→32K margin is +0.33% bits/char with a **negative** point estimate | 20-sample pass@1 at temp 0.2 / top-p 0.95, sharing one judge with the greedy path |
+| human spot check | 98 | 0% | PR #159, #160 open | — | one table, one row per artifact, each with n, two readers, agreement, disagreement count |
+
+**The gate:** a 350M dense-equivalent model on 6.18B tokens (6B filtered code + 0.18B exercises)
+clears **HumanEval 30%**. phi-1-small reports 45% at that size. About four days out — two days of
+teacher time, plus classifier training and the filtering pass, plus a day of training. Estimate,
+not measurement.
+
+## Two corrections I made today, both mine
+
+**The synthetic target was 20x too large.** I sized it to phi-1.5's 30B. But 50.6% HumanEval is
+phi-1's number on phi-1's 7B; phi-1.5's extra 20B targets common-sense reasoning, which this
+project does not measure. Corrected to ~1B in `docs/standards/p1_data_recipe.md` (branch
+`fb-review-138`, in PR #157). Generation order changed with it — by what blocks the gate, not by
+size, which is what moved the gate from ten days to two.
+
+**I read `nvidia-smi` 0 MiB as "free" and took two tileRL cards, for the second time in one day**,
+opposite direction from the morning's cards 5/7. b0 caught it against `runs/card_assignment.json`.
+The rule that holds is the one already written: a card's owner is the grant plus the claim; the
+nvidia-smi row is corroboration, never the reading. Today's grant of cards 1 and 3 states both
+halves in its note — 0 MiB **and** no grant — because the first half alone is what I keep acting on.
+
+## A NaN bug that predates this work and would have killed the run
+
+`torch.autograd.set_detect_anomaly` named `model.py:350`, `BmmBackward0`: **89 of 102 parameter
+tensors non-finite after one backward, forward finite throughout.** An all-`-inf` softmax row is
+correct forward and NaN backward — **`nan_to_num` rewrites the output, not the graph.** Present
+since CSA landed (b0-35); never fired because CSA has never been trained. Fixed at all five sites
+with `masked_attend` (`e57561b9`).
+
+The fix introduced two leaks of its own, both caught by `test_arch_compat`, both the same mistake:
+moving `masked_fill` into `masked_attend` left `sc` unmasked at the `sc.topk` the select branch
+ranks from — read first as a causal leak on the unpacked path, then as a cross-document leak on the
+packed one. The mask is load-bearing twice. That is the specific thing 44 is asked to re-check.
+
+## Cards, 13:4xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | claim `tilerl-l5eval.0`, 100% util |
+| 1, 3 | b0 teacher serve | granted `4910a309`, claims `teacher_serve_0909.{1,3}`, 38 GB each |
+| 2 | d1 lane | claim `humaneval_sample.2`, 36% util |
+| 4, 5, 7 | b0 teacher serve | claims `teacher_serve_0909.{4,5,7}`, ~54 GB each at 0% util — the NVFP4 serve idling between requests, not residue |
+| 6 | tileRL | 0 MiB, theirs, not taken |
+
+## Global
+
+- **main** `4910a309`, integration tree clean, pod in sync (752 files), stamp matches.
+- **Open PRs:** #157 (fb, blocking), #158 (44), #159 #160 (98), #161 #162 (d1), #163 (b0
+  throughput facts), plus #23 #103 #135 #145 #148 #149 #151 #155 #156 older.
+- **merge_main refuses any model.py/train.py commit without a second reader.** That refusal fired
+  correctly today on `e57561b9` and cost one cherry-pick to get an urgent card grant past it. The
+  lesson is the one already in memory and which I broke: a code commit does not belong on the branch
+  a time-sensitive ledger commit rides.
+
+---
 
 ## Since 07:5xZ — the capability number has a mechanism, and it is not the one published this morning
 
