@@ -1729,14 +1729,55 @@ assert bool((_first_vis & ~_last_vis).any()), (
     f"is asserting over a world where the leak it was written for cannot occur -- pick a T and "
     f"m where an incomplete block is visible to some query")
 
-# 4. DOC-PACKED INPUT IS REFUSED, NOT SILENTLY MISHANDLED. A compressed block straddling a `cu`
-#    boundary pools two documents and the top-k can select across them; nothing downstream can
-#    undo it and the loss does not show it.
-_refused = False
-try:
-    _csa(_q, _k, _v, cu=torch.tensor([0, 10, 20], dtype=torch.int32))
-except NotImplementedError as _e:
-    _refused = "document" in str(_e).lower()
-assert _refused, "CSA accepted doc-packed input instead of refusing; it would train cross-document attention"
+# 4. DOC-PACKED INPUT IS ISOLATED, NOT REFUSED. cu=[0,10,20] splits the 20 positions into
+#    two documents; blocks are built per document, so a perturbation in document 0 must not
+#    move any output in document 1, in any branch. The old refusal is gone -- CSA now runs on
+#    the packed training path, which is the whole point.
+_cu = torch.tensor([0, 10, 20], dtype=torch.int32)
+_yc = _csa(_q, _k, _v, cu=_cu)
+assert torch.isfinite(_yc).all(), "CSA produced non-finite output on doc-packed input"
+_cross = []
+for _t in range(10):
+    _k2, _v2 = _k.clone(), _v.clone()
+    _k2[:, _t] += 7.0
+    _v2[:, _t] += 7.0
+    _d = (_csa(_q, _k2, _v2, cu=_cu)[:, 10:] - _yc[:, 10:]).abs().max().item()
+    if _d > 1e-12:
+        _cross.append((_t, _d))
+assert not _cross, (
+    f"CSA leaks across documents: perturbing doc 0 moved doc 1 outputs at {_cross[:4]}. "
+    f"Blocks must be built per document and every branch masked to the same document")
+# and the perturbation IS visible inside its own document, so the isolation is not a blanket
+# zero -- a dead path passes the cross-document assertion for free.
+_k2, _v2 = _k.clone(), _v.clone()
+_k2[:, 5] += 7.0
+_v2[:, 5] += 7.0
+_within = (_csa(_q, _k2, _v2, cu=_cu)[:, :10] - _yc[:, :10]).abs().max().item()
+assert _within > 1e-6, (
+    f"a perturbation is invisible inside its own document (delta {_within:.2e}); the "
+    f"cross-document assertion above is then asserting over a dead path")
+
+# 4b. DOCUMENTS SHORTER THAN A BLOCK still isolate and stay visible within themselves
+#     (de's edge on this PR): blocks are per-document, so a 1- and a 3-token doc each get
+#     their own partial block, visible to themselves and to nothing across the boundary.
+_csa16 = model.CompressedSparseAttention(_CfgCsaOn, 4, 16).double()
+_q16, _k16, _v16 = (torch.randn(1, 20, 4, 16, dtype=torch.double) for _ in range(3))
+_cu16 = torch.tensor([0, 1, 4, 20], dtype=torch.int32)   # docs of len 1, 3, 16
+_y16 = _csa16(_q16, _k16, _v16, cu=_cu16)
+assert torch.isfinite(_y16).all(), "CSA produced non-finite output on sub-block-length docs"
+_k16b, _v16b = _k16.clone(), _v16.clone()
+_k16b[:, 0] += 7.0
+_v16b[:, 0] += 7.0
+assert (_csa16(_q16, _k16b, _v16b, cu=_cu16)[:, 1:] - _y16[:, 1:]).abs().max().item() == 0.0, (
+    "a 1-token document leaked across its boundary")
+_k16c, _v16c = _k16.clone(), _v16.clone()
+_k16c[:, 2] += 7.0
+_v16c[:, 2] += 7.0
+_y16c = _csa16(_q16, _k16c, _v16c, cu=_cu16)
+assert (_y16c[:, 4:] - _y16[:, 4:]).abs().max().item() == 0.0, (
+    "the 3-token document leaked into the next document")
+assert (_y16c[:, 1:4] - _y16[:, 1:4]).abs().max().item() > 1e-6, (
+    "a 3-token document is invisible inside itself -- its partial block and window are dead")
 print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all {_T - 1} "
-      f"perturbed positions; doc-packed input refused")
+      f"perturbed positions; doc-packed input isolated (cross-doc delta 0.0, within-doc "
+      f"{_within:.2e}); sub-block-length docs isolated and self-visible")
