@@ -854,6 +854,17 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
     842204 held 0 fds while rank 842276 held 52), so it belongs to the launcher path, where
     wait_for_device has already established the fact it asserts."""
 
+    # A CLAIM MUST NAME A LIVENESS-CHECKABLE PID (4c, 2026-09-10). A pid that is null or not an
+    # int can never be probed, so the row cannot go stale by liveness -- it holds its cards until
+    # a human notices the mismatch. The pod carried such a row (tilerl-accspf-rerun, pid null,
+    # card 3 at 0 MiB); it was hand-written, not acquire's, but a caller passing the wrong type
+    # gets a refusal here rather than a claim nobody can probe.
+    if pid is not None and (not isinstance(pid, int) or pid < 0):
+        return False, (
+            f"pid must be a non-negative integer, got {pid!r} (type {type(pid).__name__}): "
+            f"a claim must name a process that can be liveness-checked"
+        )
+
     os.makedirs(CLAIM_DIR, exist_ok=True)
     # CARDS ARE NORMALISED TO STR ONCE, HERE, and the alternative is what happened on 2026-09-06:
     # e1's probe passed [int(card)], the claim FILE was written correctly (claim_file already
@@ -1091,6 +1102,19 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     old = int(existing.get("pid", -1)) if existing else -1
                 except (TypeError, ValueError):
                     old = -1
+                if existing and _alive(old) and _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
+                    # THE PID WAS RECYCLED. claims() reads this row stale and the sweep at the top
+                    # of this loop deletes it, so reaching here means the row was written in the
+                    # window between that sweep and this O_EXCL and its pid already died and was
+                    # reused. Say so: the silent unlink below made claims() and this path disagree
+                    # about what the row was (44, PR #173 review). Reclaims, like the sweep: the
+                    # recorded process is dead, so the claim is stale.
+                    print(
+                        f"note: {name}'s claim pid {old} was reused (start time changed from "
+                        f"{existing.get('start_time')!r}) -- the recorded process is dead; "
+                        f"reclaiming the stale claim file",
+                        file=sys.stderr,
+                    )
                 if existing and _alive(old) and not _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
                     # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
                     # for, so the ask is already satisfied and refusing it is refusing a fact that is
@@ -1624,6 +1648,11 @@ def _selftest():
     )
     _case(good, "a claim whose start time matches stays live")
     release("reuseTest")
+
+    # A NON-INTEGER OR NON-POSITIVE pid IS REFUSED (4c, 2026-09-10): a claim whose pid cannot
+    # be probed can never go stale by liveness, so it holds its cards until a human notices.
+    okb, msgb = acquire("badTypePid", ["0"], wait=0, pid="12345")
+    _case(not okb and "integer" in msgb, f"a string pid is refused ({msgb[:60]})")
 
     # CROSS-NAMESPACE: a claim written in a different PID namespace is not compared.
     # Container PID colliding with a host PID would otherwise flip a live claim to
