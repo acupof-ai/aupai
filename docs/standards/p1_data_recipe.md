@@ -122,6 +122,75 @@ the reading under which `data/corpus/web_cci3_p*` was listed as unsuitable.
 **Fully synthetic code is outside the published recipe.** phi-1 kept the 6B filtered code. Dropping
 it is a legitimate arm but it has no reference score, so it is an ablation, not the plan.
 
+## The tokenizer is rebuilt at V=20,000
+
+Ruling 2026-09-09 (fb, reviewed by 44 without challenge). The vocabulary frozen 2026-08-29 is
+unfrozen for p1. **This invalidates nothing, because p1 has no checkpoints and that is the whole
+reason the decision is cheap today and monotonically more expensive from p1's first step.**
+
+**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, 143-162 textbook
+chapters plus the three code domains at 4M chars, 88:12):
+
+| gate | value | |
+|---|---|---|
+| round-trip lossless | true, every subset | PASS |
+| all 256 bytes | 256/256 | PASS |
+| hanzi whole-char >= 0.95 | **undefined** -- the p1 composition has no hanzi | — |
+| ref fertility <= 1.55 | **1.4286** | PASS |
+
+The authorisation is **unfreeze condition 2, "the corpus distribution changes materially"**, and
+the mechanism is measured rather than asserted: **64.9% of the frozen vocabulary's slots are hanzi
+tokens** (`facts/tokenizer.json#tok.minicpm5_slot_budget_vs_ours`), leaving ~11.5K slots serving
+English and code where the candidate has 20K. A gate is a guardrail; a condition is an
+authorisation, and they are not the same thing.
+
+**What freezing would have cost**, candidate V=20K against the frozen vocabulary, chars/token on
+the same sample:
+
+| subset | frozen | candidate | tax |
+|---|---|---|---|
+| textbooks | 3.263-3.266 | 3.289-3.297 | +0.9% |
+| code, three domains | 3.099-3.189 | 3.220-3.298 | **+3.8%** |
+| full mix 88:12 | 3.127-3.201 | 3.232-3.298 | **+3.4%** |
+
+The +3.4% is permanent and multiplies across p1's 6-20B tokens and every later run that inherits
+the vocabulary. It is also a **lower bound**: the candidate was fitted on a proxy composition
+(3:1 prose:code) where the real one is 88:12, so a vocabulary fitted on the real thing would do
+better still. That last sentence is an inference, not a measurement.
+
+Freezing carries a second permanent cost that is easy to miss: V=32,773 instead of the 20,000
+p1-small is sized for adds **13.1M embedding parameters, +4% on 323M active**, and 64.9% of those
+slots are provably dead on this corpus.
+
+**Two conditions on the rebuild.**
+
+1. **Fit on the classifier's keep set, not the raw pool.** The pool is ~18.8B gross; p1 trains on
+   the 3-6B that survives filtering, and phi-1's keep rate was 17%. Fitting on the pool feeds the
+   vocabulary the statistics of the 70-80% of documents about to be discarded. This costs no extra
+   time: tokenization already waits for the corpus to be final.
+2. **Measure the tax on held-out text** (44's condition, and **already satisfied**). The repo
+   precedent is `facts/tokenizer.json#11` -- fit on a stratified sample, evaluate on held-out text.
+   The candidate was fitted on a proxy composition (`en_c4_stage2` + `code_py_starcoder` +
+   `code_py_rp1t`, a 62.5M-token sample) while the tax was measured on the three *deduplicated*
+   domains plus synthetic textbooks that did not exist when the candidate was fitted; seeds
+   7/13/21 are three independent evaluation samples, none of them fitting text. Held-out
+   evaluation is now a step inside `scripts/build_p1_tokenizer.py`, so the next rebuild satisfies
+   this by construction rather than by remembering. **Held-out and fit overlap at ~0.3%** --
+   reported rather than claimed as zero, and negligible against a 3.4% effect, but it belongs in
+   the fact's `uncertainty` when the number lands.
+
+## p1 has no math, and that is a decision
+
+`CLAUDE.md` states this project's objective as "a reasoning model targeting coding **and math**
+capability". p1's corpus has no math domain. That is a deliberate narrowing to the user's current
+instruction -- HumanEval ~60 -- and not an omission.
+
+The consequence, recorded so it is traceable: the reproduction of `math_owm` was stopped on
+2026-09-09 because nothing in p1 reads it. **If math comes back, its corpus work restarts from
+here.** `code_py_starcoder` was stopped for a different reason -- it is upstream of
+`code_dedup08`, which p1 does read, and reproducing an upstream does not validate the downstream
+bytes p1 actually consumes. Nothing was deleted in either case.
+
 ## Acceptance: one falsifiable gate, not a checklist
 
 A corpus is good enough iff **a 350M dense model trained on it clears HumanEval 30%.** phi-1-small
