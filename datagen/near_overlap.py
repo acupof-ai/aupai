@@ -4,11 +4,15 @@
 # dedup08 th=0.8); what remains is CROSS-domain overlap. Exact channel is measured
 # by exact_overlap.py; this measures the near channel [0.5, 1.0).
 #
-# Method: 96-perm MinHash char 5-gram (same shingle/perms as the builds),
-# 24 bands x 4 rows (LSH threshold ~0.45). Signatures checkpointed per domain.
-# Containment estimate: 50K-doc sample of each domain queried against the band
+# Method: 96-perm MinHash char 5-gram (same shingle as the builds; 96 perms vs
+# the builds' 128, so the LSH threshold behavior differs), 24 bands x 4 rows
+# (LSH threshold ~0.45). Signatures checkpointed per domain.
+# Jaccard estimate: 50K-doc sample of each domain queried against the band
 # index built over ALL docs; participation = docs with >=1 est>=0.5 neighbor in
 # the other domain. Exact char-5gram Jaccard on a 100-pair sample calibrates est.
+# Every est>=0.5 hit pair is persisted to data/decontam/near_overlap_hits_0909.jsonl
+# (4c 2026-09-10): the keep-set participation cut is a separate join over that
+# file, not a statistic this instrument emits.
 import glob, json, os, random, sys, time
 from collections import defaultdict
 from multiprocessing import Pool
@@ -108,11 +112,12 @@ def main():
             idx[(b, sig[b * ROWS:(b + 1) * ROWS].tobytes())].append(g)
     print(f"{len(idx)} buckets", flush=True)
 
-    # containment: sample SAMPLE_N docs per domain, query against all
+    # participation: sample SAMPLE_N docs per domain, query against all
     rng = random.Random(20260909)
     out = {"method": f"MinHash {PERMS}perm char5gram, LSH {BANDS}x{ROWS} (th~0.45), est>={TH}, "
                      f"sample {SAMPLE_N}/domain queried vs full index", "domains": {}}
     verify_pairs = []
+    hit_pairs = []
     for d, (name, _) in enumerate(DOMAINS):
         lo = 0 if d == 0 else bound[d - 1]
         hi = bound[d]
@@ -134,6 +139,7 @@ def main():
                 est = float((sig == all_sigs[c]).mean())
                 if est >= TH:
                     hits[e].add(g)
+                    hit_pairs.append((int(g), int(c), est))
                     if g not in max_est or est > max_est[g][0]:
                         max_est[g] = (est, c)
         rec = {"sampled": len(sample)}
@@ -147,16 +153,34 @@ def main():
         out["domains"][name] = rec
         print(f"{name}: {rec}", flush=True)
 
+    # persist every hit pair: the keep-set participation cut joins this file by
+    # doc id, it does not re-run the instrument
+    locs = []
+    for name, _ in DOMAINS:
+        lp = f"{CK}/{name}.loc.json"
+        locs.append(json.load(open(lp)) if os.path.exists(lp) else None)
+    pair_path = "/work/aupai/data/decontam/near_overlap_hits_0909.jsonl"
+    os.makedirs(os.path.dirname(pair_path), exist_ok=True)
+    n_written = 0
+    with open(pair_path, "w") as f:
+        for g, c, est in hit_pairs:
+            d, e = int(dom_of[g]), int(dom_of[c])
+            lo_g = 0 if d == 0 else bound[d - 1]
+            lo_c = 0 if e == 0 else bound[e - 1]
+            lg, lc = locs[d], locs[e]
+            if lg is None or lc is None:
+                continue
+            f.write(json.dumps({"shard_a": lg[g - lo_g][0], "row_a": lg[g - lo_g][1],
+                                "domain_a": DOMAINS[d][0], "shard_b": lc[c - lo_c][0],
+                                "row_b": lc[c - lo_c][1], "domain_b": DOMAINS[e][0],
+                                "est_jaccard": round(est, 4)}, ensure_ascii=False) + "\n")
+            n_written += 1
+    out["hit_pairs"] = n_written
+    print(f"hit pairs: {n_written} -> {pair_path}", flush=True)
+
     # exact-J calibration on a fixed sample of hit pairs
     random.shuffle(verify_pairs)
     vp = verify_pairs[:100]
-    locs = []
-    for name, pat in DOMAINS:
-        lp = f"{CK}/{name}.loc.json"
-        if os.path.exists(lp):
-            locs.append(json.load(open(lp)))
-        else:
-            locs.append(None)
     diffs = []
     for est, g, c in vp:
         d, e = int(dom_of[g]), int(dom_of[c])
