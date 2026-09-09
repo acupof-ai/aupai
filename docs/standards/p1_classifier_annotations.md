@@ -122,3 +122,18 @@ full 100K ablation (acceptance criterion), not on the pilot. The enlargement
 is drawn from the three deduped domains rather than code_rp1t because the
 deduped distribution may differ from the raw pilot domain's, and the threshold
 estimate must match the inference distribution.
+
+## Enlarged pilot results (de, 2026-09-09)
+
+5K labeled, 0 discards, all outputs clean single digits: 0=5.2% 1=64.4%
+2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
+pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
+high-score code, confirming the re-draw. Keep rates on the 18.8B-token base:
+>=2 = 30.4% (~5.7B), >=3 = 26.7% (~5.0B), >=4 = 3.3% (~0.62B). The threshold
+region for the ablation is >=2 vs >=3 -- the two cuts bracketing the recipe's
+~6B slot and straddling phi-1's 17% reference; >=3 is the prior (score-2 is
+"glue code, nothing to learn", exactly what the filter exists to remove;
+score-3 is real logic). The ablation pins the point. Score 5 is nearly dead
+(0.1%) and collapses into 4 at threshold time. The full 100K labeling is
+threshold-independent -- every sample gets a 0-5 label and the cut is applied
+post-hoc -- so it proceeds before the ablation.
