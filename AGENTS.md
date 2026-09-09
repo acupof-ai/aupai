@@ -304,6 +304,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | A file transfer is unverified until the landed bytes are compared to the source; a syntactically valid corruption charges its error to the runtime before the corrupted line | 1 | §297 |
 | An instrument whose parser the watched data can break reports the failure it cannot distinguish and then stops watching; a false alarm that kills the instrument is worse than a missed alarm, because silence after the alarm reads as the all-clear; and an instrument must report its own failed reads — a blind-but-alive monitor is byte-identical to a quiet one from outside | 1 | §298 |
 | A threshold's comparability is set by the set it acts on, not by its name or value; two thresholds with the same name, value, and unit are incomparable when the sets differ | 1 | §299 |
+| A retraction is a claim about the value's history and must be true of it; a value quoted out of its instrument's context is a different fact | 1 | §301 |
 
 New shapes land in the incidents doc first and this table follows.
 
