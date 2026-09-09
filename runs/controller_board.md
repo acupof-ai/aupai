@@ -62,8 +62,9 @@ the wrong tree, and the two are indistinguishable from the outside. e1 owes the 
 - **R19 has a subject inside the repo, and it fails the third sentence.** `harness launch`'s own
   monitor: `cmd_launch:26253` takes `monitor_pid`, `:26256` prints it, and it is written nowhere —
   0 rows in `runs/experiments.jsonl` carry any pid or monitor key (full key scan). So "is this
-  run's monitor alive" cannot be asked afterwards; only `no_stale_running` catches it, 24h late and
-  on "the row still says running", not "the instrument is still watching". de took it as task #82,
+  run's monitor alive" cannot be asked afterwards; only `no_stale_running` catches it (`:7182`, 24h local / 2h on
+  the pod) and its predicate is row AGE, not "the instrument is still watching" — 44 read the
+  line and corrected my "24h". de took it as task #82,
   fix agreed: pid into the exp row plus a check, the row naming which namespace read it.
   `_arm_monitor`'s other two halves are the best version of this in the tree — it refuses to
   overwrite a verdict it cannot see and calls log-bytes a proxy out loud (`:25360-25385`).
