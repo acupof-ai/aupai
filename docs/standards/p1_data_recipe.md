@@ -122,28 +122,30 @@ live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
-phi-1 filtered ~35M **files** down to 6B tokens, a **17% keep rate in file-count口径** (the
-"35B" phrasing reads as tokens but the published input is 35M files). The two口径 are not
-interchangeable on our corpus: the measured doc/byte keep ratio is 1.66 (three points: 1.665,
-1.656, 1.656), so a 17% doc keep is a ~10% byte keep -- **~1.9B of our 18.8B pool, not 3.2B** --
-and reaching 6B would require a ~52% doc keep, not 32%. Loosening the threshold to hit a token
-count copied from another paper inverts that paper's own finding, which is that quality beats
-quantity.
+phi-1 filtered >35B tokens down to 6B, a **17% keep rate in token口径** (the paper gives both
+input counts: >35M files totalling >35B tokens; the 17% is 6/35, a token ratio, not a file ratio).
+Our pool is 18.8B; 17% of it is **3.2B**, and reaching 6B would require a 32% token keep rate.
+Loosening the threshold twofold to hit a token count copied from another paper inverts that
+paper's own finding, which is that quality beats quantity.
 
 So the keep rate and the resulting token count are **outputs of the threshold ablation, not inputs
 to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
 threshold yields 3B, the gate runs on 3B. **The acceptance criterion is HumanEval 30% at 350M; the
 corpus size has never been a criterion.**
 
-### Keep-rate口径: phi-1's 17% is file-count, ours diverges 2x by byte
+### Keep-rate口径: phi-1's 17% is token口径; ours must be quoted the same way
 
-phi-1's filter went from ~35M **files** to ~6B tokens; the ~17% keep rate is a **file-count**
-rate, not a token rate (the "35B" phrasing above reads as tokens but the published input is 35M
-files). The two口径 are not interchangeable on our corpus. Measured on the 100K labeled sample
-(threshold ablation, PR #164): at a 25% **doc** keep, the **byte** keep is 0.151 -- the kept set
-skews to short docs, because long docs in this corpus are mostly boilerplate/config-heavy and
-score low. Anyone quoting a keep rate against phi-1's 17% must say which口径: a comparable
-doc-keep gives roughly half the byte-keep, and the token count follows the byte口径.
+phi-1's paper states both input counts (>35M files, totalling >35B tokens) and the output in
+tokens only (~6B); the 17% is 6/35, a **token** ratio -- no post-filter file count is given, so
+a file-count keep rate cannot be attributed to phi-1. The comparable number for our filter is
+therefore the **byte/token keep, not the doc keep**.
+
+On our corpus the two口径 diverge by ~1.66x (three measured points: 1.665, 1.656, 1.656): at a
+25% **doc** keep, the **byte** keep is 0.151 -- the kept set skews to short docs, because long
+docs in this corpus are mostly boilerplate/config-heavy and score low. So our keep rate against
+phi-1's 17% is **~0.15, 0.9x phi-1's stringency** in the comparable口径; quoting the 25% doc
+keep against it would overstate it 1.66x. Any keep rate quoted for this filter must say which
+口径.
 
 Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
 tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
