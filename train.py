@@ -362,6 +362,18 @@ class Cfg:
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
     csa_window = 256     # sliding-window width, always exact
+    # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
+    # #dsv4.partial_rope). The p1 architecture is all three of these on together with
+    # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
+    # instead of from KDA.
+    hca = False
+    hca_compress = 128   # positions pooled into one HCA entry; V4's m'=128
+    attn_hybrid = False  # interleave CSA/HCA per attention layer instead of one global flag
+    # rope_dims 0 = NoPE, which is what every checkpoint before p1 trained under
+    # (dsv4.nope_rope_break). Nonzero rotates the LAST rope_dims of each head and is what makes
+    # attn_every=1 legal -- HybridLM refuses a zero-KDA stack without it, because a stack with
+    # neither KDA nor RoPE has no position information and measured 21 sigma worse in 2026-08-30.
+    rope_dims = 0
     # b0-17: untie the LM head from the token embedding, and give it its own AdamW lr.
     # untie_head acts only at __init__ (model.py:359), so it is in harness's _FROZEN_KEYS beside
     # value_embed -- a resume silently ignores it and the arm's weights, not the flag, carry the

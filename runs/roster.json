@@ -118,7 +118,11 @@
   },
   {
    "name": "lessons-e1 [2f8158]",
-   "why": "answered 不是 2026-09-02"
+   "why": "answered 不是 2026-09-02. AND IT HAPPENED AGAIN 2026-09-09: fb sent e1's classifier rulings here without reading this list. e1 is lessons-eb / uds:/tmp/cc-socks/56034.sock."
+  },
+  {
+   "name": "lessons-31 [abcf8c]",
+   "why": "NOT 3b; 3b is aupai-89 / uds:/tmp/cc-socks/63595.sock, who confirmed 2026-09-09 that lessons-31 is neither them nor a fork. Mis-dispatched the whole p1 topic-seed and decontamination line on 2026-09-09 and did real work on it -- 20K topic seeds, a negative-control adjudication (kappa 0 -> 0.895), three-domain exact overlap, a 685-shard decontamination scan. 3b took the artifacts over and verified them; the destructive half was held the moment the mis-dispatch was found."
   }
  ],
  "departed": [],
