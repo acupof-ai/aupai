@@ -10,7 +10,18 @@
 # kept. The hit file's row_a/row_b are 0-based source line numbers
 # (near_overlap.py locs), same skipping rules (blank + unparseable), so the
 # numbering matches.
-import json, os, sys
+#
+# GENERATION GUARD (b0 2026-09-10): the hit file's row numbers are pinned to
+# the corpus generation that was on disk when near_overlap.py ran
+# (2026-09-10, pre-swap). The corpus was swapped to the clean copies afterwards
+# (15 dedup08 rp1t shards shrank from ~9k rows to 4-360), so a re-run of this
+# script against the swapped-in shards would silently misclassify ~3.5% of
+# dedup08 pairs. Every hit row is therefore checked against the shard's
+# current line count and a violation hard-fails: the numbers only mean
+# something when hit file and shards are the same generation. The landed
+# result (/work/aupai/data/decontam/keep_set_join_0910.json) is a frozen
+# pre-swap artifact; it was computed before the swap and is not regenerated.
+import glob, json, os, sys
 from collections import defaultdict
 
 BASE = "/work/aupai/data/corpus"
@@ -21,36 +32,35 @@ SHORT = {"code_rp1t_dd09": "dd09", "code_rp1t_b2v2_dd": "b2v2", "code_dedup08": 
 
 
 def kept_row_set(src_path, keep_path):
+    # (kept 0-based source rows, total source lines) in one pass. A missing or
+    # empty keep file means the scorer dropped the whole shard: kept is empty,
+    # the line count still feeds the generation guard.
     kept = set()
     try:
         kf = open(keep_path, "rb")
     except FileNotFoundError:
-        return kept  # scorer never wrote it: treat as nothing kept
-    with kf:
-        kline = kf.readline()
-        if not kline:
-            return kept  # empty keep file: whole shard dropped
-        with open(src_path, "rb") as sf:
-            for ln, sline in enumerate(sf):
-                if sline == kline:
-                    kept.add(ln)
-                    kline = kf.readline()
-                    if not kline:
-                        break
-    return kept
+        kf = None
+    kline = kf.readline() if kf else None
+    n_lines = 0
+    with open(src_path, "rb") as sf:
+        for ln, sline in enumerate(sf):
+            n_lines = ln + 1
+            if kline and sline == kline:
+                kept.add(ln)
+                kline = kf.readline()
+    if kf:
+        kf.close()
+    return kept, n_lines
 
 
 def main():
-    kept = {}  # (short_domain, shard basename) -> set(row)
+    kept, lines = {}, {}  # (short_domain, shard basename) -> set(row) / int
     for dom in DOMAINS:
-        odir = os.path.join(KEEP, dom)
-        if not os.path.isdir(odir):
-            print(f"MISSING keep dir {odir}", flush=True)
-            continue
-        for sf in sorted(os.listdir(odir)):
-            if not sf.endswith(".jsonl"):
-                continue
-            kept[(SHORT[dom], sf)] = kept_row_set(os.path.join(BASE, dom, sf), os.path.join(odir, sf))
+        for src in sorted(glob.glob(os.path.join(BASE, dom, "*.jsonl"))):
+            sf = os.path.basename(src)
+            k, n = kept_row_set(src, os.path.join(KEEP, dom, sf))
+            kept[(SHORT[dom], sf)] = k
+            lines[(SHORT[dom], sf)] = n
         n_shards = sum(1 for k in kept if k[0] == SHORT[dom])
         n_kept = sum(len(v) for k, v in kept.items() if k[0] == SHORT[dom])
         print(f"{SHORT[dom]}: {n_shards} shards, {n_kept} kept rows indexed", flush=True)
@@ -60,12 +70,24 @@ def main():
     with open(HITS) as f:
         for line in f:
             h = json.loads(line)
-            ka = h["row_a"] in kept.get((h["domain_a"], os.path.basename(h["shard_a"])), ())
-            kb = h["row_b"] in kept.get((h["domain_b"], os.path.basename(h["shard_b"])), ())
+            ka = (h["domain_a"], os.path.basename(h["shard_a"]))
+            kb = (h["domain_b"], os.path.basename(h["shard_b"]))
+            for key, row in ((ka, h["row_a"]), (kb, h["row_b"])):
+                if key not in lines:
+                    raise SystemExit(
+                        f"generation guard: shard {key} absent from {BASE} -- the hit file "
+                        f"is from a different corpus generation than the shards on disk")
+                if row >= lines[key]:
+                    raise SystemExit(
+                        f"generation guard: {key} row {row} >= {lines[key]} current lines -- "
+                        f"the hit file is from a different corpus generation than the shards on "
+                        f"disk; the landed JSON is a frozen pre-swap artifact")
+            ka_in = h["row_a"] in kept[ka]
+            kb_in = h["row_b"] in kept[kb]
             key = " <-> ".join(sorted((h["domain_a"], h["domain_b"])))
-            if ka and kb:
+            if ka_in and kb_in:
                 counts[key][0] += 1
-            elif ka or kb:
+            elif ka_in or kb_in:
                 counts[key][1] += 1
             else:
                 counts[key][2] += 1

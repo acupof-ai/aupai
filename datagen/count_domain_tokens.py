@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 # Actual-count frozen-tokenizer tokens over one swapped-in clean domain (4c 2026-09-10).
-# Usage: COUNT_DOMAIN=code_dedup08 python3 _3btmp/datagen/count_domain_tokens.py
+# Usage: COUNT_DOMAIN=code_dedup08 python3 datagen/count_domain_tokens.py
+# COUNT_BASE overrides the shard root (default data/corpus; use
+# data/p1/keep_set for the keep set's own token count).
 import glob, json, multiprocessing as mp, os, sys
 ROOT = "/work/aupai"
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
