@@ -455,6 +455,18 @@ The rule's general form: a threshold's meaning is the pair (value, set it acts o
 
 The incident's second half is a different face of the same rule: a default-off optional stage and a stage that ran differ in the build stats by one field — `near_dedup: ABSENT` versus present. Absence of a run record reads as "ran clean" unless the reader knows ABSENT means never ran. What is true of the threshold is true of the stage: the record's shape (which fields exist) carries the meaning, not the field's name.
 
+## R21. A retraction is a claim about the value's history and must be true of it; a value quoted out of its instrument's context is a different fact
+
+1 incident (2026-09-10). `manual:` — no check verifies a retraction's historical claim against the fact base. Checkable slice: a retraction stating a value had no source (or "was superseded") when the value exists in another instrument's config; a scanner could flag retraction phrases and check the named value against `facts/`.
+
+A near-dup discussion compared the estimator's 96 perms against "the build's 128". Both numbers are real: the three dedup tools are 96/12, and `build_corpus.py`'s MinHash is 128/16. But the p1 domains were built by the 96 tools, so the comparison that mattered — estimator against the build that actually ran — was 96 against 96, consistent. The 96-vs-128 mismatch was real as numbers but manufactured as an inconsistency: 128 was quoted from a different instrument's config into a context where it had never operated.
+
+Then the retraction: "128 has no source; I made it up." That was false too — 128 has a source, in `build_corpus.py`'s config and the fact base. The retraction moved the value a second time, from the wrong context to no context, and both movements manufactured a fact that existed in neither: first an inconsistency where there was agreement, then a sourcelessness where there was a source. The middle layer is the one that survived: the comparison was not fabricated but mis-aimed, and the conclusion (no inconsistency for this measurement) was right for the wrong reason.
+
+The rule: a value's basis is bound to the instrument that produced it. Quoted into another instrument's context it becomes a different fact, and a retraction is a quotation too — "no source" is a claim about where the value came from, checked like any other. A retraction must not be allowed to be less true than the claim it corrects.
+
+- §301: 4c's 128-perm retraction, 2026-09-10.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
