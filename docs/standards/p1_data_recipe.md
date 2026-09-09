@@ -122,9 +122,13 @@ live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
-phi-1 filtered 35B down to 6B, a **17% keep rate**. Our pool is 18.8B; 17% of it is **3.2B**, and
-reaching 6B would require a 32% keep rate. Loosening the threshold twofold to hit a token count
-copied from another paper inverts that paper's own finding, which is that quality beats quantity.
+phi-1 filtered ~35M **files** down to 6B tokens, a **17% keep rate in file-count口径** (the
+"35B" phrasing reads as tokens but the published input is 35M files). The two口径 are not
+interchangeable on our corpus: the measured doc/byte keep ratio is 1.66 (three points: 1.665,
+1.656, 1.656), so a 17% doc keep is a ~10% byte keep -- **~1.9B of our 18.8B pool, not 3.2B** --
+and reaching 6B would require a ~52% doc keep, not 32%. Loosening the threshold to hit a token
+count copied from another paper inverts that paper's own finding, which is that quality beats
+quantity.
 
 So the keep rate and the resulting token count are **outputs of the threshold ablation, not inputs
 to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
