@@ -2949,6 +2949,8 @@ def main():
         "val_batches": "val batches per periodic check",
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
+        "sample_seed": "corpus-shuffle seed; unset follows --seed. Pin it across a seed sweep so "
+                       "the arms share one token cache and differ only in init (de-7)",
         "attn_every": "one attention layer every N blocks",
         # "heads %% (N+1)": argparse formats every help string with `% params`, so a
         # literal percent must be doubled. It was not, and --help has raised
@@ -3135,6 +3137,8 @@ def main():
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, required=True, help="multiplier on every optimizer lr")
+    parser.add_argument("--build_only", action="store_true",
+                        help="construct the model this launch line builds, print total/active params as JSON, exit before DDP and data (scripts/active_params.py)")
     args = parser.parse_args()
     # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
     # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
@@ -3203,6 +3207,16 @@ def main():
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
+    if args.build_only:
+        # scripts/active_params.py: the model this launch line builds, counted, no DDP/data.
+        # Params are a property of the config, so --resume is ignored here on purpose.
+        _m = HybridLM(Cfg)
+        print(json.dumps({"total": sum(p.numel() for p in _m.parameters()),
+                          "active": _n_active_params(_m, Cfg),
+                          "d": Cfg.d, "layers": Cfg.layers, "heads": Cfg.heads,
+                          "ffn_hidden": Cfg.ffn_hidden, "moe_experts": Cfg.moe_experts,
+                          "attn_every": Cfg.attn_every}))
+        return
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0
