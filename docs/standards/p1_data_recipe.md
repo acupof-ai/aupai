@@ -131,6 +131,20 @@ to it**, and both are reported against phi-1's 17% with an explanation either wa
 threshold yields 3B, the gate runs on 3B. **The acceptance criterion is HumanEval 30% at 350M; the
 corpus size has never been a criterion.**
 
+### Keep-rate口径: phi-1's 17% is file-count, ours diverges 2x by byte
+
+phi-1's filter went from ~35M **files** to ~6B tokens; the ~17% keep rate is a **file-count**
+rate, not a token rate (the "35B" phrasing above reads as tokens but the published input is 35M
+files). The two口径 are not interchangeable on our corpus. Measured on the 100K labeled sample
+(threshold ablation, PR #164): at a 25% **doc** keep, the **byte** keep is 0.151 -- the kept set
+skews to short docs, because long docs in this corpus are mostly boilerplate/config-heavy and
+score low. Anyone quoting a keep rate against phi-1's 17% must say which口径: a comparable
+doc-keep gives roughly half the byte-keep, and the token count follows the byte口径.
+
+Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
+tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
+code_dedup08 0.278723. The stats-file ratios are not used.
+
 **Generation order is by what blocks the gate, not by size.** The classifier labels are the
 smallest artifact and the first one: they unblock the 6B of filtered code, which is 97% of the
 gate corpus, and they cost five hours. Exercises second. **The gate corpus is the first two rows
