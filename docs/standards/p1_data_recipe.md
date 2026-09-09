@@ -79,7 +79,7 @@ twice and inflates the keep rate with duplicates.
 |---|---|---|---|
 | `data/corpus/code_rp1t_dd09` | 6.24B | 3.43M | rp1t filter batch 1, MinHash-J 0.9 dedup (3.75M -> 3.43M) |
 | `data/corpus/code_rp1t_b2v2_dd` | 3.60B | 2.10M | rp1t filter batch 2 v2, **cross-deduped against dd09**: its stats read `b2v2 against code_rp1t_dd09 AND within b2v2; code_rp1t_dd09 kept whole` |
-| `data/corpus/code_dedup08` | 8.41B (measured 2026-09-10) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
+| `data/corpus/code_dedup08` | 8.41B (measured 2026-09-09 UTC) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
 | total | **18.25B** | **11.78M** | |
 
 Excluded as upstream: `code_rp1t` (7.57B), `code_rp1t_b2` and `code_rp1t_b2v2` (4.89B),
@@ -93,11 +93,11 @@ threshold ablation measured it directly (bytes over 30.16 GB of shards, extrapol
 is used downstream; the derivation stays as the prior.
 
 The `code_dedup08` residual overlap, open here as a name-based inference, was
-**measured 2026-09-10**: it is a union build of 283 starcoder shards plus 15
+**measured 2026-09-09 (UTC)**: it is a union build of 283 starcoder shards plus 15
 `code_py_rp1t` shards, and those 15 are by construction a third copy of
 dd09/b2v2 content. The exact-overlap channel deleted 169,561 dedup08 docs, 138.6K (82%) of them
 on those 15 rp1t shards and 31.0K (18%) spread over the 283 starcoder shards
-(b0, pod count 2026-09-10); per-shard rate differs ~84x, so the starcoder
+(b0, pod count 2026-09-09); per-shard rate differs ~84x, so the starcoder
 side was barely touched relative to its size. An earlier draft of this
 section bounded the overlap at 0.42B = 2.2% from names and doc counts; that
 bound assumed the overlap was diffuse across the domain, and it is in fact
