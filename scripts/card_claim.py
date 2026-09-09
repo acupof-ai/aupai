@@ -363,13 +363,31 @@ def _start_time(pid):
         return None
 
 
-def _pid_reused(pid, recorded_start):
+def _pid_ns():
+    """The PID namespace inode of the calling process, or None if unreadable (macOS).
+
+    A start time read in one PID namespace is meaningless in another: a container PID
+    that happens to match a host PID of a different process would compare unequal and
+    flip a live claim to stale -- the unsafe direction. Recorded at claim time so the
+    reader can skip the comparison when namespaces differ (4c, 2026-09-10).
+    """
+    try:
+        return os.stat("/proc/self/ns/pid").st_ino
+    except OSError:
+        return None
+
+
+def _pid_reused(pid, recorded_start, recorded_ns=None):
     """True when pid is alive but its start time differs from what was recorded.
 
-    Returns False when no start time was recorded (older claims) or the current start
-    time is unreadable -- the safe direction, same rule _cvd and nvidia_fds follow.
+    Returns False when no start time was recorded (older claims), the current start
+    time is unreadable, or the reader is in a different PID namespace from the writer
+    -- the safe direction, same rule _cvd and nvidia_fds follow.
     """
     if not recorded_start:
+        return False
+    cur_ns = _pid_ns()
+    if recorded_ns is not None and cur_ns is not None and recorded_ns != cur_ns:
         return False
     cur = _start_time(pid)
     return cur is not None and cur != recorded_start
@@ -508,10 +526,14 @@ def claims():
         if c is None:
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
-        pid = int(c.get("pid", -1))
+        try:
+            pid = int(c.get("pid", -1))
+        except (TypeError, ValueError):
+            stale.append(dict(c, why=f"pid {c.get('pid')!r} is not an integer", file=nm))
+            continue
         if not _alive(pid):
             stale.append(dict(c, why=f"pid {c.get('pid')} is gone", file=nm))
-        elif _pid_reused(pid, c.get("start_time")):
+        elif _pid_reused(pid, c.get("start_time"), c.get("pid_ns")):
             stale.append(dict(c, why=f"pid {c.get('pid')} reused (start time changed)", file=nm))
         else:
             # `file` ON EVERY ROW, live as well as stale. acquire excludes its OWN claim from the
@@ -986,6 +1008,7 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 "pid": holder,
                 "cmdline": _cmdline(holder),
                 "start_time": _start_time(holder),
+                "pid_ns": _pid_ns(),
                 "acquired": _now(),
                 "note": note,
             }
@@ -1064,8 +1087,11 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 fd = os.open(mine, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o644)
             except FileExistsError:
                 existing = _read(mine)
-                old = int(existing.get("pid", -1)) if existing else -1
-                if existing and _alive(old) and not _pid_reused(old, existing.get("start_time")):
+                try:
+                    old = int(existing.get("pid", -1)) if existing else -1
+                except (TypeError, ValueError):
+                    old = -1
+                if existing and _alive(old) and not _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
                     # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
                     # for, so the ask is already satisfied and refusing it is refusing a fact that is
                     # true. de-55, 2026-09-05: the fix for the claim-coverage gap puts one acquire on
@@ -1569,6 +1595,35 @@ def _selftest():
     )
     _case(good, "a claim whose start time matches stays live")
     release("reuseTest")
+
+    # CROSS-NAMESPACE: a claim written in a different PID namespace is not compared.
+    # Container PID colliding with a host PID would otherwise flip a live claim to
+    # stale -- the unsafe direction (4c, 2026-09-10).
+    acquire("nsTest", ["0"], wait=0, pid=me)
+    p = os.path.join(d, claim_file("nsTest", ["0"]))
+    c = _read(p)
+    c["start_time"] = "fake-start-time"
+    c["pid_ns"] = 99999
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    global _pid_ns
+    _real_ns = _pid_ns
+    _pid_ns = lambda: 12345
+    live, stale = claims()
+    good = any(x.get("name") == "nsTest" for x in live) and not any(
+        s.get("name") == "nsTest" for s in stale
+    )
+    _case(good, "a claim from a different PID namespace stays live (no opinion)")
+    _pid_ns = _real_ns
+    release("nsTest")
+
+    # NULL PID: a claim with pid=null must not crash claims() -- one bad row must not
+    # take down the whole ledger (4c, 2026-09-10, pod outage).
+    with open(os.path.join(d, "nullPid.json"), "w") as fh:
+        json.dump({"name": "nullPid", "cards": ["0"], "pid": None, "cmdline": "test"}, fh)
+    live, stale = claims()
+    good = any(s.get("name") == "nullPid" and "not an integer" in s.get("why", "") for s in stale)
+    _case(good, f"a claim with pid=null reads as stale, not crash ({[s.get('why') for s in stale if s.get('name') == 'nullPid']})")
 
     ok6, msg6 = release("never_existed")
     good = not ok6
