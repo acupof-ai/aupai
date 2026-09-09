@@ -359,13 +359,15 @@ Cannot see: whether a reader will treat a written conclusion as one. Checkable: 
 
 ## R14. An instrument searching a space that contains its own text
 
-1 incident (3 instances, 2026-09-08), ~20min caught, unbounded if not. `manual:` for now, but it has a **detectable signature, which is why it is a rule and not a story: the tool's own source file appears as a SOURCE in its own output.**
+2 incidents (4 instances, 2026-09-08/09), ~20min and same-day caught, unbounded if not. `manual:` for now, but it has a **detectable signature, which is why it is a rule and not a story: the tool's own source file appears as a SOURCE in its own output -- or, in §293's verb, the tool's own executing path matches its own deletion glob.**
 
 Separate from R13 because the fix differs. R13's fix moves a conclusion somewhere it gets executed; this one's fix removes the instrument from its own search space. Restating the conclusion does not help — the tool is reading itself correctly.
 
 `reachability.py::comment_edges` read its own `FATE` prose and rescued 12 files from its own deletion-candidate list, every path it had ever ruled KEEP on. A past verdict is not a citation. With the exclusion, 70 unreachable including 15 with a KEEP ruling; without it, 56, and those 15 could never be listed again. `pgrep -f` matching its own command line is the same signature. (The `.venv` exclusion that had never executed is NOT this shape and is filed under R12 — it went green by never running, not by finding itself; the first filing put it here and that was wrong.) And `harness.py:1755`, which copies `runs/mem_probe_base.sh` to build a broken world, is its inverse: a name-based scan sees no citation, and deleting the file turns a green check into no check. **A name is not a call, in either direction** — its presence is not evidence of use, its absence is not evidence of disuse.
 
-Cannot see: any scanner whose search space includes its own source, in general. Implemented for one tool: `test_reachability_edges.py` asserts no edge is sourced from `reachability.py` itself, with a negative control, because `comment_edges` returning `{}` would satisfy that assertion vacuously.
+§293 is the same rule with a different verb: the hook's selftest runner copies a staged `scripts/hooks/pre-commit` to `.hookstaged_pre-commit` and runs the copy, so a nested hook run executes from a path its own top-of-main sweep globs for deletion; the sweep unlinked the outer run's executing copy mid-selftest, and the run died reading its own `__file__` after every world had passed. The fix shape is the same — remove the instrument from its own action space — and the narrower-glob fix is wrong because the sweep must still delete stale copies of the hook itself. `AUPAI_HOOK_LIVE_COPIES` (PR #142) is the exclusion; the regression test asserts both directions on one planted file, because asserting only the survival half passes against a sweep that deletes nothing.
+
+Cannot see: any scanner whose search space includes its own source, or any cleanup whose deletion population includes its own runtime artifacts, in general. Implemented for one tool: `test_reachability_edges.py` asserts no edge is sourced from `reachability.py` itself, with a negative control, because `comment_edges` returning `{}` would satisfy that assertion vacuously.
 
 ## Design cause: integration happens in a shared writable working tree
 
