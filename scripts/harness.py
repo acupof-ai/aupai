@@ -17262,7 +17262,7 @@ EVIDENCE = {
     "gpu_entry_points_claim": "repo",
     # repo: it reads the committed ledger, not machine state.
     "friction_kinds_cover_ledger": "repo",
-    "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
+    "mix_30b_contract": "repo", "frozen_keys_complete": "repo", "frozen_args_parse": "repo",
 }
 
 
