@@ -1454,3 +1454,19 @@ The guard, in coverage order: a smoke execution of the post-domain path before t
 Cost: ~90 GPU-minutes of a first-domain run, plus the debugging. The repaired run restarted from disk stats (the shard stats were persisted — the restart log shows "stats recomputed from disk (all shards skipped)"), so the loss was the recompute, not the data.
 Evidence: the traceback (4c, read in container 2026-09-10); the repaired file (pod, mtime 17:44Z) and restarted log (`runs/p1_score_corpus.log`, past the crash and into domain 2 at review time); the quote-survival test (44, two shapes, heredoc via `~/bin/pod` argv, both preserved); `git log --all -- data/p1/score_corpus.py` empty and the path absent from main (44); podput's sha256 verification line (this repo's pod_push output).
 open: the corruption's birth side is permanently unidentifiable — the decisive bytes exist nowhere. No gate refuses a pod launch of a script that arrived by a path with no byte-verification, and no gate smoke-executes a script's tail path before a multi-hour run.
+
+## R19. A false alarm that kills the instrument; silence after the alarm reads as the all-clear
+
+### §298 (2026-09-10, R19)
+
+**A scoring monitor reported SCORING ERROR on a healthy run, then killed itself — and the second half is the shape: after the false alarm there was no monitor at all.**
+
+4c ran an ad-hoc scoring monitor over e1's corpus scoring job. It packed four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'`. The job's log line is itself `... | dom 835145/2320870 (0.360) | 334 docs/s` — the data contains the delimiter, so field 2 ("error count") read the word `dom`, non-zero, and the watch broke out. Verified against the pod the same minute (4c): 0 tracebacks, 2 processes alive, 115/298 shards. The run was healthy; the instrument was wrong, and then the instrument was gone.
+
+**The asymmetry.** A false negative leaves the monitor watching — it can still catch the next failure. A false positive that kills the instrument blinds it: the failure class the monitor exists for is now unwatched, and "no events" and "all clear" are indistinguishable to whoever reads the channel. The monitor's error signal must be unforgeable by the watched data, and its liveness must be independently observable — a dead monitor must look different from a quiet one.
+
+The fix as re-armed (4c): `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. That closes the unforgeable-signal half. The liveness half — a heartbeat or watchdog so a dead monitor is distinguishable from a silent one — was not added; it is the open residue (44's reading of the re-arm).
+
+Cost: the run was healthy, so the direct cost was the false alarm's debugging; the deferred cost is the unwatched interval — a real scoring failure in that window would have been met with silence, and the silence would have read as "still fine".
+Evidence: 4c's write-up in `runs/controller_board.md` (2026-09-10, "My own scoring monitor reported SCORING ERROR on a healthy run, then killed itself"), including the log line, the same-minute pod verification, and the re-arm. The monitor script itself is ad-hoc — tracked in no branch and absent from the pod (`grep -l 'SCORING ERROR'` over `runs/*.sh` and `runs/*.py` on the pod: no hits; 44) — so the evidence is the board write-up, not the code.
+open: no check inspects a monitor's parsing of its watched stream; the checkable slice is a packing delimiter that also appears in the carried payload. No monitor in this repo carries a liveness signal a reader can distinguish from silence.

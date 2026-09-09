@@ -425,6 +425,18 @@ The guard, in coverage order: a smoke execution of the post-domain path before t
 
 Cannot see: which side the corruption was born on — the traceback proves the executed bytes, not their origin, and the origin bytes are gone. The meta-shape is the day's: a value's state was assumed, not read — the source's contents this time, the same slot occupancy and name membership occupied in R15's instances.
 
+## R19. An instrument whose parser the watched data can break reports the failure it cannot distinguish and then stops watching; for a monitor, a false alarm that kills the instrument is worse than a missed alarm, because silence after the alarm reads as the all-clear
+
+1 incident (2026-09-10). `manual:` — no check inspects a monitor's parsing of its watched stream. Checkable slice: a monitor that packs multi-field readings with a delimiter that also appears in the carried payload (`tr '\n' '|'` feeding `cut -d'|'`); a scanner could flag a packing delimiter that is not escaped in the data it carries.
+
+A scoring monitor packed four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'`. The log line it carries is itself `... | dom 835145/2320870 (0.360) | 334 docs/s` — the data contains the delimiter, so field 2 ("error count") was the word `dom`, non-zero, and the watch broke out with SCORING ERROR on a healthy run, then was gone. Verified against the pod the same minute: 0 tracebacks, 2 processes alive, 115/298 shards.
+
+The asymmetry is the rule. A false negative leaves the monitor watching; it can still catch the next failure. A false positive that kills the instrument blinds it — after the false alarm there was no monitor at all — and to whoever reads the channel, "no events" and "all clear" are the same signal. A monitor's error channel must be unforgeable by the watched data, and the instrument's liveness must be independently observable: a dead monitor must look different from a quiet one.
+
+- §298: 4c's scoring monitor over e1's corpus scoring, delimiter-in-data false alarm, instrument dead afterward.
+
+The fix as re-armed: `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. The prefix closes the unforgeable-signal half. The liveness half — a heartbeat a reader can distinguish from silence — was not added and is the open residue (44's reading of the re-arm).
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
