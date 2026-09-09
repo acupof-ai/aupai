@@ -179,6 +179,18 @@ slots are provably dead on this corpus.
    reported rather than claimed as zero, and negligible against a 3.4% effect, but it belongs in
    the fact's `uncertainty` when the number lands.
 
+## p1 has no math, and that is a decision
+
+`CLAUDE.md` states this project's objective as "a reasoning model targeting coding **and math**
+capability". p1's corpus has no math domain. That is a deliberate narrowing to the user's current
+instruction -- HumanEval ~60 -- and not an omission.
+
+The consequence, recorded so it is traceable: the reproduction of `math_owm` was stopped on
+2026-09-09 because nothing in p1 reads it. **If math comes back, its corpus work restarts from
+here.** `code_py_starcoder` was stopped for a different reason -- it is upstream of
+`code_dedup08`, which p1 does read, and reproducing an upstream does not validate the downstream
+bytes p1 actually consumes. Nothing was deleted in either case.
+
 ## Acceptance: one falsifiable gate, not a checklist
 
 A corpus is good enough iff **a 350M dense model trained on it clears HumanEval 30%.** phi-1-small
