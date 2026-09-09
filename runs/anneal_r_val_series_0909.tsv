@@ -11,8 +11,9 @@
 # pre-registered criterion reads and the one train.py's own comment calls comparable
 # across runs. Both reads are fixed prefixes of ONE deterministic validation split:
 # Xva is built once (train.py:3361) and never reshuffled, and validate() iterates it in
-# order, breaking at max_batches (train.py:979-980). So the 20-batch read is the first
-# 160 rows and the 100-batch read the first 800 -- different populations, the first a
+# order, breaking at max_batches (train.py:979-980). At the arms' batch 16
+# (cfg line, pod log: --batch 16 --accum 2), the 20-batch read is the first
+# 320 rows and the 100-batch read the first 1600 -- different populations, the first a
 # subset of the second, neither with sampling noise. Subtracting one from the other is
 # a category error, not a precision mismatch (S286, strengthened 2026-09-09).
 #
@@ -26,7 +27,7 @@
 # VERDICT (pre-registered rule, prereg amendment 3): the reweight moved val iff
 # |R_final - N1_final| exceeds BOTH F and D. F = |N1-N2| = 0.048 (100-batch).
 # D = max|R-N1| over the main-phase periodic reads = 0.021 at step 4000 (20-batch).
-# D and F are measured on different populations (first 160 rows vs first 800, the former
+# D and F are measured on different populations (first 320 rows vs first 1600, the former
 # a subset of the latter), both deterministic; the direction of that difference is not
 # established, so D is not a bound on the epoch-end drift. Observed: |1.819 - 1.823| =
 # 0.004, below
