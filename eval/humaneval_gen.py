@@ -194,24 +194,31 @@ def main():
 
     def gen(prompt):
         """Verbatim from _humaneval_run.py: greedy, cfg.seq window, eos tid 1,
-        stop check every 16 tokens, final truncate in the caller."""
+        stop check every 16 tokens, final truncate in the caller. Returns the
+        decoded completion and the stop reason -- the reason is the
+        eos_first/stop_at_0 split (prereg format_sft_humaneval_0909 amendment 1:
+        77.4% of baseline empties are a STOPS string at position 0, the model
+        writing the next top-level def, not eos)."""
         ids = tok.encode(prompt).ids
         x = torch.tensor([ids], device=args.device)
         new = []
+        stop_reason = "max_new"
         with torch.no_grad(), torch.autocast(device_type="cuda", dtype=torch.bfloat16):
             for step in range(args.max_new):
                 lg = model(x[:, -cfg.seq:])[0][:, -1]
                 nxt = lg.argmax(-1, keepdim=True)
                 tid = nxt.item()
                 if tid == 1:
+                    stop_reason = "eos"
                     break
                 new.append(tid)
                 x = torch.cat([x, nxt], 1)
                 if step % 16 == 15:
                     s = tok.decode(new)
                     if any(st in s for st in STOPS):
+                        stop_reason = "stop"
                         break
-        return tok.decode(new)
+        return tok.decode(new), stop_reason
 
     preds_path = os.path.join(
         ROOT, "data", "eval",
@@ -219,7 +226,7 @@ def main():
         + (".nodoc" if args.strip_docstrings else "")
         + ".jsonl")
     t0 = time.time()
-    npass = nempty = 0
+    npass = nempty = neos = nstop = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         out_path = fout.name
         fout.write(json.dumps({
@@ -233,13 +240,31 @@ def main():
             "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }, ensure_ascii=False) + "\n")
         for i, (p, prompt) in enumerate(zip(probs, prompts), 1):
-            c = truncate(gen(prompt))
+            raw, stop_reason = gen(prompt)
+            c = truncate(raw)
             ok = judge(p, c)
             empty = not c.strip()
+            # The two-column split (prereg amendment 1): an empty completion is
+            # eos_first (model ended the turn) or stop_at_0 (a STOPS string at
+            # position 0 -- the model wrote the next top-level def). Reported as
+            # two columns, never the aggregate: the total dropping could be the
+            # two swapping. empty_max_new (280 tokens decoding to blank) has
+            # never been seen and gets its own bucket rather than a wrong label.
+            if not empty:
+                empty_kind = "nonempty"
+            elif stop_reason == "eos":
+                empty_kind = "eos_first"
+                neos += 1
+            elif stop_reason == "stop":
+                empty_kind = "stop_at_0"
+                nstop += 1
+            else:
+                empty_kind = "empty_max_new"
             npass += int(ok)
             nempty += int(empty)
             fout.write(json.dumps(
-                {"task_id": p["task_id"], "gen": c, "ok": ok, "empty": empty},
+                {"task_id": p["task_id"], "gen": c, "ok": ok, "empty": empty,
+                 "empty_kind": empty_kind},
                 ensure_ascii=False) + "\n")
             fout.flush()
             if i % 20 == 0 or i == len(probs):
@@ -249,8 +274,9 @@ def main():
     attest(out_path)
     print(f"\nHUMANEVAL pass@1 (greedy) = {npass}/{len(probs)} = "
           f"{100 * npass / len(probs):.2f}%", flush=True)
-    print(f"empty-completion rate = {nempty}/{len(probs)} = "
-          f"{100 * nempty / len(probs):.1f}%", flush=True)
+    print(f"empty-completion split: eos_first {neos}/{len(probs)}, "
+          f"stop_at_0 {nstop}/{len(probs)} (total empty {nempty}/{len(probs)} = "
+          f"{100 * nempty / len(probs):.1f}%)", flush=True)
     print(f"preds saved: {out_path}", flush=True)
 
 
