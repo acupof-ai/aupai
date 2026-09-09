@@ -94,7 +94,7 @@ roughly doubling the code-token budget.
 
 4c's composition decision (2026-09-09): the p1 filtered code draws from three
 domains, not all nine -- code_rp1t_dd09 (6.24B tokens), code_rp1t_b2v2_dd
-(3.60B), code_dedup08 (~8.95B at draw time; 8.41B measured after, see
+(3.60B), code_dedup08 (~8.95B at draw time; 8.41B extrapolated after, see
 Ablation), ~18.8B total. The other five code domains are
 upstream stages and are not fed. e1 draws 100K rows from the three,
 proportional to token share (33,210 / 19,160 / 47,630), seed 42, reservoir per
@@ -138,7 +138,7 @@ estimate must match the inference distribution.
 2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
 high-score code, confirming the re-draw. Keep rates (document unit) on the
-18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured):
+18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B extrapolated):
 >=2 = 30.4%, >=3 = 26.7%, >=4 = 3.3%. Token yields need the doc/byte ratio
 1.66 (measured on the 100K sample, three points 1.656-1.665): >=2 ~3.3B,
 >=3 ~2.9B, >=4 ~0.36B -- and the final yield uses the keep set's OWN tok/byte,
@@ -227,7 +227,7 @@ before the agreement counts. The high/low grouping has structure, but the
 plant still matters -- a reader in the low group scoring low may just be
 echoing the group's label.
 
-## dedup08 token count (measured 2026-09-09)
+## dedup08 token count (extrapolated 2026-09-09; full-count measured 2026-09-10)
 
 `code_dedup08`'s stats file has no tokens field; measured by the code_rp1t
 method (tokenizer.json over a 330MB sample, 49,439 docs, tok/byte 0.278848,
@@ -238,6 +238,12 @@ docs overlap dd09|b2v2 (4c ruled them deleted, separate pass, 2026-09-09);
 the token count is re-measured after the deletion, not ratio-extrapolated.
 The gross pool is 18.25B tokens and near-unique (starcoder body overlap
 0.3-0.75%).
+
+The post-deletion re-measurement landed 2026-09-10: **8.509B tokens** / 6.06M
+docs, a full count over the 298 clean-copy shards with the frozen tokenizer
+(`datagen/count_domain_tokens.py`). The 8.41B extrapolation was 4.2% below the
+implied pre-deletion count (8.760B at 1,404 tok/doc) — an extrapolation labeled
+"measured" is why the gap went unnoticed.
 
 ## Threshold ablation results (e1, 2026-09-09)
 
