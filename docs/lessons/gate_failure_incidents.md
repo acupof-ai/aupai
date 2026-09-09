@@ -801,7 +801,7 @@ is in the report.
 
 Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
 `runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3`. 44 recomputed both means from the raw rows and
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_5`. 44 recomputed both means from the raw rows and
 got 0.0285 and 0.0089.
 open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
 a reported arm-vs-control delta was placed against a floor on the SAME metric.
@@ -1283,7 +1283,7 @@ boundary the code computes -- 0.9 x 7629 = 6866 -- was later confirmed at RUNTIM
 phase label, `step 6800 [main]` then `step 6900 [anneal]`, which is the independent check the entry
 originally lacked: every claim here was read off the source, and a phase built from a different
 field would have produced the same reading of the same lines;
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3` (amendment 1 `e24268fd`, corrected at
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_5` (amendment 1 `e24268fd`, corrected at
 `c29d6cc0`; amendment 3 redefines D as the spread rather than one draw);
 `runs/anneal_null_val_series_0908.tsv` for the N1 column, and `runs/anneal_r_vs_n1_drift_0909.tsv`
 for R against it -- committed at step 5500 with the arm still running, not at close, because the
