@@ -2269,6 +2269,16 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         print(f"mix: tokenizing {domain} ({len(texts)} docs, workers={workers}) -> {cache}", flush=True)
         data = _encode_domain(texts, tok, workers, log=lambda m: print(m, flush=True))
         del texts
+        # A REBUILD MUST UNLINK THE OLD SIDECAR FIRST. The write below sits after
+        # torch.save, so a crash between the two leaves a cache with no .counts and the
+        # reader falls back -- that holds for a first build. On a rebuild the old sidecar
+        # is still on disk, and a crash in that window leaves the NEW tensor beside the
+        # PREVIOUS tensor's counts, which _cache_pool prefers (3b's case 1 on PR #23,
+        # executed: 400 -> 800 docs, .counts still said 400 and nothing printed). The
+        # unlink is the commit point: after it, every failure in the window leaves no
+        # sidecar, which is the state the reader already handles.
+        if os.path.exists(cache + ".counts"):
+            os.remove(cache + ".counts")
         torch.save(data, cache)
         # Before open(), not inside the with: raising after it leaves behind exactly the
         # 0-byte stamp this guards against. `VOCAB_ID or ""` wrote one, and the read side
@@ -2288,6 +2298,32 @@ def _domain_seqs(domain, tok, is_main, ddp, workers=1):
         with open(seedfp, "w") as f:
             f.write(str(_sample_seed()))
         n_tok = len(data[0] if Cfg.fone else data)
+        # A FOURTH SIDECAR, beside .vocab/.srcfp/.seed: the exact counts, written by the code
+        # that produced the tensor. scripts/write_mix_500m.py sizes pools by torch.load(mmap)
+        # of the whole cache, which the co-residency guard refuses beside a run -- and the
+        # corpus stamp cannot stand in for it: its `tokens` is a 3-shard byte extrapolation
+        # (421,239,303 against this cache's 420,855,850 for code_py_rp1t, b0 2026-09-07) and
+        # it carries no row count at all.
+        #
+        # AFTER torch.save (and after the unlink above), so a crash between the save and
+        # this write leaves a cache with no .counts, which the reader treats as absent and
+        # falls back -- for a first build AND a rebuild alike. The other order would leave
+        # a file describing a tensor that does not exist -- the same argument as the
+        # 0-byte stamp note above. And after the VOCAB_ID raise, which it inherits without
+        # claiming to be identity: a count is true of the bytes whatever vocabulary
+        # produced them, but a counts file beside a cache that then failed to stamp would
+        # outlive the retokenize.
+        #
+        # RAW COUNTS ONLY -- tokens, and the two fields that say what tensor they describe.
+        # NOT `rows`: it is n_tok // (seq+1), and `seq` is right here, so writing it too would
+        # put a second source of truth for one quantity in a file the reader can already derive
+        # it from. The reader derives rows AND pool_rows, so the validation holdout stays in one
+        # place rather than being mirrored here (b0's ruling, 2026-09-07).
+        # `seq` and `fone` are stored because rows is derived from seq, and because
+        # _domain_cache_path owns the _fone suffix -- a reader that hand-spelled the path
+        # drops it silently, and the field is how that reader finds out.
+        with open(cache + ".counts", "w") as f:
+            json.dump({"tokens": int(n_tok), "seq": int(Cfg.seq), "fone": bool(Cfg.fone)}, f)
         print(f"mix: {domain} cached {n_tok / 1e6:.0f}M tokens", flush=True)
         del data
     if ddp:
