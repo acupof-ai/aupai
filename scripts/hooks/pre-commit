@@ -2226,6 +2226,15 @@ def main():
     # PARTIAL would have recorded it as data-exempt, which is false and would mislead
     # the next reader of NEEDS_DATA.
     SELFTEST_FLAG = {"scripts/test_recipe_required.py": "--strict",
+                     # --selfcheck, not --selftest. Same shape as corpus_fingerprint below, but
+                     # this one was BLOCKING THE WHOLE TREE: eval/code_fewshot.py was registered
+                     # with #105 while that branch's commits ran MAIN's hook, which had no such
+                     # entry, so the mismatch was invisible until the merge -- then argparse
+                     # exited 2 on every commit that staged the file, which every merge of main
+                     # into a branch does. Fixed here rather than by renaming the flag, because
+                     # --selfcheck is the convention its siblings use (eval/code_zh.py) and is
+                     # cited twice in docs/lessons/honest_measurement_prereg.md.
+                     "eval/code_fewshot.py": "--selfcheck",
                      # --self-check, not --selftest: the flag predates the convention and
                      # argparse rejects the other spelling, which the hook would read as the
                      # selftest failing rather than as a wrong flag.
