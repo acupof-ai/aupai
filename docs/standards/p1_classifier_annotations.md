@@ -137,7 +137,7 @@ estimate must match the inference distribution.
 5K labeled, 0 discards, all outputs clean single digits: 0=5.2% 1=64.4%
 2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
-high-score code, confirming the re-draw. Keep rates (DOCUMENT口径) on the
+high-score code, confirming the re-draw. Keep rates (document unit) on the
 18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured):
 >=2 = 30.4%, >=3 = 26.7%, >=4 = 3.3%. Token yields need the doc/byte ratio
 1.66 (measured on the 100K sample, three points 1.656-1.665): >=2 ~3.3B,
@@ -217,7 +217,7 @@ vs corpus 1,911B), so length correlates with license headers and
 import-regular professional files, and token-weighted training over-represents
 long docs; a long-bucket AUC markedly above the short bucket says the
 classifier learned length-as-proxy, which per-domain AUC cannot catch. Keep
-rate is reported in BOTH doc and token口径 -- if the classifier favors long
+rate is reported in BOTH doc and token units -- if the classifier favors long
 docs the two diverge, and a token-only report hides it.
 
 The 50-high/50-low two-reader spot check plants 10 known-bad samples (4c,
@@ -273,12 +273,14 @@ and recall against the teacher cut:
 
 Two structural findings:
 
-1. **doc and byte keep rates diverge by ~2x.** At 17% doc keep, byte keep is
-   9-10%. The classifier's kept set skews to short docs (long docs in this
-   corpus are mostly boilerplate/config-heavy and score low). Any keep rate
-   quoted against phi-1's ~17% must say which口径: phi-1's 35M files -> 6B
-   tokens is a file-count keep with a token result, and our byte口径 at a
-   comparable doc keep is roughly half.
+1. **doc and byte keep rates diverge by ~2x.** At a 17% doc keep, byte keep is
+   9-10%; at a 25% doc keep, 14-15%. The classifier's kept set skews to short
+   docs (long docs in this corpus are mostly boilerplate/config-heavy and score
+   low). phi-1's ~17% is a TOKEN rate (>35B tokens in, ~6B out; the 35M files
+   is a separate statistic, not the denominator), so the comparable number for
+   our filter is the byte keep: 0.151 at the >=3, 25%-doc operating point --
+   ~0.9x phi-1's stringency, not half. Quoting our 25% doc keep against
+   phi-1's 17% would overstate the stringency 1.66x.
 2. **The >=4 head cannot mine the textbook tail.** At the teacher's own >=4
    rate (3.07%) the head's precision is 0.457: the top 3% by classifier
    score is less than half score-4. The >=3 -> >=4 cliff is real in the
