@@ -167,8 +167,8 @@ for _f in ALL_FILES:
 
 def git_last_commit(path):
     r = subprocess.run(
-        ["git", "log", "-1", "--format=%h %ad", "--date=short", "--", path],
-        cwd=ROOT, capture_output=True, text=True,
+        ["git", "log", "-1", "--format=%h %ad", "--date=short-local", "--", path],
+        cwd=ROOT, capture_output=True, text=True, env={**os.environ, "TZ": "UTC"},
     )
     return r.stdout.strip() or "never"
 

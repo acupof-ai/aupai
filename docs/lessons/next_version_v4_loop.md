@@ -46,32 +46,43 @@ changing it confounds the loop reading. Sqrt(Softplus) affinity, Hash routing
 in the first 3 layers, and the routing-target-node constraint removal are V4
 refinements a future loop can test (facts/deepseek_v4.json#dsv4.moe).
 
-### Attention: CSA-with-SWA + HCA
+### Attention: CSA+DSA+SWA (landed), HCA + partial RoPE (unbuilt, target architecture)
 
-KDA is removed. The hybrid attention follows V4's pattern
-(facts/deepseek_v4.json#dsv4.hybrid_attention):
+KDA is removed in the treatment arm. The first v2 arm runs **CSA+DSA+SWA with
+NoPE** (4c sequencing ruling, 2026-09-09): the loop is the only FLOP-multiplying
+component under test, the control is NoPE, and putting partial RoPE in the
+treatment would confound the loop's effect with a positional-encoding change.
+Whether the first arm may run without HCA and partial RoPE is a user question
+put 2026-09-09; this spec proceeds on the assumption it may, and the arm is
+reversible if the answer is no.
 
-- Layers 0-1: HCA (Pro's pattern: first 2 layers are pure HCA).
-- Layers 2-11: alternating CSA and HCA.
+**CSA as merged** (b0-35, `e9195327`, behind `Cfg.csa`, off by default and off
+means absent): three branches over the q/k/v GatedMLA already builds, summed by
+a zero-init gate — coarse attention over KV pooled every `csa_compress`
+positions, full-resolution attention over the top-k blocks those coarse scores
+pick (the DSA top-k), and an exact sliding window of `csa_window` recent
+tokens (SWA).
 
-CSA: KV compression m=4 (every 4 tokens → 1 entry, overlapped grouping draws
-from 2m=8 neighbors), Lightning Indexer selects top-k=512 compressed entries
-per query (Flash's value; Pro uses 1024), MQA core, SWA branch restores
-n_win=128 recent uncompressed KV entries
-(facts/deepseek_v4.json#dsv4.hybrid_attention).
+**This is an NSA/DSA-family attention, NOT DeepSeek-V4's CSA**
+(`runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_5`): the grouping is
+non-overlapping where the reference overlaps 2m neighbours, and there is no
+Lightning Indexer — selection is top-k over the same coarse scores, not a
+separate low-dim indexer. **A null result here must be read as this operator,
+and so must a win**: attributing either to the V4 package would be wrong. The
+V4 reference (overlapped grouping m=4, Lightning Indexer top-k=512, MQA core,
+SWA n_win=128; Pro needs 27% of V3.2's single-token FLOPs at 1M context,
+facts/deepseek_v4.json#dsv4.hybrid_attention, dsv4.efficiency_1m) is the
+target the family is named after, not the implementation under test.
 
-HCA: KV compression m'=128, dense attention (no sparse selection)
-(facts/deepseek_v4.json#dsv4.hybrid_attention).
-
-The Lightning Indexer is the "attention selection" in 4c's brief: it makes CSA
-sparse rather than dense over compressed entries. V4 reports Pro needs 27% of
-V3.2's single-token inference FLOPs and 10% of KV cache at 1M context
-(facts/deepseek_v4.json#dsv4.efficiency_1m).
-
-CSA/HCA + partial RoPE does not exist in the codebase yet and must be built.
-The existing attention modules are DeltaRecurrence (KDA, model.py:120) and
-GatedMLA (MLA, model.py:238). The build adds CSA and HCA as new mixer classes
-following the same `inner`/`heads` interface.
+**HCA and partial RoPE are UNBUILT, not dropped.** As of 2026-09-09 neither
+appears in model.py or train.py; the existing attention modules are
+DeltaRecurrence (KDA, model.py:120) and GatedMLA (MLA, model.py:238). Both
+stay in the target architecture the user named on 2026-09-07 (loop + sparse
+MoE + CSA(SWA) + HCA, KDA out): HCA is KV compression m'=128 with dense
+attention, and partial RoPE is the last-64-dim encoding with the -i output
+correction (facts/deepseek_v4.json#dsv4.partial_rope). Unbuilt and dropped are
+different states; a session cannot lift a user order, and the first arm's
+sequencing is not a descoping.
 
 ### Positional encoding: partial RoPE
 
@@ -84,7 +95,9 @@ carries no positional encoding, position is handled by KDA/DeltaRecurrence
 (model.py:227). V4 ships the attention upgrade and the PE change together, and
 the -i correction exists because CSA's KV-as-values structure introduces
 absolute position (facts/deepseek_v4.json#dsv4.nope_rope_break). v2 is a
-from-scratch run: no NoPE checkpoint is converted or continued.
+from-scratch run: no NoPE checkpoint is converted or continued. The first arm
+is NoPE (see Attention): the break is paid when partial RoPE is built, not
+before, and paying it inside the loop comparison would confound the reading.
 
 ### Residual
 
@@ -185,7 +198,7 @@ are trained together from the same init.
 
 ## Prereg
 
-Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_1`.
+Registered in `runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_5`.
 
 ### Val-set definition
 
@@ -251,12 +264,12 @@ a self-correcting excursion.
 
 ## Owners
 
-- b0: CSA/SWA implementation
+- b0: CSA+DSA+SWA implementation (LANDED, e9195327, behind Cfg.csa); HCA + partial RoPE when the user rules the first arm's sequencing insufficient
 - de: loop + schedule
 - e1: data
 - 3b: mix/deriver/compat
 - 98: report
-- tilerl-0a: reviews model.py
+- model.py review: tilerl-0a's session exited 2026-09-09 (the tileRL team is working, roster state active-session-unknown); reviewer to be reassigned by the controller
 
 ## What is not yet answered
 

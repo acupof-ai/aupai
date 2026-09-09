@@ -503,15 +503,30 @@ guess answers it wrongly with no marker.
 ### zh_web
 
 - Result: fingerprint a0d44fc44a289d60, 89,846,923,588 bytes, 21,293,403,945 tokens
-- Source: CCI3 (`web_cci3_p*`) / wanjuan Chinese web, role "Chinese web". [FIRSTHAND, 3b]
-- Build: clean pass1/2/3 + holdout carve; pre-0830v1 stage clean, restamped at 30b.
-  filters `light`, 909 shards. [FIRSTHAND, 3b]
+- Source: CCI3 (`web_cci3_p*`) 847 of 909 files / `web_hq` 62 of 909, role "Chinese web".
+  [FIRSTHAND, e1 2026-09-08]. CORRECTED: this line read "CCI3 / wanjuan Chinese web" until
+  2026-09-08. There is no wanjuan half. Every file in this directory has link count 2, and
+  resolving all 909 by inode puts 847 in the 24 `web_cci3_p*` dirs (83.94 GB, 93.4%) and 62 in
+  `web_hq` (5.91 GB, 6.6%) -- all 62 files `web_hq` has, the whole domain linked in. No path
+  under `/work/aupai` is named wanjuan. The measurement is a `stat` over the directory, not a
+  rebuild: the stamp's own `producer_note` says nothing was cleaned here.
+- Build: NOT BUILT HERE. The stamp's `producer_note` records that the directory was hardlinked
+  from already-cleaned corpora and stamped through `corpus_fingerprint` directly, so no clean
+  ran and `reasons`/`kept`/`kept_chars`/`workers`/`near_dedup` do not exist for it -- filter
+  provenance belongs to the SOURCE corpora. The former text, "clean pass1/2/3 + holdout carve;
+  pre-0830v1 stage clean, restamped at 30b", describes those source builds, not this one.
+  filters `light`, 909 shards. [FIRSTHAND, 3b for the filters/shape; e1 2026-09-08 for the
+  hardlink structure]
 - Fetched: not recorded
 - Searched: `data/corpus/zh_web/build_corpus_stats.json` (no `kept`, no source);
   `datagen/*.py` (0 files name the domain); `git log --all -S zh_web -- datagen/ scripts/`
-  (12 commits). The CCI3 half of the fetch IS recoverable: `_manifest_cci3_hq` in
-  `datagen/fetch_corpus.py` (BAAI/CCI3-HQ via the ModelScope repo-tree API). The wanjuan
-  half: not recorded
+  (12 commits). The CCI3 93.4% IS recoverable: `_manifest_cci3_hq` in
+  `datagen/fetch_corpus.py` (BAAI/CCI3-HQ via the ModelScope repo-tree API), and those 847
+  files are on disk now, so rebuilding that part is re-hardlinking rather than re-cleaning.
+  THE OTHER 6.6% IS NOT: `web_hq`'s own producer is unrecoverable (build unrecorded pre-0830v1,
+  see its block at :365; the 2026-08-30 rebuild input `/data00/fw2raw` is gone, checked
+  2026-09-08). So a reproduction of zh_web today reaches 93.4% of its bytes and no more, and
+  the shortfall is inherited from `web_hq` rather than being a gap in this domain's own record.
 
 ### chatml — built 2026-09-01 (3b, fb ruling)
 
