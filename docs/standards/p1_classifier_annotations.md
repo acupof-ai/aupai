@@ -54,6 +54,11 @@ Greedy (temperature 0), `max_new_tokens=2`. Parse: strip, take the first
 character if it is in 0-5; otherwise retry once; on second failure discard the
 sample and count it. Discards are reported, never silently replaced.
 
+The model is a reasoning model: requests MUST set `reasoning_effort: "none"`
+(or the serve must close the think block in the prompt). With default thinking
+the 2-token budget is consumed by thinking tokens and no digit is produced.
+Verified on the pilot (de, 2026-09-09).
+
 ## Truncation
 
 `{code}` = the first 350 characters of the file (imports, docstring,
@@ -80,21 +85,25 @@ roughly doubling the code-token budget.
 
 ## Input samples
 
-e1 draws them from the code cache (`data/corpus/code_*`): uniform over files,
-seed 42, 100K rows of `{id, text}` (id = domain + doc index; text = the head
-350 chars). de does not generate inputs. The
-sample represents the classifier's future inference distribution, so it comes
-from the cache the classifier will filter. If 3b's near-dedup lands before the
-full run, the sample is re-drawn from the deduped corpus (dedup is 3b's line;
-labels on duplicates are consistent but the inference distribution changes).
+4c's composition decision (2026-09-09): the p1 filtered code draws from three
+domains, not all nine -- code_rp1t_dd09 (6.24B tokens), code_rp1t_b2v2_dd
+(3.60B), code_dedup08 (~8.95B), ~18.8B total. The other five code domains are
+upstream stages and are not fed. e1 draws 100K rows from the three,
+proportional to token share (33,210 / 19,160 / 47,630), seed 42, reservoir per
+domain, rows of `{id, text}` (id = domain + shard + doc index; text = the head
+350 chars). de does not generate inputs. The sample represents the classifier's
+future inference distribution by construction. If 3b's near-dedup lands before
+the full run, the sample is re-drawn (dedup is 3b's line; labels on duplicates
+are consistent but the inference distribution changes).
 
 ## Pilot gate
 
-Run 1,000 samples first and inspect the score histogram. The pilot draws from
-code_rp1t (largest domain, multilingual, widest quality spread); the full-run
-sample re-draws from whatever domains 4c selects, so the pilot domain is not a
-precedent. If the teacher collapses onto 3-4 (no spread at the tails), the
-50/50 spot check has no extremes to sample and the rubric gains one anchored
-example per level before the full run. If the histogram has spread, the full
-run proceeds. The pilot is the cheapest five hours of insurance this track
-has.
+RAN 2026-09-09 (de, 5-card serve, ~2 min, 1000 samples from code_rp1t):
+histogram 0=6.1% 1=73.8% 2=3.1% 3=15.5% 4=1.5% 5=0.0%; discards 0/1000; all
+outputs clean single digits. Spread exists, so the gate passed and the rubric
+gains NO anchored examples -- adding them now would make pilot and full-run
+labels incomparable. The 73.8% at 1 is consistent with web-scraped code being
+mostly boilerplate; the upper tail (score >= 3) is 17.0%, coincident with
+phi-1's ~17% keep rate, and the threshold ablation pins the operating point.
+Score 5 never fired; if it stays at zero in the full run it is a dead level
+and collapses into 4 at threshold time, not before.
