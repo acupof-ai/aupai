@@ -1384,3 +1384,23 @@ Guard criterion: a cross-project attribution cites only non-shareable identity �
 Cost: ~30 min of cross-team uncertainty about a live 88 GB process on a card everyone is accounting for.
 Evidence: host cmdline and pid 1171892 (fb's handoff, 2026-09-09); nvidia-smi readings above (fb, 15:2xZ and 15:41Z, same pid/UUID); the two namespace directions (tilerl-27, via fb, 2026-09-09: de's serve pid 546405 a host pid, invisible and unkillable from the container; tilerl's claim a container pid, unresolvable on the host, alive confirmed by 100% util); `agent-infer/Cargo.toml:78,122,134` (tilerl-27); `runs/card_assignment.json` note and `_current_state_field` (the three occupancy readings and the fix); `runs/roster.json` `not_on_this_team` (the four dispatches); `runs/controller_board.md` card table (the resolved attribution).
 open: no scanner flags an attribution whose evidence is a shared-attribute field. The checkable slice is mechanical — a cross-team claim whose evidence cites a flag, port, or feature name — but no check knows where cross-team attributions are written.
+
+## R16. Precision can move the residual error to the dangerous side
+
+### §295 (2026-09-09, R16)
+
+**A strictly more accurate liveness criterion whose residual error moved from "card sits idle" to "two jobs on one card" — caught in review before it ever decided a real card.**
+
+`card_claim.py` decides whether a card claim is stale. The old criterion: the claim's pid is dead. The new one (#173): the pid is dead OR alive with a changed start time — pid-reuse detection, because `/proc/<pid>` cannot distinguish a recycled pid from the original process. The new criterion is strictly more accurate: it separates a case the old one could not, the selftest covers both directions (a claim whose pid was reused reads stale; one whose start time matches stays live), and claims without a recorded start time keep the old behavior by design (`_pid_reused` returns False on a missing or unreadable start time).
+
+The residual error changed sides. Old criterion, only false reading: a recycled pid reads alive -> the claim reads LIVE -> the card looks owned -> nobody touches it -> cost: an idle card. New criterion's added false reading: a live process reads STALE — the unreadable case is guarded to the safe direction, but a wrong recorded start time is not — -> the card looks free -> someone acquires it -> cost: two jobs on one card. The precision gain is real and the worst case got worse, and no standard review question examines the second half.
+
+Why it escapes review (tilerl-27's formulation, the core of the rule): this class is hardest to see in review because "more precise" always sounds good. Review checks whether the new criterion is correct (yes), tested (yes, both directions), and compatible with old behavior (yes). All three hold. None asks where the residual error now lands.
+
+Learned from an incident that did not happen, not one that did — the #173 review caught the direction before the criterion ever decided a real card. Same file, same hour, a third defect of a different shape: `card_claim.py:478` did `int(c.get("pid", -1))`, which crashes on a JSON null — the schema allowed what the read path could not handle, because acquire's `pid=None` default writes `"pid": null` and `.get`'s default only covers an absent key.
+
+Guard criterion: when a predicate in a claim/liveness/safety path gains a conjunct, the review asks two questions in order — which side the residual error lands on under the new predicate, then whether the new predicate is more accurate. Accuracy gains do not hold the cost direction fixed, and the cost direction is the asymmetric half.
+
+Cost: none realized — caught in review. The cost that did not occur is a card collision under a false STALE.
+Evidence: `scripts/card_claim.py` #173 diff (`_start_time`, `_pid_reused`, the two selftest cases); the old criterion and the null crash at main `card_claim.py:478` (`int(None)`); tilerl-27's formulation and 4c's case, 2026-09-09.
+open: no checklist or scanner flags a predicate-tightening diff for the residual-direction question. The checkable slice is mechanical — a diff adding a conjunct to a predicate in claim/liveness code — but no review gate consumes it.
