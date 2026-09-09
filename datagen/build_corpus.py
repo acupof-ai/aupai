@@ -1376,7 +1376,11 @@ def _sample_ok(a, out):
             g = spec[6:] if spec.startswith("jsonl:") else spec[8:] if spec.startswith("parquet:") else spec
             paths += sorted(glob.glob(g)) if ("jsonl:" in spec or "parquet:" in spec) else []
     for p in paths:
-        for text, _ in iter_jsonl(p):
+        # parquet sources must be read as parquet: the glob above admits parquet:
+        # specs, and iter_jsonl on a parquet file dies on the first binary byte
+        # (measured 2026-09-08: math_owm stage1 rerun, UnicodeDecodeError 0x90).
+        stream = iter_parquet(p) if p.endswith(".parquet") else iter_jsonl(p)
+        for text, _ in stream:
             text = SPECIAL_TOKEN.sub("", text).strip()
             if not text:
                 continue
