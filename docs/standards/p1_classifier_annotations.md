@@ -40,15 +40,16 @@ You are annotating code samples for an educational-value classifier. Rate how us
 User:
 
 ```
-Language: {lang}
-
 {code}
 ```
 
-`{lang}` is the file extension; `{code}` is the truncated file text. If the
-served model is a base model with no chat template, the same text runs as a
-raw completion prefix (the contract is the rubric text and the output format,
-not the wrapper).
+`{code}` is the truncated file text. The corpus records are
+`{content, source, url}` with no language field; the rubric is
+language-agnostic and the teacher infers the language from the code, so no
+language hint is sent (code_rp1t is multilingual, so the classifier is
+multilingual by construction). If the served model is a base model with no
+chat template, the same text runs as a raw completion prefix (the contract is
+the rubric text and the output format, not the wrapper).
 
 ## Output contract
 
@@ -83,7 +84,8 @@ roughly doubling the code-token budget.
 ## Input samples
 
 e1 draws them from the code cache (`data/corpus/code_*`): uniform over files,
-seed 42, 100K rows of `{id, lang, text}`. de does not generate inputs. The
+seed 42, 100K rows of `{id, text}` (id = domain + doc index; text = the head
+350 chars). de does not generate inputs. The
 sample represents the classifier's future inference distribution, so it comes
 from the cache the classifier will filter. If 3b's near-dedup lands before the
 full run, the sample is re-drawn from the deduped corpus (dedup is 3b's line;
