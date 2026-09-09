@@ -289,9 +289,11 @@ def queue_section():
     roster_p = os.path.join(REPO, "runs", "roster.json")
     if not (os.path.exists(tasks_p) and os.path.exists(roster_p)):
         return ""
-    # exited members stay resolvable in the roster but are not a live row on the page (PR #119)
-    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
-               if m.get("state") != "exited"]
+    # exited members stay on the page, tagged: dropping them would make a wrong
+    # exited mark invisible (the tilerl retraction, 2026-09-09)
+    _roster = json.load(open(roster_p, encoding="utf-8"))["members"]
+    members = [m["name"] for m in _roster]
+    exited = {m["name"] for m in _roster if m.get("state") == "exited"}
     exempt = {"fb", "98"}
     tasks = [json.loads(ln) for ln in open(tasks_p, encoding="utf-8") if ln.strip()]
     latest = {}
@@ -319,7 +321,7 @@ def queue_section():
         open_cell = "—" if m in exempt else str(s["open"])
         oldest = _age(s["oldest"], now) if s["oldest"] else "—"
         closed = bj_str(s["closed"]) if s["closed"] else "—"
-        tag = " 豁免" if m in exempt else ""
+        tag = " 豁免" if m in exempt else (" 已退出" if m in exited else "")
         out.append(f'<tr><td>{html.escape(m)}{tag}</td><td class={cls}>{open_cell}</td>'
                    f'<td>{oldest}</td><td>{closed}</td></tr>')
     out.append("</table>")
