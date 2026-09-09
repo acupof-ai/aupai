@@ -1331,6 +1331,24 @@ def status():
     dup = {c: n for c, n in held.items() if len(n) > 1}
     for c, names in dup.items():
         lines.append(f"CONFLICT card {c} claimed by {names} -- acquire should have refused")
+    # ACTIVE LOANS: granted_by entries with released_at=null. `note` is the current-state
+    # authority, but a reader should not need to open the JSON to see which cards are lent --
+    # 4c read 0 MiB as unowned three times on 2026-09-09 because nothing in this output said
+    # otherwise (tilerl-27's rule: absence of a release entry is not a release).
+    _ap = os.path.join(FOREIGN_ROOT, "runs", "card_assignment.json")
+    try:
+        with open(_ap, encoding="utf-8") as _af:
+            _ao = json.load(_af)
+        for _g in _ao.get("granted_by") or []:
+            if not isinstance(_g, dict) or "released_at" not in _g:
+                continue
+            if _g.get("released_at") is None:
+                lines.append(
+                    f"LOAN  {_g.get('when', '?')} by {_g.get('by', '?')}: "
+                    f"{str(_g.get('what', '?'))[:120]} -- STILL HELD (released_at=null)"
+                )
+    except (OSError, ValueError):
+        pass
     orphans = []
     # ROOT, not a path derived from CLAIM_DIR: the selftest swaps CLAIM_DIR to a temp directory,
     # and deriving the repo root from it would look for card_assignment.json under /tmp and find
@@ -2641,6 +2659,33 @@ def _selftest():
             "THE SAME memory on an unmarked card still reads ORPHAN (the negative case)",
         )
         globals()["card_memory"] = real
+
+        # ACTIVE LOANS: a granted_by entry with released_at=null must print STILL HELD,
+        # not blank -- 4c read 0 MiB as unowned three times on 2026-09-09 because nothing
+        # in the status output said the cards were lent (tilerl-27's rule: absence of a
+        # release entry is not a release).
+        with open(os.path.join(froot, "runs", "card_assignment.json"), "w") as fh:
+            json.dump(
+                {
+                    "cards": {},
+                    "granted_by": [
+                        {"when": "2026-09-09T14:2xZ", "by": "fb + tilerl-27",
+                         "released_at": None,
+                         "what": "LOAN: cards 1 and 3 -> b0's p1 teacher serve"},
+                        {"when": "2026-09-09T13:3xZ", "by": "fb",
+                         "released_at": "2026-09-09T14:2xZ",
+                         "what": "superseded entry"},
+                        "old string entry, no released_at",
+                    ],
+                },
+                fh,
+            )
+        _o, _d, loan_lines = status()
+        loan_said = [x for x in loan_lines if x.startswith("LOAN")]
+        _case(
+            len(loan_said) == 1 and "STILL HELD" in loan_said[0] and "cards 1 and 3" in loan_said[0],
+            f"a granted_by entry with released_at=null prints STILL HELD: {loan_said}",
+        )
 
         # ---------------------------------------------------------- grant_lane (de, 2026-09-04)
         # The four fields must move together, and the gate that reads them must go GREEN on the
