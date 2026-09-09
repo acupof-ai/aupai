@@ -168,10 +168,22 @@ EXCLUDE_DIRS = ("workflows",)
 # dropped from one of them (b0 2026-09-03).
 PUSHED_RUNS = ("runs/card_assignment.json",)
 
+# A DIRECTORY NAME CANNOT ANSWER "WHO WROTE THIS FILE". The predicate below used to be
+# the directory alone plus a one-file allowlist, so every hand-written script under runs/
+# read as pod-produced and `pod_push.sh --all` skipped it -- exit 0, zero `refusing`, the
+# stamp advanced, and the pod kept an older copy. Measured 2026-09-08: 45 tracked .sh/.py
+# under runs/, 44 of them silently unshippable; 25 were absent from the pod entirely and
+# the 20 present were byte-identical only because someone had pushed each one by name.
+# runs/anneal_arms.sh was one of them, and N1 died on the stale copy. The extension is
+# what separates the two populations: the pod writes .jsonl rows and .log output, the
+# laptop writes .sh and .py.
+_LAPTOP_WRITTEN_SUFFIXES = (".sh", ".py")
+
 
 def _pod_written(path):
     """Is this a runs/ file the pod produces, so drift is expected and pushes skip it?"""
-    return path.startswith("runs/") and path not in PUSHED_RUNS
+    return (path.startswith("runs/") and path not in PUSHED_RUNS
+            and not path.endswith(_LAPTOP_WRITTEN_SUFFIXES))
 
 # git INHERITS these from the caller. The hook runs the selftests below with GIT_DIR set
 # to the committing worktree's gitdir and GIT_INDEX_FILE to its temp index, so a `git
@@ -686,6 +698,15 @@ def selftest():
     manifest = {"scripts/real.py": (sha_disk(os.path.join(d, "scripts", "real.py")), "training")}
     found = unregistered_py(d, manifest)
     assert found == ["probe.py"], found
+
+    # _pod_written: the two populations under runs/, and the allowlist exception. Asserted
+    # in both directions -- a predicate that answered True for everything would pass a
+    # one-sided check, and that is exactly the defect it replaces.
+    for _p in ("runs/experiments.jsonl", "runs/friction.jsonl", "runs/x.log", "runs/claims/7"):
+        assert _pod_written(_p), _p
+    for _p in ("runs/anneal_arms.sh", "runs/restamp_cot_ot.py", "runs/audit_0904/dead_worlds.py",
+               "runs/card_assignment.json", "scripts/harness.py", "train.py"):
+        assert not _pod_written(_p), _p
     with open(os.path.join(d, "data", "pod_head_manifest.txt"), "w") as f:
         f.write("".join(f"{sha}  {p}  {cls}\n" for p, (sha, cls) in manifest.items()))
     ok, evidence = check_pod(d)
@@ -1035,8 +1056,13 @@ def _selftest_ref():
     _saved_manifest, _saved_root = MANIFEST, ROOT
     try:
         def g(*a):
+            # GIT_* stripped: `git init` under a leaked GIT_DIR writes the SHARED repo, and
+            # with GIT_DIR at a worktree gitdir it flips core.bare (2026-09-02, twice).
+            # Pattern from test_behind_main_overlap.py:55-56.
+            env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+            env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
             return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True,
-                                  timeout=60)
+                                  timeout=60, env=env)
 
         os.makedirs(os.path.join(d, "scripts"))
         os.makedirs(os.path.join(d, "data"))
@@ -1087,16 +1113,70 @@ def _selftest_ref():
             "in main's manifest and ABSENT from the stale HEAD's, which is how it gets skipped "
             f"instead of refused.\n  main: {at_mainref!r}\n  head: {at_head!r}")
 
-        # And the default is main, not HEAD -- the whole point of the flip. Asserted by calling
-        # write_manifest with NO ref, which is how pod_push.sh:193 and :274 call it.
+        # The default is main, not HEAD -- the 2026-09-05 flip. pod_push no longer TAKES the
+        # default (it passes --ref "$MAIN_REF" since the three-halves fix below), so this is now
+        # an assertion about the function's own contract rather than about its call sites.
         write_manifest(d)
         with open(MANIFEST, encoding="utf-8") as fh:
             default_text = fh.read()
-        assert default_text == at_mainref, (
-            "write_manifest's default ref is not main; pod_push's own call sites take the "
-            "default, so they would still read the detached HEAD")
+        assert default_text == at_mainref, "write_manifest's default ref is not main"
+
+        # ALL THREE HALVES OF --all NAME ONE REF (4c's ruling 2026-09-08, tilerl-0a's symptom).
+        # push_one gates against $MAIN_REF and resolve_stamp_sha stamps it; write_manifest
+        # defaulted to the LOCAL `main`, which since the PR flip is a stale cache of the shared
+        # branch -- `gh pr merge` advances origin/main and touches no local ref. The world is the
+        # divergence itself: a local `main` one commit BEHIND a remote-tracking origin/main, with
+        # the file differing between them.
+        #
+        # MEASURED before the fix, in this shape: push_one required blob 8c1384d8 and the stamp
+        # said 3439ccdf (both origin/main) while the manifest wrote 626799f0 (local main), so the
+        # manifest asserted the OLD blob for a file pushed at the NEW one and the pod-side --check
+        # reported drift on the file the push had just landed. tilerl-0a hand-fixed it twice by
+        # fast-forwarding local main, which worked because it collapsed the refs onto one; the
+        # ruling was explicitly NOT to do that in code, since that ref is shared by every
+        # worktree.
+        g("checkout", "-q", "main")
+        with open(os.path.join(d, "scripts", "shipped.py"), "w") as fh:
+            fh.write("x = 3  # the value only the remote ref has\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "remote-only")
+        _remote_tip = g("rev-parse", "HEAD").stdout.strip()
+        # A remote-tracking ref pointing at that commit, and local main moved BACK one: exactly
+        # what a clone looks like after someone else's PR merges.
+        g("update-ref", "refs/remotes/origin/main", _remote_tip)
+        g("update-ref", "refs/heads/main", _remote_tip + "^")
+        _local_tip = g("rev-parse", "refs/heads/main").stdout.strip()
+        assert _local_tip != _remote_tip, "the world does not diverge; nothing is being tested"
+
+        at_local = _manifest_text(d, "main")
+        at_remote = _manifest_text(d, "origin/main")
+        assert at_local != at_remote, (
+            "local main and origin/main produce the same manifest, so this world cannot show a "
+            f"ref mismatch.\n  local:  {at_local!r}\n  remote: {at_remote!r}")
+        # THE ASSERTION THAT MATTERS: the hash the manifest carries for the file must be the one
+        # push_one's ref would have required, i.e. origin/main's content -- because that is the
+        # ref pod_push resolves and passes.
+        #
+        # sha256 OF THE CONTENT, not the git blob sha. sha_head hashes `git show <ref>:<path>`'s
+        # bytes, so the manifest and `git rev-parse <ref>:<path>` live in different hash spaces --
+        # comparing them fails on a correct manifest, which is what the first version of this
+        # assertion did.
+        _want = sha_head(d, "scripts/shipped.py", "origin/main")
+        _stale = sha_head(d, "scripts/shipped.py", "main")
+        assert _want and _stale and _want != _stale, (
+            f"the two refs hash the file identically ({_want}); the world does not diverge on "
+            f"the path being asserted")
+        assert _want in at_remote, (
+            f"origin/main's manifest does not carry origin/main's content hash {_want[:12]}")
+        assert _stale not in at_remote, (
+            f"the manifest built from origin/main still carries the STALE local-main hash "
+            f"{_stale[:12]}; the ref argument did not take")
+        assert _stale in at_local and _want not in at_local, (
+            "the local-main manifest is not the stale one, so the two halves of this assertion "
+            "are not opposites and the ref could be ignored in both directions")
         return ("ref load-bearing: stale detached HEAD omits a file main has, HEAD==main "
-                "identical, default is main")
+                "identical, default is main, and a manifest built from origin/main carries "
+                "origin/main's blob rather than a behind local main's")
     finally:
         globals()["MANIFEST"], globals()["ROOT"] = _saved_manifest, _saved_root
         shutil.rmtree(d, ignore_errors=True)
@@ -1142,6 +1222,13 @@ def main():
             ctx = contextlib.nullcontext()
         with ctx:
             selftest()
+    elif mode == "--ship-paths":
+        # The manifest paths that flow MAIN -> POD, i.e. everything _pod_written rejects.
+        # pod_push.sh had two hand-rolled `grep -v '^runs/'` copies of this and neither
+        # carried the PUSHED_RUNS exception, which is the drift the comment on PUSHED_RUNS
+        # predicted. One definition, read by both languages.
+        print("\n".join(p for p in (l.split()[1] for l in open(MANIFEST) if l.split())
+                         if not _pod_written(p)))
     elif mode == "--list-scoped":
         print("\n".join(scoped_paths()))
     elif mode == "--check":

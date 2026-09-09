@@ -15,9 +15,16 @@ or comments; different program = not. If the rp1t member is a genuine duplicate 
 the starcoder representative in >= 80% of mixed clusters, code_dedup08 stands;
 below that, rerun with a domain-fair representative (prefer the rp1t member).
 
-    python datagen/code_dedup_handread.py --root data/corpus \
+    python3 datagen/code_dedup_handread.py --root data/corpus \
         --domains code_py_starcoder code_py_rp1t --ckdir runs/code_dedup08_ck \
-        --rep math 40 --n_rep 100 --out runs/code_dedup_handread_sheet.json
+        --n_rp1t_clusters 40 --n_total_clusters 100 \
+        --out runs/code_dedup_handread_sheet.json
+
+`--rep math 40 --n_rep 100` stood here until 2026-09-08 and does not parse: the parser
+has never had either flag. doc_commands_exist checks that a cited FILE exists, not that
+a cited command's flags are accepted, so a documented invocation can be wrong for as
+long as nobody types it -- this one was, and the run that needed it lost the time to
+argparse's error. Verified by `--help` before this edit, not by reading the parser.
 """
 
 import argparse
@@ -64,6 +71,73 @@ def cluster_row(ord_, mem, dom_of, doc, domains):
         # deletion rate is duplicate removal or supply loss. Blank until a human fills it.
         "same_file": None,
     }
+
+
+def locate(where, dom_locs, domains):
+    """(shard, line) for a (domain_name, local_index) pair.
+
+    Exists as its own function because the inline version was WRONG and the selftest could not
+    see it: `dom_of` returns the domain NAME (a.domains[d]) while dom_locs is a LIST indexed by
+    position, so `dom_locs[name]` raised TypeError. The script therefore never once reached the
+    sheet -- clustering completed, 116,380 clusters were found, and the first cluster_row call
+    died on it (2026-09-08).
+
+    The old selftest passed three hand-built cluster_row cases with their own `doc` closure, so
+    the real lookup was never called with a real dom_locs. Hoisted here so it can be.
+
+    dom_of keeps returning the NAME on purpose, and the reason is not the number of call sites
+    (b0, reviewing #49) -- that count changes whenever someone adds a caller. Under
+    index-return, `dom_of(g)[0] == domains[1]` becomes `== 1`: a bare integer compared against
+    a positional convention that lives in the arg parser. `== domains[1]` carries its own
+    meaning; `== 1` requires the reader to know that position 1 is rp1t. That is POSITION
+    STANDING IN FOR IDENTITY, the same class as the ordinal slice removed from this file's draw
+    one commit earlier -- index-return would reintroduce in every comparison exactly the
+    confusion the sibling fix eliminated in one slice.
+    """
+    name, local = where
+    # `.index()` takes the FIRST match and --domains is nargs="+" with no duplicate check
+    # (line 227), so two domains sharing a name make every lookup for the later one resolve
+    # silently to the earlier one's shard and line -- no exception, and the sheet then
+    # attributes a document to the wrong corpus. That is the single mistake this tool exists
+    # to prevent, so it refuses (b0's review of #49, measured: locate(("same", 0), locs,
+    # ["same", "same"]) returned the FIRST domain's ("shard_a", 7)).
+    if len(set(domains)) != len(domains):
+        dup = sorted({d for d in domains if domains.count(d) > 1})
+        raise SystemExit(
+            f"REFUSE: --domains names {dup} more than once. Every lookup for the later "
+            f"occurrence would resolve to the earlier one's shard and line, so the sheet would "
+            f"attribute documents to the wrong corpus with nothing raising."
+        )
+    return dom_locs[domains.index(name)][local]
+
+
+def draw_mixed(mixed, n, rng):
+    """n mixed clusters, drawn rather than sliced -- and the assertion lives HERE, not in the
+    caller, so the selftest exercises the production path instead of a copy of it.
+
+    `rng.shuffle(list(mixed.keys()))` stood in the caller until 2026-09-08 and was a NO-OP:
+    shuffle mutates in place and the list it was handed was discarded on the same line, so the
+    slice that followed took the LOWEST-ORDINAL n clusters. Ordinal is position in the corpus
+    scan, so that was a contiguous slice of the first shards, not a sample of the stratum -- and
+    the mixed stratum is the arm #70's whole question rests on.
+
+    The first fix asserted the property in the caller and re-tested both spellings on a synthetic
+    pool inside the selftest. The mutant SURVIVED: restoring the no-op in the caller left the
+    selftest green, because the selftest was checking its own copy of the logic. Hence one
+    function, called by both.
+    """
+    keys = sorted(mixed)
+    got = rng.sample(keys, min(n, len(keys)))
+    if len(keys) > n:
+        # A no-op shuffle is indistinguishable from a working draw by the output's SIZE -- both
+        # return n. The property that separates them: a random draw cannot be the pool's first n
+        # in order.
+        if got == keys[:n]:
+            raise SystemExit(
+                f"REFUSE: the mixed draw of {n} equals the {n} lowest-ordinal clusters exactly. "
+                f"That is corpus position, not a sample; the 2026-09-08 no-op shuffle is back."
+            )
+    return got
 
 
 def _selftest():
@@ -113,6 +187,52 @@ def _selftest():
     if any(r["same_file"] is not None for r in (pure, mixed, rp_first)):
         fails.append("same_file must start blank; it is the human's judgement")
 
+    # THE LOOKUP, through the real locate(). `dom_of` hands it a NAME and dom_locs is indexed
+    # by POSITION; the inline version indexed by name and raised TypeError on every run, which
+    # the three cluster_row cases above cannot see because they pass their own `doc` closure.
+    # Second domain on purpose: index 0 would pass even if locate() ignored the name entirely.
+    _locs = [[("shard_a", 7)], [("shard_b", 3), ("shard_b", 9)]]
+    _doms = ["dom_zero", "dom_one"]
+    if locate(("dom_one", 1), _locs, _doms) != ("shard_b", 9):
+        fails.append("locate() did not resolve (dom_one, 1) to shard_b line 9")
+    if locate(("dom_zero", 0), _locs, _doms) != ("shard_a", 7):
+        fails.append("locate() did not resolve the first domain")
+    try:
+        locate(("no_such_domain", 0), _locs, _doms)
+    except ValueError:
+        pass
+    else:
+        fails.append("locate() accepted a domain name not in domains; it must raise")
+    # DUPLICATE NAMES: .index() takes the first match, so without the refusal a lookup for the
+    # later domain returns the earlier one's shard -- wrong provenance, nothing raised.
+    try:
+        locate(("same", 0), [[("shard_a", 7)], [("shard_b", 3)]], ["same", "same"])
+    except SystemExit as e:
+        if "more than once" not in str(e):
+            fails.append(f"duplicate --domains refused with the wrong message: {e}")
+    else:
+        fails.append(
+            "locate() accepted a duplicated domain name; it resolves to the FIRST and "
+            "would attribute a document to the wrong corpus"
+        )
+
+    # THE DRAW, through draw_mixed itself. The three cluster_row cases above cannot see this
+    # defect: they test the SHAPE of one row and the no-op was in WHICH rows get built.
+    pool = {k: [k, k + 1] for k in range(200)}
+    got = draw_mixed(pool, 40, random.Random(5))
+    if len(got) != 40:
+        fails.append(f"draw_mixed returned {len(got)}, not 40")
+    if got == sorted(pool)[:40]:
+        fails.append("draw_mixed returned the pool's first 40 in order -- not a draw")
+    if len(set(got)) != len(got):
+        fails.append("draw_mixed returned a duplicate cluster; a cluster must be read once")
+    if not set(got) <= set(pool):
+        fails.append("draw_mixed invented a cluster not in the pool")
+    # and the REFUSAL: a pool whose draw would be the first n must raise, not return
+    try:
+        draw_mixed({k: [k] for k in range(3)}, 3, random.Random(5))
+    except SystemExit:
+        fails.append("draw_mixed refused when n >= pool size, where every draw IS the whole pool")
     for f in fails:
         print(f"  FAIL {f}", file=sys.stderr)
     if fails:
@@ -122,7 +242,12 @@ def _selftest():
         "code_dedup_handread selftest OK: pure-starcoder cluster yields a row with a None "
         "excerpt (the old rp1t[0] raised IndexError on all 60 of them), the mixed cluster "
         "keeps its excerpt, an rp1t-first cluster is labelled rp1t(rep), and same_file is "
-        "blank for the reader"
+        "blank for the reader; and draw_mixed -- the production draw, not a copy of it -- "
+        "returns 40 distinct clusters from the pool and never the pool's first 40 in order, "
+        "which is the only property that separates a draw from the no-op shuffle it replaced; "
+        "and locate() resolves a (name, local) pair through the real position lookup that "
+        "raised TypeError on every run before 2026-09-08, and refuses a duplicated domain name "
+        "rather than silently resolving it to the first occurrence"
     )
     return 0
 
@@ -147,6 +272,13 @@ def main():
         if os.path.exists(sig_path) and os.path.exists(loc_path):
             S = np.load(sig_path)
             L = json.load(open(loc_path))
+            if S.shape[0] == 0:
+                raise SystemExit(
+                    f"REFUSE: the cache for {dom!r} at {sig_path} holds 0 signatures. An empty "
+                    f"cache is what a misspelled domain leaves behind, and reading it makes the "
+                    f"typo permanent -- every later run reports 'cached 0 sigs' and looks fine. "
+                    f"Delete it and re-sign, or fix the domain name."
+                )
             print(f"{dom}: cached {S.shape[0]} sigs", flush=True)
         else:
             # replicate near_dedup_scale's signing block
@@ -154,6 +286,18 @@ def main():
             from multiprocessing import Pool
 
             shards = sorted(glob.glob(os.path.join(a.root, dom, "*.jsonl")))
+            # A misspelled --domains entry globs zero shards, and without this the run prints
+            # "signing 0 shards", writes an EMPTY sig cache, and continues: the domain
+            # contributes nothing to the clustering while every later line looks healthy. The
+            # cached zero is the worse half -- the next run reads "cached 0 sigs" and a typo is
+            # then indistinguishable from a genuinely empty domain, permanently. --domains is
+            # nargs="+" so any string reaches here (3b, 2026-09-08, while #70 was blocked).
+            if not shards:
+                raise SystemExit(
+                    f"REFUSE: domain {dom!r} has no *.jsonl under {os.path.join(a.root, dom)}. "
+                    f"Signing it would write an empty cache and every later count would be "
+                    f"silently short by this domain. Check the spelling against --root."
+                )
             parts, done = [], 0
             print(f"{dom}: signing {len(shards)} shards", flush=True)
             with Pool(16) as pool:
@@ -226,14 +370,27 @@ def main():
     print(f"total rp1t docs in clusters: {rp1t_members}", flush=True)
 
     # ordinal rep per cluster = min global index (code_dedup08 kept min ordinal)
-    rng.shuffle(list(mixed.keys()))
-    rp1t_sample = list(mixed.keys())[: a.n_rp1t_clusters]
+    #
+    # `rng.shuffle(list(mixed.keys()))` stood here until 2026-09-08 and was a NO-OP: shuffle
+    # mutates in place, and the list it was handed is discarded on the same line, so `mixed` was
+    # untouched and the slice below took the 40 LOWEST-ORDINAL mixed clusters. Ordinal is position
+    # in the corpus scan, so that is a contiguous slice of the first shards, not a sample of the
+    # stratum -- and the mixed stratum is the arm the whole question rests on. The intent was
+    # visible in the code and the effect was absent, which is why the sample below is asserted
+    # rather than assumed. `sorted()` first, because dict order depends on insertion and a seeded
+    # draw over an unordered set is not reproducible.
+    rp1t_sample = draw_mixed(mixed, a.n_rp1t_clusters, rng)
     star_sample = rng.sample(sorted(pure_star), max(0, a.n_total_clusters - a.n_rp1t_clusters))
     chosen = rp1t_sample + star_sample
 
     def doc(g):
-        d, local = dom_of(g)
-        shard, ln = dom_locs[d][local]
+        # dom_of returns the domain NAME (a.domains[d]) and dom_locs is a LIST indexed by
+        # position, so `dom_locs[name]` raises TypeError. Pre-existing, and it means this script
+        # never once reached the sheet: clustering finishes, 116,380 clusters are found, and the
+        # first cluster_row call dies. Index by position and keep dom_of's contract, because
+        # cluster_row's callers read the NAME (`dom_of(g)[0] == domains[1]`) -- changing dom_of
+        # to return an index would move the defect into three comparisons instead of fixing it.
+        shard, ln = locate(dom_of(g), dom_locs, a.domains)
         with open(shard, encoding="utf-8") as f:
             for i, line in enumerate(f):
                 if i == ln:

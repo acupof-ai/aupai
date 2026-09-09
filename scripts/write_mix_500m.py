@@ -205,6 +205,28 @@ assert all(w is not None for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_C
 # labelled as the ast.parse pass's own count so nobody reads it as current.
 RP1T_PYTHON_TOKENS_FALLBACK = 420_646_182
 
+# WHICH corpus fills the rp1t half of the code objective. resume 2 swaps this to
+# "code_rp1t_dd09", the near-dedup rebuild (data/corpus/code_rp1t_dd09, 235 shards). Held as a
+# name rather than edited in three call sites because _code_split, _rp1t_tokens and the floor
+# message all need the same one, and a swap that changes two of three is silent.
+#
+# NOT SWITCHED YET, and the remaining blocker is a DECISION, not a measurement: dd09's stamp is
+# now complete -- tokens 6,235,703,063 (tokens_status measured, full count over all 235 shards,
+# no sampling), packed_rows 1,522,016, fingerprint 5244d92ea157379f, docs 3,434,322 = the dedup
+# pass's docs_kept exactly (3b, read off the pod stamp 2026-09-07, not transcribed from a relay:
+# an earlier figure of 6,233,805,634 was 1,897,429 tokens low because the counter used
+# splitlines(), which breaks on the U+2028/U+2029 that occur inside rp1t's content values).
+#
+# So flipping this string now WOULD produce a launchable mix, which is why it is a ruling and not
+# a cleanup. dd09 is 14.80x code_py_rp1t's supply, and _code_split divides the code objective in
+# proportion to supply, so the swap moves the split hard: starcoder 95.40% -> 58.37% of the code
+# rows (1,609,923 -> 985,056), rp1t 4.60% -> 41.63% (77,550 -> 702,417), and both corpora's draw
+# falls from 0.7543 to 0.4615 epochs because the same pinned row budget now spans 14.8x more
+# supply. The code objective's TOTAL is unchanged and no other domain moves (selftest case 1
+# pins it), so this is a re-decision of the code mix's composition, not of the whole mix --
+# resume 2 with its own prereg row.
+CODE_RP1T_DOMAIN = "code_py_rp1t"
+
 
 # One-epoch supply, tokens. Measured stamps for the landed domains; code is a parameter.
 # chatml is a RE-RENDER of wiki_chat's chat rows, not new data, so its supply is bounded by
@@ -330,11 +352,19 @@ def _weight_for_rows(rows, total_rows):
     denomination -- tokens and rows are views of it. Stating rows without the weight that
     produces them is how stage 1 under-drew cot by 61,593,088 tokens.
     """
-    for places in range(5, 13):
+    # 5..16, not 5..13. The reachable row counts are NOT monotonic in `places`: for 271,881 rows
+    # of 7,324,218, 12dp gives 271,880 and 13dp gives 271,881 exactly, while 14dp and 15dp fall
+    # back to 271,880 -- float64 spacing near 0.0371 is coarser than the last decimal asks for.
+    # Hit while routing the ceiling through the measured pools: the clamp asks for whatever row
+    # count the pool implies, and an arbitrary row count is exactly the case a 12dp ceiling cannot
+    # always encode. The assertion below still fires if no precision works, so a genuinely
+    # unrepresentable count is still loud rather than silently rounded.
+    for places in range(5, 17):
         w = round(rows / total_rows, places)
         if int(total_rows * w) == rows:
             return w, places
-    raise AssertionError(f"no weight up to 12dp yields {rows} rows")
+    raise AssertionError(f"no weight at 5..16 decimal places yields exactly {rows} rows of "
+                         f"{total_rows}; float64 cannot encode this draw")
 
 
 # The 16B readout's per-role nat/B figures. Present here ONLY so the refusal below can
@@ -420,7 +450,7 @@ def _band_warning(name, rows, pool_tok):
     ]
 
 
-def _allocation():
+def _allocation(cursor=None, code_tokens=None):
     """The objective's weights with supply-capped domains held fixed and the rest renormalised.
 
     One function because the selftest needs the same numbers build() uses, and a selftest that
@@ -428,7 +458,7 @@ def _allocation():
     from the thing it checks. `code` appears here as a single objective; _code_split divides its
     rows afterwards.
     """
-    capped = {n: _ceiling_weight(n) for n in OBJECTIVE if n in SUPPLY_CAPPED}
+    capped = {n: _ceiling_weight(n, cursor) for n in OBJECTIVE if n in SUPPLY_CAPPED}
     free = {n: w for n, (w, _) in OBJECTIVE.items() if n not in SUPPLY_CAPPED}
     # THE CODE SHARE ABSORBS WHAT THE CAPPED DOMAINS RELEASE, above 20B only (4c's ruling; see
     # CODE_TOTAL_ABOVE_20B). Raising code's pre-scale share by the released amount is what makes the
@@ -437,9 +467,138 @@ def _allocation():
     # so scale returns to ~1 and the other five keep their decided weights instead of each taking a
     # slice of weight released by a domain they have nothing to do with.
     free["code"] = CODE_TOTAL_ABOVE_20B if TOTAL_TOKENS > 20_000_000_000 else CODE_TOTAL
-    scale = (1.0 - sum(capped.values())) / sum(free.values())
+    if cursor:
+        free = _place_freed_under_ceiling(free, cursor, code_tokens)
+    # THE RENORMALISATION MUST NOT REACH A CLAMPED DOMAIN, or the ceiling is a comment. Placing
+    # the freed share raises sum(free) above the pre-scale total, so `scale` came out at 1.013417
+    # on .step22500 -- and multiplying a clamped weight by 1.013417 puts it back over the ceiling
+    # it was just clamped to. Measured before this fix: math and starcoder were clamped to 2.10
+    # epochs and written at 2.1282, the clamp applied and then undone in the same function.
+    # So: hold the clamped domains fixed alongside `capped` and renormalise only what is free to
+    # move. Iterate, because absorbing the difference can push a previously-unclamped recipient
+    # over its own ceiling; the loop is bounded by the number of free domains, since each pass
+    # either clamps one more or converges.
+    return _renormalise_holding_clamped(free, capped, cursor, code_tokens)
 
-    return dict({n: w * scale for n, w in free.items()}, **capped)
+
+def _renormalise_holding_clamped(free, capped, cursor, code_tokens):
+    """Scale the unclamped free domains to fill 1 - sum(capped) - sum(pinned).
+
+    A domain is PINNED when the ceiling decided its weight rather than the objective. Such a
+    weight is a bound, so scaling it is not a renormalisation -- it is a violation with a
+    multiplication in front of it. Separated from _allocation so the fixed point is testable.
+    """
+    free = dict(free)
+    pinned = {}
+    # Bounded by len(free): each pass either pins one more domain or converges.
+    for _ in range(len(free) + 1):
+        movable = {n: w for n, w in free.items() if n not in pinned}
+        if not movable:
+            raise SystemExit(
+                "REFUSING: every free domain is pinned at its ceiling, so nothing can absorb the "
+                f"remainder; the weights sum to {sum(free.values()) + sum(capped.values()):.6f}."
+            )
+        scale = (1.0 - sum(capped.values()) - sum(pinned.values())) / sum(movable.values())
+        scaled = dict(pinned, **{n: w * scale for n, w in movable.items()})
+        over = _ceiling_overshoot(scaled, cursor, code_tokens)
+        if not over:
+            return dict(scaled, **capped)
+        # Pin each overshooting domain AT its ceiling and renormalise the rest around it.
+        pinned.update(over)
+        free.update(over)
+    raise SystemExit("REFUSING: ceiling renormalisation did not converge")
+
+
+def _ceiling_overshoot(weights, cursor, code_tokens):
+    """{domain: its weight AT the ceiling} for every FREED_RECIPIENT above FREED_CEILING.
+
+    Reads the same weights that will be written, so it cannot pass a check the file then fails.
+    starcoder is translated through _code_split's share for the reason _place_freed_under_ceiling
+    documents: `code` is the objective, starcoder is a fraction of it.
+    """
+    if not cursor:
+        return {}
+    sc_share = code_tokens / (code_tokens + _rp1t_tokens())
+    out = {}
+    for name in FREED_RECIPIENTS:
+        is_sc = name == "code_py_starcoder"
+        key = "code" if is_sc else name
+        if key not in weights:
+            continue
+        pool = _domain_pool_rows(name, code_tokens if is_sc else SUPPLY[name])
+        drawn = int(ROWS * weights[key])
+        if is_sc:
+            drawn = int(drawn * sc_share)
+        if drawn + int(cursor.get(name, 0)) <= int(FREED_CEILING * pool):
+            continue
+        rows = max(0, int(FREED_CEILING * pool) - int(cursor.get(name, 0)))
+        out[key] = _weight_for_rows(int(rows / sc_share) if is_sc else rows, ROWS)[0]
+    return out
+
+
+# The two domains that absorb what the capped three release on a resume, and the ceiling they may
+# not cross.
+def _ceil_pool(name):
+    """The pool row count _ceiling_weight sizes against, for tests that need to construct a
+    cursor relative to the ceiling. Same expression, not a copy of the number."""
+    return _domain_pool_rows(name, SUPPLY[name] * (1 - SUPPLY_RELATIVE_ERROR.get(name, 0.0)))
+
+
+FREED_RECIPIENTS = {"math_owm_stage2": 0.2643, "code_py_starcoder": 0.3297}
+# 2.10 TOTAL EPOCHS, ruled by 4c 2026-09-07 after two withdrawals, and the withdrawals are the
+# reason the number is where it is. The first ruling said 1.000, which is below what the UNCHANGED
+# mix already draws (math 1.2179, starcoder 1.1314 measured on .step22500) -- a ceiling under the
+# untouched behaviour cannot be met by any reallocation, so the overflow rule had nowhere to send
+# anything. The second said 1.30, and I sized that against the 3,004,219-row SEGMENT while every
+# weight in this file is a fraction of the 7,324,218-row WHOLE PLAN: at 1.30 the recipients may
+# take 2,268,335 plan rows while their launch weights already ask 4,980,346. Both numbers were
+# real and each was correct for its own denominator, which is why neither reading looked wrong.
+# 2.10 is above what the fixed deriver produces, so nothing binds today and this changes no number
+# in the launch mix. THAT CLAIM IS ASSERTED IN THE SELFTEST (case 17) AGAINST THIS VALUE, not stated
+# here: three different pairs for those two epoch figures were in circulation in this file and none
+# matched the code to better than 1.2%, so the number is derived where it is checked and this comment
+# names only the ruling. It is here so the ceiling is a guard and not a comment.
+FREED_CEILING = 2.10
+
+
+def _place_freed_under_ceiling(weights, cursor, code_tokens):
+    """Send the share released by the capped domains to FREED_RECIPIENTS, pro rata.
+
+    THE CEILING IS NOT ENFORCED HERE, and the first version's attempt to is worth recording.
+    It computed each recipient's room as `int(FREED_CEILING * pool) - cursor` and clamped the
+    FREED rows against it -- but a recipient's base weight already draws from that same room, so
+    the comparison was freed-rows against total-room and passed a recipient whose total was over.
+    4c's ruling is stated in TOTAL epochs (cursor + everything this plan draws), so the bound has
+    to be applied to the final weights, which only _renormalise_holding_clamped sees. Two
+    derivations of one ceiling in two units is how the 1.000 and 1.30 rulings both went wrong.
+
+    code_py_starcoder IS NOT AN OBJECTIVE. `code` is, and _code_split divides it between starcoder
+    and rp1t IN PROPORTION TO SUPPLY, so starcoder's share has to be translated back through that
+    split or the freed rows would be added to a quantity nothing draws.
+    """
+    # STARCODER SUPPLY IS A PARAMETER, not a SUPPLY entry: build() takes it as code_tokens and
+    # _code_split is handed it too. Reading a constant here would size against a different supply
+    # than the split divides, and the two would drift silently.
+    if code_tokens is None:
+        raise SystemExit("REFUSING: freed-share placement needs starcoder supply (code_tokens)")
+    sc_share = code_tokens / (code_tokens + _rp1t_tokens())
+    # The freed share is whatever the capped domains did NOT take relative to a fresh start: their
+    # cursor-free weights minus their cursor-aware ones. Derived, not passed in, so it cannot drift
+    # from what _ceiling_weight actually returned.
+    freed = sum(_ceiling_weight(n) - _ceiling_weight(n, cursor) for n in SUPPLY_CAPPED
+                if n in OBJECTIVE)
+    if freed <= 0:
+        return weights
+    base = sum(FREED_RECIPIENTS.values())
+    out = dict(weights)
+    for name, share in FREED_RECIPIENTS.items():
+        rows = int(ROWS * freed * share / base)
+        if name == "code_py_starcoder":
+            # rows are STARCODER rows; `code` has to rise by rows/sc_share to deliver them.
+            out["code"] = out.get("code", 0.0) + _weight_for_rows(int(rows / sc_share), ROWS)[0]
+        else:
+            out[name] = out.get(name, 0.0) + _weight_for_rows(rows, ROWS)[0]
+    return out
 
 
 MEASURED = os.path.join(ROOT, "data", "token_cache_pools.json")
@@ -482,20 +641,29 @@ def _cache_pool(name):
     # `fone` disagrees with Cfg means this call has the wrong file, and a wrong-mode count is
     # worse than no count. Same for `seq`: rows is derived from it, so a cache built under a
     # different seq carries a row count that is not this run's.
-    side, n, source, c = path + ".counts", None, "cache", None
+    side, n, source, c, side_seq, side_fone = path + ".counts", None, "cache", None, None, None
     if os.path.exists(side):
         try:
             with open(side, encoding="utf-8") as f:
                 c = json.load(f)
+            # ALL THREE FIELDS INSIDE THE TRY: a well-formed object missing a key is a
+            # damaged sidecar, not a mismatch, and its KeyError must take the fallback
+            # path like every other read failure (3b's case 2 on PR #23: {"tokens": N}
+            # alone escaped as an uncaught KeyError and took down the whole mix write).
             n, source = int(c["tokens"]), "counts"
+            side_seq, side_fone = int(c["seq"]), bool(c["fone"])
         except (OSError, ValueError, KeyError, TypeError) as e:
             # LOUD, because a silent fallback here becomes a co-residency refusal further down
             # that reaches the caller as "no cache". `source` in the returned dict says which
-            # path answered; this line says why the cheap one did not.
+            # path answered; this line says why the cheap one did not. RESET n/source too:
+            # a failure after `tokens` succeeded (a missing `seq`, say) leaves them holding
+            # the sidecar's values, and the fallback below would then answer the cache's
+            # number under the sidecar's name (caught by test_cache_counts' missing-key case).
+            n, source = None, "cache"
             print(f"  {name}: .counts unreadable ({e}); falling back to the cache read",
                   flush=True)
             c = None
-    if c is not None and (int(c["seq"]) != SEQ or bool(c["fone"]) != bool(train.Cfg.fone)):
+    if c is not None and (side_seq != SEQ or side_fone != bool(train.Cfg.fone)):
         # RAISES, and deliberately NOT inside the try above -- a mismatch is not a damaged
         # file to route around. _domain_cache_path owns the _fone suffix, so a .counts whose
         # mode disagrees with Cfg means this call is looking at a cache built for a different
@@ -546,10 +714,26 @@ def _measured_pools():
     return out
 
 
-def _rp1t_tokens():
+def _rp1t_tokens(name=CODE_RP1T_DOMAIN):
     """The ast.parse-surviving Python supply: the stamp when the corpus is here, else the
-    fallback constant. Never both, and the JSON records which one was used."""
-    return _corpus_stamp("code_py_rp1t", "tokens") or RP1T_PYTHON_TOKENS_FALLBACK
+    fallback constant. Never both, and the JSON records which one was used.
+
+    The DOMAIN IS A PARAMETER because resume 2 swaps in a near-deduped rebuild under a new
+    name (code_rp1t_dd09). The fallback is only correct for the default: it is one specific
+    corpus's ast.parse count, so a different domain falling back to it would report another
+    corpus's supply under its own name -- SUPPLY's wiki_chat entry records what that costs.
+    """
+    tok = _corpus_stamp(name, "tokens")
+    if tok:
+        return tok
+    if name != CODE_RP1T_DOMAIN:
+        sys.exit(
+            f"REFUSING: {name} has no `tokens` in data/corpus/{name}/build_corpus_stats.json, "
+            f"and RP1T_PYTHON_TOKENS_FALLBACK is {CODE_RP1T_DOMAIN}'s count, not {name}'s. "
+            f"A supply figure measured on another corpus is the wiki_chat defect (SUPPLY:212): "
+            f"the guard is fine and the number handed to it is not the quantity it names."
+        )
+    return RP1T_PYTHON_TOKENS_FALLBACK
 
 
 def _corpus_stamp(name, field):
@@ -606,7 +790,31 @@ def _pool_rows(pool_tok):
     return rows - min(int(rows * 0.05), 5000)
 
 
-def _ceiling_weight(name):
+def _domain_pool_rows(name, pool_tok):
+    """ONE answer to "how many rows is this domain's pool", for the ceiling, the epochs field and
+    the run. A measured pool WINS over the stamp-derived one, because the cache is what train.py
+    draws from.
+
+    THE POOL SOURCE WAS THE THIRD INSTANCE OF THIS PR'S OWN DEFECT (tilerl, 2026-09-07). The unit
+    was already shared -- _pool_rows' docstring says "the ceiling and the epochs field must
+    agree" -- but the SOURCE was not: build() reported epochs off the measured cache while
+    _ceiling_overshoot and _ceiling_weight priced the same quantity off the stamp. Measured on the
+    .step22500 mix, that leaves a band of ceilings where the guard passes a domain the file then
+    reports as over the line:
+
+        math_owm_stage2    stamp 2.0558 vs cache 2.0509   band (2.0509, 2.0558), gap 0.0048
+        code_py_starcoder  stamp 1.9909 vs cache 2.0052   band (1.9909, 2.0052), gap 0.0143
+
+    Nothing lands in either band at FREED_CEILING 2.10, which is why it was invisible and why the
+    launched run is unaffected. It is fixed anyway: "a bound computed in one denominator and
+    applied in another" is the sentence this PR was written to remove, and leaving the third
+    instance in the tree because today's ceiling misses the band is how the first two survived.
+    """
+    meas = _measured_pools().get(name)
+    return meas["pool_rows"] if meas else _pool_rows(pool_tok)
+
+
+def _ceiling_weight(name, cursor=None, ceiling=EPOCH_SOFT_CEILING):
     """The largest weight for a supply-capped domain whose WHOLE error band clears the ceiling.
 
     A supply-capped weight is not a judgement, it is arithmetic on the supply -- so it should be
@@ -619,13 +827,27 @@ def _ceiling_weight(name):
     supply. It costs 0.01pt of chat_qa and buys a verdict that does not depend on which way a
     rounding went. When 3b lands the exact integers, SUPPLY_RELATIVE_ERROR loses the entry and
     this returns to the sharp ceiling with no other edit.
+
+    THE CURSOR IS SUBTRACTED, or this sizes each domain to `ceiling` epochs OF THIS SEGMENT while
+    the launch check counts cursor + segment. Those are the same two quantities the epoch guard
+    itself confused: PR #2 taught the CHECK to count the total and left this, the thing that
+    CHOOSES the weight, counting the segment -- so on the first real resume the two disagreed by
+    construction and the mix blocked on its own guard. Measured on .step22500: cot/chatml/chat_qa
+    sit at 3.54 total epochs already, so a fresh 4.0-per-segment weight put them at 7.54 and the
+    room actually left is 53,553 rows, 1.78% of the segment budget against 15.50% before.
+    A guard that counts right and a deriver that does not is one defect wearing two faces.
     """
     rel = SUPPLY_RELATIVE_ERROR.get(name, 0.0)
     # ROWS, not tokens. The ceiling asks how many times the model re-reads the pool, and the
     # pool is packed rows -- tokens overstate it, because packing drops a partial row per
     # document and n_val rows are held out on top. Deriving in tokens put all three capped
     # domains over the real line while reporting them under it.
-    max_rows = EPOCH_SOFT_CEILING * _pool_rows(SUPPLY[name] * (1 - rel))
+    pool_rows = _domain_pool_rows(name, SUPPLY[name] * (1 - rel))
+    max_rows = ceiling * pool_rows - int((cursor or {}).get(name, 0))
+    # NEVER NEGATIVE. A domain already past the ceiling on the cursor alone has no room, and a
+    # negative weight would be allocated as one -- silently taking rows from the other domains.
+    # Zero is the honest answer and the launch check still reports the overrun.
+    max_rows = max(0, max_rows)
     # _weight_for_rows, not a floor at some chosen precision: build_mix draws int(ROWS*weight),
     # so the weight has to hit max_rows EXACTLY. Flooring to 4dp instead cost 488 rows -- a
     # rounding loss dressed as a safety margin, and indistinguishable from one by anyone reading
@@ -672,7 +894,7 @@ def _code_split(starcoder_tokens, code_rows):
     sc_rows = round(code_rows * starcoder_tokens / total)
     return {
         "code_py_starcoder": (sc_rows, starcoder_tokens),
-        "code_py_rp1t": (code_rows - sc_rows, _rp1t_tokens()),
+        CODE_RP1T_DOMAIN: (code_rows - sc_rows, _rp1t_tokens()),
     }
 
 
@@ -707,7 +929,7 @@ def build(code_tokens, cursor=None):
     # Derived here, not cached at module level: the ladder-dir selftest mutates OBJECTIVE,
     # and a module-level snapshot would not follow it -- the refusal then dies on a
     # KeyError instead of its own assertion, which is a guard failing for the wrong reason.
-    alloc = _allocation()
+    alloc = _allocation(cursor, code_tokens)
     rows_by_name = _rows_for_weights(alloc, ROWS)
     code = _code_split(code_tokens, rows_by_name.pop("code"))
     spec = {n: (rows_by_name[n], why) for n, (_, why) in OBJECTIVE.items()}
@@ -748,7 +970,7 @@ def build(code_tokens, cursor=None):
         # A measured pool WINS over the stamp-derived one. Not "if they disagree, warn": the
         # cache is the thing build_mix actually draws from, so where it exists there is
         # nothing to reconcile.
-        pool_rows_est = meas["pool_rows"] if meas else _pool_rows(pool_tok)
+        pool_rows_est = _domain_pool_rows(name, pool_tok)
         # ROWS THIS DOMAIN HAS ALREADY DRAWN, from the resume cursor. Was `used = 0` with the
         # comment "fresh run, new names; asserted rather than assumed" -- which was true when
         # every mix started from scratch and became the defect the moment one did not. Nothing
@@ -787,6 +1009,27 @@ def build(code_tokens, cursor=None):
                 f"this plan, over a {pool_rows_est:,}-row pool. The segment alone is "
                 f"{runtime / pool_rows_est:.3f} epochs, which is why a per-segment ceiling read "
                 f"this as a PASS. Cut this domain's weight until the TOTAL clears 4."
+            )
+        if os.path.isdir(os.path.join(ROOT, "data", "corpus", name)) and not _corpus_fingerprint(name):
+            # SCOPED TO A CORPUS THAT IS ACTUALLY HERE. Without the isdir guard this warns on
+            # EVERY domain from any machine without the corpora -- which is every dev box, since
+            # data/corpus lives on the pod (see the fingerprint comment below). Caught by running
+            # the selftest: the first version fired 9 of 9 locally and broke case 6's
+            # `assert not _warnings`, i.e. it was the warning-that-fires-on-everything its own
+            # negative control exists to forbid.
+            #
+            # WARN, not a refusal: the launcher cannot fix a missing stamp field, and the writer
+            # must stay able to regenerate the 17 committed mixes that carry a null fingerprint
+            # for at least one domain (b0 counted them 2026-09-07; those nulls are stale MIX
+            # files, written before the read below existed -- every one of those domains has a
+            # fingerprint in its stamp today). The BINDING check is
+            # launch_gate.gate_corpora:184, which NOGOs a domain whose stamp has no fingerprint,
+            # so nothing launches on this WARN alone. Recorded here because the writer, running
+            # ON the pod, is where the absence is first visible.
+            warnings.append(
+                f"{name}: data/corpus/{name} exists but its build_corpus_stats.json carries no "
+                f"`fingerprint`, so this mix pins no bytes for it. launch_gate.gate_corpora will "
+                f"refuse a launch against this mix until the corpus pass writes that field."
             )
         if drawn_epochs > EPOCH_SOFT_CEILING:
             warnings.append(
@@ -839,7 +1082,12 @@ def build(code_tokens, cursor=None):
             # it out; saying WHY it is out is the only version that survives being read by
             # someone who is about to launch.
             "fingerprint": _corpus_fingerprint(name),
-            "fingerprint_source": f"read from data/corpus/{name}/build_corpus_stats.json",
+            "fingerprint_source": (
+                f"read from data/corpus/{name}/build_corpus_stats.json"
+                if _corpus_fingerprint(name) else
+                f"ABSENT: data/corpus/{name}/build_corpus_stats.json carries no `fingerprint`, "
+                f"so this mix pins nothing for {name}. launch_gate.gate_corpora refuses it."
+            ),
             "epoch_cap_note": (
                 f"epochs {epochs} = ceil(({used}+{runtime})/{pool_rows_est}). PROVISIONAL: the pool "
                 f"is estimated as stamp_tokens//(seq+1) minus n_val, not measured from a token "
@@ -891,6 +1139,9 @@ def build(code_tokens, cursor=None):
 
 
 def selftest():
+    # Case 17 rebinds these to build the only world where a recipient ceiling binds; declared here
+    # because Python requires `global` before the name's first use in the function.
+    global FREED_CEILING, TOTAL_TOKENS, ROWS
     # 1. the OBJECTIVE is fixed and only its internal split tracks supply. The first version of
     #    this check asserted the per-domain code weight never moves, which was right when code
     #    was one domain and became wrong the moment it became two -- the invariant is the SUM.
@@ -1107,7 +1358,7 @@ def selftest():
     # the ceiling would never produce. A test written in the wrong unit fails for the right
     # reason and points at the wrong place.
     for name in SUPPLY_CAPPED:
-        pool = _pool_rows(SUPPLY[name])
+        pool = _domain_pool_rows(name, SUPPLY[name])
         rows = int(ROWS * _ceiling_weight(name))
         assert rows / pool <= EPOCH_SOFT_CEILING, (
             f"{name}: {rows / pool:.6f} epochs overshoots the ceiling"
@@ -1262,14 +1513,15 @@ def selftest():
     # And every domain clears the ceiling on the rows build_mix DRAWS, at the 30B row budget.
     _rows30 = int(30e9) // SEQ
     for _n, _wt in _w30.items():
-        _ep = int(_rows30 * _wt) / _pool_rows(SUPPLY[_n]) if _n in SUPPLY else None
+        _ep = (int(_rows30 * _wt) / _domain_pool_rows(_n, SUPPLY[_n])
+               if _n in SUPPLY else None)
         if _ep is not None:
             assert _ep <= EPOCH_SOFT_CEILING, f"{_n} draws {_ep:.6f} epochs at 30B"
     # NEGATIVE CONTROL, on the same numbers: the 20B weights at a 30B row budget must cross the
     # ceiling in all three capped domains. If they did not, none of the assertions above could
     # tell a recomputed mix from a copied one.
     _bad = [n for n, w in (("cot", 0.08069), ("chatml", 0.00741), ("chat_qa", 0.00725))
-            if int(_rows30 * w) / _pool_rows(SUPPLY[n]) > EPOCH_SOFT_CEILING]
+            if int(_rows30 * w) / _domain_pool_rows(n, SUPPLY[n]) > EPOCH_SOFT_CEILING]
     assert len(_bad) == 3, (
         f"the 20B weights at a 30B budget should cross the ceiling in all three capped domains, "
         f"caught {_bad}. Without this the case cannot distinguish recompute from copy"
@@ -1370,10 +1622,27 @@ def selftest():
         assert f"{_n}: " not in _fw or "exceeds" not in _fw.split(f"{_n}: ")[1][:80], (
             f"{_n} must NOT trip the ceiling on a fresh start -- if it does, this case cannot "
             f"tell the fix from a pre-existing violation")
-        assert any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
-            f"{_n} draws past {EPOCH_SOFT_CEILING} epochs once the cursor is counted "
-            f"(cursor {_cur[_n]:,}) and no warning names it. The ceiling is measuring one "
-            f"segment, which is the defect this argument exists to fix.")
+        # THE ASSERTION FLIPPED WHEN THE DERIVER WAS FIXED, and the flip is the point. Until
+        # 2026-09-07 this read "the cursor-aware build MUST warn", because the check counted the
+        # total while _ceiling_weight still sized each domain to 4.0 epochs of THIS SEGMENT -- so a
+        # resume necessarily produced a mix that violated its own ceiling and the warning was the
+        # evidence the check had been fixed. Now the deriver subtracts the cursor, so a resume mix
+        # is BUILT under the ceiling and must NOT warn: the correct end state is no violation to
+        # report. Asserted on the total epochs rather than on the warning's absence alone, because
+        # "no warning" is also what a check that stopped looking would produce.
+        _dom = _resumed["domains"][_n]
+        # pool_rows_estimated and rows, NOT epochs_fractional: that field is want_tok/pool_tok, a
+        # TOKEN ratio, and the ceiling is a ROW count -- the two differ because packing drops a
+        # partial row per document and n_val rows are held out. Its own note says the token ratio
+        # "is NOT what build_mix draws against".
+        _tot = (_cur[_n] + _dom["rows_from_weight_at_runtime"]) / _dom["pool_rows_estimated"]
+        assert _tot <= EPOCH_SOFT_CEILING + 1e-9, (
+            f"{_n} draws {_tot:.4f} total epochs (cursor {_cur[_n]:,} + "
+            f"{_dom['rows_from_weight_at_runtime']:,} over {_dom['pool_rows_est']:,}), past "
+            f"{EPOCH_SOFT_CEILING}. The deriver is sizing to one segment again.")
+        assert not any(w.startswith(f"{_n}: ") and "exceeds" in w for w in _resumed["_warnings"]), (
+            f"{_n} is built under the ceiling but still warns -- the check and the deriver "
+            f"disagree, which is the defect in the other direction.")
     # AND THE FRESH-START PATH IS BYTE-IDENTICAL. A cursor-aware ceiling that changed the
     # no-cursor answer would silently rewrite every committed mix.
     assert build(8.85e9, None)["domains"] == _fresh["domains"], (
@@ -1390,10 +1659,27 @@ def selftest():
     #     it, so a 6.0-epoch resume mix would have been written with an accurate warning nobody
     #     was required to read. That is the shape where the code is defensible and the contract
     #     is false.
-    assert set(_resumed["_launch_blocked"]) == set(_cur), (
+    #     THE WORLD HAD TO BE REBUILT WHEN THE DERIVER WAS FIXED. Until 2026-09-07 `_resumed`
+    #     itself blocked, because the deriver sized to 4.0 epochs per SEGMENT and any cursor
+    #     pushed the total over -- so the live cursor was a world where blocking was reachable.
+    #     With the cursor subtracted a normal resume is built UNDER the ceiling and blocks nothing,
+    #     which would leave this assertion vacuous on `_resumed`: `set([]) == set([])` after the
+    #     loop below iterates nothing. A binding check needs a world where the bad thing is still
+    #     possible, so the world is now a cursor ALREADY PAST the ceiling on its own -- there the
+    #     deriver returns zero rows (clamped, never negative) and the overrun is real and
+    #     unfixable by any weight, which is exactly when a launch must be refused.
+    _over = {n: int(_ceil_pool(n) * 4.5) for n in _cur}
+    _blocked = build(8.85e9, _over)
+    assert set(_blocked["_launch_blocked"]) == set(_over), (
         f"every over-ceiling domain must block the launch, got "
-        f"{_resumed['_launch_blocked']} for a cursor over {sorted(_cur)}")
-    for _n in _cur:
+        f"{_blocked['_launch_blocked']} for a cursor over {sorted(_over)}")
+    for _n in _over:
+        assert _blocked["domains"][_n]["rows_from_weight_at_runtime"] == 0, (
+            f"{_n}'s cursor is past the ceiling, so the deriver must ask for ZERO further rows, "
+            f"not a negative count silently allocated as one: "
+            f"{_blocked['domains'][_n]['rows_from_weight_at_runtime']}")
+    _resumed = _blocked
+    for _n in _over:
         # A NAME WITH NO REASON IS A KeyError IN main()'s REFUSAL PRINT, which reads
         # _untrusted_supply[n] for every n in _launch_blocked. The two fields are one mechanism.
         assert _n in _resumed["_untrusted_supply"], (
@@ -1434,7 +1720,180 @@ def selftest():
           "the total (not just _warnings, which nothing reads), the reason is in the same dict "
           "main() prints per blocked name, and a fresh start still only warns")
 
-    print("selftest: 16/16")
+    # 17 THE RECIPIENT CEILING BINDS, AND SURVIVES THE RENORMALISATION THAT FOLLOWS IT.
+    #     The defect this catches shipped and was measured: the ceiling was clamped in ROWS inside
+    #     _place_freed_under_ceiling, and then `scale = (1 - sum(capped)) / sum(free)` came out at
+    #     1.013417 and multiplied the clamp away -- applied and undone in the same function, with
+    #     nothing warning, because every row count in between was correct.
+    #     THE WORLD IS THE LIVE .step22500 CURSOR AT THE 30B TOTAL, because that is the only
+    #     cursor where a recipient is anywhere near its ceiling: the small fixture `_cur` above
+    #     leaves math at 0.86 epochs, where any ceiling above 0.86 is vacuous and a test on it
+    #     would pass however _renormalise_holding_clamped behaves. Same lesson as case 16's fresh
+    #     path -- a negative assertion needs a world where the positive is reachable.
+    #     AND THE CEILING HAS TO BE LOWERED, because at the shipped FREED_CEILING nothing binds by
+    #     design -- which is why 4c set it there. That claim is ASSERTED below against the shipped
+    #     value rather than quoted: three different pairs for these two epoch figures were in
+    #     circulation in this file (2.0509/2.0045 at the FREED_CEILING comment, 2.0557/2.0142 here)
+    #     and tilerl measured starcoder at 1.9909, so all three disagreed with the code by up to
+    #     1.2%. A comment labelled `measured` is what the next reader trusts instead of deriving,
+    #     and a stale one is worse than no number. The assertion cannot go stale.
+    _live_cur = {"chat_qa": 31260, "chatml": 31945, "code_py_rp1t": 68575,
+                 "code_py_starcoder": 1424422, "cot": 348846, "en_c4_stage2": 702789,
+                 "math_owm_stage2": 1142230, "textbook_30b": 438345, "zh_web": 131588}
+    _saved = (FREED_CEILING, TOTAL_TOKENS, ROWS)
+    try:
+        TOTAL_TOKENS, ROWS = 30_000_000_000, 30_000_000_000 // SEQ
+        _unpinned = build(8.85e9, _live_cur)
+
+        def _ep_of(m, n):
+            _pool = _domain_pool_rows(
+                n, 8.85e9 if n == "code_py_starcoder" else SUPPLY[n])
+            return (m["domains"][n]["rows_from_weight_at_runtime"]
+                    + int(_live_cur.get(n, 0))) / _pool
+        # THE SHIPPED CEILING BINDS NOTHING -- asserted, not quoted. This is the claim the whole
+        # ruling rests on ("2.10 changes no number in the launch mix"), so it is checked against
+        # whatever FREED_CEILING currently says rather than against an epoch figure typed into a
+        # comment. If a future weight change pushes a recipient over the shipped ceiling, the mix
+        # silently starts pinning and this fires instead.
+        _shipped = {n: _ep_of(_unpinned, n) for n in FREED_RECIPIENTS}
+        for _n, _e in _shipped.items():
+            assert _e <= FREED_CEILING, (
+                f"{_n} draws {_e:.4f} total epochs against the shipped FREED_CEILING "
+                f"{FREED_CEILING}, so the ceiling BINDS in the launch mix and the ruling that it "
+                f"changes no number is no longer true. Re-derive the mix with 4c before launching.")
+        # THE UNPINNED WORLD MUST BE OVER THE LOWERED CEILING, or there is nothing to clamp.
+        FREED_CEILING = 1.90
+        for _n in FREED_RECIPIENTS:
+            assert _ep_of(_unpinned, _n) > FREED_CEILING, (
+                f"fixture is vacuous: {_n} draws {_ep_of(_unpinned, _n):.4f} epochs without any "
+                f"clamp, already under the {FREED_CEILING} ceiling this case lowers it to")
+        _pinned = build(8.85e9, _live_cur)
+        for _n in FREED_RECIPIENTS:
+            _ep = _ep_of(_pinned, _n)
+            assert _ep <= FREED_CEILING + 1e-6, (
+                f"{_n} draws {_ep:.6f} total epochs against a {FREED_CEILING} ceiling that BOUND "
+                f"it -- the clamp was applied and then renormalised away, the defect measured at "
+                f"scale=1.013417")
+            # AT the ceiling, not merely under it. `<=` alone would pass if the renormalisation
+            # cut the domain to zero, which is a different bug wearing this one's green tick.
+            assert _ep > FREED_CEILING - 0.02, (
+                f"{_n} pinned to {_ep:.6f} against {FREED_CEILING}: under the line by more than "
+                f"rounding, so the clamp overshot rather than pinned")
+        assert abs(sum(v["weight"] for v in _pinned["domains"].values()) - 1.0) < 1e-5, (
+            f"pinning both recipients must still leave a normalised mix, got "
+            f"{sum(v['weight'] for v in _pinned['domains'].values()):.9f}")
+        # THE CAPPED THREE MUST NOT MOVE: their weight is the epoch ceiling's answer, not a share
+        # of the remainder, so a recipient pinning cannot be paid for out of them.
+        for _n in SUPPLY_CAPPED:
+            assert (_pinned["domains"][_n]["rows_from_weight_at_runtime"]
+                    == _unpinned["domains"][_n]["rows_from_weight_at_runtime"]), (
+                f"{_n} is supply-capped; pinning a RECIPIENT must not move it")
+        # AND SOMETHING MUST ABSORB THE REFUSED ROWS, or the mix sums to 1 only by dropping them.
+        assert [n for n in _pinned["domains"]
+                if n not in SUPPLY_CAPPED and n not in FREED_RECIPIENTS
+                and _pinned["domains"][n]["rows_from_weight_at_runtime"]
+                != _unpinned["domains"][n]["rows_from_weight_at_runtime"]], (
+            "no unpinned domain absorbed the rows the ceiling refused")
+    finally:
+        FREED_CEILING, TOTAL_TOKENS, ROWS = _saved
+    print("  17 a recipient ceiling that BINDS survives the renormalisation after it: on the live "
+          "cursor with the ceiling lowered under the unclamped draw, both recipients pin AT it "
+          "instead of 1.3% above, the capped three do not move, and another domain absorbs the "
+          "difference")
+
+    # 18. THE MISSING-FINGERPRINT WARN, with its NEGATIVE CONTROL in the same case. A warning
+    #     that fires on every domain is worth the same as one that fires on none, so the shipped
+    #     world (every domain stamped) must produce NO fingerprint warning, and only then does
+    #     the stubbed-absent world have to produce one. Ordered that way deliberately: the
+    #     positive alone would pass against a `warnings.append` with no condition at all.
+    #
+    #     `os.path.isdir` IS STUBBED TOO, because the WARN is guarded on the corpus being present
+    #     and data/corpus is on the pod: unstubbed, this case would assert on a branch it never
+    #     reaches from a dev box and pass for the wrong reason. Restricted to the corpus root so
+    #     nothing else in build() sees a lie.
+    _saved_fp = globals()["_corpus_fingerprint"]
+    _real_isdir = os.path.isdir
+    _corpus_root = os.path.join(ROOT, "data", "corpus")
+
+    def _isdir_corpora_exist(p):
+        return True if str(p).startswith(_corpus_root) else _real_isdir(p)
+
+    try:
+        os.path.isdir = _isdir_corpora_exist
+        globals()["_corpus_fingerprint"] = lambda n: "f" * 16
+        _all_fp = build(3.8e9)
+        assert not [w for w in _all_fp["_warnings"] if "no `fingerprint`" in w], (
+            f"a fully stamped mix must raise no fingerprint warning: {_all_fp['_warnings']}"
+        )
+        for _d in _all_fp["domains"].values():
+            assert _d["fingerprint_source"].startswith("read from"), _d["fingerprint_source"]
+
+        _one = sorted(_all_fp["domains"])[0]
+        globals()["_corpus_fingerprint"] = lambda n: None if n == _one else "f" * 16
+        _miss = build(3.8e9)
+        _hits = [w for w in _miss["_warnings"] if "no `fingerprint`" in w]
+        assert len(_hits) == 1 and _hits[0].startswith(f"{_one}: "), (
+            f"exactly the unstamped domain must warn, got {_hits}"
+        )
+        assert _miss["domains"][_one]["fingerprint"] is None
+        assert _miss["domains"][_one]["fingerprint_source"].startswith("ABSENT:"), (
+            "a null fingerprint must say WHY in fingerprint_source, or the field reads as an "
+            "omission rather than a statement"
+        )
+        # NOT in _launch_blocked: the binding refusal is launch_gate.gate_corpora:184, and
+        # duplicating it here would let a future edit satisfy the writer while the gate is the
+        # thing that actually has to hold.
+        assert _one not in _miss.get("_launch_blocked", []), (
+            "the missing fingerprint is a WARN in the writer; the refusal belongs to launch_gate"
+        )
+        # THE isdir GUARD ITSELF, or the stub above would hide a WARN that fires from every dev
+        # box: with the corpus absent there is nothing to pin and nothing to say.
+        os.path.isdir = _real_isdir
+        if not _real_isdir(os.path.join(_corpus_root, _one)):
+            globals()["_corpus_fingerprint"] = lambda n: None
+            assert not [w for w in build(3.8e9)["_warnings"] if "no `fingerprint`" in w], (
+                "with data/corpus absent the writer must not warn about fingerprints -- the "
+                "absence of a corpus is not the absence of a pin"
+            )
+    finally:
+        os.path.isdir = _real_isdir
+        globals()["_corpus_fingerprint"] = _saved_fp
+    print("  18 a domain whose stamp carries no fingerprint warns and says ABSENT with the "
+          "reason in fingerprint_source, while a fully stamped mix warns not at all; the "
+          "refusal stays in launch_gate rather than being duplicated here")
+
+    # 19. THE FALLBACK IS ONE CORPUS'S COUNT, so a SWAPPED code domain with no stamped tokens
+    #     must REFUSE rather than inherit it. Without the name check _rp1t_tokens would report
+    #     code_py_rp1t's 420,646,182 as dd09's supply -- the wiki_chat defect exactly: a real
+    #     number, honestly measured, for a different domain than the one it is filed under.
+    #     Asserted on SystemExit and on the message naming both domains, because a refusal that
+    #     does not say which corpus the fallback belongs to sends the reader to the wrong file.
+    assert _rp1t_tokens(CODE_RP1T_DOMAIN) > 0, "the default domain must still resolve"
+    _saved_stamp = globals()["_corpus_stamp"]
+    try:
+        globals()["_corpus_stamp"] = lambda n, f: None
+        assert _rp1t_tokens(CODE_RP1T_DOMAIN) == RP1T_PYTHON_TOKENS_FALLBACK, (
+            "with no stamp the DEFAULT domain falls back, which is what the constant is for"
+        )
+        try:
+            _rp1t_tokens("code_rp1t_dd09")
+        except SystemExit as e:
+            _msg = str(e)
+            assert "code_rp1t_dd09" in _msg and CODE_RP1T_DOMAIN in _msg, (
+                f"the refusal must name the domain asked for AND the one the fallback measures: "
+                f"{_msg}"
+            )
+        else:
+            raise AssertionError(
+                "a swapped code domain with no stamped tokens must refuse, not silently return "
+                "another corpus's ast.parse count"
+            )
+    finally:
+        globals()["_corpus_stamp"] = _saved_stamp
+    print("  19 a swapped code domain with no stamped tokens refuses and the message names both "
+          "domains, while the default still falls back to the constant it was measured for")
+
+    print("selftest: 19/19")
     return 0
 
 
@@ -1524,12 +1983,19 @@ def build_probe():
 
 
 def _read_cursor(path):
-    """{domain: rows} from a checkpoint's row_cursor, or a refusal.
+    """(rows, srcfp, seed) from a checkpoint's cursor state, or a refusal.
 
     torch.load with weights_only=False, because row_cursor sits beside the tensors in a dict
     the trainer wrote. REFUSES rather than returning {} when the key is absent: an empty cursor
     and a missing cursor produce identical mixes, and the whole point of this flag is that the
     caller asserted a resume. A silent {} would write a fresh-start mix under a resume's name.
+
+    ALL THREE FIELDS, not just the rows. Rows alone decide the arithmetic, but they do not
+    identify the state the arithmetic was done against: the same row count over a different
+    corpus, or over the same corpus shuffled at a different seed, names DIFFERENT rows. The
+    launcher compares the triple the mix was derived against with the resuming checkpoint's,
+    so this function has to return what that comparison needs -- it used to discard srcfp and
+    seed, which is why the field could not be written at all.
     """
     import torch
 
@@ -1548,7 +2014,11 @@ def _read_cursor(path):
                  f"build_mix seeds used[] from a full-plan-prefix cursor; any other basis counts "
                  f"rows differently and the epoch totals here would be arithmetic on two "
                  f"incompatible conventions.")
-    return {k: int(v) for k, v in rc.items()}
+    return (
+        {k: int(v) for k, v in rc.items()},
+        {k: str(v) for k, v in (ck.get("row_cursor_srcfp") or {}).items()},
+        ck.get("row_cursor_seed"),
+    )
 
 
 def main():
@@ -1583,17 +2053,61 @@ def main():
     a = ap.parse_args()
     if a.selftest:
         return selftest()
-    cursor = _read_cursor(a.resume_cursor) if a.resume_cursor else None
+    cursor = cursor_srcfp = cursor_seed = None
+    if a.resume_cursor:
+        cursor, cursor_srcfp, cursor_seed = _read_cursor(a.resume_cursor)
     ref = None
     if int(a.total) != TOTAL_TOKENS:
         if not a.out or a.probe:
             ap.error("a non-default --total needs --out and excludes --probe")
+        # A SHRINKING --total AND --resume-cursor CANNOT BOTH BE HONOURED, so this refuses
+        # rather than picking one. Below, `_shrinking` overwrites every weight and anneal with
+        # the 20B build's -- and that reference build is deliberately cursor-free (:2016), so
+        # the copy discards precisely the cursor-aware sizing that _ceiling_weight,
+        # _place_freed_under_ceiling and _ceiling_overshoot just computed. The result is a
+        # fresh-start composition written under a resume's name.
+        #
+        # WORSE THAN SHIPPING IT UNBLOCKED: build() puts `_launch_blocked` and
+        # `_untrusted_supply` in the dict it returns (:1088-1090), the loop overwrites only
+        # `weight` and `anneal`, and nothing rebuilds them before json.dumps -- so the file
+        # keeps a block list computed against the cursor beside weights that ignore it. A
+        # reader sees the block and reads it as evidence the cursor WAS honoured.
+        if cursor and int(a.total) <= TOTAL_TOKENS:
+            ap.error(
+                f"--total {a.total / 1e9:.3f}B is at or below the default "
+                f"{TOTAL_TOKENS / 1e9:.3f}B AND --resume-cursor was passed. The shrinking path "
+                f"copies weights from a fresh-start 20B reference build, which would silently "
+                f"discard the cursor-aware sizing and write a file whose _launch_blocked was "
+                f"computed against a cursor its weights ignore. Drop --resume-cursor for a "
+                f"fresh-start mix at this total, or raise --total above the default so weights "
+                f"are recomputed under the cursor.")
         # The REFERENCE build stays fresh-start: it exists only to lift the 20B weights for a
         # smaller total, and a cursor-aware reference would compare two different quantities.
         ref = build(a.code_tokens)
         TOTAL_TOKENS = int(a.total)
         ROWS = TOTAL_TOKENS // SEQ
     m = build_probe() if a.probe else build(a.code_tokens, cursor)
+    if cursor:
+        # THE STATE THIS FILE'S ARITHMETIC WAS DERIVED AGAINST, so the launcher can refuse a
+        # resume it does not describe. A resume mix is correct for exactly one checkpoint --
+        # `epochs` is cursor + this plan -- and nothing else in the file says which. Written
+        # here rather than inside build(), which is handed the rows alone and never sees the
+        # other two.
+        #
+        # THE TRIPLE, NOT THE CHECKPOINT'S PATH OR HASH. Two checkpoints with equal cursor
+        # state are substitutable and a file identity would refuse one of them for no reason
+        # (4c's ruling 2026-09-07). Rows alone are not enough either: the same count over a
+        # re-fingerprinted corpus, or over the same corpus shuffled at a different sample
+        # seed, names different rows, and the epoch totals here would be arithmetic on a
+        # prefix that no longer exists.
+        m["_derived_against"] = {
+            "row_cursor": cursor,
+            "row_cursor_srcfp": cursor_srcfp,
+            "row_cursor_seed": cursor_seed,
+            "_note": (
+                "the resume state this mix's `epochs` values were computed against; "
+                "train.py refuses a resume whose own triple differs"),
+        }
     out = PROBE_OUT if a.probe else (a.out or OUT)
     if ref is not None:
         # WEIGHTS ARE COPIED FROM THE 20B BUILD ONLY WHEN THE NEW TOTAL IS SMALLER, and that
@@ -1656,7 +2170,7 @@ def main():
                 # 4.000028929185, all three at exactly 4.000000000000 once floored. Checking the
                 # fractional row is checking a row nobody reads.
                 _rows = int(ROWS * d["weight"])
-                _epochs = _rows / _pool_rows(_sup)
+                _epochs = _rows / _domain_pool_rows(name, _sup)
                 if _epochs > EPOCH_SOFT_CEILING:
                     _over.append(f"{name} {_epochs:.2f} epochs at weight {d['weight']:.7f}")
 

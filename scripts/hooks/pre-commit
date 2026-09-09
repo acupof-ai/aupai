@@ -236,18 +236,61 @@ def staged(diff_filter):
     return [f for f in r.stdout.splitlines() if f.strip()]
 
 
+def _config_sections(raw):
+    """[(header, body)] for an INI file: a section is its header line plus every line until
+    the next header. Used to hash part of a config rather than all of it."""
+    out, header, body = [], "", []
+    for line in raw.decode("utf-8", "replace").splitlines(True):
+        if line.lstrip().startswith("["):
+            if header or body:
+                out.append((header, "".join(body)))
+            header, body = line.strip(), []
+        else:
+            body.append(line)
+    if header or body:
+        out.append((header, "".join(body)))
+    return out
+
+
 def _shared_repo_state(root):
-    """(sha256 of the shared .git/config, staged paths) -- what a selftest must not change.
+    """(sha256 of the shared .git/config EXCEPT its [branch] sections, staged paths, branch
+    section names) -- what a selftest must not change.
 
     Stripping GIT_* from the child stops the leak we know about (e1-12). This measures
     the property instead of the mechanism: whatever a selftest does, the shared repo must
     look the same afterwards. Two cheap reads, ~10ms.
 
-    HASH THE WHOLE FILE, do not enumerate fields (b0's correction, 2026-09-02). The first
+    HASH THE FILE, do not enumerate fields (b0's correction, 2026-09-02). The first
     version compared core.bare, because that is the field that broke us -- but `git init`
     under a leaked GIT_DIR rewrites the entire config, and core.bare is merely the most
     lethal line in it. A field list only catches the forms already imagined; the next leak
     adds a remote or bumps repositoryformatversion and passes.
+
+    [branch] SECTIONS ARE EXCLUDED, and that exclusion is the whole difference between a
+    guard and a lottery. `git push -u` writes `[branch "<name>"] remote/merge` into the
+    SHARED config; six sessions open PRs continuously, so that writer is normal work and
+    cannot be paused. Every selftest the hook runs is one more collision window, and there
+    are about forty of them. What it cost, both measured 2026-09-08: b0 refused five times
+    with a different digest each time (3cfc2d49, cbf3cc0c, 33df6b01 among them), e1 four
+    times, each refusal naming a DIFFERENT innocent file. Nine refusals, nine wrong names.
+
+    WHAT WOULD MAKE THIS EXCLUSION WRONG, stated so the next person to widen it knows what
+    to falsify: it rests on the claim that the only writers of [branch] sections are
+    `git push -u` and a human `git config`. b0 measured the half that is easy to get
+    backwards -- creating a branch locally writes nothing to the shared config. If a
+    SELFTEST is ever found writing a [branch] section, that selftest has the bug; the
+    answer is still not to widen the digest, because widening it restores the livelock.
+    A leaked `git init` rewrites core.*, remote.* and repositoryformatversion, all still
+    hashed, so the destructive form this guard exists for is untouched.
+
+    The branch NAMES come back as the third element so a refusal can say which direction
+    they moved, because direction is the one observation that separates the innocent causes:
+    a gain is a push, a loss is a branch or worktree being pruned. It is deliberately NOT
+    part of the equality -- see _shared_repo_changed. b0 read the old hint ("same value
+    every run is a selftest, a different value each time is a peer") and reached a
+    confident, specific, wrong conclusion, because neither tell distinguishes a gain from
+    a loss: the evidence was in b0's own paste, a branch count of 84 -> 81, and a drop
+    rules a push OUT.
 
     The leak needs GIT_DIR pointing at a WORKTREE gitdir (.git/worktrees/<name>) -- a
     plain repo's GIT_DIR does not flip core.bare, so a casual test looks safe and only a
@@ -272,15 +315,106 @@ def _shared_repo_state(root):
     cfg = subprocess.run(["git", "-C", root, "rev-parse", "--path-format=absolute",
                           "--git-common-dir"],
                          capture_output=True, text=True, env=env).stdout.strip()
-    digest = ""
+    digest, branches = "", frozenset()
     if cfg:
         path = os.path.join(cfg, "config")
         if os.path.exists(path):
             with open(path, "rb") as fh:
-                digest = hashlib.sha256(fh.read()).hexdigest()[:16]
+                raw = fh.read()
+            secs = _config_sections(raw)
+            branches = frozenset(h for h, _ in secs if h.startswith('[branch "'))
+            kept = "".join(h + "\n" + b for h, b in secs if not h.startswith('[branch "'))
+            digest = hashlib.sha256(kept.encode("utf-8")).hexdigest()[:16]
     idx = subprocess.run(["git", "-C", root, "diff", "--cached", "--name-only"],
                          capture_output=True, text=True, env=env).stdout.split()
-    return digest, frozenset(idx)
+    return digest, frozenset(idx), branches
+
+
+def _shared_repo_changed(before, after):
+    """What changed between two _shared_repo_state reads, as a list of observations.
+
+    Empty means nothing a selftest is answerable for. Branch sections are reported when
+    something else already changed, and never on their own: they are the thing six
+    concurrent pushes write, and charging a selftest for them is what produced five
+    false refusals across two sessions on 2026-09-08.
+    """
+    what = []
+    if after[0] != before[0]:
+        what.append(f".git/config changed outside its [branch] sections "
+                    f"({before[0]} -> {after[0]})")
+    gained, lost = after[1] - before[1], before[1] - after[1]
+    if gained:
+        what.append(f"staged {sorted(gained)[:4]}")
+    if lost:
+        what.append(f"unstaged {sorted(lost)[:4]}")
+    if what:
+        b_add, b_del = len(after[2] - before[2]), len(before[2] - after[2])
+        if b_add or b_del:
+            what.append(f"and, separately, [branch] sections {len(before[2])} -> "
+                        f"{len(after[2])} (+{b_add}/-{b_del}); a gain is someone's "
+                        f"`git push -u`, a loss is a branch or worktree being pruned")
+    return what
+
+
+def _refuse_committing_on_main(merging):
+    """Refuse a commit whose HEAD is the branch `main`. Nobody's session branch is main.
+
+    2026-09-08, 05:40:09Z: b0 committed 484a9528 onto refs/heads/main from aupai-b0, which had
+    main checked out. At 05:45:45 they ran `branch: Reset to origin/main`, and main moved off
+    that commit -- a sideways move, caught by main_advances_by_ancestry, which then refused every
+    commit repo-wide until PR #54 recorded the pair. Nothing was lost only because b0 created
+    refs/heads/b0 from HEAD in the same second (both reflog entries read 05:45:45), so the rescue
+    was an act rather than a safety net.
+
+    THE PREDICATE IS "HEAD IS main", NOT "main != origin/main". 4c's proposal was the latter, and
+    it would NOT have fired: at 05:40:09 local main was 7049750c and origin/main had been pushed
+    to 7049750c at 05:39:05, so the two were EQUAL and the divergence was created BY the commit
+    this hook runs before. A predicate reading the state the commit produces cannot see the commit
+    that produces it. Checking HEAD's branch instead fires before the first such commit exists,
+    which is the whole point of a pre-commit gate.
+
+    This is main_in_no_worktree's hazard at the write. That check (WARN, harness) sees the state
+    statically and asks another session to fix their own tree; this refuses the act that turns the
+    state into a loss. Neither replaces the other: a tree can hold main checked out for hours
+    harmlessly, and a commit here is wrong the first time.
+
+    `symbolic-ref --short -q HEAD` and not `rev-parse --abbrev-ref HEAD`, and the reason is NOT
+    the one this docstring first gave. It claimed abbrev-ref's literal "HEAD" when detached was a
+    string a name test could match; measured, both refuse identically there, because "HEAD" !=
+    "main" and the gate returns. A mutation sweep swapping the two commands SURVIVED every world
+    until an UNBORN HEAD was added -- `git init` with no commit yet, where abbrev-ref exits 128 and
+    prints "HEAD" (so the mutant returns early and PERMITS the commit) while symbolic-ref exits 0
+    and correctly answers "main". That is the repo's very first commit, made on main, which is the
+    one commit this gate most needs to catch. The right justification is that symbolic-ref reads
+    the ref HEAD points at, which exists before any commit does; rev-parse resolves HEAD to an
+    object, which does not.
+
+    Exempt while merging: `merge_main.sh` never checks main out, but a session resolving a
+    conflict on a branch that legitimately tracks main must be able to finish. Silent when git
+    cannot answer -- a tree with no HEAD is not a tree committing on main.
+    """
+    if merging:
+        return
+    r = subprocess.run(["git", "symbolic-ref", "--short", "-q", "HEAD"],
+                       capture_output=True, text=True)
+    if r.returncode != 0 or r.stdout.strip() != "main":
+        return
+    print(
+        "REFUSING: HEAD is the branch `main`, so this commit lands on main directly.\n"
+        "Commit on your own branch and let merge_main advance main:\n"
+        "  git branch <your-name> && git checkout <your-name>   # keeps the staged work\n"
+        "  git commit <paths> -m '...'\n"
+        "  scripts/merge_main.sh <your-name>\n"
+        "main is advanced by an atomic update-ref compare-and-swap that touches no working "
+        "tree, which is safe only while no tree holds main. A commit here also puts work on a "
+        "ref every other session fast-forwards: on 2026-09-08 the next `Reset to origin/main` "
+        "moved main off such a commit and the sideways move refused every commit in the "
+        "repository until it was recorded by hand.\n"
+        "If you are already holding work here, `git branch <name>` first -- it keeps HEAD's "
+        "commit and your index, and costs nothing if you were about to be right.",
+        file=sys.stderr,
+    )
+    sys.exit(1)
 
 
 def _refuse_copied_worktree(top):
@@ -454,6 +588,7 @@ def main():
             )
             sys.exit(1)
         _refuse_copied_worktree(top)
+        _refuse_committing_on_main(merging)
     print(f"hook: tree check {time.time() - t0:.2f}s", file=sys.stderr)
 
     # Behind main. A conclusion drawn from a check has two inputs -- the check's code
@@ -858,7 +993,27 @@ def main():
         # that silently skipped a shard would reproduce that defect inside the artifact meant
         # to fix it. Its selftest carries the negative control that makes that detectable --
         # a first-shard-only count that must differ from the full one.
+        #
+        # And it DID reproduce a defect of its own, on the axis the registration did not
+        # name: registered and green for a week while :50 counted ids with no <eos>, because
+        # the selftest asserted shard COVERAGE and nothing named the convention. Six facts
+        # were short by exactly their document counts. Registration gates the file, not the
+        # property; the convention assertion added 2026-09-08 is what gates this one.
         "datagen/count_corpus_dir.py",
+        # The dd09+b2v2_dd hardlink union (3b-17). Registered because its whole job is to
+        # produce a directory whose stamp another session will read as a supply, and the two
+        # ways it can be wrong are silent: a shard name in both sources drops one, and a copy
+        # instead of a link costs 30 GB on a filesystem at 93%. Its selftest builds two real
+        # source dirs and asserts the union's token count as a KNOWN ANSWER over the text --
+        # never as the sum of the source stamps, which cannot see a dropped shard. Four
+        # mutants: collision check off, copy-not-link, count gate off, existing-copy check
+        # off; all four red.
+        "datagen/build_dd09_full.py",
+        # The multiprocess batch counter for a whole directory, and the second reader that
+        # confirmed en_c4_30b. Same convention as count_tokens.py by calling it; its own
+        # selftest asserts ids + one <eos> per document plus the two exclusions
+        # (holdout_slice_*, the stats file) that would otherwise move n_shards and bytes.
+        "scripts/count_dir.py",
         # --selftest needs no GPU BY CONSTRUCTION, which is why it can be gated here. The
         # replica guard reads source text only, so it runs before the CUDA check; gating a
         # source-text check behind CUDA is how an untested guard stays untested, and this
@@ -914,6 +1069,12 @@ def main():
         # Measured 2026-09-07, three mutants each killing a different world set: count-not-overlap
         # -> W2/W3-control/W6, two-dot -> W3-control/W6, always-empty -> W1/W3.
         "scripts/test_behind_main_overlap.py",
+        # _refuse_committing_on_main's five worlds. Registered because the gate it tests lives in
+        # THIS file and nowhere else, and because its load-bearing world is one nobody would think
+        # to build: an UNBORN HEAD is the only world separating symbolic-ref from
+        # `rev-parse --abbrev-ref`, and the swap mutant survived the other four. Detached, which is
+        # the world the first docstring claimed, does not discriminate at all.
+        "scripts/test_on_main_refusal.py",
         # The stamp branch that decides whether the next training launch is allowed. Registered
         # because it runs entirely against a FAKE pod -- the three outcomes are decided by
         # stamp_sync's own arguments, so the one gate nobody can exercise from this machine
@@ -1352,6 +1513,13 @@ def main():
         "scripts/ckpt_info.py",
         "scripts/restartability_audit.py", "scripts/shape_audit.py",
         "scripts/tokenizer_eval.py", "scripts/tokenizer_report.py",
+        # tokenizer_sweep: its selftest builds four corpus dirs in tempfile and checks
+        # which FILES load_text reaches -- no tokenizer, no data dir, no card.
+        "scripts/tokenizer_sweep.py",
+        # test_v2_mix_is_resume1: reads two committed JSON files and diffs them. The v2 mix
+        # is a HAND COPY, so nothing else recomputes it; this is the only thing standing
+        # between a stray weight edit and a two-variable architecture comparison.
+        "scripts/test_v2_mix_is_resume1.py",
         "scripts/launch_gate.py", "scripts/test_num_id_resolve.py",
         "mathbank/math_programs_l5_ext_novel.py",
         "mathbank/emit_novel_ops.py",
@@ -1360,6 +1528,14 @@ def main():
         "scripts/test_tokenizer_fp_name.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
+        # The score-matrix rewrite trace: the writer half (eval/score_matrix.py) and the
+        # check half (harness.py) must stay in step, and the test asserts they share ONE
+        # comparison rather than two copies of it.
+        "scripts/test_score_matrix_trace.py",
+        # Guards the EDGE KINDS, where test_reachability_fresh.py guards the listing's
+        # freshness. Both are needed and neither substitutes: a listing regenerated on the
+        # hour from a scan reading one ledger of 32 is fresh and wrong.
+        "scripts/test_reachability_edges.py",
         "scripts/test_eval_load_only.py",
         "scripts/test_pod_drift_root.py",
         "scripts/launch_tests.py",
@@ -1590,6 +1766,13 @@ def main():
         # the subject is build_mix, not this file. Two reverts of the fix were run in real
         # worktrees and each fails this test at its own assertion. ~4s, no card.
         "scripts/test_mix_anneal_and_cursor.py",
+        # A resume mix names the cursor state it was derived against, and build_mix refuses a
+        # different one. THREE trigger lists, not one, because the property spans three files:
+        # write_mix_500m writes the field, write_mix_stage2 writes its own rows-only form, and
+        # train.py compares it -- an edit to any of the three can make the guard vacuous, and
+        # none of them is this file. 13 mutations run, all red. ~35s (case 13 runs the mix
+        # writer twice as a subprocess), no card.
+        "scripts/test_mix_derived_against.py",
         # build_mix states the cache bytes it is about to read BEFORE the first torch.load, so a
         # launch's own log carries the number instead of it being computed offline (the 166.2 GB
         # for the E1 mix appeared in no log, and the 101 GB RSS was found in /proc afterwards).
@@ -1826,6 +2009,37 @@ def main():
         # fix that swaps the short prefix out instead of unioning it in, which is the
         # regression de caught before it shipped.
         "scripts/test_ckpt_name_hyphen.py",
+        # StepProfiler's arithmetic and its labels. Here and NOT in NEEDS_DATA because it needs
+        # no card: it execs the class body out of train.py and drives it with fake cuda events.
+        # 0.05s, mean of 5 runs of `python3 scripts/test_step_profiler.py` at load average 8.3
+        # (0.12s at load ~20; it is startup-bound, so it tracks host load). The commit that
+        # added it claimed 1.7s, which was one run taken at load average 40 while a stalled
+        # hook held the box -- 34x the quiet-box figure, and stated without being re-read.
+        # Registered in the same commit as the file, which is what the gate that refused
+        # that commit was for. Its capacity is measured, not assumed -- five mutants, all red:
+        # summing the no-sync arm instead of averaging it, dropping the spread verdict, dropping
+        # the cadence rounding, ignoring --no_bucket_view in the label, and restoring the
+        # "unmeasurable at accum 1" label that is false whenever DDP is off at accum > 1.
+        "scripts/test_step_profiler.py",
+        # The checkpoint-deletion predicates. Registered because this file's output is what
+        # someone reads before deleting 6 GB, and BOTH of its failures so far were silent: the
+        # first version scored three predicates and printed a well-formed listing that offered
+        # the 30B leg's resume source, and the fix for it scanned 7 of 78 runs/*.jsonl and
+        # printed an equally well-formed listing that offered four cited checkpoints. Neither
+        # was a crash, a skip or an odd-looking row -- a listing cannot show the predicate it
+        # does not have.
+        #
+        # Its selftest runs against the REAL runs/ tree rather than a fixture, on purpose: the
+        # recurring defect is a population narrower than the question, and a fixture is a
+        # population I choose. Off the pod there is no /work/aupai/runs and it SKIPs, so its
+        # green here is worth nothing; the load-bearing run is on the pod.
+        #
+        # Capacity measured against the shipped defect, not assumed: restoring the 7-ledger
+        # tuple leaves 4 files protected only by the resume predicate and the subsumption
+        # assertion fires. It catches that mutant through one predicate only -- had
+        # experiments.jsonl been inside the 7, nothing here would have fired while 71 ledgers
+        # went unread, which is why the ledger count is printed on every listing.
+        "scripts/deletion_candidates.py",
     }
     # A value is the REASON the whole --selftest cannot run here, or (reason, flag) when
     # part of it CAN: the exemption belongs to the assertions that need the data, not to
@@ -2099,11 +2313,12 @@ def main():
         # the readout that scores them or the pinned hash goes stale silently.
         "mathbank/emit_novel_ops_4way.py": {"eval/novel_ops_4way.py"},
         "eval/l1_2x2_diagnose.py": {"eval/test_l1_fewshot_2x2.py"},
-        # _cache_pool is the reader half of the .counts sidecar train.py writes. Its own
-        # selftest does not build a cache, so the two-arm agreement is only asserted by this
-        # file -- and an edit here (dropping the mismatch raise, deriving pool_rows twice) is
-        # exactly what makes the two paths disagree.
-        "scripts/write_mix_500m.py": {"scripts/test_cache_counts.py"},
+        # write_mix_500m owns three tested contracts: the .counts sidecar _cache_pool reads
+        # (test_cache_counts -- its own selftest builds no cache, so the two-arm agreement is
+        # asserted only here), the _derived_against field train.py consumes, and the shrinking
+        # --total refusal (the latter two via test_mix_derived_against, which also covers stage2).
+        "scripts/write_mix_500m.py": {"scripts/test_cache_counts.py", "scripts/test_mix_derived_against.py"},
+        "scripts/write_mix_stage2.py": {"scripts/test_mix_derived_against.py"},
         # Derived, 2026-09-04. The per-subject cost in seconds is in the comment beside each.
         # test_mem_defaults_frozen guards BOTH train.py and model.py because the memory arm's
         # behaviour is split across them: the selection lives in model.ProductKeyMemory.forward
@@ -2115,12 +2330,22 @@ def main():
         # ALONE would have meant it runs only when someone edits the test -- the gap this table
         # exists to close, and the one my own guard fell into before (registered-guard-never-asked).
         "train.py": {"scripts/test_arch_compat.py", "scripts/test_plan_length.py",
+                     # Its subject is a class DEFINED in train.py, which it reads out of the file
+                     # by source span -- so a train.py edit is exactly when it must run, and
+                     # SELFTEST_FILES alone would run it only when someone edits the test. 0.05s
+                     # (mean of 5, load average 8.3), and train.py is the worst-case subject at
+                     # 42.6s -- that figure read from this comment block, not re-measured here.
+                     "scripts/test_step_profiler.py",
                      "scripts/test_untie_head.py",
                      "scripts/test_mem_defaults_frozen.py",
                      "scripts/test_moe_defaults_frozen.py",
                      "scripts/test_muon_3d.py",
                      "scripts/test_mix_val_frac.py",
                      "scripts/test_mix_anneal_and_cursor.py",
+                     # build_mix compares the mix's _derived_against triple with the resuming
+                     # checkpoint's; a change here can make that guard vacuous, and the writers
+                     # that produce the field are in another file.
+                     "scripts/test_mix_derived_against.py",
                      "scripts/test_cache_read_line.py",
                      "scripts/test_cache_mmap.py",
                      # train.py writes the .counts sidecar that write_mix_500m._cache_pool
@@ -2239,8 +2464,20 @@ def main():
     # handled below.
     _subject_tests &= (SELFTEST_FILES | set(PARTIAL))
 
-    # Measured per selftest, not once around the loop, so the refusal can name WHICH
-    # one did it (e1-14). A single before/after pair would say "something changed".
+    # THE BASELINE IS RE-READ BEFORE EVERY SELFTEST, and this comment used to claim that while
+    # the code captured it ONCE outside the loop. The consequence is a refusal that names an
+    # innocent file: any concurrent write to the shared repo -- another session's `git push -u`
+    # adding a [branch] section, a `git config` anywhere in this checkout -- lands between two
+    # selftests and is attributed to whichever one happened to be running. MEASURED 2026-09-07:
+    # `card_claim.py --selftest` was refused for changing .git/config while that file runs ZERO
+    # git commands (grep -c '"git"' -> 0); the config's mtime was 14:34, a peer's push, and the
+    # commit was blocked for something no selftest did. b0 hit the same refusal twice with a
+    # DIFFERENT hash each time, which is the signature of a concurrent writer rather than of a
+    # selftest -- a selftest that writes the config writes the same thing every run.
+    #
+    # Re-reading per file cannot tell a concurrent writer from a guilty selftest either, but it
+    # bounds the window to one selftest's duration instead of the whole loop, and the guilty
+    # party is then the file that was actually running. The residual is named in the refusal.
     state_before = _shared_repo_state(repo_root())
     # One temp root for every selftest this hook runs, removed in the same finally as the
     # staged copies. 19 of the tracked selftests mkdtemp without rmtree, and most cannot
@@ -2298,6 +2535,11 @@ def main():
             # selftest as FAILING rather than as un-runnable. Nothing in the map was .sh until
             # scripts/merge_main.sh, so the assumption held by accident.
             _interp = ["bash"] if f.endswith(".sh") else [sys.executable]
+            # RE-READ IMMEDIATELY BEFORE THE RUN, so the window this selftest is answerable for
+            # is its own duration and not every selftest before it (see the note at the loop's
+            # baseline). A write that lands while file N-1 runs is now file N-1's problem, or
+            # nobody's if it lands between two runs -- never wrongly file N's.
+            state_before = _shared_repo_state(repo_root())
             r = subprocess.run(_interp + [dst, flag], capture_output=True,
                                text=True, cwd=repo_root(), env=_env)
             if r.returncode != 0:
@@ -2312,22 +2554,31 @@ def main():
             # already broken. Checked after the rc check so a crashing selftest reports
             # its own error first.
             after = _shared_repo_state(repo_root())
-            if after != state_before:
-                what = []
-                if after[0] != state_before[0]:
-                    what.append(f".git/config changed ({state_before[0]} -> {after[0]})")
-                gained, lost = after[1] - state_before[1], state_before[1] - after[1]
-                if gained:
-                    what.append(f"staged {sorted(gained)[:4]}")
-                if lost:
-                    what.append(f"unstaged {sorted(lost)[:4]}")
-                print(f"REFUSING: {f} --selftest changed the SHARED repo: "
-                      + "; ".join(what) + ".\n"
-                      "It passed, which makes this worse than a failure: rc=0 reads as "
-                      "verified while every other session's git is already broken.\n"
-                      "A selftest must build its world from nothing the caller is "
-                      "holding -- strip GIT_* from every subprocess it spawns "
-                      "(pod_drift.py:61-66).",
+            what = _shared_repo_changed(state_before, after)
+            if what:
+                # REPORT THE OBSERVATION, DO NOT NAME A CULPRIT. This said "<file> --selftest
+                # changed the SHARED repo", and it cannot know that. The wrongness is
+                # STRUCTURAL, not bad luck (e1's derivation, 2026-09-08): the window wraps one
+                # selftest's subprocess, a round runs about forty of them back to back, so the
+                # windows tile most of the round's wall clock. A concurrent write lands in
+                # WHICHEVER window it happens to fall in, uniformly, and that window's file gets
+                # named. Nine refusals across b0 and e1 on 2026-09-08 named nine different
+                # innocent files with zero repeats -- the uniformity IS the evidence. The
+                # correlation between the named file and the cause is zero, so printing it as
+                # the subject is not imprecise, it is misleading, and each reader spent their
+                # time proving a clean file clean.
+                print("REFUSING: the SHARED repo changed while a selftest was running.\n"
+                      "  observed: " + "; ".join(what) + "\n"
+                      f"  running at the time: {f} {flag} (it PASSED, which is why this "
+                      f"matters: rc=0 reads as verified while every other session's git may "
+                      f"already be broken)\n"
+                      "This does NOT establish that the selftest made the change -- the window "
+                      "is its duration, and any session's write lands in someone's window. Read "
+                      "the observation above first, then decide. If a selftest IS the cause it "
+                      "must build its world from nothing the caller is holding: strip GIT_* from "
+                      "every subprocess it spawns (pod_drift.py:61-66). Two tells that it is "
+                      "not: grep the named file for a git invocation at all, and re-run it "
+                      "alone.",
                       file=sys.stderr)
                 sys.exit(1)
     finally:
@@ -2565,22 +2816,41 @@ def _selftest():
     # true merge, not a fast-forward: a fast-forward runs no hook, which is how this
     # stayed hidden. Kept separate because it needs a worktree, not just a repo.
     d2 = tempfile.mkdtemp()
+    _nohooks = tempfile.mkdtemp()  # empty: advance_main points core.hooksPath here
     try:
         def git(*a, cwd=d2):
             return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True,
                                   text=True, env=clean)
+
+        def advance_main(msg, *paths):
+            """Advance MAIN in the primary worktree, which is checked out on main.
+
+            core.hooksPath at an empty directory, so this command runs NO hooks. These commits
+            BUILD the world; they are not the action under test. _refuse_committing_on_main
+            refuses a commit whose HEAD is the branch main (de, 2026-09-08), so without this
+            every world-5 setup commit was refused, main never advanced, and 5c/5e failed on a
+            precondition -- "worktree is not behind" -- rather than on what they assert. Setup
+            must not pass through the gate under test; the same mistake in the other direction
+            cost an hour in test_on_main_refusal.py, where installing the hook during setup made
+            the merge exemption read as broken.
+
+            NOT --no-verify: that is banned repo-wide, and a hook's own selftest is the last
+            place to demonstrate it. hooksPath says what is meant -- this world's construction
+            runs no hooks -- and leaves the flag with no foothold.
+            """
+            git("add", *paths)
+            return git("-c", f"core.hooksPath={_nohooks}", "commit", "-q", "-m", msg)
+
         for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
                   ("config", "user.name", "t")):
             git(*a)
         with open(os.path.join(d2, "f.txt"), "w") as fh:
             fh.write("base\n")
-        git("add", "f.txt")
-        git("commit", "-q", "-m", "base")
+        advance_main("base", "f.txt")
         git("branch", "-q", "feat")
         with open(os.path.join(d2, "m.txt"), "w") as fh:
             fh.write("m\n")
-        git("add", "m.txt")
-        git("commit", "-q", "-m", "main-ahead")
+        advance_main("main-ahead", "m.txt")
         wt = os.path.join(d2, "wt")
         git("worktree", "add", "-q", wt, "feat")
         hooks = os.path.join(d2, ".git", "hooks")
@@ -2623,8 +2893,7 @@ def _selftest():
             git(*a, cwd=wt)
         with open(os.path.join(d2, "m2.txt"), "w") as fh:
             fh.write("m2\n")
-        git("add", "m2.txt")
-        git("commit", "-q", "-m", "main-ahead-2")
+        advance_main("main-ahead-2", "m2.txt")
         behind2 = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
         if behind2 == "0":
             fails.append("world 5b precondition: worktree is not behind again, proves nothing")
@@ -2655,8 +2924,7 @@ def _selftest():
         # legitimately allowed and this world would assert the wrong thing.
         with open(os.path.join(d2, "code.py"), "w") as fh:
             fh.write("x = 0  # main's version\n")
-        git("add", "code.py")
-        git("commit", "-q", "-m", "main touches code.py")
+        advance_main("main touches code.py", "code.py")
         with open(os.path.join(wt, "runs", "friction.jsonl"), "a") as fh:
             fh.write('{"id": "y", "kind": "hook"}\n')
         with open(os.path.join(wt, "code.py"), "w") as fh:
@@ -2681,8 +2949,7 @@ def _selftest():
         # Nothing this commit writes lands on top of anything main changed.
         with open(os.path.join(d2, "unrelated.txt"), "w") as fh:
             fh.write("main moved here\n")
-        git("add", "unrelated.txt")
-        git("commit", "-q", "-m", "main-ahead on an unrelated file")
+        advance_main("main-ahead on an unrelated file", "unrelated.txt")
         behind5e = git("rev-list", "--count", "HEAD..main", cwd=wt).stdout.strip()
         if behind5e == "0":
             fails.append("world 5e precondition: worktree is not behind, proves nothing")
@@ -2731,6 +2998,7 @@ def _selftest():
                          "git can merge without a person, not merge=union alone")
     finally:
         shutil.rmtree(d2, ignore_errors=True)
+        shutil.rmtree(_nohooks, ignore_errors=True)
 
     # WORLD 6 (must DETECT): _shared_repo_state notices a selftest that wrote to the
     # shared repo, which is the e1-14 detector. Built from the real leak: a fake
@@ -2771,7 +3039,7 @@ def _selftest():
         finally:
             shutil.rmtree(victim, ignore_errors=True)
         after = _shared_repo_state(d3)
-        if after == before:
+        if not _shared_repo_changed(before, after):
             fails.append("world 6: the leak did not reproduce, so the detector is "
                          "untested -- GIT_DIR must point at a worktree gitdir")
         elif subprocess.run(["git", "-C", d3, "config", "--get", "core.bare"],
@@ -2787,12 +3055,136 @@ def _selftest():
         # which is the point of hashing.
         with open(cfg_path, "wb") as fh:
             fh.write(cfg_bytes)
-        if _shared_repo_state(d3) != before:
+        if _shared_repo_changed(before, _shared_repo_state(d3)):
             fails.append("world 6: state did not return to baseline after restoring the "
                          "config bytes, so a difference cannot be attributed to one "
                          "selftest")
     finally:
         shutil.rmtree(d3, ignore_errors=True)
+
+    # WORLD 6b (must ATTRIBUTE, not merely detect): a write that lands while selftest A runs must
+    # be charged to A and NOT to a later innocent selftest B. World 6 above cannot see this -- it
+    # takes ONE before/after pair around a single write, which is exactly the shape that was
+    # broken: the hook captured state_before once outside the loop, so any write landing during A
+    # was still "new" when B finished and the refusal named B. MEASURED 2026-09-07:
+    # card_claim.py --selftest was refused for changing .git/config while running zero git
+    # commands, because a peer's `git push -u` landed earlier in the loop.
+    #
+    # The world is the LOOP's baseline discipline rather than the hook end-to-end: two runs, a
+    # write injected during the first, and the question is whether the second sees a difference.
+    # Driving the real hook would need two staged selftest files and a peer writing between them;
+    # this asserts the property that fix turns on, and the negative control is the old code path
+    # (one baseline for both runs), which must FAIL to attribute.
+    d6b = tempfile.mkdtemp()
+    try:
+        def g6(*a):
+            return subprocess.run(["git"] + list(a), cwd=d6b, capture_output=True, text=True,
+                                  env=clean)
+        g6("init", "-q", "-b", "main", ".")
+        g6("config", "user.email", "t@t")
+        g6("config", "user.name", "t")
+
+        def two_selftests(per_file_baseline):
+            """Replay the loop over two selftests, A guilty and B innocent.
+
+            Returns (A blamed, B blamed). `per_file_baseline` is the fix: read the baseline
+            immediately before each run instead of once for the whole loop.
+            """
+            loop_baseline = _shared_repo_state(d6b)
+
+            # --- selftest A: writes the shared config while it runs. The guilty one.
+            before_a = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
+            g6("config", "de.world6b", "written-during-A")     # A's write
+            blamed_a = bool(_shared_repo_changed(before_a, _shared_repo_state(d6b)))
+
+            # --- selftest B: touches nothing at all.
+            before_b = _shared_repo_state(d6b) if per_file_baseline else loop_baseline
+            blamed_b = bool(_shared_repo_changed(before_b, _shared_repo_state(d6b)))
+
+            g6("config", "--unset", "de.world6b")
+            return blamed_a, blamed_b
+
+        guilty, innocent = two_selftests(per_file_baseline=True)
+        if not guilty:
+            fails.append("world 6b: the guilty selftest was NOT blamed, so the world does not "
+                         "reproduce a shared-repo write at all and proves nothing about B")
+        if innocent:
+            fails.append("world 6b: an innocent selftest was blamed for a write made during the "
+                         "PREVIOUS one -- the per-file baseline is not in effect")
+        # NEGATIVE CONTROL: one baseline for the whole loop, which is how the code stood. B must
+        # be blamed there, or this world cannot tell the fix from its absence.
+        g_old, i_old = two_selftests(per_file_baseline=False)
+        if not (g_old and i_old):
+            fails.append(f"world 6b control: with ONE baseline for the whole loop the innocent "
+                         f"selftest must ALSO be blamed (got guilty={g_old} innocent={i_old}); "
+                         f"without that this world passes with the fix reverted")
+    finally:
+        shutil.rmtree(d6b, ignore_errors=True)
+
+    # WORLD 6c (must NOT fire): a concurrent `git push -u` writing a [branch] section is not a
+    # selftest's doing, and a real `git init` leak still is. Both halves are asserted here
+    # because dropping [branch] from the digest can be taken too far: exclude too much and the
+    # detector that stopped two repo-wide outages measures nothing.
+    #
+    # MEASURED 2026-09-08, and this world is built from those refusals: b0 refused three times
+    # with a different digest each time (3cfc2d49 -> cbf3cc0c -> 33df6b01), e1 refused twice
+    # each naming a DIFFERENT innocent file. The actual config change behind e1's was the
+    # REMOVAL of `3b-zombie-lock` and `fb-code` during a worktree cleanup -- a direction the old
+    # hint could not express, since "a different value each time is a peer" reads identically
+    # for a gain and a loss.
+    d6c = tempfile.mkdtemp()
+    try:
+        def g7(*a, cwd=d6c):
+            return subprocess.run(["git"] + list(a), cwd=cwd, capture_output=True, text=True,
+                                  env=clean)
+        for a in (("init", "-q", "-b", "main", "."), ("config", "user.email", "t@t"),
+                  ("config", "user.name", "t")):
+            g7(*a)
+        with open(os.path.join(d6c, "f.txt"), "w") as fh:
+            fh.write("base\n")
+        g7("add", "f.txt")
+        g7("commit", "-q", "-m", "base")
+
+        base = _shared_repo_state(d6c)
+        if not base[0]:
+            fails.append("world 6c precondition: no config digest, so nothing here can show")
+
+        # (a) A PUSH-SHAPED WRITE MUST NOT FIRE. `git push -u` writes exactly this pair.
+        g7("config", "branch.peer-pushed.remote", "origin")
+        g7("config", "branch.peer-pushed.merge", "refs/heads/peer-pushed")
+        added = _shared_repo_state(d6c)
+        if _shared_repo_changed(base, added):
+            fails.append(f"world 6c: a [branch] section added by a peer's push was reported as "
+                         f"a shared-repo change: {_shared_repo_changed(base, added)}")
+        if len(added[2]) != len(base[2]) + 1:
+            fails.append(f"world 6c: the branch section was not counted "
+                         f"({len(base[2])} -> {len(added[2])}); direction cannot be reported")
+
+        # (b) A REMOVAL MUST NOT FIRE EITHER, and must be visible as a LOSS. This is e1's case:
+        # the config really did change, no selftest did it, and the direction is what says so.
+        g7("config", "--remove-section", "branch.peer-pushed")
+        removed = _shared_repo_state(d6c)
+        if _shared_repo_changed(added, removed):
+            fails.append(f"world 6c: removing a [branch] section was reported as a shared-repo "
+                         f"change: {_shared_repo_changed(added, removed)}")
+        if len(removed[2]) != len(added[2]) - 1:
+            fails.append("world 6c: a removed [branch] section did not lower the count, so a "
+                         "loss cannot be told from a gain -- the tell b0 needed")
+
+        # (c) THE DETECTOR STILL FIRES ON THE REAL THING, and says which direction the branch
+        # sections moved when it does. Without this the exclusion could be widened to
+        # everything and every world above would still pass.
+        g7("config", "branch.also-pushed.remote", "origin")   # concurrent push, same window
+        g7("config", "core.bare", "true")                     # the leak's signature field
+        leaked = _shared_repo_changed(removed, _shared_repo_state(d6c))
+        if not leaked:
+            fails.append("world 6c: core.bare=true did NOT fire -- the exclusion is too wide "
+                         "and this guard no longer detects the leak it exists for")
+        elif not any("[branch] sections" in w and "+1/-0" in w for w in leaked):
+            fails.append(f"world 6c: fired, but did not report the branch-section direction "
+                         f"alongside it: {leaked}")
+    finally:
+        shutil.rmtree(d6c, ignore_errors=True)
 
     # WORLDS 7-10 ARE GONE, and their absence is the point (shape A, 6e ruling 2026-09-04).
     # All four tested that the hook's manifest regeneration left no residue on a refusal:
@@ -2940,6 +3332,13 @@ def _selftest():
                          f"pass without testing anything (copied {_copied})")
         git8("add", "-A")
         git8("commit", "-q", "-m", "base")
+        # ON A BRANCH, not main. This world runs the hook DIRECTLY (below), so every gate in it
+        # fires, and _refuse_committing_on_main (de, 2026-09-08) refuses first when HEAD is main --
+        # the mapped-test refusal this world asserts was never reached, and it failed as "refused
+        # but not by the mapped test". A branch is also what a real session commits on, so this
+        # makes the world more faithful rather than less. After the base commit, so the branch has
+        # somewhere to point.
+        git8("checkout", "-q", "-b", "feat8")
 
         # THE WORLD MUST BE GREEN BEFORE IT IS BROKEN, or a refusal proves nothing. Measured
         # directly: run the mapped test against the unmutated copy.

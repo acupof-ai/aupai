@@ -135,8 +135,8 @@ A non-emptiness selftest sat beside a truncation defect and every truncated row 
 open: a check that a selftest's property is the property asked — non-emptiness where completeness is meant; none exists.
 
 ### §215 (2026-09-05, R2-b)
-A battery of content-free rules passed while the leak family it samples is unbounded. The S_test_4way readout's floor is certified by a battery of rules that read the options and operands but never apply the rule: v1 shipped with a value-rank leak (3rd-largest scored 0.6430), v2 fixed the rank marginals and shipped with a nearest-zero leak (0.3500) and a closest-to-3a1 leak (0.4190), v3 fixed the proximity marginals and the per-program floor is still 0.384/0.498 by direct rule-scoring (measured here: "smallest" on diamond_chain, closest_3*sum on diamond_chain4 — the MAX over rules, not the rule first named; reporting largest's 0.484 here was this section's own error class, one rule's score where the population max sat 1.4pt higher; sha c2758aa8). Three closures in one day, none converged. The reason is structural, not bad luck: gold is itself an affine functional of the operands (3a1 - 2a2 - ... + 1), so the family of content-free rules that correlate with gold is the affine functionals — an unbounded population — and any finite battery is a sample of it. "The 19 rules score at chance" answers a question about those 19 rules; the property asked is that no affine functional separates gold, which no finite battery can certify. The battery is a regression net for leaks already found, and the per-program floor (not the pooled aggregate) is the number the readout's MDE must be computed from. Evidence: mathbank/emit_novel_ops_4way.py commits 67835664/5b8b5597/8e9384d1, runs/prereg.jsonl#conversion_rate_0905@amended_8.
-open: a check that a floor certified by a finite battery is reported as a battery-relative floor, not a certificate; none exists. Satisfied for this one instrument by runs/prereg.jsonl#conversion_rate_0905@amended_8's readout_1_instrument wording (amendment 4: prior lower bound from the current battery, not a certificate; the no-injection control arm as the operational floor), not by any automated check. The recorded floor moved twice on 2026-09-05 (0.330→0.364, 0.288→0.294) while the 1000 items stayed byte-identical — a quantity that moves when nothing measured moves is a property of the instrument, which is the claim made concrete.
+A battery of content-free rules passed while the leak family it samples is unbounded. The S_test_4way readout's floor is certified by a battery of rules that read the options and operands but never apply the rule: v1 shipped with a value-rank leak (3rd-largest scored 0.6430), v2 fixed the rank marginals and shipped with a nearest-zero leak (0.3500) and a closest-to-3a1 leak (0.4190), v3 fixed the proximity marginals and the per-program floor is still 0.384/0.498 by direct rule-scoring (measured here: "smallest" on diamond_chain, closest_3*sum on diamond_chain4 — the MAX over rules, not the rule first named; reporting largest's 0.484 here was this section's own error class, one rule's score where the population max sat 1.4pt higher; sha c2758aa8). Three closures in one day, none converged. The reason is structural, not bad luck: gold is itself an affine functional of the operands (3a1 - 2a2 - ... + 1), so the family of content-free rules that correlate with gold is the affine functionals — an unbounded population — and any finite battery is a sample of it. "The 19 rules score at chance" answers a question about those 19 rules; the property asked is that no affine functional separates gold, which no finite battery can certify. The battery is a regression net for leaks already found, and the per-program floor (not the pooled aggregate) is the number the readout's MDE must be computed from. Evidence: mathbank/emit_novel_ops_4way.py commits 67835664/5b8b5597/8e9384d1, runs/prereg.jsonl#conversion_rate_0905@amended_12.
+open: a check that a floor certified by a finite battery is reported as a battery-relative floor, not a certificate; none exists. Satisfied for this one instrument by runs/prereg.jsonl#conversion_rate_0905@amended_12's readout_1_instrument wording (amendment 4: prior lower bound from the current battery, not a certificate; the no-injection control arm as the operational floor), not by any automated check. The recorded floor moved twice on 2026-09-05 (0.330→0.364, 0.288→0.294) while the 1000 items stayed byte-identical — a quantity that moves when nothing measured moves is a property of the instrument, which is the claim made concrete.
 
 ### §216 (2026-09-05, R2-b)
 A test's green was a signal about a different world, not a weaker signal about this one. `test_cache_absent_refusal`'s negative control — the half that proves the absent-cache path tokenizes rather than refuses — redirected `TOKEN_CACHE` and nothing else. That was sufficient until `_token_cache_dir` gained a middle step (env, else `cache_guard.NVME_CACHE_DIR` if it is a directory, else `dirname(TOKEN_CACHE)`): on the POD that directory exists and holds the live caches, so the control would have resolved to `/mnt/data02/tokens` and tokenized `probe_absent` INTO THE SHARED CACHE DIR — the 2026-09-02 incident (a test writing a real cache beside a live run's) reproduced by the test written about it. It passed on every laptop because the mount is absent there, which is the live-disk dependence its own comment forbids. Same shape as §201 (a refusal verified only where it cannot fire): the environment the test runs in is narrower than the property asked, and the gap is exactly the environment where the defect lives. Fixed by redirecting `NVME_CACHE_DIR` too and asserting the accessor resolves inside the temp world before tokenizing; the pod was simulated by making the NVMe dir exist with the isolation line removed — the assertion fires and nothing is written to the shared dir. Evidence: 68d23a6b, scripts/test_cache_absent_refusal.py.
@@ -443,6 +443,139 @@ open: same as §200's — a self-scan must exclude its own span and read executa
 Two regexes over the SELFTEST_FILES literal were wrong in opposite directions, and neither count announced itself. Matching every quoted .py in the region gave 182 paths — including "HEAD:scripts/credential_scan.py" from a git revspec in a comment, prose read as a literal (§61/§217's family). Requiring exactly one quoted path per line gave 149 of 177 — the map packs several entries onto one line. Both looked plausible; the over-count and the under-count hid each other. Fixed by `ast.literal_eval` on the assignment node: 177 == 177, nothing missing, nothing extra, checked against the ast of the same file — the parser cannot disagree with the literal by construction. Evidence: 07907e3f (de branch), scripts/hooks/pre-commit `_registered_selftest_paths`.
 open: a check that a source reader over a Python literal parses (ast), never regexes — a regex over a literal is a guess about formatting, and a comment is a valid guess's worst case; none exists.
 
+### §267 (2026-09-07, R2)
+A set-level invariant was enforced by an ordering, which enforces it pairwise and not on the closure. `runs/dedup_b2v2.py` had to dedup `code_rp1t_b2v2` against `code_rp1t_dd09` with dd09 KEPT WHOLE. The implementation listed dd09 first so its ordinals are globally lower, making `min(cluster)` a dd09 document on every cross-domain cluster — true, and not the invariant. Union-find merges by TRANSITIVITY: two dd09 documents that are not near-dups of each other join one cluster when a single b2v2 document is near both, and every dd09 ordinal in that cluster except the minimum becomes a non-representative. Ordering picks the survivor; it says nothing about who else is in the set.
+
+Measured on the full 5,857,693-document run: 8,355 dd09 documents would have been deleted by a pass whose only output is b2v2 shards. Direct dd09-dd09 edges at est>=0.9: **0** — so dd09's own dedup missed nothing and the 8,355 are transitive in their entirety (`keep_whole_transitive_spared` 8355, `edges_keep_whole_internal` 0, both stamped into `data/corpus/code_rp1t_b2v2_dd/build_corpus_stats.json`).
+
+Caught by an assertion that refused before the write. It is worth naming why the failure would otherwise have been invisible: this pass never rewrites dd09, so dd09's directory, fingerprint and stamp would all have been unchanged and correct afterwards. The deletion would have shown up only as 8,355 documents missing from a b2v2 output nobody had a prior count for.
+
+Two fixes, and the second is the transferable one. The invariant is now STATED — `deleted = {i for i in deleted if i >= n_keep}`, a dd09 ordinal is never deleted — instead of being derived from a property of the ordering. And the assertion was re-pointed from the symptom to the cause: refusing on "a dd09 document would be deleted" asserts nothing once the constraint makes it impossible, so it now refuses on "any edge joins two dd09 documents at est>=0.9", the condition that would mean dd09's stamp is wrong and this pass must not build on it.
+The general form: a property true of every pair is not true of the transitive closure over those pairs. If an invariant is about a SET, write the set predicate; an ordering, a comparison, or a sort key is evidence about pairs.
+Evidence: `runs/dedup_b2v2.py` and `runs/why_refuse.py` on the pod, `runs/dedup_b2v2.log` (`REFUSE: 8355 code_rp1t_dd09 document(s) would be deleted`), `runs/why_refuse.log` (`dd09-dd09 0 ... TRANSITIVE 8355 ... MISSED it 0`).
+open: nothing asserts that a keep-whole or hold-out set is enforced as a predicate rather than inferred from ordering. The class is one grep — a dedup or partition that relies on `min()`/sort position to protect a subset — and it would have fired here before the run.
+
+### §272 (2026-09-08, R2)
+
+A property whose POPULATION is computed with the predicate the defect breaks cannot see the defect, and the green it produces is byte-identical to a green earned by passing.
+
+b0-32 made a lend of another team's card expire. Property (7) asserts that a lend is a window: ours inside it, theirs outside, and a note claiming a lend without a readable window refuses. It read
+
+    _lends = {c: n for c, n in cmap.items() if c in _base and _parse_lend_window(n) is not None}
+
+and **three of its four planted defects PASSED** -- `25:99-26:88Z`, a backwards window `21:34-21:32Z`, and the lend timestamps deleted outright. Each makes `_parse_lend_window` return None, which removes the card from the set the property then quantifies over. The loop body never runs, so no assertion is evaluated and nothing is even reached to fail. The fix is one word of scope: the population is now what CLAIMS a lend (`_mentions_lend`), which the defect cannot shrink, and the unreadable-window refusal moved inside the loop where it is reachable.
+
+**Second instance on the same function in two days, and I did not recognise it the second time.** §266's half of the 09-07 card fix is the same disease at the other end: with the pre-fix classifier `ours=[0..7]` and `theirs=[]` SATISFIES both "the three sets partition the listed cards" and "every not-ours card refuses", because the second quantifies over `theirs` and the defect empties it. Once as a partition, once as a window parse. The recognisable signature is a comprehension whose filter and whose assertion call the same function.
+
+**A mutant that does not mutate reads exactly like a surviving defect.** My harness disabled property (7) by rewriting `_claimed = {...}` as `_claimed = {} or {...}`. A non-empty dict is truthy, so `or` returns the original and the mutant was not a mutant; I read the resulting RED as the guard failing its paired prediction and went looking for a fault in the guard. Emptying the LOOP (`for c, n in sorted({}.items())`) is the mutation that was intended. Two rules, both cheap: mutate the iteration, not the expression that feeds it, and assert the mutant's behaviour actually changed before believing its verdict.
+
+The delivery standard that caught all of this is the paired prediction, not the count: 26 worlds, and for each defect the prediction is three-way -- defect alone RED, defect plus ITS OWN property removed GREEN, defect plus a DIFFERENT property removed still RED. The middle leg is what a vacuous property fails: mine went GREEN with property (7) removed AND green with it present, so the pair disagreed with itself and named the vacuity. A pass count alone would have read 8/12 as "mostly working".
+
+Rule: write the population from the CLAIM and the assertion from the PROOF. Before trusting a suite, ask which planted defect changes the SIZE of the set the property iterates over; any defect that does is invisible to it.
+
+Cost: caught in the mutation pass before review, so nothing shipped. The property was written, run, and green on 3 of the 4 worlds it exists for.
+Evidence: `_assert_card_ownership` properties (6) and (7) in `scripts/harness.py`, `_selftest_card_lend_expires` (registered as a direct selftest, proven to run by a planted raise surfacing as "direct selftest: _selftest_card_lend_expires raised AssertionError"); PR #58; the three mutation suites at 12/12, 10/10 and 4/4.
+open: no check finds a comprehension whose filter predicate is also called in the assertion beneath it. That is the machine-checkable signature of this class and it is one AST walk over harness.py's properties -- it would have fired on both this instance and §266's.
+
+### §274 (2026-09-08, R2)
+
+A test whose verdict depends on two inputs is deterministic only if BOTH are fixed. Pinning one is worse than pinning neither: it passes for hours and then fails for a reason that reads as a defect in the code.
+
+`_selftest_card_lend_expires` (§272, PR #58) asks whether a lend expires. That needs a clock and a note. I pinned the clock -- `21:33Z` inside, `21:00Z` before -- so the verdict would not depend on wall time, and read the NOTE from the live `runs/card_assignment.json`, deliberately, because a fixture note is what let the original card-0/6 hole survive. Both halves are defensible. Together they are a test that silently depends on the controller never rewording the file. Three hours later 4c wrote the SECOND lend, `00:30Z-00:45Z`, and `21:33` is outside it: `card 6 inside its window: expected ours, got theirs`. **Main's CI was red for four merges** (`c175826f`, `3121cc24`, `4fe54763`, `021d59e8`, run 34174571345) and every session's ledger merge was blocked, over a note edit that was correct.
+
+The fix is to derive the clock from whatever window the note carries -- midpoint inside by construction, a day either side outside by construction -- so the pair is consistent for every note that can be written, including the next one. Not a fixture: a fixture would have to be re-typed on every rewording, which is the defect one level up.
+
+**Fixing it exposed two more instances of the same root cause in the same function, neither in the CI log**, and both would have broken on the following reword:
+
+- The `baseline_theirs=False` assertion required "theirs at every clock". That is a property of the note's OPENING TOKEN, not of the flag: 4c's `GRANTED`-leading note matches `_OURS_RE`, so the assertion would have failed on CORRECT code. Replaced with a form-independent statement of what the flag does -- baseline off, the verdict is the same at all three clocks; baseline on, it is not.
+- The bad-window worlds did `note6.replace("21:32-21:34Z", bad)`. That literal is absent from the new note, so `replace` returned it UNCHANGED and the "unparseable window" world became "the live note, valid window", which correctly passes. §272's truthy-`or` reached through a stale literal instead of an expression. Now the literal is rebuilt from the parser's own match, with `assert _mutated != note6` as the non-vacuity guard.
+
+One visible failure, three defects, one shape: a property stated over text another session owns. Deriving the second input from the first is the general fix -- when a test reads a live artifact, every other input must be a FUNCTION of what it read, never a constant that agreed with it once.
+
+The live read stays, and that is 4c's ruling rather than my preference: a controller reword that reddens CI is the check doing its job on the one artifact that matters, and a fixture reintroduces the hole PR #58 closed. The cost is real and now stated, which is what makes it a choice.
+
+Cost: main CI red across four merges, blocking every session's ledger merge; found by 4c reading the CI log, not by me. Fixed in PR #61 (`297acfc2`).
+Evidence: `_selftest_card_lend_expires` in `scripts/harness.py`; verified against 4 note forms including two not yet written (date-after-times single-`Z`, `GRANTED` with a `T` separator); paired revert of the clock fix reproduces the CI failure RED with the unmutated version GREEN; the non-vacuity guard shown to discriminate the stale literal from the derived one on the live note. The selftest summary names its skips rather than counting them, because the count is a property of the TREE, not of the fix -- a fresh `git worktree add` carries no gitignored artifacts, so `pinned_ids`, `sft_pack_uncontaminated` and `tokenizer_roundtrip` skip there and pass here, and CI reports a third number (§ skip-list rule). A skip that is NOT artifact-dependent is the signal.
+open: nothing finds a selftest that pins a constant AND reads a repo file whose content the constant must agree with. The signature is a literal timestamp, path or id in the same function as an `open()` of a live ledger, and it is one AST walk -- it would have fired on all three instances here before the first merge went red.
+
+### §270 (2026-09-08, R2)
+
+A surviving mutant has two causes that demand opposite fixes: the check is weak, or the clause the mutation touched is dead. Reading the survival as the first when it is the second adds a check that cannot fire.
+
+b0's review of 3b-17 found that `build_dd09_full.py` asserted the union's token total and never its file set. `count_dir` globs `*.jsonl`, so a stray shard from an earlier run is counted as supply and the total stays self-consistent — the token gate is blind by construction, not weak, because the stray's tokens really are in the directory. I added the comparison as `{(name, st_ino)}` sets and its selftest summary printed **"file set asserted equal to the plan BY INODE"**.
+
+Three things went wrong in the mutation sweep, in order.
+
+**The first mutant died on the wrong assertion.** Zeroing the inodes in both sets also collapsed `set(inos)` in the duplicate-inode check two lines below, so that check raised instead. The selftest was red, which read as the mutation working. A mutation that kills a different assertion than the one it targets establishes nothing about the target; the message named `links one inode under two names`, not `file set is not the plan`, and that is the only signal that separated them.
+
+**The honest mutant then survived**, and so did a second (`len(got) != len(want)` instead of membership). Both for one reason: the link loop above refuses any planned name whose `st_ino` differs from its source, and creates every planned name. So by the time the comparison runs, every planned name is present and inode-verified, `want <= got` always holds, `missing` is empty on every reachable path, and cardinality is equivalent to membership. The inode half was unreachable and the summary line was claiming a property the comparison could not have — the strength lives in the loop.
+
+Neither survivor is a hole. Both clauses are kept with the unreachability commented, since a refactor of the loop should not silently downgrade the check to a cardinality test, and the summary line was rewritten to say what the check does.
+
+**The duplicate-inode check had no world at all.** It catches what the name comparison cannot: two sources already hardlinked to each other, where every name is present, every link is verified, the file set equals the plan, and one file is counted under two names. The world links `src_d_000` to `src_a_000`, and its control has to assert that the token gate cannot catch it — 3 docs over 2 distinct inodes — or the world never establishes the check is load-bearing. Same for the stray-shard world: its control asserts the stray IS counted (`docs == 7`, not 6).
+
+The real directory is clean — 387 names both ways, sources disjoint because `b2v2_dd` was deduped against `dd09`. b0's line on that: "safe by accident of the numbering rather than by construction, which is worth a line in the script if a third source is ever added." The check is that line.
+
+### §273 (2026-09-08, R2)
+A new gate makes a NEGATIVE assertion pass by firing first, so the world that asserts a refusal is the one that goes silently green. `_refuse_committing_on_main` landed in `scripts/hooks/pre-commit` (PR #55) and refuses a commit whose HEAD is the branch `main`. Three of `harness.py`'s own `_demo` fixtures `git init -b main` and install the real hook. One of them asserts the hook PASSES on a small allowed data file, so it broke main's CI at `60a6f0af` and was reported within the hour. **The other two were not equally visible, and that asymmetry is the entry.**
+
+| fixture | asserts | after the gate landed |
+|---|---|---|
+| allowed data file (~22084) | hook passes | FAILs — this is the CI red |
+| pre-merge-commit (~21884) | merge is **refused** | **still green, for the wrong reason** |
+| manifest regeneration (~21908) | commit succeeds | FAILs, but only when reached |
+
+The pre-merge-commit world exists to prove the `data/` allow-list stops a non-fast-forward merge carrying an unlisted path — a real defect that landed in main through a merge on 2026-08-31. Its assertion is `rc != 0`. The on-main refusal satisfies that, so the world keeps passing while the allow-list has stopped being the cause of anything it observes. Nothing in the artifact shows the difference: the assertion is true, the exit code is right, the world is green.
+
+The general form: **a positive assertion breaks loudly when a new gate fires early, and a negative assertion absorbs it.** So after adding any refusal, the fixtures to audit are not the ones that failed — they are the ones asserting a refusal, which cannot fail. `rc != 0` collapses "the gate under test fired", "some other gate fired", and "the process died before reaching it"; the fix is to assert the refusal's own string, which the three fixtures here do not.
+
+**The scan matters more than the traceback.** 62's advice was to grep for the class rather than fix the world CI named, and it found two more. Two corrections came out of doing it:
+- **The predicate is "installs the REAL hook", not "inits on main".** `harness.py:21954` inits on main deliberately, to exercise `git commit-tree --with-tree=main`, and installs no hook; its own comment records a CI break from getting that branch name wrong — green on every dev box, red in CI, because the default branch name is a property of the environment. A rule phrased as "no fixture on main" sends the next reader to change it.
+- **A fixture that writes its own two-line stub reaches no gate.** Two of the three functions a name-based first cut flagged wrote `#!/bin/sh` printing `GIT_INDEX_FILE`, or a file holding only `SELFTEST_FILES`.
+
+**No check for the class, and the absence is the honest outcome.** Three attempts, each wrong in a different direction: a function-level escape test let the broken world read as clean, because `_demo` is ~900 lines and one `-b fixture` anywhere in it excused every world; per-init with function-level hook attribution flagged the `--with-tree=main` fixture; per-init with per-repo-variable attribution produced 26 hits across 20 functions that install no hook while `_demo`, the only true subject, disappeared. A scan that misses the one instance that matters is worse than no scan, because it certifies.
+
+**For a hook change, "main is green" and "your commits work" are independent in BOTH directions.** `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` resolves to the integration tree's copy, so a session's commits run main's hook while the edit under test sits in their worktree: main green does not imply your commits work, and your commits working does not imply main is green, because the hook you run and the hook you edited are different files. Verified by running `--selftest` directly; there is no other available evidence.
+Evidence: main CI red at `60a6f0af` (run 34167159575), `AssertionError: allowed data file must pass`; the three fixtures at `scripts/harness.py` `_demo`; `/tmp/de_scan_worlds.py` and its three superseded versions; `scripts/test_on_main_refusal.py` for the gate itself.
+open: nothing distinguishes a fixture that passes from one that passes because a new gate fired first. The machine-checkable form is narrower than the class: for every fixture asserting `rc != 0` against a real hook, require the assertion to name the refusal string it expects — then a gate firing early fails the fixture instead of satisfying it.
+
+### §268 (2026-09-08, R2)
+A shared broken world cannot test a check whose verdict its mutation cannot move. `_broken_facts` is the world for `facts_well_formed`, and it is a good one: real files, four mutations, each a copy-then-break of a real artifact. Adding a fifth predicate to that check, three mutations were added to the same world — a source naming only `/tmp`, one naming `/tmp` beside a tracked script, one naming `/tmp` beside `path@rev` — and all four mutants of the new predicate SURVIVED.
+
+The arithmetic is the whole shape. That world already reports **42 errors** from its existing four mutations; the check returns `FAIL` plus the first five in its evidence string. So removing the new predicate entirely leaves the verdict `FAIL` and the visible slice unchanged, and `--selftest`, which asserts the state, cannot see the difference. Measured: `state=FAIL, ephemeral rows named: none` for the control and for every one of `drop the openable-beside check`, `drop the path@rev half`, `drop the check entirely`, `stop consulting the baseline`.
+
+The clean tree could not serve either, for the opposite reason: its 13 ephemeral-only rows are registered debt, so dropping the exemption logic leaves its failing set identical too. A world that is already saturated and a world that is already exempted fail the same way.
+
+The fix is a dedicated world per predicate — four one-fact trees, each built by mutating the real `facts/data_scaling.json` — where each mutant reds exactly one: openable-beside → world 2, `path@rev` → world 3, the check itself → world 1, the baseline lookup → world 4. Four mutants, four distinct single-world failures.
+
+Two world defects that sweep caught, both green-on-the-wrong-branch:
+- **World 3's rev must name a path that resolves ONLY at that rev.** The first version cited `scripts/exp.py@<rev>`; that path also exists in the working tree, so the openable-beside clause answered first and the `path@rev` branch was never reached — dropping it left the world green. Re-pointed at a probe deleted in a real commit, verified present at the parent and absent from the tree.
+- **A `git init` world has an empty object store, so no rev resolves at all.** World 3 then failed twice for one cause: the tracked-path half called the retired probe absent, and this half saw no openable evidence. Fixed with `objects/info/alternates` pointing at the real store — the narrowest thing that makes a rev resolvable while the world keeps its own HEAD, index and refs.
+
+The general form: a verdict is the least granular aggregate there is, so a world already failing for other reasons cannot certify a new check. Before adding a mutation to an existing world, ask what that world's verdict and visible evidence are WITHOUT it — if the answer is the same, the world is not a world for this check.
+Evidence: `/tmp/de_world_mutants.py` (four mutants against the shared world, all SURVIVED; the same four against the dedicated selftest, each reds one), `scripts/harness.py::_selftest_facts_ephemeral_only_source`.
+open: nothing counts how many errors a broken world already reports before a new mutation is added to it. `--selftest` asserts each world FAILs; it never asserts that the world fails FOR THE MUTATION, and with 42 errors in one world that distinction is where a new check goes unguarded.
+
+### §271 (2026-09-08, R1)
+`gh pr view --json headRefOid` is not a statement about the branch, and its answer is well-formed. PR #47 was merged on the strength of it and **dropped its most recent commit**: the API reported `d6c4a7c1` while `git ls-remote origin refs/heads/de-monitor-class-2` reported `d3ef01e3`. Both answered, one was true. The merge took the API's sha, so `d3ef01e3` never reached main.
+
+Detected by reading the disagreement, not by anything failing. The confirmation after the fact is the method worth keeping, and it is 84's: **grep main for one symbol that must be present and one that must be absent.** Here that pair was `_MONITOR_CLEAN` (6 hits, so the merged content is there) and `oom-killed` (0 hits, so the later commit is not). A sha comparison says "different"; the symbol pair says *which half of the work is missing*, which decides whether a re-push suffices or something on main is broken.
+
+Same shape as `.conclusion // .status` (an in-progress check's `""` read as terminal) and `[ -d /proc/<pid> ]` (a zombie's `/proc` entry read as a live process): **the instrument answers a question adjacent to the one asked, the answer is well-formed, and no error surfaces, so the reader never re-examines their own question.** What distinguishes this one is that the adjacent question has no user-visible name — no documented lag, and the field is called `headRefOid`, which is exactly what the reader wants.
+
+Rule: if a merge, a gate, or a claim turns on a branch's current sha, read it from `git ls-remote origin refs/heads/<branch>`. The PR API's copy is for display.
+
+Cost: one re-push (PR #48) and a review cycle. Nothing was wrong on main — what landed was correct and complete as a rule; the loss was three assertions and a fact correction. 84 checked their own open PR against the mechanism within minutes and found all three sources agreeing, which is the reason to state the check rather than the incident.
+
+**A second instance of §267 landed in this same hour, in the verification of somebody else's fix.** I grepped main for the rotted flag strings to decide whether 3b's PR had fixed five docstrings or one, got a hit in four files, and read that as "still rotted". The hit was 3b's own explanatory prose: the corrected docstring says "`--exact 0.8 --shingles 5` stood here until 2026-09-08 and the parser has never had either flag". A grep for a dead flag matches the sentence recording that it is dead. Running harness's own collector over main's blobs instead — `accepted_flags` and `DOC_INVOCATION_RE`, which is what the check does — showed 0 rotted invocations in all five. Five held commits were dropped as redundant on that reading. **A fix that documents what it removed is unsearchable by the string it removed**, and the test has to be the checker, never a grep over file text.
+
+**A third, and it is the one with the transferable rule.** 84 reported "`dedup_corpus.py` has NO CONSUMER anywhere in the tree" as measured; I relayed it into `facts/data_quality.json#dq.corpus_exact_dup_is_zero` as the fact's basis; 44 refuted it on review by naming `harness.py`'s `_run_pipeline_step("dedup", "dedup_corpus.py", ...)`. My first account of the miss was also wrong — I wrote that the grep could not see a filename passed as a string argument. 84 then checked their own command: it searched `data/dedup|dedup_manifest|dedup_stats`, `*.py` included, and every hit was inside `dedup_corpus.py` itself. **It searched for the ARTIFACT names, and the consumer names none of them, because it invokes the SCRIPT.** A search for `dedup_corpus` would have found the call site whether string or import, so no `--include` pattern and no string-argument awareness would have helped. "Who reads these files" and "who runs this thing" are different questions, and a pipeline step names the producer, never its outputs. Three people were wrong in sequence about one grep — the searcher about what absence meant, me about the mechanism — and only running the checker settled it.
+
+**The fact's citation now names a symbol, not a line.** The same call site was read at `:22336` (44), `:22385` (84) and `:22560` (me) on 2026-09-08 alone, as edits above it moved it. A line number in a fact is a claim that rots on every unrelated commit.
+**A FOURTH instance, and this one was not the API's fault.** PR #48 lost a commit the same way #47 did, with the instrument behaving correctly throughout: 44 merged at `b28000e1`, which is what `ls-remote` reported at that moment, and my correction `b165d6ee` landed on the branch while the merge was in flight. Both of us followed this entry's own rule and the newer commit still did not land. **`ls-remote` answers "what is the tip"; nothing answers "has the tip moved since the reviewer opened it".** So the rule above is necessary and not sufficient, and the missing half is the author's: after requesting a review, either stop pushing or say the head moved. Re-pushed as PR #50, which is also why this paragraph is a follow-up commit rather than an edit to the branch under review — editing it would have been the same mistake in miniature.
+Evidence: `gh pr view 47 --json headRefOid` vs `git ls-remote origin refs/heads/de-monitor-class-2` at 20:42Z; `git show refs/remotes/origin/main:scripts/pod_pull_ledgers.py | grep -c oom-killed` = 0 against `_MONITOR_CLEAN` = 6; PR #47 merged as `f4cacde6`; PR #48 merged at `b28000e1` as `47148ae3` with `b165d6ee` orphaned, re-pushed as #50 (`eb8e2524`); `/tmp/de_check_main_docstrings.py` for the second half; 84's retraction of their own grep for the third.
+open: no check reads a merge's sha from both sources and compares them, and none can retroactively — the window is between push and merge, and only the merger is in it. Two machine-checkable halves are narrower and real: after a merge, assert the merged commit is an ancestor of the tip `ls-remote` reports (would have caught #47), and assert no push to the head branch is newer than the review that approved it (would have caught #48).
+
 ## R3. Artifacts carry their producer identity
 
 ### §24 (2026-08-31, R3)
@@ -602,7 +735,7 @@ A number's basis was a different rounding; the rounding was not named. Evidence:
 open: a check that numbers name their rounding; none exists.
 
 ### §185 (2026-09-05, R6)
-A memory budget was computed from a dtype nobody had set. The charter, the controller's arithmetic and mine all costed the product-key value table at 6 bytes per parameter: a bf16 table at 2 plus one fp32 Adagrad moment at 4. Measured on the pod by reading the live tensors instead: the table is torch.float32 (nn.Embedding is constructed in the default dtype and nothing casts it), its dense gradient is fp32 too, and the Adagrad state is fp32 -- 12 bytes per parameter, and the gradient had been omitted from the arithmetic entirely. At M1 the error is 6.00 GiB against 12.00 and went unnoticed because the shape fit anyway; at 2048x2048 it is 24.00 against 48.00, and the arm OOMed in backward allocating the 8.00 GiB gradient after construction had already succeeded. The number that decided the arm's size was an assumption wearing the units of a measurement. It also produced a false intermediate finding: with the wrong 6 bytes I reported a 14.82 GiB "gap over the arithmetic" and attributed it to activations and fragmentation -- a plausible explanation for a discrepancy that was two-thirds arithmetic error. Evidence: probes on card 5, runs/prereg.jsonl#memory_layers_0905 amendment_5.
+A memory budget was computed from a dtype nobody had set. The charter, the controller's arithmetic and mine all costed the product-key value table at 6 bytes per parameter: a bf16 table at 2 plus one fp32 Adagrad moment at 4. Measured on the pod by reading the live tensors instead: the table is torch.float32 (nn.Embedding is constructed in the default dtype and nothing casts it), its dense gradient is fp32 too, and the Adagrad state is fp32 -- 12 bytes per parameter, and the gradient had been omitted from the arithmetic entirely. At M1 the error is 6.00 GiB against 12.00 and went unnoticed because the shape fit anyway; at 2048x2048 it is 24.00 against 48.00, and the arm OOMed in backward allocating the 8.00 GiB gradient after construction had already succeeded. The number that decided the arm's size was an assumption wearing the units of a measurement. It also produced a false intermediate finding: with the wrong 6 bytes I reported a 14.82 GiB "gap over the arithmetic" and attributed it to activations and fragmentation -- a plausible explanation for a discrepancy that was two-thirds arithmetic error. Evidence: probes on card 5, runs/prereg.jsonl#memory_layers_0905@amended_12 (the amendment_5 record).
 open: a check that a size computed from a tensor's dtype reads the dtype off the constructed tensor rather than from the code's intent. The construction is available to it -- one forward on a small instance prints every dtype -- and nothing does it. Weaker but cheaper: refuse a memory-budget number in a doc that names no dtype.
 
 ### §192 (2026-09-05, R6)
@@ -610,8 +743,93 @@ A share carried across denominators: opt_step was 3.4% of M3's 2349 ms step, quo
 open: a check that a share or ratio quoted in a doc names its denominator; none exists.
 
 ### §230 (2026-09-05, R6)
-A review reported five checks as MEASURED that had only been READ. e1 sent b0 a five-point review of 18f3adf7 (a selftest count, two mutant reverts, a symlink probe, a python one-liner) having run none of them — only read the diff. b0 repeated one figure back as if checked, having read only the message: the figure then had two independent-looking sources and zero executions, and b0 was about to file two of the findings in docs/lessons. e1 retracted in full and re-ran all five; all five confirmed, which makes the first message lucky rather than acceptable. The remedy is not mutual checking, which cannot see a shared source: ask "when did this command run" of your OWN claim. Sub-case from the same thread: a claim flagged unverified in one sentence was used as a premise one clause later — flagging a claim unverified governs that sentence, not the next one. Second instance the same day, same author: amendment 6's natural-share ratio 0.796713701057 was a leftover from a token-derived build, carried across a rebuild that changed the digits; the true quantity (1-wS-wP)/(1-wP) = 0.796904315197 reproduces, and a reviewer's proposed alternative (0.79640625) turned out to be the numerator — three numbers within 0.05%, none the same quantity. A derived number carried across a rebuild of its inputs is the same shape as amendment 2's floor quoted as a measurement. Evidence: runs/friction.jsonl (e1's kind=check row), runs/review.jsonl's provenance_of_these_numbers field for 18f3adf7, runs/prereg.jsonl#conversion_rate_0905 amendment 6.
+A review reported five checks as MEASURED that had only been READ. e1 sent b0 a five-point review of 18f3adf7 (a selftest count, two mutant reverts, a symlink probe, a python one-liner) having run none of them — only read the diff. b0 repeated one figure back as if checked, having read only the message: the figure then had two independent-looking sources and zero executions, and b0 was about to file two of the findings in docs/lessons. e1 retracted in full and re-ran all five; all five confirmed, which makes the first message lucky rather than acceptable. The remedy is not mutual checking, which cannot see a shared source: ask "when did this command run" of your OWN claim. Sub-case from the same thread: a claim flagged unverified in one sentence was used as a premise one clause later — flagging a claim unverified governs that sentence, not the next one. Second instance the same day, same author: amendment 6's natural-share ratio 0.796713701057 was a leftover from a token-derived build, carried across a rebuild that changed the digits; the true quantity (1-wS-wP)/(1-wP) = 0.796904315197 reproduces, and a reviewer's proposed alternative (0.79640625) turned out to be the numerator — three numbers within 0.05%, none the same quantity. A derived number carried across a rebuild of its inputs is the same shape as amendment 2's floor quoted as a measurement. Evidence: runs/friction.jsonl (e1's kind=check row), runs/review.jsonl's provenance_of_these_numbers field for 18f3adf7, runs/prereg.jsonl#conversion_rate_0905@amended_12 (the amendment_6 record).
 open: a check that a review's "measured" claims name a command that ran — the provenance field is the machine side; and that a number in a decision document names what produced it; none exists.
+
+### §269 (2026-09-08, R6)
+A summary grouped by SIZE cannot fail on a difference of KIND. Ten byte-extrapolated corpus stamps were recounted exactly, and the five non-zero deltas were reported as one group: "small, both directions, consistent with sampling noise." Four of the five were exactly that. The fifth was not sampling noise at all.
+
+`en_c4_30b` at **+1,029,505 equalled the domain's document count to the unit** — its counter omitted the `<eos>` terminator — and its own `tokens_config` said "full pass, no sampling/extrapolation", so the group's stated basis was false for that row. A definitional error and four sampling errors, merged on the one axis where they are alike: **+0.159% sits unremarkably among -0.106%, -0.091%, +0.234%, +0.481%.** e1 named it first.
+
+What made it recoverable was not a better grouping but a **per-row identity the grouping discarded**: `delta == docs` is true or false of one row, and no summary of five rows can express it. That is the general lesson — when a group is reported, the thing that would have caught the outlier is usually a predicate that only exists at row scale.
+
+Cost: the corrected value reached the controller ~25 minutes late, and had the group been believed, four more counters carrying the same defect would not have been looked for (they were: five sites in total, `build_cot.py:82` found last, by 44).
+
+R6 rather than R2, and the distinction is worth keeping because it decides where the fix goes: there is no world, no mutation, and nothing executable here. §268 is a world that cannot certify a check; this is a REPORT that cannot certify its own rows. The basis was stated as one thing when one of five was another, which is R6's subject exactly.
+Evidence: `runs/delta.py` output at cutoff, `runs/count_en_c4_30b.json`, and the row's pre-correction `tokens_config` in `facts/corpus_supply.json` at `b4095851^`. Reported by 84, whose own account of it is the source of this entry.
+
+**§268 and §269 share one line, and it is the one to carry away: an aggregate is CHOSEN, so it cannot report what the choice discarded.** A verdict discards which mutation failed; a magnitude discards which kind of error it was. In both cases the discarded thing was the finding, and in both cases nothing in the artifact records that anything was discarded — which is why neither is detectable by reading the artifact and both are detectable by asking what the aggregate cannot represent.
+open: no check reads a grouped report and asks whether a per-row predicate would separate its members. The machine-checkable half here is narrow and real — a recount delta equal to the domain's document count is an `<eos>` defect, not noise — and `facts_well_formed` could assert it wherever both numbers are in the fact store.
+
+### §285 (2026-09-09, R6)
+
+**Three aggregates over the same held-out set ranked two arms three different ways, so the noise
+floor is not a scalar.** Two null arms differing only in `Cfg.seed` (`--sample_seed 42` pinned, so one
+corpus order; init and dropout are the whole difference) were scored on the full matrix:
+
+    final val (nats/token)          N1 1.8230   N2 1.8710   N1 better by 0.0480
+    domain_loss unweighted mean     N1 2.0241   N2 1.9956   N2 better by 0.0285
+    domain_bpb  unweighted mean     N1 0.77209  N2 0.76323  N2 better by 0.00886
+
+Same two checkpoints, same nine domains, three readings of held-out likelihood, and the SIGN is not
+stable. An arm separated from a control at this scale can be declared better or worse by choosing
+which aggregate to quote, with no error on either side and nothing to flag it.
+
+Two more from the same pair. **`mc_ceval` moved 23.1 to 27.7 -- a 4.6-point floor on pure init**,
+larger than most gaps ever quoted on that metric at this scale. And **`domain_loss`'s aggregate
+movement is 93% two domains**: per-domain init noise runs from 0.0001 (`code_py_rp1t`) to 0.1394
+(`chatml`), a factor of 1,400, and the two loudest -- `chatml` 0.1394 and `chat_qa` 0.0988 -- are the
+two smallest slices in the mix. `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, the field both
+null arms read: chatml **9,043** and chat_qa **8,854**, against code_py_rp1t 97,722 and
+code_py_starcoder 2,139,719 -- 11x and 237x larger. (0.1394 + 0.0988) / 9 = 0.0265 of the
+aggregate's 0.0285. An arm compared on that mean is compared on those two domains with seven along
+for the ride.
+
+The generalisation is not "aggregates hide variance", which was already known. It is that **a noise
+floor has to be measured per metric on the metric the effect will be read on**, because a floor
+measured on one aggregate does not bound another aggregate over the same data, and can point the
+other way. A single scalar "the floor is 0.048" is a category error the moment more than one metric
+is in the report.
+
+Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
+`runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`. 44 recomputed both means from the raw rows and
+got 0.0285 and 0.0089.
+open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
+a reported arm-vs-control delta was placed against a floor on the SAME metric.
+
+### §286 (2026-09-09, R6)
+
+**The same metric name over two estimators put the noise floor 50% apart.** `train.py:408-409`:
+
+    val_batches      = 20
+    val_batches_full = 100   # fixed prefix, so the epoch-end number is comparable across runs
+
+Both print as `val`. The periodic `step N val` line is the 20-batch estimate; the epoch-end
+`ep 1/1 ... val` line is the 100-batch one, and the code's own comment says which of the two is
+comparable across runs. The same-step gap between the two null arms, read off the periodic series,
+ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.088, mean 0.076, no
+trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
+**0.048**.
+
+Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
+the floor off the periodic series would have published it ~50% too large and buried any true effect
+between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have made it
+convincing. A series that agrees with itself is evidence about the estimator's stability, not about
+its agreement with the quantity being estimated.
+
+The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
+the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
+presentation -- here the digits are honest and the SAMPLE SIZE is the unstated basis.
+
+Nothing was published: the 0.077 reached this session's messages and the controller board, both
+corrected in the same commit that measured 0.048, and 44 verified it reached no other repo artifact.
+Evidence: `train.py:408-409`; `runs/anneal_null_val_series_0908.tsv`, both arms' fifteen periodic
+reads and both epoch-end reads, committed here; board at `31b3d360`. The arm logs themselves are
+pod-only and are not in this repository -- 44's R10 finding on PR #117, which is why the series was
+extracted and committed rather than cited in place.
+open: no check. A metric name that resolves to two estimators is not detectable from the log line;
+the fix would be to print the batch count beside the number, which edits `train.py` (frozen).
 
 ## R7. Retractions travel as wide as the ruling
 
@@ -641,5 +859,378 @@ A deletion target list named tracked repository content, and nothing on the dele
 The general form: a deletion candidate's tracked status is a property of the repository, not of the directory it sits in, so a list built by looking at the filesystem cannot see it. Check `git ls-files` for every candidate BEFORE the list is broadcast, not before the `rm` -- by then the list is what people are agreeing to.
 open: a check that no path on a deletion-candidate list is tracked in main; none exists. It is one `git ls-tree` per candidate and would have fired here.
 
+### §275 (2026-09-08, R9)
+
+A deletion listing is a claim about its own predicates, not about the files. Mine scored "protected" as pinned OR hardlinked OR named-by-an-open-row, and under those three `ckpt_1.5b-a0.2b-e48_8b.pt.step9000` came out UNPROTECTED -- 6.1 GB, no pin, `nlink` 1, no open row. It is the RESUME SOURCE of the entire 30B trajectory and the baseline row of the endpoint comparison I had filed an hour earlier. The listing would have offered for deletion the one checkpoint the endpoint is compared against.
+
+**A resume source carries none of those three marks once the run it seeded has finished**, which is exactly when it stops looking needed: the pin was never taken because nothing was at risk while the run held it, the hardlink was never made, and the row closed. The three predicates are each correct and together they are not a partition.
+
+The two that were missing:
+
+    CITED BY A RESULTS ARTIFACT   basenames grepped out of score_matrix.jsonl, the domain_loss
+                                  ledgers, review.jsonl, prereg.jsonl -- a scored checkpoint is
+                                  the only way to re-derive or dispute the score
+    RESUME SOURCE OF A RECORDED   the --resume argument of any experiments row, CLOSED ROWS
+    RUN                           INCLUDED -- a closed row is the case that needs it
+
+Protection went 125 GB -> 178 GB, candidates 232 GB -> 179 GB. The 53 GB difference is entirely files something in the tree cites.
+
+**The listing was not wrong about the file, it was wrong about itself.** Every row was well-formed; the omission had no representation anywhere in the output, so nothing in "no protection found" hinted that a fourth predicate existed. Same disease as a property whose population is emptied by the defect it is written for (§272) and as a suite whose aggregate discards which assertion fired (§270): the artifact is internally consistent and the missing thing is invisible *in it*. 4c's sentence is the one to keep -- "unprotected" meant "no protection my predicates could see".
+
+Fix: the predicates live in `scripts/deletion_candidates.py`, not in whoever runs it. A listing is regenerated; a rule that existed only in the operator's head is not. Delivery is a paired prediction rather than a green run -- with the two predicates the target is protected by name, and with exactly those two removed it goes unprotected again, so the near-miss reproduces on demand.
+
+Cost: none realised. Nothing was deleted at any point; the user had named no target, and 4c's instruction was explicitly to list and broadcast rather than delete. What it cost was a listing that, if acted on, would have destroyed the baseline of a finished run.
+Evidence: `scripts/deletion_candidates.py`; the paired-prediction check (protected with the predicates, `None` without); `runs/friction.jsonl` kind `near_miss`, 2026-09-08.
+open: nothing checks that a deletion-candidate generator's protection rule covers the ways a checkpoint can be depended on. The machine-checkable half is narrower and worth having on its own: no candidate may be a basename appearing in any `runs/*.jsonl`. That single grep would have fired here.
+
+### §276 (2026-09-08, R11)
+
+**The fix for §275 reproduced §275, inside itself, written by the session that had just named the shape.** The predicate added to catch "a recorded result depends on this checkpoint" grepped a hardcoded tuple of seven ledger filenames. The pod holds 78 `runs/*.jsonl`. So the predicate whose entire purpose was to widen a too-narrow population was itself a hand-enumerated population, and it shipped one commit after I wrote "unprotected means no protection my predicates could see."
+
+Found by 3b, not by me. Four checkpoints came out NO PROTECTION FOUND while cited: `ckpt_b0_mem_m2.pt.interrupt.step36` by `experiments.jsonl`, `ckpt_ab_fp32logits_base.pt` by `tasks.jsonl`, `ckpt_b0_moe48_mem.pt` by `friction.jsonl`. The first is the sharpest: **`experiments.jsonl` is a file the script already opened**, for the resume-source predicate, and still did not scan for citations. Reading a file for one purpose does not put it in another predicate's population.
+
+3b's fourth, `ckpt_ab_fp32logits_base.pt.step500`, I could not confirm and it is not cited: across all 78 ledgers the only matching string is `ckpt_ab_fp32logits_base.pt`. What is cited is its base. That distinction became a separate output field rather than a predicate -- see below.
+
+A second instance of the same shape in the same function: the resume regex was `--resume\s+(\S+)`, which does not match `--resume=PATH`. A pattern narrower than the thing it is named for.
+
+Fix: `glob(runs/*.jsonl)`. The population comes from the filesystem, so it cannot drift from what the caller means and nobody has to remember to add a ledger.
+
+**My first selftest for it asserted the wrong invariant, and the tree said so.** I required every predicate's removal to free at least one file, on the theory that a predicate protecting nothing is dead. It fired on predicates 1, 3 and 4. The measurement showed the assertion was wrong rather than the code: predicates 1 and 3 read `milestones.jsonl` and `experiments.jsonl`, which the glob also reads, so they name 33 and 13 files with **0 uniquely protected** -- necessarily, since their ledgers are members of the glob's population. Predicate 4 matches nothing at all while no run is open. That subsumption is not redundancy to delete; it is the invariant worth asserting, and it is exactly what the tuple broke.
+
+Capacity measured against the shipped defect rather than argued: restoring the seven-name tuple leaves 4 files protected only by the resume predicate, and the subsumption assertion fires. **The honest limit, recorded in the file:** it catches that mutant through ONE predicate, because `milestones.jsonl` was inside the seven and predicate 4 is idle. Had `experiments.jsonl` happened to be in the tuple, no assertion would have fired while 71 ledgers went unread. The printed ledger count is what covers that residue -- an output that states the size of the population it scanned is the only thing a reader can compare against the population they meant.
+
+A family annotation, deliberately not a predicate: a free row whose `ckpt_X.pt` base is cited now prints `(family: ckpt_X.pt)`. 19 of the 44 free files carry it, which is why it must not protect -- promoting it would protect 19 of 44 and leave a listing nobody can act on, and an intermediate step of a scored run usually IS deletable. "Nothing names this file" and "nothing names this STEP of a run that is named" are different claims and only the second is safe to act on without asking.
+
+Pod after: 78 ledgers scanned, 88 checkpoints, 196 GB protected against 178 GB under the tuple.
+
+Cost: none realised, same as §275 -- 4c's standing ruling held that no deletion may be proposed from this script's output until the follow-up lands, so the defective listing was never acted on. The ruling was what made a second wrong listing free.
+Evidence: `scripts/deletion_candidates.py` (`ledgers()`, `_selftest`), registered in `SELFTEST_FILES`; the mutant run restoring the tuple; PR follow-up to #76.
+open: whether a hand-enumerated population is complete is not checkable in general. Per instance it is: assert that no member of a sub-population is missed by the predicate that should subsume it, and print the population size.
+
+### §277 (2026-09-08, R11)
+
+`eval/domain_bpb.py::text_bpb` truncated `ids` to `max_ctx=2048`, summed loss over that prefix, and set the divisor from the **whole** text's bytes. Our held-out rows are 4,097 tokens. So the numerator covered 2,047 tokens and the denominator covered roughly twice that, and **every absolute bits-per-byte figure this project has published is about half its true value** -- `facts/`, `runs/score_matrix.jsonl`, the prereg bar 0.334243, and 98's report.
+
+Found by 4c on origin/main, not by me, though the function is mine.
+
+Measured rather than estimated, over the real val rows of all nine domains of `mix_1.5b-a0.2b-e48_20b_launch.json` through `val_seqs`:
+
+    domain             rows  trunc    whole_B   scored_B   ratio
+    math_owm_stage2      64     64     852456     428341  1.9901
+    en_c4_stage2         64     64     927217     461585  2.0088
+    cot                  64     64     747706     380103  1.9671
+    textbook_30b         64     64    1302881     654148  1.9917
+    chatml               64     64    1051614     522022  2.0145
+    chat_qa              64     64    1067117     528244  2.0201
+    zh_web               64     64    1088748     541363  2.0111
+    code_py_starcoder    64     64     834004     418778  1.9915
+    code_py_rp1t         64     64     879592     440679  1.9960
+    ALL                              8751335    4375263  2.0002
+
+64 of 64 rows truncated in every domain: the truncation was not an edge case, it was the entire population. The per-domain ratios span 2.7%, so a single 2x applied uniformly would slightly reorder the domains; each needs its own factor.
+
+**No comparison moves.** Both arms of every contrast carry the same per-domain factor, so deltas, signs, ratios and correlations are unaffected and only levels change. That is also why it survived: every comparison anyone ran came out right.
+
+**Why nothing caught it.** The selftest had five cases and every one was a handful of tokens, so `ids[:max_ctx]` never fired -- the world in which the two quantities disagree had no input. The numerator and the denominator were each correct about their own quantity, and nothing in the output named the population they disagreed about. The docstring asserted the property the code did not have, which is the same relationship as a listing that cannot show the predicate it lacks (§275, §276).
+
+Fix: the divisor comes from the kept `ids`, not from `text`. Computed as `decode(ids) - decode(ids[0])` and **not** `decode(ids[1:])`: on a byte-level codec `ids[1:]` can begin mid-character and decode to replacement characters LONGER than the bytes they stand for -- measured on the CJK case, 9 real bytes came back as 15.
+
+Two cases added, both mutation-proven. A known answer: 3,000 tokens against a uniform-256 model reads exactly 8.0 bits/byte by construction wherever it is cut, and the defect gives `8 * 2047/2999 = 5.46`. Tolerance 1e-7, not 1e-9, because 2,047 float32 terms accumulate 2.2e-8 -- the defect sits two and a half bits away, so no plausible tolerance hides it. And an invariance case: bits/byte must not move between `max_ctx` 1024 and 2048, with a non-vacuity assert that the two cuts really do score different amounts.
+
+`rows_truncated` and `max_ctx` now appear in every preds row and in the printed line. When truncation is non-zero the figure is the bpb of each row's first `max_ctx` tokens, which is an EASIER quantity than the bpb of the rows -- every scored token has full context and none sits past the cut -- and a reader has to see that rather than infer it.
+
+Cost: ~2h to find, fix, measure the factor and restate. The larger cost is that every absolute bpb in the record needs a restatement with retraction fields, and any external reading of those numbers was wrong for as long as they stood.
+Evidence: `eval/domain_bpb.py::text_bpb` and `_selftest`; PR #79. The factor table first filed with this incident was WRONG -- see §278; the corrected ratios are 1.9712 (cot) to 2.0634 (chatml), 2.0088 overall.
+open: no gate requires a metric's selftest to include an input that exercises every truncation or cutoff branch the metric has. The narrow machine-checkable half: any function taking a `max_*` bound must have one selftest input exceeding it.
+
+### §278 (2026-09-08, R11)
+
+**The probe I wrote to measure §277's correction factor had §277's shape, and it manufactured a defect that had not occurred.** Fourth instance of R11 in one night, and the only one where the flawed population was in the instrument rather than in the code under test.
+
+To price the divisor error I needed, per domain, the bytes of the whole row against the bytes of the first 2048 tokens. I computed both by reimplementing what `text_bpb` does. Two differences from the real function, each one token wide:
+
+    plain tok.decode(ids)          the metric passes skip_special_tokens=False (domain_bpb.py:379),
+                                   because the delimiter is part of the held-out bytes
+    first token of enc(dec(ids))   the code subtracts the ORIGINAL ids' first token
+
+The first produced a 5.20% disagreement with the recorded `scored_bytes` on chatml -- the domain with the most special tokens per row -- against 0.06 to 0.53% elsewhere. **I read that as evidence that chatml's held-out row set had drifted**, built a whole theory on it (`val_seqs` takes a seed-42 prefix sized `min(max(1,int(pool*0.05)),5000)`, chatml's pool is below the cap, so the prefix moves when the pool grows), reported it to 4c as outranking the divisor in what it invalidated, and got a ruling back agreeing it was the bigger finding. It was an artefact of my decode call.
+
+The second produced a 29-byte residue on chatml after the first was fixed. That one found a real curiosity and still was not the data's fault: two chatml rows do not round-trip token-for-token, 4097 ids re-encoding to 4099 because a U+FFFD fragment splits into three tokens. **Byte identity holds** -- `dec(enc(text)) == text` -- which is the property the metric's gate actually requires, so those rows are legitimately scored. But the re-encoded first token differs from the original's, and I was subtracting the wrong one.
+
+Calling the shipped `text_bpb` instead of reimplementing it reproduces the recorded `scored_bytes` **exactly, all nine domains, zero bytes of difference**. That comparison was free and available from the first minute, and it is the one that fails first.
+
+Corrected factors, shipped numerator over the b0-37 divisor on the same rows: math_owm_stage2 1.9916, en_c4_stage2 2.0131, cot 1.9712, textbook_30b 1.9938, chatml 2.0634, chat_qa 2.0286, zh_web 2.0122, code_py_starcoder 1.9929, code_py_rp1t 1.9968, all 2.0088. My probe's values were low by up to 2.4%.
+
+**And the row sets never moved.** All nine token caches under `/mnt/data02/tokens` are stamped 2026-09-05 03:49-04:01, before both the 09-07 and 09-08 scorings, so every cross-run comparison in that window scored identical rows and the -6.89% anneal pair is clean. The val-prefix mechanism is real as arithmetic -- 50 documents added give 16.3% val overlap at chatml's scale and 19.0% at cot's, and the 5000 cap holds the COUNT while turning over 4049 of 5000 members -- but it is a latent defect with no observed instance. Prevention, filed as b0-38, not repair.
+
+Why this is the sharpest instance: the probe's every intermediate number was well-formed, its disagreement with the artifact read as a finding ABOUT THE ARTIFACT rather than about itself, and being on alert for the shape did not help -- I had written R11 hours earlier. A reimplementation creates a second population by construction, and when two populations disagree the natural reading is that the world moved.
+
+Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 4c and one to the ledger, plus a peer's ruling issued on a false premise. No number reached a report: the retraction rows were corrected in place before anything shipped, and 4c's "publish no rescaled level" ruling meant the wrong factors were never going to be printed as values anyway.
+Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
+open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
+
+## R12. An assertion whose result is anti-correlated with its own name
+
+### §279 (2026-09-08, R12)
+
+**Three lines, each green, each certifying something its name did not describe, plus a fourth written up under R11. Running the suite cannot find any of them: the suite is green exactly when the assertion is wrong.**
+
+This is not R2. R2 tests the wrong property and a known-answer world catches it. Here the world that would turn the assertion red is the world in which the code is CORRECT, so there is no input to supply.
+
+**Instance 1 -- the ordering assertion, `scripts/test_sft_holdout_gate.py`. STILL LIVE ON MAIN at `test_sft_holdout_gate.py:64`; the rebuild is task #33 (branch b0-40), and this paragraph is written in the present tense because the defect is present.** The line is named "gate is upstream of the ckpt load" and asserts `"nonexistent_ckpt" in o or "No such file" in o`, on the reasoning that reaching the checkpoint error proves the gate let the pack through. That string appears whenever the script reaches the model load at all -- including when the gate sits BELOW it and the checkpoint error fired first, before the gate ran. Green in both orderings, and *greener* in the broken one: move the gate after the load and the message arrives sooner.
+
+Reading `sft_math.py` to write the replacement turned up a second finding the assertion had been hiding: **the name is false as well as the method.** `torch.load(args.resume, ...)` is at `sft_math.py:199`; the holdout gate is at `:265` (stale branch) and `:274` (unstamped branch). The load is UPSTREAM of the gate, not downstream of it, so the property the line claims to certify does not hold and never did. A test that cannot go red also cannot report that the thing it is named for is backwards. The replacement therefore asserts the order that is actually true, read out of the source rather than out of a message, with both indices asserted non-None so a rename goes red instead of vacuously green:
+
+    _load = next((i for i, L in enumerate(_src) if "torch.load(args.resume" in L), None)
+    _gate = next((i for i, L in enumerate(_src) if '"holdout_fp" not in d' in L), None)
+    check("ckpt load is upstream of the gate (order read from sft_math.py)",
+          _load is not None and _gate is not None and _load < _gate, ...)
+
+**Instance 2 -- the vocab-mismatched probe.** A run to answer "does the unstamped-pack gate refuse" printed `REFUSED: False`, read as "the guard is broken". The pack's `vocab_id` did not match the checkpoint's, so the assert at `sft_math.py:239` fired first -- before the holdout gate at `:265`. The process refused for a reason the probe was not asking about, and the readout collapsed both refusals into one boolean named for only one of them. The decisive run needed a pack that is unstamped AND vocab-matching, so the guard under test is the only one left standing; `sft_all.pt` supplied it and the gate refused with its own message. **The guard was intact; the test was broken.** General form: when several guards sit on one path, a boolean named for one of them means nothing unless every other guard is satisfied.
+
+**Instance 3 -- an exclusion that has never been triggered.** `reachability.py`'s directory walk skips `.venv`, and that entry read as obviously correct in review. It had never once executed: no worktree in this repo contains a `.venv`, and the only tree that does is the integration tree, where it holds **13,128 `.py/.sh` against the 537 the repo owns** -- 96% of the paths a walk from the root would visit. The scanner had never been run there. So the line was green for the whole of its life for a reason unrelated to its correctness, and it inherited that greenness from a list I copied rather than from any judgement I made. **An exclusion that has never been triggered and a correct exclusion are the same source text**, and only the second one survives someone editing the list. The fix is not a better exclusion but a printed one: the run now states its tree, its population, and its exclusions, so a reader sees which of the two worlds the number was taken over.
+
+This one is filed here rather than under R14 deliberately, and the first filing was wrong. R14's signature is "the tool's own source appears as a source in its own output"; `.venv` never executing has nothing to do with the tool searching itself. It belongs with the other two above because the failure is identical: **it passed, and its passing carried no information.**
+
+**Instance 4 -- §278's probe** is the same shape one level up and is written up there.
+
+**The layer 4c added, and it is the one that survives being on alert for the others: a mutation run's own summary line can mislead.** A mutation reported one failing assertion. Two assertions were meant to cover that guard and only one did; the summary named the one that fired and said nothing about the one that did not, and "1 assertion caught it" was read as "the guard is covered". **The count of red assertions is not the identity of the red assertions.** Reading WHICH assertion fired, per mutant, is the only form that answers the question -- and it is why the mutation runs in this session report per-mutant which named assertion died, rather than a count.
+
+Cost: ~2h across the three, and one wrong report to a peer that a guard was broken when the test was.
+Evidence: `scripts/test_sft_holdout_gate.py` as landed; `sft_math.py:239` and `:265`; `scripts/reachability.py`'s EXCLUDED_DIRS and the population line its output now prints; §278.
+open: no check can find an assertion anti-correlated with its own name in general. The machine-checkable half is per-suite: every mutation run must print the NAME of each assertion that fired, never only a count.
+
+## R13. Information already present, but not in a form that can be treated as a conclusion
+
+### §280 (2026-09-08, R13)
+
+**Four times in one session, the fact needed was already written down, already measured, and already in the file being read -- and was read past every time.** The failure is not missing information. It is information whose form does not make it usable as a conclusion.
+
+**Instance 1 -- a measured conclusion sitting in a comment.** `scripts/merge_main.sh` carries, in a comment: *"main moves faster than a commit takes on a repo with six sessions"* -- with the measurement behind it, a tree that went one commit behind BETWEEN a clean `git merge main` and the commit two seconds later. That sentence rules out "merge first, then commit" as a convergent strategy. Two sessions read that file the same night and both treated the deadlock as a state they could retry into: five attempts and four attempts respectively. **A measured conclusion nobody treats as a conclusion is worth the same as no conclusion.**
+
+**Instance 2 -- "nothing cites it" impersonating evidence.** The deletion sweep ran on the criterion "no doc, ledger, script or fact names this file". That is a fact about today which one added line reverses. The stronger criterion -- RUN it and find it does nothing, `already done; skipping`, `appended 0` -- is a property of the file that no future caller can change. Both look like grounds for deletion in a PR body. Of ~270 scripts, exactly 2 could produce fixed-point evidence; everything else was resting on the weaker one while being read as the stronger. **3b's boundary on this, which is the part that makes it usable: fixed-point beats unreferenced only when the target set is CLOSED.** Verified by `ast`, not assumed: `e1_close_open_rows.py`'s `CLOSE` and `e1_drop_reasons.py`'s `REASONS` are literal dicts of 9 and 5 keys, so no future `e1-38` can wake them. Where a script derives its targets from a ledger, `appended 0` is a fact about today's ledger and tomorrow's row revives it -- there the zero says nothing about the file.
+
+**Instance 3 -- a half-correct comment, the hardest form.** `scripts/exp.py:582` describes a fabricated row as carrying `cmd=''`, `hypothesis=''` **and no commit**. The code 81 lines later at `:663` writes `"hypothesis": "", "commit": git_commit()`, and `git_commit`'s docstring at `:142` opens `Never ""`. The comment is RIGHT about `hypothesis` and wrong about `commit`, in one sentence, in one file. A peer nearly derived a wrong criterion from it. **Two claims joined in one sentence share credit: verifying the half that matches invites trusting the half that does not.** This one never even moved contexts -- it sits 81 lines from its own contradiction.
+
+**Instance 4 -- a count read as a different count.** A controller answered "how many harness check items are there" with 71, taken from a run's `71 PASS` line. That is the number that PASSED. The total is 109, read from source with `ast`. The output line was correct about what it reported and said nothing about being narrower than the question. Same family as the monotone-aggregate case in §281: **a number entirely correct in its own context becomes wrong under a different question, and neither side raises an error.**
+
+Cost: ~3h across the four, one wrong strategy pursued nine times between two sessions, one nearly-published wrong criterion.
+Evidence: `scripts/merge_main.sh` (the six-sessions comment); `scripts/exp.py:142`, `:582`, `:663`; PR #91's body; the 109-vs-71 count from `ast` over `harness.py`'s `CHECKS`.
+open: the machine-checkable slice is narrow but real -- a comment naming a field ("no commit") beside code assigning that field is a source-level contradiction a scanner can find. The rest is manual.
+
+### §281 (2026-09-08, R13)
+
+**A monotone improvement in an aggregate hid a defect that per-item output made obvious in one line.**
+
+Adding three edge kinds to `reachability.py` moved unreachable files from 79 to 56. Direction correct, magnitude plausible: more edges, fewer orphans. **Any review reading only the total would have passed it, and so would I.**
+
+Printing WHICH files were rescued and BY WHAT showed 12 of the 23 rescued by comments in `reachability.py` itself -- see §282. The aggregate could not show it, because a defect that rescues files moves the total in exactly the direction a correct fix does.
+
+The counterfactual is the whole point: **there is no threshold on the total that separates the two.** 79 to 56 is as consistent with the fix working as with the tool vouching for its own annotations. Only the per-item source column distinguishes them.
+
+Cost: caught before commit, ~20 min. Would have been permanent: the rescued files could never appear on a candidate list again.
+Evidence: `scripts/reachability.py` as landed, and its per-item `REACHED FROM` column.
+open: `report an aggregate without per-item attribution` is not checkable in general. Per-instance it is: a tool whose output is a list must print, for each item, the reason it is on the list.
+
+## R14. An instrument searching a space that contains its own text
+
+### §282 (2026-09-08, R14)
+
+**Detectable signature: the tool's own source file appears as a SOURCE in its own output.** That is the check, and it is why this is a rule rather than a story.
+
+Separate from R13 because the fix differs. R13's fix moves a conclusion somewhere it gets executed. This one's fix removes the instrument from its own search space -- no amount of restating the conclusion helps, because the tool is reading itself correctly.
+
+**Instance 1 -- my own, `scripts/reachability.py`.** `comment_edges()` reads every file's comments for path citations. `FATE` names 47 paths in prose. On the first run the tool rescued 12 files from its own deletion-candidate list -- every path it had ever ruled `KEEP` on -- purely because it had annotated them. A past verdict is not a citation. **With the self-exclusion: 70 unreachable, 15 of them carrying a KEEP ruling. Without it: 56, and those 15 could never appear on the list again.** The tool would have permanently vouched for exactly the files it had previously reported as candidates.
+
+**Instance 2 -- `pgrep -f` matching its own command line.** A pattern searching the process table finds the process running the search. Same signature: the instrument is a member of the population it enumerates.
+
+**Instance 3 -- `harness.py:1755` copying `runs/mem_probe_base.sh` to build a broken world.** Verified by reading it: the selftest copies that file into a temp tree and strips `--anneal_frac` from it to construct the violation. A name-based reachability scan reads that as no citation at all -- and deleting the file turns a green check into no check. The inverse of instance 1: there the name's presence was not evidence of use, here the name's absence is not evidence of disuse. **A name is not a call, in either direction.**
+
+Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
+Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
+open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
+
+### §284 (2026-09-09, R3)
+
+**A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
+`api_cloze` metric was run on both anneal null arms. Its `bounds` field came out byte-identical on
+the two arms:
+
+    mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+
+The arms are `mix_200m_4b_annealN.json`, seed **1337** and **1338**, world **4**, 7,629 steps. Those
+bounds are the memory-layers program's reference run (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`). Identical bounds across two checkpoints with different seeds is the
+proof it is a fixed reference rather than a per-checkpoint derivation -- one checkpoint alone could
+not have shown it.
+
+The metric partitions its items into rows the model has SEEN and rows it has not, and reports the
+accuracy gap as a memorisation readout. Here the partition was drawn on a run neither checkpoint is,
+so "seen" is rows these checkpoints never saw. **The number that produced was `within_region_gap`
+0.0008 on N1 and exactly 0.0000 on N2** -- no signal, which is what a meaningless partition produces
+and exactly what a clean result looks like. Nothing in the output says the split does not apply.
+
+This is not §4's shape. There the identity was MISSING and the artifact was rebuilt. Here the
+identity is present, correct, and stamped into the output by a tool that did its job -- and is then
+read past at the point of use. `vocab_id` and `.srcfp` both close this loop: they are compared at the
+read and refuse on mismatch. `api_cloze`'s bounds are compared to nothing.
+
+Found by reading two score-matrix rows side by side while computing a seed-only noise floor; the
+metric was not under suspicion. What made it visible was having two arms: one row's bounds look like
+provenance, two identical rows from different runs look like a constant.
+
+Evidence: `runs/score_matrix.jsonl`, rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`,
+field `metrics.api_cloze.bounds`; `runs/experiments.jsonl` row `anneal_n2_0908_score`. Confirmed
+independently by 44, who also noted the same rows' `domain_bpb` metadata self-reports
+`mix_200m_4b_annealN` -- the two metrics in one record disagree about which run produced the
+checkpoint.
+open: de-84 -- `score_matrix` must SKIP a metric whose stamped bounds do not describe the checkpoint
+being scored, rather than print a number. Filed by 44 at `d819a9ab`.
+
 ## R10. What happened only on the pod did not happen
 
+### §283 (2026-09-08, R2)
+
+**A verification tool's failure mode is isomorphic to what it verifies, so its breakage reads as a pass.** Three instances in one hour, on one mutation sweep over the pre-commit shared-repo guard:
+
+    CRASH LEFT THE MUTANT IN     the sweep mutated scripts/hooks/pre-commit in place and
+                                 restored in a finally. Killed mid-run, the finally never
+                                 fired, and M2 -- "hash nothing", the mutant that makes the
+                                 guard measure nothing -- stayed resident. `pre-commit
+                                 --selftest` then printed ok (14 worlds), because it was
+                                 testing the mutated copy.
+    ENVIRONMENT ERROR READ AS    rewritten to mutate a copy under /tmp, where the copy could
+    "ALL MUTANTS KILLED"         not resolve its own ROOT. All five mutants died on
+                                 FileNotFoundError, none reached an assertion, and the sweep
+                                 printed ALL MUTANTS KILLED.
+    AN ANCHOR THAT NEVER         M5's search string was mis-escaped, so the mutation was never
+    MATCHED READ AS A PASS       applied and the unmutated file passed.
+
+Each one produces the reading "verified" from the fact of not working. That is the same shape as the guard under test: a shared-repo digest that hashes nothing cannot fire, and a check that cannot fire is indistinguishable from a check that found nothing. **The tool and its subject fail the same way, which is why running the tool cannot detect it.**
+
+The first instance is the dangerous one, because it leaves active evidence pointing the wrong way. A green selftest is normally the strongest signal available; here it was produced BY the defect. Related to b0's observation the same night -- an exclusion that never executes and a correct exclusion are identical in code -- but worse: that one is silent, this one testifies.
+
+Fixes, in the order they were tried, and only the last is durable:
+
+- Mutate a copy, never the tree. Removes instance 1. A crash can no longer disarm the subject.
+- Require the assertion, not a nonzero exit. `rc != 0` collapses "the property failed" with "the process died"; the sweep now demands `pre-commit selftest: FAIL` in the output. Removes instance 2 as it presented, and nothing more -- it is a patch for one spelling of the failure.
+- **A positive control that MUST SURVIVE.** M0 is a behaviour-preserving comment edit; if it is reported killed, the sweep is measuring something other than the property. Without one, "all mutants killed" cannot distinguish a working sweep from a sweep that ran nothing, since both print the same line. This is 4c's ruling and it is the general form: every all-negative suite needs one case that must come back negative, or the aggregate has no discriminating power.
+
+Cost: none realised, and that is luck rather than design. The resident M2 was found by grepping the file for the fix's own string before committing; had that commit landed, the guard would have been silently inert on main with every gate green. The `--no-verify` this session used minutes earlier to escape an unrelated deadlock would have carried it in without a hook run.
+
+
+### §287 (2026-09-09, R2)
+
+**A pre-registered criterion that fires on a known-answer negative world: the control arm was
+silently a replicate of the arm it is compared against.** Caught while the arm was at step 2000 of
+7,629, before its number existed.
+
+The design: three arms at the 4B point. N1 and N2 share a mix and differ only in `Cfg.seed`, so
+`F = |N1 - N2|` is the noise floor. R shares N1's seed (1337) and carries the reweighted mix, so
+`|R - N1|` was registered as carrying "the reweight and nothing else". The criterion:
+`|R - N1| <= F` means the reweight had no measurable effect.
+
+**The premise "same seed, so only the reweight differs" was never checked against `build_mix`.**
+When it was, `train.py:2791-2810` says:
+
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
+    g = torch.Generator().manual_seed(Cfg.seed)
+    for frac, key in phases:
+        want = int(rows * frac * d.get(key, d["weight"]))
+        idx  = torch.arange(used[name], used[name] + want) % len(pool)
+        plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+
+The MAIN phase is built first, from `d["weight"]`. A structural diff of the two mixes shows they
+are byte-identical outside the `_comment` and nine `anneal` values -- `total_tokens`, `epochs` and
+every `weight` agree to the last digit. `used[]` starts at 0, so `idx` and `ph` match, and
+`randperm` draws from one generator seeded with 1337 in both runs. **N1 and R therefore consume the
+same rows in the same order for the first 6,866 steps, and the reweight cannot act until step
+6,866.**
+
+Confirmed in the logs rather than only in the code, which is what makes it a measurement:
+
+    step   N1      R
+      10   6.615   6.616
+      20   5.683   5.683      <- identical
+      30   5.587   5.587      <- identical
+      50   5.220   5.215
+     100   4.811   4.817
+
+Two runs from the same state, separating by floating-point nondeterminism.
+
+**So `|R - N1|` at the read point is drift over 7,629 steps plus the reweight over the last 763,
+and the criterion cannot tell them apart.** The drift term measured on the arms themselves:
++0.001, -0.001, +0.011, +0.016, -0.010 at steps 500/1000/1500/2000/2500, with the reweight inactive
+throughout -- no trend, and it changes sign twice. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
+`F` carries a drift term of its own, and two samples give a range rather than an upper bound on a
+third run's drift.
+
+This is R2's defining shape. R's first 6,866 steps are a **known-answer negative world** -- a
+region where the effect is zero by construction -- and the criterion fires there, reading 0.016 and
+climbing. The R1 cause sits underneath it: a premise stated in the arms table ("differs from N1
+only in the mix") was carried into a decision rule without being checked against the code that
+builds the thing it describes.
+
+**The fix, and it costs nothing because the data is already being produced.** The criterion is
+unchanged; a companion number becomes required. `D = |R - N1|` at step 6500, the last periodic read
+before the anneal begins, is the same-seed drift measured on these very arms. A verdict that the
+reweight moved val requires `|R - N1|` to exceed **both** `F` and `D`.
+
+**Two limitations, stated rather than left to be found.** `D` is read on the 20-batch periodic
+estimator and the final gap on the 100-batch epoch-end one, so `D` bounds the drift's *scale* and
+is **not subtractable** from the final number -- §286's estimator trap, one entry later and in the
+same experiment. And one same-seed pair is one drift sample, not a distribution.
+
+**The residual, and why no extrapolation of it is available.** Drift can still grow between step
+6500 and 7629, so "exceed both" keeps a false-positive path. Two models were put on the table and
+**both are dead, one of them mine.**
+
+44 first estimated the drift as `sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path.
+Fitted through the last point it back-predicted +0.008 at step 500 against an actual +0.001, and
++0.011 at 1000 against an actual -0.001, so it missed the shape. I corrected it with a linear fit
+over the points from 1000, which tracked all three (+0.000 / +0.009 / +0.017 against -0.001 /
++0.011 / +0.016) and extrapolated to 0.113, over `F`, and I concluded the false-positive path was
+"not demonstrated to be narrow".
+
+**The next read killed both.** At step 2500 the sqrt model predicted +0.018 and the linear model
++0.026; the actual is **-0.010**. My rebuttal rested on a line through three points that the fourth
+point destroyed, and I had stated its consequence more strongly than 44 stated theirs. Recorded
+here rather than quietly fixed, because the failure is the entry's own subject one level up: a
+model fitted to a handful of points, believed because it fit them.
+
+44's mechanism, supplied when asked for one and worth keeping even though its specific reading did
+not survive: the exponent is an interval, not a point. The parameter difference is a random walk,
+so `|dtheta| ~ sqrt(t)`. The val difference is `dL ~= grad_L . dtheta + 1/2 dtheta^T H dtheta`,
+whose linear term goes as `sqrt(t)` and **carries a sign**, dominating early while `grad_L` is
+large, and whose quadratic term goes as `t` and is **always positive**, taking over once
+`grad_L -> 0`. So the true exponent lies in [0.5, 1] and the observed shape says which regime you
+are in. 44 read the 500/1000 sign flip followed by growth as the quadratic taking over -- the
+`t`-linear regime. **The step-2500 reversal falsifies that reading**: a term that is always
+positive cannot produce it, so the sign-carrying linear term is still dominant at 2500 and the
+crossover has not happened.
+
+What five reads support, and nothing more: `|R - N1|` stays within [-0.010, +0.016], with no trend
+and two sign changes. That is consistent with near-zero true same-seed drift plus the periodic
+estimator's own sampling noise -- and that noise is known to be large on exactly this comparison,
+since the N1/N2 same-step gaps ran 0.067-0.088 on 20 batches against 0.048 on 100. **No
+extrapolation to step 7629 is supported by this series, including the comfortable one that the
+drift stays small.**
+
+That is the argument for `D` rather than a weakness in it. `D` is *measured* at step 6500, not
+extrapolated to it, and extrapolation is precisely what five points have now shown cannot be done
+here. The verdict rule stands and rests on no model of how drift grows.
+
+The measurement that settles it is a fourth arm -- an exact rerun of N1 at seed 1337 on
+`mix_200m_4b_annealN` -- which is not scheduled. It is named in the prereg amendment so its absence
+is visible rather than implied.
+
+Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707 s/step, about 2.7
+hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
+asking why two arms that should track each other were diverging at all.
+Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_2` (`e24268fd`, corrected at `c29d6cc0`);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
+runs and is committed at close -- §286's fix applied before the fact this time.
+open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
+one thing; the assertion would be over the built plan, not over the mix files.

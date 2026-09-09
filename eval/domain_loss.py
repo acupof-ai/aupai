@@ -94,7 +94,13 @@ def val_seqs(domain, tok, cap=SEQ_CAP):
 
     from cache_guard import assert_caches_fresh
 
-    assert_caches_fresh([domain])
+    # DECLARES A HEAD READ, so the guard prices `cap` rows rather than the file. The cache is
+    # mmap'd (train.py's _domain_seqs comment measures resident cost as scaling with rows DRAWN,
+    # not the file: "zh_web is 85 GB on disk to draw 0.08 epochs of it"), so charging this call
+    # 85 GB overstates it by 40,604x -- and that overstatement refused zh_web,
+    # code_py_starcoder and math_owm_stage2 out of every per-domain panel while the other six
+    # scored, which read as a complete panel and was not one.
+    assert_caches_fresh([domain], head_rows=cap)
     seqs = train._domain_seqs(domain, tok, True, False)
     seqs = seqs[0] if train.Cfg.fone else seqs
     if seqs is None or not len(seqs):

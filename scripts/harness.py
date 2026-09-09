@@ -17,6 +17,7 @@ python scripts/harness.py --selftest # every check must fail on its broken world
 import argparse
 import ast
 import errno
+import datetime
 import functools
 import glob
 import importlib.machinery
@@ -40,8 +41,14 @@ ROOT = os.path.dirname(HERE)
 _ORIG_GIT_INDEX_FILE = os.environ.get("GIT_INDEX_FILE") or ""
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
+sys.path.insert(0, os.path.join(ROOT, "eval"))
 import corpus_fingerprint as cfp  # noqa: E402
 import pod_drift  # noqa: E402
+# CALLED, NOT REIMPLEMENTED (R11's own rule, §278). check_score_matrix_rewrites_traced
+# needs the same "did a number move" comparison the writer uses to decide whether to
+# record a trace; a second copy here would be a second population, and the two would
+# disagree on exactly the rows that matter.
+import score_matrix  # noqa: E402
 import tmpworld  # noqa: E402
 
 # ---- the shared predicates, now in harness_core (de-71, 2026-09-07) ----
@@ -67,7 +74,9 @@ from harness_core import (  # noqa: E402
     _aupai_cards,
     _card_map,
     _cat_file_exists,
+    _LEND_RE,
     _cite_sentence,
+    _classify_card_note,
     _close_row,
     _commit_delivers,
     _csv,
@@ -77,6 +86,8 @@ from harness_core import (  # noqa: E402
     _gitignore_reader,
     _gitignored_set,
     _main_touched,
+    _mentions_lend,
+    _parse_lend_window,
     _read_tasks,
     _tmp_repo,
     _tmp_repo_shaped,
@@ -87,6 +98,8 @@ from harness_core import (  # noqa: E402
     read_mix,
     refuse_in_integration_tree,
     tree_provenance,
+    _theirs_baseline,
+    _unclassified_cards,
     walk_tracked,
 )
 
@@ -115,6 +128,15 @@ _CHECK_TIMEOUT = 5
 # Checks that legitimately scan more data than the 5s default allows. The
 # template scan reads ~850k text fields on a full-data checkout (27s measured).
 _CHECK_TIMEOUTS = {
+    # Measured on this laptop 2026-09-08: 4.9s inside the full set, 5.16/6.30/6.16s solo.
+    # It straddles the 5s default, so whether it runs is decided by the machine's mood --
+    # it banked 3 consecutive strikes and FAILed with "has not actually run since" while
+    # passing by hand seconds later, which is the deadline-nothing-can-meet case the
+    # TIMEOUT comment above describes. Its cost is a real scan (431 documented invocations
+    # against 178 argparse parsers), and it grows with the docs, so any value near the
+    # measurement is crossed again. 30s is ~5x the solo worst, the same ratio as the
+    # entries below, and still far under a hang.
+    "doc_flags_parse": 30,
     "eval_sft_template_contamination": 90,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
@@ -1193,6 +1215,11 @@ def _broken_cache_readers_set_vocab_id():
 
     Mutating the live file rather than writing a fixture, for the reason de-7.3 records: a
     fixture encodes the author's assumption twice.
+
+    PR #21 wrapped the val_seqs call in try/except CoResidentCacheRead, which put the reader
+    at branch depth 1 -- the same depth the conditional setter lands at, so the coverage
+    check's min(sd) > min(rd) no longer fires. The broken world unwraps that try/except to
+    restore the reader to depth 0, reproducing the state the coverage half was built for.
     """
     d = _tmp_repo_shaped()
     src = os.path.join(ROOT, "eval", "domain_bpb.py")
@@ -1202,6 +1229,15 @@ def _broken_cache_readers_set_vocab_id():
     line = "    train.VOCAB_ID = vocab_fingerprint(ours_tok)\n"
     if line not in text:
         return None  # the fix moved or was renamed: this world cannot be built
+    # Unwrap PR #21's try/except so the reader is at depth 0, matching the setter at depth 1.
+    _try = ("        try:\n"
+            "            rows = val_seqs(name, ours_tok)\n"
+            "        except CoResidentCacheRead as e:\n"
+            "            skipped[name] = str(e).splitlines()[0]\n"
+            "            print(f\"  {name:16} SKIPPED (co-resident cache read refused)\", flush=True)\n"
+            "            continue\n")
+    if _try in text:
+        text = text.replace(_try, "        rows = val_seqs(name, ours_tok)\n")
     import shutil as _sh
     link = os.path.join(d, "eval")
     if os.path.islink(link):
@@ -3109,7 +3145,23 @@ def check_main_advances_by_ancestry(root):
                  # had landed on local main but never reached origin, and the reset
                  # discarded them instead of pushing them. Restored by re-merging fb.
                  ("3a57ca402291636a988a651aa983192d79b7c392",
-                  "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf")}
+                  "534fecb84bf5d3ad2ef3b1008976de553ff7d7cf"),
+                 # 2026-09-07 21:40-21:45Z: b0 committed on refs/heads/main directly from
+                 # aupai-b0, which had main checked out (main_in_no_worktree WARNed on it the
+                 # same hour), then `branch: Reset to origin/main` discarded that commit from
+                 # main. The commit survives on branch b0 and returns through merge_main.
+                 ("484a952852ec8a82ba17fda22ee77ec5a49c170d",
+                  "b8b396189be5a6d6ebd0adba0f1445b18d8a754d"),
+                 # 2026-09-08 13:44Z: fb ran `git branch -f main origin/main` after merge_main's
+                 # push was refused non-fast-forward -- de had merged five PRs and origin/main had
+                 # moved 20 commits under the local ref. Both discarded commits are merge_main
+                 # CASes that never reached origin and both survive on branch fb; they return by
+                 # re-running merge_main. The recovery was reached for because merge_main's
+                 # push-refusal text (:1965-1969) says "only delivery failed", "retry the push
+                 # alone" and "Do NOT re-run the merge" -- all three correct when origin has not
+                 # moved, all three wrong here, and the third forbids the one safe action.
+                 ("a2375098b7595abb67dc45a990d9aef6ded21410",
+                  "12ecbf520be918785b76873ca2114fbb9128db28")}
     jumps = []
     unsigned = []
     for ln in lines:
@@ -5497,11 +5549,23 @@ def _broken_coresident_call_removed():
     p = os.path.join(ed, "cache_guard.py")
     with open(p, encoding="utf-8") as fh:
         s = fh.read()
-    old = "    assert_not_co_resident(domains, root=root)\n"
-    if old not in s:
-        raise SelftestSkip("the chokepoint no longer calls assert_not_co_resident this way")
+    # MATCH THE CALL, NOT ONE SPELLING OF IT. This was the literal
+    # `"    assert_not_co_resident(domains, root=root)\n"`, and on 2026-09-07 21:09 (226564c9)
+    # the chokepoint gained a `head_rows=head_rows` argument. The literal stopped matching, the
+    # world raised SelftestSkip, and `harness self-test OK` kept printing with this guard dead --
+    # for 4.5 hours, over an argument added to the very line it watches. A world keyed to an
+    # exact source string is a world that any refactor of its subject silently retires, and the
+    # skip is indistinguishable in the summary from the environmental ones (no nvidia-smi, no
+    # lane card). Regex on the CALL, so adding or reordering keyword arguments cannot kill it;
+    # what must still fail loudly is the call disappearing, which is the defect under test.
+    m = re.search(r"^[ \t]*assert_not_co_resident\(domains[^)]*\)[ \t]*\n", s, re.M)
+    if m is None:
+        raise SelftestSkip(
+            "eval/cache_guard.py's chokepoint no longer calls assert_not_co_resident(domains, "
+            "...) on its own line -- if that call was deliberately moved, re-point this world at "
+            "its new site; a SKIP here means nothing checks that the chokepoint asks")
     with open(p, "w", encoding="utf-8") as fh:
-        fh.write(s.replace(old, "", 1))
+        fh.write(s[:m.start()] + s[m.end():])
     return d
 
 
@@ -5934,14 +5998,20 @@ def check_no_oversized_blob(root):
     p = subprocess.run(["git", "-C", root, "ls-tree", "-r", "-l", "HEAD"], capture_output=True, text=True)
     if p.returncode:
         return SKIP, "not a git repository (the pod checkout is not one)"
-    big = []
+    big, scanned = [], 0
     for ln in p.stdout.splitlines():
         f = ln.split(maxsplit=4)
-        if len(f) == 5 and f[1] == "blob" and f[3].isdigit() and int(f[3]) > MAX_TRACKED_MB * 2**20:
-            big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
+        if len(f) == 5 and f[1] == "blob" and f[3].isdigit():
+            scanned += 1
+            if int(f[3]) > MAX_TRACKED_MB * 2**20:
+                big.append(f"{f[4]} ({int(f[3]) / 2**20:.0f}MB)")
     if big:
         return FAIL, f"{len(big)} tracked blob(s) over {MAX_TRACKED_MB}MB: {', '.join(big[:4])}"
-    return PASS, f"no tracked blob over {MAX_TRACKED_MB}MB"
+    # THE COUNT IS THE EVIDENCE. `git ls-tree HEAD` exits 128 in a commitless repo, so that
+    # case SKIPs correctly -- but an EMPTY COMMIT exits 0 with no output (measured 2026-09-08),
+    # and then the loop runs zero times and this returned the same string as a full scan. Not
+    # reachable on this repo's main today; the string was the only thing that could not say so.
+    return PASS, f"{scanned} tracked blob(s) scanned, none over {MAX_TRACKED_MB}MB"
 
 
 def _broken_blob():
@@ -7077,6 +7147,10 @@ _NON_EVAL_PREFIXES = {
     # code_rp1t_handread50.jsonl is 50 rows of {content, lang} -- a hand-read corpus QUALITY
     # sample, read only by scripts/test_shard_glob.py, with no question and no answer.
     "code_rp1t_handread50": "50-row hand-read corpus quality sample ({content, lang}), not an eval",
+    # 44's dd09/b2 hand-read audit samples: 50 rows each of {src, source, url, content_len, content},
+    # the 500-char truncations that were actually read. Not evals.
+    "code_rp1t_dd09_handread50": "50-row hand-read audit sample for code_rp1t_dd09, not an eval",
+    "code_rp1t_b2_handread50": "50-row hand-read audit sample for code_rp1t_b2, not an eval",
     # lambada_zh_ids.jsonl is 523 rows of {id} alone -- the id list of lambada_zh_src, which IS
     # registered. Bare ids leak nothing; the passages they name are the surface, and those are
     # covered by the lambada_zh_src entry.
@@ -7719,6 +7793,51 @@ FACT_SOURCE_PATH = re.compile(
     # profile_step.py live.
     r"(?<![\w/])(?:data|runs|scripts|docs|eval|datagen|filters|mathbank|algorithms|workflows|probes)/[\w./-]+"
 )
+# A source whose ONLY evidence is a path nobody can open. /tmp is per-machine and per-boot, so
+# a fact resting solely on one names an artifact whose absence is guaranteed rather than
+# incidental, and no reader can audit the number.
+#
+# THE CASE (3b via 4c, 2026-09-08): facts/corpus_supply.json#cs.en_c4_30b_landed cited
+# `/tmp/count_30b.py` as the counter behind its token total, and nothing else. That counter
+# omitted the <eos> terminator and the value was short by 1,029,505 -- exactly the document
+# count. Nobody found it by reading the counter, because the path was unreadable. Row as it
+# stood: `git show b4095851^:facts/corpus_supply.json`.
+#
+# "ONLY" IS THE WHOLE PREDICATE, and the measurements that put it there also set the scope.
+# 84 proposed "a source must yield at least one path the tree can resolve"; applied to facts/:
+#   475 rows carry a source
+#   205 name no path at all -- arXiv ids, hand-reads, controller rulings. Honest, and the
+#       unconditional form reds every one: 221 of 475, 46.5%, the override-not-fix outcome
+#       84 named as the reason to count first
+#   240 name a path that resolves
+#    30 name a path where none resolves -- four shapes, of which one is a defect
+# Two candidate scopes were then measured and REJECTED:
+#   - THE POD-ABSOLUTE FORM, 84's second form: refuted on the whole population, not a sample.
+#     `/work/aupai/[\w./-]+` over every source field gives 48 (id, path) pairs, 36 distinct
+#     paths, 40 distinct fact ids; read on the pod, 36 of 36 EXIST, zero absent. (My first
+#     pass said ten, because it took the first extension-bearing match per row -- 84 corrected
+#     the count and I re-derived it; the conclusion holds on 3.6x the paths.) They cite live
+#     artifacts a laptop checkout structurally cannot hold -- run logs, corpus directories,
+#     bench_eff/ddp_trace_rank0.json -- which is the same reason the tracked-path half already
+#     skips on the pod.
+#   - `~/`: rejected as a prefix. Every `~/` in facts/ is `~/bin/pod`, the TRANSPORT a pod
+#     artifact was read through rather than the artifact, and it is tracked as scripts/pod
+#     since 2026-09-04. Including it reds six moe/efficiency rows for naming their tooling.
+#     An EPHEMERAL_EXEMPT regex for `~/bin/pod` was written first and then DELETED: with `~/`
+#     out of the prefix set it guarded a pattern that cannot match, and two mutants proved it
+#     -- removing the exemption and re-adding `~/` both left the failing row set identical
+#     (/tmp/de_eph_mutants2.py). A rule with no subject reads as protection and is not.
+# The remaining scope is /tmp, where of six paths checked four are already gone from this
+# laptop and three of four from the pod: unreadable by construction, not by circumstance.
+#
+# The character class does NOT include braces, also by mutation. `/tmp/ka_{math,lzh}.json`
+# looked like it needed them, but dropping them left the failing row set identical: the row
+# that names such a path (be.known_answer_panel_3_4) passes on the two tracked eval scripts
+# beside it, so how far the match extends never reaches a decision. Matching more than is
+# used is a claim about the predicate that the world cannot check.
+EPHEMERAL_SOURCE_PREFIX = re.compile(r"(?<![\w/])(?:/tmp/|/var/tmp/|\$HOME/)[\w./-]+")
+
+
 # Debt register for tracked-missing sources: each entry carries a reason. Can only
 # shrink -- a new missing source is a FAIL, not a baseline entry. Reported in `gaps`.
 FACT_SOURCE_BASELINE = os.path.join("facts", "source_baseline.json")
@@ -8479,6 +8598,9 @@ def check_facts_well_formed(root):
     errors, ids, entries = [], {}, []
     baselined = []
     pending = []  # (tag, path, rev-or-None) for every source path absent from the tree
+    # Per ROW, not per path: "is anything else in this source openable" is a property of the
+    # whole source string, so it cannot ride on `pending`.
+    eph_pending = []  # (fn, id, [ephemeral paths], [tracked-looking paths], [(path, rev)])
     for p in files:
         fn = os.path.basename(p)
         try:
@@ -8534,6 +8656,21 @@ def check_facts_well_formed(root):
             if e["id"] in ids:
                 errors.append(f"duplicate id {e['id']!r} in {fn} and {ids[e['id']]}")
             ids[e["id"]] = fn
+            # EPHEMERAL-ONLY SOURCES RUN EVERYWHERE, including the pod, and that is the one
+            # difference from the tracked-path half below. The pod skip exists because a
+            # partial checkout legitimately lacks tracked files; /tmp is not readable on ANY
+            # machine, so the reason for the skip does not apply and skipping there would
+            # leave the pod -- where these counters are written -- unchecked.
+            #
+            # The condition is that NOTHING ELSE in the source is openable. Deciding that
+            # needs the same resolution the tracked half does, so the row is queued here and
+            # adjudicated after the batched git calls below; `pending` cannot serve, since it
+            # holds one entry per PATH and this question is per ROW.
+            _src = str(e["source"])
+            _eph = EPHEMERAL_SOURCE_PREFIX.findall(_src)
+            if _eph:
+                eph_pending.append((fn, e["id"], _eph, FACT_SOURCE_PATH.findall(_src),
+                                    re.findall(r"([\w./-]+)@([0-9a-f]{7,40})", _src)))
             # Source-path half: a full-checkout check. The pod is a partial checkout (the
             # manifest's executing files, not the repo), so a path missing there is not rot
             # -- it was never there. CI and dev run this fully; the pod skips it. The config
@@ -8574,6 +8711,31 @@ def check_facts_well_formed(root):
                 baselined.append(m)
                 continue  # registered debt; gaps reports it
             errors.append(f"{tag}: source path {m} does not exist (not in baseline)")
+    # EPHEMERAL-ONLY, adjudicated here because it needs the resolutions above. A row FAILs only
+    # when every openable thing in its source is ephemeral: an /tmp output beside a tracked
+    # script is auditable (be.known_answer_panel_3_4), an /tmp script alone is not
+    # (cs.en_c4_30b_landed). Resolution is checked against the WORKING TREE and against
+    # path@rev, the same two ways the half above accepts a citation.
+    for fn, fid, eph, tracked_like, revs in eph_pending:
+        openable = [m for m in tracked_like if os.path.exists(os.path.join(root, m))]
+        openable += [f"{p}@{r}" for p, r in revs if _rev_has_path(root, r, p)]
+        if openable:
+            continue
+        # KEYED BY ROW, not by path, and that is why it is a separate lookup from the one
+        # above: one row can name two /tmp paths and the debt is the row's, not each path's.
+        # Same contract as the tracked-path register -- shrink-only, a new row is a FAIL.
+        if f"{fn}#{fid}" in source_baseline:
+            baselined.append(f"{fn}#{fid}")
+            continue
+        errors.append(
+            f"{fn}#{fid}: the only artifact this source names is {', '.join(eph)}, which no "
+            f"reader can open -- /tmp is per-machine and per-boot, so the evidence behind this "
+            f"number is unauditable by construction. cs.en_c4_30b_landed cited "
+            f"/tmp/count_30b.py and nothing else, and was short by exactly its 1,029,505 "
+            f"document count for days because nobody could read the counter. Commit the script "
+            f"(scripts/ or probes/), cite path@rev if it is already deleted, or name a tracked "
+            f"artifact it wrote beside the /tmp path."
+        )
     agents = os.path.join(root, "AGENTS.md")
     prose = open(agents, encoding="utf-8").read() if os.path.exists(agents) else ""
     for fn, e in entries:
@@ -8650,6 +8812,13 @@ def _broken_facts():
     hit[0].pop("retracted_value", None)
     hit[1]["retracted_value"] = ["1234.5678 no such number in this entry"]
     json.dump(obj2, open(cf, "w"))
+    # NO EPHEMERAL-SOURCE MUTATION HERE, deliberately. Three were written into this world
+    # first and all four mutants of that predicate SURVIVED: the world already reports 42
+    # errors from the four mutations above, the evidence string shows five, and the verdict is
+    # FAIL either way -- so nothing the ephemeral rows did could change it
+    # (/tmp/de_world_mutants.py, 2026-09-08). _selftest_facts_ephemeral_only_source isolates
+    # that predicate in four one-fact worlds instead, where each mutant reds exactly one.
+    # A shared world is only a world for a check whose verdict its mutation can move.
     shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
     return d
 
@@ -9414,6 +9583,217 @@ def check_doc_commands(root):
                   f"plus every doc-cited data path exist")
 
 
+DOC_INVOCATION_RE = re.compile(
+    r"\b(?:python3?|bash)\s+"
+    r"((?:scripts|datagen|eval|filters|probes|mathbank|algorithms)/[\w/]+\.py)"
+    r"((?:[^\n`])*)"
+)
+DOC_FLAG_RE = re.compile(r"(?<![\w-])(--[a-zA-Z][\w-]*)")
+
+
+def accepted_flags(path):
+    """The flags a script accepts, or (None, why) when that is not statically knowable.
+
+    Returning None is the whole design. Two shapes were measured as false positives before
+    this check existed, each on a real file, and each would have made the check wrong rather
+    than strict:
+      - positional dispatch: pod_drift.py reads `sys.argv[1]` and has no argparse at all,
+        so there is no flag set to compare against. It produced 4 of 7 flags in the first
+        measurement, all wrong.
+      - a list-literal comparison: test_merge_main_ancestor.py accepts --selftest via
+        `sys.argv[1:] not in ([], ["--selftest"])`, where the flag is a string inside a
+        comparator, not an add_argument literal.
+    Both are now read; if a third shape appears, widen this and re-measure the FP count
+    rather than tightening the caller."""
+    try:
+        tree = ast.parse(open(path, encoding="utf-8").read())
+    except Exception as e:
+        return None, f"unparsable: {type(e).__name__}"
+    flags, argparse_seen, dynamic, argv_indexed = set(), False, False, False
+    for n in ast.walk(tree):
+        if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute):
+            if n.func.attr == "add_argument":
+                argparse_seen = True
+                lits = [a.value for a in n.args if isinstance(a, ast.Constant) and isinstance(a.value, str)]
+                if not lits and n.args:
+                    dynamic = True
+                flags |= {L for L in lits if L.startswith("-")}
+            if n.func.attr in ("parse_known_args", "add_subparsers"):
+                dynamic = True
+            if n.func.attr == "index":
+                flags |= {
+                    a.value
+                    for a in n.args
+                    if isinstance(a, ast.Constant) and isinstance(a.value, str) and a.value.startswith("-")
+                }
+        if isinstance(n, ast.Compare):
+            # `"--x" in sys.argv` AND `"--x" not in sys.argv` -- NotIn was missing here and
+            # test_behind_main_overlap.py:231 uses that exact form, so the flag read as
+            # undeclared. Measured 2026-09-08 while breaking down the skip classes: it fell
+            # into "no flags declared" and was skipped rather than flagged, so the omission
+            # cost reach and not a false positive -- which is why the sweep did not show it.
+            if (
+                isinstance(n.left, ast.Constant)
+                and isinstance(n.left.value, str)
+                and n.left.value.startswith("-")
+                and any(isinstance(o, (ast.In, ast.NotIn)) for o in n.ops)
+            ):
+                flags.add(n.left.value)
+            for c in n.comparators:
+                for sub in ast.walk(c):
+                    if (
+                        isinstance(sub, ast.Constant)
+                        and isinstance(sub.value, str)
+                        and sub.value.startswith("-")
+                    ):
+                        flags.add(sub.value)
+        if (
+            isinstance(n, ast.Subscript)
+            and isinstance(n.value, ast.Attribute)
+            and n.value.attr == "argv"
+            and isinstance(n.slice, ast.Constant)
+            and isinstance(n.slice.value, int)
+            and n.slice.value > 0
+        ):
+            argv_indexed = True
+    if not argparse_seen and argv_indexed:
+        return None, "positional argv dispatch, no argparse"
+    if dynamic:
+        return None, "parser built dynamically"
+    if not flags:
+        return None, "no flags declared"
+    return flags, ""
+
+
+def doc_invocations(root):
+    """Every `python <script> ...` line in a doc's fenced block or a module docstring."""
+    out = []
+    docs = [os.path.join(root, "AGENTS.md"), os.path.join(root, "README.md")]
+    docs += glob.glob(os.path.join(root, "docs", "**", "*.md"), recursive=True)
+    for p in docs:
+        if not os.path.isfile(p):
+            continue
+        try:
+            txt = open(p, encoding="utf-8").read()
+        except Exception:
+            continue
+        for blk in re.findall(r"```[a-z]*\n(.*?)```", txt, re.S):
+            for m in DOC_INVOCATION_RE.finditer(blk.replace("\\\n", " ")):
+                out.append((os.path.relpath(p, root), m.group(1), m.group(2)))
+    for p in _tracked_py(root):
+        try:
+            d = ast.get_docstring(ast.parse(open(os.path.join(root, p), encoding="utf-8").read()))
+        except Exception:
+            continue
+        if not d:
+            continue
+        for m in DOC_INVOCATION_RE.finditer(d.replace("\\\n", " ")):
+            out.append((p, m.group(1), m.group(2)))
+    return out
+
+
+def _tracked_py(root):
+    """Every .py under the code directories, from git when it can answer and from a walk
+    when it cannot.
+
+    The walk is not a fallback for tidiness: `git ls-files` returns EMPTY in a tree whose
+    index is empty, which is every `_tmp_repo_shaped()` world (a fresh `git init`) and any
+    clone before the first `git add`. Returning [] there made this check's module-docstring
+    half invisible -- and that half carries 3 of the 4 real defects it was written for, so
+    the broken world went green with the mutation present (2026-09-08). A count that silently
+    falls to zero is the same defect as doc_commands_exist's reach falling 29 -> 2 while
+    PASSing, which is why that check prints its count too."""
+    out = []
+    try:
+        r = subprocess.run(
+            ["git", "-C", root, "ls-files", "*.py"], capture_output=True, text=True, timeout=30
+        )
+        if r.returncode == 0:
+            out = r.stdout.split()
+    except Exception:
+        out = []
+    if out:
+        return out
+    for d in ("scripts", "datagen", "eval", "filters", "probes", "mathbank", "algorithms"):
+        base = os.path.join(root, d)
+        if not os.path.isdir(base):
+            continue
+        for dirpath, _dirs, files in os.walk(base):
+            for f in files:
+                if f.endswith(".py"):
+                    out.append(os.path.relpath(os.path.join(dirpath, f), root))
+    return out
+
+
+def check_doc_flags_parse(root):
+    """Every flag in a documented invocation is one its script accepts.
+
+    doc_commands_exist checks that a cited FILE exists, never that a cited COMMAND parses,
+    so a documented invocation can be wrong for as long as nobody types it. Measured
+    2026-09-08: code_dedup_handread.py's own docstring named `--rep math 40 --n_rep 100`,
+    flags the parser has never had, and the run that needed it lost the time to argparse's
+    error. Three more were live at the same moment on 308 checkable invocations, each
+    confirmed against the script's own --help."""
+    inv = doc_invocations(root)
+    if not inv:
+        return SKIP, "no documented invocations found"
+    bad, skipped = [], 0
+    for src, script, rest in inv:
+        if not os.path.isfile(os.path.join(root, script)):
+            continue
+        flags, why = accepted_flags(os.path.join(root, script))
+        if flags is None:
+            skipped += 1
+            continue
+        unknown = sorted(set(DOC_FLAG_RE.findall(rest)) - flags)
+        if unknown:
+            bad.append(f"{src} -> {script} {unknown}")
+    if bad:
+        return FAIL, (
+            f"{len(bad)} documented invocation(s) name flags the script does not accept: {sorted(bad)[:4]}"
+        )
+    return PASS, (
+        f"{len(inv) - skipped} of {len(inv)} documented invocation(s) checked, every flag "
+        f"accepted; {skipped} skipped (parser not statically knowable)"
+    )
+
+
+def _broken_doc_flags_parse():
+    """The REAL docstring of a REAL script, with one flag renamed in the DOC only.
+
+    Mutating the DOC and not the parser is the defect's own direction: the doc rots while the
+    code stays right, which is why nothing else catches it. `scripts/count_tokens.py` is the
+    subject because its parser is statically knowable ({--selftest}) -- a script whose parser
+    reads as dynamic would be SKIPPED and the world would go green with the mutation present.
+
+    The first version of this world did go green, twice over (2026-09-08, §270's own shape in
+    the world built to guard against it): it replaced the docs/ symlink with a real directory,
+    which cut the collected invocations from 428 to 1, and that 1 cited count_dir.py, whose
+    positional argv dispatch is a SKIP. Nothing was flagged because nothing was checked. So
+    docs/ stays symlinked here and only the mutated file is a real copy."""
+    import shutil
+
+    d = _tmp_repo_shaped()
+    rel = "scripts/count_tokens.py"
+    dst = os.path.join(d, rel)
+    # scripts/ is a symlink to the real tree: writing through it would edit the repo
+    # (harness_core._tmp_repo_shaped says so), so replace that one link with a real dir.
+    link = os.path.join(d, "scripts")
+    if os.path.islink(link):
+        os.unlink(link)
+        os.makedirs(link, exist_ok=True)
+        for f in os.listdir(os.path.join(ROOT, "scripts")):
+            src = os.path.join(ROOT, "scripts", f)
+            if f != os.path.basename(rel):
+                os.symlink(src, os.path.join(link, f))
+    shutil.copy(os.path.join(ROOT, rel), dst)
+    txt = open(dst, encoding="utf-8").read()
+    doc = ast.get_docstring(ast.parse(txt)) or ""
+    assert "--selftest" in doc, f"{rel}'s docstring no longer cites --selftest; pick another subject"
+    open(dst, "w", encoding="utf-8").write(txt.replace(doc, doc.replace("--selftest", "--self-test"), 1))
+    return d
+
+
 # Retired phrases that must not reappear in README. The objective changed 2026-08-30;
 # the old Chinese-LLM framing and the removed 1024 window are stale, not historical.
 _README_RETIRED = [
@@ -9658,6 +10038,88 @@ def _is_probe_mix(root, mix_path):
     return float(obj.get("total_tokens") or 0) < 2e8
 
 
+def check_score_matrix_rewrites_traced(root):
+    """A score-matrix row whose numbers moved since the last commit must say so.
+
+    THE HOLE THIS CLOSES, measured 2026-09-08. Of 109 checks, three read
+    runs/score_matrix.jsonl and only one is dedicated to it -- score_matrix_present,
+    which asserts a row EXISTS. Nothing read a value and asked whether it should have
+    changed, so a wrong domain_bpb factor table sat on main for hours: the row was
+    present, well-formed, one line, in the right ledger, and every check that could see
+    the file was satisfied. (tasks.jsonl has 6 dedicated checks, friction.jsonl 2.)
+
+    WHY NOT AN APPEND-ONLY RULE. This ledger folds on (ckpt, profile) and its writer
+    REPLACES -- rewriting a value under an existing key is the intended operation here,
+    unlike the other eight ledgers where a changed line is a defect. Over the 34 commits
+    touching the file: 79 new keys, 44 rewrites, and only 6 of those changed an existing
+    number (two of the six were _wall_s timings). A rule that fired on all 44 would be
+    worked around; one that fires 6 times in 34 commits gets read.
+
+    WHY NOT A VALUE COMPARISON. A stored snapshot of expected values is a second
+    population needing its own freshness rule, and a stale snapshot check produces
+    exactly the failure that started this: a green check about a number nobody
+    re-derived. So the writer records what it overwrote (score_matrix.write_records ->
+    _supersede_entry) and this compares the file against its own git history, which is a
+    source it cannot drift from.
+
+    `measured` cannot serve as the trace: it is the SCORING date, and 43 of the 44
+    rewrites left it untouched. The eight retraction rows still read 2026-09-04 while
+    their contents were rewritten twice on 09-08.
+
+    Scope: makes CHANGES visible, not values correct. A first write that is wrong has no
+    prior to disagree with, and nothing here compares a number to reality.
+    """
+    rel = os.path.join("runs", "score_matrix.jsonl")
+    p = os.path.join(root, rel)
+    if not os.path.exists(p):
+        return SKIP, f"{rel} not present"
+    # SKIP, NEVER PASS, WHERE THERE IS NO GIT. /work/aupai is a hand-pushed tree with no
+    # .git, so this check's only source of truth is absent there. Passing would be the
+    # R12 shape -- a line green because it never ran -- and one we would have built
+    # ourselves into the check written to catch a silent value change.
+    if pod_drift.is_pod(root):
+        return SKIP, ("pod tree (/work/aupai) has no .git, and this check reads the "
+                      "previous commit's copy of the file; it can only run in a checkout")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    r = subprocess.run(["git", "-C", root, "show", f"HEAD:{rel}"],
+                       capture_output=True, text=True, env=env, timeout=30)
+    if r.returncode != 0:
+        return SKIP, f"{rel} has no committed version at HEAD yet"
+
+    def rows(text):
+        out = {}
+        for line in text.splitlines():
+            if not line.strip():
+                continue
+            try:
+                d = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            out[(d.get("ckpt"), d.get("profile", "full"))] = d
+        return out
+
+    before = rows(r.stdout)
+    after = rows(open(p, encoding="utf-8", errors="ignore").read())
+    untraced = []
+    for k in after.keys() & before.keys():
+        moved = score_matrix._supersede_entry(before[k], after[k], "", "")
+        if moved is None:
+            continue
+        # The trace must be NEW, not one carried over from an earlier rewrite: comparing
+        # counts rather than presence is what keeps a row with one old entry from
+        # covering a second, undeclared change.
+        if len(after[k].get("superseded") or []) <= len(before[k].get("superseded") or []):
+            fields = sorted(moved["changed"])[:3]
+            untraced.append(f"{k[0]}/{k[1]}: {', '.join(fields)}")
+    if untraced:
+        return FAIL, (
+            f"{len(untraced)} score-matrix row(s) whose numbers moved since HEAD with no new "
+            f"`superseded` entry: {untraced[:3]}. Rewriting a value here is legal, doing it "
+            f"invisibly is not -- write through eval/score_matrix.py::write_records, which "
+            f"records what it overwrote.")
+    return PASS, f"{len(after)} row(s); every numeric change since HEAD carries its `superseded` trace"
+
+
 def check_score_matrix(root):
     """Every status=ok training run has a score-matrix record for the checkpoint it
     produced. 'Trained but not scored' must be impossible: an ok row with no matrix
@@ -9778,6 +10240,36 @@ def check_score_matrix(root):
                       f"{sorted(set(unverifiable))[:5]} -- add reading_artifact: <path> naming the "
                       f"run's own reading, or a cmd that names its --out")
     return PASS, "every ok training run has a score-matrix record"
+
+
+def _broken_score_matrix_untraced_rewrite():
+    """A committed matrix row whose number is then changed BY HAND, no trace.
+
+    Built as a real git repo with a real commit, because the check's whole source of
+    truth is `git show HEAD:<path>` -- a world without history would make it SKIP, and a
+    SKIP that reads as "not broken" is the failure mode this check was written about.
+
+    The mutation is exactly the incident: a value moves and nothing in the row says so.
+    Writing the same change through score_matrix.write_records must PASS, which is the
+    negative control the selftest asserts alongside this.
+    """
+    import tempfile
+
+    d = tempfile.mkdtemp()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    p = os.path.join(d, "runs", "score_matrix.jsonl")
+    row = {"ckpt": "a.pt", "profile": "full", "metrics": {"x": {"loss": 1.0}}}
+    with open(p, "w") as f:
+        f.write(json.dumps(row) + "\n")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+    for cmd in (["init", "-q", "-b", "main"], ["add", "-A"],
+                ["-c", "user.email=t@t", "-c", "user.name=t", "commit", "-qm", "w",
+                 "--no-verify"]):
+        subprocess.run(["git", "-C", d, *cmd], env=env, capture_output=True)
+    with open(p, "w") as f:
+        f.write(json.dumps({"ckpt": "a.pt", "profile": "full",
+                            "metrics": {"x": {"loss": 2.0}}}) + "\n")
+    return d
 
 
 def _broken_score_matrix():
@@ -10352,6 +10844,29 @@ def _token_cache_dir():
     forced = os.environ.get("AUPAI_TOKEN_CACHE_DIR") or os.environ.get("HARNESS_TOKEN_CACHE_DIR")
     if forced:
         return forced
+    # THE TORCH-FREE PATH IS TRIED FIRST, and it is not a second implementation -- it is train's
+    # own three steps (env, NVMe-if-it-exists, dirname(TOKEN_CACHE)) with TOKEN_CACHE read from
+    # train.py's source instead of from an imported module. `import train` reaches model.py and then
+    # fla, which costs 9.8 s of a 36.4 s `harness check` (profiled 2026-09-07, de) to produce one
+    # string, and on this laptop both paths return '/data00' -- measured, they AGREE.
+    #
+    # Correctness rests on the constant being a literal: if train.py ever computes TOKEN_CACHE, the
+    # regex misses and this FALLS THROUGH to the import rather than guessing, so the expensive path
+    # remains the authority and the cheap one is only allowed to answer when it can read the same
+    # inputs. That is the opposite order from the version before this change, which imported first
+    # and used the scrape only when torch was absent; the reason for THAT order was that the scrape
+    # then ignored AUPAI_TOKEN_CACHE_DIR, which the `forced` branch above now handles for both.
+    try:
+        src = open(os.path.join(ROOT, "train.py"), encoding="utf-8").read()
+        m = re.search(r'^TOKEN_CACHE\s*=\s*["\']([^"\']+)["\']', src, re.M)
+        if m:
+            sys.path.insert(0, os.path.join(ROOT, "eval"))
+            import cache_guard
+            if os.path.isdir(cache_guard.NVME_CACHE_DIR):
+                return cache_guard.NVME_CACHE_DIR
+            return os.path.dirname(m.group(1))
+    except Exception:
+        pass   # fall through to the import, which is the authority
     try:
         sys.path.insert(0, ROOT)
         import train
@@ -13765,9 +14280,91 @@ def _selftest_launch_closes_its_orphaned_row():
         assert rc == 127, (
             f"the negative control assumes bash reports a missing command as 127, got {rc}; if this "
             f"changes, 4c's nonexistent-path world may become a real raise and belongs above")
+
+        # DE-77: A COMMAND THAT REFUSED. The process DID exist and exited nonzero without ever
+        # opening a device, so neither the raise guard above nor the monitor covers it: the guard
+        # never fires, and section 5 was the SUCCESS path by construction. 4c hit it as a phantom
+        # running row for a script that never launched.
+        #
+        # THE PREDICATE IS THE WRAPPER'S OWN .rc AND NOT THE ABSENCE OF A CLAIM, and this world is
+        # what makes that checkable: a fast eval that legitimately never holds a card writes rc 0,
+        # and closing on "no claim" alone would close its row as a failure too. Both cases are built
+        # here, from the same wrapper the launcher uses, so the discriminator is exercised in both
+        # directions rather than asserted in a comment.
+        # _launch_after_row, not cmd_launch: the Popen and everything after it live in the
+        # guarded half, and section 5 is there. Reading the wrong function made this assertion
+        # fire on a correct fix -- which is the assertion working, and worth naming so the next
+        # reader does not re-point it at the outer function.
+        src_launch = inspect.getsource(_launch_after_row)
+        assert "_refused_rc" in src_launch, (
+            "the de-77 closer is gone from _launch_after_row: a wrapped command that exits nonzero "
+            "without holding a device leaves its row running forever")
+        # THE WHOLE FUNCTION, not a slice starting at the closer. Slicing from '_refused_rc =
+        # None' put everything ABOVE the closer outside the window, so an _arm_monitor call
+        # inserted before it was invisible and M3 survived twice -- a criterion cannot see what its
+        # own slice excludes.
+        _guard = src_launch
+        assert 'not in (None, "", "0")' in _guard, (
+            "the refusal predicate no longer excludes rc 0 -- a short successful job that never "
+            "opened a device would be closed as a failure (de-47's fast-eval path)")
+        # THE REAL CALL, not the first mention. An earlier version compared indexes of the bare
+        # string "_arm_monitor", which the mutation sweep defeated: inserting a reference to it
+        # ABOVE the closer left the first occurrence where it was, so the ordering read as correct
+        # while the monitor was armed first. Anchor on the assignment that actually arms it.
+        assert _guard.index("_refused_rc = None") < _guard.index("monitor_pid = _arm_monitor("), (
+            "the closer must run BEFORE the monitor is armed: a monitor watching a process that "
+            "already exited reports it as vanished")
+
+        for label, exit_code, want_closed in (("refused", 2, True), ("fast success", 0, False)):
+            name = "de77_" + label.split()[0]
+            rc_file = os.path.join(d, f"{name}.rc")
+            wrapped = ["bash", "-c",
+                       'set -o pipefail; "$@"; rc=$?; printf %s "$rc" > "$0"; exit "$rc"',
+                       rc_file, "bash", "-c", f"exit {exit_code}"]
+            with open(os.path.join(d, "runs", f"{name}.log"), "w") as lf:
+                p = subprocess.Popen(wrapped, stdout=lf, stderr=subprocess.STDOUT,
+                                     stdin=subprocess.DEVNULL)
+            got_rc = p.wait()
+            assert got_rc == exit_code, f"{label}: wrapper returned {got_rc}, want {exit_code}"
+            assert os.path.exists(rc_file), (
+                f"{label}: the wrapper wrote no .rc, so the launcher's predicate has no input and "
+                f"this world tests nothing")
+            with open(rc_file) as _f:
+                written = _f.read().strip()
+            assert written == str(exit_code), f"{label}: .rc holds {written!r}"
+
+            subprocess.run(
+                [sys.executable, os.path.join(HERE, "exp.py"), "--root", d, "start",
+                 "--name", name, "--cmd", "x", "--hypothesis", "y"],
+                check=True, capture_output=True)
+            assert any(r.get("name") == name for r in open_rows()), (
+                f"{label}: sanity -- exp.py start must leave an open row")
+
+            # The launcher's predicate, applied to this world's real .rc.
+            if written not in ("", "0"):
+                assert _close_row(
+                    name, "fail",
+                    f"refused: wrapped command exited {written} without holding a device",
+                    "the command exited before any descendant opened a GPU device",
+                    "read the log and fix what the command refused on, then relaunch",
+                    root=d), f"{label}: _close_row reported failure"
+
+            still_open = [r for r in open_rows() if r.get("name") == name]
+            if want_closed:
+                assert not still_open, (
+                    f"{label}: the row is STILL OPEN for a command that exited {exit_code} without "
+                    f"holding a device -- this is 4c's phantom row, and no_stale_running refuses "
+                    f"every commit in the repository once it is a day old")
+            else:
+                assert still_open, (
+                    f"{label}: rc 0 must NOT be closed as a failure here -- a 3-second eval that "
+                    f"never opened a device is a job that came and went (de-47), and its row is "
+                    f"closed by the monitor, not by the refusal path")
+
         print("  launch: a death before the process exists closes its own row (2 raise sites); "
               "a nonexistent command path is NOT such a death -- bash exits 127 with the process "
-              "alive, so that world cannot test this")
+              "alive, so that world cannot test this; a REFUSED command (rc 2, no device) closes "
+              "its row while a fast success (rc 0, no device) does not (de-77)")
     finally:
         shutil.rmtree(d, ignore_errors=True)
 
@@ -14000,6 +14597,94 @@ def _broken_no_conflict_markers():
     return d
 
 
+def check_main_in_no_worktree(root):
+    """`refs/heads/main` is checked out in NO worktree.
+
+    This is what makes merge_main's compare-and-swap legal. It advances main with an atomic
+    `update-ref`, touching no working tree -- which is safe precisely because no tree has main
+    checked out. A worktree holding main has an index and a HEAD that update-ref does not
+    update, so the branch moves under a checkout that still believes it is at the old commit:
+    the next `git status` there reports every intervening change as a local deletion or
+    modification, and a `git checkout .` in that state discards main's own commits.
+
+    AGENTS.md states the invariant as a property of the integration tree -- "/Users/bytedance/
+    code/aupai is the integration tree and is DETACHED; main is checked out in no worktree at
+    all, which is what makes the compare-and-swap below legal". Nothing enforced it, and it
+    stopped being true tonight: aupai-b0 holds refs/heads/main at 47148ae3, and 44
+    fast-forwarded main there by hand. Measured 2026-09-08, reported by 4c.
+
+    WARN, not FAIL, and the reason is the failure mode rather than caution: nothing is
+    corrupted while the branch merely sits checked out, and a session that hits a FAIL on
+    another session's worktree cannot fix it -- `git worktree` operations on somebody else's
+    tree are exactly what the one-worktree-per-session rule exists to prevent. The owner
+    detaches it (`git checkout --detach`) or moves to a branch; a hard failure would block
+    every commit in every tree until they did.
+
+    The predicate reads `git worktree list --porcelain`, whose `branch refs/heads/<name>` line
+    appears only for an attached worktree -- a detached one prints `detached` and no branch
+    line. So the check needs no path knowledge and works the same on the pod, in CI and on any
+    laptop, where a path test would hardcode one machine's layout (the same reasoning as
+    integration_tree.py's).
+    """
+    if not os.path.exists(os.path.join(root, ".git")):
+        return SKIP, "no .git (pod or partial checkout)"
+    r = subprocess.run(["git", "worktree", "list", "--porcelain"],
+                       cwd=root, capture_output=True, text=True)
+    if r.returncode != 0:
+        return SKIP, f"git worktree list failed: {r.stderr.strip()[:80]}"
+    wt, holders, n = None, [], 0
+    for ln in r.stdout.splitlines():
+        if ln.startswith("worktree "):
+            wt = ln.split(" ", 1)[1].strip()
+            n += 1
+        elif ln.strip() == "branch refs/heads/main" and wt:
+            holders.append(wt)
+    if holders:
+        return WARN, (
+            f"refs/heads/main is checked out in {len(holders)} worktree(s): {holders[:3]}. "
+            f"merge_main advances main by an atomic update-ref that touches no working tree, "
+            f"which is only safe while no tree holds it -- the holder's index and HEAD are not "
+            f"updated, so main moves under a checkout that still believes it is at the old "
+            f"commit. The owner detaches (git checkout --detach) or moves to a branch"
+        )
+    return PASS, f"main checked out in no worktree ({n} worktree(s) listed)"
+
+
+def _broken_main_in_no_worktree():
+    """A REAL second worktree with main checked out, made by `git worktree add`.
+
+    Not a hand-written porcelain fixture: the thing under test is what git reports about a real
+    attached worktree, and a fabricated `branch refs/heads/main` line would share the check's
+    own assumption about the output format. The world builds a repo, commits, detaches its
+    original tree so main is free, then adds a second worktree holding main -- which is the
+    live shape exactly (an integration tree detached, another tree on main).
+    """
+    import shutil
+    import subprocess as sp
+
+    d = _tmp_repo()
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t"]
+    sp.run(["git", "init", "-b", "main"], cwd=d, capture_output=True, env=env)
+    shutil.copy(os.path.join(ROOT, "AGENTS.md"), os.path.join(d, "AGENTS.md"))
+    sp.run(["git", "add", "AGENTS.md"], cwd=d, capture_output=True, env=env)
+    sp.run(git + ["commit", "-m", "init"], cwd=d, capture_output=True, env=env)
+    # Detach the original tree first: git refuses to check main out twice, so without this the
+    # `worktree add` fails and the world goes green with no holder at all.
+    sp.run(git + ["checkout", "--detach"], cwd=d, capture_output=True, env=env)
+    sp.run(git + ["worktree", "add", os.path.join(d, "held"), "main"],
+           cwd=d, capture_output=True, env=env)
+    # A THIRD WORKTREE ON A NON-MAIN BRANCH, so the world can tell "main is checked out" from
+    # "a branch is checked out". Without it a predicate matching `branch refs/heads/` at all --
+    # every session's own worktree -- passed the selftest, because nothing here held any branch
+    # but main (measured: mutant M2 SURVIVED, 2026-09-08). This is the world's discriminating
+    # power, not decoration: the live tree has ten attached worktrees and exactly one of them is
+    # the violation.
+    sp.run(git + ["worktree", "add", "-b", "sidebranch", os.path.join(d, "side")],
+           cwd=d, capture_output=True, env=env)
+    return d
+
+
 def check_no_shared_stash(root):
     """The stash stack is empty. There is exactly ONE of it per repository.
 
@@ -14060,6 +14745,257 @@ def _broken_no_shared_stash():
     sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "stash", "push",
             "-m", "broken world"], cwd=d, capture_output=True, env=env)
     return d
+
+
+def _assert_card_ownership(root):
+    """None when cards[] ownership is sound, else the FAIL message.
+
+    A FUNCTION SO ONE DEFINITION SERVES BOTH BRANCHES of check_allocation_reads_the_grant. That
+    check returns early when the file names a block grant, so anything written after that return
+    runs only in the no-grant world -- which is not the world this repo has been in all week. The
+    assertions below were written down there first and seven mutants survived them, the original
+    `\\bRL[ _-]?TEAM\\b` defect included, because none of them was ever reached.
+
+    THEN THEY WERE REACHABLE AND STILL GREEN ON THE PRE-FIX WORLD, which is the more instructive
+    failure and the reason property (3) exists. With the old regex AND the old two-state
+    classifier restored, _aupai_cards returns ours=[0..7] and theirs=[], and properties (1) and
+    (2) both hold: a partition of eight cards into "all ours" is still a partition, and "every
+    not-ours card must refuse" iterates over an empty set. Both of my first two assertions are
+    SATISFIED BY THE DEFECT. An assertion quantified over a set the defect empties cannot see the
+    defect -- the emptying IS the defect.
+
+    Three properties, and NONE NAMES A CARD NUMBER. Hard-coding "0 and 6 must refuse" would go
+    stale the day the controller moves a card, and a check that must be edited whenever the grant
+    changes is a check that will eventually disagree with the grant it is guarding.
+    """
+    ours, theirs, cmap = _aupai_cards(root)
+    if not cmap:
+        return None                      # no map is "no information"; other checks own that case
+    unknown = _unclassified_cards(root)
+    # (1) COVERAGE. Every listed card lands in exactly one of the three states. A card in none of
+    #     them has no owner decision at all -- the shape that let `--cards 0` through -- and a card
+    #     in two makes the answer depend on which list the caller happens to read first.
+    seen = sorted(ours) + sorted(theirs) + sorted(unknown)
+    if sorted(set(seen)) != sorted(cmap) or len(seen) != len(set(seen)):
+        return (f"the live cards[] map lists {sorted(cmap)} but ours={sorted(ours)}, "
+                f"theirs={sorted(theirs)}, unclassified={sorted(unknown)} do not partition it -- "
+                f"a card in none of the three has no owner decision, and one in two has an answer "
+                f"that depends on the reader")
+    # (2) THE REFUSAL FIRES ON THE LIVE TEXT. For every card the live file does not give aupai,
+    #     --cards must refuse. This is the assertion item 8's typed fixture could not make: it is
+    #     stated over whatever the file says today, so the wording cannot drift out from under it.
+    #     Card 0's note lost the "TEAM" token at some point and nothing went red for it.
+    for c in sorted(set(theirs) | set(unknown)):
+        got, ref = _validate_explicit_cards(str(c), root=root)
+        if not ref:
+            return (f"--cards {c} was ACCEPTED as {got!r} while the LIVE "
+                    f"runs/card_assignment.json note for card {c} reads "
+                    f"{str(cmap.get(c))[:90]!r} -- that note does not grant the card to aupai, and "
+                    f"this is the exact shape that accepted --cards 0 and 6 on 2026-09-07")
+    # (3) THE CLASSIFIER DISCRIMINATES AT ALL, asserted on the live notes and not on a count.
+    #     (1) and (2) are both vacuously true when the classifier calls everything ours, which is
+    #     precisely the bug: measured, the pre-fix predicate gives ours=[0..7] theirs=[] and turns
+    #     (2) into a loop over nothing. So the property has to be about the DECISION, not about the
+    #     partition's shape: a note whose subject is another team must not classify as ours. Stated
+    #     over the file's own text, so it needs no card number and cannot be satisfied by a
+    #     predicate that has stopped discriminating.
+    for c, note in sorted(cmap.items()):
+        subject = str(note or "").strip()[:24].lower()
+        if ("tilerl" in subject or "rl team" in subject) and c in ours:
+            return (f"cards[{c}] opens with {str(note)[:40]!r} -- another team's name is the "
+                    f"SUBJECT of that note -- and the classifier still put card {c} in ours. This "
+                    f"is the 2026-09-07 defect exactly: `\\bRL[ _-]?TEAM\\b` matched neither "
+                    f"'tileRL (...)' (no TEAM token) nor even 'tileRL TEAM' (no word boundary "
+                    f"between 'e' and 'R'), so theirs came back empty and every card read as ours")
+    # (4) A CARD THE CONTROLLER PUT IN block_cards CANNOT BE ANOTHER TEAM'S. The block grant and
+    #     cards[] are written by the same controller in the same file, so they cannot disagree
+    #     about who owns a card; if they do, one of the two reads is wrong and a launcher will act
+    #     on whichever it happens to consult.
+    #
+    #     THIS PROPERTY EXISTS BECAUSE MY OWN FIRST FIX FAILED IT AND MUTATION FOUND IT SURVIVING.
+    #     An unanchored `tile[ _-]?rl` matched "for tilerl's PR" and "b0+tilerl" -- a peer's name
+    #     mentioned inside a note about aupai's own work -- and classified cards 1 and 2 as
+    #     tileRL's while card 1 was running resume 1. Properties (1)-(3) all passed on that world:
+    #     the partition was still a partition, every not-ours card still refused, and no note's
+    #     SUBJECT was another team. Over-restrictive is a defect too -- it refuses aupai's own
+    #     launches onto aupai's own cards and sends someone hunting for a grant that already
+    #     exists -- so the guard has to bound the classifier from both sides, not just one.
+    #     THE TRIGGER IS `theirs`, NOT `theirs | unknown` (4c's ruling, 2026-09-08, asked for
+    #     before this was built because it decides the blast radius). A baseline-ours card must
+    #     classify NOT-THEIRS; ours and unclassified both satisfy that. Including `unknown` here
+    #     turns one unreadable note on any block card into a repo-wide FAIL -- measured: doctoring
+    #     cards[3] to unparseable prose failed the whole invariant and with it every commit in the
+    #     repo, where today it refuses `--cards 3` and nothing else. That is the wrong direction to
+    #     fail in: this property exists to catch drift in the PERMISSIVE direction (a card silently
+    #     leaving aupai's side), and an unreadable note is already fail-closed where it matters,
+    #     because _validate_explicit_cards refuses it at launch and property (2) asserts that
+    #     refusal on the live text. A guard that blocks everyone in order to report a condition
+    #     that already blocks the one launcher who cares is a worse guard, not a stricter one.
+    block = _grant_cards(root, raise_on_false=False)[0] or []
+    misowned = [c for c in block if c in theirs]
+    if misowned:
+        return (f"block_cards gives {_csv(sorted(block))} to an aupai training block, but "
+                f"cards[] classifies {_csv(sorted(misowned))} as another team's "
+                f"({'; '.join(f'cards[{c}] = ' + repr(str(cmap.get(c))[:60]) for c in misowned)}) "
+                f"-- the same controller wrote both, so they cannot disagree about the owner. An "
+                f"over-restrictive classifier refuses aupai's own launches onto aupai's own cards")
+    # (5) OWNERSHIP COMES FROM cards[] AND NOT FROM THE TOP-LEVEL `status` PROSE. tilerl-0a's
+    #     check, adopted here so it runs on every commit rather than once at review.
+    #
+    #     The trap it closes: the phrase the OLD regex wanted -- "RL TEAM (tileRL) KEEPS CARDS 0
+    #     AND 6" -- is still in the file today, in the top-level `status` field, which _card_map
+    #     never reads. So a "fix" that widened the search to the whole file would classify 0 and 6
+    #     as theirs and pass properties (1)-(4) for entirely the wrong reason: it would be reading
+    #     a running commentary that goes stale in hours, not an ownership record. Card 0's note
+    #     already proves the hazard -- its "Current: tilerl-48 levers arm 3" status line is a
+    #     misattribution, confirmed by 48 as a job it never ran.
+    #
+    #     THE FIXTURE IS ASSERTED NON-VACUOUS FIRST. Blanking a field that never held the phrase
+    #     would prove nothing, so the check requires the phrase to be there before removing it.
+    _raw = os.path.join(root, "runs", "card_assignment.json")
+    try:
+        with open(_raw, encoding="utf-8") as _fh:
+            _obj = json.load(_fh)
+    except (OSError, ValueError):
+        _obj = None
+    if _obj is not None and "RL TEAM" in str(_obj.get("status", "")):
+        import shutil as _sh3
+        import tempfile as _tf3
+
+        _sd = _tf3.mkdtemp(prefix="status_blank_")
+        try:
+            os.makedirs(os.path.join(_sd, "runs"), exist_ok=True)
+            _obj2 = dict(_obj)
+            _obj2["status"] = ""
+            with open(os.path.join(_sd, "runs", "card_assignment.json"), "w") as _fh:
+                json.dump(_obj2, _fh)
+            _o2, _t2, _ = _aupai_cards(_sd)
+            _u2 = _unclassified_cards(_sd)
+            if (sorted(_o2), sorted(_t2), sorted(_u2)) != (sorted(ours), sorted(theirs),
+                                                           sorted(unknown)):
+                return (f"blanking the top-level `status` field changed the ownership partition "
+                        f"from ours={sorted(ours)}/theirs={sorted(theirs)}/"
+                        f"unclassified={sorted(unknown)} to ours={sorted(_o2)}/"
+                        f"theirs={sorted(_t2)}/unclassified={sorted(_u2)} -- ownership is being "
+                        f"read from `status`, which is running commentary that goes stale in hours "
+                        f"(card 0's own status line misattributes a job 48 never ran), not from "
+                        f"the cards[] owner")
+        finally:
+            _sh3.rmtree(_sd, ignore_errors=True)
+    # (6) THE BASELINE IS PINNED TO {0, 6} BY THE 2026-09-06 USER ORDER, and this is the property
+    #     without which the whole expiry mechanism is decorative. _theirs_baseline READS the list
+    #     from the file, which is what lets the controller move a card without editing code -- and
+    #     it is therefore also what lets a lend shrink the baseline instead of expiring. Dropping
+    #     card 6 from theirs_baseline mid-lend makes its note classify by the ordinary rule, which
+    #     returns `theirs` on a tileRL-subject note, so properties (1)-(5) and every agreement
+    #     property still pass while the card has silently stopped being expiry-checked. The
+    #     mechanism cannot detect its own removal; only a pin can.
+    #
+    #     A USER ORDER IS THE AUTHORITY, so this names the two cards and cites the order rather
+    #     than deriving the list from anything in the repo. That is the one place a card number
+    #     belongs in this function: properties (1)-(5) are deliberately number-free because they
+    #     guard a mechanism, and this one guards a decision only the user can change.
+    #
+    #     THE CITATION IS NOW A LINE IN main, not a conversation (tilerl-0a, reviewing #58).
+    #     AGENTS.md's GPUs bullet states it: "Cards 1,2,3,4,5,7 belong to this repo; cards 0 and 6
+    #     are tileRL's (user order 2026-09-06, '0,6 tileRL'; the earlier all-8 grant of 2026-08-30
+    #     is superseded)." Before aupai #53 landed that line, every trace of the ruling was a
+    #     citation inside a row citing it, while AGENTS.md asserted the opposite ("All 8 cards
+    #     belong to this repo" -- true when written 08-30, superseded without an edit). Cited by
+    #     the bullet's own words rather than by line number: this file is edited constantly and a
+    #     line number in a citation rots on the next unrelated commit (§271's third half).
+    _base = _theirs_baseline(root)
+    if sorted(_base) != [0, 6]:
+        return (f"runs/card_assignment.json theirs_baseline is {sorted(_base)}, not [0, 6]. Cards "
+                f"0 and 6 are tileRL's by USER ORDER 2026-09-06 ('0,6 tileRL'), recorded in "
+                f"AGENTS.md's GPUs bullet; this list is what makes a lend on them EXPIRE, so "
+                f"removing a card from it silently stops the expiry check while every other "
+                f"property still passes -- the mechanism cannot see its own removal. Changing this "
+                f"needs a user order, not an edit")
+    #     AND THE CITED LINE MUST STILL SAY IT. A pin citing a document that has changed under it is
+    #     the §271 shape: the citation reads as authority while the authority has moved. AGENTS.md
+    #     said "All 8 cards belong to this repo" for a week after the 09-06 order superseded it, so
+    #     this is not hypothetical -- it is the state this repo was actually in. Asserted against
+    #     the bullet's own text rather than a line number, and SKIPPED rather than failed when the
+    #     file is absent, because a fixture tree legitimately has no AGENTS.md.
+    _ag = os.path.join(root, "AGENTS.md")
+    if os.path.isfile(_ag):
+        try:
+            with open(_ag, encoding="utf-8") as _fh:
+                _agtxt = _fh.read()
+        except OSError:
+            _agtxt = ""
+        if _agtxt and "cards 0 and 6 are tileRL's" not in _agtxt:
+            return ("AGENTS.md no longer states that cards 0 and 6 are tileRL's, but "
+                    "theirs_baseline still pins [0, 6] and this check still cites that order. One "
+                    "of the two moved: either the user changed the split and the pin is stale, or "
+                    "AGENTS.md lost the line. AGENTS.md asserted 'All 8 cards belong to this repo' "
+                    "for a week after the 2026-09-06 order superseded it, so a pin citing a "
+                    "document that has drifted is the measured failure here, not a hypothetical")
+    # (7) A LEND IS A WINDOW, AND A NOTE CLAIMING ONE WITHOUT A READABLE WINDOW REFUSES. The
+    #     natural shortcut is to accept the word "lent" as the grant and read the dates as
+    #     decoration; measured on card 6's real note, that shortcut makes a 13-minute loan
+    #     permanent -- the note stays in the file forever because the file records what happened,
+    #     not only who owns what. So the classifier must return ours ONLY inside the window, and
+    #     a lend whose window it cannot parse must land in `unclassified` (which refuses) rather
+    #     than fall back to either owner.
+    #
+    #     ASSERTED BY VARYING THE CLOCK ON THE LIVE NOTE, not on a fixture I wrote: the same text
+    #     must read ours inside its window and theirs outside it. A fixture would prove the parser
+    #     works on my sentence; this proves it works on the controller's.
+    #
+    #     THE POPULATION IS "CLAIMS A LEND", NOT "HAS A PARSEABLE WINDOW", and my first version got
+    #     this wrong in the way I have the most notes about. It read
+    #         _lends = {c: n for c, n in cmap.items() if c in _base and _parse_lend_window(n)}
+    #     and every unparseable-window mutant PASSED -- 25:99Z, a backwards window, and the
+    #     timestamps deleted outright -- because each one makes _parse_lend_window return None,
+    #     which REMOVES the card from the set the property then quantifies over. The defect empties
+    #     its own population, so the loop runs zero times and reports success. Three of the four
+    #     worlds this property exists for were green against it.
+    _claimed = {c: n for c, n in cmap.items() if c in _base and _mentions_lend(n)}
+    for _c, _n in sorted(_claimed.items()):
+        _w = _parse_lend_window(_n)
+        if _w is None:
+            return (f"cards[{_c}] claims a lend but carries no readable window "
+                    f"({str(_n)[:110]!r}). A lend on a baseline-theirs card is a WINDOW: without "
+                    f"one there is nothing to expire, so the note would read as a standing grant "
+                    f"on another team's card. Write it as 'Lent ... YYYY-MM-DD HH:MM-HH:MMZ ...' "
+                    f"or drop the lend wording; an unreadable window refuses --cards {_c} today "
+                    f"and that refusal is a symptom, not the fix")
+        _inside = _w[0] + (_w[1] - _w[0]) / 2
+        _after = _w[1] + datetime.timedelta(days=1)
+        _before = _w[0] - datetime.timedelta(days=1)
+        _in_ours = _classify_card_note(_n, baseline_theirs=True, now=_inside)
+        _post = _classify_card_note(_n, baseline_theirs=True, now=_after)
+        _pre = _classify_card_note(_n, baseline_theirs=True, now=_before)
+        if (_in_ours, _post, _pre) != ("ours", "theirs", "theirs"):
+            return (f"cards[{_c}]'s lend window {_w[0]:%Y-%m-%d %H:%M}-{_w[1]:%H:%M}Z classifies "
+                    f"inside={_in_ours}, after={_post}, before={_pre} -- it must be ours ONLY "
+                    f"inside the window. A lend that stays ours after its window makes a "
+                    f"13-minute loan permanent; one that is ours BEFORE it opens hands the card "
+                    f"over while its owner is still running on it")
+        # The word without a window must NOT be a grant. Stripping the window from the controller's
+        # own sentence is the drift this guards: the result claims a lend and cannot prove one, so
+        # it refuses instead of picking an owner.
+        #
+        # STRIPPED BY THE PARSER'S OWN MATCH, not by a second regex written here. My first version
+        # substituted a hand-written `\d{4}-\d{2}-\d{2} \d{2}:\d{2}-\d{2}:\d{2}\s*Z` -- which does
+        # not match 4c's real `2026-09-08 21:30Z-21:45Z` form, so the "timestamps removed" world
+        # still parsed a window and this assertion failed against a CORRECT classifier. A test that
+        # reimplements what it is testing tests the copy: the strip has to use _LEND_RE, the thing
+        # the classifier actually consults, or the two drift apart and the test accuses the code.
+        _m = _LEND_RE.search(str(_n))
+        _stripped = str(_n)[:_m.start()] + str(_n)[_m.end():] if _m else str(_n)
+        if _parse_lend_window(_stripped) is not None:
+            return (f"cards[{_c}]: removing the window _LEND_RE matched still leaves a parseable "
+                    f"window -- the note carries two, so this property is testing the second one "
+                    f"and a drift in the first would go unseen")
+        if _classify_card_note(_stripped, baseline_theirs=True, now=_inside) != "unclassified":
+            return (f"cards[{_c}] still classifies as "
+                    f"{_classify_card_note(_stripped, baseline_theirs=True, now=_inside)!r} with "
+                    f"its lend WINDOW REMOVED -- a handover word is being read as the grant and "
+                    f"the window as decoration, which makes every past loan permanent")
+    return None
 
 
 def check_allocation_reads_the_grant(root):
@@ -14169,8 +15105,28 @@ def check_allocation_reads_the_grant(root):
                 return FAIL, (f"the grant's lane card(s) {_csv(sorted(both))} are inside its "
                               f"own block {_csv(block)} -- a non-training job would land on a "
                               f"card the training block holds, which OOMs both")
+        # THE OWNERSHIP ASSERTIONS RUN ON BOTH BRANCHES, and that placement is the whole reason
+        # they are here rather than below with items 6-8 (b0, 2026-09-07).
+        #
+        # Items 6, 7 and 8 sit AFTER the `return PASS` on the next line, inside a function whose
+        # first branch is `if granted:`. So they execute only when the file names NO block grant.
+        # The live file has named one all week. I wrote the --cards ownership assertions down
+        # there first and mutation-tested them: SEVEN mutants survived, including restoring the
+        # original `\bRL[ _-]?TEAM\b` defect verbatim -- not because the assertions were weak but
+        # because nothing reached them. The check returned PASS at line 14309 every time.
+        #
+        # That is the same shape as the defect being fixed, one level up: item 8's fixture was
+        # vacuous because its wording matched only itself, and item 8 ITSELF was unreachable
+        # because a grant exists. A guard can be dead for a reason that has nothing to do with
+        # what it asserts, so the delivery standard is that a planted regression turns it RED --
+        # never that it passes today.
+        _own_fail = _assert_card_ownership(root)
+        if _own_fail:
+            return FAIL, _own_fail
         return PASS, (f"grant {_csv(granted)} decides the block, one source; "
-                      f"lane {lane_s or 'none (grant says null)'}")
+                      f"lane {lane_s or 'none (grant says null)'}; "
+                      f"cards[] ownership: ours {_csv(_aupai_cards(root)[0])}, "
+                      f"theirs {_csv(_aupai_cards(root)[1])}")
     # 6. An explicit launch_block_granted:false must RAISE FOR A LAUNCH and NOT for a read.
     #    "I say no" and "I have not spoken" are different answers, and on the pod they were
     #    worlds apart: the pod held a false grant from 2026-09-01 and the launcher happily fell
@@ -14233,6 +15189,19 @@ def check_allocation_reads_the_grant(root):
     #    The fixture is written here because the property is about values this tree does not hold
     #    (a card the map omits), and it is exercised through _validate_explicit_cards so no ledger
     #    row or log is produced.
+    #
+    #    THE FIXTURE'S OWN WORDING IS WHAT HID THE DEFECT THIS CHECK EXISTS TO CATCH (b0,
+    #    2026-09-07). The typed note below reads "RL TEAM (tileRL) -- not ours", which is the one
+    #    phrasing the old `\bRL[ _-]?TEAM\b` matched, while the LIVE file said
+    #    "tileRL (user order 2026-09-06, '0,6 tileRL')" and matched nothing -- so `--cards 0` and
+    #    `--cards 6` were accepted for as long as the pattern and the fixture agreed with each
+    #    other and with nothing else. A fixture that supplies the wording the predicate wants
+    #    tests the predicate against itself.
+    #
+    #    SO PART (b) BELOW READS THE LIVE runs/card_assignment.json. The typed fixture stays for
+    #    the cases the live file cannot exhibit (a card absent from the map, an empty spec), and
+    #    the live read covers the case it hid. Both are needed: the fixture alone was vacuous, and
+    #    a live-only check cannot construct an unlisted card.
     import shutil as _sh2
     import tempfile as _tf2
 
@@ -14242,15 +15211,23 @@ def check_allocation_reads_the_grant(root):
         with open(os.path.join(_fx, "runs", "card_assignment.json"), "w") as fh:
             json.dump({"launch_block_granted": True, "block_cards": "1,2",
                        "lane_card": "5",
+                       # BOTH SPELLINGS, because the live file uses one and the old fixture used
+                       # the other, and the predicate must read either. Card 3's note is the live
+                       # file's shape ("tileRL (...)"), card 0's is the fixture's historical one.
                        "cards": {"0": "RL TEAM (tileRL) -- not ours",
+                                 "3": "tileRL (user order 2026-09-06, '0,6 tileRL')",
+                                 "4": "a note in nobody's vocabulary",
                                  "1-2": "GRANTED -> a training block",
                                  "5": "GRANTED -> a probe"}}, fh)
         for _spec, _must_refuse, _label in (
             ("5", False, "a card cards[] grants us and no block holds"),
             ("0", True, "a card marked RL TEAM"),
+            ("3", True, "a card whose note leads with tileRL, the LIVE file's wording"),
+            ("4", True, "a card whose note names no owner the parser can read"),
             ("7", True, "a card no cards[] entry mentions"),
             ("1", True, "a card inside block_cards"),
             ("5,0", True, "a set with one RL-team card among ours"),
+            ("5,3", True, "a set with one tileRL-worded card among ours"),
             ("", True, "an empty spec"),
         ):
             _got, _ref = _validate_explicit_cards(_spec, root=_fx)
@@ -14260,6 +15237,11 @@ def check_allocation_reads_the_grant(root):
             if not _must_refuse and _ref:
                 return FAIL, (f"--cards {_spec!r} ({_label}) was refused: {_ref[:120]} -- a flag "
                               f"that refuses a granted card leaves no way to place a job")
+        # (b) THE LIVE FILE, not a typed copy of it -- via the same function the granted branch
+        #     calls, so the two branches cannot drift into asserting different things.
+        _own = _assert_card_ownership(root)
+        if _own:
+            return FAIL, _own
     finally:
         _sh2.rmtree(_fx, ignore_errors=True)
 
@@ -15295,6 +16277,63 @@ def _broken_fixture_not_live_state():
     return d
 
 
+def check_shared_config_not_fixture_identity(root):
+    """The shared repo's git identity is not a test-fixture signature.
+
+    A selftest that runs `git config user.name t` under a leaked GIT_DIR writes the SHARED
+    .git/config instead of its temp world -- GIT_DIR overrides both -C and cwd. It flipped
+    this repo's author identity to t <t@t> on 2026-09-07 (de's manual pod_push.sh --selftest
+    run, friction near_miss row), and 558 commits landed as t before anyone read
+    `git log --format=%an`. The hook strips GIT_* before the selftests it invokes, and the
+    hook's config-digest guard brackets only that loop -- a manual `--selftest` run is
+    outside it, which is the path that fired. This check is the backstop: whatever vector
+    flips the config, the next `harness check` (every commit's hook, plus CI) goes red.
+
+    THE FIXTURE SIGNATURES, NOT THE COMMANDED IDENTITY. The repo's identity is one human's
+    and may legitimately change; the fixture literals are the values that are never
+    legitimate. Census of the tree's fixture identities, 2026-09-09 (grep user.name/email
+    literals across *.py and *.sh): name=t (42), email=t@t (38), email=t@example.invalid
+    (15), name=T (14, merge_main.sh's fixtures), email=t@t.t (2), email=a@b (1). A new
+    fixture identity must be added here or it leaks past this check. An unset identity
+    (the pod) passes.
+    """
+    _FIXTURE_NAMES = {"t", "T"}
+    _FIXTURE_EMAILS = {"t@t", "t@example.invalid", "t@t.t", "a@b"}
+    name = subprocess.run(["git", "-C", root, "config", "user.name"],
+                          capture_output=True, text=True).stdout.strip()
+    email = subprocess.run(["git", "-C", root, "config", "user.email"],
+                           capture_output=True, text=True).stdout.strip()
+    if name in _FIXTURE_NAMES or email in _FIXTURE_EMAILS:
+        return FAIL, (f"the shared git identity is a fixture signature ({name} <{email}>). "
+                      f"A selftest wrote .git/config under a leaked GIT_DIR -- the manual "
+                      f"--selftest path is outside the hook's digest guard. Find the selftest "
+                      f"that ran last and restore the identity the repo used before it")
+    return PASS, (f"shared git identity is {name or '<unset>'} <{email or '<unset>'}>, "
+                  f"not a fixture signature")
+
+
+def _broken_shared_config_not_fixture_identity():
+    """A repo whose config was flipped to the merge_main fixture identity must FAIL.
+
+    The world holds the real scripts/merge_main.sh because the selftest's meta-check
+    requires a repo-real path; the check reads only git config, so the FAIL comes from
+    the two config lines below, not the file. The T/t@t pair is merge_main.sh's own
+    fixture identity, exercising the name=T branch.
+    """
+    import shutil
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    sh("init", "-q", "-b", "main")
+    sh("config", "user.name", "T")
+    sh("config", "user.email", "t@t")
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "merge_main.sh"),
+                os.path.join(d, "scripts", "merge_main.sh"))
+    sh("add", "-A")
+    sh("commit", "-qm", "base")
+    return d
+
+
 CHECKS = [
     (
         "fixture_not_live_state",
@@ -15306,6 +16345,17 @@ CHECKS = [
         "believe the test is isolated",
         check_fixture_not_live_state,
         _broken_fixture_not_live_state,
+    ),
+    (
+        "shared_config_not_fixture_identity",
+        "the shared repo's git identity is not the t <t@t> fixture signature",
+        "2026-09-07: a manual pod_push.sh --selftest with GIT_DIR exported wrote the fixture "
+        "identity into the shared .git/config (GIT_DIR overrides -C and cwd), and 558 commits "
+        "landed as t <t@t> before anyone read git log --format=%an. The hook's config-digest "
+        "guard brackets only the selftests the hook itself runs; a manual --selftest is "
+        "outside it. This check is the backstop that fires on the next commit after any flip",
+        check_shared_config_not_fixture_identity,
+        _broken_shared_config_not_fixture_identity,
     ),
     (
         "no_hardcoded_cache_path",
@@ -15756,6 +16806,13 @@ CHECKS = [
         _broken_doc_commands,
     ),
     (
+        "doc_flags_parse",
+        "every flag in a documented invocation is one its script accepts",
+        "code_dedup_handread's own docstring named --rep/--n_rep, flags the parser never had; the run that needed it lost the time to argparse's error, and doc_commands_exist cannot see a stale flag because it checks that the cited FILE exists",
+        check_doc_flags_parse,
+        _broken_doc_flags_parse,
+    ),
+    (
         "readme_current",
         "README reflects the current objective, not a retired one",
         "README opened with the retired Chinese-LLM framing after the objective changed; a stale README misdirects every new reader",
@@ -15768,6 +16825,13 @@ CHECKS = [
         "a base checkpoint reads zero on every generative eval, and an unscored ok run is invisible -- the matrix is the only score that moves on a base",
         check_score_matrix,
         _broken_score_matrix,
+    ),
+    (
+        "score_matrix_rewrites_traced",
+        "a score-matrix row whose numbers moved since HEAD carries a new `superseded` entry",
+        "the ledger folds on (ckpt, profile) and its writer REPLACES, so a value change is legal here and was therefore invisible -- a wrong domain_bpb factor table sat on main for hours with the row present, well-formed and satisfying every check that could see the file; `measured` is the scoring date and 43 of 44 rewrites left it untouched",
+        check_score_matrix_rewrites_traced,
+        _broken_score_matrix_untraced_rewrite,
     ),
     (
         "ladder_config_frozen",
@@ -16054,6 +17118,13 @@ CHECKS = [
         _broken_frozen_paths,
     ),
     (
+        "main_in_no_worktree",
+        "refs/heads/main is checked out in no worktree; that is what makes merge_main's CAS legal",
+        "AGENTS.md asserted it as a property and nothing checked it: aupai-b0 held main at 47148ae3 and main was fast-forwarded there by hand (4c, 2026-09-08)",
+        check_main_in_no_worktree,
+        _broken_main_in_no_worktree,
+    ),
+    (
         "no_shared_stash",
         "the stash stack is empty; it is shared by every worktree in this repo",
         "e1 and b0 each stashed, merged main and popped in the same window -- and each popped the other's entry",
@@ -16143,6 +17214,10 @@ EVIDENCE = {
     "mutation_asserted_took": "repo",
     # repo: it reads tracked test files with ast and answers the same anywhere.
     "fixture_not_live_state": "repo",
+    # repo: it reads the shared .git/config's user.name/email, which every worktree of this
+    # repository shares and CI's checkout carries. Green here IS green on main. On the pod the
+    # identity is unset, which the check passes by design.
+    "shared_config_not_fixture_identity": "repo",
     # repo: the subject is git ls-files joined against pod_drift.SCOPE, both of which are the
     # checkout's. On the pod git ls-files is empty, so the check degrades to its own SKIP before
     # the auth rule is ever consulted.
@@ -16165,10 +17240,14 @@ EVIDENCE = {
     "one_deliverable_per_owner": "repo",
     "review_present": "repo", "ledgers_one_line_per_row": "repo", "facts_well_formed": "repo",
     "unreached_files_ruled": "repo", "entrypoints_ran": "repo", "entrypoints_table_present": "repo", "docs_root_clean": "repo",
-    "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo",
+    "lessons_have_frontmatter": "repo", "fact_refs_resolve": "repo", "doc_commands_exist": "repo", "doc_flags_parse": "repo",
     "prereg_citations_current": "repo",
     "prereg_amendments_dated": "repo",
     "readme_current": "repo", "score_matrix_present": "repo", "reported_path_is_written": "repo",
+    # repo, and the check says so itself: its only source of truth is
+    # `git show HEAD:runs/score_matrix.jsonl`, and it SKIPs on the pod naming that tree's
+    # missing .git. A "pod" declaration would ask it to answer where it cannot run.
+    "score_matrix_rewrites_traced": "repo",
     "cited_artifacts_attested": "repo", "selftests_are_gated": "repo", "probe_numbers_unique": "repo",
     "launcher_states_anneal_frac": "repo",
     # NOT "repo": the evidence is THIS CHECKOUT's .git/hooks symlink and the integration
@@ -16196,7 +17275,7 @@ EVIDENCE = {
     # the shapes a runner and a fixture land in.
     "test_integration_tree_guard": "repo",
     "device_set_honoured": "repo", "untracked_aged": "repo", "dirty_aged": "repo",
-"no_shared_stash": "repo", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
+"no_shared_stash": "repo", "main_in_no_worktree": "local", "friction_minutes_required": "repo", "frozen_paths": "repo", "no_conflict_markers": "repo",
 "train_cite_targets": "repo",
     "shared_file_claim": "repo",
     "getattr_cfg_names_exist": "repo",
@@ -19807,6 +20886,592 @@ def _selftest_exp_fold():
           "survive; exp.py and harness agree")
 
 
+def _selftest_main_in_no_worktree_discriminates():
+    """The broken world must WARN because of the HOLDER, and go green when it detaches.
+
+    `--selftest` asserts each world reaches its check's failing tier, never that it reached it
+    for the mutation -- §268's ceiling. Here the world has two worktrees and the check counts
+    them, so a version that WARNed on "more than one worktree" would pass that assertion while
+    measuring something else entirely. Detaching the holder changes exactly one bit of the world
+    and must flip the verdict; if it does not, the check is reading worktree count rather than
+    main's checkout.
+    """
+    import subprocess as sp
+
+    env = dict(os.environ, GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+    d = _broken_main_in_no_worktree()
+    held = os.path.join(d, "held")
+    state, ev = check_main_in_no_worktree(d)
+    assert state == WARN, f"holder attached: expected WARN, got {state}: {ev[:120]}"
+    assert "held" in ev, f"the evidence must name the holding worktree, got {ev[:120]}"
+    sp.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "checkout", "--detach"],
+           cwd=held, capture_output=True, env=env)
+    state2, ev2 = check_main_in_no_worktree(d)
+    assert state2 == PASS, (
+        f"after detaching the holder: expected PASS, got {state2}: {ev2[:120]}. The world still "
+        f"has three worktrees and one of them still holds `sidebranch`, so a check reading "
+        f"worktree COUNT, or matching `branch refs/heads/` at all, fails here -- which is the "
+        f"whole point of these two controls"
+    )
+    assert "side" not in ev, (
+        f"the WARN named the sidebranch worktree: {ev[:150]}. The subject is main's checkout, "
+        f"not any branch's -- every session's own worktree holds a branch"
+    )
+    return ("main_in_no_worktree discriminates: WARN naming ONLY the main-holding worktree while a "
+            "third tree holds sidebranch, PASS on the same three-worktree world once main detaches")
+
+
+def _selftest_card_lend_expires():
+    """A lend on another team's card is ours ONLY inside its window, and the pin catches its removal.
+
+    WHY AN EXPLICIT SELFTEST AND NOT A `broken()` WORLD (b0-32). This check's registered world
+    grants block 0-3 and names card 2 as the lane, so it FAILs at case 1 -- long before
+    _assert_card_ownership runs. `--selftest` only demands the world reach the failing tier, so
+    every property below would stay unexercised behind a green selftest, which is the trap the
+    registered world's own docstring records one guard over.
+
+    THE WORLDS 4c SPECIFIED, and the two that would silently disable the mechanism:
+
+      baseline [0, 6]                      -> PASS   (the live shape)
+      baseline [0]                         -> FAIL   a lend can shrink the baseline instead of
+                                                     expiring; every other property still passes,
+                                                     so only the pin sees it
+      baseline [0, 6, 7]                   -> FAIL   card 7's standing GRANTED note is not a lend
+      lend with no readable window         -> FAIL   nothing to expire = a permanent grant
+      unreadable note on a block card      -> PASS   4c's ruling: per-card refusal, never repo-wide
+      block card handed to another team    -> FAIL   the permissive drift (4) exists for
+
+    THE CARD-7 WORLD IS UNREACHABLE TODAY, AND THAT IS A PROPERTY OF PROPERTY (6), NOT OF THE
+    CODE (tilerl-0a's follow-up to PR #58). "card 7 becomes unclassified" cannot happen while
+    (6) pins the baseline to exactly [0, 6]: the pin is what keeps card 7 out of the baseline,
+    so the branch that would misread its standing GRANTED note as a lend is never entered.
+    Recorded because the cost is deferred, not absent -- the day (6) is relaxed to accept a
+    baseline read from the file, this world stops being hypothetical and card 7 starts failing
+    for real. It is kept as a FAIL case so that relaxation has to confront it.
+
+    THE CLOCK IS DERIVED FROM THE NOTE, NOT PINNED (PR #61, and the docstring above said
+    "pinned in every world" until it broke main's CI for four merges -- §274). A verdict
+    depending on the wall clock cannot be tested, but pinning the clock while READING the live
+    note is worse than pinning neither: the pair agreed for three hours, then the controller
+    wrote a second lend at different times and the constant fell outside it, failing in a way
+    that read as a defect in the classifier. So the three clocks are computed from whatever
+    window the note carries -- midpoint inside BY CONSTRUCTION, a day either side outside BY
+    CONSTRUCTION -- which holds for every note that can be written, including the next one.
+    Every other input this function compares against live text is derived the same way, for
+    the same reason: a literal that agreed with the file once is a defect with a delay on it.
+    """
+    import copy
+    import shutil as _sh
+    import tempfile as _tf
+
+    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(live_p):
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+    with open(live_p, encoding="utf-8") as fh:
+        live = json.load(fh)
+    if not _parse_lend_window(str((live.get("cards") or {}).get("6", ""))):
+        raise SelftestSkip("the live file carries no parseable lend to vary the clock on")
+
+    utc = datetime.timezone.utc
+    # THE CLOCK IS DERIVED FROM THE NOTE'S OWN WINDOW, NOT WRITTEN AS A CONSTANT. Pinning `now`
+    # made the verdict independent of the wall clock, which was the point -- and I then read the
+    # NOTE from a file that changes, so the pinned clock and the live note drifted apart. The
+    # constants below were 21:33/21:00 on 2026-09-08, inside and before card 6's FIRST lend
+    # (21:32-21:34Z). The controller then wrote a SECOND lend for 00:30-00:45Z, and 21:33 is
+    # outside it: the selftest failed with "expected ours, got theirs" and took main's CI red for
+    # four merges (c175826f, 3121cc24, 4fe54763, 021d59e8), blocking every ledger merge.
+    #
+    # HALF-PINNED IS NOT PINNED. A test whose verdict depends on two inputs is deterministic only
+    # if BOTH are fixed; fixing one and letting the other move is worse than fixing neither,
+    # because it passes for weeks and then fails for a reason that looks like the code.
+    #
+    # So the three clocks are computed from whichever window the note carries: the midpoint is
+    # inside by construction, and a day either side is outside by construction. That holds for
+    # every note the controller can write, including the next one.
+    def _clocks(note):
+        w = _parse_lend_window(note)
+        if w is None:
+            return None
+        return (w[0] + (w[1] - w[0]) / 2,          # inside, by construction
+                w[1] + datetime.timedelta(days=1),  # after, by construction
+                w[0] - datetime.timedelta(days=1))  # before, by construction
+
+    _c6 = _clocks(str((live.get("cards") or {}).get("6", "")))
+    if _c6 is None:
+        raise SelftestSkip("card 6's live note carries no parseable window to derive clocks from")
+    inside, after, before = _c6
+
+    def world(mut):
+        d = copy.deepcopy(live)
+        mut(d)
+        t = _tf.mkdtemp(prefix="lend_")
+        os.makedirs(os.path.join(t, "runs"), exist_ok=True)
+        os.makedirs(os.path.join(t, "data"), exist_ok=True)
+        with open(os.path.join(t, "runs", "card_assignment.json"), "w") as f:
+            json.dump(d, f)
+        src = os.path.join(ROOT, "data", "mix_scale_run_config.json")
+        if os.path.isfile(src):
+            _sh.copy(src, os.path.join(t, "data", "mix_scale_run_config.json"))
+        return t
+
+    def verdict(mut):
+        t = world(mut)
+        try:
+            return _assert_card_ownership(t)
+        finally:
+            _sh.rmtree(t, ignore_errors=True)
+
+    assert verdict(lambda d: None) is None, (
+        f"the unmutated live file must PASS or every FAIL below proves nothing: "
+        f"{str(verdict(lambda d: None))[:200]}")
+
+    # THE EXPIRY ITSELF, on the controller's own sentence rather than one I wrote.
+    note6 = str(live["cards"]["6"])
+    for label, now, want in (("inside its window", inside, "ours"),
+                             ("after it closed", after, "theirs"),
+                             ("before it opened", before, "theirs")):
+        got = _classify_card_note(note6, baseline_theirs=True, now=now)
+        assert got == want, (
+            f"card 6 {label}: expected {want}, got {got}. A lend that stays ours after its window "
+            f"makes a 13-minute loan permanent; one that is ours before it opens hands the card "
+            f"over while its owner is still running on it")
+    # THE FLAG IS WHAT MAKES THE WINDOW MATTER, asserted so the note's OPENING TOKEN cannot decide
+    # it. The first version asserted `baseline_theirs=False` gives "theirs" at every clock, which
+    # held only while the live note opened with tileRL: once the controller wrote a GRANTED-leading
+    # note, `_OURS_RE` matched and the assertion failed on correct code. Same defect as the pinned
+    # clock above -- a property stated over text the controller rewrites.
+    #
+    # The property that holds for EVERY note form: with the flag off, the verdict does not change
+    # across the window, because no expiry applies to a card that is not baseline-theirs. With the
+    # flag on it does change. That is the flag doing the work, and it needs no assumption about
+    # which vocabulary the note happens to use.
+    _off = {_classify_card_note(note6, baseline_theirs=False, now=t)
+            for t in (before, inside, after)}
+    assert len(_off) == 1, (
+        f"with baseline_theirs=False card 6's verdict CHANGES across the window ({_off}) -- the "
+        f"expiry must be gated on the baseline, or a lend note on any card would expire it")
+    _on = {_classify_card_note(note6, baseline_theirs=True, now=t)
+           for t in (before, inside, after)}
+    assert len(_on) > 1, (
+        f"with baseline_theirs=True the verdict is constant across the window ({_on}) -- the "
+        f"window is being ignored, so nothing expires")
+
+    # THE NOTE FORM THE CONTROLLER ACTUALLY WROTE, which my first version did not expire at all
+    # (tilerl-0a's review of PR #58). This world is permanent because it is the ONLY lend that has
+    # ever happened and its wording is 4c's, not mine: 4c opened it with GRANTED, gave the date once
+    # and put Z on BOTH times. My expiry branch sat inside `if _NOT_OURS_RE.search(s)`, which that
+    # note misses, so it fell through to _OURS_RE, matched `granted\b` and returned ours -- during
+    # the window and three days after. `harness launch --cards 6` was ACCEPTED on an expired lend.
+    #
+    # THE PROPERTY IS ASSERTED ON THE CLASSIFIER, NOT ON THE CHECK, and that distinction is the
+    # whole lesson: my check DID go red on this note while the classifier said ours, and only the
+    # classifier gates a launch. A red check nobody runs before launching refuses nothing. So the
+    # three asserts below read _classify_card_note directly, and the fourth walks the launch path.
+    note_4c = ("GRANTED 2026-09-08 21:30Z-21:45Z -> b0: domain_loss on .step25000/25500/26000. "
+               "Card 6 is tileRL's (user order 2026-09-06 '0,6 tileRL'); released after.")
+    assert _parse_lend_window(note_4c) is not None, (
+        "4c's own note form parses to NO window. It gives the date once and puts Z on both times "
+        "('21:30Z-21:45Z'); a pattern requiring Z only after the second time fits the example I "
+        "invented rather than the one in the file, and then nothing expires")
+    for label, now, want in (("inside", datetime.datetime(2026, 9, 8, 21, 35, tzinfo=utc), "ours"),
+                             ("3 days later", datetime.datetime(2026, 9, 11, 12, 0, tzinfo=utc),
+                              "theirs"),
+                             ("before it opens",
+                              datetime.datetime(2026, 9, 8, 20, 0, tzinfo=utc), "theirs")):
+        got = _classify_card_note(note_4c, baseline_theirs=True, now=now)
+        assert got == want, (
+            f"4c's GRANTED-leading note {label}: expected {want}, got {got}. The baseline must "
+            f"decide before the note's opening token is read -- what the prose begins with cannot "
+            f"be allowed to override a user order, or the expiry covers only the note forms whose "
+            f"first word happens to name the owner")
+    _t4c = world(lambda d: d["cards"].__setitem__("6", note_4c))
+    try:
+        _o4c, _, _ = _aupai_cards(_t4c)
+        assert 6 not in _o4c, (
+            f"card 6 is in ours={_o4c} with 4c's note and the lend long expired -- the classifier "
+            f"is what gates a launch")
+        _g4c, _r4c = _validate_explicit_cards("6", root=_t4c)
+        assert _r4c, (
+            f"--cards 6 was ACCEPTED ({_g4c!r}) on 4c's note with the lend expired. This is the "
+            f"defect tilerl-0a measured: rc=0 through the launch path while the check went red")
+    finally:
+        _sh.rmtree(_t4c, ignore_errors=True)
+    # THE HYPOTHETICAL IS NOT A CLAIM. Card 0's live note says "short aupai lane jobs only by
+    # explicit grant while tileRL is not using it" -- a grant would be REQUIRED, not made. My first
+    # widening of the handover vocabulary matched a bare `grant` and turned that into "claims a lend
+    # with no readable window", refusing a card whose note is doing its job. Asserted on the live
+    # text so the next widening cannot re-break it.
+    note0 = str(live["cards"].get("0", ""))
+    if "explicit grant" in note0:
+        assert not _mentions_lend(note0), (
+            f"card 0's note reads as a claimed handover: {note0[:90]!r}. It states that a grant "
+            f"would be required, which is a condition and not an act -- reading it as a claim "
+            f"refuses a card nobody lent")
+        assert _classify_card_note(note0, baseline_theirs=True) == "theirs", (
+            "card 0 must be theirs: it is baseline-theirs and no window was ever written for it")
+
+    # THE PIN. Both directions, because a baseline is as wrong widened as shrunk.
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [0])) is not None, (
+        "dropping card 6 from theirs_baseline PASSED. That world classifies card 6 by the ordinary "
+        "rule, which returns theirs on a tileRL-subject note, so the partition still looks right "
+        "while the card has silently stopped being expiry-checked -- the mechanism cannot detect "
+        "its own removal and property (6) is the only thing that can")
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7])) is not None, (
+        "widening theirs_baseline to include card 7 PASSED -- card 7 carries a standing aupai "
+        "grant, and a baseline naming it would expire a grant that has no window")
+    # AND THE WRONG BASELINE MUST BE FAIL-CLOSED, not merely caught. Since the baseline now decides
+    # before the note's opening token (tilerl-0a's fix), card 7's windowless GRANTED note reads
+    # `unclassified` under that bad baseline rather than staying `ours`. That is the safe direction
+    # and is asserted rather than assumed: the card must NOT land in theirs, and --cards 7 must
+    # refuse. Before the fix a wrong baseline could not move card 7 at all, which sounds safer and
+    # was not -- it meant property (6)'s pin was the only thing standing between a bad baseline and
+    # a launch.
+    _t7 = world(lambda d: d.__setitem__("theirs_baseline", [0, 6, 7]))
+    try:
+        _o7, _th7, _ = _aupai_cards(_t7)
+        assert 7 not in _th7, (
+            f"a wrong baseline handed card 7 to the other team (theirs={_th7}) -- card 7 is aupai's "
+            f"by a standing grant and no baseline edit may transfer it")
+        _g7, _r7 = _validate_explicit_cards("7", root=_t7)
+        assert _r7, (
+            f"--cards 7 was ACCEPTED ({_g7!r}) under a baseline that wrongly claims it. An "
+            f"unreadable ownership state must refuse the card, not grant it")
+    finally:
+        _sh.rmtree(_t7, ignore_errors=True)
+    assert verdict(lambda d: d.pop("theirs_baseline")) is not None, (
+        "removing theirs_baseline entirely PASSED -- an absent baseline reads as no cards being "
+        "another team's, which is the permissive direction")
+    assert verdict(lambda d: d.__setitem__("theirs_baseline", [6, 0])) is None, (
+        "theirs_baseline [6, 0] FAILED -- the pin compares a SET of cards, not a written order")
+
+    # THE PIN'S CITATION MUST STILL HOLD. Three worlds, because the interesting one is the middle.
+    # AGENTS.md asserted "All 8 cards belong to this repo" for a week after the 2026-09-06 order
+    # superseded it, so a pin citing a document that has drifted under it is this repo's measured
+    # state, not a hypothetical. The third world matters for a different reason: a fixture tree
+    # legitimately has no AGENTS.md, and a citation check that FAILs on its absence would refuse
+    # every such tree.
+    _ag_src = os.path.join(ROOT, "AGENTS.md")
+    if os.path.isfile(_ag_src):
+        with open(_ag_src, encoding="utf-8") as _fh:
+            _ag_txt = _fh.read()
+        assert "cards 0 and 6 are tileRL's" in _ag_txt, (
+            "AGENTS.md does not carry the 09-06 split, so the pin cites nothing in main. Either "
+            "the user changed the split or the line was lost; both need a person")
+
+        _t_ag = world(lambda d: None)
+        try:
+            with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
+                _fh.write(_ag_txt)
+            assert _assert_card_ownership(_t_ag) is None, (
+                "the world with AGENTS.md's real text FAILED -- the citation assertion must pass "
+                "on the file it cites, or the FAIL below proves nothing")
+            with open(os.path.join(_t_ag, "AGENTS.md"), "w") as _fh:
+                _fh.write(_ag_txt.replace("cards 0 and 6 are tileRL's",
+                                          "All 8 cards belong to this repo"))
+            assert _assert_card_ownership(_t_ag) is not None, (
+                "replacing AGENTS.md's split line with the SUPERSEDED 08-30 wording PASSED. That "
+                "is the exact drift that stood for a week: the pin keeps citing an order the "
+                "document no longer states, and the citation reads as authority while the "
+                "authority has moved")
+            os.remove(os.path.join(_t_ag, "AGENTS.md"))
+            assert _assert_card_ownership(_t_ag) is None, (
+                "a tree with NO AGENTS.md FAILED -- a fixture tree has none, and a citation check "
+                "that refuses on absence refuses every fixture")
+        finally:
+            _sh.rmtree(_t_ag, ignore_errors=True)
+
+    # A LEND MUST BE A WINDOW. The population is "claims a lend", not "has a parseable window":
+    # my first version quantified over the latter, and all three unparseable worlds passed because
+    # the defect removes the card from the set the property loops over.
+    def no_window(d):
+        d["cards"]["6"] = ("tileRL (user order 2026-09-06, '0,6 tileRL'). Lent once to b0 for "
+                           "domain_loss, released and confirmed 0 MiB.")
+
+    assert verdict(no_window) is not None, (
+        "a lend claimed with NO readable window PASSED -- there is nothing to expire, so the note "
+        "reads as a standing grant on another team's card")
+    # A BAD WINDOW MUST REFUSE, and the mutation is applied to whatever window the note carries
+    # rather than to a literal I typed. The first version did note6.replace("21:32-21:34Z", bad),
+    # a substring of the FIRST lend; once the controller wrote a second lend that substring was
+    # absent, replace() returned the note UNCHANGED, and the world became "the live note with a
+    # valid window" -- which correctly PASSES, so the assertion failed against correct code. A
+    # mutation that does not mutate is the same defect as the truthy-`or` mutant from PR #58's
+    # own history, reached here through a stale literal instead of a truthy expression.
+    #
+    # ASSERTED NON-VACUOUS FIRST: the mutated text must differ from the original, or the world is
+    # not the world the assertion names.
+    _w6 = _parse_lend_window(note6)
+    _live_win = f"{_w6[0]:%H:%M}Z-{_w6[1]:%H:%M}Z"
+    if _live_win not in note6:                     # the controller may write it without the first Z
+        _live_win = f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z"
+    assert _live_win in note6, (
+        f"cannot locate card 6's own window text in its note to mutate it. Parsed "
+        f"{_w6[0]:%H:%M}-{_w6[1]:%H:%M}Z but neither spelling appears in {note6[:110]!r}; a "
+        f"mutation built on a literal that is absent does nothing and the world stays valid")
+    for bad in ("25:99Z-26:88Z", "21:34Z-21:32Z"):
+        _mutated = note6.replace(_live_win, bad)
+        assert _mutated != note6, f"the {bad} mutation left the note unchanged -- it is not a world"
+        assert verdict(lambda d, m=_mutated: d["cards"].__setitem__("6", m)) is not None, (
+            f"lend window {bad} PASSED -- an unparseable or backwards window must refuse, not fall "
+            f"back to either owner")
+
+    # 4c's RULING ON BLAST RADIUS, both halves. Unreadable is per-card; theirs is repo-wide.
+    def uncl3(d):
+        d["cards"]["3"] = "qqq prose no parser can classify"
+
+    assert verdict(uncl3) is None, (
+        "an unreadable note on block card 3 FAILED the repo-wide invariant. 4c's ruling "
+        "2026-09-08: a baseline-ours card must classify NOT-THEIRS, and ours or unclassified both "
+        "satisfy that -- an unreadable note is already fail-closed at launch, so blocking every "
+        "commit to report it is the wrong direction to fail in")
+    t_uncl = world(uncl3)
+    try:
+        _got, _ref = _validate_explicit_cards("3", root=t_uncl)
+        assert _ref, (f"--cards 3 was ACCEPTED with an unreadable note ({_got!r}) -- the per-card "
+                      f"refusal is what makes the repo-wide PASS above safe, so it is asserted "
+                      f"here rather than assumed")
+    finally:
+        _sh.rmtree(t_uncl, ignore_errors=True)
+    assert verdict(lambda d: d["cards"].__setitem__(
+        "2", "tileRL owns this now, 2026-09-08")) is not None, (
+        "a block card whose note hands it to another team PASSED -- this is the permissive drift "
+        "property (4) exists for, and the ruling above narrowed that property, so it is asserted "
+        "here to prove the narrowing did not disable it")
+    assert verdict(lambda d: d.__setitem__("block_cards", "1,2,3,4,5,6,7")) is not None, (
+        "block_cards taking baseline-theirs card 6 PASSED -- the same controller writes both "
+        "fields, so they cannot disagree about the owner")
+    return (f"card lends expire: card 6 ours only inside its OWN window "
+            f"({_w6[0]:%Y-%m-%d %H:%M}-{_w6[1]:%H:%M}Z, read from the live note and not typed here), "
+            f"theirs a day either side, and with baseline_theirs off the verdict does not change "
+            f"across that window at all; 4c's OWN GRANTED-leading note form "
+            "('2026-09-08 21:30Z-21:45Z', Z on both times) parses, reads ours inside and theirs 3 "
+            "days later, and --cards 6 REFUSES on it through the launch path; card 0's 'only by "
+            "explicit grant' is not read as a claimed handover; baseline [0] / [0,6,7] / absent all "
+            "FAIL and [6,0] passes; a lend with no window, 25:99Z or a backwards window all "
+            "refuse; an unreadable note on block card 3 refuses THAT card and passes the invariant "
+            "while a card handed to another team still FAILs; and the pin's citation is verified "
+            "against AGENTS.md's own text -- present PASSes, replaced with the superseded 08-30 "
+            "wording FAILs, absent PASSes")
+
+
+def _selftest_facts_ephemeral_only_source():
+    """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
+    does not.
+
+    3b's case via 4c, 2026-09-08. Its own selftest rather than three more mutations in
+    _broken_facts, and that is measured rather than stylistic: the shared world already
+    carries four mutations and reports 42 errors, of which the evidence string shows five, so
+    all four mutants of this predicate SURVIVED there -- FAIL either way, and no ephemeral row
+    named in the visible slice (/tmp/de_world_mutants.py). A world whose verdict cannot change
+    when the subject is removed measures nothing about the subject. The clean tree cannot serve
+    either: its 13 ephemeral-only rows are baselined, so dropping the openable-beside check
+    leaves its failing set identical.
+
+    Four worlds, one fact file each, built by MUTATING the real facts/data_scaling.json so the
+    entries carry real config/measured/status fields:
+      1 /tmp only                   -> FAIL, naming the row
+      2 /tmp beside a tracked script -> PASS. THE CONTROL THAT DECIDES THE PREDICATE: a flat
+        "any /tmp path fails" reds 18 honest rows, among them be.known_answer_panel_3_4, which
+        cites two tracked eval scripts plus the /tmp outputs they wrote.
+      3 /tmp beside path@rev         -> PASS. The retirement form has to satisfy this half as
+        it does the tracked-path half; the rev is verified to hold the file, since one that
+        resolves to nothing would make the case pass for the wrong reason.
+      4 /tmp only, but baselined     -> PASS. Shrink-only debt, the same contract the
+        tracked-path register has.
+    """
+    import shutil
+
+    real = json.load(open(os.path.join(FACTS_DIR, "data_scaling.json"), encoding="utf-8"))
+    if len(real["facts"]) < 1:
+        raise SelftestSkip("facts/data_scaling.json is empty")
+    rev = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "HEAD"],
+                         capture_output=True, text=True).stdout.strip()
+    # World 3 needs a path that is ONLY reachable at a rev: if the same path also resolves in
+    # the working tree, openable-beside passes the case and the rev half is never reached --
+    # measured, dropping the rev half left this selftest green when world 3 cited
+    # `scripts/exp.py@<rev>` (/tmp/de_world_mutants.py, M_rev SURVIVED). So: a probe deleted in
+    # a real commit, verified present at the parent and absent from the tree.
+    dead_path, dead_rev = "probes/t69_copy_rate.py", None
+    if not os.path.exists(os.path.join(ROOT, dead_path)):
+        cand = subprocess.run(["git", "-C", ROOT, "rev-list", "-1", "HEAD", "--", dead_path],
+                              capture_output=True, text=True).stdout.strip()
+        if cand and _rev_has_path(ROOT, f"{cand}^", dead_path):
+            dead_rev = subprocess.run(["git", "-C", ROOT, "rev-parse", f"{cand}^"],
+                                      capture_output=True, text=True).stdout.strip()
+    if not rev or not dead_rev:
+        raise SelftestSkip(f"no rev holds a deleted {dead_path} for world 3 "
+                           f"(rev={rev[:8]!r}, dead_rev={dead_rev})")
+
+    cases = [
+        ("1 /tmp only", "/tmp/de_only_ephemeral.py, full pass, no sampling", None, FAIL),
+        ("2 /tmp beside a tracked script",
+         "scripts/exp.py wrote the row; detail in /tmp/de_beside_tracked.py", None, PASS),
+        ("3 /tmp beside path@rev",
+         f"{dead_path}@{dead_rev} retired; run log in /tmp/de_beside_rev.log", None, PASS),
+        ("4 /tmp only, baselined", "/tmp/de_only_ephemeral.py, full pass",
+         "data_scaling.json#{id}", PASS),
+    ]
+    bad = 0
+    for label, source, baseline_key, want in cases:
+        d = _tmp_repo_shaped()
+        try:
+            os.makedirs(os.path.join(d, ".git"), exist_ok=True)
+            # THE WORLD MUST BE ABLE TO RESOLVE THE REAL REPO'S REVS. _tmp_repo_shaped runs a
+            # real `git init`, which gives an EMPTY object store, so `<rev>:<path>` answers
+            # nothing and world 3 fails twice over -- once on the tracked-path half calling the
+            # retired probe absent, once on this half seeing no openable evidence. Measured
+            # before this line existed. `objects/info/alternates` borrows the real store
+            # read-only, which is the narrowest thing that makes a rev resolvable; the world
+            # still has its own HEAD, index and refs, so nothing it does reaches the repo.
+            _alt = os.path.join(d, ".git", "objects", "info")
+            os.makedirs(_alt, exist_ok=True)
+            _real_git = subprocess.run(["git", "-C", ROOT, "rev-parse", "--path-format=absolute",
+                                        "--git-common-dir"],
+                                       capture_output=True, text=True).stdout.strip()
+            if _real_git:
+                with open(os.path.join(_alt, "alternates"), "w") as fh:
+                    fh.write(os.path.join(_real_git, "objects") + "\n")
+            if os.path.islink(os.path.join(d, "facts")):
+                os.remove(os.path.join(d, "facts"))
+            os.makedirs(os.path.join(d, "facts"), exist_ok=True)
+            obj = {"facts": [dict(real["facts"][0])]}
+            fid = obj["facts"][0]["id"]
+            obj["facts"][0]["source"] = source
+            obj["facts"][0].pop("guard_phrases", None)
+            json.dump(obj, open(os.path.join(d, "facts", "data_scaling.json"), "w"))
+            key = baseline_key.format(id=fid) if baseline_key else None
+            json.dump({key: "selftest world 4"} if key else {},
+                      open(os.path.join(d, "facts", "source_baseline.json"), "w"))
+            # AGENTS.md must mention the one fact file, or the orphan-file error fires and the
+            # world FAILs for a reason that is not the subject -- which is how the shared
+            # world hid this predicate in the first place.
+            with open(os.path.join(d, "AGENTS.md"), "w") as fh:
+                fh.write("facts/data_scaling.json is the scaling fact file.\n")
+            got, ev = check_facts_well_formed(d)
+            named = fid in ev and "no reader can open" in ev
+            ok = got == want and (named if want == FAIL else not named)
+            bad += 0 if ok else 1
+            print(f"  {'ok  ' if ok else 'BUG '} {label}: {got}"
+                  + ("" if ok else f" (wanted {want}) -- {ev[:220]}"))
+        finally:
+            shutil.rmtree(d, ignore_errors=True)
+    assert bad == 0, f"{bad} of {len(cases)} ephemeral-source worlds wrong"
+    print("  facts ephemeral source: /tmp alone FAILs; /tmp beside a tracked script, beside "
+          "path@rev, or baselined does not")
+
+
+def _selftest_exp_reclassify_monitor_close():
+    """A monitor-closed row can be re-closed by hand WITH a reason and not without it, and
+    the monitor's event survives.
+
+    de-70, 4c's ruling (a) 2026-09-08. (1.5b-a0.2b-e48_30b, 2026-09-07 05:15) was stopped
+    deliberately at .step22500 and its monitor wrote `fail / exit 137 (signal 9)`, because a
+    monitor reports PROCESS STATE and a kill looks like a crash. No verb could restate it:
+    `amend` excludes status by design, `retract` withdraws a result rather than replacing
+    one, `note` carries running forward. fold() already preferred a human's close over a
+    monitor's in either merge order -- measured before this was written -- so the only thing
+    missing was a writer that would append the human event.
+
+    THE SUBPROCESS IS THE POINT. This drives `exp.py done` as a command, not main()
+    in-process: the refusal lives in argument handling and an in-process call would let a
+    NameError or an argparse omission pass as long as the fold agreed (§258 -- seven worlds
+    that never exec'd the entry point). The four cases are: no reason refuses; a reason
+    appends; the monitor's event is still on disk afterwards; and a row a HUMAN closed still
+    refuses, which is the narrowness of ruling (a) rather than a side effect.
+    """
+    import shutil
+    import subprocess
+    import tempfile
+
+    d = tempfile.mkdtemp(prefix="expreclass_")
+    try:
+        os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+        p = os.path.join(d, "runs", "experiments.jsonl")
+        MON = {"name": "m", "started": "2026-09-07 05:15", "cmd": "./run_ddp.sh --name m",
+               "hypothesis": "does the 30b arm resume", "status": "fail", "writer": "monitor",
+               "result": "exit 137 (signal 9)", "ended": "2026-09-07 09:00"}
+        HUM = {"name": "h", "started": "2026-09-07 05:15", "cmd": "./run_ddp.sh --name h",
+               "hypothesis": "control", "status": "ok", "result": "val 2.884 at step 2000",
+               "ended": "2026-09-07 09:00"}
+        with open(p, "w", encoding="utf-8") as f:
+            for r in ({**MON, "status": "running", "writer": None, "result": ""}, MON,
+                      {**HUM, "status": "running", "result": ""}, HUM):
+                f.write(json.dumps({k: v for k, v in r.items() if v is not None}) + "\n")
+        before = open(p, encoding="utf-8").read()
+
+        exp_py = os.path.join(ROOT, "scripts", "exp.py")
+
+        def run(*args):
+            # --root, NOT cwd: exp.py derives ROOT from its own __file__ and refuses an ambient
+            # env override on purpose (an AUPAI_ROOT would silently redirect a production run's
+            # ledger), so running it from the fixture directory reads the REAL runs/ and the
+            # fixture tests nothing -- measured, the first version of this world got "no open row
+            # ... Open rows: none" from the repo's own ledger.
+            return subprocess.run([sys.executable, exp_py, "--root", d, *args],
+                                  capture_output=True, text=True, cwd=d, timeout=120)
+
+        # 1. NO REASON -> refused, and the message must say what to do.
+        r = run("done", "--name", "m", "--started", "2026-09-07 05:15", "--status", "ok",
+                "--result", "stopped by hand at .step22500")
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, f"a reclassify with no --reason must be refused, got rc=0: {out}"
+        assert "--reason" in out and "MONITOR" in out, \
+            f"the refusal must name --reason and say the closer was the monitor: {out[:200]}"
+        assert open(p, encoding="utf-8").read() == before, \
+            "a refused reclassify must write nothing"
+
+        # 2. WITH A REASON -> appended, and the fold shows it.
+        r = run("done", "--name", "m", "--started", "2026-09-07 05:15", "--status", "ok",
+                "--result", "stopped by hand at .step22500",
+                "--reason", "deliberate stop at a chosen step, not a crash")
+        out = r.stdout + r.stderr
+        assert r.returncode == 0, f"a reclassify WITH --reason must be accepted: {out}"
+        assert "RECLASSIFIED" in out, f"the caller must be told what was overridden: {out[:200]}"
+
+        evs = [json.loads(ln) for ln in open(p, encoding="utf-8") if ln.strip()]
+        mine = [e for e in evs if e["name"] == "m" and e["started"] == "2026-09-07 05:15"]
+        # 3. THE MONITOR'S EVENT IS UNTOUCHED -- the acceptance condition 4c set. Append-only
+        #    is not a claim about intent, it is checkable: the original bytes are still there.
+        assert before in open(p, encoding="utf-8").read(), \
+            "the reclassify rewrote the file instead of appending to it"
+        assert any(e.get("writer") == "monitor" and "137" in str(e.get("result")) for e in mine), \
+            "the monitor's own event must still be in the ledger"
+        new = [e for e in mine if e.get("reclassify_reason")]
+        assert len(new) == 1, f"exactly one reclassify event, got {len(new)}"
+        assert new[0].get("writer") is None, \
+            "the human's close must carry NO writer, or fold() reads it as the monitor's and drops it"
+        assert new[0]["reclassifies"]["result"] == "exit 137 (signal 9)", \
+            "the event must record WHAT it overrode, not only that it did"
+        assert new[0]["cmd"] == MON["cmd"] and new[0]["hypothesis"] == MON["hypothesis"], \
+            "the reclassify must inherit the run's cmd and hypothesis -- it is the same run"
+
+        sys.path.insert(0, os.path.join(ROOT, "scripts"))
+        import exp as _exp
+        prev = _exp.LOG
+        try:
+            _exp.LOG = p
+            folded = {(x["name"], x["started"]): x for x in _exp.rows()}
+        finally:
+            _exp.LOG = prev
+        got = folded[("m", "2026-09-07 05:15")]
+        assert got["status"] == "ok" and got.get("reclassify_reason"), \
+            f"the fold must show the human's close with its reason, got {got.get('status')}"
+
+        # 4. A HUMAN-CLOSED ROW STILL REFUSES. Ruling (a) is narrow BY CONSTRUCTION: overriding
+        #    a human's close would need a fold rule saying which human wins, and there is none.
+        #    Without this case the branch could accept any closed row and every assertion above
+        #    would still pass.
+        r = run("done", "--name", "h", "--started", "2026-09-07 05:15", "--status", "fail",
+                "--result", "overriding a human", "--reason", "trying it anyway")
+        out = r.stdout + r.stderr
+        assert r.returncode != 0, f"re-closing a HUMAN-closed row must still be refused: {out}"
+        assert "already closed" in out, f"and with the ordinary refusal: {out[:200]}"
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    print("  exp reclassify: a monitor-closed row re-closes only with --reason, appends, keeps "
+          "the monitor's event; a human-closed row still refuses")
+
+
 def _selftest_gpu_descendants():
     """Known answer: a child whose cmdline shares nothing with its parent's is still
     found, because descent is what is walked.
@@ -20410,6 +22075,11 @@ def _demo(only=None):
     # is VISIBLE -- WARN is the signal, silence is the defect.
     warn_only = {"untracked_aged", "dirty_aged", "review_present", "probe_numbers_unique",
                  "no_shared_stash", "keep_claim_reasons_live", "pod_ledger_rows_home",
+                 # main_in_no_worktree: WARN because the fix is another session's `git worktree`
+                 # operation on their own tree, and a FAIL would block every commit everywhere
+                 # until they ran it. Nothing is corrupted while the branch merely sits checked
+                 # out; the damage needs main to MOVE under it.
+                 "main_in_no_worktree",
                  "run_commits_resolve", "pod_stamp_is_main", "unreached_files_ruled",
                  "peer_stalled", "card_held_without_claim", "merge_keeps_parent_paths",
                  "one_deliverable_per_owner", "prereg_citations_current",
@@ -20938,8 +22608,19 @@ def _demo(only=None):
 
     # pre-commit hook selftest: a staged 6MB file must exit non-zero; a small
     # allowed data file must pass; a small unallowed data file must refuse.
+    #
+    # ON A BRANCH, NOT main. This world invokes the REAL hook directly, so every gate in it
+    # fires, and _refuse_committing_on_main (de, 2026-09-08) refuses when HEAD is the branch
+    # main -- which broke main's CI at 60a6f0af on the "allowed data file must pass" assertion.
+    # `git init -b fixture` rather than a checkout: -b names the initial branch, and this world's
+    # first hook run happens before any commit exists, where HEAD is unborn.
+    #
+    # The two `rc != 0` assertions were the more dangerous half: my refusal satisfies them, so
+    # they would have kept passing for the wrong reason -- the 6MB blob and the unallowed data
+    # file would never have been the cause. A gate that makes a negative assertion pass by
+    # firing first is invisible in exactly the world that asserts a refusal.
     d = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d, capture_output=True)
     hook_dst = os.path.join(d, ".git", "hooks", "pre-commit")
@@ -20968,8 +22649,14 @@ def _demo(only=None):
     # refused. git runs no pre-commit hook on a clean merge, so this is the only
     # commit-time gate on the merge path (2026-08-31: a bad fact landed in main
     # through a merge). The branch commit uses --no-verify: the point is the merge.
+    #
+    # `-b fixture`, not main: this world installs the REAL hook, and
+    # _refuse_committing_on_main refuses a commit whose HEAD is main (de, 2026-09-08). On main
+    # the merge would be refused by that gate rather than by the data/ allow-list, so the world
+    # would pass for the wrong reason -- its assertion is a refusal, and any gate firing first
+    # satisfies it.
     dm = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=dm, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=dm, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=dm, capture_output=True)
     for hk in ("pre-commit", "pre-merge-commit"):
@@ -20984,7 +22671,7 @@ def _demo(only=None):
     open(os.path.join(dm, "data", "evil.bin"), "w").write("x")
     subprocess.run(["git", "add", "data/evil.bin"], cwd=dm, capture_output=True)
     subprocess.run(["git", "commit", "-qm", "evil", "--no-verify"], cwd=dm, capture_output=True)
-    subprocess.run(["git", "checkout", "-q", "main"], cwd=dm, capture_output=True)
+    subprocess.run(["git", "checkout", "-q", "fixture"], cwd=dm, capture_output=True)
     open(os.path.join(dm, "other"), "w").write("y")  # diverge so the merge is non-ff
     subprocess.run(["git", "add", "other"], cwd=dm, capture_output=True)
     subprocess.run(["git", "commit", "-qm", "other"], cwd=dm, capture_output=True)
@@ -20995,8 +22682,12 @@ def _demo(only=None):
 
     # Manifest regeneration: stage a scoped edit, run the hook, commit, and
     # pod_drift.py --check-head must pass without a second commit.
+    #
+    # `-b fixture`, not main: this world installs the REAL hook and asserts a commit SUCCEEDS, so
+    # _refuse_committing_on_main (de, 2026-09-08) would refuse it outright. Same shape as the
+    # AGENTS.md note below -- a gate that has nothing to do with manifests deciding this world.
     d2 = tempfile.mkdtemp()
-    subprocess.run(["git", "init", "-q", "-b", "main"], cwd=d2, capture_output=True)
+    subprocess.run(["git", "init", "-q", "-b", "fixture"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.email", "t@t"], cwd=d2, capture_output=True)
     subprocess.run(["git", "config", "user.name", "t"], cwd=d2, capture_output=True)
     hook_dst2 = os.path.join(d2, ".git", "hooks", "pre-commit")
@@ -21173,6 +22864,10 @@ def _demo(only=None):
         _selftest_devs_map,
         _selftest_gpu_descendants,
         _selftest_exp_fold,
+        _selftest_exp_reclassify_monitor_close,
+        _selftest_main_in_no_worktree_discriminates,
+        _selftest_card_lend_expires,
+        _selftest_facts_ephemeral_only_source,
         _selftest_check_timeout_skips,
         _selftest_attest_written_path,
         _selftest_merge_fix_not_deadlocked,
@@ -21380,6 +23075,14 @@ _FROZEN_KEYS = (
     # at __init__, a resume silently ignores it, which is exactly the drift the frozen set
     # exists to catch (the arm's own weights carry the init; the flag does not).
     "zero_init_out", "muon_shape_lr", "value_embed",
+    # b0-35: CSA replaces the dense branch inside GatedMLA, and when on it adds parameters
+    # (the branch gate), so two segments of one run that disagree on it are two models wearing
+    # one name -- the same argument as head_mixed. The three shape knobs are here for a
+    # DIFFERENT reason than csa itself: they do not change the parameter count, they change
+    # what the attention can SEE (how coarse the pooling is, how many blocks are re-read, how
+    # wide the exact window is), so a resume that moved one would alter the receptive field
+    # mid-run while the loss curve carried a single name.
+    "csa", "csa_compress", "csa_topk", "csa_window",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling
@@ -21425,6 +23128,17 @@ _FROZEN_KEYS = (
     # segment and it silently becomes the MoE-24 arm at the same parameter count.
     "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
     "moe_latent", "moe_shared_ffn",
+    # FROZEN, and NOT beside `seed` in the allow-list even though it is a seed. `seed` is there
+    # as "the quantity that is supposed to vary"; this one decides WHICH ROWS the run reads, so
+    # two ladder points that disagree on it differ in their data and not only in D -- which is
+    # the one thing the ladder exists to isolate. train.py's `_build_row_cursor` already refuses
+    # a resume whose cursor was written at another sample_seed (the pool is shuffled differently,
+    # so the row count indexes other documents), but that covers one run in two halves; nothing
+    # compares two SEPARATE points, and ladder_cfg_consistent is what does.
+    #   The flag exists so a seed sweep can pin it: unset, `_sample_seed` follows Cfg.seed, so
+    # --seed alone reshuffles the corpus and folds row-order variance into what was meant to be
+    # an init-variance measurement (de-7; the anneal N1/N2 arms, 09-08).
+    "sample_seed",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -21449,6 +23163,7 @@ _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
+    "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
     "fp8",                # training precision, not architecture
     # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
     # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
@@ -21461,6 +23176,11 @@ _UNFROZEN_ALLOWLIST = {
     # stops instead of reporting a number at a precision nobody chose.
     "bf16",
     "track", "profile", "profile_warmup", "profile_steps",  # measurement
+    # UNFROZEN, not frozen: a step-time breakdown is a diagnostic, not a recipe key. Freezing it
+    # would mean every resume of a once-profiled run must keep passing it or be refused, which
+    # is backwards -- a resume that drops it should simply run unprofiled. Note the completeness
+    # check passes with the flag in EITHER set, so green here would not have caught the choice.
+    "profile_step_every",
     "allow_corpus_drift", "allow_pod_drift", "allow_env_drift", "allow_partial_cursor",  # safety overrides
     "lr_scale",           # optimizer multiplier, varies by experiment
     "no_static_graph", "no_bucket_view",  # DDP A/B, do not touch Cfg
@@ -22128,13 +23848,22 @@ def _validate_explicit_cards(spec, root=None):
     mutant's success was visible only to a human reading the output.
 
     The rule: every card named must be one runs/card_assignment.json's cards[] map grants US --
-    an entry that exists and is not marked RL TEAM -- and none may be in block_cards. This
-    overrides the DERIVATION of cards, never the grant: a caller may choose among our cards and
-    may not add one. A card absent from the map is refused, because the map is the whole
-    statement of ownership and silence about a card is not a grant of it.
+    an entry that exists and whose note reads as an aupai grant -- and none may be in
+    block_cards. This overrides the DERIVATION of cards, never the grant: a caller may choose
+    among our cards and may not add one. A card absent from the map is refused, because the map is
+    the whole statement of ownership and silence about a card is not a grant of it.
+
+    A CARD WHOSE NOTE THE PARSER CANNOT CLASSIFY IS REFUSED TOO, and that is a third case rather
+    than a variant of the other two: "the map says this is tileRL's" and "the map says something
+    nobody wrote a rule for" are different facts, and only the first can be reported as an owner.
+    Before 2026-09-07 the classifier had two states and an unreadable note fell into `ours`, which
+    is how `--cards 0` and `--cards 6` were accepted against a file whose own prose gives those
+    cards to tileRL. See _classify_card_note in harness_core for the two independent reasons the
+    old regex missed.
     """
     want = _expand_cards(spec)
     ours, theirs, cmap = _aupai_cards(root)
+    unknown_map = _unclassified_cards(root)
     if not want:
         return "", f"--cards {spec!r} names no card."
     if not cmap:
@@ -22143,16 +23872,25 @@ def _validate_explicit_cards(spec, root=None):
                     "just CUDA_VISIBLE_DEVICES with a ledger row.")
     rl = [c for c in want if c in theirs]
     unlisted = [c for c in want if c not in cmap]
+    unknown = [c for c in want if c in unknown_map]
     # block_cards, when the file names one. raise_on_false=False: an explicit false grant is the
     # launch's problem to refuse further down, not a reason to crash while validating.
     blocked = [c for c in want if c in (_grant_cards(root, raise_on_false=False)[0] or [])]
-    if rl or unlisted or blocked:
+    if rl or unlisted or unknown or blocked:
         why = []
         if rl:
             why.append(f"{_csv(rl)} belong(s) to the RL team per cards[]")
         if unlisted:
             why.append(f"{_csv(unlisted)} appear(s) in no cards[] entry, so nothing grants it to "
                        f"us -- silence is not a grant")
+        if unknown:
+            # THE NOTE IS QUOTED. A refusal saying only "unclassified" sends the reader to the
+            # file to guess which words tripped it; the text is the whole evidence for the
+            # refusal, so it belongs in the refusal.
+            why.append("; ".join(
+                f"cards[{c}] reads {str(unknown_map[c])[:120]!r}, which names neither an aupai "
+                f"grant nor another team -- an owner the parser cannot read is not a grant"
+                for c in unknown))
         if blocked:
             why.append(f"{_csv(blocked)} is in block_cards, which a training block owns")
         return "", (f"--cards {spec!r}: " + "; ".join(why) + ".\n"
@@ -23316,6 +25054,47 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
             return 1
 
     # 5. Arm monitor
+    #
+    # BEFORE ARMING: a wrapped command that REFUSED closes its own row here (de-77, 4c 2026-09-08).
+    # `exp.py start` appends status=running before the command runs, and a command that exits
+    # nonzero without ever opening a device left that row running forever -- a phantom for a script
+    # that never launched. The two `return 1` paths above close their rows; this path did not,
+    # because it is the SUCCESS path by construction and a guarded refusal reaches it.
+    #
+    # THE PREDICATE IS THE WRAPPER'S OWN .rc, not the absence of a claim. The wrapper writes that
+    # file itself, so its presence means the command ran to completion and its content is the
+    # command's verdict -- which is exactly what separates the two cases the block above already
+    # distinguishes in prose: a 3-second eval that came and went (rc 0, cards legitimately never
+    # observed) from a command that refused (rc != 0, nothing ran). Closing on "no claim" alone
+    # would close the fast-eval row too, and closing on rc alone would close a successful short
+    # job's row as a failure.
+    #
+    # No monitor is armed for a command that has already exited: the monitor exists to notice a
+    # live job going quiet, and arming it here would make it report a process that ended before it
+    # started watching.
+    _refused_rc = None
+    if not claim_name and os.path.exists(rc_path):
+        try:
+            with open(rc_path) as _f:
+                _refused_rc = _f.read().strip()
+        except OSError:
+            _refused_rc = None
+    if _refused_rc not in (None, "", "0"):
+        subprocess.run(
+            [sys.executable, os.path.join(HERE, "exp.py"),
+             "done", "--name", args.name,
+             "--result", f"refused: wrapped command exited {_refused_rc} without holding a device",
+             "--finding", f"{os.path.basename(log_path)}: the command exited {_refused_rc} before "
+                          f"any descendant opened a GPU device, so nothing ran under this row",
+             "--decision", "read the log and fix what the command refused on, then relaunch",
+             "--status", "fail"],
+            capture_output=True,
+        )
+        print(f"REFUSED: {args.name} exited {_refused_rc} without holding a device; the row is "
+              f"closed as fail and no monitor was armed. Log: {log_path}", file=sys.stderr)
+        _release_cards(claim_name)
+        return 1
+
     monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
                                started=launch_started)
 

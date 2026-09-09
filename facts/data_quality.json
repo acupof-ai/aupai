@@ -795,7 +795,7 @@
     "cross_domain": "7 domains x 250,000 rows = 1,750,000 rows, 1,750,000 distinct keys, ZERO cross-domain collisions. Key is build_corpus.exact_key's normaliser (strip [\\s\\W_]+, sha1).",
     "known_answer_verification": "planting 100 unique docs + one body at 7 copies + one at 3 returns 109 scanned / 101 unique / 8 dup rows / max 7. The instrument detects what it looks for; the zero is a measurement, not a silence.",
     "why_within_domain_zero_is_expected": "build_corpus._parallel_exact_pass ran on every domain build and is global across that domain's shards, so within-domain zero is that pass WORKING, not evidence of a clean source.",
-    "why_cross_domain_zero_is_the_new_information": "no pass ever compared two domains -- dedup_corpus.py never ran (data/dedup/ absent) and has no consumer. The gap is real in code; this measures it empty in this corpus.",
+    "why_cross_domain_zero_is_the_new_information": "no pass ever compared two domains: dedup_corpus.py HAS a consumer -- harness.py's _run_pipeline_step(\"dedup\", \"dedup_corpus.py\", ...), reached because \"dedup\" is in that module's STEPS tuple, and it runs the script under subprocess.run -- and it has never been INVOKED. Zero rows in runs/experiments.jsonl name it, and docs/lessons/scale_36b_plan.md:155 marks its output a planned artifact that does not yet exist. Cited by symbol, not by line: the same call site was read at :22336, :22385 and :22560 on 2026-09-08 alone. The gap is real in code; this measures it empty in this corpus. BASIS HISTORY, because this clause has been wrong twice and both errors were about the basis rather than the value: it first read \"never ran (data/dedup/ absent)\", which de falsified by running the script on a laptop while verifying a corrected docstring -- nine files appeared under data/dedup/, the value stayed correct, and the stated basis stopped describing the world (84 caught it). The replacement read \"NO CONSUMER anywhere in the tree\" (44 caught it reviewing PR #48), and the reason it was wrong is worth keeping: 84's grep searched the ARTIFACT names -- data/dedup, dedup_manifest, dedup_stats -- over *.py included, and the consumer names none of them because it invokes the SCRIPT. \"Who reads these files\" and \"who runs this thing\" are different questions, and a pipeline step names the producer, never its outputs; a search for dedup_corpus would have found it. What the measurement rests on is never-invoked, checkable against the experiments ledger, unlike both earlier forms.",
     "hardlink_false_lead": "2010 of 3422 shards have link count 2. The pairs are staging->assembled (web_cci3_p* <-> zh_web, wiki <-> wiki_chat, math <-> math_seed); only the assembled name appears in a mix, so no inode is read twice in one run."
    },
    "uncertainty": "EXACT duplication only. A paraphrase, a boilerplate-heavy pair, or a reformatted copy hashes differently and is counted unique -- and near-dedup has never run on this corpus (every build carries --no_near_dedup; build_corpus._near_dedup_postpass has no caller outside its own test). dq.code_rp1t_handread_50 measures 12% near-dup in code_rp1t by hand, which this number does not contradict and does not cover. code_rp1t and math_owm_stage2/en_c4_stage2/zh_web were scanned at a 250K-row prefix cross-domain, not in full.",
@@ -1031,6 +1031,88 @@
    "uncertainty": "The scoping removes a false positive and does not re-examine the true one: pass3_garbage.py did change at df2b7744, so the nine domains remain genuinely behind the current filter, exactly as the 2026-09-01 ruling says. That ruling's 0.25% weighted residue is unchanged by anything here. Whether a fourth filter could enter the pipeline without PIPELINE_FILTERS following is guarded by the ast assertion, which reads build_corpus.py's loader tuple -- it cannot see a filter reached by some other mechanism, such as an import added elsewhere in that file.",
    "status": "measured",
    "boundary": "Says which files the fingerprint should cover. It does not re-rule the stage-2 staleness, does not measure any corpus, and does not touch the pod's untracked filters/__init__.py, which still needs removing or committing for the pod's fp to equal a tree's."
+  },
+  {
+   "id": "dq.zh_web_textbook_provenance_terminates",
+   "value": "zh_web and textbook_30b carry no build-time filter provenance; their chain ends at a post-hoc stamp",
+   "unit": null,
+   "measured": "2026-09-07",
+   "source": "data/corpus/{zh_web,textbook_30b,web_hq,textbook,web_cci3_p*}/build_corpus_stats.json on the pod; hardlink sources resolved by st_ino; task t44 in runs/tasks.jsonl",
+   "config": {
+    "how_built": "task t44 (owner 3b, closed 2026-08-31) hardlinked existing cleaned directories and stamped them through corpus_fingerprint.fp_dir/fp_filters directly. build_corpus's stamper never ran, so reasons/kept/kept_chars/kept_tokens/workers/near_dedup are ABSENT, not zero -- 7 stamp keys against build_corpus's 15.",
+    "hardlink_sources_by_inode": "textbook_30b -> textbook, 79 of 79 files. zh_web -> 25 directories: web_hq (62 files) plus web_cci3_p0..p23 (20-47 each); every file links=2.",
+    "source_stamp_key_counts": "web_hq 6 keys, no reasons, its own note says 'web_hq is data/corpus/web moved wholesale... stamped 2026-08-30, post-hoc, by the controller session from the live directory' with stamped_at_build=false. textbook 3 keys (reasons {kept 920692, bad_bytes 52}, top_hosts, fingerprint), no filters, no filters_fp. web_cci3_p1..p21 3 keys each WITH a real reasons histogram. web_cci3_p0, p22, p23 have NO build_corpus_stats.json at all.",
+    "terminal_state": "filter provenance terminates at web_hq / textbook, stamped post-hoc, not at build.",
+    "filters_field_is_inherited": "the 'filters: light' on the four t44 stamps is a claim carried by the task, not a value measured at build in those directories",
+    "annotation_written": "producer and producer_note fields added to zh_web, textbook_30b, wiki_chat and math_seed stamps 2026-09-07, each verified against the live fp_dir before writing",
+    "share_of_mix": "zh_web 21,293,403,945 + textbook_30b 1,610,210,330 tokens = 55% of the 41.5B landed tokens named by data/mix_1.5b-a0.2b-e48_20b_launch.json"
+   },
+   "uncertainty": "the inode map samples every file in both target directories, so the source attribution is exact; what cannot be recovered is which filter version produced web_hq and textbook, since neither stamp records one",
+   "boundary": "says what provenance EXISTS, not whether the data is good. No quality claim about zh_web or textbook_30b follows from this entry.",
+   "status": "measured"
+  },
+  {
+   "id": "dq.code_rp1t_dd09.handread_50",
+   "value": 0.6,
+   "unit": "fraction usable",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs, seed=42, stratified max 2/shard, 235 shards/3.43M docs post-dedup; sample artifact: data/eval/code_rp1t_dd09_handread50.jsonl",
+   "config": {
+    "categories": "good code 46%, test code 12%, expository 2%, boilerplate 18%, non-code 22%",
+    "dominant_languages": "Java 20%, C++ 14%, PHP 12%, JS 12%",
+    "contamination": "0/1000 code_holdout substring hits",
+    "audit_doc": "docs/audits/code_rp1t_dd09_b2_hand_read.md"
+   },
+   "uncertainty": "+-0.14 (n=50, binomial, p=0.5)",
+   "status": "measured",
+   "artifact_sha256": "28ea581bff29fd2d1880f0b0a17e191b00ecdc87b0fd1a160266549ed8186712"
+  },
+  {
+   "id": "dq.code_rp1t_b2.handread_50",
+   "value": 0.74,
+   "unit": "fraction usable",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs, seed=42, stratified max 2/shard, 152 shards/2.42M docs pre-dedup; sample artifact: data/eval/code_rp1t_b2_handread50.jsonl",
+   "config": {
+    "categories": "good code 56%, test code 18%, boilerplate 12%, non-code 14%",
+    "dominant_languages": "Java 32%, Python 12%, Ruby 12%, C# 10%",
+    "contamination": "0/1000 code_holdout substring hits",
+    "audit_doc": "docs/audits/code_rp1t_dd09_b2_hand_read.md"
+   },
+   "uncertainty": "+-0.12 (n=50, binomial, p=0.74)",
+   "status": "measured",
+   "artifact_sha256": "1f0136564cbad57a7337ca4882dca1fe0cdf6024d4219394ca1f8a217be3a3c0"
+  },
+  {
+   "id": "dq.code_rp1t.noncode_tail",
+   "value": "dd09 22%, b2 14%",
+   "unit": "fraction non-code",
+   "measured": "2026-09-07",
+   "source": "hand-read of 50 docs per corpus, same sample as dq.code_rp1t_dd09 and dq.code_rp1t_b2 handread_50",
+   "config": {
+    "composition": "HTML docs (Javadoc/Doxygen/LCOV), CSS, config files (POM/Dockerfile/cask), license-only",
+    "filter_rules": "6 rules handed to e1 for C/JS/Java validators, see audit doc"
+   },
+   "uncertainty": "+-0.12 (n=50, binomial)",
+   "status": "measured"
+  },
+  {
+   "id": "dq.handread_excerpt_sufficient",
+   "value": 0.0036,
+   "unit": "fraction of document pairs a 400-char excerpt cannot distinguish",
+   "measured": "2026-09-08",
+   "source": "datagen/excerpt_sufficiency.py, run on the pod against data/corpus/code_py_starcoder",
+   "config": {
+    "n": 4200,
+    "draw": "6 shards sampled with Random(11), up to 700 lines each, uniform within shard",
+    "normalisation": "' '.join(s.split()) -- whitespace-collapsed, because the hand-read criterion is 'same code modulo whitespace, identifiers, or comments'",
+    "statistic": "count of docs whose normalised first-400-char sha1 collides with an earlier doc's while the FULL-text sha1 differs, over n",
+    "why": "code_dedup_handread.py:67-68 truncates rep_text_excerpt and member_text_excerpt to 400 chars, so the reader judges same_file from 400 chars. This bounds what that judgement can resolve: a shared license or import header long enough to fill the excerpt would make two different files read as the same one.",
+    "doc_length": "median 1883 chars, p10 279; 14.5% of docs are under 400 chars and are therefore shown in full"
+   },
+   "uncertainty": "+-0.0018 (n=4200, binomial 95%: 0.20%-0.59%)",
+   "boundary": "Measured on code_py_starcoder only, which is the domain the sheet's representatives come from. It does not bound the rp1t side, and it does not say anything about the opposite error -- two excerpts of the SAME file that look different because the difference falls inside the first 400 chars.",
+   "status": "measured"
   }
  ]
 }

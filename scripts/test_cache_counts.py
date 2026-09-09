@@ -178,6 +178,16 @@ def main():
     check("unreadable" in log,
           f"the fallback must be loud -- otherwise `source` is the only trace: {log!r}")
 
+    # A WELL-FORMED OBJECT MISSING A KEY is the same class: damaged, not a mismatch.
+    # {"tokens": N} alone used to reach the mismatch comparison outside the read's try
+    # and escape as an uncaught KeyError, taking down the whole mix write (3b's case 2).
+    with open(side, "w", encoding="utf-8") as f:
+        json.dump({"tokens": a["tokens"]}, f)
+    got, log = _quiet(w._cache_pool, "probe")
+    check(got is not None and got["source"] == "cache",
+          f"a .counts missing seq/fone must fall back, not answer or raise: {got}")
+    check("unreadable" in log, f"the fallback must be loud: {log!r}")
+
     return _report()
 
 

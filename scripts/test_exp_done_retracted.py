@@ -44,7 +44,14 @@ def world(started="2026-09-02 05:00", retract=True, close=True):
     os.makedirs(os.path.join(d, "runs"), exist_ok=True)
     shutil.copy(REAL, os.path.join(d, "runs", "experiments.jsonl"))
     rows = [json.loads(x) for x in open(REAL, encoding="utf-8") if x.strip()]
-    tmpl = rows[-1]
+    # `writer` IS STRIPPED, and that is not cosmetic (de-70, 2026-09-08). tmpl is the real
+    # ledger's LAST row, so this fixture inherits whatever fields that row happens to carry today
+    # -- and on 2026-09-08 the last row was a monitor close, so every zz_done_retr event silently
+    # became writer="monitor". `done` now treats a row closed ONLY by the monitor as re-closable
+    # with --reason, so case 1 below started failing with the reclassify refusal instead of the
+    # ordinary one: a fixture whose subject changed because someone else's run landed. Every case
+    # here is about a HUMAN-closed row, which is a row with no writer.
+    tmpl = {k: v for k, v in rows[-1].items() if k != "writer"}
     evs = [
         dict(tmpl, name="zz_done_retr", status="running", started=started, result="", ended="",
              cmd="./run_ddp.sh --name zz_done_retr"),

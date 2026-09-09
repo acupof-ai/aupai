@@ -297,6 +297,21 @@ def build():
         ),
         "domains": landed,
         "_blocked": blocked,
+        # THE STAGE-1 STATE THIS FILE'S EPOCHS WERE DERIVED AGAINST. Every `epochs` here is a
+        # cap over used + want, with used seeded from STAGE1_CURSOR, so the file is correct for
+        # exactly the checkpoint that cursor came from. train.py's _assert_mix_derived_against
+        # refuses a resume whose own row_cursor differs.
+        #
+        # ROWS ONLY, and the absent keys are the point: STAGE1_CURSOR is a transcribed constant,
+        # not a checkpoint read, so this writer has no srcfp and no seed to state. The reader
+        # compares only the keys a mix actually carries -- claiming a seed here would be
+        # inventing one, and defaulting it to None would refuse every real checkpoint.
+        "_derived_against": {
+            "row_cursor": dict(STAGE1_CURSOR),
+            "_note": (
+                "stage-1 row cursor from ckpt_pretrain_15b_s1.pt.step16000, transcribed; no "
+                "srcfp or seed because this writer reads no checkpoint"),
+        },
     }
 
 
