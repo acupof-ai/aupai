@@ -4985,14 +4985,18 @@ def check_score_matrix_ckpts_present(root):
     fact defect. Score_matrix rows are DATED measurements -- `measured` is the row's epoch,
     and a pruned checkpoint cannot be un-pruned -- so:
 
-    - row names a deletion-CANDIDATE (in the listing, not KEEP-claimed) -> FAIL while the
-      listing is inside its 24h claim window (the written rule: broadcast, delete after 24h
-      unclaimed): a live file someone measured is on the prune list, the row is evidence
-      for a KEEP claim, and the window is the time to write it. A candidate in a listing
-      OLDER than the window WARNs instead: the deletion process stalled, and a permanent
-      FAIL freezes every commit -- the pre-commit hook runs the full suite -- for a failure
-      the row's author cannot act on ('red nobody acts on is no signal'). A listing with
-      no parsed date is treated as fresh: loud on the unknown.
+    - row names a deletion-CANDIDATE (in the listing, not KEEP-claimed). Three bands off the
+      listing's generation time (4c, 2026-09-09), because regenerating a listing is routine and
+      must not equal a repo-wide freeze -- the pre-commit hook runs the full suite, so a fresh
+      listing with cited-but-unclaimed candidates would refuse every commit until triage
+      completes, and a freeze teaches people not to refresh (a stale listing is what made
+      ckpt_facts_sources_present report false absents the same morning):
+      - age < 6h (grace) -> WARN: the triage has not had time;
+      - 6h-24h (the claim window) -> FAIL: pressure while a KEEP claim can still be written
+        and before the 24h deletion (the written rule: broadcast, delete after 24h unclaimed);
+      - past 24h -> WARN: the deletion process stalled, and a permanent FAIL freezes every
+        commit for a failure the row's author cannot act on ('red nobody acts on is no signal').
+      A listing with no parsed date FAILs: loud on the unknown.
     - row names a checkpoint ABSENT from the listing -> WARN, named: the measurement stands
       as dated history but cannot be re-derived. A permanent FAIL here would be the
       'red nobody acts on is no signal' rule -- the only available action is annotation.
@@ -5011,20 +5015,31 @@ def check_score_matrix_ckpts_present(root):
     if not listings:
         return SKIP, "no runs/pod_ckpt_candidates_*.txt"
     date, keep, cands = _parse_ckpt_listing(listings[-1])
-    fresh = True
+    GRACE_H, WINDOW_H = 6.0, 24.0
+    age_h = None
     if date:
         try:
             listed = datetime.datetime.strptime(date, "%Y-%m-%d %H:%MZ").replace(
                 tzinfo=datetime.timezone.utc)
-            fresh = (datetime.datetime.now(datetime.timezone.utc) - listed) <= \
-                datetime.timedelta(hours=24)
+            age_h = (datetime.datetime.now(datetime.timezone.utc) - listed).total_seconds() / 3600.0
         except ValueError:
-            fresh = True
+            age_h = None
+
+    def _band():
+        # 'grace' (WARN) / 'window' (FAIL) / 'stale' (WARN); no parsed date -> 'window'.
+        if age_h is None:
+            return "window"
+        if age_h < GRACE_H:
+            return "grace"
+        if age_h <= WINDOW_H:
+            return "window"
+        return "stale"
+
     p = os.path.join(root, "runs", "score_matrix.jsonl")
     if not os.path.exists(p):
         return SKIP, "no runs/score_matrix.jsonl"
     n_rows = 0
-    bad, stale, warned = [], [], []
+    bad, stale, grace, warned = [], [], [], []
     for i, ln in enumerate(open(p, encoding="utf-8"), 1):
         ln = ln.strip()
         if not ln:
@@ -5045,21 +5060,27 @@ def check_score_matrix_ckpts_present(root):
             cand = next((t for t in targets if t in cands), None)
             if cand:
                 via = f" (alias_of {cand})" if cand != name else ""
-                if fresh:
+                band = _band()
+                if band == "window":
                     bad.append(f"row {i} -> {name}{via} (deletion-candidate {date}, not KEEP-claimed)")
+                elif band == "grace":
+                    grace.append(f"row {i} -> {name}{via} (deletion-candidate {date}, listing in "
+                                 f"grace period; not KEEP-claimed)")
                 else:
                     stale.append(f"row {i} -> {name}{via} (deletion-candidate {date}, claim window "
                                  f"passed; not KEEP-claimed)")
             else:
                 warned.append(f"row {i} -> {name} (absent from listing {date}; dated history)")
     if bad:
-        both = "; ".join(bad + stale + warned)
-        return FAIL, f"{len(bad)} FAIL + {len(stale)} stale-window + {len(warned)} WARN: " \
-                     f"score_matrix row(s) name doomed/gone checkpoints (listing {date}): {both}."
-    if stale or warned:
-        return WARN, f"{n_rows} row(s) cite checkpoints; {len(stale)} name a candidate past its " \
-                     f"claim window, {len(warned)} name one absent from the listing (dated history, " \
-                     f"cannot be re-derived; listing {date}): " + "; ".join(stale + warned) + "."
+        both = "; ".join(bad + stale + grace + warned)
+        return FAIL, f"{len(bad)} FAIL + {len(stale)} stale-window + {len(grace)} grace + " \
+                     f"{len(warned)} WARN: score_matrix row(s) name doomed/gone checkpoints " \
+                     f"(listing {date}): {both}."
+    if stale or grace or warned:
+        return WARN, f"{n_rows} row(s) cite checkpoints; {len(grace)} name a candidate in a " \
+                     f"listing's grace period, {len(stale)} past its claim window, {len(warned)} " \
+                     f"absent from the listing (dated history, cannot be re-derived; listing " \
+                     f"{date}): " + "; ".join(grace + stale + warned) + "."
     return PASS, f"{n_rows} row(s) cite checkpoints; every name is KEEP-claimed or resolves " \
                  f"against the listing ({date}, {len(cands)} candidates)."
 
@@ -5077,12 +5098,13 @@ def _broken_score_matrix_ckpts():
     listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
     assert listings, "broken world found no candidates listing"
     lp = listings[-1]
-    # Pin the listing INSIDE its 24h claim window so the candidate tier is FAIL, not the
-    # stale-window WARN -- the world must exercise the red branch.
+    # Pin the listing INSIDE the FAIL band (6h-24h old): a younger date lands in grace
+    # (WARN), an older one in stale-window (WARN) -- the world must exercise the red branch.
     txt = open(lp, encoding="utf-8").read()
-    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
     open(lp, "w", encoding="utf-8").write(
-        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {now}", txt, count=1))
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
     _date, keep, cands = _parse_ckpt_listing(lp)
     victim = next((n for n in cands if n not in keep), None)
     assert victim, "broken world found no unkept candidate to name"
@@ -5104,12 +5126,13 @@ def _selftest_score_matrix_alias_resolves():
     shutil.copytree(os.path.join(ROOT, "runs"), runs)
     listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
     lp = listings[-1]
-    # Same fresh-window pin as _broken_score_matrix_ckpts: the candidate alias must be
-    # FAIL-named, not WARN-named as a stale-window candidate.
+    # Same FAIL-band pin as _broken_score_matrix_ckpts (6h-24h old): the candidate alias
+    # must be FAIL-named, not WARN-named as grace or stale-window.
     txt = open(lp, encoding="utf-8").read()
-    now = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%d %H:%MZ")
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
     open(lp, "w", encoding="utf-8").write(
-        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {now}", txt, count=1))
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
     _date, keep, cands = _parse_ckpt_listing(lp)
     kept = next(iter(keep))
     cand = next(n for n in cands if n not in keep)
