@@ -102,10 +102,11 @@ side was barely touched relative to its size. An earlier draft of this
 section bounded the overlap at 0.42B = 2.2% from names and doc counts; that
 bound assumed the overlap was diffuse across the domain, and it is in fact
 concentrated on the 15 rp1t shards.
-The dd09<->b2v2 near-overlap (22.9%/26.3% participation, est J>=0.5) is
-PENDING RE-MEASUREMENT after the loc/sig realignment (PR #177); near-dedup
-deletion is not approved. Operational detail stays in the pod's
-`data/decontam/NOTES.md`.
+The dd09<->b2v2 near-overlap is 23.27%/26.21% participation (est J>=0.5,
+re-measured 2026-09-10 after the loc/sig realignment, PR #177; calibration
+MAE 0.003, 100/100 exact J>=0.5); dd09<->dedup08 6.68%/5.84%,
+b2v2<->dedup08 4.02%/3.14%. Near-dedup deletion is not approved.
+Operational detail stays in the pod's `data/decontam/NOTES.md`.
 
 ### Which clean corpus p1 reads (source of truth)
 
