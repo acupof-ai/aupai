@@ -2540,9 +2540,10 @@
     ],
     "logs_pod_only": "ab300m_a2.log and ab300m_b.log under the pod's runs/ directory. Named here rather than in source because they do not resolve from main and facts_well_formed reads any runs/-prefixed path in source as a citation. The two numbers each log settles are restated in arm_a2/arm_b above, so nothing depends on reaching the files."
    },
-   "boundary": "TWO VARIABLES, ONE RATIO. grad_ckpt and micro-batch both move between the arms, so no part of the 2.27x can be assigned to either alone from this pair. The clean version is a third arm -- grad_ckpt=False at batch 16 x accum 2 -- which was NOT run: it is the OOM-risk configuration this shape was being tested to avoid, and eff.microbatch_32_oom records the neighbouring failure. Until that arm exists, quote this as an order of magnitude, never as grad_ckpt's cost.\n\n12 layers only. The measurement that governs the 500M recipe is eff.grad_ckpt_inverts_with_depth's 1.116x at L32, which inverts the verdict.",
+   "boundary": "TWO VARIABLES, ONE RATIO. grad_ckpt and micro-batch both move between the arms, so no part of the 2.27x can be assigned to either alone from this pair. The clean version is a third arm -- grad_ckpt=False at batch 16 x accum 2 -- which was NOT run: it is the OOM-risk configuration this shape was being tested to avoid, and eff.microbatch_32_oom records the neighbouring failure. Until that arm exists, quote this as an order of magnitude, never as grad_ckpt's cost.\n\n12 layers only. The measurement that governs the 500M recipe is eff.grad_ckpt_inverts_with_depth's 1.116x at L32, which inverts the verdict.\n\nTHE ID IS NARROWER THAN THE MEASUREMENT and is not being renamed (e1, 4c ruling 2026-09-08): it is cited elsewhere and a rename breaks those citations. `claim` is what carries the scope now, so anyone who arrives by grepping the id must read it before quoting the number.",
    "uncertainty": "Median of one run per arm, not a repeated measurement, so there is no spread. The arms were launched from a profiler that at the time did NOT seed before building the model (fixed in 41c5cd8, and the arms initialized different weights 0.016 apart at step 0) -- that invalidated the LOSS-PARITY gate, which was retracted, and does NOT affect these two numbers: throughput is wall-clock over a fixed shape and peak is an allocator reading, neither of which depends on the values in the weights. Stated explicitly because a reader who knows the parity failure would reasonably suspect the whole pair.",
-   "status": "measured"
+   "status": "measured",
+   "claim": "the throughput and memory ratio between TWO CONFIGURATIONS that differ in grad_ckpt AND micro-batch together -- NOT grad_ckpt's own cost, which no arm here isolates"
   },
   {
    "id": "eff.run_end_cursor_overstates_under_max_steps",
@@ -2703,7 +2704,8 @@
    "guard_phrases": [
     "P decides whether the params leg fits",
     "the interval collapses to a point once P is known"
-   ]
+   ],
+   "claim": "P, the params-plus-optimizer resident bytes of the data leg -- one term of the memory account, 1.34 GiB against a 49.53 GiB measured peak. It is NOT the memory verdict: activations are 97.3% of that peak and their scaling exponent e is unmeasured, so this number cannot say whether the params leg fits."
   },
   {
    "id": "eff.activation_d_exponent_206m_438m",
