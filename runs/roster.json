@@ -61,14 +61,14 @@
   },
   {
    "name": "3b",
-   "socket": "uds:/tmp/cc-socks/22008.sock",
+   "socket": "uds:/tmp/cc-socks/63595.sock",
    "role": "data",
    "topics": [
     "corpus"
    ],
-   "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03.",
-   "listagents_name": "aupai-84",
-   "listagents_ref": "5c9ee3"
+   "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: 984bce9a on main is 'train: --sample_seed, so a seed sweep varies init without reshuffling the corpus (3b)' -- the commit the anneal arms' pin depends on -- and 3c815555 is their review row for PR #113.",
+   "listagents_name": "aupai-89",
+   "listagents_ref": "92ce31"
   },
   {
    "name": "de",
