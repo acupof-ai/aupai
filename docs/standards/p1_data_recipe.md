@@ -122,7 +122,7 @@ live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
-phi-1 filtered >35B tokens down to 6B, a **17% keep rate in token口径** (the paper gives both
+phi-1 filtered >35B tokens down to 6B, a **17% token keep rate** (the paper gives both
 input counts: >35M files totalling >35B tokens; the 17% is 6/35, a token ratio, not a file ratio).
 Our pool is 18.8B; 17% of it is **3.2B**, and reaching 6B would require a 32% token keep rate.
 Loosening the threshold twofold to hit a token count copied from another paper inverts that
@@ -132,24 +132,6 @@ So the keep rate and the resulting token count are **outputs of the threshold ab
 to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
 threshold yields 3B, the gate runs on 3B. **The acceptance criterion is HumanEval 30% at 350M; the
 corpus size has never been a criterion.**
-
-### Keep-rate口径: phi-1's 17% is token口径; ours must be quoted the same way
-
-phi-1's paper states both input counts (>35M files, totalling >35B tokens) and the output in
-tokens only (~6B); the 17% is 6/35, a **token** ratio -- no post-filter file count is given, so
-a file-count keep rate cannot be attributed to phi-1. The comparable number for our filter is
-therefore the **byte/token keep, not the doc keep**.
-
-On our corpus the two口径 diverge by ~1.66x (three measured points: 1.665, 1.656, 1.656): at a
-25% **doc** keep, the **byte** keep is 0.151 -- the kept set skews to short docs, because long
-docs in this corpus are mostly boilerplate/config-heavy and score low. So our keep rate against
-phi-1's 17% is **~0.15, 0.9x phi-1's stringency** in the comparable口径; quoting the 25% doc
-keep against it would overstate it 1.66x. Any keep rate quoted for this filter must say which
-口径.
-
-Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
-tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
-code_dedup08 0.278723. The stats-file ratios are not used.
 
 **Generation order is by what blocks the gate, not by size.** The classifier labels are the
 smallest artifact and the first one: they unblock the 6B of filtered code, which is 97% of the
@@ -167,6 +149,26 @@ the reading under which `data/corpus/web_cci3_p*` was listed as unsuitable.
 
 **Fully synthetic code is outside the published recipe.** phi-1 kept the 6B filtered code. Dropping
 it is a legitimate arm but it has no reference score, so it is an ablation, not the plan.
+
+## Keep-rate units
+
+phi-1's paper states both input counts (>35M files, totalling >35B tokens) and the output in
+tokens only (~6B); the 17% is 6/35, a **token** ratio -- no post-filter file count is given, so
+a file-count keep rate cannot be attributed to phi-1. The comparable number for our filter is
+therefore the **byte/token keep, not the doc keep**.
+
+On our corpus the two units diverge by ~1.66x (three measured points: 1.665, 1.656, 1.656): at
+the >=3 cut sized to a 25% **doc** keep, the **byte** keep is 0.151 -- the kept set skews to
+short docs, because long docs in this corpus are mostly boilerplate/config-heavy and score low.
+So our keep rate against phi-1's 17% is **~0.15, 0.9x phi-1's stringency** in the comparable
+unit; quoting the 25% doc keep against it would overstate it 1.66x. Any keep rate quoted for
+this filter must say which unit.
+
+Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
+tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
+code_dedup08 0.278723. These are whole-domain ratios; the kept subset is compositionally
+different, so the final token count is measured directly on the keep set with its own tok/byte,
+not converted. The stats-file ratios are not used.
 
 ## The tokenizer is rebuilt at V=20,000
 
