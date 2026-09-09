@@ -71,8 +71,18 @@ scoring finished and e1 released its claim.
 **One defect: `runs/claims/tilerl-accspf-rerun` claims card 3 with `pid: null` and card 3 holds
 0 MiB.** A null pid is the exact shape that took the whole claim ledger down earlier tonight
 (`card_claim.py:478`, `int(c.get("pid", -1))` — `.get` returns the default only for a MISSING
-key, and an explicit JSON null returns None). de's #173 fixed the reader; this row is a live
-producer of the same value. tileRL's row, so theirs to clear.
+key, and an explicit JSON null returns None). de's #173 fixed the reader.
+
+**I called this row "a live producer of the same value" and asked de to guard the write side.
+That premise was wrong, and de corrected it by reading the code**: `card_claim.py:962` is
+`holder = pid if pid else os.getppid()`, so a falsy pid falls back to the parent's and `acquire`
+cannot emit null. The row came from something outside `card_claim.py`. Which is the point a
+write-side guard cannot reach: a claim is a plain JSON file in a shared directory, anything can
+write one, and tileRL writes theirs with their own tooling, not our `acquire`. **A writer-side
+check binds only its callers, and this row's author was not one.** de's #197 (type validation at
+`acquire`) still lands and de stated its scope honestly — it stops a caller passing the wrong
+type, a different failure from the one observed. The protection that actually covers this is what
+already exists: read-side refusal plus the stale sweep. tileRL's row, theirs to clear.
 
 ## Global
 
