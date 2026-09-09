@@ -1,6 +1,79 @@
-# Controller board (fb) — 2026-09-09, 03:1xZ
+# Controller board (fb) — 2026-09-09, 07:5xZ
+
+## Since 06:1xZ — v2 is shelved, and the PR queue's bottleneck is review, not CI
+
+**v2's first arm will not run as specified, and the budget argument is the hard half.**
+`runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_4`. Three build blockers, each independent and each
+fixable: `model.py:1635` refuses 0 KDA layers under NoPE by design (waits on partial RoPE); `Cfg.csa`
+is in no parser dict (`train.py:2942-3005`), so CSA is code-edit-only; the reference CSA kernel is
+233.19 vs 28.59 ms/step = **8.157x** against this row's own pre-registered <=1.15x gate (PR #140).
+What is not fixable at this budget: control 6*N*D = **3.60e19** FLOPs and treatment **5.40e19**, both
+**below the 1e20 lower edge** of the regime where `facts/smelt_deeploop.json#smelt.ce_gain` reports
+6.8-10.0%. And this repository already ran the two-arm test at 7.34e17, where the loop **lost** at
+equal compute: `#repo.loop_not_adopted_equal_compute`, -0.043905 nat (t -32.49, 544/576 blocks),
+-0.038320 humaneval gold BPB (t -6.45, 123/164 tasks) — 26% more tokens beat the loop for the same
+FLOPs. Launching as specified re-derives a measured negative. **The question that survives is the
+crossover**, between our 7.34e17 loss and SMELT's claimed 1e20 gain; that is a different experiment.
+
+**The PR queue is not blocked on CI.** 11 open PRs, CI green on all but one in progress,
+**zero rows in `runs/review.jsonl` for any of them** (only #139 carries an `artifact:` PR comment).
+Assigned by pair: de 6 (#120 #122 #139 #137 #140 #141), 44 2 (#134 #128), b0 2 (#103 #135). de's
+six include b0's three — tilerl's session exited, the fixed pair tilerl<->b0 left b0 with no second
+reader, so b0<->de. Forced by an exit, not a change to the user's 2026-08-31 pairing order.
+#134 merged by 44 at `682f80f4` with the pod push in the same step, which is the flip working.
+
+**PR #142 — a hook bug that refuses every branch that has merged main.** `_sweep_dirs` covers the
+directory of every registered selftest file, which includes `scripts/hooks/`, so a commit that
+stages the hook has its live `.hookstaged_pre-commit` unlinked by a nested run's sweep; the outer
+selftest then dies on `open(__file__)` at `:3464` **after all fourteen worlds passed**, with a
+traceback naming no world. The crash is in the world COUNT, not an assertion. Fixed two ways, both
+with negative controls: the count can no longer change the verdict, and the parent publishes what it
+owns in `AUPAI_HOOK_LIVE_COPIES` so nested sweeps skip it (env unset -> nothing protected, i.e. the
+pre-fix behaviour, so the fix cannot pass by disabling the sweep). It is a race, so it does not
+reproduce every run — which is why it read as "your hook change is broken" for two attempts.
+
+**Cards.** aupai 2,4,5,7 — all four idle. tileRL 0,1,3,6, all four held, boundary re-confirmed by
+their own session after they took card 2 in error and returned it in 8 minutes. **The flagship's
+remaining 4,146 steps do NOT need six cards**: world 6 `--batch 8 --accum 4` = 192 sequences/step;
+world 4 `--accum 6` = 4x8x6 = **192**, so `total_steps = len(Xtr) // (batch*accum)`
+(`train.py:3717`, `Xtr` per-rank) is unchanged at 38,146 and `warmdown_start` at 34,332 — same LR
+curve, ~1.5x wall clock (**~5.1h EXTRAPOLATED from resume1's 2.97 s/step, not measured**). Launch
+line staged. **Waiting on the user: the run was stopped by their order 2026-09-08, and only they
+reopen it.**
+
+**Ledger.** `anneal_r_0909`'s pod/local conflict ruled local (`runs/ledger_resolutions.jsonl`): the
+pod row's `scoring FAILED rc=1 -- no metrics` describes the FIRST attempt only; the rescore
+succeeded and `runs/score_matrix.jsonl` holds `ckpt_anneal_r_0909.pt` with all ten metrics. Both
+sides agree on val 1.819; they disagreed only on whether a reading exists.
+
+---
+
+# Round record — 2026-09-09, 06:1xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
+
+## ROUND CLOSED — the reweight does not enter the 30B mix, and the reason is power, not the bound
+
+**R final epoch-end val 1.819 against N1's 1.823: |R-N1| = 0.004, below F = 0.048 and D = 0.021 by
+factors of 12 and 5.** Ten metrics scored, none showing a readable effect; the two excursions past
+2x their floor go in OPPOSITE directions (math_v2_like better, humaneval_bpb worse), which is the
+noise signature. exp row `anneal_r_0909` closed at `0d75423d`, score matrix on the pod.
+
+**The sentence the 30B decision rests on is not the bound.** N1's entire anneal tail moved val
+1.854 -> 1.823 = **0.031**, against a threshold of 0.048. The phase being reweighted contributes
+less in total than the floor the reweight must clear. So the result is "this budget cannot resolve
+an effect of this size", never "no effect" — and any future anneal-phase test at 4B tokens is
+under-powered by construction.
+
+**The sharpest single item is a floor of exactly zero.** `minimal_pairs` overall: N1 and N2 both
+0.8014, floor 0.0000. Not agreement — **compensation**. Working the counts back from the
+per-dimension accuracies: N1 39+16+20+58+89 = **222** of 277, N2 38+13+17+64+90 = **222**, while
+`factual` moved 18.75 points between them. A floor of 0.0000 would have made R's +0.0108 read as an
+unbounded multiple of the noise, the most confident false positive in the whole matrix — **the
+metric with no visible noise was the one most able to manufacture an effect.** §285 said the floor
+is per metric; this says the floor must be measured at the resolution the effect would appear at.
+(R on the same basis: 225 of 277, three items, with `factual` down 25 points. Not a result. The rule
+is that "+0.0108 against a 0.0000 floor" never appears without 222/222 beside it.)
 
 ## The number this round exists to produce
 
@@ -8,7 +81,7 @@
 |---|---|---|---|---|
 | N1 | 1337 | **1.823** | 7,629 | 4.00B |
 | N2 | 1338 | **1.871** | 7,629 | 4.00B |
-| R | 1337 | not launched | — | — |
+| R | 1337 | **1.819** | 7,629 | 4.00B |
 
 **F = 0.048.** Everything else about the two arms is identical: same mix
 (`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
@@ -134,16 +207,66 @@ fixes R's decision rule while R's number does not yet exist. The three arms had 
 no prereg row at all — the criterion was real and dated, but it lived only in a shell script's
 header comment, where no check reads it.
 
+## 排兵布阵 — rebuilt from zero 2026-09-09 03:3xZ, sockets re-verified 04:2xZ
+
+**Why from zero.** The roster went stale under session churn: b0's `92633.sock` pid is dead (b0 is
+now `lessons-d1 [0e4d13]`, identity verified against #102's head sha `98f005d2`, #105's `8a182adc`,
+and review.jsonl 277/278/281/292/293), de's `aupai-db` is unreachable, 3b's `aupai-84` is gone,
+tilerl exited, and four sessions started in the last 10 minutes. **Names are not identity here —
+a resume changes both the label and the socket while the work continues.** Every assignment below
+therefore opens with an identity check against an artifact the session wrote.
+
+**The ordering principle, from the user's 2026-09-05 orders**: chase only what produces a number
+nobody has. One primary per person; everything else is `blocked_on` until the primary lands.
+
+| # | owner | primary — produces | acceptance | reviewer |
+|---|---|---|---|---|
+| 1 | **3b** | **R's reading.** D at step 6500 and the epoch-end val, read per metric against F=0.048 and D | the verdict states \|R−N1\|, F and D together, and calls the bound a result if it fails to clear both | 44 |
+| 2 | **b0** | **b0-35 — v2 attention (CSA + DSA top-k + SWA branch)**: test_arch_compat cases, 60-step one-card smoke, per-step cost in facts/efficiency.json | the cost number exists and the smoke passes; this is the next model, not a cleanup | de |
+| 3 | **de** | **de-84 — score_matrix SKIPs a cross-bounds metric** | the two anneal rows SKIP; a matching-bounds checkpoint still scores | 44 |
+| 4 | **e1** | **e1-51 — cot supply tokens + tokenizer_eval on the 30B mix** | three numbers land in facts/tokenizer.json; a fail is a rebuild decision | 3b |
+| 5 | **44** | **44-41 — v4 loop spec + prereg row** | docs/lessons/next_version_v4_loop.md plus a prereg row; fact_refs_resolve green | fb |
+| 6 | **98** | **the progress page carries tonight's numbers** | F=0.048, the per-metric table, R's verdict when it lands; one screen, plain words | fb |
+
+**Queue debt cleared as part of this.** b0 holds 9 open tasks and de holds 12. Nine is a list, not a
+queue. Each names ONE and marks the rest `blocked_on`; `one_deliverable_per_owner` has been red for
+hours and this is what clears it.
+
+**Review chain after tilerl's exit**: b0↔de (repaired by fb, user may overrule), de↔44, e1↔3b,
+3b↔44, fb↔44. 44 is currently second-reading three people, which is the load to watch.
+
+**Ownerless from the exit**: PR #23 (tilerl-cache-sidecar, changes-requested by 3b) and infra split
+steps 3-6. Offered to b0, who was its reviewer; adopt or close, not left to rot. **b0 adopted #23**
+and is fixing 3b's two findings on branch `b0-51-cache-sidecar` — and b0 states it as tail work,
+not a second deliverable, which is the right call and keeps `one_deliverable_per_owner` honest.
+
+**Sockets, re-verified 04:2xZ after another churn.** b0 answered the identity probe himself:
+`lessons-d1`, worktree `/Users/bytedance/code/aupai-b0`, HEAD `b0-51-cache-sidecar`, one active
+task b0-35. de is `aupai-dd`, 44 is `lessons-44` (13d, never moved). `aupai-89` and `lessons-eb`
+are probed and unanswered — 3b and e1 are the two names outstanding, and 3b owns the step-6500
+read, so that one matters within the hour.
+
+**Cards**: 2,4,5,7 hold R until ~05:5xZ. 3 and 6 idle. Card 0 holds tileRL's l5eval (32.8 GiB),
+and **card 1 now holds `tilerl-seed1curve` at 28.3 GiB — card 1 is aupai's under the 09-06 order,
+claimed with no controller lend note.** Neither is killed: nothing of ours is blocked, R holds the
+four it needs, and killing another team's job needs an instruction naming it. **Whether cards 0 and 6 return to
+aupai is the user's ruling, not the controller's**: a session exiting does not revoke the standing
+order of 2026-09-06.
+
 ## Cards
 
 | | |
 |---|---|
 | aupai | **2, 4, 5, 7** — granted by the user 2026-09-08, machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`) |
-| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 |
-| now | 0 at 32.8 GiB / 100% (tileRL level-5 eval, claim `tilerl-l5eval.0.json`); **2 running N2's score matrix**, claim taken; 1, 3, 4, 5, 6, 7 at 0 MiB |
+| tileRL | 0 and 6 by the STANDING order of 2026-09-06 |
+| now, 04:2xZ | four procs at ~52 GiB = arm R on 2,4,5,7, claim `anneal_r_0909.2-4-5-7.json`. Card 0 at 32.8 GiB, claim `tilerl-l5eval.0.json`. **Card 1 at 28.3 GiB, claim `tilerl-seed1curve.1.json` — card 1 is aupai's under the 09-06 order.** |
 
-**N2 released its cards cleanly.** All four went to 0 MiB and `runs/claims/anneal_n2_0908.2-4-5-7.json`
-is gone — no orphan, no reparented grandchild holding memory.
+**Card 1 is a tileRL job on an aupai card and I am not killing it.** Nothing of ours is blocked:
+R needs four and holds four, and 1 was idle when the claim was taken. But "idle is not free" is
+the rule that exists precisely here, and the claim carries no controller lend note, so the
+encroachment is recorded rather than tolerated silently. It becomes a kill only if a 6-card job
+is queued, and that decision is the user's — it sits in Open decisions below alongside whether
+0 and 6 come back.
 
 ## Running now — arm R, cards 2,4,5,7
 
@@ -152,8 +275,8 @@ is gone — no orphan, no reparented grandchild holding memory.
 | run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
 | launched | 2026-09-09 01:48Z by fb |
 | cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
-| progress | step 2700 / 7629, 35%, 77K tok/s/gpu, 1.707 s/step |
-| next reads | D at step 6500 (~1.9h), epoch-end val at ~05:2xZ |
+| progress | step 7160 / 7629, **94%**, phase `[anneal]`, 1.71 s/step |
+| next reads | **epoch-end val at 7629, ~13 min out — the verdict.** 3b owns it, Monitor `b2ftlp566` armed on the `ep 1/1` line |
 
 ## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
 
@@ -202,37 +325,89 @@ measured at 6500, not extrapolated to it.
 arm's scoring step deadlocks 30 min and exits nonzero; N1 and N2 both did. Checkpoint unaffected,
 scoring done by hand in the gap. The correct fix is one line in `run_ddp.sh`, which is frozen.
 
-## Next gate — R
+## D is the spread of the replicate drift, not its value at one step — amendment 3, `83360615`
 
-R's epoch-end val at ~05:2xZ, read **per metric** against the floor table above, never against a
-single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound and a result, not a
-failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
-Score by hand on a freed card after the chained pass exits nonzero.
+**My own amendment 1 was the defect.** It required `D = |R-N1| at step 6500`: one draw of a quantity
+whose entire content is its spread. R's main phase is a same-seed replicate (§287), so every
+periodic read before the anneal at step 6866 measures numerical nondeterminism and nothing else.
+Thirteen such reads, committed at `runs/anneal_r_vs_n1_drift_0909.tsv` **while the arm was still
+running**, because a series that arrives after the verdict cannot constrain it:
 
-## Queue — 8 open, and the reviewer bottleneck broke tonight
+| | |
+|---|---|
+| reads | **13, window closed** (500..6500; 7000 is already `[anneal]`) |
+| range | [-0.021, +0.016] |
+| max\|d\| | **D = 0.021** at step 4000, FINAL |
+| mean | -0.0026 |
+| sign changes | 3 |
+| last main-phase read | 6500: R 1.849 vs N1 1.854, \|d\| 0.005 |
 
-| PR | branch | state |
+A 6500 read landing near the mean would have understated D about sevenfold. **D is now
+`max|R-N1|` over every main-phase periodic read, and it FREEZES at 6500** — the next periodic read,
+7000, is inside the anneal, so the window is closed by construction rather than by choice (44's
+point, sharper than my own statement of it).
+
+44 verified all four legs independently rather than reading mine: the phase arithmetic in code
+(`train.py:2626`, 0.9 x 7629 = 6866, margin 366 steps), a byte diff of the two mixes, every
+statistic recomputed off the TSV, and the commit time 04:29:50Z against R's position. On max vs
+range: **max is right because D is a floor for a pointwise exceedance and must be in the units of
+one draw.** That is a better reason than the asymmetric-cost one I gave.
+
+**Merged before the read it governs**, which is the only reason it is a pre-registration. Amendment
+1 was mine, the correction is mine, and it is recorded as a correction rather than quietly fixed —
+the second time tonight one of my criteria expressed something narrower than the property asked
+(§287 was the first). 44 holds whether that pair is a shape.
+
+## Next gate — the verdict at step 7629
+
+R's epoch-end val, ~13 min out, read **per metric** against the floor table — §285 is the reason a
+single aggregate is not enough. 3b owns the read; Monitor `b2ftlp566` is armed on the `ep 1/1` line.
+
+**The rule, in 3b's wording, which is better than mine:** the reweight moved val **iff |R-N1| at the
+final epoch-end read exceeds BOTH F = 0.048 and D = 0.021.** I had written `max(F, D)` — same
+threshold, but naming both floors means neither can be dropped silently.
+
+**Two properties of the design, registered as amendment 4 (`0c4617d2`) BEFORE the number existed,
+because afterwards they read as excuse-making:**
+
+- **The estimator mismatch runs conservative, and that asymmetry has to be reported.** F is the
+  100-batch epoch-end read; D is a max over 20-batch periodic reads, so D carries 20-batch sampling
+  noise on top of the true replicate drift and is an **upper bound** on it. Applying it to a
+  100-batch comparison over-penalises R. Consequence: **a no-effect verdict carries this caveat and
+  an effect verdict does not.** No clean epoch-end D exists and that is structural — the epoch-end
+  R-vs-N1 comparison IS the verdict quantity, since R's anneal differs, so drift and effect are
+  separable only inside the replicate and the replicate has only periodic reads.
+- **The design is under-powered by construction.** N1's entire anneal tail moved val 1.854 -> 1.823
+  = **0.031**, against a threshold of max(F, D) = **0.048**. The phase being reweighted contributes
+  less in total than the floor the reweight must clear, and D alone is 68% of that contribution; a
+  reweight that doubled the anneal's whole effect would reach ~0.062, barely over F. **So a null
+  means "this budget cannot resolve an effect of this size", never "no effect"** — and the 30B mix
+  decision rests on that sentence, not on the bound.
+
+## Queue — 9 open, 10 merged tonight
+
+| PR | branch | state, 05:2xZ |
 |---|---|---|
-| #100 | fact-repro-table (98) | **MERGED `3804ff48`** by 44 as second reviewer |
-| #118 | fb-shapes-287 | approved, then **held by fb** — correction `3b50be2e` pushed after the step-2500 read falsified part of the entry; awaiting 44's re-approval |
-| #23 | tilerl-cache-sidecar | changes-requested by 3b, correctly blocked |
-| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | no qualifying review |
+| #128 | fb-cite-amended3 | MERGEABLE. §285/§287 anchors to `@amended_3`; §287 gains the RUNTIME confirmation of its boundary — the log's phase label flips 6800 `[main]` -> 6900 `[anneal]`, against the 6866 the code computes. Every other claim in that entry was read off source, where a phase built from a different field gives the same reading of the same lines. 44 reviews |
+| #105 | b0-47-code-decode | §290 done, CI green, **CONFLICTING again** — main moved under it. de merges once b0 rebases |
+| #129 | b0-49-r4-wallclock | §291, CONFLICTING; unblocks when #105 lands |
+| #131 | de-98-guard-population | de's guard task, opened within the hour of de-84 closing |
+| #132 | b0-52-csa-doc-cu | b0's actual primary (b0-35) |
+| #122 #120 | 44 | need de |
+| #103 | 3b-runsmove | needs b0 |
+| #23 | tilerl-cache-sidecar | b0 adopted, tail work |
 
-**#100 is how the bottleneck should break.** It sat approved-and-unmerged for 7h because the 09-07
-ruling puts the merge on the reviewer and de was asleep. I declined to merge it myself: a third
-party merging satisfies the rule's purpose and fails its letter, and the cost is not one facts
-table — it establishes that the reviewer step is skippable whenever a reviewer sleeps, which is the
-step that makes approval mean anything. **The clean route needed no exception, because nothing says
-a PR has one reviewer**: 44 independently reviewed it, became a roster reviewer of that PR, and
-merged and pod-pushed inside the ruling. Conflict was `facts/corpus_supply.json` only, resolved by
-union, 29 facts, JSON validated.
+**de-98's measured value beat my estimate, and how it beat it is the point.** I wrote "1 of 4
+unguarded ledgers" into `--produces`. de enumerated the filesystem: **3 of 10 guarded** — unguarded
+are review (no writer at all), ledger_resolutions, retro, milestones, msg_log, prereg, experiments.
+**My "4" was itself a list**, the three harness writers plus the one that had just bitten us, which
+is exactly the defect the acceptance condition was written to catch, committed by me in the act of
+writing it. Both numbers go in the close: the measurement and the estimate it replaced.
 
-**A trap 44 hit doing it**: #100's head branch is `fact-repro-table`, not `pr100`; two pushes went
-to a same-named new branch first. Worth a friction row.
-
-**I held my own PR after it was approved.** 44 approved #118 and the step-2500 read landed in the
-same minute, falsifying "monotone since 1000" and the residual built on it. Approval is not a
-reason to merge something you now know is wrong.
+Ruling on retro, which de asked for: **it gets the shared writer like the other five.** Eight rows
+all dated 2026-08-31 is evidence nobody has written since, not evidence the ledger is retired —
+different claims, only the first measured. Retiring it here would also be a carve-out in the very
+guard whose AST enumeration exists to make carve-outs impossible.
 
 ## Landed this tick — three defects, all found by reading rather than by a check
 
