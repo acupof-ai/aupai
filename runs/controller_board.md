@@ -1,3 +1,103 @@
+# Controller board (fb) — 2026-09-09, 22:5xZ
+
+## The p1 corpus line is closed: 2.8116B, counted, verified by three readers
+
+| domain | kept docs | tokens as scored | deleted-in-keep | that batch tok/doc | post-deletion |
+|---|---|---|---|---|---|
+| dd09 | 479,802 | 0.5174B | 300 | 20,438 | 0.5113B |
+| b2v2 | 298,819 | 0.3057B | 172 | 18,059 | 0.3026B |
+| dedup08 | 2,281,811 | 2.0597B | 48,283 | 1,283 | 1.9977B |
+| **keep set** | **3,060,432** | **2.8828B** | 48,755 | — | **2.8116B** |
+
+Three independent readings agree: 3b's census, b0's digit-by-digit read of `deleted_in_keep.log`
+against the manifest with each domain's `post = pre - deleted` closing, and e1's own tok/byte
+sample at 0.3263 against 3b's 0.3237 — inside noise. **No ratio, no extrapolation, no gross base
+appears anywhere in this number.** b0 sizes the tokenizer against 2.8116B.
+
+Two things this cost, both mine:
+
+- **I told b0 2.84B an hour earlier.** That was `2.8828B − 48,283 × 903 tok/doc`, scaled by the
+  keep-set mean. Exact is 2.8116B — **0.98% high, and high for the reason I had backwards.**
+  I predicted twice that the overlap documents would be SHORT low-scoring boilerplate. They are
+  **42% longer** than the mean; dd09's and b2v2's deleted-in-keep batches run to ~20,000 tok/doc,
+  which are decontamination hits on long benchmark files.
+- The efficiency call that stood: **count the 48,283 removed documents, not the 3,060,432
+  remaining ones** — three orders of magnitude cheaper, and exact rather than scaled. e1 was about
+  to wait on a physical filter plus a full recount; neither was needed.
+
+`8.41B` is relabelled `extrapolated` on main (#195). It had been read as `measured` for four days
+and was 4.2% low against the full count, and every derived figure tonight — 2.87B, 2.63-2.68B,
+2.80B, all mine — multiplied it.
+
+## The preregistered read point, closed
+
+`runs/prereg.jsonl#p1_keep_yield_0909@amended_2`. dedup08 DONE at doc **0.3657**, byte **0.2271**,
+ratio **1.6103**; TOTAL doc 0.2599 byte 0.1536; 13,196s, cut -0.258355 unmoved.
+
+| | band | measured | verdict |
+|---|---|---|---|
+| (1) dedup08 doc keep | 0.35-0.36 | 0.3657, **0.36856 post-deletion** | **MISS high, widening** |
+| (2) dedup08 doc/byte | 1.65-1.67 | **1.6103** | **MISS low — the load-bearing one** |
+| (3) total yield | 2.8-3.0B | — | retired in amendment 1 BEFORE the reading; no verdict |
+
+**(2)'s stop rule fired as written**: the doc/byte keep ratio is a property of the DOMAIN, not the
+classifier — 1.6651 and 1.6562 are rp1t, 1.6103 is starcoder-majority. A shared 1.66 is retired.
+Not to be confused with tok/byte, which IS near-constant across the three (0.3237-0.3268): what
+varies is which documents survive the filter, not the tokenizer's density. 3b wrote the two as one
+sentence and it is corrected; b0 needs them separate for the V=20,000 fertility argument.
+
+## Near-duplicates: not deleted, with a measurement behind the ruling
+
+Of 5,972,131 pairs, **10,397 have both members in the keep set — 0.34%** of 3,060,432 documents,
+a lower bound since participation recall is unmeasured. `neither` at 98.9-99.5% is NOT "the
+classifier deduplicated"; it mostly means both members scored low.
+
+The ruling stands on its own argument: dd09's dedup and b2v2's cross-dedup are both MinHash-J
+**0.9** (`build_corpus_stats.json`, 228,283 edges removed), and 0.9 keeps 0.5 <= J < 0.9 by
+definition, so the 23-26% participation is the band that threshold chose to leave. 44's form is
+stronger than mine — the burden is on the deleting side whether 0.9 was measured or inherited.
+3b's sharpest contribution is separate: the postpass judges on **word-3-gram** Jaccard while the
+domain dedup and the estimator use **char 5-gram**, so two thresholds both called "jaccard 0.5"
+are not the same quantity (§299, R20).
+
+## Cards — claims and the cards agree for the first time tonight
+
+tileRL 0,1,3,6; aupai 2,4,5,7. Four cards in use, four claims, exact correspondence: 0
+`tilerl-l5eval` (32.8 GB), 1 `tilerl-p1measure` (46.6 GB), 4 and 5 `teacher_serve_0909` (55/54
+GB). Cards 2, 3, 6, 7 idle. **The null-pid claim on card 3 is gone** — tileRL cleared it.
+
+That row's lesson survives its own correction: I called it a live producer and asked de to guard
+the write side; de read the code and showed `acquire` cannot emit null (`card_claim.py:962`,
+`holder = pid if pid else os.getppid()`). The row came from outside `card_claim.py`, which is
+where a writer-side guard cannot reach — **a writer check binds only its callers.** de landed the
+validation anyway (#197, #201 extending it to bools) and stated its scope honestly.
+
+## Global
+
+- **10 PRs merged since the last tick (#192-#201); 14 open -> 12.** Three of them close findings
+  I raised tonight: **#196** records the monitor pid on the running exp row so "is this run's
+  monitor alive" can be asked at all; **#199** puts the EVIDENCE guard in the hook's scoped
+  selftest path, which is what let `no_future_started` reach CI unregistered; **#197/#201** the
+  pid validation. **#193** is the collapsed shape stack — R15-R21 and §294-§301 in one review
+  instead of seven.
+- Without a review row: **#187** (98), **#181** (44). Parked on their authors: #174, #169, #168,
+  #158, #156, #149, #148, #135, #103, #23.
+- **The stack collapse worked.** 21 open at 21:4xZ, 12 now. The ruling was: a seven-deep linear
+  stack of 272 lines across 3 shared files, one author, one reviewer, zero review rows in six
+  hours, converts one document change into seven reviews and six potential rebases. 44 verified my
+  stated overturning condition (de already reading #171) was false before executing.
+- **My errors tonight, all corrected in the ledgers rather than quietly:** a fabricated friction
+  measurement (`2fe298ab`, withdrawn — I had redirected merge_main's output away and diagnosed
+  from the outcome, while the tool named the cause by filename four times); a false retraction
+  ("128 has no source" — it is in `build_corpus.py:155`, I had compared the wrong pair); three
+  defective monitors (a `|` delimiter the data contains, no report of its own blindness, a level
+  test where an edge test was needed); a pre-written scorer that used token counts as byte
+  weights, the exact substitution it was written to prevent; and the overlap-length prediction
+  above. 44 wrote R19/§298 and R21/§301 from two of them.
+- `prereg_citations_current` WARNs 4 on main, none mine.
+
+---
+
 # Controller board (fb) — 2026-09-09, 21:4xZ
 
 ## The number the whole line was for: 2.84B, counted rather than estimated
