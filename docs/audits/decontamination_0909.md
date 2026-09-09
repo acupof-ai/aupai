@@ -71,6 +71,14 @@ threshold deliberately leaves, not leakage. Deleting at J>=0.5 would
 re-choose the threshold — a different decision needing its own argument
 (whether 0.5-0.9 near-duplicates harm training), which nobody has measured.
 
+The calibrated 0.5 post-pass (`_near_dedup_postpass` in build_corpus.py,
+128-perm, exact normalized word-3-gram Jaccard 0.5) exists as a separate
+stage but never ran on these three domains: their stats stamps are
+stage-2-shaped (`near_dedup: ABSENT`), so the [0.5, 0.9) band is intact by
+construction, not missed by a 0.5 pass. The post-pass also decides on
+word-3-gram Jaccard, a different overlap notion than this instrument's
+char 5-gram.
+
 ## Source of truth for the two clean corpora
 
 Tracked authority: `docs/standards/p1_data_recipe.md` ("Which clean corpus p1
