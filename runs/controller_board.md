@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-09, 03:1xZ
+# Controller board (fb) — 2026-09-09, 04:2xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | N1 | 1337 | **1.823** | 7,629 | 4.00B |
 | N2 | 1338 | **1.871** | 7,629 | 4.00B |
-| R | 1337 | not launched | — | — |
+| R | 1337 | running, step 4690/7629 (61%), loss 1.668 | 7,629 | 4.00B |
 
 **F = 0.048.** Everything else about the two arms is identical: same mix
 (`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
@@ -134,7 +134,7 @@ fixes R's decision rule while R's number does not yet exist. The three arms had 
 no prereg row at all — the criterion was real and dated, but it lived only in a shell script's
 header comment, where no check reads it.
 
-## 排兵布阵 — rebuilt from zero, 2026-09-09 03:3xZ
+## 排兵布阵 — rebuilt from zero 2026-09-09 03:3xZ, sockets re-verified 04:2xZ
 
 **Why from zero.** The roster went stale under session churn: b0's `92633.sock` pid is dead (b0 is
 now `lessons-d1 [0e4d13]`, identity verified against #102's head sha `98f005d2`, #105's `8a182adc`,
@@ -163,11 +163,20 @@ hours and this is what clears it.
 3b↔44, fb↔44. 44 is currently second-reading three people, which is the load to watch.
 
 **Ownerless from the exit**: PR #23 (tilerl-cache-sidecar, changes-requested by 3b) and infra split
-steps 3-6. Offered to b0, who was its reviewer; adopt or close, not left to rot.
+steps 3-6. Offered to b0, who was its reviewer; adopt or close, not left to rot. **b0 adopted #23**
+and is fixing 3b's two findings on branch `b0-51-cache-sidecar` — and b0 states it as tail work,
+not a second deliverable, which is the right call and keeps `one_deliverable_per_owner` honest.
 
-**Cards**: 2,4,5,7 hold R until ~05:2xZ. 1, 3, 6 idle. Card 0 holds tileRL's orphaned l5eval
-(32.8 GiB, 100%, pid 3083582, claim 19h old, owning session gone) — not killed, because it is
-another team's job and killing needs an instruction naming it. **Whether cards 0 and 6 return to
+**Sockets, re-verified 04:2xZ after another churn.** b0 answered the identity probe himself:
+`lessons-d1`, worktree `/Users/bytedance/code/aupai-b0`, HEAD `b0-51-cache-sidecar`, one active
+task b0-35. de is `aupai-dd`, 44 is `lessons-44` (13d, never moved). `aupai-89` and `lessons-eb`
+are probed and unanswered — 3b and e1 are the two names outstanding, and 3b owns the step-6500
+read, so that one matters within the hour.
+
+**Cards**: 2,4,5,7 hold R until ~05:5xZ. 3 and 6 idle. Card 0 holds tileRL's l5eval (32.8 GiB),
+and **card 1 now holds `tilerl-seed1curve` at 28.3 GiB — card 1 is aupai's under the 09-06 order,
+claimed with no controller lend note.** Neither is killed: nothing of ours is blocked, R holds the
+four it needs, and killing another team's job needs an instruction naming it. **Whether cards 0 and 6 return to
 aupai is the user's ruling, not the controller's**: a session exiting does not revoke the standing
 order of 2026-09-06.
 
@@ -176,11 +185,15 @@ order of 2026-09-06.
 | | |
 |---|---|
 | aupai | **2, 4, 5, 7** — granted by the user 2026-09-08, machine fields set (`launch_block_granted=true`, `block_cards="2,4,5,7"`, `lane_card=""`) |
-| tileRL | 0, 1, 3, 6 — 0 and 6 by the STANDING order of 2026-09-06 |
-| now | 0 at 32.8 GiB / 100% (tileRL level-5 eval, claim `tilerl-l5eval.0.json`); **2 running N2's score matrix**, claim taken; 1, 3, 4, 5, 6, 7 at 0 MiB |
+| tileRL | 0 and 6 by the STANDING order of 2026-09-06 |
+| now, 04:2xZ | four procs at ~52 GiB = arm R on 2,4,5,7, claim `anneal_r_0909.2-4-5-7.json`. Card 0 at 32.8 GiB, claim `tilerl-l5eval.0.json`. **Card 1 at 28.3 GiB, claim `tilerl-seed1curve.1.json` — card 1 is aupai's under the 09-06 order.** |
 
-**N2 released its cards cleanly.** All four went to 0 MiB and `runs/claims/anneal_n2_0908.2-4-5-7.json`
-is gone — no orphan, no reparented grandchild holding memory.
+**Card 1 is a tileRL job on an aupai card and I am not killing it.** Nothing of ours is blocked:
+R needs four and holds four, and 1 was idle when the claim was taken. But "idle is not free" is
+the rule that exists precisely here, and the claim carries no controller lend note, so the
+encroachment is recorded rather than tolerated silently. It becomes a kill only if a 6-card job
+is queued, and that decision is the user's — it sits in Open decisions below alongside whether
+0 and 6 come back.
 
 ## Running now — arm R, cards 2,4,5,7
 
@@ -189,8 +202,8 @@ is gone — no orphan, no reparented grandchild holding memory.
 | run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
 | launched | 2026-09-09 01:48Z by fb |
 | cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
-| progress | step 2700 / 7629, 35%, 77K tok/s/gpu, 1.707 s/step |
-| next reads | D at step 6500 (~1.9h), epoch-end val at ~05:2xZ |
+| progress | step 4690 / 7629, **61%**, loss 1.668, gnorm 0.52, 77K tok/s/gpu, 1.709 s/step, peak 49.53 GiB |
+| next reads | D at step 6500 — 1,810 steps out at 1.71 s/step = **~52 min**, ~05:1xZ. Epoch-end val ~05:5xZ. 3b owns the read |
 
 ## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
 
@@ -246,14 +259,36 @@ single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound 
 failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
 Score by hand on a freed card after the chained pass exits nonzero.
 
-## Queue — 8 open, and the reviewer bottleneck broke tonight
+## Queue — 11 open, and the §-numbering chain is the only ordering constraint
 
-| PR | branch | state |
+| PR | branch | state, 04:2xZ |
 |---|---|---|
-| #100 | fact-repro-table (98) | **MERGED `3804ff48`** by 44 as second reviewer |
-| #118 | fb-shapes-287 | approved, then **held by fb** — correction `3b50be2e` pushed after the step-2500 read falsified part of the entry; awaiting 44's re-approval |
-| #23 | tilerl-cache-sidecar | changes-requested by 3b, correctly blocked |
-| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | no qualifying review |
+| #124 | 44-shapes-288-289 | **merges FIRST.** §288+§289, green on both CI events, MERGEABLE. Needs a review row — 44 asked de directly |
+| #105 | b0-47-code-decode | approved on content by de. CONFLICTING; b0 renumbers §289 → **§290** and resolves in one push, then de merges |
+| #125 | 44-v2spec-current | v2 spec: first arm CSA+DSA+SWA NoPE, HCA/partial-RoPE written UNBUILT not dropped, amendment_3. MERGEABLE. **fb reads before merge** |
+| #123 | 3b-frozen-args | joins the frozen launch line to train.py's parser |
+| #122 | 44-roster-exited-skip | revised per my objection: exited members get their own line, never dropped; fixture-tested |
+| #120 | 44-teacher-vocab | teacher vocab 248,320 |
+| #109 | e1-tokshards | ancestry FAIL names what the sideways move discarded |
+| #106 | 44-minicpm5-arch | conflict resolved, pushed `057b395d`, de's to merge |
+| #103 | 3b-runsmove | two closed research .md → docs/audits/ |
+| #92 | 98 | pod: refuse non-ASCII argv |
+| #23 | tilerl-cache-sidecar | b0 adopted; 3b's two findings being fixed |
+
+**The §-chain is the only hard order in that list: #124, then b0's §290 push, then #105.**
+Everything else can land in any order. I ruled #124 first because it is green and its two
+sections are contiguous, while #105 is CONFLICTING and must be re-pushed regardless — so the
+renumber costs b0 nothing beyond a number he was already editing.
+
+**Why b0's green CI did not catch the collision, corrected from my first reading.** I told de the
+check sees only the branch's files. That is wrong. `.github/workflows/ci.yml` is
+`on: [push, pull_request]` with a bare `actions/checkout@v4`, so the pull_request run checks out
+the **merge ref** — it does test the merged tree, and #124 shows both runs green. The real gap is
+narrower: **the pull_request run tests the merge with main as of the last push to the PR, and main
+moving afterwards re-triggers nothing.** #105's last green run sits at head `8a182adc`, computed
+before §284-287 existed — a real merge test against a main that no longer exists. Stale-green, not
+blind. The durable fix is the repo setting (require branches up to date before merging), not
+another check, and 44 has the sentence if it becomes a shape.
 
 **#100 is how the bottleneck should break.** It sat approved-and-unmerged for 7h because the 09-07
 ruling puts the merge on the reviewer and de was asleep. I declined to merge it myself: a third
