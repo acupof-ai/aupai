@@ -714,6 +714,14 @@ _carry_restore() {
 # predicate that only ever says "dead" passes every positive case: the live-pid and deliberate-hold
 # rows are the ones that would have prevented 2026-09-05.
 if [ "$1" = "--selftest" ]; then
+  # A manual run reproduces the hook environment with GIT_DIR exported; under it the
+  # `git init` / `git config user.name T` calls below hit the SHARED .git -- the
+  # 2026-09-02 core.bare flip, and de's 2026-09-07 pod_push near-miss that wrote the
+  # shared config the same way (friction near_miss row). The hook strips GIT_* before
+  # invoking this; a manual run does not. Strip at the entry, once, for every world.
+  # The list is pod_drift._GIT_ENV_VARS plus GIT_PREFIX: GIT_CONFIG names the file
+  # `git config` writes directly, bypassing repo resolution (4c, measured).
+  unset GIT_DIR GIT_INDEX_FILE GIT_WORK_TREE GIT_OBJECT_DIRECTORY GIT_COMMON_DIR GIT_CONFIG GIT_CONFIG_GLOBAL GIT_PREFIX
   _fails=0
   _t=$(mktemp -d)
   _case() {  # $1=name $2=want dead|alive
@@ -789,6 +797,20 @@ time.sleep(20)
   # reimplementation of the predicate. Both directions: a gate that only ever refuses passes
   # every negative case, and one that only ever accepts is the prose rule it replaced.
   _g=$(mktemp -d)
+  # GUARD THE STRIP ABOVE, on the property that matters: a config write to a temp world
+  # must land in THAT world's .git/config. GIT_DIR redirects repo resolution and GIT_CONFIG
+  # names the output file directly, so a leaked var of either kind makes the write land
+  # elsewhere while `rev-parse --absolute-git-dir` still reads the temp world (4c,
+  # measured) -- the probe below writes a sentinel and greps the file it must land in.
+  # Mutant-tested: drop the unset at the entry and this FAILs.
+  _probe=$(mktemp -d)
+  git -C "$_probe" init -q . >/dev/null 2>&1
+  git -C "$_probe" config probe.guard sentinel >/dev/null 2>&1
+  _probe_real=$(cd "$_probe" && pwd -P)
+  # git config stores probe.guard as a [probe] section, so grep the value, not the dotted key.
+  grep -q "sentinel" "$_probe_real/.git/config" 2>/dev/null \
+    || { echo "  FAIL git-env guard: a config write to the temp world did not land in its own .git/config -- GIT_* leaked (GIT_DIR or GIT_CONFIG redirects it)" >&2; _fails=$((_fails + 1)); }
+  rm -rf "$_probe"
   (
     cd "$_g" && git init -q . && git config user.email t@t && git config user.name T
     mkdir -p runs && echo x > model.py && echo y > train.py && echo z > other.txt
@@ -1711,7 +1733,7 @@ for _ in $(seq 1 120); do
     _carry_out=$(_carry_stage "$1") || { echo "  main is unmoved at ${_old:0:8}." >&2; exit 1; }
     _carry=$(printf '%s\n' "$_carry_out" | head -1)
     _carry_paths=$(printf '%s\n' "$_carry_out" | tail -n +2)
-    if ! git merge --no-edit main; then
+    if ! git merge --no-edit -m "merge main into $1 ($1)" main; then
       # WHY `git merge` FAILED, WHICH IS TWO DIFFERENT THINGS. A content conflict leaves
       # unmerged index entries and no commit. A merge that resolved cleanly and then had its
       # COMMIT refused by the pre-commit hook leaves MERGE_HEAD set, ZERO unmerged paths, and
@@ -1806,7 +1828,7 @@ for _ in $(seq 1 120); do
     if [ -s "$_rows" ]; then
       _rn=$(grep -c . "$_rows" 2>/dev/null || echo 0)
       if cat "$_rows" >> "$_wt_self/runs/friction.jsonl" \
-         && git -C "$_wt_self" commit -q -m "friction: $_rn queued row(s) from $1" \
+         && git -C "$_wt_self" commit -q -m "friction: $_rn queued row(s) ($1)" \
               -- runs/friction.jsonl >/dev/null 2>&1; then
         : > "$_rows"
         echo "merge_main: drained $_rn queued friction row(s) into one commit" >&2
