@@ -18183,6 +18183,16 @@ EVIDENCE = {
 }
 
 
+def assert_evidence_covers_checks():
+    # Equality, not subset: both directions fail loudly. A check added without a declaration
+    # is classified by nobody; a stale name is noise. Cheap enough to run in the hook's
+    # scoped path, where the full _demo() guard never fires for a CHECKS/EVIDENCE-only diff.
+    check_names = {n for n, *_ in CHECKS}
+    assert set(EVIDENCE) == check_names, (
+        f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
+        f"undeclared: {sorted(check_names - set(EVIDENCE))}")
+
+
 # -------------------------------------------------------------------------- stages
 #
 # A stage is done when its POSTCONDITION exists, never when its artifact does.
@@ -24085,11 +24095,8 @@ def _demo(only=None):
 
     # Every check declares where its evidence lives (EVIDENCE); a check added
     # without a declaration would be classified by nobody, and a stale name is
-    # noise. Equality, not subset: both directions fail loudly.
-    check_names = {n for n, *_ in CHECKS}
-    assert set(EVIDENCE) == check_names, (
-        f"EVIDENCE stale: {sorted(set(EVIDENCE) - check_names)}; "
-        f"undeclared: {sorted(check_names - set(EVIDENCE))}")
+    # noise.
+    assert_evidence_covers_checks()
 
     # THE COUNT MUST NOT INCLUDE WHAT WAS SKIPPED. `len(CHECKS)` claimed "81 checks each verified to
     # FAIL on a broken world" while a SelftestSkip meant some of them were never run -- the skip
@@ -27510,6 +27517,10 @@ def main():
         _paths = [p.strip() for p in a.selftest_touching.split(",") if p.strip()]
         _names = _checks_touching(_paths)
         if not _names:
+            # The one global invariant cheap enough to run here: a CHECKS-table or EVIDENCE
+            # edit selects no check function, so without this the guard only exists in the
+            # full ~4min run and a stale/undeclared name sails through the hook (task #84).
+            assert_evidence_covers_checks()
             print(f"no CHECK function is changed by the staged diff of {', '.join(_paths)} -- "
                   f"nothing scoped to verify. THIS IS NOT A PASS for those files: an edit to a "
                   f"shared helper or to the CHECKS table can break any check, and only the full "
