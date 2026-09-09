@@ -93,7 +93,7 @@ threshold ablation measured it directly (bytes over 30.16 GB of shards, extrapol
 6% below the derivation (docs/standards/p1_classifier_annotations.md, PR #164). The extrapolated
 value was used downstream; the derivation stays as the prior. A full count over the post-deletion
 clean copy (all 298 shards, frozen tokenizer, 2026-09-10, `datagen/count_domain_tokens.py`)
-measured **8.509B tokens** / 6.06M docs; the extrapolation was 4.2% below the implied
+measured **8.509B tokens** / 6.06M docs; the extrapolation was 4.0% below the implied
 pre-deletion count (8.760B at 1,404 tok/doc) — an extrapolation labeled "measured" is why the
 gap went unnoticed.
 
