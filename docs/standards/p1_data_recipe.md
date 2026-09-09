@@ -59,9 +59,17 @@ p1 follows those proportions:
 
 | part | tokens | source |
 |---|---|---|
-| synthetic textbooks | ~20B | 27B teacher, seeded from the 20K topic table |
+| synthetic textbooks | ~20B | 27B teacher, seeded from the 20K topic table, **in English** |
 | filtered code | ~6B | educational-value classifier over `data/corpus/code_*` |
 | synthetic exercises | ~0.18B | 27B teacher, `signature + docstring -> body` with executable tests |
+
+**The synthetic textbooks are English.** HumanEval's docstrings are English, the exercise form is
+`signature + docstring -> body` with an English docstring, phi-1 and phi-1.5 are English, and AGENTS.md
+already states that this corpus follows capability rather than language at roughly 60:40 English-leaning
+because code is written in English. This was left unstated in the first revision of this document and the
+omission cost a measurement: the tokenizer proxy named below was `data/corpus/textbook`, which is 76%
+Chinese, and it read never_used 0.084 where the English proxy reads 0.63. A recipe that does not name the
+language of two thirds of its tokens will be proxied in the wrong one.
 
 **Fully synthetic code is outside the published recipe.** phi-1.5 kept the 6B filtered code. Dropping
 it is a legitimate arm but it has no reference score, so it is an ablation, not the plan.
@@ -84,14 +92,17 @@ first.
 | synthetic exercises | 44 | execution pass rate with the discard rate recorded; decontaminated against HumanEval and MBPP; topic distribution table; 50 samples, two readers, agreement recorded |
 | educational-value classifier | e1 | held-out AUC against teacher labels; keep rate stated against phi-1's ~17%; **threshold ablation run on our own corpus**; 50 high-scoring and 50 low-scoring samples, two readers |
 | topic seeds, dedup, decontamination | 3b | 20K topic table with a coverage measure; decontamination carries a known-positive control; a self-repetition metric for the synthetic set |
-| tokenizer + eval harness | de | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
+| tokenizer + eval harness | d1 | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
 | human spot check | 98 | one table, one row per artifact, each with n, two readers, agreement, disagreement count, and a mix/no-mix verdict; a row without an agreement rate does not count |
 
 Two criteria are load-bearing and easy to drop:
 
-- **The classifier threshold is measured, not copied.** FineWeb-Edu reports threshold 3 as best
-  overall, with higher thresholds improving knowledge and reasoning benchmarks while significantly
-  degrading HellaSwag and PIQA. That trade-off is a property of their corpus.
+- **The classifier threshold is measured, not copied.** FineWeb-Edu reports threshold 3 as the best
+  trade-off between knowledge- and reasoning-intensive benchmarks and benchmarks like HellaSwag.
+  That trade-off is a property of their corpus. (An earlier revision of this line said higher
+  thresholds "significantly degrade HellaSwag and PIQA"; 44 checked the source and the paper's
+  text names HellaSwag only, with the per-threshold numbers in a figure. Corrected rather than
+  deleted, because the overstatement is the same defect this document exists to prevent.)
 - **Decontamination reports a known-positive control.** A HumanEval problem is planted and must be
   caught. `facts/contamination.json#cont.split` records 30% of math-500 questions with a containment
   hit in the math SFT corpus; a decontamination that only reports "0 hits" is indistinguishable from
