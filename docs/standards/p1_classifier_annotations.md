@@ -315,5 +315,6 @@ a follow-up PR so they carry review and re-run provenance.
 | ablation log (AUC tables, sweep) | `runs/p1_train_head.log` | `train_head.py` |
 
 experiments.jsonl rows: `classifier_pilot_1k`, `classifier_pilot_5k`,
-`classifier_labels_100k`, `classifier_ablation_0910`. The yield band is
-preregistered: `runs/prereg.jsonl#p1_keep_yield_0909`.
+`classifier_labels_100k`, `classifier_ablation_0910`. The yield prediction is
+preregistered (amended once, 2026-09-10: per-domain byte keep x per-domain
+bytes): `runs/prereg.jsonl#p1_keep_yield_0909@amended_1`.
