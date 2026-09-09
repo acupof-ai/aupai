@@ -11,9 +11,25 @@
 | dedup08 | 2,281,811 | 2.0597B | 903 | 0.3237 |
 | **keep set** | **3,060,432** | **2.8828B** | 942 | 0.3246 |
 
-**Size against 2.84B, not 2.88B**: the dedup08 row is PRE-DELETION and the decontam pass removes
-48,283 of its kept documents, which scales the keep set to **2.8392B**. b0 has this for the
-tokenizer schedule.
+**Size against 2.8116B.** The dedup08 row is PRE-DELETION; the decontam pass removes 48,283 of
+its kept documents. Rather than re-count 3,060,432 documents, 3b counted the 48,283 — three
+orders of magnitude cheaper and EXACT instead of scaled:
+
+| domain | deleted-in-keep | tokens | that batch's tok/doc | post-deletion |
+|---|---|---|---|---|
+| dedup08 | 48,283 | 61.97M | **1,283** | 1.9977B |
+| dd09 | 300 | 6.13M | **20,438** | 0.5113B |
+| b2v2 | 172 | 3.11M | **18,059** | 0.3026B |
+| | | | | **2.8116B** |
+
+**My scaled 2.8392B was 0.98% high, and the reason inverts what I predicted.** I expected the
+overlap documents to be SHORT — low-scoring boilerplate — and said so twice. They are 42% LONGER
+than the keep-set mean of 903. dd09's and b2v2's deleted-in-keep batches are more extreme still
+at ~20,000 tok/doc: those are decontamination hits on long benchmark files, not overlap. So
+scaling by a mean overestimates here, for exactly the reason I had backwards.
+
+Every number on this line is now a direct count: keep set **2.8828B** as scored, **2.8116B**
+after deletion. Neither owes a ratio, an extrapolation, or a gross base. b0 has both.
 
 **Every derived figure from tonight is superseded, mine first**: 2.87B (shared ratio), 2.63-2.68B
 (the per-domain correction), 2.80B (byte keep × gross). They failed for different reasons and
