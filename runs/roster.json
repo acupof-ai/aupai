@@ -1,133 +1,136 @@
 {
-  "_comment": [
-    "Who is on this round, how to reach them, and what they own. Read by",
-    "scripts/board.py who. Address peers by SOCKET, never by name: session names",
-    "collide -- 'lessons-44' resolves to at least two live sessions and only one is",
-    "on this team. On 2026-09-01 three non-team sessions were given work because an",
-    "idle status in ListAgents was read as ownership. Idle does not derive",
-    "membership; a produced artifact or the session's own word does.",
-    "Post to a topic and everyone sees it. Send a socket message and only one does.",
-    "2026-09-05 fb: ADDRESSING STANDARD. Send to the socket in this file, or to listagents_name with its [ref] appended -- never a bare name. Names collide (lessons-e1 is NOT e1; lessons-23/c1 are not on this team) and the channel a grant commit names (e.g. 'via tilerl-27') is a grant channel, never the runner. Before the first send of a session, run ListAgents and match name+ref against this file; if they disagree, this file is updated first. A misrouted message goes back to its sender, and the sender re-reads this file. Incidents: 2026-09-01 three non-team sessions dispatched; 2026-09-05 b0's bench review sent to tilerl-27 then to a session outside the team."
-  ],
-  "members": [
-    {
-      "name": "fb",
-      "socket": "uds:/tmp/cc-socks/67870.sock",
-      "role": "controller",
-      "topics": [
-        "*"
-      ],
-      "note": "rulings, card allocation, launch; the run's supervisor of record Socket verified 2026-09-06 12:2xZ: PPID of this session's shell is 67870, cwd /Users/bytedance/code/aupai (integration tree; worktree ../aupai-fb).",
-      "listagents_name": "aupai-4c",
-      "listagents_ref": "61638d",
-      "ref": "61638d"
-    },
-    {
-      "name": "tilerl",
-      "socket": "uds:/tmp/cc-socks/39436.sock",
-      "role": "integration",
-      "topics": [
-        "shape_recipe",
-        "supervision"
-      ],
-      "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03.",
-      "listagents_name": "tilerl-0a",
-      "listagents_ref": "59e76a"
-    },
-    {
-      "name": "b0",
-      "socket": "uds:/tmp/cc-socks/92633.sock",
-      "role": "research",
-      "topics": [
-        "mix",
-        "architecture"
-      ],
-      "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b).",
-      "listagents_name": "lessons-62",
-      "listagents_ref": "a7fc18"
-    },
-    {
-      "name": "e1",
-      "socket": "uds:/tmp/cc-socks/66482.sock",
-      "role": "research",
-      "topics": [
-        "launch_gate"
-      ],
-      "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03.",
-      "listagents_name": "lessons-58",
-      "listagents_ref": "e0c880"
-    },
-    {
-      "name": "3b",
-      "socket": "uds:/tmp/cc-socks/22008.sock",
-      "role": "data",
-      "topics": [
-        "corpus"
-      ],
-      "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03.",
-      "listagents_name": "aupai-84",
-      "listagents_ref": "5c9ee3"
-    },
-    {
-      "name": "de",
-      "socket": "uds:/tmp/cc-socks/39861.sock",
-      "role": "implement",
-      "topics": [
-        "instruments",
-        "launch_gate"
-      ],
-      "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03.",
-      "listagents_name": "aupai-db",
-      "listagents_ref": "4e353c"
-    },
-    {
-      "name": "44",
-      "socket": "uds:/tmp/cc-socks/62780.sock",
-      "role": "research",
-      "topics": [
-        "readout"
-      ],
-      "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
-      "listagents_name": "lessons-44",
-      "listagents_ref": "c5bf0d"
-    },
-    {
-      "name": "98",
-      "socket": "uds:/tmp/cc-socks/34653.sock",
-      "role": "reporting",
-      "topics": [],
-      "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03.",
-      "listagents_name": "aupai-98",
-      "listagents_ref": "2d0371"
-    }
-  ],
-  "not_on_this_team": [
-    {
-      "name": "lessons-3c",
-      "why": "Ark KV Cache; refused 2026-09-01"
-    },
-    {
-      "name": "lessons-23",
-      "why": "lessons side; refused 2026-09-01"
-    },
-    {
-      "name": "lessons-44 [c33c66]",
-      "why": "Feishu KVCache proposals; refused 2026-09-01"
-    },
-    {
-      "name": "lessons-e1 [2f8158]",
-      "why": "answered 不是 2026-09-02"
-    }
-  ],
-  "departed": [],
-  "pairs": {
-    "de": "44",
-    "44": "de",
-    "tilerl": "b0",
-    "b0": "tilerl",
-    "3b": "b0",
-    "fb": "44",
-    "e1": "3b"
+ "_comment": [
+  "Who is on this round, how to reach them, and what they own. Read by",
+  "scripts/board.py who. Address peers by SOCKET, never by name: session names",
+  "collide -- 'lessons-44' resolves to at least two live sessions and only one is",
+  "on this team. On 2026-09-01 three non-team sessions were given work because an",
+  "idle status in ListAgents was read as ownership. Idle does not derive",
+  "membership; a produced artifact or the session's own word does.",
+  "Post to a topic and everyone sees it. Send a socket message and only one does.",
+  "2026-09-05 fb: ADDRESSING STANDARD. Send to the socket in this file, or to listagents_name with its [ref] appended -- never a bare name. Names collide (lessons-e1 is NOT e1; lessons-23/c1 are not on this team) and the channel a grant commit names (e.g. 'via tilerl-27') is a grant channel, never the runner. Before the first send of a session, run ListAgents and match name+ref against this file; if they disagree, this file is updated first. A misrouted message goes back to its sender, and the sender re-reads this file. Incidents: 2026-09-01 three non-team sessions dispatched; 2026-09-05 b0's bench review sent to tilerl-27 then to a session outside the team."
+ ],
+ "members": [
+  {
+   "name": "fb",
+   "socket": "uds:/tmp/cc-socks/67870.sock",
+   "role": "controller",
+   "topics": [
+    "*"
+   ],
+   "note": "rulings, card allocation, launch; the run's supervisor of record Socket verified 2026-09-06 12:2xZ: PPID of this session's shell is 67870, cwd /Users/bytedance/code/aupai (integration tree; worktree ../aupai-fb).",
+   "listagents_name": "aupai-4c",
+   "listagents_ref": "61638d",
+   "ref": "61638d"
   },
-  "refreshed": "2026-09-06T12:2xZ by fb: fb socket 67870 recorded (b0 found it absent)"
+  {
+   "name": "tilerl",
+   "socket": "uds:/tmp/cc-socks/39436.sock",
+   "role": "integration",
+   "topics": [
+    "shape_recipe",
+    "supervision"
+   ],
+   "note": "merges into main, pod sync, throughput; supervise_run.sh and the live run's log discipline (tilerl-14); pairs b0-8, de-15, de-17, 44-11 ListAgents name tilerl-0a as of 2026-09-03. EXITED 2026-09-09, reported by the user. Entry kept rather than removed: commits, review rows and task rows across the ledgers name tilerl as author, reviewer and pair, and a roster that drops the name makes those rows unresolvable. What it owned and now has no owner: PR #23 (tilerl-cache-sidecar, changes-requested by 3b), the infra split steps 3-6, and REVIEWER duty for b0 -- b0's open PRs #105 and #102 have no reviewer while this stands. Cards 0 and 6 remain tileRL's by the user's standing order of 2026-09-06; a session exiting does not revoke a user order, so their fate is a user ruling, not a controller one. CORRECTED 03:4xZ, same day: marking tilerl `exited` was WRONG and is retracted here rather than edited away. What exited is the SESSION the roster pointed at; the team is working. Evidence: a new claim runs/claims/tilerl-seed1curve.1.json was written 2026-09-09 03:42:36 for card 1, pid 1332000, cmdline 'python3 -m tilerl.cli train --recipe grpo-gsm8k-27b ... --seed 1', and nvidia-smi shows card 1 at 27,659 MiB / 97%. ListAgents shows tilerl-7b and tilerl-9b started minutes earlier. Card 1 is tileRL's under the current allocation, the claim was taken correctly, and it does not touch aupai's block. THIS IS THE SAME SHAPE AS b0, e1, 3b AND de -- five of the seven roster entries pointed at a dead socket in one morning while the work continued. The difference is only that nobody from tileRL has messaged, so the new session is not yet identified: state is `active-session-unknown`, not `exited`. Its ownerless items stand until someone from tileRL claims them: PR #23 (changes-requested by 3b) and infra split steps 3-6.",
+   "listagents_name": "tilerl-0a",
+   "listagents_ref": "59e76a",
+   "state": "active-session-unknown",
+   "exited": "the roster's session (tilerl-0a / 59e76a) exited 2026-09-09, reported by the user"
+  },
+  {
+   "name": "b0",
+   "socket": "uds:/tmp/cc-socks/56758.sock",
+   "role": "research",
+   "topics": [
+    "mix",
+    "architecture"
+   ],
+   "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: the roster's 92633.sock pid is dead and the file absent; PR #102 head 98f005d2 on b0-46-score-matrix-trace and #105 head 8a182adc on b0-47-code-decode match exactly; review.jsonl rows 277/278/281/292/293 read reviewer=b0; c4c0a7af exists.",
+   "listagents_name": "lessons-d1",
+   "listagents_ref": "0e4d13"
+  },
+  {
+   "name": "e1",
+   "socket": "uds:/tmp/cc-socks/56034.sock",
+   "role": "research",
+   "topics": [
+    "launch_gate"
+   ],
+   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
+   "listagents_name": "lessons-eb",
+   "listagents_ref": "75ded7"
+  },
+  {
+   "name": "3b",
+   "socket": "uds:/tmp/cc-socks/63595.sock",
+   "role": "data",
+   "topics": [
+    "corpus"
+   ],
+   "note": "corpus fetch, filters, token counts; pod-only file classification (3b-4); pair is b0 since e1 left ListAgents name aupai-3b as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: 984bce9a on main is 'train: --sample_seed, so a seed sweep varies init without reshuffling the corpus (3b)' -- the commit the anneal arms' pin depends on -- and 3c815555 is their review row for PR #113.",
+   "listagents_name": "aupai-89",
+   "listagents_ref": "92ce31"
+  },
+  {
+   "name": "de",
+   "socket": "uds:/tmp/cc-socks/62973.sock",
+   "role": "implement",
+   "topics": [
+    "instruments",
+    "launch_gate"
+   ],
+   "note": "eval instruments, harness checks; inherited launch_gate from e1: allocation off the ladder config (de-15), recipe reconciliation (de-17), fact fixes (de-16) ListAgents name aupai-db as of 2026-09-03. Also pairs b0 from 2026-09-09 (tilerl exited); de now second-reads both 44 and b0. SOCKET CORRECTED 2026-09-09 after a resume; the roster's 4e353c is dead. Identity verified against d49bb673 on main. NOTE de's own warning: rows de wrote before this correction carry a PLACEHOLDER socket built from the listagents ref (47baf0), which is not an address -- the same mistake fb made in de-85. A ref is not a socket, and a row carrying one addresses nobody.",
+   "listagents_name": "aupai-dd",
+   "listagents_ref": "47baf0"
+  },
+  {
+   "name": "44",
+   "socket": "uds:/tmp/cc-socks/62780.sock",
+   "role": "research",
+   "topics": [
+    "readout"
+   ],
+   "note": "surveys, review, readout design; resume/plan arithmetic facts (44-11), AUTHORITY into checks (44-10) ListAgents name lessons-44 [c5bf0d] as of 2026-09-03.",
+   "listagents_name": "lessons-44",
+   "listagents_ref": "c5bf0d"
+  },
+  {
+   "name": "98",
+   "socket": "uds:/tmp/cc-socks/34653.sock",
+   "role": "reporting",
+   "topics": [],
+   "note": "owns ~/aupai-progress.html and every user-facing line ListAgents name aupai-98 as of 2026-09-03.",
+   "listagents_name": "aupai-98",
+   "listagents_ref": "2d0371"
+  }
+ ],
+ "not_on_this_team": [
+  {
+   "name": "lessons-3c",
+   "why": "Ark KV Cache; refused 2026-09-01"
+  },
+  {
+   "name": "lessons-23",
+   "why": "lessons side; refused 2026-09-01"
+  },
+  {
+   "name": "lessons-44 [c33c66]",
+   "why": "Feishu KVCache proposals; refused 2026-09-01"
+  },
+  {
+   "name": "lessons-e1 [2f8158]",
+   "why": "answered 不是 2026-09-02"
+  }
+ ],
+ "departed": [],
+ "pairs": {
+  "de": "44",
+  "44": "de",
+  "b0": "de",
+  "3b": "b0",
+  "fb": "44",
+  "e1": "3b",
+  "tilerl": "b0"
+ },
+ "refreshed": "2026-09-09T03:5xZ by fb: five of seven entries pointed at dead sockets in one morning (b0, e1, 3b, de corrected with identity evidence; tilerl's session gone but the team working). A resume changes label and socket while the work continues.",
+ "pairs_note": "2026-09-09 fb: b0's reviewer was `tilerl` and tilerl's session is unreachable, so b0 had NO reachable second reader and its open PRs #105 and #102 had no reviewer at all. b0 -> de. tilerl -> b0 is kept because tileRL is working (a fresh card-1 claim at 03:42) and only its session pointer is dead; the b0 -> tilerl direction is dropped because it names nobody reachable. de now second-reads both 44 and b0. WHY THIS ENTRY EXISTS AT ALL: fb recorded the b0<->de repair in the member NOTES and left `pairs` -- the machine-readable half -- saying `b0: tilerl`. That is the same human-half/machine-half split that made a card grant read `launch_block_granted=false` while its prose announced a grant, which 3b caught on fb two days ago. b0 caught this one. Previous value: {\"de\": \"44\", \"44\": \"de\", \"tilerl\": \"b0\", \"b0\": \"tilerl\", \"3b\": \"b0\", \"fb\": \"44\", \"e1\": \"3b\"}"
 }
