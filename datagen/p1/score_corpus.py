@@ -14,6 +14,9 @@ tok = AutoTokenizer.from_pretrained(MODEL)
 model = AutoModel.from_pretrained(MODEL, torch_dtype=torch.float16).to("cuda:0").eval()
 w = np.load(HEAD)
 bias = float(open("/work/aupai/data/p1/head_ge3_bias.txt").read().splitlines()[0])
+# drift guard: CUT is a hand-copied value from bias.txt line 2; a retrained head that
+# overwrites bias.txt must not silently leave scoring on the old cut
+assert abs(float(open("/work/aupai/data/p1/head_ge3_bias.txt").read().splitlines()[1]) - CUT) < 1e-6
 
 os.makedirs(OUT, exist_ok=True)
 t0 = time.time()
