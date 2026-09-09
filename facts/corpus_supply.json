@@ -344,14 +344,17 @@
    "config": {
     "tool": "scripts/corpus_snapshot.py",
     "output": "runs/corpus_snapshot.json",
-    "tier_rule": "build_corpus_stats.json: filters_fp present -> reproducible; fingerprint only -> detectable; no stats file -> none",
+    "tier_rule": "build_corpus_stats.json: filters_fp present -> `filters_known`; fingerprint only -> `content_only`; no stats file -> `none`. RENAMED 2026-09-08 from `reproducible`/`detectable` (e1, 4c's ruling), in scripts/corpus_snapshot.py._tier and here together. `reproducible` was read at face value and produced a wrong instruction -- 14 domains were called rebuildable when the stamp cannot support that. A label a reader acts on has to survive being taken literally.",
     "shard_line": "name:size:sha256(first 64KB):sha256(last 64KB) -- datagen/corpus_fingerprint._shard_line, so the snapshot cannot diverge from the guard that reads it",
     "corpus_dir": "/work/aupai/data/corpus",
-    "taken_at": "2026-09-03 07:23Z"
+    "taken_at": "2026-09-03 07:23Z",
+    "what_filters_fp_covers": "EXACTLY THREE FILES: filters/pass1_garbage.py, pass2_garbage.py, pass3_garbage.py, hashed by datagen/corpus_fingerprint.fp_filters over the PIPELINE_FILTERS tuple at :53. NOT covered: the tokenizer, build_corpus.py itself, the source snapshot, worker count, shard ordering, and whether the near-dedup pass ran (a separate `near_dedup` stamp field; code_rp1t carries False). filters/secrets.py is deliberately outside the hash because build_corpus.py does not import it. So a matching filters_fp proves the garbage filters were identical and nothing more, and NO domain in any tier is shown byte-reproducible by its stamp alone.",
+    "count_drifted": "The 49/14/30/5 split in `value` is the 07:23Z snapshot. runs/corpus_snapshot.json in the repo was regenerated later the same day (9cb89c17) and reads 50 domains, 15 filters_known, 30 content_only, 5 none -- the added domain is rp1t_arxiv_papers. Read the artifact for the live count; this entry's value is the reading at its measured time."
    },
    "uncertainty": "The snapshot fixes the bytes as of 2026-09-03 07:23Z; it does not recover lost provenance and must not be read as making the 35 non-reproducible domains reproducible. Head+tail 64KB per shard catches truncation, replacement and same-size head/tail edits; a rewrite confined to a shard's interior is not covered.",
    "status": "measured",
-   "boundary": "Says what each domain IS and whether it changes from now on. Says nothing about what produced it for 35 of the 49, and nothing about content quality for any of them."
+   "boundary": "Says what each domain IS and whether it changes from now on. Says nothing about what produced it for 35 of the 49, and nothing about content quality for any of them.",
+   "claim": "WHAT EACH CORPUS DOMAIN'S BUILD STAMP CAN PROVE about where its bytes came from, and how much disk they occupy once hardlinks are counted. Three tiers, ordered by how much a stamp settles: filters_known > content_only > none. Read it before planning any rebuild; do NOT read any tier as a promise that a rebuild reproduces the bytes."
   },
   {
    "id": "cs.arxiv_landed",
