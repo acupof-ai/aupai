@@ -224,6 +224,160 @@ class DeltaRecurrence(nn.Module):
         return self.o(out.reshape(B, T, self.d).to(x.dtype))
 
 
+class _CfgView:
+    """A read-only cfg with a few fields overridden, for per-layer architecture choices.
+
+    Attribute reads fall through to the real cfg, so a field added later needs no change here and
+    a typo in an override name cannot silently shadow anything -- the override dict is explicit
+    and small. Not a copy: cfg carries tensors and a copy would duplicate them per layer.
+    """
+
+    def __init__(self, cfg, **over):
+        object.__setattr__(self, "_cfg", cfg)
+        object.__setattr__(self, "_over", over)
+
+    def __getattr__(self, k):
+        o = object.__getattribute__(self, "_over")
+        return o[k] if k in o else getattr(object.__getattribute__(self, "_cfg"), k)
+
+    def __setattr__(self, k, v):
+        raise AttributeError(
+            f"_CfgView is read-only; setting {k!r} here would change one layer's view of the "
+            f"config and leave the checkpoint's recorded cfg describing a different model.")
+
+
+def masked_attend(sc, mask, v):
+    """softmax(sc masked by `mask`) @ v, finite in the BACKWARD as well as the forward.
+
+    THE BUG THIS REPLACES, found 2026-09-09 by a CPU forward/backward of the p1 config before it
+    reached a card: `torch.nan_to_num(torch.softmax(sc.masked_fill(~mask, -inf), -1) @ v)` gives
+    the right forward value and a NaN GRADIENT. nan_to_num rewrites the output, not the graph, so
+    a row that is entirely -inf still differentiates through softmax as 0/0 and BmmBackward0
+    propagates NaN into every parameter upstream. Measured: 89 of 102 parameter tensors
+    non-finite after one backward; forward finite throughout, which is why no forward-only test
+    or parity check could see it.
+
+    Fully-masked rows are not an edge case in either caller. A compressed block is visible only
+    once its LAST member is at or before the query, so every query before its document's first
+    complete block has one -- in HCA at m'=128 that is the first 128 positions of every document,
+    and in CSA's compress branch the first m. CSA has carried this since b0-35 and it never fired
+    because CSA has never been trained; its first backward would have NaN'd.
+
+    The fix gives a dead row a uniform FINITE score and zeroes its output afterwards, so the
+    softmax never sees an all--inf row. Same forward value as before -- zero for a query with no
+    visible context, which is the correct attention result -- with a defined gradient of zero
+    instead of NaN.
+    """
+    alive = mask.any(-1, keepdim=True)
+    sc = sc.masked_fill(~mask, float("-inf"))
+    sc = torch.where(alive, sc, torch.zeros_like(sc))
+    return torch.softmax(sc, dim=-1) @ v * alive.to(v.dtype)
+
+
+def pool_per_doc(q, kh, vh, cu, m):
+    """Mean-pool K/V into blocks of `m` PER DOCUMENT, with the visibility mask.
+
+    Lifted verbatim out of CompressedSparseAttention._forward_packed so CSA and HCA share one
+    implementation. They differ only in `m` (16 vs 128) and in what they do with the result, and
+    the part that is subtle is identical: two of this file's recorded incidents are a compressed
+    block that straddled a document boundary and a block gated on its FIRST position instead of
+    its last, and neither raises -- the second makes the model better at training time and only
+    surfaces as a generation collapse nobody can attribute. A second copy of these lines is a
+    second chance to reintroduce them.
+
+    Returns (kc, vc, vis, block_id, doc): pooled K/V as (B,H,NB,D), the (B,T,NB) visibility mask,
+    the per-position block id and the per-position document id.
+    """
+    B, T, H, D = q.shape
+    pos = torch.arange(B * T, device=q.device)
+    cu_l = cu.to(pos.dtype)
+    doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
+    doc_start = cu_l[doc]                                         # (B,T)
+    nb_doc = (cu_l[1:] - cu_l[:-1] + m - 1) // m                  # blocks per doc
+    offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
+    first_doc = doc[:, 0]
+    # per-batch block id: doc's global offset + within-doc block, minus the batch's first
+    # doc's offset, so block ids run 0..NB-1 inside each batch
+    block_id = (offset[doc] + (pos.view(B, T) - doc_start) // m
+                - offset[first_doc][:, None])                    # (B,T)
+    NB = int((offset[doc[:, -1]] + nb_doc[doc[:, -1]]
+              - offset[first_doc]).max().item())
+
+    # --- pool K/V per document block ----------------------------------------------
+    idx = block_id[:, None, :, None].expand(B, H, T, D)
+    kc = kh.new_zeros(B, H, NB, D)
+    vc = vh.new_zeros(B, H, NB, D)
+    kc.scatter_add_(2, idx, kh)
+    vc.scatter_add_(2, idx, vh)
+    # count REAL positions per block in float32: bf16 cannot hold every count up to T
+    # exactly, and a partial block must be a mean over what it holds
+    cnt = q.new_zeros(B, NB, dtype=torch.float32)
+    cnt.scatter_add_(1, block_id, torch.ones(B, T, device=q.device))
+    cnt = cnt.clamp(min=1)
+    kc = kc / cnt[:, None, :, None].to(kc.dtype)
+    vc = vc / cnt[:, None, :, None].to(vc.dtype)
+
+    # block metadata: last position (the blk_last <= t visibility rule, unchanged),
+    # owning document (cross-document refusal), and the pad-slot marker (NB is a max over
+    # batches, so shorter batches carry empty slots that must stay invisible)
+    blk_last = torch.full((B, NB), -1, device=q.device, dtype=torch.long)
+    blk_last.scatter_reduce_(1, block_id, pos.view(B, T), reduce="amax",
+                             include_self=True)
+    blk_doc = torch.zeros(B, NB, dtype=torch.long, device=q.device)
+    blk_doc.scatter_(1, block_id, doc)
+    ar = torch.arange(T, device=q.device)
+    vis = ((blk_last >= 0)[:, None, :]
+           & (blk_last[:, None, :] <= ar[None, :, None])
+           & (blk_doc[:, None, :] == doc[:, :, None]))       # (B,T,NB)
+    return kc, vc, vis, block_id, doc
+
+
+class HeavilyCompressedAttention(nn.Module):
+    """HCA: dense attention over aggressively compressed KV, no sparse selection.
+
+    facts/deepseek_v4.json#dsv4.hybrid_attention -- V4 interleaves HCA with CSA after the first
+    two layers. HCA is the cheap half: compression m'=128 against CSA's 16, and every compressed
+    entry is attended densely, so there is no top-k, no full-resolution branch and no gate. One
+    branch means one number, which is also why it needs no learned mixing.
+
+    Two consequences of m'=128 that are easy to miss:
+
+    A query in the first 128 positions of its document sees NO complete block of that document,
+    because a block is visible only once its last member is at or before the query -- the same
+    `blk_last <= t` rule the compress branch of CSA uses, and for the same causal reason. In CSA
+    the sliding window covers that prefix exactly; HCA has no window, so those queries attend to
+    nothing and the softmax over an all-masked row is undefined. They are given a zero output
+    here rather than a NaN, which is correct as an attention result (no visible context) and is
+    the reason for the nan_to_num rather than an oversight.
+
+    That prefix is why HCA is INTERLEAVED and never used alone: at m'=128 the first 128 tokens of
+    every document are handled entirely by the CSA layers around it. A model of pure HCA layers
+    would be blind over exactly the span most code completions live in.
+    """
+
+    def __init__(self, cfg, h, hd):
+        super().__init__()
+        self.h, self.hd = h, hd
+        self.m = int(getattr(cfg, "hca_compress", 128))
+        if self.m < 1:
+            raise ValueError(f"hca needs a positive hca_compress, got {self.m}")
+        self.scale = hd ** -0.5
+
+    def forward(self, q, k, v, cu=None):
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        if cu is None:
+            # Unpacked: one document, so the per-doc arithmetic degenerates to a plain
+            # contiguous blocking. Built through the same helper by handing it the trivial cu
+            # rather than a second implementation of the visibility rule.
+            cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
+        kc, vc, vis, _, _ = pool_per_doc(q, kh, vh, cu, self.m)
+        sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
+        y = masked_attend(sc, vis[:, None], vc)
+        return y.transpose(1, 2)                                # B,T,H,D
+
+
 class CompressedSparseAttention(nn.Module):
     """CSA: coarse attention over compressed KV blocks, top-k selection, plus a sliding window.
 
@@ -307,10 +461,17 @@ class CompressedSparseAttention(nn.Module):
         sc = (qh @ kc.transpose(-1, -2)) * self.scale          # B,H,T,nb
         blk_last = (torch.arange(nb, device=q.device) * self.m + self.m - 1)[None, :]
         vis = blk_last <= torch.arange(T, device=q.device)[:, None]            # T,nb
+        # MASK sc IN PLACE, BEFORE the topk below reads it. The select branch picks its blocks
+        # from THIS tensor, so an unmasked score here lets topk rank a block the query cannot
+        # see; `sel &= vis` then drops it and the query silently attends to fewer blocks than
+        # topk promised. Moving this line into masked_attend (2026-09-09) did exactly that and
+        # test_arch_compat's CSA causality case caught it -- the masking is load-bearing twice
+        # and only one of the two uses is the attention below.
         sc = sc.masked_fill(~vis, float("-inf"))
-        # the first m-1 queries see NO complete block: all -inf -> NaN. They are covered by the
-        # window branch, so this branch must contribute zero rather than poison the sum.
-        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+        # the first m-1 queries see NO complete block. They are covered by the window branch,
+        # so this branch contributes exactly zero -- see masked_attend for why the obvious
+        # nan_to_num spelling of that is correct forward and NaN backward.
+        y_cmp = masked_attend(sc, vis, vc)
 
         # --- select: top-k compressed blocks, attended at full resolution ------------------
         kk = min(self.topk, nb)
@@ -322,10 +483,8 @@ class CompressedSparseAttention(nn.Module):
         pos_sel = sel.repeat_interleave(self.m, dim=-1)[..., :T]
         full = (qh @ kh.transpose(-1, -2)) * self.scale
         m_sel = pos_sel & causal[None, None]
-        y_sel = torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh
-        # a query whose selected set is empty produces all -inf -> NaN; such a row contributes
-        # nothing rather than poisoning the sum
-        y_sel = torch.nan_to_num(y_sel, nan=0.0)
+        # a query whose selected set is empty contributes nothing (masked_attend)
+        y_sel = masked_attend(full, m_sel, vh)
 
         # --- window: the last n_win tokens, exact -----------------------------------------
         ar = torch.arange(T, device=q.device)
@@ -344,51 +503,18 @@ class CompressedSparseAttention(nn.Module):
         B, T, H, D = q.shape
         qh = q.transpose(1, 2)                                # B,H,T,D
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
-        pos = torch.arange(B * T, device=q.device)
-        cu_l = cu.to(pos.dtype)
-        doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
-        doc_start = cu_l[doc]                                         # (B,T)
-        nb_doc = (cu_l[1:] - cu_l[:-1] + self.m - 1) // self.m        # blocks per doc
-        offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
-        first_doc = doc[:, 0]
-        # per-batch block id: doc's global offset + within-doc block, minus the batch's first
-        # doc's offset, so block ids run 0..NB-1 inside each batch
-        block_id = (offset[doc] + (pos.view(B, T) - doc_start) // self.m
-                    - offset[first_doc][:, None])                    # (B,T)
-        NB = int((offset[doc[:, -1]] + nb_doc[doc[:, -1]]
-                  - offset[first_doc]).max().item())
-
-        # --- pool K/V per document block ----------------------------------------------
-        idx = block_id[:, None, :, None].expand(B, H, T, D)
-        kc = kh.new_zeros(B, H, NB, D)
-        vc = vh.new_zeros(B, H, NB, D)
-        kc.scatter_add_(2, idx, kh)
-        vc.scatter_add_(2, idx, vh)
-        # count REAL positions per block in float32: bf16 cannot hold every count up to T
-        # exactly, and a partial block must be a mean over what it holds
-        cnt = q.new_zeros(B, NB, dtype=torch.float32)
-        cnt.scatter_add_(1, block_id, torch.ones(B, T, device=q.device))
-        cnt = cnt.clamp(min=1)
-        kc = kc / cnt[:, None, :, None].to(kc.dtype)
-        vc = vc / cnt[:, None, :, None].to(vc.dtype)
-
-        # block metadata: last position (the blk_last <= t visibility rule, unchanged),
-        # owning document (cross-document refusal), and the pad-slot marker (NB is a max over
-        # batches, so shorter batches carry empty slots that must stay invisible)
-        blk_last = torch.full((B, NB), -1, device=q.device, dtype=torch.long)
-        blk_last.scatter_reduce_(1, block_id, pos.view(B, T), reduce="amax",
-                                 include_self=True)
-        blk_doc = torch.zeros(B, NB, dtype=torch.long, device=q.device)
-        blk_doc.scatter_(1, block_id, doc)
+        kc, vc, vis, block_id, doc = pool_per_doc(q, kh, vh, cu, self.m)
+        NB = kc.shape[2]      # the select branch's top-k is bounded by the block count
         ar = torch.arange(T, device=q.device)
-        vis = ((blk_last >= 0)[:, None, :]
-               & (blk_last[:, None, :] <= ar[None, :, None])
-               & (blk_doc[:, None, :] == doc[:, :, None]))       # (B,T,NB)
 
         # --- compress: same three lines as the unpacked path, over per-document blocks ----
         sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
+        # Masked in place BEFORE the topk below reads it, for the same reason as the unpacked
+        # path: the select branch ranks blocks from THIS tensor, and an unmasked score lets it
+        # pick a block belonging to another document. Caught by test_arch_compat's CSA
+        # cross-document case when this line briefly moved inside masked_attend.
         sc = sc.masked_fill(~vis[:, None], float("-inf"))
-        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+        y_cmp = masked_attend(sc, vis[:, None], vc)
 
         # --- select: top-k blocks, attended at full resolution, same document only --------
         kk = min(self.topk, NB)
@@ -400,8 +526,7 @@ class CompressedSparseAttention(nn.Module):
         causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
         full = (qh @ kh.transpose(-1, -2)) * self.scale
         m_sel = pos_sel & same[:, None] & causal[None, None]
-        y_sel = torch.nan_to_num(
-            torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh, nan=0.0)
+        y_sel = masked_attend(full, m_sel, vh)
 
         # --- window: the last n_win tokens inside the document ---------------------------
         m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
@@ -411,6 +536,62 @@ class CompressedSparseAttention(nn.Module):
         g = torch.sigmoid(self.branch_gate(q)).transpose(1, 2).unsqueeze(-1)   # B,H,T,3,1
         y = g[..., 0, :] * y_cmp + g[..., 1, :] * y_sel + g[..., 2, :] * y_win
         return y.transpose(1, 2)                                # B,T,H,D
+
+
+class PartialRoPE(nn.Module):
+    """RoPE on the LAST `dims` of each head only (facts/deepseek_v4.json#dsv4.partial_rope).
+
+    Partial and not full, because the leading hd-dims are what CSA and HCA pool. A compressed
+    entry is a mean over m positions; mean-pooling a rotated vector mixes m different rotation
+    angles and the result encodes no usable position at all. Leaving the leading dims
+    position-free is what lets the same K carry content into the pooled branches and position
+    into the exact ones.
+
+    POSITIONS ARE PER DOCUMENT. `cu` marks boundaries in the packed stream and every other
+    branch in this file is masked to the query's own document; a position counted from the row
+    start would make RoPE encode the distance between two tokens in DIFFERENT documents. That
+    error raises nothing and is invisible in the loss -- the same shape as the CSA compress-branch
+    leak recorded above, and as eff.kda_document_isolation_violated. The arithmetic is CSA's own:
+    `flat_pos - cu[doc(flat_pos)]`.
+
+    NOT APPLIED to the attention OUTPUT. dsv4.partial_rope also specifies RoPE at position -i on
+    each output because V4's compressed KV entries double as values, so a pooled value carries the
+    absolute position baked into its keys. Our CSA pools K and V through separate projections
+    (kv_up produces both, then they are pooled independently) and only K is rotated here, so V
+    never carries an angle and there is nothing to undo. If V is ever rotated, that correction
+    becomes required -- this comment is the record of why it is absent, not an oversight.
+    """
+
+    def __init__(self, dims, hd, base=10000.0):
+        super().__init__()
+        if dims <= 0 or dims % 2 or dims > hd:
+            raise ValueError(
+                f"rope_dims={dims} must be positive, even, and at most head_dim={hd}: RoPE rotates "
+                f"pairs, so an odd width leaves one dimension with no partner and a width above "
+                f"the head has no dimensions left to rotate.")
+        self.dims = dims
+        inv = base ** (-torch.arange(0, dims, 2, dtype=torch.float32) / dims)
+        # persistent=False: derived from (dims, base), so it is not state. A persistent buffer
+        # would add a key to every checkpoint and make rope_dims un-changeable after the fact.
+        self.register_buffer("inv_freq", inv, persistent=False)
+
+    def positions(self, B, T, cu, device):
+        """Per-document positions for the packed stream; plain arange when cu is absent."""
+        if cu is None:
+            return torch.arange(T, device=device).expand(B, T)
+        pos = torch.arange(B * T, device=device)
+        cu_l = cu.to(pos.dtype)
+        doc = torch.bucketize(pos, cu_l[1:], right=True)
+        return (pos - cu_l[doc]).view(B, T)
+
+    def forward(self, x, pos):
+        """x: (B, T, H, hd). Rotates x[..., -dims:] in place-free fashion, returns the whole."""
+        head, tail = x[..., :-self.dims], x[..., -self.dims:]
+        ang = pos.to(torch.float32)[:, :, None, None] * self.inv_freq  # B,T,1,dims/2
+        cos, sin = torch.cos(ang), torch.sin(ang)
+        a, b = tail.float().chunk(2, dim=-1)
+        rot = torch.cat([a * cos - b * sin, b * cos + a * sin], dim=-1)
+        return torch.cat([head, rot.to(x.dtype)], dim=-1)
 
 
 class GatedMLA(nn.Module):
@@ -464,6 +645,23 @@ class GatedMLA(nn.Module):
         # in forward would add tensors to the checkpoint of every run that does not use it.
         self.csa = CompressedSparseAttention(cfg, self.h, self.hd) if getattr(
             cfg, "csa", False) else None
+        # HCA (dsv4.hybrid_attention): the other half of V4's hybrid attention. CSA and HCA are
+        # both constructed only when their flag is on, for the same state_dict reason as above.
+        self.hca = HeavilyCompressedAttention(cfg, self.h, self.hd) if getattr(
+            cfg, "hca", False) else None
+        if self.csa is not None and self.hca is not None:
+            raise ValueError(
+                "csa and hca are both on for this layer. V4 INTERLEAVES them across layers -- it "
+                "does not stack them inside one -- so a layer is one or the other. HybridLM picks "
+                "per layer from cfg.attn_kind; setting both on cfg means every layer would run "
+                "both branches and the arm would be neither architecture.")
+        # PARTIAL RoPE (dsv4.partial_rope). Zero = off, which is what every existing checkpoint
+        # was trained under (dsv4.nope_rope_break: this stack is NoPE and position comes from
+        # KDA). It carries no parameters and its one buffer is non-persistent, so turning it on
+        # does not change any state_dict key -- but it DOES change what the weights mean, which
+        # is why a checkpoint records the flag rather than the layer inferring it.
+        rd = int(getattr(cfg, "rope_dims", 0) or 0)
+        self.rope = PartialRoPE(rd, self.hd) if rd else None
 
     def forward(self, x, cu=None):
         B, T, D = x.shape
@@ -494,6 +692,17 @@ class GatedMLA(nn.Module):
         q = q.view(B, T, self.h, self.hd)
         q = F.rms_norm(q, (self.hd,))
         k = F.rms_norm(k, (self.hd,))
+        # PARTIAL RoPE, applied AFTER the norm and to q/k only. After, because rms_norm rescales
+        # the whole head and would otherwise rescale the rotated tail by a factor that depends on
+        # the angle, making the same relative offset mean different things at different absolute
+        # positions. q/k only, because V carries no angle -- see PartialRoPE's docstring for why
+        # V4's -i output correction is not needed here.
+        if self.rope is not None:
+            p = self.rope.positions(B, T, cu, x.device)
+            q, k = self.rope(q, p), self.rope(k, p)
+        if self.hca is not None:
+            y = self.hca(q, k, v, cu)
+            return self.o(y.reshape(B, T, self.d) * torch.sigmoid(gate))
         # CSA (b0-35). ONE `if` ON THE UNCHANGED PATH, placed after q/k/v are built and normed
         # so that with the flag off every tensor below is bit-for-bit what it was before this
         # branch existed -- no reordering, no re-association, nothing recomputed. The parity
@@ -1555,13 +1764,22 @@ def _mem_layers(cfg):
 
 class Block(nn.Module):
 
-    def __init__(self, cfg, is_attn=False, memory=None, moe=False):
+    def __init__(self, cfg, is_attn=False, memory=None, moe=False, attn_kind=None):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
         # head_mixed replaces the layer-level alternation entirely: EVERY block gets both mixers,
         # so is_attn stops selecting anything. Reading it here rather than in HybridLM keeps the
         # block list construction (:421) untouched, so attn_every still decides nothing else.
         _hm = getattr(cfg, "head_mixed", 0)
+        # attn_kind is the V4 hybrid's per-layer choice ("csa" or "hca"), decided by HybridLM
+        # because interleaving is a property of the STACK and no layer can see its own index.
+        # None = read the flags off cfg, which is every pre-hybrid config and every A/B that
+        # turns one branch on globally. Implemented as a shallow cfg copy rather than another
+        # GatedMLA argument: csa/hca are already read through getattr(cfg, ...) in three places
+        # (the two constructors and the both-on refusal), and a second source for the same two
+        # booleans is how they come to disagree.
+        if attn_kind is not None and is_attn and not _hm:
+            cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"))
         self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
         # THE FFN IS REPLACED, NOT SUPPLEMENTED, and that is the structural difference from the
@@ -1631,12 +1849,17 @@ class HybridLM(nn.Module):
         # = no position information = not a valid model (attn_every=1 gave 21-sigma worse
         # val loss, 2026-08-30). Refuse rather than produce a plausible-looking wrong number.
         n_kda = sum(1 for i in range(cfg.layers) if i % cfg.attn_every != cfg.attn_every - 1)
-        if n_kda == 0:
+        if n_kda == 0 and not int(getattr(cfg, "rope_dims", 0) or 0):
             raise ValueError(
                 f"attn_every={cfg.attn_every} produces 0 KDA layers, but GatedMLA is NoPE "
                 f"(KDA handles position). The model would have no position information. "
-                f"Use attn_every >= 2, or add RoPE to GatedMLA first."
+                f"Use attn_every >= 2, or set rope_dims > 0."
             )
+        # The refusal above is about POSITION, not about KDA, so rope_dims lifts it -- that was
+        # always the stated fix ("add RoPE to GatedMLA first"). What it must not do is lift it by
+        # accident: rope_dims is checked here rather than assumed from the attention flags,
+        # because a p1-shaped config that sets csa/hca and forgets rope_dims is exactly the
+        # 21-sigma-worse model of 2026-08-30 wearing the new architecture's name.
         # ONE SHARED MEMORY POOL, owned here so it is registered exactly once no matter how many
         # blocks read it (see Block._mem). `mem_values` 0 or absent means no memory: a Cfg from
         # before this field existed is legitimately the control, and the control must construct
@@ -1718,13 +1941,31 @@ class HybridLM(nn.Module):
             # is exact rather than merely harmless: post-fix ratio 1.0000 on the same card, with a
             # --no-commit control reading 2.0000 in the same claim to prove the test can still see
             # the defect.
+        # V4 HYBRID ATTENTION (dsv4.hybrid_attention): CSA and HCA INTERLEAVED across layers, not
+        # stacked inside one. Off by default, and off means every layer reads cfg.csa/cfg.hca as
+        # before, so no existing arm changes shape.
+        #
+        # The first two attention layers are CSA and not HCA, which is the one place this departs
+        # from copying V4-Flash verbatim (its first two are pure SWA). Reason, not preference:
+        # HCA at m'=128 has no window branch, so a query in the first 128 positions of its
+        # document sees no complete block and attends to nothing. Whatever occupies the bottom of
+        # the stack has to cover that prefix exactly, and CSA's window branch does; SWA would too,
+        # but that is a third attention class to implement and CSA already contains it.
+        _hyb = bool(getattr(cfg, "attn_hybrid", False))
+        attn_idx = [i for i in range(cfg.layers) if i % cfg.attn_every == cfg.attn_every - 1]
+        kind = {}
+        if _hyb:
+            for n, i in enumerate(attn_idx):
+                kind[i] = "csa" if n < 2 or n % 2 == 0 else "hca"
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
                    memory=(self.memory if i in self.mem_layers else None),
-                   moe=(i in self.moe_layers))
+                   moe=(i in self.moe_layers),
+                   attn_kind=kind.get(i))
              for i in range(cfg.layers)]
         )
+        self.attn_kinds = kind
         self.norm = RMSNorm(cfg.d)
         # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
         #
