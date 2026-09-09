@@ -1272,6 +1272,16 @@ def main():
         "eval/domain_bpb.py",
         "eval/score_math_formatfree.py", "eval/score_code_exec.py",
         "eval/cache_guard.py", "eval/pairwise_judge.py",
+        # Held-out perplexity. Registered 2026-09-08: it computed its own holdout split from
+        # the GLOBAL Cfg.val_frac while train.py honours each domain's `val_frac` key, so on
+        # the five mix_e1_* arms (p_format in all five, plus each arm's own s_inject_n*) it
+        # scored rows the run had TRAINED on, under a docstring promising "exactly the rows
+        # train.py holds out". Both sides now call train.val_split_n; the selftest asserts
+        # EXACT counts on hand-built mixes, because the two arms of the bug differ by a
+        # handful of rows and an inequality passes on both. It also walks the shipped
+        # data/mix_e1_*.json so the case dies if a mix stops carrying the override. No GPU,
+        # no caches, no checkpoint -- --selftest loads nothing.
+        "eval/ppl.py",
         # The two code generative evals, registered 2026-09-08 after both were found to strip
         # the prompt TWICE -- `ids[len(prompt):]` on top of the slice train.generate_batch
         # already does, whose docstring says it returns generated ids.
