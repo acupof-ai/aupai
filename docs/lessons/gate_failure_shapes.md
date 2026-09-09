@@ -441,6 +441,20 @@ The fix as re-armed, in two stages (4c). Stage one: `P_TAIL:`/`P_ERR:` prefixes 
 
 The rule's in-repo instance is `harness.py:_arm_monitor` (25241): clauses one and two hold — silence never overrides the verdict, and the observation is declared a LOG BYTES proxy, not process state (25360-25385) — but clause three fails hard. `cmd_launch` prints the monitor's pid (26256) and drops it: no exp row, no artifact (485 rows of `runs/experiments.jsonl`, zero pid/monitor keys), so a monitor's liveness is unanswerable after the fact. The only backstop, `no_stale_running` (24h local / 2h pod), judges the row's age, not the instrument. Fix: persist the monitor pid in the exp row and check it — no heartbeat needed (4c's finding, verified by 44; de's file, handed to de).
 
+## R20. A threshold's comparability is set by the set it acts on, not by its name or its value; two thresholds with the same name, value, and unit are incomparable when the sets differ
+
+1 incident (2026-09-10). `manual:` — no check compares two thresholds' sample spaces. Checkable slice: same-name, same-value thresholds applied to different feature sets (shingles, n-grams, populations); a scanner could flag thresholds whose metric name and value match but whose upstream feature extraction differs.
+
+A corpus pipeline carried two thresholds both named "jaccard 0.5". The domain dedup that built the corpora, and the instrument that measured the near-dup participation rate, act on char 5-gram shingles. A post-pass stage in the same pipeline decides near-duplication on exact normalized word 3-grams. Same name, same value, same unit (0-1) — different sets. A reader checking units sees identical instruments; the thing that differs is the set the Jaccard operates on, which lives in the shingle function, not in the threshold's name or the config field a reader sees first.
+
+The consequence is not academic: even if the post-pass had run over the three domains, it would remove a different band than the one the participation rate measures. The measured 23-26% band is defined on char-5-gram J; the post-pass's 0.5 is on word-3-gram J. The two 0.5s read as one decision executed twice; they are two decisions.
+
+The rule's general form: a threshold's meaning is the pair (value, set it acts on); comparability requires both. R6 says a number must carry its algorithm; this rule says the algorithm's first element — the population the metric is computed over — is the element that hides, because the unit-checking habit verifies the scale and stops there.
+
+- §299: 3b's finding in the p1 corpus pipeline, 2026-09-10.
+
+The incident's second half is a different face of the same rule: a default-off optional stage and a stage that ran differ in the build stats by one field — `near_dedup: ABSENT` versus present. Absence of a run record reads as "ran clean" unless the reader knows ABSENT means never ran. What is true of the threshold is true of the stage: the record's shape (which fields exist) carries the meaning, not the field's name.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
