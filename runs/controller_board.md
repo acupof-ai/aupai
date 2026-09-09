@@ -11,7 +11,7 @@ them says on its face that it is not my read of the diff.**
 | V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
 | classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
 | classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
-| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **102/298**, cumulative doc keep **0.358** — inside the preregistered 0.35-0.36 band and **sitting on its upper edge**, so the DONE line may land at or just above 0.36 | rate has HALVED to 313 docs/s: 3b's re-signing reads the same 298 shards off the same disk. ETA ~3.7h on the remaining ~4.2M docs, not the 2.5h posted at 19:0xZ. **The DONE line is a VERIFICATION, not a discovery** — the band is preregistered |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **115/298**, cumulative doc keep **0.360** — **at the preregistered band's upper bound and still rising** (0.349 at 56, 0.358 at 102, 0.360 at 115). Say now, before the DONE line, that this is heading for a MISS on the high side; a band I wrote at 18:5xZ is not worth more than the number | rate 334 docs/s while 3b's re-signing reads the same shards; 3b is 128/298 and ~50 min from finishing, after which the rate returns to 620. So the contention costs ~50 min, not the 3.7h I first wrote. **The DONE line is a VERIFICATION, not a discovery** — the band is preregistered |
 | decontamination | 3b | **DONE, verified** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | the rerun hitlist is **byte-identical** to the approved one (`diff -q` silent) — determinism proven on the same criterion and source. Clean copy 57G, source untouched. Swap waits on e1 |
 | near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 and b2v2 re-signed; dedup08 at 15/298, then the keep-set doc-id join |
 | tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
@@ -146,6 +146,15 @@ tracking to 0.354). Usable as a correction, not yet as a fact — it needs the D
   as "no review row" for every PR. Caught by a known-answer check — #174 and #168 have rows I wrote
   myself, and the tool reported them as bare as the rest. **A tool that answers a question it was
   not asked, on stdout, at exit 0.**
+- **My own scoring monitor reported SCORING ERROR on a healthy run, then killed itself.** It packed
+  four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'` — and the log
+  line it carries is itself `... | dom 835145/2320870 (0.360) | 334 docs/s`. The data contains the
+  delimiter, so field 2 ("error count") was the word `dom`, non-zero, and the watch broke out.
+  Verified against the pod the same minute: 0 tracebacks, 2 processes alive, 115/298. **An instrument
+  whose parser the data can break reports the failure it cannot distinguish, and then stops
+  watching** — the second half is worse: after the false alarm there was no monitor at all. Re-armed
+  with `P_TAIL:`/`P_ERR:` prefixes and `sed -n 's/^P_ERR://p'`, which no log line can forge.
+  §-candidate for 44.
 - pod: **0 refusing, 865 files match, stamp `4cf4b9d0`**; `pod_pull_ledgers` reports no
   pod-only rows; integration tree clean.
 
