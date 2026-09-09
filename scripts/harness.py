@@ -4975,6 +4975,182 @@ def _broken_ckpt_facts_sources():
     return d
 
 
+def check_score_matrix_ckpts_present(root):
+    """Every runs/score_matrix.jsonl row's checkpoint resolves against the pod listing.
+
+    The same defect as ckpt_facts_sources_present in a second file: a fact citing a gone
+    checkpoint FAILs, a score_matrix row citing one was silent (4c, 2026-09-09; the basename
+    scan's 54 was an upper bound -- the true count is this check's own WARN line). The tiers
+    differ because the files differ. Facts are current evidence, so an absent source is a
+    fact defect. Score_matrix rows are DATED measurements -- `measured` is the row's epoch,
+    and a pruned checkpoint cannot be un-pruned -- so:
+
+    - row names a deletion-CANDIDATE (in the listing, not KEEP-claimed). Three bands off the
+      listing's generation time (4c, 2026-09-09), because regenerating a listing is routine and
+      must not equal a repo-wide freeze -- the pre-commit hook runs the full suite, so a fresh
+      listing with cited-but-unclaimed candidates would refuse every commit until triage
+      completes, and a freeze teaches people not to refresh (a stale listing is what made
+      ckpt_facts_sources_present report false absents the same morning):
+      - age < 6h (grace) -> WARN: the triage has not had time;
+      - 6h-24h (the claim window) -> FAIL: pressure while a KEEP claim can still be written
+        and before the 24h deletion (the written rule: broadcast, delete after 24h unclaimed);
+      - past 24h -> WARN: the deletion process stalled, and a permanent FAIL freezes every
+        commit for a failure the row's author cannot act on ('red nobody acts on is no signal').
+      A listing with no parsed date FAILs: loud on the unknown.
+    - row names a checkpoint ABSENT from the listing -> WARN, named: the measurement stands
+      as dated history but cannot be re-derived. A permanent FAIL here would be the
+      'red nobody acts on is no signal' rule -- the only available action is annotation.
+
+    Resolution (the two traps 4c measured 2026-09-09, both handled by construction):
+    - `#cu` is a variant selector, not part of the filename: _ckpt_names' token class stops
+      at '#', so 'ckpt_x.pt#cu' extracts 'ckpt_x.pt' (19 rows).
+    - `alias_of` names the real file when the row's ckpt never existed as one: train.py
+      writes only the suffixless final, so a stopped run's rows cite the intended final and
+      carry the alias. The alias target is what must resolve; a name scan that ignores it
+      false-FAILs a correct row (the 30b row: ckpt_1.5b-a0.2b-e48_30b.pt -> the 26.7b final).
+    - only ckpt_* names are ours; an external baseline row (pythia-160m-step2000) is not a
+      pod checkpoint and is not scanned.
+    """
+    listings = sorted(glob.glob(os.path.join(root, "runs", "pod_ckpt_candidates_*.txt")))
+    if not listings:
+        return SKIP, "no runs/pod_ckpt_candidates_*.txt"
+    date, keep, cands = _parse_ckpt_listing(listings[-1])
+    GRACE_H, WINDOW_H = 6.0, 24.0
+    age_h = None
+    if date:
+        try:
+            listed = datetime.datetime.strptime(date, "%Y-%m-%d %H:%MZ").replace(
+                tzinfo=datetime.timezone.utc)
+            age_h = (datetime.datetime.now(datetime.timezone.utc) - listed).total_seconds() / 3600.0
+        except ValueError:
+            age_h = None
+
+    def _band():
+        # 'grace' (WARN) / 'window' (FAIL) / 'stale' (WARN); no parsed date -> 'window'.
+        if age_h is None:
+            return "window"
+        if age_h < GRACE_H:
+            return "grace"
+        if age_h <= WINDOW_H:
+            return "window"
+        return "stale"
+
+    p = os.path.join(root, "runs", "score_matrix.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/score_matrix.jsonl"
+    n_rows = 0
+    bad, stale, grace, warned = [], [], [], []
+    for i, ln in enumerate(open(p, encoding="utf-8"), 1):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        names = _ckpt_names(str(r.get("ckpt", "")))
+        if not names:
+            continue  # external baseline or empty; not a pod checkpoint
+        n_rows += 1
+        alias_names = _ckpt_names(str(r.get("alias_of", "")))
+        for name in sorted(names):
+            targets = [name] + sorted(alias_names)
+            if any(t in keep for t in targets):
+                continue
+            cand = next((t for t in targets if t in cands), None)
+            if cand:
+                via = f" (alias_of {cand})" if cand != name else ""
+                band = _band()
+                if band == "window":
+                    bad.append(f"row {i} -> {name}{via} (deletion-candidate {date}, not KEEP-claimed)")
+                elif band == "grace":
+                    grace.append(f"row {i} -> {name}{via} (deletion-candidate {date}, listing in "
+                                 f"grace period; not KEEP-claimed)")
+                else:
+                    stale.append(f"row {i} -> {name}{via} (deletion-candidate {date}, claim window "
+                                 f"passed; not KEEP-claimed)")
+            else:
+                warned.append(f"row {i} -> {name} (absent from listing {date}; dated history)")
+    if bad:
+        both = "; ".join(bad + stale + grace + warned)
+        return FAIL, f"{len(bad)} FAIL + {len(stale)} stale-window + {len(grace)} grace + " \
+                     f"{len(warned)} WARN: score_matrix row(s) name doomed/gone checkpoints " \
+                     f"(listing {date}): {both}."
+    if stale or grace or warned:
+        return WARN, f"{n_rows} row(s) cite checkpoints; {len(grace)} name a candidate in a " \
+                     f"listing's grace period, {len(stale)} past its claim window, {len(warned)} " \
+                     f"absent from the listing (dated history, cannot be re-derived; listing " \
+                     f"{date}): " + "; ".join(grace + stale + warned) + "."
+    return PASS, f"{n_rows} row(s) cite checkpoints; every name is KEEP-claimed or resolves " \
+                 f"against the listing ({date}, {len(cands)} candidates)."
+
+
+def _broken_score_matrix_ckpts():
+    """The real score_matrix with one appended row naming a REAL deletion-candidate under
+    a #cu suffix: the check must FAIL, and extracting the name without stripping #cu
+    lands on the absent tier (WARN only), so the world pins the variant-selector rule too."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    assert listings, "broken world found no candidates listing"
+    lp = listings[-1]
+    # Pin the listing INSIDE the FAIL band (6h-24h old): a younger date lands in grace
+    # (WARN), an older one in stale-window (WARN) -- the world must exercise the red branch.
+    txt = open(lp, encoding="utf-8").read()
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
+    open(lp, "w", encoding="utf-8").write(
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    _date, keep, cands = _parse_ckpt_listing(lp)
+    victim = next((n for n in cands if n not in keep), None)
+    assert victim, "broken world found no unkept candidate to name"
+    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": f"{victim}#cu", "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
+    return d
+
+
+def _selftest_score_matrix_alias_resolves():
+    """An absent ckpt name whose alias_of names a KEPT file is not a gone row; an absent
+    name whose alias names a deletion-CANDIDATE is FAIL-named through the alias. 4c's trap
+    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    lp = listings[-1]
+    # Same FAIL-band pin as _broken_score_matrix_ckpts (6h-24h old): the candidate alias
+    # must be FAIL-named, not WARN-named as grace or stale-window.
+    txt = open(lp, encoding="utf-8").read()
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
+    open(lp, "w", encoding="utf-8").write(
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    _date, keep, cands = _parse_ckpt_listing(lp)
+    kept = next(iter(keep))
+    cand = next(n for n in cands if n not in keep)
+    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_kept_alias.pt",
+                             "alias_of": kept, "measured": "2026-09-09", "metrics": {}}) + "\n")
+        fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_cand_alias.pt",
+                             "alias_of": cand, "measured": "2026-09-09", "metrics": {}}) + "\n")
+    _s, ev = check_score_matrix_ckpts_present(d)
+    assert "ckpt_alias_selftest_kept_alias.pt" not in ev, \
+        f"an absent name with a KEPT alias was named as gone: {ev}"
+    assert "ckpt_alias_selftest_cand_alias.pt" in ev, \
+        f"an absent name with a deletion-candidate alias was not FAIL-named: {ev}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  score_matrix_ckpts: absent name with kept alias stays silent; "
+          "candidate alias FAIL-named through the alias")
+
+
 def check_keep_claim_reasons_live(root):
     """A KEEP claim whose reason cites a RETRACTED fact must WARN named: the reason
     died but the claim did not. ckpt_facts_sources_present only checks fact->ckpt
@@ -11935,8 +12111,9 @@ def cmd_friction(argv):
     `minutes_lost` IS A SELF-REPORT AND THE OUTPUT SAYS SO. It is the field a reader will
     want to sum, and a sum of estimates printed beside measured counts reads as measured
     (this repo's most common defect shape). So the summary prints the count as the number
-    and the minutes as `~N min (self-reported)`, and a row may omit minutes entirely
-    rather than inventing one.
+    and the minutes as `~N min (self-reported)`, and a row of any other kind may omit minutes
+    entirely rather than inventing one -- near_miss/process_failure/hook rows must carry it
+    (friction_minutes_required).
 
     Rows are events, never folded: two merges blocked by the same cause are two rows, which
     is the whole point of counting by cause."""
@@ -11950,7 +12127,8 @@ def cmd_friction(argv):
     a.add_argument("--blocked", required=True, help="what could not proceed")
     a.add_argument("--fix", default="", help="what unblocked it, or empty if nothing did yet")
     a.add_argument("--minutes", type=int, default=None,
-                   help="SELF-REPORTED minutes lost; omit rather than guess")
+                   help="SELF-REPORTED minutes lost; REQUIRED for near_miss/process_failure/hook "
+                        "(friction_minutes_required), omit rather than guess for other kinds")
     a.add_argument("--who", default=None, help="defaults to the current branch")
     a.add_argument("--commit", action="store_true",
                    help="commit the row path-scoped in this call, so the ledger never sits "
@@ -13384,6 +13562,22 @@ def _broken_lane_respected():
             f"runs/card_assignment.json grants no lane card (block {','.join(block)}), and the "
             f"defect this check catches is a busy LANE counted as one of the block's cards -- "
             f"there is no such card to mark busy, so the world would assert nothing")
+    if len(block) < 2:
+        # A ONE-CARD BLOCK CANNOT HOLD THIS DEFECT. The check FAILs on partial occupancy,
+        # 0 < busy < world; with a single block card the only states are 0 busy and all busy,
+        # and marking block[0] busy lands on "all 1 busy (block used as block)" -- a correct
+        # PASS. The world then asserts nothing and _demo reports "broken world cannot be made
+        # to fail" against a check that works, which is what main's CI went red on at
+        # 5a5c833d: the grant of 2026-09-09 narrowed block_cards to "4" because one card is
+        # genuinely all aupai holds besides the lane (5 and 7 went to another container, 0/1/3/6
+        # to tileRL). The grant is honest and the world is the thing that cannot be built, so
+        # this SKIPs by name rather than widening the grant to suit the test -- the same ruling
+        # as the no-lane branch above, and the same reason: shaping the record around the guard
+        # would put cards in the allocation file that nobody owns.
+        raise SelftestSkip(
+            f"runs/card_assignment.json grants a {len(block)}-card block ({','.join(block)}), and "
+            f"this check's defect is PARTIAL occupancy of the block -- with fewer than two block "
+            f"cards there is no partial state to build, only idle and full")
     # One block card plus the lane, no training process: the lane must not make up the count.
     os.environ["HARNESS_BUSY_CARDS"] = f"{block[0]},{lane[0]}"
     os.environ["HARNESS_TRAINING_PROC"] = "0"
@@ -15530,6 +15724,92 @@ def _assert_card_ownership(root):
     return None
 
 
+def check_card_observed_blocks(root=ROOT):
+    """Every cards[] observed_block still holds: its probe re-runs and its expect matches.
+
+    An observed_block is a FACT, not a decision -- "another container holds this card",
+    asserted at a time, carrying a probe a check can re-run. This is the alarm the 2026-09-09
+    incident lacked: the 09:0xZ note "HELD BY ANOTHER CONTAINER, 97 GiB" outlived the ARLE
+    serve by hours and nothing went red, so tilerl-27 under-used card 5 and warmdown planning
+    counted cards from a wrong file. A prose observation cannot be re-checked, so it cannot
+    expire; a probed one can, and this FAILs in the under-use direction -- while the block
+    stands the classifier refuses the card (fail closed), and when the world moves on this
+    names the card the same day so the file gets corrected.
+
+    A probe with target "pod" (the default) runs in the container through the pod wrapper and
+    SKIPs when the pod is unreachable: a dead tunnel is not an expired observation
+    (pod_reachable's lesson). target "local" runs through the local shell; the broken world
+    uses it so the selftest runs anywhere. A probe that errors or times out has stopped
+    holding.
+
+    Malformed entries FAIL too: a block a human cannot re-run is a block that cannot expire,
+    which is the defect this field exists to remove.
+    """
+    blocks = [(c, n["observed_block"]) for c, n in _card_map(root).items()
+              if isinstance(n, dict) and isinstance(n.get("observed_block"), dict)]
+    if not blocks:
+        return PASS, "no observed_block entries"
+    stale, skipped, bad = [], [], []
+    pod_bin = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
+    for c, ob in blocks:
+        probe, expect, asserted = ob.get("probe"), ob.get("expect"), ob.get("asserted_at")
+        if not isinstance(probe, str) or not probe or not isinstance(expect, str) \
+                or not isinstance(asserted, str) or not asserted:
+            bad.append(c)
+            continue
+        target = str(ob.get("target") or "pod").lower()
+        got, holds = "", False
+        try:
+            if target == "pod":
+                ok, _why = pod_reachable()
+                if not ok:
+                    skipped.append(c)
+                    continue
+                r = subprocess.run([pod_bin, probe], capture_output=True, text=True, timeout=30)
+            else:
+                r = subprocess.run(probe, shell=True, capture_output=True, text=True, timeout=30)
+            got = (r.stdout or r.stderr or "").strip()
+            holds = r.returncode == 0 and expect in r.stdout
+        except (OSError, subprocess.TimeoutExpired) as e:
+            got = f"{e.__class__.__name__}"
+        if not holds:
+            stale.append((c, asserted, probe, got[-120:]))
+    if bad:
+        return FAIL, ("cards[] observed_block entries missing asserted_at/probe/expect on "
+                      f"card(s) {_csv(sorted(bad))} -- a block nobody can re-run cannot expire, "
+                      "which is the defect this field exists to remove")
+    if stale:
+        return FAIL, (f"{len(stale)} observed_block(s) outlived the fact they recorded: "
+                      + "; ".join(f"card {c}: asserted {a}, probe {p!r} no longer holds "
+                                  f"(got {got!r})" for c, a, p, got in stale)
+                      + ". The observation is stale, not the card: delete or re-assert the "
+                      "block; the owner field decides who owns it")
+    msg = f"{len(blocks)} observed_block(s) hold"
+    if skipped:
+        msg += f", {len(skipped)} skipped (pod unreachable)"
+    return PASS, msg
+
+
+def _broken_card_observed_blocks():
+    """The REAL grant file with one observed_block whose probe no longer holds."""
+    import shutil
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "runs", "card_assignment.json"),
+                os.path.join(d, "runs", "card_assignment.json"))
+    p = os.path.join(d, "runs", "card_assignment.json")
+    with open(p, encoding="utf-8") as fh:
+        a = json.load(fh)
+    a.setdefault("cards", {})["9"] = {
+        "owner": "aupai",
+        "observed_block": {"asserted_at": "2026-09-09T09:00Z", "probe": "false",
+                           "expect": "x", "target": "local"},
+    }
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(a, fh)
+    return d
+
+
 def check_allocation_reads_the_grant(root):
     """The cards a training launch GETS are the cards the grant file GIVES.
 
@@ -16958,6 +17238,16 @@ CHECKS = [
         _broken_allocation_reads_the_grant,
     ),
     (
+        "card_observed_blocks_fresh",
+        "every cards[] observed_block's probe still holds, and the entry is well-formed",
+        "an observation written into card prose outlived the fact it recorded by hours and "
+        "nothing went red: the 09:0xZ 'HELD BY ANOTHER CONTAINER, 97 GiB' note kept card 5 "
+        "reading as blocked after the ARLE serve was gone, so tilerl-27 under-used it and "
+        "warmdown planning miscounted cards (4c, 2026-09-09)",
+        check_card_observed_blocks,
+        _broken_card_observed_blocks,
+    ),
+    (
         "env_importable",
         "every third-party module the repo imports is installed",
         "a container restart dropped the writable layer; SFT died on ModuleNotFoundError and read as a code bug",
@@ -16998,6 +17288,13 @@ CHECKS = [
         "eff.kda_mla_growth_ratio_l32's step1500 source was pruned with nothing red; the same day's list nearly took step2000/2500/3000 too",
         check_ckpt_facts_sources_present,
         _broken_ckpt_facts_sources,
+    ),
+    (
+        "score_matrix_ckpts_present",
+        "no runs/score_matrix.jsonl row names a checkpoint on the deletion list unkept, or one absent from the pod listing",
+        "a score_matrix row citing a pruned checkpoint was silent while the same defect in a fact source FAILed; the basename scan's 54 was an upper bound, nobody had computed the true count (4c, 2026-09-09)",
+        check_score_matrix_ckpts_present,
+        _broken_score_matrix_ckpts,
     ),
     (
         "run_commits_resolve",
@@ -17746,6 +18043,7 @@ EVIDENCE = {
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
+    "card_observed_blocks_fresh": "repo",
     # repo: harness.py and the hook are both tracked, so the worlds' shape answers the same
     # anywhere. `auth=?` is not a third value -- an unregistered check prints it and is then
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
@@ -17820,6 +18118,7 @@ EVIDENCE = {
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
+    "score_matrix_ckpts_present": "repo",
     # "both": the question joins two filesystems -- the pod holds the rows, the repository
     # holds what it is missing -- so neither side alone can answer it. It runs wherever a
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
@@ -21793,6 +22092,75 @@ def _selftest_card_lend_expires():
             "wording FAILs, absent PASSes")
 
 
+def _selftest_card_observed_blocks():
+    """The object form of a cards[] note: owner decides, an observed_block expires by its probe.
+
+    A SEPARATE FUNCTION from _selftest_card_lend_expires, because that one SKIPS whenever the
+    live file carries no parseable lend -- the usual state -- and these cases depend on the
+    live file only as a world base, not on any lend in it. Folded in, they would run in the
+    one hour a window is open and never otherwise: the registered broken world covers the
+    check's FAIL half, this covers the classifier's third state and the check's PASS half.
+
+    The third state is the one 4c said must not be guessed (2026-09-09): an expired block
+    falls BACK to the owner, never to unclassified. A fact that moved must not read as a card
+    with no owner.
+    """
+    import copy
+    import shutil as _sh
+    import tempfile as _tf
+
+    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(live_p):
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+    with open(live_p, encoding="utf-8") as fh:
+        live = json.load(fh)
+
+    def world(mut):
+        d = copy.deepcopy(live)
+        mut(d)
+        t = _tf.mkdtemp(prefix="oblock_")
+        os.makedirs(os.path.join(t, "runs"), exist_ok=True)
+        with open(os.path.join(t, "runs", "card_assignment.json"), "w") as f:
+            json.dump(d, f)
+        return t
+
+    _block = {"asserted_at": "2026-09-09T09:00Z", "probe": "echo held", "expect": "held",
+              "target": "local"}
+    # THE CLASSIFIER, straight: owner decides; no owner refuses; the block's three verdicts.
+    assert _classify_card_note({"owner": "aupai"}) == "ours"
+    assert _classify_card_note({"owner": "tilerl"}) == "theirs"
+    assert _classify_card_note({}) == "unclassified"
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block}) == "theirs", (
+        "an UNMEASURED block must fail closed: nobody re-ran the probe, so it has not expired")
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block},
+                               probe_holds=True) == "theirs"
+    _expired = _classify_card_note({"owner": "aupai", "observed_block": _block},
+                                   probe_holds=False)
+    assert _expired == "ours", (
+        f"an expired block must fall back to the owner, got {_expired!r} -- the third state "
+        "must never be unclassified, or a fact that moved reads as a card with no owner")
+    # THE CHECK RE-RUNS THE PROBE. A holding block passes; a malformed one FAILs, because a
+    # block nobody can re-run cannot expire (the stale half is the registered broken world).
+    t_hold = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": _block}))
+    try:
+        _st, _ = check_card_observed_blocks(t_hold)
+        assert _st == PASS, f"a holding observed_block FAILED: {_st}"
+    finally:
+        _sh.rmtree(t_hold, ignore_errors=True)
+    t_bad = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": {"asserted_at": "t"}}))
+    try:
+        _st2, _ = check_card_observed_blocks(t_bad)
+        assert _st2 == FAIL, f"a malformed observed_block did not FAIL: {_st2}"
+    finally:
+        _sh.rmtree(t_bad, ignore_errors=True)
+    return ("object-form cards[] entries: owner decides (aupai->ours, tilerl->theirs, "
+            "none->unclassified); an observed_block is theirs while live or unmeasured and "
+            "falls back to the owner when the probe expires, never to unclassified; the check "
+            "passes a holding probe and FAILs a malformed block")
+
+
 def _selftest_facts_ephemeral_only_source():
     """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
     does not.
@@ -23637,6 +24005,7 @@ def _demo(only=None):
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
         _selftest_card_lend_expires,
+        _selftest_card_observed_blocks,
         _selftest_facts_ephemeral_only_source,
         _selftest_facts_retracted_value_names_what_died,
         _selftest_check_timeout_skips,
@@ -23657,6 +24026,7 @@ def _demo(only=None):
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
         _selftest_owner_queue_depth_unreachable_members,
+        _selftest_score_matrix_alias_resolves,
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
     ):
