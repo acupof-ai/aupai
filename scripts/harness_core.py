@@ -730,6 +730,30 @@ def refuse_in_integration_tree(what, path=None):
           file=sys.stderr)
     return True
 
+def append_ledger(path, row, what=None):
+    """One guarded event to any runs/*.jsonl ledger: refuse in the integration tree, append.
+
+    The shared write path for every session-facing ledger writer (de-98): tasks and friction
+    reach disk through harness._append_task, board through board.append, and review,
+    ledger_resolutions, milestones, msg_log, prereg, experiments and retro through their own
+    writers -- each calling this or refuse_in_integration_tree before the write. A writer that
+    does not is exactly what test_integration_tree_guard.py's enumeration world is for.
+
+    O_APPEND, one write() of one complete line: concurrent appends under a page-sized payload
+    do not interleave, and no reader observes a partial row. Building the line first matters --
+    f.write() of a str can flush at a buffer boundary. Lifted from harness._append_task, which
+    now delegates here."""
+    if refuse_in_integration_tree(what or f"appending to {os.path.basename(path)}", path=path):
+        raise SystemExit(1)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    line = (json.dumps(row, ensure_ascii=False) + "\n").encode("utf-8")
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o644)
+    try:
+        os.write(fd, line)
+    finally:
+        os.close(fd)
+
+
 def fold_by_id(rows, key="id"):
     """Last event per key wins, in first-insertion order. THE fold for every runs/*.jsonl ledger.
 
