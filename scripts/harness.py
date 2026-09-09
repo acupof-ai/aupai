@@ -4162,9 +4162,32 @@ def _broken_stale_run():
     rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
     assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
     rows[0]["started"] = "2020-01-01 00:00"
-    # A future date must also FAIL: a negative age is indistinguishable from "just started"
-    # without an explicit branch, so the row would never go stale (4c, 2026-09-10).
-    rows.append(dict(rows[0], name="future_job", started="2099-01-01 00:00"))
+    open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    return d
+
+
+def _broken_future_started():
+    """A running row whose started date is in the future: negative age, must FAIL not silently pass."""
+    d = _tmp_repo()
+    subprocess.run(
+        [
+            sys.executable,
+            os.path.join(HERE, "exp.py"),
+            "--root",
+            d,
+            "start",
+            "--name",
+            "future_job",
+            "--cmd",
+            "x",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    p = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
+    rows[0]["started"] = "2099-01-01 00:00"
     open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
     return d
 
@@ -17423,6 +17446,13 @@ CHECKS = [
         "a killed job wrote its checkpoint, never ran its eval, and left the row open",
         check_no_stale_running,
         _broken_stale_run,
+    ),
+    (
+        "no_future_started",
+        "no experiments.jsonl row has a 'started' date in the future",
+        "a future date gives a negative age, always under the stale threshold, so the row never goes stale",
+        check_no_stale_running,
+        _broken_future_started,
     ),
     (
         "no_ghost_running",
