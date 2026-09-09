@@ -21,6 +21,9 @@ W4  RoPE actually does something. W3 passes trivially on a no-op, so the same to
 W5  HCA is causal. A future token cannot move an earlier output.
 W6  HCA isolates documents. A token in document B cannot move an output in document A.
 W7  The zero-KDA refusal lifts with rope_dims and holds without it.
+W9  Every branch survives a BACKWARD. The forward-only worlds above all passed while
+    89 of 102 parameter tensors came back non-finite, which is the whole reason this
+    one exists.
 W8  The hybrid interleave assigns the kinds it claims, and the first two attention layers are
     CSA -- HCA at m'=128 is blind over the first 128 positions of a document and something with
     a window has to sit under it.
@@ -246,6 +249,52 @@ def w8_hybrid_interleave():
     return True, f"kinds {kinds}, each matching the module actually constructed"
 
 
+
+def w9_gradients_are_finite():
+    """The whole p1 stack must survive a BACKWARD, not just a forward.
+
+    The bug this world exists for, 2026-09-09: every masked-softmax branch in CSA and HCA was
+    spelled `nan_to_num(softmax(masked_fill(-inf)) @ v)`. That is correct forward and NaN
+    backward -- nan_to_num rewrites the output, not the graph, so an all--inf row still
+    differentiates as 0/0 and BmmBackward0 carries NaN into every upstream parameter. Measured
+    before the fix: 89 of 102 parameter tensors non-finite after one backward, with the forward
+    finite throughout. No forward-only check could see it, and CSA had carried it since b0-35
+    without firing because CSA has never been trained.
+
+    Fully-masked rows are the normal case in both callers, not an edge: a compressed block is
+    visible only once its last member is at or before the query, so every query before its
+    document's first complete block has one.
+    """
+    fails = []
+    cu = torch.tensor([0, 128, 256, 384, 512], dtype=torch.int32)
+    for label, over, packed in [
+        ("CSA packed", dict(csa=True, rope_dims=32), True),
+        ("HCA packed", dict(hca=True, rope_dims=32), True),
+        ("CSA unpacked", dict(csa=True, rope_dims=32), False),
+        ("HCA unpacked", dict(hca=True, rope_dims=32), False),
+    ]:
+        c = cfg(d=128, heads=4, csa_compress=16, csa_topk=4, csa_window=32,
+                hca_compress=64, **over)
+        torch.manual_seed(0)
+        mla = M.GatedMLA(c)
+        x = torch.randn(2, 256, c.d, requires_grad=True)
+        y = mla(x, cu if packed else None)
+        if not torch.isfinite(y).all():
+            fails.append(f"{label}: forward is non-finite")
+            continue
+        y.sum().backward()
+        n = int((~torch.isfinite(x.grad)).sum())
+        if n:
+            fails.append(f"{label}: {n} non-finite entries in the input gradient")
+        bad = [k for k, prm in mla.named_parameters()
+               if prm.grad is not None and not torch.isfinite(prm.grad).all()]
+        if bad:
+            fails.append(f"{label}: {len(bad)} parameter tensors with non-finite grad, e.g. {bad[0]}")
+    if fails:
+        return False, "; ".join(fails)
+    return True, "four branch/packing combinations backward with every gradient finite"
+
+
 WORLDS = [
     ("W1 csa_refactor_parity", w1_csa_refactor_parity),
     ("W2 rope_off_is_identity", w2_rope_off_is_identity),
@@ -255,6 +304,7 @@ WORLDS = [
     ("W6 hca_isolates_documents", w6_hca_isolates_documents),
     ("W7 zero_kda_refusal", w7_zero_kda_refusal),
     ("W8 hybrid_interleave", w8_hybrid_interleave),
+    ("W9 gradients_are_finite", w9_gradients_are_finite),
 ]
 
 
