@@ -79,16 +79,18 @@ twice and inflates the keep rate with duplicates.
 |---|---|---|---|
 | `data/corpus/code_rp1t_dd09` | 6.24B | 3.43M | rp1t filter batch 1, MinHash-J 0.9 dedup (3.75M -> 3.43M) |
 | `data/corpus/code_rp1t_b2v2_dd` | 3.60B | 2.10M | rp1t filter batch 2 v2, **cross-deduped against dd09**: its stats read `b2v2 against code_rp1t_dd09 AND within b2v2; code_rp1t_dd09 kept whole` |
-| `data/corpus/code_dedup08` | ~8.95B (derived) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
-| total | **~18.8B** | **11.78M** | |
+| `data/corpus/code_dedup08` | 8.41B (measured 2026-09-10) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
+| total | **18.25B** | **11.78M** | |
 
 Excluded as upstream: `code_rp1t` (7.57B), `code_rp1t_b2` and `code_rp1t_b2v2` (4.89B),
 `code_py_starcoder` (8.74B), `code_py_rp1t` (0.42B). `code_rp1t_rest` and `code_rp1t_dd09_full`
 are empty shells.
 
-`code_dedup08`'s figure is **derived, not read**: its stats file carries no `tokens` field, so
-8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. Measure it
-before any threshold decision rests on it.
+`code_dedup08`'s figure was **derived, not read**: its stats file carries no `tokens` field, so
+8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. The
+threshold ablation measured it directly (bytes over 30.16 GB of shards, extrapolated): **8.41B**,
+6% below the derivation (docs/standards/p1_classifier_annotations.md, PR #164). The measured value
+is used downstream; the derivation stays as the prior.
 
 The `code_dedup08` residual overlap, open here as a name-based inference, was
 **measured 2026-09-10**: it is a union build of 283 starcoder shards plus 15
@@ -122,9 +124,11 @@ live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
-phi-1 filtered 35B down to 6B, a **17% keep rate**. Our pool is 18.8B; 17% of it is **3.2B**, and
-reaching 6B would require a 32% keep rate. Loosening the threshold twofold to hit a token count
-copied from another paper inverts that paper's own finding, which is that quality beats quantity.
+phi-1 filtered >35B tokens down to 6B, a **17% token keep rate** (the paper gives both
+input counts: >35M files totalling >35B tokens; the 17% is 6/35, a token ratio, not a file ratio).
+Our pool is 18.25B measured; 17% of it is **3.10B**, and reaching 6B would require a 32% token keep rate.
+Loosening the threshold twofold to hit a token count copied from another paper inverts that
+paper's own finding, which is that quality beats quantity.
 
 So the keep rate and the resulting token count are **outputs of the threshold ablation, not inputs
 to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
@@ -147,6 +151,26 @@ the reading under which `data/corpus/web_cci3_p*` was listed as unsuitable.
 
 **Fully synthetic code is outside the published recipe.** phi-1 kept the 6B filtered code. Dropping
 it is a legitimate arm but it has no reference score, so it is an ablation, not the plan.
+
+## Keep-rate units
+
+phi-1's paper states both input counts (>35M files, totalling >35B tokens) and the output in
+tokens only (~6B); the 17% is 6/35, a **token** ratio -- no post-filter file count is given, so
+a file-count keep rate cannot be attributed to phi-1. The comparable number for our filter is
+therefore the **byte/token keep, not the doc keep**.
+
+On our corpus the two units diverge by ~1.66x (three measured points: 1.665, 1.656, 1.656): at
+the >=3 cut sized to a 25% **doc** keep, the **byte** keep is 0.151 -- the kept set skews to
+short docs, because long docs in this corpus are mostly boilerplate/config-heavy and score low.
+So our keep rate against phi-1's 17% is **~0.15, 0.9x phi-1's stringency** in the comparable
+unit; quoting the 25% doc keep against it would overstate it 1.66x. Any keep rate quoted for
+this filter must say which unit.
+
+Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
+tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
+code_dedup08 0.278723. These are whole-domain ratios; the kept subset is compositionally
+different, so the final token count is measured directly on the keep set with its own tok/byte,
+not converted. The stats-file ratios are not used.
 
 ## The tokenizer is rebuilt at V=20,000
 
