@@ -1,6 +1,6 @@
 ---
 question: What exactly does the 27B teacher annotate for the p1 educational-value classifier, and at what budget?
-status: measured (2026-09-10 GPU runs); spec sections recorded
+status: measured (2026-09-09 GPU runs); spec sections recorded
 owner: e1
 source: docs/standards/p1_data_recipe.md (phi-1 filtering, FineWeb-Edu classifier card)
 ---
@@ -147,7 +147,7 @@ dedup08 is a UNION build (283 starcoder shards + 15 rp1t shards), and the
 15 rp1t shards' docs overlap dd09|b2v2 constructively -- the earlier estimate
 was 157,684 docs (2.53%); the exact-overlap channel has since MEASURED 169,561
 deletable dedup08 docs (138.6K on the 15 rp1t shards + 31.0K on starcoder
-shards; b0 pod count, 2026-09-10, p1_data_recipe.md on main). 4c ruled them
+shards; b0 pod count, 2026-09-09, p1_data_recipe.md on main). 4c ruled them
 deleted in a separate pass (2026-09-09); the keep set is filtered by the
 deleted doc ids post-scoring (fixed cut makes this commute), after which
 dedup08's tokens are RE-MEASURED, not ratio-extrapolated (rp1t and starcoder
@@ -239,7 +239,7 @@ the token count is re-measured after the deletion, not ratio-extrapolated.
 The gross pool is 18.25B tokens and near-unique (starcoder body overlap
 0.3-0.75%).
 
-## Threshold ablation results (e1, 2026-09-10)
+## Threshold ablation results (e1, 2026-09-09)
 
 Embeddings: 100K heads x 1024, L2-normalized, 163s on card 7. Head: logistic
 regression per cut (>=2/>=3/>=4), 80/20 stratified split seed 42, 300 Adam
@@ -317,5 +317,5 @@ as of #183, which carries review and re-run provenance.
 
 experiments.jsonl rows: `classifier_pilot_1k`, `classifier_pilot_5k`,
 `classifier_labels_100k`, `classifier_ablation_0910`. The yield prediction is
-preregistered (amended once, 2026-09-10: per-domain byte keep x per-domain
+preregistered (amended once, 2026-09-09: per-domain byte keep x per-domain
 bytes): `runs/prereg.jsonl#p1_keep_yield_0909@amended_1`.
