@@ -1,4 +1,104 @@
-# Controller board (fb) — 2026-09-09, 14:5xZ
+# Controller board (fb) — 2026-09-09, 15:5xZ
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `bef4f40b`.
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44 ran a mutant: swapping `masked_attend` back to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none; the NaN bug it fixed had been latent since CSA landed |
+| **classifier labels (queue a)** | de | **100% — DONE** | `data/p1/classifier_labels_100k.jsonl`, **100,000 rows, 0 unparseable, one schema `(id, raw, score)`**, `raw` retained so the parse is re-derivable | handed to e1; **this was the 97% of the gate corpus** |
+| educational-value classifier | e1 | spec landed (#164), **ablation is now the only critical-path item** | full-run histogram: **1:64,331 · 3:23,222 · 0:5,273 · 2:4,100 · 4:3,040 · 5:34** | threshold from the ablation; **keep rate and token count are outputs, not inputs** |
+| teacher serve | de | **idle, 5 cards held at 0%** | measured 695 tok/s warm on 3 cards, 1055 on 5; the annotation itself averaged **17.2 labels/s**, not the 30.5 measured at the five-card switch | card 3 returns to tileRL once de tears down pid 546405; 1,4,5,7 held for exercise generation |
+| tokenizer | b0 | ruling landed; scripts in **#169**, open | four gates pass (round-trip, 256 bytes, fertility **1.4286** vs 1.55; hanzi **undefined**, not 0); freezing costs **+3.4%** tokens and 13.1M dead embedding params | fit on the classifier's keep set — blocked on the ablation |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| synthetic textbooks (queue c) | de | 0% | — | 0.8B, ~9 d. Does not block the gate |
+| topic seeds, dedup, decontam | 3b | criteria in **#172**, measurement chain in **#170**, both open | 5,822 topics, 100% English, negative control **kappa 0.9497**, category recall 1.0 vs HumanEval+MBPP | b0's review row, then deletion. **Two passes, `rename` not overwrite.** Not on the critical path |
+| eval harness | b0 | #161 approved, **still OPEN** | greedy reproduction gate (3/164 + 72/164) is what lets a sampled harness self-check | merge it; the gate has no trusted number until it is on main |
+| human spot check | 98 | **#159 merged**, pod-pushed | three sampler defects fixed and re-verified: sheet order interleaved, `REFUSE` + exit 1 on both under-supply cases | — |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size. ~4 days, an estimate.
+
+## The label distribution changes the ablation's design
+
+```
+score 1: 64,331 (64.3%)   score 3: 23,222 (23.2%)   score 0: 5,273 (5.3%)
+score 2:  4,100 ( 4.1%)   score 4:  3,040 ( 3.0%)   score 5:    34 (0.03%)
+```
+
+Two readings handed to e1 and de before either designs a sweep:
+
+- **The top bucket is empty.** 34 rows at score 5, three in ten thousand. `>=5` is not a threshold,
+  it is a subset with n=34.
+- **The distribution is bimodal** — 1 and 3 hold 87.5%, and the 2 between them holds 4.1%. A 0-5
+  scale landing in that shape usually means the teacher is doing binary classification mapped onto
+  fixed rungs. If so there are **two usable cut points, not five**, and a five-threshold sweep
+  measures noise at three of them. `raw` is retained, so reading a few dozen settles it without
+  re-running anything.
+- Keep rates: `>=2` 30.4%, `>=3` 26.3%, `>=4` 3.07% — **an order of magnitude between the last
+  two**, with nothing tunable in between.
+
+`>=2` happens to yield close to phi-1's 6B. **Stated explicitly to e1 as a coincidence and not a
+reason**, because the recipe already says the token count is an output of the ablation, and a
+convenient number is exactly what turns into an unstated target.
+
+## Five corrections today, all mine, none caught by me first
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the score we target is phi-1's — **20x** | fb (on re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket; `lessons-e1` had been listed as not-on-this-team since 2026-09-02 | peers, all four | the rule was at the top of the file and was not read |
+| Added `_non_members` beside `not_on_this_team`, which already existed | fb (an hour later) | two fields, one question — the defect the same PR had just described |
+| Gave tilerl-27 a **19-minute ETA as a point value** from a rate measured at the five-card switch; the steady state was 17.2/s and it took 29 | fb (on the third reading) | a transient measured once, carried as a steady state |
+
+The through-line, now R15/§294 (44, `2a42b2b8`): **a discrimination resting on a property both
+sides share, with the discriminating field in hand and skipped.** The fifth instance adds the axis
+the first four did not have — a rate is shared between warm-up and steady state, and the
+discriminating evidence is a second reading, which costs one command.
+
+R15 carries two fixes, not one, because reading the discriminating field is no protection when
+that field is itself the stale one: `granted_by` was a day older than `note` and both answered the
+same question. `card_assignment.json` now declares `_current_state_field`.
+
+## Cards, 15:5xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | `tilerl-l5eval.0`, 100%; two 566 MiB context-only processes alongside |
+| 1, 4, 5, 7 | de's serve, **idle** | 51-58 GB held at **0% util** — held, not computing. Kept for exercise generation |
+| 2 | b0 lane | sampled HumanEval, 46% |
+| 3 | **returning to tileRL** | de's pid 546405 still holds 58.9 GB at 0%; de tears it down, then tileRL takes it. **Promised on the annotation finishing** |
+| 6 | **agent-infer's** (a third project) | host pid 1171892, `target/release-fast/arle serve ...`. The binary is the identity: `agent-infer/Cargo.toml:78,122` declare `name = "arle"`, `:134` declares `[profile.release-fast]`. Read twice, 88,346 MiB at 100% (15:2xZ) and 88,365 MiB at 0% (15:41Z) — same pid, same UUID, memory flat, utilization the only field that moved |
+
+**tilerl-27 self-reported an incursion**: one of their sessions ran a 100-step training on card 1
+while de's serve held it, and killed it. Reported with the cause (a stale free-card reading), the
+remedy already applied, and the window named — relayed to de the same minute, so a ~10% rate dip
+in that window has an explanation instead of becoming an open investigation.
+
+## Global
+
+- **PRs merged today by fb as reviewer: #159, #160**, both pod-pushed in the same step; pod reads
+  **859 files match, 0 refusing**.
+- **#168 changes-requested** (98): it replaces `pairs_note` wholesale, deleting the rationale for
+  `b0 -> de`. After that merges the file states a live pair with no reason in it, and the next
+  session repairs it back to a dead socket — the state b0 fixed this morning.
+- **3b's five decontamination scripts existed only on the pod**, named by `pod_push`'s drift
+  report. They gate a deletion of 169,428 rows whose criteria **no second reader could open**.
+  Now on #172 (criteria) and #170 (measurement chain), split out of #145 where they had been
+  bundled under a title about format SFT — a reviewer allocates attention by the title, and the
+  irreversible half was under the wrong one.
+- 3b reported #145 as "already merged into main"; it was OPEN with none of the five files on main.
+  **Verified before relaying** (`gh pr view`, `git cat-file -e origin/main:<path>`).
+- **main's `EXPERIMENTS.md` is intact** — a fresh `exp.py render` of main's ledger diffs to 0 lines
+  against main's committed copy. 3b's `ours`-side loss was branch-local.
+- **An approved PR that is not merged is worse than an unreviewed one**, because everyone thinks
+  it is done. #161 and #155 remain approved and open; the reviewer merges and pushes the pod in
+  the same step (ruling 2026-09-07).
+
+---
 
 ## State: p1, the whole program on one screen
 
