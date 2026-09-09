@@ -520,9 +520,9 @@ def main():
     # reading its own source after every world had passed. The parent exports the paths it owns in
     # AUPAI_HOOK_LIVE_COPIES and nested runs inherit it, so "in use" is read from the process that
     # created the file rather than guessed from an mtime.
-    _live = {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}
     _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in _registered_selftest_paths()}
     _sweep_dirs.add(repo_root())
+    _live = {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}
     for _dir in _sweep_dirs:
         for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
             if os.path.abspath(_stale) in _live:
