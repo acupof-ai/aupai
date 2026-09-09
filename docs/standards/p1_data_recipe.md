@@ -64,10 +64,46 @@ p1 follows phi-1:
 
 | part | tokens | source | teacher time |
 |---|---|---|---|
-| filtered code | ~6B | educational-value classifier over `data/corpus/code_*` | **none** -- no generation |
+| filtered code | **set by the threshold ablation** | educational-value classifier over the three domains named below | **none** -- no generation |
 | synthetic textbooks | ~0.8B | 27B teacher, seeded from the 20K topic table, **in English** | ~8 days at 1160 tok/s |
 | synthetic exercises | ~0.18B | 27B teacher, `signature + docstring -> body` with executable tests | ~1.8 days |
 | classifier labels | ~0.02B | 27B teacher, ~100K educational-value annotations | ~5 hours |
+
+### The classifier's input: three domains, not ten
+
+The pod holds ten `code_*` directories, and **five of them are upstream stages of the other
+three.** Feeding a stage and its own descendant passes the same documents through the teacher
+twice and inflates the keep rate with duplicates.
+
+| domain | tokens | docs | what it is |
+|---|---|---|---|
+| `data/corpus/code_rp1t_dd09` | 6.24B | 3.43M | rp1t filter batch 1, MinHash-J 0.9 dedup (3.75M -> 3.43M) |
+| `data/corpus/code_rp1t_b2v2_dd` | 3.60B | 2.10M | rp1t filter batch 2 v2, **cross-deduped against dd09**: its stats read `b2v2 against code_rp1t_dd09 AND within b2v2; code_rp1t_dd09 kept whole` |
+| `data/corpus/code_dedup08` | ~8.95B (derived) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
+| total | **~18.8B** | **11.78M** | |
+
+Excluded as upstream: `code_rp1t` (7.57B), `code_rp1t_b2` and `code_rp1t_b2v2` (4.89B),
+`code_py_starcoder` (8.74B), `code_py_rp1t` (0.42B). `code_rp1t_rest` and `code_rp1t_dd09_full`
+are empty shells.
+
+`code_dedup08`'s figure is **derived, not read**: its stats file carries no `tokens` field, so
+8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. Measure it
+before any threshold decision rests on it.
+
+One residual overlap is open and owned by 3b: `code_dedup08` contains `code_py_rp1t`, which is
+probably a Python subset of `code_rp1t` and therefore probably overlaps `code_rp1t_dd09`, bounded
+at 0.42B = 2.2%. "Probably" is an inference from the names and doc counts, not a measurement.
+
+### The 6B is not a target
+
+phi-1 filtered 35B down to 6B, a **17% keep rate**. Our pool is 18.8B; 17% of it is **3.2B**, and
+reaching 6B would require a 32% keep rate. Loosening the threshold twofold to hit a token count
+copied from another paper inverts that paper's own finding, which is that quality beats quantity.
+
+So the keep rate and the resulting token count are **outputs of the threshold ablation, not inputs
+to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
+threshold yields 3B, the gate runs on 3B. **The acceptance criterion is HumanEval 30% at 350M; the
+corpus size has never been a criterion.**
 
 **Generation order is by what blocks the gate, not by size.** The classifier labels are the
 smallest artifact and the first one: they unblock the 6B of filtered code, which is 97% of the
