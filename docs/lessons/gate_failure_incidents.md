@@ -969,7 +969,7 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
-### §289 (2026-09-08, R11)
+### §290 (2026-09-08, R11)
 
 **A check's population is a filename regex, and the regex is narrower than the check's name.** `check_deletion_list_no_tracked` (`scripts/harness.py::check_deletion_list_no_tracked`) refuses a deletion list that names a tracked file -- the rm would remove what a fresh checkout ships, with every gate green. Its population comes from one line:
 
@@ -1257,3 +1257,51 @@ Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json`
 runs and is committed at close -- §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
 one thing; the assertion would be over the built plan, not over the mix files.
+
+
+### §288 (2026-09-09, R4)
+
+**A socket field accepts a dead address and every writer takes it: two sessions independently
+wrote a "socket" built from a listagents ref within one hour.**
+
+de's de-85 rows (`runs/tasks.jsonl`, ids de-85) carry `"socket": "uds:/tmp/cc-socks/4e353c.sock"`
+-- `4e353c` is de's listagents ref, not a socket; no such file ever existed. One row knows it:
+"Note the socket in this row is a placeholder built from de's listagents ref, not read from
+runs/roster.json -- correct it before relying on it." fb made the identical substitution
+dispatching de-85 the same hour. The field's grammar admits any `uds:...` string and no writer
+checks the file exists, so a value that looks like an address is accepted as one, and anything
+sent to it reaches nobody.
+
+Why the field invites it: a listagents ref is a hex string of the same shape as a socket suffix,
+and the roster prints both in adjacent columns (`listagents_ref` beside `socket`). The fix is a
+check at the write: a socket row whose path does not exist refuses, the way a card claim refuses
+a held card. R13 is the secondary reading -- the ref was resolvable information stored in a field
+that cannot use it -- but the failure that bit is R4: the write never failed.
+
+Evidence: `runs/tasks.jsonl` de-85 rows (2026-09-09 02:05); the roster note corrected in #119
+("A ref is not a socket, and a row carrying one addresses nobody"). Cost: not measured -- no
+message is known to have been lost, because a lost message leaves no trace; that is the shape.
+
+### §289 (2026-09-09, R11)
+
+**A rebuild from the register answers "what work is registered", not "what work was assigned" --
+two real items were silently absent from a complete-looking assignment.**
+
+The 2026-09-09 03:3xZ rebuild of the six-person assignment enumerated `runs/tasks.jsonl`. Two
+items assigned in conversation had no row: b0 named `b0-48` as ready to push (zero rows in
+tasks.jsonl), and e1's "spec-close package" -- `prereg_registers_recipe_values` -- appears zero
+times in tasks.jsonl and zero times in harness.py. Neither existed to be rebuilt, so the rebuild
+dropped both while looking complete.
+
+The population the rebuild needed is "work a session is actually doing", which lives in messages
+and branch heads; the population it enumerated was "work with a ledger row". R11's fix is
+structural: the population must come from the source, not a list -- here, asking each owner
+"what are you doing that has no row" before declaring the assignment complete, or requiring
+assignment to exist only when registered. The register cannot show the work it does not contain,
+and a rebuild that asserts completeness against the register asserts against a list.
+
+Evidence: `grep b0-48 runs/tasks.jsonl` -> 0 rows (2026-09-09); `grep prereg_registers_recipe_values`
+-> 0 in tasks.jsonl and 0 in harness.py; the rebuild is `runs/controller_board.md`'s assignment
+section (b397eb97). Cost: none realised -- both surfaced in the same hour's conversation and were
+re-attached; the cost that did occur is that the rebuild's completeness was unverifiable from its
+own output.
