@@ -801,7 +801,7 @@ is in the report.
 
 Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
 `runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`. 44 recomputed both means from the raw rows and
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3`. 44 recomputed both means from the raw rows and
 got 0.0285 and 0.0089.
 open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
 a reported arm-vs-control delta was placed against a floor on the SAME metric.
@@ -820,11 +820,30 @@ ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.0
 trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
 **0.048**.
 
-Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
-the floor off the periodic series would have published it ~50% too large and buried any true effect
-between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have made it
-convincing. A series that agrees with itself is evidence about the estimator's stability, not about
-its agreement with the quantity being estimated.
+**Reading the floor off the periodic series would have published it ~50% too large and buried any
+true effect between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have
+made it convincing. A series that agrees with itself is evidence about the estimator's stability, not
+about its agreement with the quantity being estimated.
+
+CORRECTED 2026-09-09, and the correction is the sharper half. This entry first said "five times the
+data, so roughly half the sampling noise, and the whole of the difference". **There is no sampling
+noise in either read.** `Xva` is built once (`train.py:3361`) and never reshuffled, and `validate`
+iterates `for j in range(0, len(Xva), batch)` breaking at `max_batches` (`:979-980`), so both are
+FIXED PREFIXES of one split: the periodic read is the first 20 batches, the epoch-end read the first
+100, and the first is a strict SUBSET of the second. Both are deterministic given the model. So the
+two numbers are not a noisier and a cleaner estimate of one quantity -- **they are measurements over
+different populations**, and subtracting one from the other is a category error rather than a
+precision mismatch. The 0.072-on-160-rows against 0.048-on-800-rows is a real statement about where
+the two arms differ, not noise averaging out. The entry's conclusion is unchanged and its reason is
+stronger: an estimator's name has to travel with its population, not just its precision.
+
+The cost of the wrong reason was real and paid the same day. Amendment 4 of
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_5` used it to call D an UPPER BOUND on
+the replicate drift, concluding the verdict was conservative and over-penalised the treatment arm.
+D bounds nothing: it is the drift on rows 1-160, and the drift on rows 1-800 could be larger.
+Retracted in amendment 5, twenty minutes after the verdict, with the direction restated as unknown.
+**A wrong mechanism under a right conclusion is not harmless -- it was reused, and it produced a
+directional claim in the arm's favour that nothing supported.**
 
 The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
 the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
@@ -1259,10 +1278,17 @@ Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707
 hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
 asking why two arms that should track each other were diverging at all.
 Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
-`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_2` (`e24268fd`, corrected at `c29d6cc0`);
-`runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
-runs and is committed at close -- §286's fix applied before the fact this time.
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values). The
+boundary the code computes -- 0.9 x 7629 = 6866 -- was later confirmed at RUNTIME by the arm's own
+phase label, `step 6800 [main]` then `step 6900 [anneal]`, which is the independent check the entry
+originally lacked: every claim here was read off the source, and a phase built from a different
+field would have produced the same reading of the same lines;
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3` (amendment 1 `e24268fd`, corrected at
+`c29d6cc0`; amendment 3 redefines D as the spread rather than one draw);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column, and `runs/anneal_r_vs_n1_drift_0909.tsv`
+for R against it -- committed at step 5500 with the arm still running, not at close, because the
+drift it records is what the criterion reads and a series that arrives after the verdict cannot
+constrain it. §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
 one thing; the assertion would be over the built plan, not over the mix files.
 
@@ -1313,3 +1339,16 @@ Evidence: `grep b0-48 runs/tasks.jsonl` -> 0 rows (2026-09-09); `grep prereg_reg
 section (b397eb97). Cost: none realised -- both surfaced in the same hour's conversation and were
 re-attached; the cost that did occur is that the rebuild's completeness was unverifiable from its
 own output.
+
+### §292 (2026-09-09, R3)
+A symlinked artifact deploys from a working copy nobody owns, so its live version is decided by a checkout rather than by the branch everyone reads. `.git/hooks/pre-commit` is a symlink resolved against the INTEGRATION tree's worktree, so every session's commit runs `/Users/bytedance/code/aupai/scripts/hooks/pre-commit` -- that tree's working FILE, not main's tip. Two failures follow from the one fact, an hour apart, and the second is the one nobody had written down.
+
+FIRST HALF, already in AGENTS.md: an edit made in a branch worktree does not run until it is merged. `eval/code_fewshot.py` was added to the hook's `SELFTEST_FILES` on `b0-47-code-decode` while the file accepts `--selfcheck`, not `--selftest`. Every commit on that branch ran main's older hook, which had no such registration, so the mismatch could not fire. It went live the instant PR #105 merged: argparse exits 2, the hook reads that as the selftest failing, and **every commit that stages the file is refused -- which is every `git merge origin/main` into a branch**. Measured minutes after the merge. It does not catch a cherry-pick, which is why b0's own rebuild escaped it and the block looked narrower than it was.
+
+SECOND HALF, and the new shape: **merging the fix does not deploy it.** PR #136 landed the `SELFTEST_FLAG` entry on main at `bb44710b`, and the identical refusal reproduced afterwards, because the integration tree's checkout was still at `839400c0`. `grep -c` on the deployed file returned 0 while main held the entry. The tree's files advance only when a `merge_main` runs against a CLEAN tree -- earlier runs had printed "the integration tree is dirty, so its files were NOT advanced" -- so main and the running hook drift apart on a condition nobody watches. Both halves are invisible from where a session stands: nothing reports that the running hook is not main's, and **the check that would notice cannot run, because the thing that is stale IS the checker**.
+
+What made it recoverable rather than worse: the tree had DIVERGED, not merely fallen behind -- it carried de's `48ff83d9` review row, absent from main -- so advancing it by hand would have discarded another session's commit from the checkout. The fix was the normal merge of that row, which advanced the tree's files in the same step.
+
+Evidence: `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` resolving into the integration tree; `.hookstaged_code_fewshot.py: error: unrecognized arguments: --selftest` reproduced after `bb44710b`; `grep -c 'code_fewshot.py": "--selfcheck"'` returning 0 on the deployed file and 1 on main; `git log --oneline origin/main..839400c0` showing the two-commit divergence; hook line 1298 (`SELFTEST_FILES`), line 2225 (`SELFTEST_FLAG`), `eval/code_fewshot.py:209`. Verified by 3b end to end on a worktree at `7d314fcd`, running the patched hook directly with the file staged: clean tree green and `--selfcheck` 6/6 rc=0, against a one-token mutation of the known-answer comparison giving REFUSING 0/6 rc=1 -- red in both directions, which is what says the selftest discriminates rather than merely passes. **It had never run under the hook before this.**
+
+open: no check compares the deployed hook against the hook on main. It is one `git diff origin/main -- scripts/hooks/pre-commit` in the integration tree, reported rather than enforced, since a session cannot fix another tree's checkout; the value is that the gap becomes visible instead of being discovered by a refused commit. None exists.
