@@ -342,6 +342,39 @@ def _alive(pid):
     return True
 
 
+def _start_time(pid):
+    """The process's start time as a comparable string, or None if unreadable.
+
+    /proc/<pid>/stat field 22 (clock ticks since boot) on Linux, `ps -o lstart=` on macOS.
+    A PID that exits and is recycled reads alive via _alive but is a different process;
+    the start time is the only reader that distinguishes them.
+    """
+    try:
+        with open(f"/proc/{pid}/stat") as fh:
+            stat = fh.read()
+        rest = stat[stat.rindex(")") + 2 :].split()
+        return rest[19]
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        r = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True)
+        return r.stdout.strip() or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
+def _pid_reused(pid, recorded_start):
+    """True when pid is alive but its start time differs from what was recorded.
+
+    Returns False when no start time was recorded (older claims) or the current start
+    time is unreadable -- the safe direction, same rule _cvd and nvidia_fds follow.
+    """
+    if not recorded_start:
+        return False
+    cur = _start_time(pid)
+    return cur is not None and cur != recorded_start
+
+
 SHELLS = {"bash", "sh", "zsh", "dash", "ksh", "-bash", "-sh", "-zsh"}
 # The pod's tree is wrapper bash -> torchrun -> 4 ranks. 6 is that plus slack, and it is a cap
 # rather than a guess: a cycle in a ppid table would otherwise loop forever (CLAUDE.md's
@@ -475,8 +508,11 @@ def claims():
         if c is None:
             stale.append({"file": nm, "why": "unreadable or truncated"})
             continue
-        if not _alive(int(c.get("pid", -1))):
+        pid = int(c.get("pid", -1))
+        if not _alive(pid):
             stale.append(dict(c, why=f"pid {c.get('pid')} is gone", file=nm))
+        elif _pid_reused(pid, c.get("start_time")):
+            stale.append(dict(c, why=f"pid {c.get('pid')} reused (start time changed)", file=nm))
         else:
             # `file` ON EVERY ROW, live as well as stale. acquire excludes its OWN claim from the
             # clash check by filename now, not by name, so a live row without this field would be
@@ -949,6 +985,7 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                 "cards": list(cards),
                 "pid": holder,
                 "cmdline": _cmdline(holder),
+                "start_time": _start_time(holder),
                 "acquired": _now(),
                 "note": note,
             }
@@ -1028,7 +1065,7 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
             except FileExistsError:
                 existing = _read(mine)
                 old = int(existing.get("pid", -1)) if existing else -1
-                if existing and _alive(old):
+                if existing and _alive(old) and not _pid_reused(old, existing.get("start_time")):
                     # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
                     # for, so the ask is already satisfied and refusing it is refusing a fact that is
                     # true. de-55, 2026-09-05: the fix for the claim-coverage gap puts one acquire on
@@ -1507,6 +1544,31 @@ def _selftest():
     live, _ = claims()
     good = ok5 and "runD" not in [c["name"] for c in live]
     _case(good, "release removes the claim")
+
+    # PID REUSE: a claim whose pid is alive but whose start time changed is stale.
+    # _alive alone cannot distinguish a recycled pid from the original process.
+    acquire("reuseTest", ["0"], wait=0, pid=me)
+    p = os.path.join(d, claim_file("reuseTest", ["0"]))
+    c = _read(p)
+    real_st = c.get("start_time")
+    c["start_time"] = "fake-start-time"
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    live, stale = claims()
+    good = any(
+        s.get("name") == "reuseTest" and "reused" in s.get("why", "") for s in stale
+    ) and not any(x.get("name") == "reuseTest" for x in live)
+    _case(good, f"a claim whose pid was reused reads as stale ({[s.get('why') for s in stale if s.get('name') == 'reuseTest']})")
+
+    c["start_time"] = real_st
+    with open(p, "w") as fh:
+        json.dump(c, fh)
+    live, stale = claims()
+    good = any(x.get("name") == "reuseTest" for x in live) and not any(
+        s.get("name") == "reuseTest" for s in stale
+    )
+    _case(good, "a claim whose start time matches stays live")
+    release("reuseTest")
 
     ok6, msg6 = release("never_existed")
     good = not ok6
