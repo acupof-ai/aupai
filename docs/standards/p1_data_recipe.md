@@ -79,26 +79,56 @@ twice and inflates the keep rate with duplicates.
 |---|---|---|---|
 | `data/corpus/code_rp1t_dd09` | 6.24B | 3.43M | rp1t filter batch 1, MinHash-J 0.9 dedup (3.75M -> 3.43M) |
 | `data/corpus/code_rp1t_b2v2_dd` | 3.60B | 2.10M | rp1t filter batch 2 v2, **cross-deduped against dd09**: its stats read `b2v2 against code_rp1t_dd09 AND within b2v2; code_rp1t_dd09 kept whole` |
-| `data/corpus/code_dedup08` | ~8.95B (derived) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
-| total | **~18.8B** | **11.78M** | |
+| `data/corpus/code_dedup08` | 8.41B (measured 2026-09-10) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
+| total | **18.25B** | **11.78M** | |
 
 Excluded as upstream: `code_rp1t` (7.57B), `code_rp1t_b2` and `code_rp1t_b2v2` (4.89B),
 `code_py_starcoder` (8.74B), `code_py_rp1t` (0.42B). `code_rp1t_rest` and `code_rp1t_dd09_full`
 are empty shells.
 
-`code_dedup08`'s figure is **derived, not read**: its stats file carries no `tokens` field, so
-8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. Measure it
-before any threshold decision rests on it.
+`code_dedup08`'s figure was **derived, not read**: its stats file carries no `tokens` field, so
+8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. The
+threshold ablation measured it directly (bytes over 30.16 GB of shards, extrapolated): **8.41B**,
+6% below the derivation (docs/standards/p1_classifier_annotations.md, PR #164). The measured value
+is used downstream; the derivation stays as the prior.
 
-One residual overlap is open and owned by 3b: `code_dedup08` contains `code_py_rp1t`, which is
-probably a Python subset of `code_rp1t` and therefore probably overlaps `code_rp1t_dd09`, bounded
-at 0.42B = 2.2%. "Probably" is an inference from the names and doc counts, not a measurement.
+The `code_dedup08` residual overlap, open here as a name-based inference, was
+**measured 2026-09-10**: it is a union build of 283 starcoder shards plus 15
+`code_py_rp1t` shards, and those 15 are by construction a third copy of
+dd09/b2v2 content. The exact-overlap channel deleted 169,561 dedup08 docs, 138.6K (82%) of them
+on those 15 rp1t shards and 31.0K (18%) spread over the 283 starcoder shards
+(b0, pod count 2026-09-10); per-shard rate differs ~84x, so the starcoder
+side was barely touched relative to its size. An earlier draft of this
+section bounded the overlap at 0.42B = 2.2% from names and doc counts; that
+bound assumed the overlap was diffuse across the domain, and it is in fact
+concentrated on the 15 rp1t shards.
+The dd09<->b2v2 near-overlap (22.9%/26.3% participation, est J>=0.5) is
+PENDING RE-MEASUREMENT after the loc/sig realignment (PR #177); near-dedup
+deletion is not approved. Operational detail stays in the pod's
+`data/decontam/NOTES.md`.
+
+### Which clean corpus p1 reads (source of truth)
+
+The 2026-09-09/10 decontamination pass produced two artifacts that both read
+as "the clean corpus". They serve different uses:
+
+- `data/corpus_clean/<domain>/` (pod, 57G) — clean source copies, for any use
+  that does NOT go through the quality classifier.
+- the classifier's keep set minus the deleted doc ids — **what p1 training
+  reads**. The keep set is decontaminated by doc id after e1's scoring run.
+
+The corpus swap (old source dirs renamed aside, clean copies renamed into
+place, old kept) happens after e1's scoring finishes, per 4c's plan (b).
+This section is the tracked authority; the manifests and per-pass numbers
+live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
-phi-1 filtered 35B down to 6B, a **17% keep rate**. Our pool is 18.8B; 17% of it is **3.2B**, and
-reaching 6B would require a 32% keep rate. Loosening the threshold twofold to hit a token count
-copied from another paper inverts that paper's own finding, which is that quality beats quantity.
+phi-1 filtered >35B tokens down to 6B, a **17% token keep rate** (the paper gives both
+input counts: >35M files totalling >35B tokens; the 17% is 6/35, a token ratio, not a file ratio).
+Our pool is 18.25B measured; 17% of it is **3.10B**, and reaching 6B would require a 32% token keep rate.
+Loosening the threshold twofold to hit a token count copied from another paper inverts that
+paper's own finding, which is that quality beats quantity.
 
 So the keep rate and the resulting token count are **outputs of the threshold ablation, not inputs
 to it**, and both are reported against phi-1's 17% with an explanation either way. If a strict
@@ -122,6 +152,95 @@ the reading under which `data/corpus/web_cci3_p*` was listed as unsuitable.
 **Fully synthetic code is outside the published recipe.** phi-1 kept the 6B filtered code. Dropping
 it is a legitimate arm but it has no reference score, so it is an ablation, not the plan.
 
+## Keep-rate units
+
+phi-1's paper states both input counts (>35M files, totalling >35B tokens) and the output in
+tokens only (~6B); the 17% is 6/35, a **token** ratio -- no post-filter file count is given, so
+a file-count keep rate cannot be attributed to phi-1. The comparable number for our filter is
+therefore the **byte/token keep, not the doc keep**.
+
+On our corpus the two units diverge by ~1.66x (three measured points: 1.665, 1.656, 1.656): at
+the >=3 cut sized to a 25% **doc** keep, the **byte** keep is 0.151 -- the kept set skews to
+short docs, because long docs in this corpus are mostly boilerplate/config-heavy and score low.
+So our keep rate against phi-1's 17% is **~0.15, 0.9x phi-1's stringency** in the comparable
+unit; quoting the 25% doc keep against it would overstate it 1.66x. Any keep rate quoted for
+this filter must say which unit.
+
+Byte-to-token conversion uses measured per-domain tok/byte (330MB sample per domain,
+tokenizer.json, +1 eos/doc): code_rp1t_dd09 0.306557, code_rp1t_b2v2_dd 0.306274,
+code_dedup08 0.278723. These are whole-domain ratios; the kept subset is compositionally
+different, so the final token count is measured directly on the keep set with its own tok/byte,
+not converted. The stats-file ratios are not used.
+
+## The tokenizer is rebuilt at V=20,000
+
+Ruling 2026-09-09 (fb, reviewed by 44 without challenge). The vocabulary frozen 2026-08-29 is
+unfrozen for p1. **This invalidates nothing, because p1 has no checkpoints and that is the whole
+reason the decision is cheap today and monotonically more expensive from p1's first step.**
+
+**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, 143-162 textbook
+chapters plus the three code domains at 4M chars, 88:12):
+
+| gate | value | |
+|---|---|---|
+| round-trip lossless | true, every subset | PASS |
+| all 256 bytes | 256/256 | PASS |
+| hanzi whole-char >= 0.95 | **undefined** -- the p1 composition has no hanzi | — |
+| ref fertility <= 1.55 | **1.4286** | PASS |
+
+The authorisation is **unfreeze condition 2, "the corpus distribution changes materially"**, and
+the mechanism is measured rather than asserted: **64.9% of the frozen vocabulary's slots are hanzi
+tokens** (`facts/tokenizer.json#tok.minicpm5_slot_budget_vs_ours`), leaving ~11.5K slots serving
+English and code where the candidate has 20K. A gate is a guardrail; a condition is an
+authorisation, and they are not the same thing.
+
+**What freezing would have cost**, candidate V=20K against the frozen vocabulary, chars/token on
+the same sample:
+
+| subset | frozen | candidate | tax |
+|---|---|---|---|
+| textbooks | 3.263-3.266 | 3.289-3.297 | +0.9% |
+| code, three domains | 3.099-3.189 | 3.220-3.298 | **+3.8%** |
+| full mix 88:12 | 3.127-3.201 | 3.232-3.298 | **+3.4%** |
+
+The +3.4% is permanent and multiplies across p1's 6-20B tokens and every later run that inherits
+the vocabulary. It is also a **lower bound**: the candidate was fitted on a proxy composition
+(3:1 prose:code) where the real one is 88:12, so a vocabulary fitted on the real thing would do
+better still. That last sentence is an inference, not a measurement.
+
+Freezing carries a second permanent cost that is easy to miss: V=32,773 instead of the 20,000
+p1-small is sized for adds **13.1M embedding parameters, +4% on 323M active**, and 64.9% of those
+slots are provably dead on this corpus.
+
+**Two conditions on the rebuild.**
+
+1. **Fit on the classifier's keep set, not the raw pool.** The pool is ~18.8B gross; p1 trains on
+   the 3-6B that survives filtering, and phi-1's keep rate was 17%. Fitting on the pool feeds the
+   vocabulary the statistics of the 70-80% of documents about to be discarded. This costs no extra
+   time: tokenization already waits for the corpus to be final.
+2. **Measure the tax on held-out text** (44's condition, and **already satisfied**). The repo
+   precedent is `facts/tokenizer.json#11` -- fit on a stratified sample, evaluate on held-out text.
+   The candidate was fitted on a proxy composition (`en_c4_stage2` + `code_py_starcoder` +
+   `code_py_rp1t`, a 62.5M-token sample) while the tax was measured on the three *deduplicated*
+   domains plus synthetic textbooks that did not exist when the candidate was fitted; seeds
+   7/13/21 are three independent evaluation samples, none of them fitting text. Held-out
+   evaluation is now a step inside `scripts/build_p1_tokenizer.py`, so the next rebuild satisfies
+   this by construction rather than by remembering. **Held-out and fit overlap at ~0.3%** --
+   reported rather than claimed as zero, and negligible against a 3.4% effect, but it belongs in
+   the fact's `uncertainty` when the number lands.
+
+## p1 has no math, and that is a decision
+
+`CLAUDE.md` states this project's objective as "a reasoning model targeting coding **and math**
+capability". p1's corpus has no math domain. That is a deliberate narrowing to the user's current
+instruction -- HumanEval ~60 -- and not an omission.
+
+The consequence, recorded so it is traceable: the reproduction of `math_owm` was stopped on
+2026-09-09 because nothing in p1 reads it. **If math comes back, its corpus work restarts from
+here.** `code_py_starcoder` was stopped for a different reason -- it is upstream of
+`code_dedup08`, which p1 does read, and reproducing an upstream does not validate the downstream
+bytes p1 actually consumes. Nothing was deleted in either case.
+
 ## Acceptance: one falsifiable gate, not a checklist
 
 A corpus is good enough iff **a 350M dense model trained on it clears HumanEval 30%.** phi-1-small
@@ -131,14 +250,25 @@ first.
 
 ## Per-line acceptance criteria
 
-| line | owner | acceptance |
-|---|---|---|
-| teacher serve + synthetic textbooks | b0 | measured tok/s on the tileRL serve BEFORE sizing anything; 50-sample readability judgement; topic coverage cross-table against the exercise set |
-| synthetic exercises | 44 | execution pass rate with the discard rate recorded; decontaminated against HumanEval and MBPP; topic distribution table; 50 samples, two readers, agreement recorded |
-| educational-value classifier | e1 | held-out AUC against teacher labels; keep rate stated against phi-1's ~17%; **threshold ablation run on our own corpus**; 50 high-scoring and 50 low-scoring samples, two readers |
-| topic seeds, dedup, decontamination | 3b | 20K topic table with a coverage measure; decontamination carries a known-positive control; a self-repetition metric for the synthetic set |
-| tokenizer + eval harness | d1 | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
-| human spot check | 98 | one table, one row per artifact, each with n, two readers, agreement, disagreement count, and a mix/no-mix verdict; a row without an agreement rate does not count |
+| line | owner | socket | acceptance |
+|---|---|---|---|
+| teacher serve + synthetic textbooks | de | `uds:/tmp/cc-socks/62973.sock` | measured tok/s on the tileRL serve BEFORE sizing anything; 50-sample readability judgement; topic coverage cross-table against the exercise set |
+| synthetic exercises | 44 | `uds:/tmp/cc-socks/62780.sock` | execution pass rate with the discard rate recorded; decontaminated against HumanEval and MBPP; topic distribution table; 50 samples, two readers, agreement recorded |
+| educational-value classifier | e1 | `uds:/tmp/cc-socks/56034.sock` | held-out AUC against teacher labels; keep rate stated against phi-1's ~17%; **threshold ablation run on our own corpus**; 50 high-scoring and 50 low-scoring samples, two readers |
+| topic seeds, dedup, decontamination | 3b | `uds:/tmp/cc-socks/63595.sock` | 20K topic table with a coverage measure; decontamination carries a known-positive control; a self-repetition metric for the synthetic set |
+| tokenizer + eval harness | b0 | `uds:/tmp/cc-socks/56758.sock` | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
+| human spot check | 98 | `uds:/tmp/cc-socks/34653.sock` | one table, one row per artifact, each with n, two readers, agreement, disagreement count, and a mix/no-mix verdict; a row without an agreement rate does not count |
+
+**The socket column is the point of the table, not decoration.** The first revision named
+owners by roster nickname alone, and one of those nicknames -- `d1` -- is not a member of
+`runs/roster.json` at all, while `de`, who is actually running the teacher serve, had no row.
+Dispatching from this table on 2026-09-09 sent four lines to the wrong sessions: `aupai-dd` is de
+and was addressed as b0, `lessons-d1` is b0 and was addressed as d1, e1's rulings went to
+`lessons-e1` (whose roster comment reads "lessons-e1 is NOT e1"), and 3b's line went to
+`lessons-31`, which is on no roster. Every one of them was caught by a peer, none by the
+dispatcher. `runs/roster.json` already carried the rule -- address by socket, never by name --
+and it was not read, so the address now sits in the table someone dispatches from rather than in
+a second file they have to remember to open.
 
 Two criteria are load-bearing and easy to drop:
 

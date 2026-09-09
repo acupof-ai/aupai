@@ -483,7 +483,7 @@
    "value": {
     "roundtrip_lossless": true,
     "bytes_present": "256/256",
-    "hanzi_whole_char": 0.9880,
+    "hanzi_whole_char": 0.988,
     "ref_fertility": 1.4286,
     "never_used_frac": 0.0188
    },
@@ -500,6 +500,87 @@
    },
    "uncertainty": "single-draw values at the stated setting. never_used_frac's three-seed range at a fixed setting exceeds the 0.01 threshold, which is why it is reported and not gated (tok.never_used_not_decidable); the 0.0188 here is one draw and not a pass/fail",
    "boundary": "AGENTS.md pre-fetch gate for the 30B v2 mix, now by measurement on the exact fetch composition rather than by the wider-composition ruling in the mix file's _comment. ALL THRESHOLD GATES PASS: the 30B build is cleared to fetch. ref fertility is corpus-independent (REF_EN), so 1.4286 matches the role-dir run exactly; hanzi moved 0.9793 -> 0.9880 because the exact mix draws zh_web from 909 shards. NEVER-USED IS LOAD-BEARING FOR THIS CLEARANCE: 0.0188 is nearly twice the retired 0.01 threshold -- if never-used were still gated, this run FAILS and the 30B fetch is blocked. The un-gate decision (tok.never_used_not_decidable) is what makes the clearance possible, not a tidy-up; a reader who does not follow that citation will not see it. The cot supply half of e1-51 needs no new measurement: cs.cot_open_thoughts_landed counts the 776,084,377 unreachable tokens and carries the repair spec (re-render with a content field, rename shards to three digits), and the v2 mix names data/corpus/cot only by 4c's 2026-09-08 ruling -- the repair is a future-mix path, not a v2 one.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_new_code_distribution",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "ref_fertility": 1.4286,
+    "hanzi_whole_char": 0.3498,
+    "never_used_frac": 0.6192,
+    "chars_per_token": 3.3657,
+    "en_fertility": 1.4228
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains code_py_starcoder,code_py_rp1t --per_domain 3000 --shards 8 (b0, pod, seed 7)",
+   "config": {
+    "sample": "6016 docs, 33.86M chars (~10.2M tokens at 3.37 chars/tok), 8 shards/domain, whole-doc clip",
+    "corpus": "the new 1.3B line's code component: code_py_starcoder (285 shards, 28GB) + code_py_rp1t (17 shards, 1.5GB), the phi-1-style Python supply",
+    "baseline_default_mix": "same tokenizer, same flags, 7-domain default: hanzi 0.9806, never_used 0.0077",
+    "hanzi_denominator": "3036 hanzi occurrences in the 600-row gate sample, 0.03% of the sample's tokens"
+   },
+   "uncertainty": "THE HANZI FAIL IS A COMPOSITION ARTIFACT, NOT A VOCAB DEFECT. The same frozen tokenizer reads 0.9806 on the default mix and 0.9895 on zh_web alone; tokenizer_report.py:144-154 documents this exact dependence (an English/LaTeX corpus measured 0.1594). On pure code the gate measures how the vocab handles Chinese comments -- a corner case, not the distribution. never_used 0.6192 is sample-size bound (10.2M tokens; the metric drops ~10x from 1.6M to 142M tokens on the old mix) but the direction is structural: a zh-web-fitted vocab carries 21,286 hanzi-bearing slots (64.9% of 32,773, tok.minicpm5_slot_budget_vs_ours) into a corpus where hanzi is 0.03% of tokens. chars/token 3.37 on code is BETTER than the default mix's 2.60 -- per-char compression is not the problem; slot allocation is.",
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was never run. Says nothing about a code-fitted candidate's gates -- no candidate was built. FOR THE P1 SIZING DECISION THIS ROW IS SUPERSEDED by tok.gates_p1_proxy_composition: pure code is not the p1 composition (p1 is ~3:1 prose:code per docs/standards/p1_data_recipe.md). The measurement itself stands.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_p1_proxy_composition",
+   "value": {
+    "english_prose_proxy": {
+     "prose_domain": "en_c4_stage2",
+     "never_used_frac": [0.6247, 0.6338, 0.6373],
+     "hanzi_whole_char": [0.3844, 0.0027, 0.001],
+     "chars_per_token": [3.4256, 3.4332, 3.3962],
+     "en_fertility": [1.463, 1.4592, 1.4914],
+     "ref_fertility": 1.4286,
+     "utilised": [0.3784, 0.3695, 0.3659],
+     "byte_fragment_tokens": [0.0166, 0.0161, 0.0151]
+    },
+    "chinese_prose_proxy": {
+     "prose_domain": "textbook",
+     "never_used_frac": [0.0855, 0.0843, 0.0831],
+     "hanzi_whole_char": [0.9943, 0.9927, 0.9936],
+     "chars_per_token": [2.0694, 2.076, 2.0751],
+     "en_fertility": [1.5135, 1.5574, 1.5155],
+     "ref_fertility": 1.4286,
+     "utilised": [0.9131, 0.9141, 0.9155],
+     "byte_fragment_tokens": [0.0559, 0.0561, 0.0569]
+    }
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/tokenizer_p1_proxy.py --prose-domain {en_c4_stage2,textbook} (b0, pod, seeds 7/13/21, 30M chars per seed at 3:1 prose:code; smoke-tested from the tree path, full-scale numbers from the identical pod run)",
+   "config": {
+    "p1_composition": "~20B synthetic textbooks + ~6B filtered code + ~0.18B exercises (docs/standards/p1_data_recipe.md, PR #154) ~= 3.3:1 prose:code",
+    "proxy": "the synthetic textbooks do not exist yet, so the prose half is a proxy. Two are measured because the recipe does not state the textbooks' language and the decision flips on it: en_c4_stage2 (English web, 0.0000 hanzi frac) reads as the phi-1-shape branch; textbook (the existing synthetic tutorials, 75.7% hanzi by chars, same content as textbook_30b) reads as the Chinese-prose branch",
+    "sample": "30M chars per seed, 3:1 prose:code by chars, code split 95/5 code_py_starcoder/code_py_rp1t, whole-doc, shuffled into one corpus key so _even_rows' 600-row gate sample sees the true mix",
+    "vocab": "data/tokenizer.json, 32,773 slots, 21,286 hanzi-bearing (64.9%, tok.minicpm5_slot_budget_vs_ours)"
+   },
+   "uncertainty": "never_used is tight within branch (three-seed ranges 0.0126 English, 0.0024 Chinese) but the between-branch gap (0.084 vs 0.63) is the whole decision and it is a language fork, not sampling noise. The recipe doc never states the synthetic textbooks' language; the circumstantial evidence points English (phi-1/phi-1.5 proportions, HumanEval acceptance gate, signature+docstring exercises, the doc itself is English) while the repo's only existing synthetic-textbook pipeline is Chinese. Raised to 4c 2026-09-09. hanzi whole-char on the English branch spans 0.001..0.384 across seeds because the 600-row gate sample catches whatever Chinese lives in code comments -- the gate measures corpus composition, not vocab quality (tokenizer_report.py:144-154 documents the same tokenizer reading 0.1594 on English/LaTeX and 0.9895 on zh_web), and never_used is the candidate replacement gate (reported, not gated, since PR #69).",
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). No candidate vocabulary was built or fitted -- these are the frozen vocabulary's readings on the two proxy populations. The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was not run. The deciding measurement for sizing is bits/char vs V on the real p1 composition, which needs a fresh sweep (the existing sweep, tok.vocab_sweep_32k_64k, was on the old bilingual mix) plus the never_used re-measure on the real synthetic textbooks when b0 ships the first batch, per 4c's standing instruction that the real sample wins over the proxy.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.p1_vocab_sweep_bits_per_char",
+   "value": {
+    "bits_per_char": {"16384": 2.0465, "20000": 2.0484, "24576": 2.0504, "32768": 2.0552, "frozen_oldmix_32773": 2.0546},
+    "bits_per_token": {"16384": 7.714, "20000": 7.8829, "24576": 8.0403, "32768": 8.2415, "frozen_oldmix_32773": 7.0249},
+    "chars_per_token": {"16384": 3.7693, "20000": 3.8484, "24576": 3.9213, "32768": 4.0102, "frozen_oldmix_32773": 3.4191},
+    "never_used_frac_on_800_eval_rows": {"16384": 0.0609, "20000": 0.0948, "24576": 0.1463, "32768": 0.2386},
+    "ref_fertility": {"16384": 1.3896, "20000": 1.3117, "24576": 1.2338, "32768": 1.1948},
+    "marginal_20k_to_32k": "+0.33% bits/char -- point estimate is that bigger V is slightly WORSE on this composition; no measurable compression gain from growing past 20K"
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/build_p1_vocab_sweep.py (b0, pod); the script writes its results JSON and the four candidate tokenizers to its --outdir on the pod (the OUTDIR constant in the script), regenerable from the script -- the candidates are derived artifacts and not committed, matching the old sweep (tok.vocab_sweep_32k_64k: no sweep artifact located)",
+   "config": {
+    "composition": "English proxy: en_c4_stage2 + code_py_starcoder/code_py_rp1t at a 3:0.95:0.05 byte budget -- the p1 composition's prose:code ratio, code split 95/5 like tok.gates_p1_proxy_composition",
+    "candidates": "fitted on the proxy at 16K/20K/24K/32K with build_tokenizer.py's trainer shape (initial_alphabet=ByteLevel.alphabet(), same specials); ONE held-out set, 800 rows from last-quartile shards, identical for every candidate",
+    "estimator": "tokenizer_sweep.bits_per_char, interpolated 3/2/1-gram over the token stream with fixed weights (0.55/0.30/0.15); n-gram model on 30000 train rows",
+    "frozen_reference": "data/tokenizer.json (32,773 slots, fitted on the old bilingual mix) scored on the same held-out set, to split fit effect from size effect"
+   },
+   "uncertainty": "The estimator's train-size dependence is measured, not assumed: at 3000 train rows the 16K->32K spread was +1.35%, at 30000 it is +0.43% -- the sign (bigger V slightly worse on bits/char) survives, the magnitude shrinks. The 20K->32K marginal is +0.33% at 30K. The repo's standing claim that bits/char is 'strictly monotone in size' (tokenizer_eval.py, the reason it cannot rank across sizes) does not hold on this composition at either train size. never_used is on 800 eval rows (~200K tokens) and is size-bound (tok.never_used_not_decidable); the load-bearing part is its direction -- larger V wastes more slots on the same text (6.1% at 16K to 23.9% at 32K).",
+   "boundary": "Intrinsic proxy; screens, does not rank (TokEval). The verdict on vocabulary size remains two pretrains differing only in vocabulary (unfreeze condition 3), not this sweep. This satisfies freeze condition 1 of the V=20,000 working target (4c, 2026-09-09): the 20K->32K segment is measured on the English proxy. Condition 2 (never_used re-measure on the first real synthetic textbooks) is still open -- the proxy is English WEB prose, not synthetic textbook prose, and 4c's standing instruction is that the real sample wins over the proxy. The embedding-param arithmetic at the pinned d's (scripts/p1_size.py, 4c 2026-09-09): shrinking 32,784->20,000 saves 13.1M tied params on p1-small (d=1024, 1.21% of 1.08B) and 26.2M on p1 (d=2048, 0.44% of 5.92B), and 39.0% of LM-head FLOP/token at both d's. The sweep conclusion itself is d-independent: bits/char does not depend on d, and the vocabulary is shared between p1-small and p1.",
    "status": "measured"
   }
  ]
