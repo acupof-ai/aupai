@@ -11,11 +11,37 @@ them says on its face that it is not my read of the diff.**
 | V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
 | classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
 | classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
-| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **115/298**, cumulative doc keep **0.360** — **at the preregistered band's upper bound and still rising** (0.349 at 56, 0.358 at 102, 0.360 at 115). Say now, before the DONE line, that this is heading for a MISS on the high side; a band I wrote at 18:5xZ is not worth more than the number | rate 334 docs/s while 3b's re-signing reads the same shards; 3b is 128/298 and ~50 min from finishing, after which the rate returns to 620. So the contention costs ~50 min, not the 3.7h I first wrote. **The DONE line is a VERIFICATION, not a discovery** — the band is preregistered |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **167/298**, doc keep **0.363** and still rising (0.349@56 → 0.358@102 → 0.362@157 → 0.363@167). **Prediction (1) MISSES HIGH; e1 confirms and will not round it in.** The two rp1t domains landed exactly on the prereg (dd09 0.1397/0.0839, b2v2 0.1421/0.0858, ratios 1.665/1.656 both inside band (2)) | 394 docs/s, 131 shards left, DONE ~1.5-2h. **The DONE line is a VERIFICATION, not a discovery** — the band is preregistered
 | decontamination | 3b | **DONE, verified** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | the rerun hitlist is **byte-identical** to the approved one (`diff -q` silent) — determinism proven on the same criterion and source. Clean copy 57G, source untouched. Swap waits on e1 |
 | near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 and b2v2 re-signed; dedup08 at 15/298, then the keep-set doc-id join |
 | tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
 | HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
+
+## My own token estimate is wrong, and the doc-keep miss is not why
+
+`p1_keep_yield_0909`'s prediction (3), **2.87B = 18.8B × (0.2538/1.66), divides a DOC-WEIGHTED
+keep rate by ONE corpus ratio.** That step assumes a domain's doc share equals its byte share.
+Computed from `p1_data_recipe.md:80-83` and `p1_classifier_annotations.md:140`:
+
+| domain | tok/doc | doc share | byte share |
+|---|---|---|---|
+| dd09 | 1819 | 0.291 | 0.342 |
+| b2v2 | 1714 | 0.178 | 0.197 |
+| **dedup08** | **1348** | **0.530** | **0.461** |
+
+dedup08 is the highest-keep domain and its documents are 26% smaller, so doc-weighting inflates
+exactly the term the estimate is most sensitive to. Per-domain byte keep on per-domain bytes, at
+the same predicted 0.354: `6.24×0.0839 + 3.60×0.0858 + 8.41×(0.354/1.66)` = **2.63B**. The
+one-ratio form reproduces 2.87B *exactly* on the same inputs — same numbers, two methods, +6.2%,
+which is how the error was identified rather than guessed. A second, independent error runs the
+same way: 18.8B carries dedup08 at **8.95B derived** against **8.41B measured**, a further −2.9%.
+
+**Corrected: ~2.63B at the predicted keep, ~2.68B at the 0.365 it is trending to.** Prediction (3)
+therefore misses **LOW** while (1) misses **HIGH** — two errors of opposite sign, which is why
+neither was visible in the total. Amended into the prereg row **before** the DONE line
+(`amendment 1`, `e1023f8a`), not after it. (1) and (2) stand unchanged. b0 sizes the tokenizer
+schedule against ~2.65B, not 2.87B; e1's final yield is measured from the keep set's own tok/byte
+and owes nothing to any ratio, mine included.
 
 ## The token estimate moved down, and the reason is a ratio
 
