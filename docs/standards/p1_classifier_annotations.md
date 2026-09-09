@@ -246,7 +246,7 @@ The gross pool is 18.25B tokens and near-unique (starcoder body overlap
 
 The post-deletion re-measurement landed 2026-09-10: **8.509B tokens** / 6.06M
 docs, a full count over the 298 clean-copy shards with the frozen tokenizer
-(`datagen/count_domain_tokens.py`). The 8.41B extrapolation was 4.2% below the
+(`datagen/count_domain_tokens.py`). The 8.41B extrapolation was 4.0% below the
 implied pre-deletion count (8.760B at 1,404 tok/doc) — an extrapolation labeled
 "measured" is why the gap went unnoticed.
 
