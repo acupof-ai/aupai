@@ -393,15 +393,21 @@ Why it escapes review: "more precise" always sounds like an improvement, and it 
 
 Cannot see: whether a residual error's cost is asymmetric — that lives in what the predicate gates, not in the predicate. The fix is a review question, not a check: when a criterion changes, ask which side the residual lands on BEFORE asking whether the new one is more accurate.
 
-## R17. Two artifacts joined by position must have that position produced by one writer; a cross-process "row i ↔ row i" convention has no owner
+## R17. A positional join across two producers has no owner; a contract written only in a comment is a check that cannot fail, and it is worse than no check
 
-1 incident (2026-09-10), caught in review by measurement, not by reading the code. `manual:` — no check knows two files are consumed together by position. Checkable slice: where two artifacts are zipped by row, the ordering must have a single writer or an explicit join key; a scanner could flag positional joins over files with different producers.
+1 incident (2026-09-10), caught in review by measurement, not by reading the code. `manual:` — no check knows two files are consumed together by position. Checkable slice: where two artifacts are zipped by row, the ordering must have a single writer or an explicit join key; a scanner could flag positional joins over files with different producers, and comments that assert ordering invariants.
 
-The shape: two artifacts must correspond row by row, but each is produced by a different code path with a different ordering guarantee — one stacks in completion order (`imap_unordered`), the other enumerates in sorted-glob order. The correspondence is a convention that exists only in the reader's assumption: no line of code states it, no writer is responsible for it, so no check can fail on it. Both producers are individually correct; the system is wrong by ~85% of rows. What survives is what never depended on the join — the order-independent statistic (participation as set membership); what dies is everything coordinate-dependent (calibration pairs, hit coordinates).
+The shape: two artifacts must correspond row by row. The producer of the loc index (`build_locs.py`, pod-only, never on main) states the contract in its header comment — "in the same order sig_one produced signatures" — and three lines below violates it with `sorted(glob)`, while the signatures are stacked in `imap_unordered` completion order. The contract was expressed in the one place it cannot be checked: a comment. That is worse than never expressing it: never expressed, the next reader asks "how do these align?" and investigates; expressed in a comment, the next reader reads the answer and stops. A correct assertion about code behavior, in a comment, is a check that cannot fail — it consumes the moment that would have produced doubt. Both producers were individually correct; the system was wrong by ~85% of rows.
 
-- §296: near_overlap's signatures (completion order) and loc index (sorted-glob order), joined by row position. b0 measured ~85% of rows misaligned in #177's review.
+The second facet: the producer was not on main. Review of the consumer (`near_overlap.py`, which reads the loc files) could not see the file that decided the alignment — an artifact invisible to review decided whether two artifacts aligned.
+
+What survived is what never depended on the join — the order-independent statistic (participation as set membership); what died is everything coordinate-dependent (calibration pairs, hit coordinates).
+
+- §296: near_overlap signatures (completion order) and loc index (sorted-glob order), joined by row position under a comment-stated contract. b0 measured ~85% misaligned in #177's review.
 
 The fix shape is part of the rule: do not make the second producer reproduce the first's order — make the first persist its own ordering and delete the site where the guess happened (3b's choice in #177). And the guard must assert the property, not a proxy: equal lengths passes under any permutation; the #177 guard re-signs the doc at `loc[i]` and compares the signature.
+
+Adjacent to R13's "measured conclusion in a comment" (§280): that one is a conclusion in the wrong place; this one is a CONTRACT in the wrong place, and a contract has a counterparty — another process that depends on it.
 
 Cannot see: which artifacts are consumed together by position — that lives in the reader's code, not the writers'. A positional join over two files with different producers is the review question.
 
