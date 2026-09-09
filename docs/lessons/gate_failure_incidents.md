@@ -1118,3 +1118,90 @@ Fixes, in the order they were tried, and only the last is durable:
 
 Cost: none realised, and that is luck rather than design. The resident M2 was found by grepping the file for the fix's own string before committing; had that commit landed, the guard would have been silently inert on main with every gate green. The `--no-verify` this session used minutes earlier to escape an unrelated deadlock would have carried it in without a hook run.
 
+
+### §287 (2026-09-09, R2)
+
+**A pre-registered criterion that fires on a known-answer negative world: the control arm was
+silently a replicate of the arm it is compared against.** Caught while the arm was at step 2000 of
+7,629, before its number existed.
+
+The design: three arms at the 4B point. N1 and N2 share a mix and differ only in `Cfg.seed`, so
+`F = |N1 - N2|` is the noise floor. R shares N1's seed (1337) and carries the reweighted mix, so
+`|R - N1|` was registered as carrying "the reweight and nothing else". The criterion:
+`|R - N1| <= F` means the reweight had no measurable effect.
+
+**The premise "same seed, so only the reweight differs" was never checked against `build_mix`.**
+When it was, `train.py:2791-2810` says:
+
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
+    g = torch.Generator().manual_seed(Cfg.seed)
+    for frac, key in phases:
+        want = int(rows * frac * d.get(key, d["weight"]))
+        idx  = torch.arange(used[name], used[name] + want) % len(pool)
+        plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+
+The MAIN phase is built first, from `d["weight"]`. A structural diff of the two mixes shows they
+are byte-identical outside the `_comment` and nine `anneal` values -- `total_tokens`, `epochs` and
+every `weight` agree to the last digit. `used[]` starts at 0, so `idx` and `ph` match, and
+`randperm` draws from one generator seeded with 1337 in both runs. **N1 and R therefore consume the
+same rows in the same order for the first 6,866 steps, and the reweight cannot act until step
+6,866.**
+
+Confirmed in the logs rather than only in the code, which is what makes it a measurement:
+
+    step   N1      R
+      10   6.615   6.616
+      20   5.683   5.683      <- identical
+      30   5.587   5.587      <- identical
+      50   5.220   5.215
+     100   4.811   4.817
+
+Two runs from the same state, separating by floating-point nondeterminism.
+
+**So `|R - N1|` at the read point is drift over 7,629 steps plus the reweight over the last 763,
+and the criterion cannot tell them apart.** The drift term measured on the arms themselves:
++0.001, -0.001, +0.011, +0.016 at steps 500/1000/1500/2000, monotone since 1000, with the reweight
+inactive throughout. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
+`F` carries a drift term of its own, and two samples give a range rather than an upper bound on a
+third run's drift.
+
+This is R2's defining shape. R's first 6,866 steps are a **known-answer negative world** -- a
+region where the effect is zero by construction -- and the criterion fires there, reading 0.016 and
+climbing. The R1 cause sits underneath it: a premise stated in the arms table ("differs from N1
+only in the mix") was carried into a decision rule without being checked against the code that
+builds the thing it describes.
+
+**The fix, and it costs nothing because the data is already being produced.** The criterion is
+unchanged; a companion number becomes required. `D = |R - N1|` at step 6500, the last periodic read
+before the anneal begins, is the same-seed drift measured on these very arms. A verdict that the
+reweight moved val requires `|R - N1|` to exceed **both** `F` and `D`.
+
+**Two limitations, stated rather than left to be found.** `D` is read on the 20-batch periodic
+estimator and the final gap on the 100-batch epoch-end one, so `D` bounds the drift's *scale* and
+is **not subtractable** from the final number -- §286's estimator trap, one entry later and in the
+same experiment. And one same-seed pair is one drift sample, not a distribution.
+
+**The residual, and why it is not narrow.** Drift can still grow between step 6500 and 7629, so
+"exceed both" keeps a false-positive path. 44's first estimate extrapolated the drift as
+`sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path. **That model does not survive a
+fit check.** Fitted through the last point it back-predicts +0.008 at step 500 against an actual
++0.001, and +0.011 at 1000 against an actual -0.001. A linear fit over the points from 1000 on
+tracks all three (+0.000 / +0.009 / +0.017 against -0.001 / +0.011 / +0.016) and extrapolates to
+**0.113, well over `F`**. The model that fits worse extrapolates under the floor and the model that
+fits better extrapolates over it, so **the extrapolation is not decidable from four points and
+neither number should be quoted as the answer**. Labelling one of them would be R6's own failure
+inside R2's entry. What is decidable: the false-positive path is not demonstrated to be narrow.
+
+The measurement that settles it is a fourth arm -- an exact rerun of N1 at seed 1337 on
+`mix_200m_4b_annealN` -- which is not scheduled. It is named in the prereg amendment so its absence
+is visible rather than implied.
+
+Cost: none realised. Caught at step 2000 of 7,629, ~5.5 hours before the read point, by asking why
+two arms that should track each other were diverging monotonically.
+Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_1` (`e24268fd`);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
+runs and is committed at close -- §286's fix applied before the fact this time.
+open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
+one thing; the assertion would be over the built plan, not over the mix files.
