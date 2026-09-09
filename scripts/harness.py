@@ -18021,6 +18021,7 @@ EVIDENCE = {
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
+    "score_matrix_ckpts_present": "repo",
     # "both": the question joins two filesystems -- the pod holds the rows, the repository
     # holds what it is missing -- so neither side alone can answer it. It runs wherever a
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
