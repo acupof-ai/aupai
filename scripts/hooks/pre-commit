@@ -2087,6 +2087,12 @@ def main():
         "scripts/test_e2e.py": "asserts `set E2E_GPU=<idx>` at import; the pod's cards are shared and it will not pick one",
         "datagen/test_scan_math_contamination.py": "needs data/corpus/math/ape210k_000.jsonl at import (gitignored corpus); IndexError on the glob",
         "datagen/prepare_sft.py": "imports loader off sys.path; ModuleNotFoundError outside its runner",
+        # The format-SFT packer's boundary known-answer test (ruling C, 2026-09-09):
+        # asserts the split-encode invariants on the REAL tokenizer, because the
+        # prompt/body boundary merge is a tokenizer property and a fake tokenizer
+        # would make the test vacuous. Needs data/tokenizer.json (gitignored);
+        # --selftest passed on a box with the tokenizer 2026-09-09.
+        "datagen/prepare_format_sft.py": "needs data/tokenizer.json (gitignored) for the boundary merge assertions",
         "datagen/rescore_code.py": "sandbox_exec needs root (chroot + namespaces); pod only",
         # The sandbox itself. 17 known answers, every one of which needs root plus unshare,
         # so none can run on a dev box or in CI -- run by hand on the pod, and the commit
