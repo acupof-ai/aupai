@@ -73,6 +73,10 @@ def sign_domain(name, pat):
                   f"{done} total ({round(time.perf_counter()-t0)}s)", flush=True)
     S = np.vstack([p[0] for p in parts])
     np.save(sp, S)
+    # locs in the SAME completion order as the stacked sigs. A sorted-glob
+    # rebuild misaligns ~85% of rows (b0, PR #177 review 2026-09-10): the
+    # sigs are stacked in imap_unordered completion order, not shard order.
+    json.dump([loc for p in parts for loc in p[1]], open(lp, "w"))
     print(f"{name}: {S.shape[0]} sigs -> {sp} ({round(time.perf_counter()-t0)}s)", flush=True)
     return S
 
@@ -117,7 +121,7 @@ def main():
     out = {"method": f"MinHash {PERMS}perm char5gram, LSH {BANDS}x{ROWS} (th~0.45), est>={TH}, "
                      f"sample {SAMPLE_N}/domain queried vs full index", "domains": {}}
     verify_pairs = []
-    hit_pairs = []
+    hit_pairs = set()
     for d, (name, _) in enumerate(DOMAINS):
         lo = 0 if d == 0 else bound[d - 1]
         hi = bound[d]
@@ -139,7 +143,7 @@ def main():
                 est = float((sig == all_sigs[c]).mean())
                 if est >= TH:
                     hits[e].add(g)
-                    hit_pairs.append((int(g), int(c), est))
+                    hit_pairs.add((min(int(g), int(c)), max(int(g), int(c)), est))
                     if g not in max_est or est > max_est[g][0]:
                         max_est[g] = (est, c)
         rec = {"sampled": len(sample)}
@@ -153,30 +157,39 @@ def main():
         out["domains"][name] = rec
         print(f"{name}: {rec}", flush=True)
 
-    # persist every hit pair: the keep-set participation cut joins this file by
-    # doc id, it does not re-run the instrument
+    # persist every unique hit pair: the keep-set participation cut joins this
+    # file by doc id, it does not re-run the instrument
     locs = []
     for name, _ in DOMAINS:
         lp = f"{CK}/{name}.loc.json"
-        locs.append(json.load(open(lp)) if os.path.exists(lp) else None)
+        if not os.path.exists(lp):
+            raise SystemExit(f"missing {lp} -- sign_domain must persist locs in sig order")
+        locs.append(json.load(open(lp)))
+    # content guard: len equality cannot prove loc/sig alignment -- a sorted-glob
+    # rebuild passes len while misaligning ~85% of rows (b0, PR #177, 2026-09-10)
+    guard_rng = random.Random(0)
+    lsh = B.MinHashLSH(perms=PERMS, bands=BANDS)
+    for d, (name, _) in enumerate(DOMAINS):
+        L, S = locs[d], sigs[d]
+        assert len(L) == S.shape[0], f"{name}: {len(L)} locs vs {S.shape[0]} sigs"
+        for i in guard_rng.sample(range(len(L)), min(14, len(L))):
+            doc = read_doc(L[i])
+            assert (np.asarray(lsh.signature(doc), dtype=np.int64) == S[i]).all(), \
+                f"{name}: loc[{i}] sig mismatch -- loc/sig order misaligned"
+    print("loc guard: 14/doc content spot-check OK", flush=True)
     pair_path = "/work/aupai/data/decontam/near_overlap_hits_0909.jsonl"
     os.makedirs(os.path.dirname(pair_path), exist_ok=True)
-    n_written = 0
     with open(pair_path, "w") as f:
-        for g, c, est in hit_pairs:
+        for g, c, est in sorted(hit_pairs):
             d, e = int(dom_of[g]), int(dom_of[c])
             lo_g = 0 if d == 0 else bound[d - 1]
             lo_c = 0 if e == 0 else bound[e - 1]
-            lg, lc = locs[d], locs[e]
-            if lg is None or lc is None:
-                continue
-            f.write(json.dumps({"shard_a": lg[g - lo_g][0], "row_a": lg[g - lo_g][1],
-                                "domain_a": DOMAINS[d][0], "shard_b": lc[c - lo_c][0],
-                                "row_b": lc[c - lo_c][1], "domain_b": DOMAINS[e][0],
+            f.write(json.dumps({"shard_a": locs[d][g - lo_g][0], "row_a": locs[d][g - lo_g][1],
+                                "domain_a": DOMAINS[d][0], "shard_b": locs[e][c - lo_c][0],
+                                "row_b": locs[e][c - lo_c][1], "domain_b": DOMAINS[e][0],
                                 "est_jaccard": round(est, 4)}, ensure_ascii=False) + "\n")
-            n_written += 1
-    out["hit_pairs"] = n_written
-    print(f"hit pairs: {n_written} -> {pair_path}", flush=True)
+    out["hit_pairs_unique"] = len(hit_pairs)
+    print(f"hit pairs: {len(hit_pairs)} unique -> {pair_path}", flush=True)
 
     # exact-J calibration on a fixed sample of hit pairs
     random.shuffle(verify_pairs)
