@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-09, 04:2xZ
+# Controller board (fb) — 2026-09-09, 05:0xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | N1 | 1337 | **1.823** | 7,629 | 4.00B |
 | N2 | 1338 | **1.871** | 7,629 | 4.00B |
-| R | 1337 | running, step 4690/7629 (61%), loss 1.668 | 7,629 | 4.00B |
+| R | 1337 | running, step 6140/7629 (80%), periodic val 1.872 at 6000 | 7,629 | 4.00B |
 
 **F = 0.048.** Everything else about the two arms is identical: same mix
 (`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
@@ -202,8 +202,8 @@ is queued, and that decision is the user's — it sits in Open decisions below a
 | run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
 | launched | 2026-09-09 01:48Z by fb |
 | cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
-| progress | step 4690 / 7629, **61%**, loss 1.668, gnorm 0.52, 77K tok/s/gpu, 1.709 s/step, peak 49.53 GiB |
-| next reads | D at step 6500 — 1,810 steps out at 1.71 s/step = **~52 min**, ~05:1xZ. Epoch-end val ~05:5xZ. 3b owns the read |
+| progress | step 6140 / 7629, **80%**, 77K tok/s/gpu, 1.71 s/step, peak 49.53 GiB |
+| next reads | step 6500 — **~10 min out**, the LAST main-phase periodic read, so D freezes there. Epoch-end val ~05:4xZ. 3b owns both |
 
 ## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
 
@@ -251,6 +251,37 @@ measured at 6500, not extrapolated to it.
 **The chained scoring will fail on R too.** A four-card grant with no lane card guarantees every
 arm's scoring step deadlocks 30 min and exits nonzero; N1 and N2 both did. Checkpoint unaffected,
 scoring done by hand in the gap. The correct fix is one line in `run_ddp.sh`, which is frozen.
+
+## D is the spread of the replicate drift, not its value at one step — amendment 3, `83360615`
+
+**My own amendment 1 was the defect.** It required `D = |R-N1| at step 6500`: one draw of a quantity
+whose entire content is its spread. R's main phase is a same-seed replicate (§287), so every
+periodic read before the anneal at step 6866 measures numerical nondeterminism and nothing else.
+Twelve such reads, committed at `runs/anneal_r_vs_n1_drift_0909.tsv` **while the arm was still
+running**, because a series that arrives after the verdict cannot constrain it:
+
+| | |
+|---|---|
+| range | [-0.021, +0.016] |
+| max\|d\| | **0.021** at step 4000 |
+| mean | -0.00264 |
+| sign changes | 3 |
+
+A 6500 read landing near the mean would have understated D about sevenfold. **D is now
+`max|R-N1|` over every main-phase periodic read, and it FREEZES at 6500** — the next periodic read,
+7000, is inside the anneal, so the window is closed by construction rather than by choice (44's
+point, sharper than my own statement of it).
+
+44 verified all four legs independently rather than reading mine: the phase arithmetic in code
+(`train.py:2626`, 0.9 x 7629 = 6866, margin 366 steps), a byte diff of the two mixes, every
+statistic recomputed off the TSV, and the commit time 04:29:50Z against R's position. On max vs
+range: **max is right because D is a floor for a pointwise exceedance and must be in the units of
+one draw.** That is a better reason than the asymmetric-cost one I gave.
+
+**Merged before the read it governs**, which is the only reason it is a pre-registration. Amendment
+1 was mine, the correction is mine, and it is recorded as a correction rather than quietly fixed —
+the second time tonight one of my criteria expressed something narrower than the property asked
+(§287 was the first). 44 holds whether that pair is a shape.
 
 ## Next gate — R
 
