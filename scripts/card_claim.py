@@ -1102,6 +1102,19 @@ def acquire(name, cards, wait=0, note="", pid=None, require_device=False, wait_f
                     old = int(existing.get("pid", -1)) if existing else -1
                 except (TypeError, ValueError):
                     old = -1
+                if existing and _alive(old) and _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
+                    # THE PID WAS RECYCLED. claims() reads this row stale and the sweep at the top
+                    # of this loop deletes it, so reaching here means the row was written in the
+                    # window between that sweep and this O_EXCL and its pid already died and was
+                    # reused. Say so: the silent unlink below made claims() and this path disagree
+                    # about what the row was (44, PR #173 review). Reclaims, like the sweep: the
+                    # recorded process is dead, so the claim is stale.
+                    print(
+                        f"note: {name}'s claim pid {old} was reused (start time changed from "
+                        f"{existing.get('start_time')!r}) -- the recorded process is dead; "
+                        f"reclaiming the stale claim file",
+                        file=sys.stderr,
+                    )
                 if existing and _alive(old) and not _pid_reused(old, existing.get("start_time"), existing.get("pid_ns")):
                     # SAME PID, SAME CARDS: the claim already says exactly what this call is asking
                     # for, so the ask is already satisfied and refusing it is refusing a fact that is
