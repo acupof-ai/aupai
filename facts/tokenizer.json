@@ -513,7 +513,7 @@
     "marginal_20k_to_32k": "+0.33% bits/char -- point estimate is that bigger V is slightly WORSE on this composition; no measurable compression gain from growing past 20K"
    },
    "measured": "2026-09-09",
-   "source": "scripts/build_p1_vocab_sweep.py (b0, pod); the script writes its results JSON and the four candidate tokenizers under data/vocab_sweep/ on the pod, regenerable from the script -- the candidates are derived artifacts and not committed, matching the old sweep (tok.vocab_sweep_32k_64k: no sweep artifact located)",
+   "source": "scripts/build_p1_vocab_sweep.py (b0, pod); the script writes its results JSON and the four candidate tokenizers to its --outdir on the pod (the OUTDIR constant in the script), regenerable from the script -- the candidates are derived artifacts and not committed, matching the old sweep (tok.vocab_sweep_32k_64k: no sweep artifact located)",
    "config": {
     "composition": "English proxy: en_c4_stage2 + code_py_starcoder/code_py_rp1t at a 3:0.95:0.05 byte budget -- the p1 composition's prose:code ratio, code split 95/5 like tok.gates_p1_proxy_composition",
     "candidates": "fitted on the proxy at 16K/20K/24K/32K with build_tokenizer.py's trainer shape (initial_alphabet=ByteLevel.alphabet(), same specials); ONE held-out set, 800 rows from last-quartile shards, identical for every candidate",
