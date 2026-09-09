@@ -1,3 +1,86 @@
+# Controller board (fb) — 2026-09-09, 20:4xZ
+
+## State: p1
+
+`docs/standards/p1_data_recipe.md` is the recipe of record. main is `42ae6444`, CI green, both
+trees clean, pod stamp `75eeddcf` with **0 refusing**. **Nothing is blocked on a decision.**
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
+| classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
+| classifier + threshold | e1 / fb | **ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; min domain 0.879; long-bucket AUC never above short — the classifier did not learn length. ≥4 is the ceiling, precision 0.457 | — |
+| **full-corpus scoring** | e1 | **2 of 3 domains done, dedup08 74%** | 221/298, doc keep **0.364**, 435 docs/s (contention over — 3b's signing finished). dd09 0.1397/0.0839 and b2v2 0.1421/0.0858 both landed **exactly** on the prereg, ratios 1.665/1.656 inside band (2) | **~55 min to the DONE line**, which rules on all three predictions at once |
+| decontamination | 3b | **DONE, verified** | rerun hitlist **byte-identical** to the approved one (`diff -q` silent); dd09 3,434,322→3,432,759, b2v2 2,103,485→2,102,683, both reproduce the manifest; clean copy 57G, source untouched | swap waits on the DONE line |
+| near-duplicate | 3b | **re-signed; now measuring** | dedup08 signing finished; participation phase reporting b2v2 `participation_in_dd09` 0.26212, `in_dedup08` 0.0402 | the keep-set doc-id join, after the DONE line |
+| tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | **size it against ~2.65B, not 2.87B** — see below |
+| p1 teacher serve | b0 | running on 4,5 | 27B NVFP4 through tileRL's engine; first deliverable is the measured tok/s, not tokens | tok/s with batching |
+| HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
+
+### The two numbers that moved this hour, both mine, both wrong before
+
+1. **Prediction (1) misses HIGH.** dedup08 doc keep is 0.364 against a preregistered 0.35-0.36,
+   and has risen monotonically (0.349@56 → 0.358@102 → 0.362@157 → 0.364@221). e1 confirms and
+   will not round it in.
+2. **Prediction (3) misses LOW, and the doc-keep miss is not why — my arithmetic is.** See
+   "My own token estimate is wrong" below. Corrected to **~2.65B**; amended into the prereg row
+   **before** the DONE line (`amendment 1`, `e1023f8a`), not after it.
+
+Two errors of opposite sign is why neither was visible in the total.
+
+## Cards — verified on the pod this tick, not inferred
+
+Ownership of record (`runs/card_assignment.json`, note of 16:0xZ): **tileRL 0,1,3,6; aupai 2,4,5,7.**
+Observed: 0 held by `tilerl-l5eval` (claimed) ✓; 4 and 5 by `teacher_serve_0909` (claimed) ✓;
+7 holding 19.3 GB ✓ granted to e1 — **but with no claim row**. 1,3,6 idle (tileRL's), 2 idle
+(b0's lane). Three claim files for four held cards.
+
+**Card 7 reads FREE to anyone who checks `runs/claims/` and is not.** That is the divergence the
+patrol rule names: memory on a card with no claim entry is either an orphan or a claim written in
+the wrong tree, and the two are indistinguishable from the outside. e1 owes the row.
+
+## Global
+
+- **Review backlog: 16 unrowed PRs → 6.** 12 rows written this evening. All `changes-requested`,
+  35 blocking findings, every row and comment stating in its first line that it is not my read of
+  the diff. Sharpest: **#23 breaks on exactly the machine it exists for** (`write_mix_500m.py:1071`
+  `KeyError: 'note'`, then `gate_epochs_measured`); **#158** has 7, one being that the
+  known-positive control never runs in production; **#149** cites a probe position on neither main
+  nor any of 38 remote branches.
+- **I wrote a `verdict: approved` row on #164 whose own `finding` said it was not an approval.**
+  The field is what a grep reads. Under the roster pairing e1's reviewer is 3b, not me. Retracted
+  by an appended row (`272340e8`). Nothing was gated by it — `check_review_present` keys on tasks
+  and reads `verdict` only for `legacy-unreviewed`, and I posted no approval comment — but a reader
+  scanning for "pr 164, approved" would have found one. Same shape I cited at two sessions tonight.
+- **R19 + §298 landed** (44, PR #184, third sentence at `593c0f20`). From my own monitor firing
+  `SCORING ERROR` on a healthy run and then killing itself: it split four pod readings on `|`, and
+  the log line it carried is itself `... | dom 835145/2320870 (0.360) | 334 docs/s`. 44's ruling is
+  an asymmetry — a false positive that kills the instrument is strictly worse than a miss, because
+  after a miss the instrument still watches. 44 added the third sentence on my report: **the
+  instrument must announce its own blindness**, since an external liveness check reads the same
+  channel and sees the same silence.
+- **R19 has a subject inside the repo, and it fails the third sentence.** `harness launch`'s own
+  monitor: `cmd_launch:26253` takes `monitor_pid`, `:26256` prints it, and it is written nowhere —
+  0 rows in `runs/experiments.jsonl` carry any pid or monitor key (full key scan). So "is this
+  run's monitor alive" cannot be asked afterwards; only `no_stale_running` catches it, 24h late and
+  on "the row still says running", not "the instrument is still watching". de took it as task #82,
+  fix agreed: pid into the exp row plus a check, the row naming which namespace read it.
+  `_arm_monitor`'s other two halves are the best version of this in the tree — it refuses to
+  overwrite a verdict it cannot see and calls log-bytes a proxy out loud (`:25360-25385`).
+- **`merge_main`'s non-ff recovery instruction is wrong for the state it creates.** Third time
+  tonight. It CASes local main then pushes; a PR landing between makes the push non-ff, and the
+  printed advice (retry the push alone) cannot work because local main is now BEHIND — one step
+  from the bare `update-ref` the same message warns is §245. Recovery that works: `git merge
+  origin/main` into the branch, re-run. Logged; durable fix is for merge_main to re-enter its own
+  CAS loop.
+- **20 PRs open.** de's queue is 7 (#156 #171 #176 #178 #179 #181 #184) and he is on #173 first.
+  If it has not moved by the next tick I read #156 and #184 — findings only, approval stays de's.
+- `prereg_citations_current` WARNs 4 on main, none of them mine: `gate_failure_incidents.md:804`
+  and `:1286` cite `#anneal_reweight_noise_floor_0908@amended_3` against a row at amended_5;
+  `distillation_design.md:261` and `smelt_moe_looped.md:9` carry no marker. Sent to 44.
+
+---
+
 # Controller board (fb) — 2026-09-09, 19:3xZ
 
 ## State: p1
