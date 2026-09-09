@@ -148,7 +148,7 @@ def read_examples():
         print(f"  excluded {n_holdout} eval-holdout questions", flush=True)
 
 
-def _encode_pairs(batch, tok, num_id):
+def _encode_pairs(batch, tok, num_id, split=False):
     """(prompt, answer) pairs -> [(prompt_ids, full_ids, full_values)], one per pair.
 
     num_id None is plain BPE and the values come back empty. Otherwise numbers
@@ -156,8 +156,21 @@ def _encode_pairs(batch, tok, num_id):
     encodes the pretraining corpus -- a FoNE model has never seen a number written
     any other way, so packing SFT data the old way would fine-tune it out of its
     own input distribution.
+
+    split=True encodes prompt and answer SEPARATELY and concatenates the token
+    streams, so inference (which encodes the prompt alone) sees a token-by-token
+    prefix of the training sequence. Concatenating the strings first lets
+    byte-level BPE merge the prompt's trailing token with the answer's leading
+    one (~98% of code pairs: "\\n" + indentation), and no masking rule can then
+    make the first supervised position match what inference feeds. Plain BPE
+    only: this path exists for the raw format-SFT pack, whose model has
+    fone=False; pack_and_save refuses the FoNE combination.
     """
     prompts = [p for p, _ in batch]
+    if split:
+        answers = [a for _, a in batch]
+        return [(ep.ids, ep.ids + ea.ids, ())
+                for ep, ea in zip(tok.encode_batch(prompts), tok.encode_batch(answers))]
     fulls = [p + a for p, a in batch]
     if num_id is None:
         return [(ep.ids, ef.ids, ()) for ep, ef in zip(tok.encode_batch(prompts), tok.encode_batch(fulls))]
@@ -179,7 +192,8 @@ def _encode_pairs(batch, tok, num_id):
 from loader import vocab_fingerprint as _vocab_fingerprint  # noqa: E402
 
 
-def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
+def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None,
+                  split_encode=False, extra_stats=None):
     """Greedily pack (prompt, output) text pairs into (seq+1)-token rows and save.
 
     One example never split across rows; over-length examples dropped; rows are
@@ -189,11 +203,25 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
     num_id set adds "values": float32 (N, seq+1), the number at every [NUM]
     position and 0 elsewhere, which sft_math.py feeds to the FoNE embedding.
 
+    split_encode (default OFF): encode prompt and answer separately and
+    concatenate the streams, so the inference sequence is a token-by-token
+    prefix of the training sequence. Only the raw format-SFT pack opts in;
+    every existing pack keeps its exact bytes. See _encode_pairs. The default
+    path's byte-invariance under this flag is a code-reading judgment (the
+    default branch is untouched; 4c review 2026-09-09), not a golden-pack
+    test. Reversal condition: a future edit that changes the default branch
+    ITSELF -- not adding a branch before it -- needs a golden-pack comparison.
+
+    extra_stats: merged into build_stats, for counts only the caller knows
+    (e.g. how many pairs its own filter dropped).
+
     `sources` is the caller's own source list, stamped into sources_fp. Pass it when the
     examples came from files; leave it None when they were built in-process. It is a
     parameter rather than this module's SOURCES because prepare_sft_math.py has a different
     four-file list and calls this same function -- see _fp_sources.
     """
+    if split_encode and num_id is not None:
+        raise ValueError("split_encode is plain-BPE only; the FoNE path encodes prompt+answer as one string")
     # Never split an example across rows; drop over-length ones. sft.py doc-masks by
     # <eos>, so within-row cross-example attention is already blocked, but a truncated
     # example has no prompt for the mask to supply.
@@ -226,11 +254,20 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
     pending = deque()
     for i in range(0, len(examples), ENC_BATCH):
         batch = examples[i : i + ENC_BATCH]
-        for ids_p, ids_f, vals_f in _encode_pairs(batch, tok, num_id):
+        for _ex, (ids_p, ids_f, vals_f) in enumerate(_encode_pairs(batch, tok, num_id, split=split_encode)):
             ids_f = ids_f + [eos]
-            # byte-level BPE without prefix space: prompt is an exact prefix of full
+            # split_encode: ids_f IS ep+eb, so the prefix holds by construction. A
+            # mismatch there means the pack silently fell back to the common-prefix
+            # mask this flag exists to replace, whose only trace would be a stats
+            # count nobody reads before training -- raise instead (4c review,
+            # 2026-09-09). Default path: concat-then-encode can merge across the
+            # boundary, and the common-prefix fallback masks the merged token.
             plen = len(ids_p)
             if ids_f[:plen] != ids_p:
+                if split_encode:
+                    raise RuntimeError(
+                        f"split_encode: prompt is not a token prefix of the packed "
+                        f"sequence at example {i + _ex} -- the boundary invariants broke")
                 n_mismatch += 1
                 plen = 0
                 for a, b in zip(ids_p, ids_f):
@@ -299,7 +336,8 @@ def pack_and_save(examples, tok, eos, out_path, seq, num_id=None, sources=None):
         # both arms' drop counts side by side, and one of them was unrecoverable.
         "build_stats": {"examples": len(examples), "dropped_overlong": n_drop,
                         "rows": n_rows, "row_len": row_len, "pad_tokens": n_pad,
-                        "prefix_mismatches": n_mismatch, "seq": seq},
+                        "prefix_mismatches": n_mismatch, "seq": seq,
+                        "split_encode": split_encode, **(extra_stats or {})},
     }
     if num_id is not None:
         blob["values"] = torch.tensor(rows_val, dtype=torch.float32)
