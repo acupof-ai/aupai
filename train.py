@@ -354,10 +354,10 @@ class Cfg:
     # one name. csa_compress/csa_topk/csa_window are frozen for the same reason: they change
     # what the attention can see, not how fast it sees it.
     #
-    # REFUSES doc-packed input (`cu is not None`). A compressed block straddling a document
-    # boundary pools two documents into one entry and the top-k can then select across them --
-    # cross-document attention with no downstream mask able to undo it, and nothing in the loss
-    # showing it. eff.kda_document_isolation_violated is that failure in the KDA short_conv.
+    # DOC-PACKED INPUT (`cu is not None`) IS supported: blocks are built per document, so no
+    # compressed entry pools two documents, and compress/select/window are all masked by the
+    # block's owning document (model.py CompressedSparseAttention._forward_packed; isolation
+    # asserted in scripts/test_arch_compat.py cases 4 and 4b). The cu=None path is unchanged.
     csa = False
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
