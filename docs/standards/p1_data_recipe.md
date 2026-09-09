@@ -131,14 +131,25 @@ first.
 
 ## Per-line acceptance criteria
 
-| line | owner | acceptance |
-|---|---|---|
-| teacher serve + synthetic textbooks | b0 | measured tok/s on the tileRL serve BEFORE sizing anything; 50-sample readability judgement; topic coverage cross-table against the exercise set |
-| synthetic exercises | 44 | execution pass rate with the discard rate recorded; decontaminated against HumanEval and MBPP; topic distribution table; 50 samples, two readers, agreement recorded |
-| educational-value classifier | e1 | held-out AUC against teacher labels; keep rate stated against phi-1's ~17%; **threshold ablation run on our own corpus**; 50 high-scoring and 50 low-scoring samples, two readers |
-| topic seeds, dedup, decontamination | 3b | 20K topic table with a coverage measure; decontamination carries a known-positive control; a self-repetition metric for the synthetic set |
-| tokenizer + eval harness | d1 | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
-| human spot check | 98 | one table, one row per artifact, each with n, two readers, agreement, disagreement count, and a mix/no-mix verdict; a row without an agreement rate does not count |
+| line | owner | socket | acceptance |
+|---|---|---|---|
+| teacher serve + synthetic textbooks | de | `uds:/tmp/cc-socks/62973.sock` | measured tok/s on the tileRL serve BEFORE sizing anything; 50-sample readability judgement; topic coverage cross-table against the exercise set |
+| synthetic exercises | 44 | `uds:/tmp/cc-socks/62780.sock` | execution pass rate with the discard rate recorded; decontaminated against HumanEval and MBPP; topic distribution table; 50 samples, two readers, agreement recorded |
+| educational-value classifier | e1 | `uds:/tmp/cc-socks/56034.sock` | held-out AUC against teacher labels; keep rate stated against phi-1's ~17%; **threshold ablation run on our own corpus**; 50 high-scoring and 50 low-scoring samples, two readers |
+| topic seeds, dedup, decontamination | 3b | `uds:/tmp/cc-socks/63595.sock` | 20K topic table with a coverage measure; decontamination carries a known-positive control; a self-repetition metric for the synthetic set |
+| tokenizer + eval harness | b0 | `uds:/tmp/cc-socks/56758.sock` | temp 0.2 / top-p 0.95 / 20-sample pass@1 sharing one judge with the greedy path, both reported; tokenizer rebuild decision from `tokenizer_eval` on a sample of the new composition |
+| human spot check | 98 | `uds:/tmp/cc-socks/34653.sock` | one table, one row per artifact, each with n, two readers, agreement, disagreement count, and a mix/no-mix verdict; a row without an agreement rate does not count |
+
+**The socket column is the point of the table, not decoration.** The first revision named
+owners by roster nickname alone, and one of those nicknames -- `d1` -- is not a member of
+`runs/roster.json` at all, while `de`, who is actually running the teacher serve, had no row.
+Dispatching from this table on 2026-09-09 sent four lines to the wrong sessions: `aupai-dd` is de
+and was addressed as b0, `lessons-d1` is b0 and was addressed as d1, e1's rulings went to
+`lessons-e1` (whose roster comment reads "lessons-e1 is NOT e1"), and 3b's line went to
+`lessons-31`, which is on no roster. Every one of them was caught by a peer, none by the
+dispatcher. `runs/roster.json` already carried the rule -- address by socket, never by name --
+and it was not read, so the address now sits in the table someone dispatches from rather than in
+a second file they have to remember to open.
 
 Two criteria are load-bearing and easy to drop:
 
