@@ -10,9 +10,11 @@ One sampler for all four lines so the protocol is uniform
 Modes:
   random       n random docs
   stratified   K strata x M docs per stratum by --strata-field (n = K*M); rows
-               emitted in stratum order so a reader sees each pair together
+               emitted in stratum order so a reader sees each pair together;
+               refuses on short strata unless --allow-short
   highlow      n top + n bottom by --score-field (2n rows); the group label is
-               withheld from the sheet and kept in the manifest only
+               withheld from the sheet and kept in the manifest only, and the
+               sheet is shuffled so row order cannot reveal the groups
 
 Outputs <out>.jsonl (sample_id, pair_id, text) and <out>.manifest.json (source
 files + sha256, seed, mode, n, command). The manifest is the sample's identity:
@@ -40,6 +42,8 @@ def main():
     ap.add_argument("--strata", type=int)
     ap.add_argument("--per-stratum", type=int)
     ap.add_argument("--score-field")
+    ap.add_argument("--allow-short", action="store_true",
+                    help="stratified: write a short sample instead of refusing")
     a = ap.parse_args()
 
     paths = sorted(glob.glob(a.source))
@@ -78,25 +82,43 @@ def main():
                 by.setdefault(r["stratum"], []).append(r)
         keys = rng.sample(sorted(by), min(a.strata, len(by)))
         k = 0
+        short = []
         for key in keys:
             docs = by[key]
             if len(docs) < a.per_stratum:
+                short.append((str(key), len(docs)))
                 continue
             for r in rng.sample(docs, a.per_stratum):
                 sheet.append({"sample_id": f"S{k:03d}", "pair_id": str(key), "text": r["text"]})
                 k += 1
+        if short and not a.allow_short:
+            sys.exit("REFUSE: strata too short: "
+                     + ", ".join(f"{key}({n})" for key, n in short)
+                     + " -- lower --strata/--per-stratum or pass --allow-short")
     else:  # highlow: neutral ids, group kept out of the sheet
         if not a.score_field:
             sys.exit("REFUSE: highlow needs --score-field")
         scored = sorted(rows, key=lambda r: r["score"])
+        if 2 * a.n > len(scored):
+            sys.exit(f"REFUSE: highlow needs 2n distinct docs, have {len(scored)}, "
+                     f"need {2 * a.n} -- lower --n")
         order = [("lo", i) for i in range(a.n)] + [("hi", i) for i in range(len(scored) - a.n, len(scored))]
         for k, (group, ix) in enumerate(order):
             sid = f"H{k:03d}"
             groups[sid] = group
             sheet.append({"sample_id": sid, "pair_id": None, "text": scored[ix]["text"]})
+        # blinding is a property of the sheet, not of where the label sits:
+        # all-lo-then-all-hi row order unmasks the groups to any reader who
+        # notices the first half looks worse. groups is keyed by sample_id,
+        # so the shuffle does not touch it.
+        rng.shuffle(sheet)
 
+    if not sheet:
+        sys.exit(f"REFUSE: sample is empty -- no docs matched the {a.mode} draw")
     # the shuffle lesson: a sample that equals the corpus head is a draw that did
-    # not happen (handread_criterion_0908, fixed at 796fec85)
+    # not happen (handread_criterion_0908, fixed at 796fec85). Live in random
+    # mode; stratified groups by stratum and highlow takes score tails, so
+    # either can match the head only if the corpus is already ordered that way.
     if [s["text"] for s in sheet] == [r["text"] for r in rows[: len(sheet)]]:
         sys.exit("REFUSE: sample equals the corpus head -- the draw did not shuffle")
 
