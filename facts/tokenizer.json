@@ -483,7 +483,7 @@
    "value": {
     "roundtrip_lossless": true,
     "bytes_present": "256/256",
-    "hanzi_whole_char": 0.9880,
+    "hanzi_whole_char": 0.988,
     "ref_fertility": 1.4286,
     "never_used_frac": 0.0188
    },
@@ -500,6 +500,29 @@
    },
    "uncertainty": "single-draw values at the stated setting. never_used_frac's three-seed range at a fixed setting exceeds the 0.01 threshold, which is why it is reported and not gated (tok.never_used_not_decidable); the 0.0188 here is one draw and not a pass/fail",
    "boundary": "AGENTS.md pre-fetch gate for the 30B v2 mix, now by measurement on the exact fetch composition rather than by the wider-composition ruling in the mix file's _comment. ALL THRESHOLD GATES PASS: the 30B build is cleared to fetch. ref fertility is corpus-independent (REF_EN), so 1.4286 matches the role-dir run exactly; hanzi moved 0.9793 -> 0.9880 because the exact mix draws zh_web from 909 shards. NEVER-USED IS LOAD-BEARING FOR THIS CLEARANCE: 0.0188 is nearly twice the retired 0.01 threshold -- if never-used were still gated, this run FAILS and the 30B fetch is blocked. The un-gate decision (tok.never_used_not_decidable) is what makes the clearance possible, not a tidy-up; a reader who does not follow that citation will not see it. The cot supply half of e1-51 needs no new measurement: cs.cot_open_thoughts_landed counts the 776,084,377 unreachable tokens and carries the repair spec (re-render with a content field, rename shards to three digits), and the v2 mix names data/corpus/cot only by 4c's 2026-09-08 ruling -- the repair is a future-mix path, not a v2 one.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_new_code_distribution",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "ref_fertility": 1.4286,
+    "hanzi_whole_char": 0.3498,
+    "never_used_frac": 0.6192,
+    "chars_per_token": 3.3657,
+    "en_fertility": 1.4228
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains code_py_starcoder,code_py_rp1t --per_domain 3000 --shards 8 (b0, pod, seed 7)",
+   "config": {
+    "sample": "6016 docs, 33.86M chars (~10.2M tokens at 3.37 chars/tok), 8 shards/domain, whole-doc clip",
+    "corpus": "the new 1.3B line's code component: code_py_starcoder (285 shards, 28GB) + code_py_rp1t (17 shards, 1.5GB), the phi-1-style Python supply",
+    "baseline_default_mix": "same tokenizer, same flags, 7-domain default: hanzi 0.9806, never_used 0.0077",
+    "hanzi_denominator": "3036 hanzi occurrences in the 600-row gate sample, 0.03% of the sample's tokens"
+   },
+   "uncertainty": "THE HANZI FAIL IS A COMPOSITION ARTIFACT, NOT A VOCAB DEFECT. The same frozen tokenizer reads 0.9806 on the default mix and 0.9895 on zh_web alone; tokenizer_report.py:144-154 documents this exact dependence (an English/LaTeX corpus measured 0.1594). On pure code the gate measures how the vocab handles Chinese comments -- a corner case, not the distribution. never_used 0.6192 is sample-size bound (10.2M tokens; the metric drops ~10x from 1.6M to 142M tokens on the old mix) but the direction is structural: a zh-web-fitted vocab carries 21,286 hanzi-bearing slots (64.9% of 32,773, tok.minicpm5_slot_budget_vs_ours) into a corpus where hanzi is 0.03% of tokens. chars/token 3.37 on code is BETTER than the default mix's 2.60 -- per-char compression is not the problem; slot allocation is.",
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was never run. Says nothing about a code-fitted candidate's gates -- no candidate was built.",
    "status": "measured"
   }
  ]
