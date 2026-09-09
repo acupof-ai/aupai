@@ -85,9 +85,10 @@ char 5-gram.
 
 Tracked authority: `docs/standards/p1_data_recipe.md` ("Which clean corpus p1
 reads"). In short: `data/corpus_clean/<domain>/` serves non-classifier uses;
-p1 training reads the classifier keep set minus the deleted doc ids; the
-corpus swap (old dirs renamed aside, clean renamed into place, old kept)
-happens after e1's scoring run, per 4c's plan (b).
+p1 training reads the classifier keep set minus the deleted doc ids. The
+corpus swap (plan b) **executed 2026-09-10**: old dirs renamed aside as
+`data/corpus/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08}_predecontam`
+(kept, not deleted), clean copies renamed into place.
 
 ## Shard-count sizing is not used
 
@@ -102,3 +103,46 @@ count. `datagen/count_cleaned_code.py` counts tokens per row.
 `kind="overlap"` (169,561 rows); `kind="exact"` is a different mechanism
 (1 row). An audit grepping `kind="exact"` for the exact-overlap channel will
 mismatch — read `kind="overlap"`.
+
+## Post-scoring sequence (2026-09-10)
+
+e1's scorer finished (cut -0.258355; keep doc 0.2599, byte 0.1536). The
+keep-set join (`datagen/keep_set_join.py`, PR #192; result
+`data/decontam/keep_set_join_0910.json`) over the 5,972,131 hit pairs:
+
+| pair | both in keep | exactly one in | neither |
+|---|---|---|---|
+| dd09 <-> b2v2 | 7,198 | 18,041 | 4,643,788 |
+| dd09 <-> dedup08 | 1,979 | 4,773 | 678,931 |
+| b2v2 <-> dedup08 | 1,220 | 5,444 | 610,757 |
+
+Both-ends-in-keep totals 10,397 pairs = 0.34% of the 3,060,432-doc keep set.
+Deleting near-duplicates at J>=0.5 removes at most one doc per pair, so the
+upper bound on what such a pass could remove from the keep set is 0.34% —
+the no-deletion ruling (4c) now has a measured bound. (The participation
+rates are lower bounds — recall unmeasured — so 0.34% is a lower bound too.)
+
+Of the 169,561 exact-overlap deletions, **43,341 (25.56%) are in the keep
+set** — far below the ~62,000 independence expectation, so overlap docs
+score low. Both channels together: 48,283 of 178,941 dedup08 deletions in
+the keep set (9,380 of the 11,745 decontamination-channel deletions are
+dedup08's; 178,941 is all dedup08). Post-deletion doc keep, consistent
+two-channel basis: (2,281,811 − 48,283) / (6,239,038 − 178,941) = **36.86%**,
+above the pre-deletion 36.57%.
+
+Token counts (frozen tokenizer, full counts, `datagen/count_domain_tokens.py`):
+
+| what | tokens | docs |
+|---|---|---|
+| dedup08 clean copy (post-deletion, in place) | 8.509B | 6,060,097 |
+| keep set, post-deletion, exact (2.8828B scored minus the 71.21M deleted-in-keep) | **2.8116B** | 3,011,677 |
+| — dd09 | 0.5113B | 479,502 |
+| — b2v2 | 0.3026B | 298,647 |
+| — dedup08 | 1.9977B | 2,233,528 |
+
+The 48,283 dedup08 deleted-in-keep docs average 1,283 tok/doc vs the keep
+mean of 903 — the exact-overlap docs are longer than average, not shorter
+(`data/decontam/deleted_in_keep_tokens_0910.json`). The 8.41B figure the
+8.509B replaces was an extrapolation from 30.16 GB of shards, mislabeled
+"measured" in two docs (corrected, PR #195); it was 4.0% below the implied
+pre-deletion count.
