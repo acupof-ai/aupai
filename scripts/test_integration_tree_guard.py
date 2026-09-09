@@ -40,9 +40,21 @@ than one line), and board.append (the third ledger, and the one 44 wrote). board
 guard from harness rather than copying it -- a second implementation of one rule is how
 FRICTION_KINDS came to reject a kind this repo's own merge_main.sh emits.
 
+W11-W12 ENUMERATE, THEY DO NOT LIST. The guard's population is every ledger writer in the tree,
+and the population is read from the filesystem at test time -- `git grep` over tracked files for the writers,
+`.gitattributes` for the union ledgers -- never from a literal list of ledgers (4c's ruling,
+de-98: "my 4 was itself a list -- the three harness writers plus the one that had just bitten
+us"). A new session ledger or a new unguarded writer turns W11 red by itself; the only list
+this file carries is the adjudicated exclusions, each a run-side or one-off writer with a
+reason, and adding a line there is a conscious adjudication in a commit -- the registration
+event. Fixture builders (selftest/_broken/_world worlds and test_*.py) write into tmp worlds,
+never the repo tree, and are skipped by convention; a fixture that wrote the real tree would
+have to be adjudicated too, which is the point.
+
 restartable: yes -- every world is a fresh temp git repo removed in a finally. Nothing reads or
 writes the repository's real ledgers.
 """
+import ast
 import inspect
 import os
 import shutil
@@ -55,8 +67,22 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 sys.path.insert(0, os.path.join(ROOT, "datagen"))
 
 
+_CLEAN_ENV = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
+_CLEAN_ENV.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
+
+
 def _git(d, *a):
-    return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, timeout=60)
+    """git in a throwaway world, with the caller's git environment stripped.
+
+    This had no env= at all while running `init`, `config` and `branch -M main`. Under a
+    leaked GIT_DIR those write to the SHARED repository, and with GIT_DIR pointing at a
+    worktree gitdir `git init` flips core.bare and takes every session's git down (twice on
+    2026-09-02). `branch -M` also rewrites a [branch] section, which the pre-commit
+    shared-repo guard deliberately excludes from its digest -- so without this strip the
+    guard would be silent on exactly that write. Pattern from
+    test_behind_main_overlap.py:55-56."""
+    return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True, timeout=60,
+                          env=_CLEAN_ENV)
 
 
 def _integration_tree(parent):
@@ -83,8 +109,192 @@ def _report(fails):
         print(f"\n{len(fails)} failure(s)")
         return 1
     print("  ledger writers: refuse in the integration tree (detached too), not in a linked "
-          "worktree, fail open on no-git/no-git-binary; all three writers call the guard")
+          "worktree, fail open on no-git/no-git-binary; W11 enumerates every writer from the "
+          "filesystem and W12 the union population from .gitattributes")
     return 0
+
+
+# --- W11: the writer enumeration ---------------------------------------------------------
+#
+# Every tracked .py that opens a runs/*.jsonl ledger for writing, with the enclosing function
+# and whether it calls the guard. AST, not grep: a grep for 'runs/' cannot tell a write from a
+# read and cannot resolve a module constant. The path resolver is ROOT-independent on purpose
+# -- every writer builds its path as os.path.join(ROOT, "runs", "x.jsonl"), and ROOT is
+# unresolvable statically; the runs/<...>.jsonl TAIL is what identifies the ledger.
+
+_WRITE_FLAGS = {"O_WRONLY", "O_RDWR", "O_APPEND", "O_CREAT"}
+_TMP_FUNCS = ("mkdtemp", "TemporaryDirectory", "_tmp_repo", "tempdir")
+_FIXTURE_PREFIXES = ("selftest", "_selftest", "_broken", "_world", "world", "_demo", "_two",
+                     "_bad", "_fix", "_board_event", "_in_subprocess", "_repo", "retract_cases",
+                     "_fixture", "_event")
+
+# Adjudicated: run-side and one-off writers that are NOT session ledger writers. Each line is a
+# conscious decision; a new writer turns W11 red until it is guarded or adjudicated here.
+_EXCLUDED_WRITERS = {
+    ("scripts/memory_diag.py", "log_diag"): "train-side diag writer, frozen for p500m_20b_0902; "
+                                            "runs on the pod, which is not a git repo, so the guard fails open there",
+    ("scripts/moe_diag.py", "log_diag"): "same as memory_diag",
+    ("scripts/eval_artifacts.py", "attest"): "eval-side; runs/artifact_refs.jsonl is written by eval runs on the pod",
+    ("scripts/b0_sd_cu_rescore.py", "main"): "one-off rescore tool, ran once",
+    ("scripts/e1_39_close_c6e.py", "<module>"): "one-off task-close script (e1-39)",
+    ("scripts/fable5_audit_sample.py", "main"): "one-off audit sample",
+    ("scripts/write_prereg_moe48_30b.py", "main"): "one-off prereg writer, ran once",
+}
+
+
+def _ledger_tail(node, consts):
+    """The runs/<...>.jsonl tail an expression statically names, else None. ROOT and friends
+    are deliberately unresolvable -- the tail is the identity."""
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        i = node.value.rfind("runs/")
+        if i >= 0 and node.value.endswith(".jsonl"):
+            return node.value[i:]
+        return None
+    if isinstance(node, ast.Name):
+        return consts.get(node.id)
+    if isinstance(node, ast.JoinedStr):
+        parts = [v.value for v in node.values
+                 if isinstance(v, ast.Constant) and isinstance(v.value, str)]
+        if len(parts) != len(node.values):
+            return None
+        return _ledger_tail(ast.Constant("".join(parts)), consts)
+    if isinstance(node, ast.BinOp) and isinstance(node.op, ast.Add):
+        return _ledger_tail(node.right, consts) or _ledger_tail(node.left, consts)
+    if isinstance(node, ast.BoolOp):
+        for v in node.values:
+            t = _ledger_tail(v, consts)
+            if t:
+                return t
+        return None
+    if isinstance(node, ast.IfExp):
+        return _ledger_tail(node.orelse, consts) or _ledger_tail(node.body, consts)
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) \
+            and node.func.attr == "join":
+        for a in node.args:
+            t = _ledger_tail(a, consts)
+            if t and t.startswith("runs/"):
+                return t
+        for i, a in enumerate(node.args):
+            if isinstance(a, ast.Constant) and a.value == "runs":
+                tail = [b.value for b in node.args[i + 1:]
+                        if isinstance(b, ast.Constant) and isinstance(b.value, str)]
+                if len(tail) == len(node.args[i + 1:]) and tail and tail[-1].endswith(".jsonl"):
+                    return "runs/" + "/".join(tail)
+    return None
+
+
+def _is_tmp(node, consts, tmp):
+    """A tmp-world root: mkdtemp/_tmp_repo call, a constant containing 'tmp', or a Name so marked."""
+    if isinstance(node, ast.Name):
+        return node.id in tmp or consts.get(node.id) == "__TMP__"
+    if isinstance(node, ast.Call):
+        f = node.func
+        name = f.attr if isinstance(f, ast.Attribute) else (f.id if isinstance(f, ast.Name) else "")
+        if name in _TMP_FUNCS:
+            return True
+        if name == "join":
+            return any(_is_tmp(a, consts, tmp) for a in node.args)
+    if isinstance(node, ast.Constant) and isinstance(node.value, str) and "tmp" in node.value:
+        return True
+    if isinstance(node, ast.BoolOp):
+        return any(_is_tmp(v, consts, tmp) for v in node.values)
+    return False
+
+
+def _write_mode(call):
+    """open(): the mode string. os.open(): the flag bits. Default open mode is read."""
+    f = call.func
+    if isinstance(f, ast.Name) and f.id == "open":
+        mode = None
+        if len(call.args) >= 2 and isinstance(call.args[1], ast.Constant) \
+                and isinstance(call.args[1].value, str):
+            mode = call.args[1].value
+        for kw in call.keywords:
+            if kw.arg == "mode" and isinstance(kw.value, ast.Constant) \
+                    and isinstance(kw.value.value, str):
+                mode = kw.value.value
+        return mode is not None and (mode.lstrip("tb").startswith(("w", "a", "x")) or "+" in mode)
+    if isinstance(f, ast.Attribute) and f.attr == "open" and isinstance(f.value, ast.Name) \
+            and f.value.id == "os" and len(call.args) >= 2:
+        return any(isinstance(n, (ast.Name, ast.Attribute))
+                   and getattr(n, "id", getattr(n, "attr", "")) in _WRITE_FLAGS
+                   for n in ast.walk(call.args[1]))
+    return False
+
+
+def ledger_writers(root):
+    """Every (relpath, lineno, ledger, func, guarded) write site in tracked .py files."""
+    # git grep pre-filters in C: reading every tracked .py to string-check it cost ~1s and
+    # pushed this check past its deadline. A file naming neither string cannot hold a site.
+    def mentioning(needle):
+        r = subprocess.run(["git", "-C", root, "grep", "-l", needle, "--", "*.py"],
+                           capture_output=True, text=True, timeout=60)
+        return set(r.stdout.split()) if r.returncode == 0 else set()
+
+    files = sorted(mentioning("runs/") & mentioning(".jsonl"))
+    out = []
+    for rel in files:
+        path = os.path.join(root, rel)
+        try:
+            src = open(path, encoding="utf-8").read()
+            tree = ast.parse(src)
+        except (OSError, SyntaxError):
+            continue
+        mod = {}
+        for node in tree.body:
+            if isinstance(node, ast.Assign) and len(node.targets) == 1 \
+                    and isinstance(node.targets[0], ast.Name):
+                t = _ledger_tail(node.value, mod)
+                if t:
+                    mod[node.targets[0].id] = t
+
+        class V(ast.NodeVisitor):
+            def __init__(self):
+                self.stack = []
+                self.locals = [dict(mod)]
+                self.tmp = [set()]
+
+            def visit_FunctionDef(self, node):
+                self.stack.append(node)
+                self.locals.append(dict(mod))
+                self.tmp.append(set())
+                for stmt in ast.walk(node):
+                    if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
+                            and isinstance(stmt.targets[0], ast.Name):
+                        t = _ledger_tail(stmt.value, self.locals[-1])
+                        if t:
+                            self.locals[-1][stmt.targets[0].id] = t
+                        if _is_tmp(stmt.value, self.locals[-1], self.tmp[-1]):
+                            self.tmp[-1].add(stmt.targets[0].id)
+                self.generic_visit(node)
+                self.tmp.pop()
+                self.locals.pop()
+                self.stack.pop()
+
+            visit_AsyncFunctionDef = visit_FunctionDef
+
+            def visit_Call(self, node):
+                f = node.func
+                is_open = (isinstance(f, ast.Name) and f.id == "open") or (
+                    isinstance(f, ast.Attribute) and f.attr == "open"
+                    and isinstance(f.value, ast.Name) and f.value.id == "os")
+                if is_open and node.args and _write_mode(node):
+                    target = _ledger_tail(node.args[0], self.locals[-1])
+                    if target and not _is_tmp(node.args[0], self.locals[-1], self.tmp[-1]):
+                        fn = self.stack[-1] if self.stack else None
+                        fname = fn.name if fn else "<module>"
+                        body = ast.get_source_segment(src, fn) if fn else ""
+                        guarded = ("refuse_in_integration_tree" in body) or ("append_ledger" in body)
+                        out.append((rel, node.lineno, target, fname, guarded))
+                self.generic_visit(node)
+
+        V().visit(tree)
+    return out
+
+
+def _is_fixture(rel, fname):
+    """Fixture builders write tmp worlds, never the repo tree (see the W11-W12 docstring)."""
+    return os.path.basename(rel).startswith("test_") or fname.startswith(_FIXTURE_PREFIXES)
 
 
 def main():
@@ -191,6 +401,47 @@ def main():
         if "symbolic-ref" in body or "abbrev-ref" in body:
             fails.append("W10: the guard's BODY still reads a branch name -- that predicate went "
                          "inert the moment the integration tree was detached (2026-09-05)")
+
+        # W11: EVERY SESSION LEDGER WRITER CALLS THE GUARD. The population is the filesystem:
+        # git grep over tracked files at test time, so a new unguarded writer turns this red by
+        # itself. The only list is the adjudicated exclusions (run-side and one-off writers,
+        # each with a reason in _EXCLUDED_WRITERS); fixtures write tmp worlds and are skipped
+        # by convention.
+        writers = ledger_writers(ROOT)
+        for rel, lineno, target, fname, guarded in writers:
+            if guarded or _is_fixture(rel, fname) or (rel, fname) in _EXCLUDED_WRITERS:
+                continue
+            fails.append(f"W11: {rel}:{lineno} opens {target} for writing in {fname}() without "
+                         f"calling the guard -- a new session ledger writer, or one that forgot "
+                         f"refuse_in_integration_tree/append_ledger. Guard it, or adjudicate it "
+                         f"in _EXCLUDED_WRITERS with a reason")
+
+        # W12: THE UNION LEDGER POPULATION IS ENUMERATED, NEVER LISTED. Every merge=union path
+        # in .gitattributes either has a guarded writer (W11's scan) or is covered by the
+        # generic `harness ledger append` writer, which accepts any runs/*.jsonl path. A new
+        # union ledger outside that shape -- or the generic writer going away -- turns this red.
+        ga = open(os.path.join(ROOT, ".gitattributes"), encoding="utf-8").read()
+        union_ledgers = [ln.split()[0] for ln in ga.splitlines()
+                         if ln.strip() and "merge=union" in ln and ln.split()[0].endswith(".jsonl")]
+        guarded_targets = {t for (_r, _l, t, _f, g) in writers if g}
+        for led in union_ledgers:
+            if led in guarded_targets:
+                continue
+            if not (led.startswith("runs/") and led.endswith(".jsonl")):
+                fails.append(f"W12: union ledger {led!r} has no guarded writer and is outside "
+                             f"runs/*.jsonl, so the generic writer cannot cover it -- give it a "
+                             f"guarded writer or move it under runs/")
+        for name in ("cmd_review", "cmd_ledger_append"):
+            fn = getattr(harness, name, None)
+            if fn is None:
+                fails.append(f"W12: harness.{name} is gone -- the generic guarded writers for "
+                             f"review.jsonl and the writerless ledgers (retro, ledger_resolutions)")
+            elif "append_ledger" not in inspect.getsource(fn):
+                fails.append(f"W12: harness.{name} no longer calls append_ledger -- the writer "
+                             f"lost its guard")
+        if harness.cmd_ledger_append(["--path", "../evil.jsonl", "--row", "{}"]) != 1:
+            fails.append("W12: `harness ledger append` accepted a path outside runs/ -- the "
+                         "generic writer's trust boundary is gone")
     finally:
         shutil.rmtree(tmp, ignore_errors=True)
 

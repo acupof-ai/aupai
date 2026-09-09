@@ -429,6 +429,78 @@
    "boundary": "About the GATE's decidability, not about the vocabulary: whether 32,773 slots carry unreachable entries is a separate question this measurement cannot answer.\n\nTHE 0.01 THRESHOLD WAS A DELIBERATE CHOICE, NOT A PLACEHOLDER, AND THAT MAKES THIS WORSE. It enters at 143f5d4a (2026-08-29, 'tokenizer: gates green, and the two failures were both instrument or class errors'), whose message records the calibration: 'never used 0.0070 <=0.01 ok (regression guard: 234K params, 0.1% of the model)' over '106 tokens with zero occurrences in 142M'. So the guard was set 0.003 above a measured 0.0070 -- and 142M is essentially the scale at which the three-seed range measured here is 0.0110 (20000x24, 172M) and 0.0113 (shards axis, 167-187M). The threshold was placed INSIDE its own measurement noise on the day it was written, and one draw could not have shown that. The defect is not a missing calibration and not the wrong size: it is that a single draw at 142M does not determine the value to the precision the threshold needs.\n\nTWO CONSEQUENCES, raised by 3b 2026-09-08 and recomputed here.\n\n(1) THE 0.1% COST FIGURE IS PRICED AGAINST THE SAME SINGLE DRAW and inherits its uncertainty. 143f5d4a's '234K params, 0.1% of the model' is 229 slots x d_model 1024 = 234,496, and 229 is 0.0070 x 32,773 -- the same draw the threshold was set from. Across the readings in `data` the slot count runs 141 (0.0043) to 511 (0.0156), i.e. 144K to 524K params, a 3.63x band. The cost is real and small at every point in that band, so this does not change the decision to accept it; what it changes is that '0.1%' is one draw's value and not a measured constant.\n\n(2) A GUARD WHOSE MARGIN IS INSIDE THE SEED SPREAD FIRES ON RESEEDING ALONE, which makes it a permanent-red candidate rather than a regression guard -- the failure mode 143f5d4a's own message says it was avoiding ('regression guards with the cost recorded, rather than targets that would be permanently red'). Of the nine readings in `data`, three exceed 0.01: one of the three seeds at 20000x24, and one of the three shard settings at seed 7 (0.0156, the same run, counted under both axes). Those nine are seven distinct settings, not nine independent draws, so treat this as 'it fires on reseeding at more than one setting', not as an estimated fire rate.",
    "audit": "Three seeds at each of two fixed (per_domain, shards) settings, plus a shards sweep at fixed seed, on the v2 composition. Ranges 0.0042 (9000x16), 0.0110 (20000x24) and 0.0113 (shards axis) against a 0.01 threshold, so no measured setting separates pass from fail. STOPPED HERE by 4c 2026-09-08 rather than searching further settings: the metric is sound on nested prefixes, both axes move it by more than the threshold, and the deliverable became demoting never_used from regression guard to reported-ungated (e1-52) rather than finding a setting that happens to be quiet.",
    "refuted_by": "a setting whose three-seed range is under 0.0033, which would make the gate decidable and give this fact a value; or a calibration of the 0.01 threshold on a corpus of this size, which would say what the gate should be testing in the first place"
+  },
+  {
+   "id": "tok.minicpm5_slot_budget_vs_ours",
+   "value": "Our frozen vocabulary spends 64.9% of its slots on hanzi-bearing tokens; MiniCPM5-2B's spends 20.4%. Decoded id by id through each tokenizer's own decoder (a regex over the raw vocab strings finds 0, because both are ByteLevel-encoded -- that reading is wrong and was discarded): ours 32,773 slots, 21,286 hanzi-bearing, 11,487 non-hanzi; MiniCPM5-2B 130,560 slots, 26,677 hanzi-bearing, 103,883 non-hanzi. THE HEADLINE RATIO IS NOT 3.98x. Total vocabulary is 3.98x, but code and math compete only for non-hanzi slots, and that pool is 9.04x. This is the quantitative form of unfreeze condition 2 (the corpus distribution changed materially): the vocabulary was fitted on Chinese web plus cosmopedia and the corpus is now code- and math-leaning.",
+   "measured": "2026-09-08",
+   "source": "data/tokenizer.json (vocab_id b378391577ba03df) and https://huggingface.co/openbmb/MiniCPM5-2B/resolve/main/tokenizer.json fetched with curl -4 2026-09-08; per-id decode loop, hanzi = [\\u4e00-\\u9fff]",
+   "config": {
+    "method": "tokenizer.decode([i]) for every id, count ids whose decoded text contains at least one hanzi",
+    "ours_vocab": 32773,
+    "theirs_vocab": 130560
+   },
+   "uncertainty": "the hanzi class is the CJK Unified Ideographs block only; CJK Extension A-F and compatibility ideographs are not counted, so both hanzi counts are lower bounds",
+   "boundary": "a slot count is not a capability claim. It says where the vocabulary's parameters went, not what either model can do, and it does not by itself justify a rebuild -- a rebuild invalidates every checkpoint trained on the old vocabulary.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.fertility_ours_vs_minicpm5_own_corpus",
+   "value": "On an identical sample of OUR corpus (153 documents per domain, drawn on the pod from code_rp1t_dd09 / math_owm_stage2 / zh_web, 3 shards each, 1200-char clip, seed 7), our frozen vocabulary needs more tokens than MiniCPM5-2B's for the same text in all three domains, and the penalty is largest exactly where our target capability is. Code: ours 48,687 tokens vs theirs 39,027, ratio 1.248x (chars/token 2.947 vs 3.676). Math: 53,729 vs 47,092, 1.141x (3.202 vs 3.654). Chinese web: 115,821 vs 105,443, 1.098x (chars/token 1.516 vs 1.665). On the repo's own gated reference text, ref fertility is 1.4286 for ours and 1.0519 for theirs (gate threshold is <= 1.55, so ours passes; theirs is far below it).",
+   "measured": "2026-09-08",
+   "source": "scripts/fertility_vs_external.py (this repo) run on both tokenizers over one shared sample blob; the gated ref number from scripts/tokenizer_report.py; sample preserved at /work/aupai/runs/fert_sample.b64",
+   "config": {
+    "per_domain": 153,
+    "shards": 3,
+    "clip": 1200,
+    "seed": 7,
+    "domains": [
+     "code_rp1t_dd09",
+     "math_owm_stage2",
+     "zh_web"
+    ],
+    "same_bytes_both_tokenizers": true
+   },
+   "uncertainty": "one sample, one seed; the repo's own rule is that shards and clip are part of the metric's definition, so these numbers are not comparable to fertility figures taken at other settings",
+   "boundary": "fertility is tokens per unit of text, not quality. A larger vocabulary buys compression and costs embedding parameters; at 200M-1.5B scale the embedding table is a large share of the model, which this measurement does not price.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.minicpm5_fim_and_tool_tokens",
+   "value": "MiniCPM5-2B's tokenizer carries structural special tokens for code completion and tool use that ours does not have at all: <|fim_prefix|>, <|fim_middle|>, <|fim_suffix|> (fill-in-the-middle), plus <tool_call>/</tool_call>, <tools>/</tools>, <tool_response>/</tool_response> and <|im_sep|>, within 510 added tokens total. Ours has 7 added tokens: <unk>, <eos>, <|im_start|>, <|im_end|>, <|think|>, <|/think|>, [NUM]. FIM is a structural design decision for code, not a byproduct of vocabulary size -- a 32K vocabulary can carry three FIM markers. Recorded because our target capability is code and this is a dimension the repo has never considered; it is independent of the unfreeze question.",
+   "measured": "2026-09-08",
+   "source": "tokenizer_config.json and tokenizer.json from https://huggingface.co/openbmb/MiniCPM5-2B, fetched with curl -4 2026-09-08; ours from data/tokenizer.json added_tokens",
+   "config": {
+    "their_added_tokens": 510,
+    "our_added_tokens": 7
+   },
+   "uncertainty": null,
+   "boundary": "the presence of FIM markers says the tokenizer supports the format; it is not evidence that FIM training was done, and the MiniCPM5-2B card says nothing about FIM.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_30b_mix_exact",
+   "value": {
+    "roundtrip_lossless": true,
+    "bytes_present": "256/256",
+    "hanzi_whole_char": 0.9880,
+    "ref_fertility": 1.4286,
+    "never_used_frac": 0.0188
+   },
+   "unit": "gate readings",
+   "measured": "2026-09-09",
+   "claim": "whether the frozen vocabulary passes AGENTS.md's pre-fetch gates on the 30B v2 mix's EXACT nine domains, closing the gap tok.gates_v2_composition_fixed_sampler named -- it ran on the role directories (en_c4, code_rp1t_dd09_full), a wider composition than data/mix_1.5b-a0.2b-e48_30b_v2.json names",
+   "source": "scripts/tokenizer_eval.py --tokenizers data/tokenizer.json --domains math_owm_stage2,en_c4_stage2,cot,textbook_30b,chatml,chat_qa,zh_web,code_py_starcoder,code_py_rp1t, run on the pod 2026-09-09. The three scripts and data/tokenizer.json on the pod were md5-identical to main's merged tree before the run (tokenizer_eval c2dac23d, tokenizer_report 0a51c482, tokenizer_sweep ff8b3cf8, tokenizer.json c86dbe1a), so the reading is reproducible from main with no staged code",
+   "config": {
+    "domains": "the nine domains the 30B v2 mix actually names -- en_c4_stage2 not en_c4, code_py_rp1t not code_rp1t_dd09_full",
+    "per_domain": 3000,
+    "shards": 8,
+    "clip": "whole document",
+    "tool": "main's merged tree (PR #77 samplers)"
+   },
+   "uncertainty": "single-draw values at the stated setting. never_used_frac's three-seed range at a fixed setting exceeds the 0.01 threshold, which is why it is reported and not gated (tok.never_used_not_decidable); the 0.0188 here is one draw and not a pass/fail",
+   "boundary": "AGENTS.md pre-fetch gate for the 30B v2 mix, now by measurement on the exact fetch composition rather than by the wider-composition ruling in the mix file's _comment. ALL THRESHOLD GATES PASS: the 30B build is cleared to fetch. ref fertility is corpus-independent (REF_EN), so 1.4286 matches the role-dir run exactly; hanzi moved 0.9793 -> 0.9880 because the exact mix draws zh_web from 909 shards. NEVER-USED IS LOAD-BEARING FOR THIS CLEARANCE: 0.0188 is nearly twice the retired 0.01 threshold -- if never-used were still gated, this run FAILS and the 30B fetch is blocked. The un-gate decision (tok.never_used_not_decidable) is what makes the clearance possible, not a tidy-up; a reader who does not follow that citation will not see it. The cot supply half of e1-51 needs no new measurement: cs.cot_open_thoughts_landed counts the 776,084,377 unreachable tokens and carries the repair spec (re-render with a content field, rename shards to three digits), and the v2 mix names data/corpus/cot only by 4c's 2026-09-08 ruling -- the repair is a future-mix path, not a v2 one.",
+   "status": "measured"
   }
  ]
 }
