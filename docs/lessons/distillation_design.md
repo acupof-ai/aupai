@@ -14,10 +14,13 @@ with tileRL. The design is closed at run-ready state; section 6 is the pick-up c
 ## 0. The vocab constraint, verified not accepted
 
 Our vocab is 32,773 (facts/tokenizer.json#tok.vocab_size). The teacher's is **248,320** —
-248,044 BPE entries (247,587 merges, Qwen2Tokenizer, read on the pod from
-`/work/Qwen3.8-27B-NVFP4/tokenizer.json`, 2026-09-08) padded to a multiple of 128 in the
-embedding table (`model.language_model.embed_tokens.weight [248320, 5120]`, read from
-`model.safetensors`, 2026-09-09). Ratio 7.57x either way. Two different
+the embedding table's row count (`model.language_model.embed_tokens.weight [248320, 5120]`,
+read from `model.safetensors`, 2026-09-09). The tokenizer carries 248,044 BPE entries
+(247,587 merges, Qwen2Tokenizer, read on the pod from
+`/work/Qwen3.8-27B-NVFP4/tokenizer.json`, 2026-09-08) plus 33 added tokens = 248,077 —
+243 rows fewer than the table, and the padding mechanism is not recorded anywhere we read,
+so the gap is stated, not explained (de's review, 2026-09-09: ceil(248044/128)=1938 gives
+248,064, so "padded to a multiple of 128" did not hold). Ratio 7.57x either way. Two different
 vocabularies have no token-level probability alignment, so logits KL is not a tuning
 problem — it is undefined. facts/distillation.json#distill.vocab_mismatch_blocks_logits_kl.
 
