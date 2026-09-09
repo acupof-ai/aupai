@@ -295,14 +295,15 @@ the filter exists to remove; score-3 is real logic), and the sweep says >=3
 costs ~6 points of precision at 17% doc keep (0.866 -> 0.806) for a stricter
 quality floor.
 
-Per-domain tok/byte, measured (330MB sample per domain, tokenizer.json, +1
-eos/doc): dd09 0.306557, b2v2_dd 0.306274, dedup08 0.278723. These convert
+Per-domain tok/byte, measured by `datagen/p1/join_lengths.py` (330MB sample
+budget per domain, tokenizer.json, +1 eos/doc; the dedup08 prefix landed at
+346MB): dd09 0.306557, b2v2_dd 0.306274, dedup08 0.278723. These convert
 byte keep to token keep; the stats-file ratios are not used.
 
 ## Run artifacts
 
-Pod paths (pod `/work/aupai/data/p1/`); the scripts move to `datagen/p1/` in
-a follow-up PR so they carry review and re-run provenance.
+Pod paths (pod `/work/aupai/data/p1/`); the scripts live in `datagen/p1/`
+as of #183, which carries review and re-run provenance.
 
 | artifact | path | produced by |
 |---|---|---|
