@@ -246,6 +246,34 @@ class _CfgView:
             f"config and leave the checkpoint's recorded cfg describing a different model.")
 
 
+def masked_attend(sc, mask, v):
+    """softmax(sc masked by `mask`) @ v, finite in the BACKWARD as well as the forward.
+
+    THE BUG THIS REPLACES, found 2026-09-09 by a CPU forward/backward of the p1 config before it
+    reached a card: `torch.nan_to_num(torch.softmax(sc.masked_fill(~mask, -inf), -1) @ v)` gives
+    the right forward value and a NaN GRADIENT. nan_to_num rewrites the output, not the graph, so
+    a row that is entirely -inf still differentiates through softmax as 0/0 and BmmBackward0
+    propagates NaN into every parameter upstream. Measured: 89 of 102 parameter tensors
+    non-finite after one backward; forward finite throughout, which is why no forward-only test
+    or parity check could see it.
+
+    Fully-masked rows are not an edge case in either caller. A compressed block is visible only
+    once its LAST member is at or before the query, so every query before its document's first
+    complete block has one -- in HCA at m'=128 that is the first 128 positions of every document,
+    and in CSA's compress branch the first m. CSA has carried this since b0-35 and it never fired
+    because CSA has never been trained; its first backward would have NaN'd.
+
+    The fix gives a dead row a uniform FINITE score and zeroes its output afterwards, so the
+    softmax never sees an all--inf row. Same forward value as before -- zero for a query with no
+    visible context, which is the correct attention result -- with a defined gradient of zero
+    instead of NaN.
+    """
+    alive = mask.any(-1, keepdim=True)
+    sc = sc.masked_fill(~mask, float("-inf"))
+    sc = torch.where(alive, sc, torch.zeros_like(sc))
+    return torch.softmax(sc, dim=-1) @ v * alive.to(v.dtype)
+
+
 def pool_per_doc(q, kh, vh, cu, m):
     """Mean-pool K/V into blocks of `m` PER DOCUMENT, with the visibility mask.
 
@@ -346,8 +374,7 @@ class HeavilyCompressedAttention(nn.Module):
             cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
         kc, vc, vis, _, _ = pool_per_doc(q, kh, vh, cu, self.m)
         sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
-        sc = sc.masked_fill(~vis[:, None], float("-inf"))
-        y = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+        y = masked_attend(sc, vis[:, None], vc)
         return y.transpose(1, 2)                                # B,T,H,D
 
 
@@ -434,10 +461,17 @@ class CompressedSparseAttention(nn.Module):
         sc = (qh @ kc.transpose(-1, -2)) * self.scale          # B,H,T,nb
         blk_last = (torch.arange(nb, device=q.device) * self.m + self.m - 1)[None, :]
         vis = blk_last <= torch.arange(T, device=q.device)[:, None]            # T,nb
+        # MASK sc IN PLACE, BEFORE the topk below reads it. The select branch picks its blocks
+        # from THIS tensor, so an unmasked score here lets topk rank a block the query cannot
+        # see; `sel &= vis` then drops it and the query silently attends to fewer blocks than
+        # topk promised. Moving this line into masked_attend (2026-09-09) did exactly that and
+        # test_arch_compat's CSA causality case caught it -- the masking is load-bearing twice
+        # and only one of the two uses is the attention below.
         sc = sc.masked_fill(~vis, float("-inf"))
-        # the first m-1 queries see NO complete block: all -inf -> NaN. They are covered by the
-        # window branch, so this branch must contribute zero rather than poison the sum.
-        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+        # the first m-1 queries see NO complete block. They are covered by the window branch,
+        # so this branch contributes exactly zero -- see masked_attend for why the obvious
+        # nan_to_num spelling of that is correct forward and NaN backward.
+        y_cmp = masked_attend(sc, vis, vc)
 
         # --- select: top-k compressed blocks, attended at full resolution ------------------
         kk = min(self.topk, nb)
@@ -449,10 +483,8 @@ class CompressedSparseAttention(nn.Module):
         pos_sel = sel.repeat_interleave(self.m, dim=-1)[..., :T]
         full = (qh @ kh.transpose(-1, -2)) * self.scale
         m_sel = pos_sel & causal[None, None]
-        y_sel = torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh
-        # a query whose selected set is empty produces all -inf -> NaN; such a row contributes
-        # nothing rather than poisoning the sum
-        y_sel = torch.nan_to_num(y_sel, nan=0.0)
+        # a query whose selected set is empty contributes nothing (masked_attend)
+        y_sel = masked_attend(full, m_sel, vh)
 
         # --- window: the last n_win tokens, exact -----------------------------------------
         ar = torch.arange(T, device=q.device)
@@ -477,8 +509,12 @@ class CompressedSparseAttention(nn.Module):
 
         # --- compress: same three lines as the unpacked path, over per-document blocks ----
         sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
+        # Masked in place BEFORE the topk below reads it, for the same reason as the unpacked
+        # path: the select branch ranks blocks from THIS tensor, and an unmasked score lets it
+        # pick a block belonging to another document. Caught by test_arch_compat's CSA
+        # cross-document case when this line briefly moved inside masked_attend.
         sc = sc.masked_fill(~vis[:, None], float("-inf"))
-        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+        y_cmp = masked_attend(sc, vis[:, None], vc)
 
         # --- select: top-k blocks, attended at full resolution, same document only --------
         kk = min(self.topk, NB)
@@ -490,8 +526,7 @@ class CompressedSparseAttention(nn.Module):
         causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
         full = (qh @ kh.transpose(-1, -2)) * self.scale
         m_sel = pos_sel & same[:, None] & causal[None, None]
-        y_sel = torch.nan_to_num(
-            torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh, nan=0.0)
+        y_sel = masked_attend(full, m_sel, vh)
 
         # --- window: the last n_win tokens inside the document ---------------------------
         m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
