@@ -1397,12 +1397,12 @@ The residual error changed sides. Old criterion, only false reading: a recycled 
 
 Why it escapes review (tilerl-27's formulation, the core of the rule): this class is hardest to see in review because "more precise" always sounds good. Review checks whether the new criterion is correct (yes), tested (yes, both directions), and compatible with old behavior (yes). All three hold. None asks where the residual error now lands.
 
-Learned from an incident that did not happen, not one that did — the #173 review caught the direction before the criterion ever decided a real card. Same file, same hour, a third defect of a different shape: `card_claim.py:478` did `int(c.get("pid", -1))`, which crashes on a JSON null — the schema allowed what the read path could not handle, because acquire's `pid=None` default writes `"pid": null` and `.get`'s default only covers an absent key.
+Learned from an incident that did not happen, not one that did — the #173 review caught the direction before the criterion ever decided a real card. Same file, same hour, a third defect of a different shape: `card_claim.py:530` (main) did `int(c.get("pid", -1))`, which crashes on a JSON null — the schema allowed what the read path could not handle, and `.get`'s default only covers an absent key. The null row was not written by acquire: acquire's `pid=None` resolves to `os.getppid()` (`card_claim.py:962`), so the writer path cannot produce a null — the null in the ledger was a hand-written pod row (de's finding, #193 review). The schema's gap was real; the attributed cause was not.
 
 Guard criterion: when a predicate in a claim/liveness/safety path gains a conjunct, the review asks two questions in order — which side the residual error lands on under the new predicate, then whether the new predicate is more accurate. Accuracy gains do not hold the cost direction fixed, and the cost direction is the asymmetric half.
 
 Cost: none realized — caught in review. The cost that did not occur is a card collision under a false STALE.
-Evidence: `scripts/card_claim.py` #173 diff (`_start_time`, `_pid_reused`, the two selftest cases); the old criterion and the null crash at main `card_claim.py:478` (`int(None)`); tilerl-27's formulation and 4c's case, 2026-09-09.
+Evidence: `scripts/card_claim.py` #173 diff (`_start_time`, `_pid_reused`, the two selftest cases); the old criterion and the null crash at main `card_claim.py:530` (`int(None)`), with the null row traced to a hand-written pod row rather than acquire (`pid=None` → `os.getppid()`, `card_claim.py:962`); tilerl-27's formulation and 4c's case, 2026-09-09.
 open: no checklist or scanner flags a predicate-tightening diff for the residual-direction question. The checkable slice is mechanical — a diff adding a conjunct to a predicate in claim/liveness code — but no review gate consumes it.
 
 ## R17. A positional join across two producers has no owner; a contract written only in a comment is a check that cannot fail
