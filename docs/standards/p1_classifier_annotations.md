@@ -94,7 +94,7 @@ roughly doubling the code-token budget.
 
 4c's composition decision (2026-09-09): the p1 filtered code draws from three
 domains, not all nine -- code_rp1t_dd09 (6.24B tokens), code_rp1t_b2v2_dd
-(3.60B), code_dedup08 (~8.95B at draw time; 8.41B measured after, see
+(3.60B), code_dedup08 (~8.95B at draw time; 8.41B extrapolated after, see
 Ablation), ~18.8B total. The other five code domains are
 upstream stages and are not fed. e1 draws 100K rows from the three,
 proportional to token share (33,210 / 19,160 / 47,630), seed 42, reservoir per
@@ -138,9 +138,10 @@ estimate must match the inference distribution.
 2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
 high-score code, confirming the re-draw. Keep rates (document unit) on the
-18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured):
+18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B extrapolated):
 >=2 = 30.4%, >=3 = 26.7%, >=4 = 3.3%. Token yields need the doc/byte ratio
-1.66 (measured on the 100K sample, three points 1.656-1.665): >=2 ~3.3B,
+(measured on the 100K sample, three points 1.656-1.665; the full-corpus run
+then broke the shared ratio -- see structural finding 1): >=2 ~3.3B,
 >=3 ~2.9B, >=4 ~0.36B -- and the final yield uses the keep set's OWN tok/byte,
 measured directly, not the domain average. GROSS, not unique:
 dedup08 is a UNION build (283 starcoder shards + 15 rp1t shards), and the
@@ -149,7 +150,11 @@ was 157,684 docs (2.53%); the exact-overlap channel has since MEASURED 169,561
 deletable dedup08 docs (138.6K on the 15 rp1t shards + 31.0K on starcoder
 shards; b0 pod count, 2026-09-09, p1_data_recipe.md on main). 4c ruled them
 deleted in a separate pass (2026-09-09); the keep set is filtered by the
-deleted doc ids post-scoring (fixed cut makes this commute), after which
+deleted doc ids post-scoring (fixed cut makes this commute -- exact up to
+the scorer's floating-point determinism: identical content scored in
+different batches can differ in the last fp bits, so a same-content pair
+straddling -0.258355 keeps one side and misaligns the greedy id match;
+count unmeasured, expected 0, 4c 2026-09-09), after which
 dedup08's tokens are RE-MEASURED, not ratio-extrapolated (rp1t and starcoder
 shards have no reason to share a length distribution, and length is a strong
 confound in this corpus). The conversions stay gross until that re-measurement
@@ -227,7 +232,7 @@ before the agreement counts. The high/low grouping has structure, but the
 plant still matters -- a reader in the low group scoring low may just be
 echoing the group's label.
 
-## dedup08 token count (measured 2026-09-09)
+## dedup08 token count (extrapolated 2026-09-09; full-count measured 2026-09-10)
 
 `code_dedup08`'s stats file has no tokens field; measured by the code_rp1t
 method (tokenizer.json over a 330MB sample, 49,439 docs, tok/byte 0.278848,
@@ -238,6 +243,12 @@ docs overlap dd09|b2v2 (4c ruled them deleted, separate pass, 2026-09-09);
 the token count is re-measured after the deletion, not ratio-extrapolated.
 The gross pool is 18.25B tokens and near-unique (starcoder body overlap
 0.3-0.75%).
+
+The post-deletion re-measurement landed 2026-09-10: **8.509B tokens** / 6.06M
+docs, a full count over the 298 clean-copy shards with the frozen tokenizer
+(`datagen/count_domain_tokens.py`). The 8.41B extrapolation was 4.0% below the
+implied pre-deletion count (8.760B at 1,404 tok/doc) — an extrapolation labeled
+"measured" is why the gap went unnoticed.
 
 ## Threshold ablation results (e1, 2026-09-09)
 
@@ -281,6 +292,18 @@ Two structural findings:
    our filter is the byte keep: 0.151 at the >=3, 25%-doc operating point --
    ~0.9x phi-1's stringency, not half. Quoting our 25% doc keep against
    phi-1's 17% would overstate the stringency 1.66x.
+
+   The full-corpus run measured the ratio on all three domains (2026-09-09):
+   dd09 0.1397/0.0839 = 1.6651, b2v2 0.1421/0.0858 = 1.6562, dedup08
+   0.3657/0.2271 = 1.6103. The two rp1t domains sit in the 1.65-1.67 band;
+   dedup08 (starcoder-majority) falls below it. The preregistered stopping
+   rule for prediction (2) therefore fires: the doc/byte ratio is a
+   PER-DOMAIN property, not the classifier's -- it tracks the corpus (rp1t
+   vs starcoder), not the filter. Any sample-based token estimate uses its
+   own domain's ratio; a shared 1.66 is retired. The TOTAL ratio
+   0.2599/0.1536 = 1.692 is not a fourth data point: its numerator is
+   doc-weighted and its denominator byte-weighted, so it is not a weighted
+   mean of the per-domain ratios and sits above all three.
 2. **The >=4 head cannot mine the textbook tail.** At the teacher's own >=4
    rate (3.07%) the head's precision is 0.457: the top 3% by classifier
    score is less than half score-4. The >=3 -> >=4 cliff is real in the
