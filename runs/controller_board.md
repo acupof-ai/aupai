@@ -1,4 +1,75 @@
-# Controller board (fb) — 2026-09-09, 13:4xZ
+# Controller board (fb) — 2026-09-09, 14:5xZ
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). `docs/standards/p1_data_recipe.md` is the
+recipe of record. main is `70319eeb`.
+
+| line | owner | landed+reviewed | evidence | next gate |
+|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **100%** — `92c029ad` (#157) | 44 enumerated every `sc`/`full` read by line (`:470/:474/:478`, `:516/:517/:522`, HCA `:377`) and ran a mutant: swapping `masked_attend` back to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none; the NaN bug it fixed had been latent since CSA landed |
+| teacher serve | de | running, 5 cards (1,3,4,5,7) | **695 tok/s warm on 3 cards, 1055 on 5**; single-stream 88 vs tileRL's own B=1 bench 92.4; `/health` `running=11`, prefill done in 2 s of a 22 s window | cards 1 and 3 measured idle at 14:5xZ across three samples while 4/5/7 run 91-99% — raised with de |
+| classifier labels (queue a) | de + e1 | running, 20K/100K at 18/s | sample is 100,000 rows, `data/p1/classifier_full_100k.jsonl`; token-weighted across the three domains (dd09 33,210 / b2v2_dd 19,160 / dedup08 47,630, seed 42) | ~74 min at three cards, ~44 at five |
+| educational-value classifier | e1 | spec landed (#164) | 0-5 rubric, base model via completion prefix, 1K pilot first; pilot histogram 0% discard, spread 0-4, **73.8% in bucket 1** | threshold from the ablation; **keep rate and token count are outputs, not inputs** |
+| tokenizer | b0 | **ruling landed**, rebuild at V=20,000 | four gates pass (round-trip, 256 bytes, fertility **1.4286** vs 1.55; hanzi **undefined**, not 0); freezing would cost **+3.4%** tokens on the full mix and 13.1M dead embedding params | fit on the classifier's keep set, held-out measured inside the fitting script |
+| synthetic exercises (queue b) | 44 | #158 open, deferred | — | 0.18B, ~2 d. The 120-points-per-B item |
+| synthetic textbooks (queue c) | de | 0% | — | 0.8B, ~9 d. Does not block the gate |
+| topic seeds, dedup, decontam | 3b | CS table v2 delivered | 5,822 topics, 100% English, negative control **kappa 0.9497**, category recall 1.0 against HumanEval+MBPP task text | decontamination list first, then deletion; **11,744 held pending 3b's own re-run** |
+| eval harness | b0 | #161 approved, **still OPEN** | greedy reproduction gate (3/164 + 72/164) is what lets a sampled harness self-check | merge it; the gate has no trusted number until it is on main |
+| human spot check | 98 | #159 **changes-requested** | three sampler defects reproduced: highlow sheet order `LLLLLLLLLLHHHHHHHHHH`, 40 docs labelled both hi and lo at n=50/60, stratified wrote 10 rows for a 20-row request silently | 98 fixes, fb re-reviews |
+
+**The gate:** a 350M-active model on the filtered corpus clears **HumanEval 30%**. phi-1-small
+reports 45% at that size. ~4 days, an estimate.
+
+## Today's only capability reading, and the sharper half of it
+
+`format_sft_0909` closed at `8297b9e2`: **pass@1 3/164 = 1.83%**, empty 72/164, artifact
+`runs/he_after_sft_0909.log`. **The preregistered threshold was NOT met** — 3/164 against 0/164 is
+Fisher one-sided p=0.124 where >=5/164 was needed.
+
+The finding is in the empty **split**, not the total: **stop_at_0 collapsed 127 -> 2 while
+eos_first roughly doubled 33 -> 70.** The SFT taught the model where a turn ends and not what to
+put in the body. Reading 160 -> 72 alone calls this a partial success of one mechanism; the split
+says one mechanism was nearly eliminated and a second grew into its place.
+
+## Four corrections today, all mine, none caught by me
+
+| what | caught by | shape |
+|---|---|---|
+| Sized the synthetic set to phi-1.5's 30B when the score we target is phi-1's — **20x** | fb (on re-derivation) | anchored on the wrong paper's number |
+| Read an empty `nvidia-smi` row as "unowned", **three times**; the third took tileRL's card 1 | b0, b0, 44 | an occupancy observation read as an allocation decision |
+| Dispatched **four** lines by name without checking the socket; `lessons-e1` had been listed as not-on-this-team since 2026-09-02 | peers, all four | the rule was at the top of the file and was not read |
+| Added `_non_members` beside `not_on_this_team`, which already existed and is already printed by `board.py who` | fb (an hour later) | two fields, one question — the defect the same PR had just described |
+
+The through-line: **a field that answers the right question in the wrong tense, or a signal that
+answers the adjacent question.** `granted_by` correctly said who owned which card, for yesterday.
+`0 MiB` correctly said nobody is computing now. An idle socket correctly said that socket is
+quiet. Each failed toward the permissive reading, which is why none of them looked wrong.
+
+Structural fixes landed rather than more prose: `note` marked the single current-state field in
+`card_assignment.json`; the recipe's owner table carries a **socket column**; `board.py who <name>`
+exits 0 with a socket for a member and non-zero with the reason for anyone else.
+
+## Cards, 14:5xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | `tilerl-l5eval.0`, 100% |
+| 1, 3 | **lent** by tilerl-27 to de's serve | `released_at: null`; recallable on one message; **measured idle at 14:5xZ** |
+| 2 | b0 lane | sampled HumanEval, 24-47% |
+| 4, 5, 7 | de's serve | 91-99% |
+| 6 | tileRL | 87.8 GB, their spec prefill profile |
+
+## Global
+
+- **16 PRs open.** de was reviewer on six while running the critical path; three prioritised
+  (#161, #162, #155), three explicitly deferred (#158, #156, #148). #162 merged.
+- **98 had no reviewer in `pairs` at all** — two PRs with no assigned reader. fb took them (#168).
+- **An approved PR that is not merged is worse than an unreviewed one**, because everyone thinks
+  it is done. #161 and #155 are approved and open; the reviewer merges and pushes the pod in the
+  same step (ruling 2026-09-07).
+
+---
 
 ## State: p1, the whole program on one screen
 
