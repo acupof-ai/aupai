@@ -13384,6 +13384,22 @@ def _broken_lane_respected():
             f"runs/card_assignment.json grants no lane card (block {','.join(block)}), and the "
             f"defect this check catches is a busy LANE counted as one of the block's cards -- "
             f"there is no such card to mark busy, so the world would assert nothing")
+    if len(block) < 2:
+        # A ONE-CARD BLOCK CANNOT HOLD THIS DEFECT. The check FAILs on partial occupancy,
+        # 0 < busy < world; with a single block card the only states are 0 busy and all busy,
+        # and marking block[0] busy lands on "all 1 busy (block used as block)" -- a correct
+        # PASS. The world then asserts nothing and _demo reports "broken world cannot be made
+        # to fail" against a check that works, which is what main's CI went red on at
+        # 5a5c833d: the grant of 2026-09-09 narrowed block_cards to "4" because one card is
+        # genuinely all aupai holds besides the lane (5 and 7 went to another container, 0/1/3/6
+        # to tileRL). The grant is honest and the world is the thing that cannot be built, so
+        # this SKIPs by name rather than widening the grant to suit the test -- the same ruling
+        # as the no-lane branch above, and the same reason: shaping the record around the guard
+        # would put cards in the allocation file that nobody owns.
+        raise SelftestSkip(
+            f"runs/card_assignment.json grants a {len(block)}-card block ({','.join(block)}), and "
+            f"this check's defect is PARTIAL occupancy of the block -- with fewer than two block "
+            f"cards there is no partial state to build, only idle and full")
     # One block card plus the lane, no training process: the lane must not make up the count.
     os.environ["HARNESS_BUSY_CARDS"] = f"{block[0]},{lane[0]}"
     os.environ["HARNESS_TRAINING_PROC"] = "0"
