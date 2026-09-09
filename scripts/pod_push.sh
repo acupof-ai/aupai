@@ -120,8 +120,8 @@ stamp_sync() {
   if [ "$1" = all ]; then
     local head_sha dirty
     head_sha=$2  # resolved and refused-on before the first push
-    dirty=$(git status --porcelain -- $(awk '{print $2}' data/pod_head_manifest.txt \
-            | grep -v '^runs/') 2>/dev/null | wc -l | tr -d ' ')
+    dirty=$(git status --porcelain -- $(python3 scripts/pod_drift.py --ship-paths) \
+            2>/dev/null | wc -l | tr -d ' ')
     ~/bin/pod "cd /work/aupai && printf '%s %s %s\n' $head_sha $dirty $(date -u +%Y-%m-%dT%H:%M:%SZ) > data/pod_synced_head" < /dev/null
     echo "pod sync stamp: $head_sha (dirty=$dirty)"
   elif [ "$1" = partial ] && [ "${2:-}" = clean ] && [ -n "${3:-}" ]; then
@@ -535,7 +535,7 @@ sys.exit(0 if is_integration_tree('$(pwd)') else 1)
   # and are simply absent from stdout -> pushed.
   # Space-separated: a newline inside the quoted command becomes a command
   # separator in the pod's bash -lc, so only the first path would reach sha256sum.
-  paths=$(awk '{print $2}' data/pod_head_manifest.txt | grep -v '^runs/' | tr '\n' ' ')
+  paths=$(python3 scripts/pod_drift.py --ship-paths | tr '\n' ' ')
   ~/bin/pod "cd /work/aupai && sha256sum $paths 2>/dev/null" > "$tmp/pod" || true
   pushes=(); dels=(); blocked=()
   while read -r op p; do

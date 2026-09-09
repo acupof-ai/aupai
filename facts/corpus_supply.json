@@ -1329,6 +1329,21 @@
    "uncertainty": "The snapshot fixes the bytes as of 2026-09-08; head+tail 64KB per shard misses interior-only rewrites. The chatml/chat_qa reruns used TODAYs code against sources unchanged since 2026-08-28, so they prove the current pipeline is deterministic on those domains, not that the 2026-09-01 builds were deterministic then (the code in between was not exercised). not_tried is a statement about what was done, not about what would happen.",
    "status": "measured",
    "boundary": "Answers \"can a rerun produce the same bytes\" per domain as of 2026-09-08. Says nothing about rebuild cost, source availability for the 59 not_tried domains beyond the noted few, or content quality. The tier is a property of the stamp, not of the bytes."
+  },
+  {
+   "id": "cs.math_short_v8_cap_audit",
+   "value": "math_short_v8's 40,000 L4 rows are exactly the recorded command's L4 target (N=100,000 x --ratios 0,0,0.6,0.4 -> L4 40,000, L3 60,000). The generator has NO 1,200 cap: its caps are 100,000 total (CLI arg) and 150 instances per program (MAX_INST, run_math_short.py:27). The ~1,300 figure is the bank's PROGRAM count (1,302 programs: L1 166, L2 189, L3 509, L4 434, L5 4, run_math_short.py --list), a different unit -- programs, not rows. The pod file matches the recorded command exactly: 97,771 rows = L3 57,771 (stalled below the 60,000 target, the generator's documented all-programs-at-cap-or-rejecting stall) + L4 40,000 (target met); sha256 7e45bc95d0aa3226823a7a493a4df525a611ee7287712a7e28bec4ed217830e8 matches data/PROVENANCE.md:58. Of the three hypotheses: (1) the cap is not 1,200 -- confirmed, unit confusion; (2) recorded command != what ran -- NOT supported; (3) rows are not one verified instance each -- not supported.",
+   "measured": "2026-09-08",
+   "source": "mathbank/run_math_short.py read in full (caps at lines 27, 184-185, stall at 225-228); python3 run_math_short.py --list (program counts); pod: wc -l + sha256sum + level distribution of /work/aupai/data/synthetic/math_short_v8.jsonl; data/PROVENANCE.md:55-58",
+   "config": {
+    "file": "/work/aupai/data/synthetic/math_short_v8.jsonl",
+    "command": "run_math_short.py 100000 --ratios 0,0,0.6,0.4 --seed 28",
+    "max_inst": 150,
+    "programs_total": 1302
+   },
+   "uncertainty": null,
+   "boundary": "The '1,200' under audit was supplied in dispatch, not read from any file; no 1,200 constant exists in mathbank/ (the only 1200s are arithmetic parameters in math_programs_l3_ext6.py). The provenance line's '509 programs x 150 = 57,771' justification is arithmetically wrong (509x150=76,350); the stall is real but its recorded explanation is not.",
+   "status": "measured"
   }
  ]
 }
