@@ -41,6 +41,80 @@ not enter the 30B mix on this evidence.
 p-value, or confidence interval quoted off this pair is fabricated. Written into the prereg row's
 `will_not_claim` before R has a number.
 
+## The floor is per metric, and on three metrics it is a sign flip
+
+Both null arms are now scored (`runs/score_matrix.jsonl`, N1 and N2, 10 metrics each). The pair
+differs only in `Cfg.seed`, so **every difference below is init noise with no effect in it.**
+
+| metric | N1 | N2 | N2 - N1 | basis |
+|---|---|---|---|---|
+| final val (nats/tok) | 1.8230 | 1.8710 | **+0.0480** | 100 val batches |
+| domain_loss unweighted mean | 2.0241 | 1.9956 | **-0.0285** | 9 domains |
+| domain_bpb unweighted mean | 0.77209 | 0.76323 | **-0.00886** | 9 domains |
+| mc_ceval Average | 23.1 | 27.7 | **+4.60** | C-Eval |
+| minimal_pairs overall | 0.801444 | 0.801444 | **0.00000** | 277 pairs |
+| minimal_pairs factual | 1.0000 | 0.8125 | **-0.1875** | n=16 |
+| minimal_pairs function_word | 1.0000 | 0.8500 | **-0.1500** | n=20 |
+| minimal_pairs numeric | 0.5800 | 0.6400 | +0.0600 | n=100 |
+| minimal_pairs mean_margin | 2.5819 | 2.4643 | -0.1176 | 277 pairs |
+| math_v2_like overall | 0.97145 | 0.97377 | +0.00232 | n=3012 |
+| math_v2_like perfect_square | 1.0000 | 0.9000 | -0.1000 | n=10 |
+| humaneval gold bpb (byte-wtd) | 0.49047 | 0.49199 | +0.00152 | 164 tasks |
+| lambada_en acc | 0.24743 | 0.24704 | -0.00039 | 5,153 |
+| lambada_zh open_acc5 | 0.4950 | 0.4710 | -0.0240 | 1,000 |
+| l1_fewshot correct | 20 | 18 | -2 | 3 demos |
+
+**Three readings of held-out likelihood, and they do not agree on which arm is better.** Final val
+says N1 by 0.048. `domain_loss` unweighted mean says **N2** by 0.0285. `domain_bpb` unweighted mean
+says **N2** by 0.0089. Same two checkpoints, same nine domains, opposite rankings. So the floor is
+not a scalar to clear — on these aggregates the sign itself is not stable between two seeds, and
+**no single-metric reading of R can rank it against N1.**
+
+**The domain aggregate is 93% two domains.** Per-domain init noise spans a factor of 1,400:
+`code_py_rp1t` 0.0001 and `code_py_starcoder` 0.0020 at one end, `chatml` **0.1394** and `chat_qa`
+**0.0988** at the other. Those two are the smallest slices in the mix (7,974 and 7,838 rows, 0.88
+and 0.89 epochs), so their held-out splits are the smallest. Of the aggregate's 0.0285 movement,
+(0.1394 + 0.0988) / 9 = 0.0265 is those two — **93%**. An arm compared on the unweighted mean is
+being compared on chatml and chat_qa with seven domains along for the ride.
+
+**`minimal_pairs.overall` is identical to sixteen digits while all five of its dimensions moved.**
+Both arms scored exactly 222 of 277. N1: 39 + 16 + 20 + 58 + 89. N2: 38 + 13 + 17 + 64 + 90.
+Same total, different 222. The aggregate cannot fail on a difference it does not represent, and
+here it reported perfect agreement between two arms that disagree on 5 of 5 partitions.
+
+**mc_ceval's floor is 4.6 points.** Every C-Eval comparison at this scale that quoted a gap under
+4.6 points was inside init noise. This is the largest single number in the table and the one most
+likely to have been read as a result before tonight.
+
+**The small-n dimensions are unusable and should be reported as counts.** `factual` is 16 items
+(16/16 vs 13/16), `function_word` 20 (20/20 vs 17/20), `perfect_square_pattern` 10 (10/10 vs 9/10).
+A 3-item and a 1-item swing print as 18.75 and 10.00 percentage points. Nothing is wrong with the
+measurement; the percentage is the wrong presentation for n=10.
+
+## api_cloze scores every checkpoint against another program's row bounds
+
+Both arms' `api_cloze.bounds` are byte-identical and name a run neither arm is:
+
+```
+mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+```
+
+The anneal arms ran `mix_200m_4b_annealN.json`, seed **1337 / 1338**, world **4**, 7,629 steps.
+The bounds are the memory-layers program's (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`), and the metric's own `gap_note` says so. Identical bounds across
+two runs with different seeds confirms the split is a fixed reference, not derived from the
+checkpoint being scored.
+
+**So the "seen" region is rows these checkpoints never saw.** `within_region_gap` came out 0.0008
+on N1 and exactly 0.0000 on N2 — the right answer for a partition with no meaning here, and the
+reason nobody noticed. The bounds ARE stamped, which is what let this be found at all; what is
+missing is a refusal when the stamped bounds do not describe the checkpoint being scored. Same
+family as `vocab_id` and `.srcfp`: the fingerprint exists, nothing checks it at the read.
+
+Not a claim that api_cloze is broken — inside the memory program it is measuring what it says.
+It is a claim that the default score-matrix profile runs it on checkpoints where its partition is
+arbitrary, and reports a number rather than a SKIP.
+
 ## Pre-registration — written before R, honest about N1 and N2
 
 `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`, registered 2026-09-09T01:15Z by fb.
