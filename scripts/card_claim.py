@@ -1484,6 +1484,17 @@ def _selftest():
     good = r3.returncode == 0
     _case(good, f"and the original holder can release it ({r3.stdout.strip() or r3.stderr.strip()})")
 
+    # CLI RELEASE --CARDS: must release only the named card, not every claim under the name.
+    # 2026-09-10: the CLI path called release(a.name) without passing a.cards, freeing all
+    # claims under the name -- including cards still in use.
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "7", "--wait", "0"], capture_output=True, text=True, env=env)
+    _sp.run([sys.executable, here, "acquire", "--name", "cliMulti", "--cards", "8", "--wait", "0"], capture_output=True, text=True, env=env)
+    r4 = _sp.run([sys.executable, here, "release", "--name", "cliMulti", "--cards", "7"], capture_output=True, text=True, env=env)
+    live_m = [c for c in claims()[0] if c.get("name") == "cliMulti"]
+    good = r4.returncode == 0 and [c.get("cards") for c in live_m] == [["8"]]
+    _case(good, f"CLI release --cards frees only that card ({r4.stdout.strip() or r4.stderr.strip()}; left {[c.get('cards') for c in live_m]})")
+    _sp.run([sys.executable, here, "release", "--name", "cliMulti"], capture_output=True, text=True, env=env)
+
     # SAME NAME, DISJOINT CARDS, BOTH GRANTED. b0's production defect, 2026-09-04: two
     # score_matrix passes -- armA on card 4, armB's doc_cu on card 2 -- and the second was
     # refused. Disjoint cards, no possible contention, mutual exclusion by filename, because the
@@ -3225,7 +3236,8 @@ def main():
     if not a.name:
         ap.error(f"--name is required for {a.action}")
     if a.action == "release":
-        ok, msg = release(a.name)
+        cards = [c.strip() for c in a.cards.split(",") if c.strip()] if a.cards else None
+        ok, msg = release(a.name, cards)
         print(msg, file=sys.stderr if not ok else sys.stdout)
         return 0 if ok else 1
     if not a.cards:
