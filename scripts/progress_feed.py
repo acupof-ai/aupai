@@ -289,11 +289,13 @@ def queue_section():
     roster_p = os.path.join(REPO, "runs", "roster.json")
     if not (os.path.exists(tasks_p) and os.path.exists(roster_p)):
         return ""
-    # exited members stay on the page, tagged: dropping them would make a wrong
-    # exited mark invisible (the tilerl retraction, 2026-09-09)
+    # members the controller cannot dispatch to stay on the page, tagged by state:
+    # dropping them would make a wrong mark invisible (the tilerl retraction, 2026-09-09)
     _roster = json.load(open(roster_p, encoding="utf-8"))["members"]
     members = [m["name"] for m in _roster]
-    exited = {m["name"] for m in _roster if m.get("state") == "exited"}
+    _unreachable_tags = {"exited": "已退出", "active-session-unknown": "会话未知"}
+    unreachable = {m["name"]: _unreachable_tags[m["state"]] for m in _roster
+                   if m.get("state") in _unreachable_tags}
     exempt = {"fb", "98"}
     tasks = [json.loads(ln) for ln in open(tasks_p, encoding="utf-8") if ln.strip()]
     latest = {}
@@ -321,7 +323,7 @@ def queue_section():
         open_cell = "—" if m in exempt else str(s["open"])
         oldest = _age(s["oldest"], now) if s["oldest"] else "—"
         closed = bj_str(s["closed"]) if s["closed"] else "—"
-        tag = " 豁免" if m in exempt else (" 已退出" if m in exited else "")
+        tag = " 豁免" if m in exempt else (f" {unreachable[m]}" if m in unreachable else "")
         out.append(f'<tr><td>{html.escape(m)}{tag}</td><td class={cls}>{open_cell}</td>'
                    f'<td>{oldest}</td><td>{closed}</td></tr>')
     out.append("</table>")

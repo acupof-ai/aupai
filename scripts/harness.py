@@ -8337,6 +8337,14 @@ def _broken_tasks_closed_by_commit():
 
 QUEUE_MIN_OPEN = 2
 QUEUE_EXEMPT = {"fb", "98"}
+# Members the controller cannot dispatch work to: a session that exited, or one whose
+# live socket the roster does not know. The WARN's only action is "controller assigns
+# now", and a WARN naming a socket that cannot receive the work is noise (de's review,
+# PR #122, 2026-09-09 -- the check's subject moved from "member exited" to "no
+# dispatchable socket"). They stay in the roster and stay NAMED in the note, so a wrong
+# mark remains visible: the tilerl retraction (2026-09-09) was caught because this check
+# kept naming the member.
+QUEUE_UNREACHABLE_STATES = {"exited", "active-session-unknown"}
 
 
 def check_owner_queue_depth(root):
@@ -8372,13 +8380,11 @@ def check_owner_queue_depth(root):
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
     roster = json.load(open(roster_p, encoding="utf-8"))["members"]
-    # exited members stay in the roster so ledger rows naming them stay resolvable.
-    # They hold no queue and are not policed as idle, but they are REPORTED on their
-    # own line, not dropped: a member wrongly marked exited must stay visible -- the
-    # tilerl retraction (2026-09-09) was caught because this check kept naming it.
-    exited = [m["name"] for m in roster if m.get("state") == "exited"]
+    unreachable = sorted((m["name"], m.get("state")) for m in roster
+                         if m.get("state") in QUEUE_UNREACHABLE_STATES)
+    unreachable_names = {n for n, _s in unreachable}
     members = [m["name"] for m in roster
-               if m["name"] not in QUEUE_EXEMPT and m["name"] not in exited]
+               if m["name"] not in QUEUE_EXEMPT and m["name"] not in unreachable_names]
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     depth = {m: 0 for m in members}
     for t in rows:
@@ -8386,13 +8392,15 @@ def check_owner_queue_depth(root):
             if t.get("owner") in depth:
                 depth[t["owner"]] += 1
     empty = [m for m, n in sorted(depth.items()) if n == 0]
-    exited_note = f" | exited (not policed): {', '.join(sorted(exited))}" if exited else ""
+    unreachable_note = (f" | unreachable (not policed): "
+                        f"{', '.join(f'{n} ({s})' for n, s in unreachable)}"
+                        if unreachable else "")
     if empty:
-        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now" + exited_note
+        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now" + unreachable_note
     short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
     if short:
-        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills" + exited_note
-    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items())) + exited_note
+        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills" + unreachable_note
+    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items())) + unreachable_note
 
 
 def _broken_owner_queue_depth():
@@ -8409,6 +8417,49 @@ def _broken_owner_queue_depth():
                 r = dict(r, blocked_on="frozen until the run ends")
             fh.write(json.dumps(r, ensure_ascii=False) + "\n")
     return d
+
+
+def _selftest_owner_queue_depth_unreachable_members():
+    """Members in an unreachable state are out of the idle list, still in the note.
+
+    de's review of the unreachable-states change (PR #122, 2026-09-09): the registered
+    broken world blocks every open task, so a mutant deleting the state filter still
+    WARNs on it -- the world cannot see the filter. One roster, three fixtures:
+    ghost (exited) and phantom (active-session-unknown), 0 open tasks each, must be
+    absent from the policed part and present in the note WITH their states; a live
+    fixture with 0 open tasks must still be named idle, proving the filter does not
+    swallow everyone.
+    """
+    import shutil as _sh
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    for rel in ("runs/roster.json", "runs/tasks.jsonl"):
+        _sh.copy(os.path.join(ROOT, rel), os.path.join(d, rel))
+    rp = os.path.join(d, "runs", "roster.json")
+    with open(rp, encoding="utf-8") as fh:
+        roster = json.load(fh)
+    for name, st in (("ghost", "exited"), ("phantom", "active-session-unknown"),
+                     ("livefixture", None)):
+        m = {"name": name, "role": "research", "socket": "uds:/x.sock",
+             "topics": [], "note": "fixture"}
+        if st is not None:
+            m["state"] = st
+        roster["members"].append(m)
+    with open(rp, "w", encoding="utf-8") as fh:
+        json.dump(roster, fh, ensure_ascii=False, indent=1)
+
+    _s, ev = check_owner_queue_depth(d)
+    head, _sep, note = ev.partition(" | unreachable (not policed): ")
+    for name in ("ghost", "phantom"):
+        assert name not in head, f"{name} policed as idle/short: {ev}"
+    assert "ghost (exited)" in note and "phantom (active-session-unknown)" in note, \
+        f"unreachable members dropped or mis-stated in the note: {ev}"
+    assert "livefixture" in head, f"live member with 0 open tasks not named idle: {ev}"
+    assert "livefixture" not in note, f"live member named in the unreachable note: {ev}"
+
+    _sh.rmtree(d, ignore_errors=True)
+    print("  owner_queue_depth: exited + active-session-unknown out of the idle list, "
+          "in the note with states; live 0-task member still named idle")
 
 
 def check_one_deliverable_per_owner(root):
@@ -23605,6 +23656,7 @@ def _demo(only=None):
         _selftest_scoped_index_is_read,
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
+        _selftest_owner_queue_depth_unreachable_members,
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
     ):
