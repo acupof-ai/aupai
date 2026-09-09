@@ -1,0 +1,37 @@
+# R vs N1 val series -- the SAME-SEED REPLICATE drift, which is D (S287).
+# R  = mix_200m_4b_annealR.json, --seed 1337, --sample_seed 42, runs/anneal_r_0909.log
+# N1 = mix_200m_4b_annealN.json, --seed 1337, --sample_seed 42, runs/anneal_n1_0908.log
+# Both logs are pod-only and not in this repository; extracted 2026-09-09 04:3xZ (R10).
+#
+# WHY THESE ROWS ARE DRIFT AND NOT EFFECT: train.py:2791-2810 builds the MAIN phase
+# from d["weight"], and annealN/annealR are byte-identical outside _comment and nine
+# 'anneal' values. anneal_frac 0.1 of 7629 steps means the anneal begins at step 6866,
+# so EVERY row below is inside the replicate. Same weights, same corpus order, same
+# seed: the only source of difference is numerical nondeterminism.
+#
+# All values are train.py's periodic val, val_batches = 20 (train.py:408). NOT the
+# epoch-end 100-batch estimator that F = 0.048 is measured on (train.py:409). The two
+# are different estimators of the same quantity and their gaps differ by ~50% (S286);
+# never subtract one from the other.
+#
+# ELEVEN READS, all main phase:
+#   range   [-0.021, +0.016]
+#   max|d|  0.021  (step 4000)
+#   mean    -0.00264
+#   sign changes 3
+#
+# CONSEQUENCE FOR THE CRITERION: a single read at step 6500 is ONE DRAW of a quantity
+# whose entire content is its spread. Had 6500 been read alone and landed near the mean
+# (-0.003), D would be understated ~7x against the observed max of 0.021.
+step	n1_val	r_val	drift
+500	2.577	2.578	+0.001
+1000	2.348	2.347	-0.001
+1500	2.256	2.267	+0.011
+2000	2.193	2.209	+0.016
+2500	2.147	2.137	-0.010
+3000	2.114	2.110	-0.004
+3500	2.068	2.062	-0.006
+4000	2.045	2.024	-0.021
+4500	1.991	1.986	-0.005
+5000	1.950	1.944	-0.006
+5500	1.910	1.906	-0.004
