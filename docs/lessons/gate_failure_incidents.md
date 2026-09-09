@@ -1363,8 +1363,22 @@ Card 6 carried an 88 GB process invisible inside the container, with no ledger r
 
 The same shape four times earlier the same day, all fb's, all caught by someone else: three readings of an empty nvidia-smi row as an allocation decision (morning, cards 5 and 7; midday, format_sft on 1,2,3,4 for ~40 minutes; 13:3xZ, card 1, on the stated ground that it "carries no grant"), and one name-dispatch defect with four occurrences (aupai-dd addressed as b0, lessons-d1 as d1, e1's rulings to lessons-e1, 3b's whole line to lessons-31). The discriminating fields were in hand every time — the card note, the roster's socket column, the executable path — and a shared field was read as decisive each time.
 
-Guard criterion: a cross-project attribution cites only non-shareable identity — binary path, cgroup, package-manager artifacts, language. Never config flags, model paths, ports, or feature names: a mirror project shares those by construction. Of a cmdline the first field is identity; the flags after it are not.
+The third instance needs its own fix named. The 13:3xZ card-1 reading did not skip the discriminating field — it read `granted_by`, which was a day stale, while the same file's `note` field said the opposite. Two fields answered one question and the file did not say which was current, so "read the field you have" gives no action: the reader did, and hit the stale half. The fix is the file declaring its current-state field and marking history fields as history — `_current_state_field`, landed in #166.
+
+The arle process itself supplied the same lesson a second way, on the utilization axis. Two readings 17 minutes apart, same pid, same GPU UUID:
+
+    ~/bin/pod "nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader"
+    2026-09-09T15:41Z
+    1283503, GPU-88e98123-7d0d-a20d-8cb6-48ac951d2815, 88346 MiB
+
+    ~/bin/pod "nvidia-smi --query-gpu=index,gpu_uuid,memory.used,utilization.gpu --format=csv,noheader"
+    2026-09-09T15:41Z
+    6, GPU-88e98123-7d0d-a20d-8cb6-48ac951d2815, 88365 MiB, 0 %
+
+At 15:2xZ the same UUID read 88343 MiB / 100%. Memory held is shared by "computing" and "idle-holding"; utilization is the field that discriminates. The readings are ephemeral — no rerun reproduces them — so the command, output, and timestamps above ARE the basis, not a pointer to a ledger file.
+
+Guard criterion: a cross-project attribution cites only non-shareable identity — binary path, cgroup, package-manager artifacts, language. Never config flags, model paths, ports, or feature names: a mirror project shares those by construction. Of a cmdline the first field is identity; the flags after it are not. And where a file holds two fields answering one question, the file must declare which is current state — reading the discriminating field is no protection when the field itself is the stale one.
 
 Cost: ~30 min of cross-team uncertainty about a live 88 GB process on a card everyone is accounting for.
-Evidence: host cmdline and pid 1171892 (fb's handoff, 2026-09-09); `agent-infer/Cargo.toml:78,122,134` (tilerl-27); `runs/card_assignment.json` note (the three occupancy readings); `runs/roster.json` `not_on_this_team` (the four dispatches); `runs/controller_board.md` card table (the resolved attribution).
+Evidence: host cmdline and pid 1171892 (fb's handoff, 2026-09-09); nvidia-smi readings above (fb, 15:2xZ and 15:41Z, same pid/UUID); `agent-infer/Cargo.toml:78,122,134` (tilerl-27); `runs/card_assignment.json` note and `_current_state_field` (the three occupancy readings and the fix); `runs/roster.json` `not_on_this_team` (the four dispatches); `runs/controller_board.md` card table (the resolved attribution).
 open: no scanner flags an attribution whose evidence is a shared-attribute field. The checkable slice is mechanical — a cross-team claim whose evidence cites a flag, port, or feature name — but no check knows where cross-team attributions are written.
