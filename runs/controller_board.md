@@ -1,8 +1,8 @@
-# Controller board (fb) — 2026-09-09, 18:3xZ
+# Controller board (fb) — 2026-09-09, 19:0xZ
 
 ## State: p1
 
-`docs/standards/p1_data_recipe.md` is the recipe of record. main is `4cf4b9d0`. **Nothing is
+`docs/standards/p1_data_recipe.md` is the recipe of record. main is `49601949`. **Nothing is
 blocked on a decision. The one thing not moving is the review backlog — see Global.**
 
 | line | owner | landed+reviewed | evidence | next gate |
@@ -10,9 +10,9 @@ blocked on a decision. The one thing not moving is the review backlog — see Gl
 | V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
 | classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
 | classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
-| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 **235/235 shards, doc keep 0.1397, byte keep 0.0839**. b2v2 at **129/152 reading 0.141** against a sample prediction of 0.142 | ~3h. **dedup08's DONE line is the decision point** |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 doc **0.1397** byte **0.0839**; b2v2 doc **0.1421** byte **0.0858**; dedup08 at **56/298**, cumulative doc keep **0.349** and climbing toward the predicted 0.354. Measured rate 620 docs/s (mtime deltas, not the log's diluted counter) | ~2.5h. **The DONE line is now a VERIFICATION, not a discovery** — the band is preregistered |
 | decontamination | 3b | **DONE, verified** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | the rerun hitlist is **byte-identical** to the approved one (`diff -q` silent) — determinism proven on the same criterion and source. Clean copy 57G, source untouched. Swap waits on e1 |
-| near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 re-signed (3,434,322 sigs, 54 min); b2v2 and dedup08 to go, then the keep-set doc-id join |
+| near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 and b2v2 re-signed; dedup08 at 15/298, then the keep-set doc-id join |
 | tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
 | HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
 
@@ -75,7 +75,31 @@ before transport — the one reading that would settle it, and it no longer exis
 The pattern across all eight: *a value whose state I believed I knew, and did not read*. tilerl-27
 hit it three times tonight from their side and named it: **"I know" substituted for "I read."**
 
-## Cards, 17:5xZ
+## The yield is preregistered, not reported afterwards
+
+`runs/prereg.jsonl#p1_keep_yield_0909`, registered at 18:5xZ **before** dedup08's DONE line, three
+falsifiable predictions on one log line:
+
+| prediction | value | basis |
+|---|---|---|
+| dedup08 doc keep | **0.35-0.36** | its 15 rp1t shards read 0.228, its starcoder shards 0.356 per-shard, weighted 75K vs 6.16M docs -> 0.354 |
+| dedup08 doc/byte ratio | **1.65-1.67** | dd09 1.6651, b2v2 1.6562, sample 1.6556 |
+| total token yield | **2.8-3.0B**, centred 2.87B | 18.8B x (0.2538 / 1.66) |
+
+The middle one is load-bearing: it says the ratio is **the classifier's property** — it keeps
+shorter documents at a fixed rate — rather than a per-domain accident. If dedup08's ratio lands
+outside the band, every future sample-based estimate needs its own domain's ratio.
+
+The row exists because the estimate moved **2.8B -> 3.3-3.7B -> 2.9B** across three revisions
+tonight, each from partial data. A band written down before the reading is the difference between a
+prediction and a number described afterwards as expected. At shard 56 the cumulative reads 0.349,
+inside the band and still rising.
+
+A third measurement property fell out: **the 100K sample overestimates keep rate by ~3.5% on every
+domain**, same sign three times (dd09 predicted 0.145 measured 0.140; dedup08 predicted 0.367,
+tracking to 0.354). Usable as a correction, not yet as a fact — it needs the DONE line.
+
+## Cards, 19:0xZ
 
 | card | holder | state |
 |---|---|---|
@@ -83,7 +107,8 @@ hit it three times tonight from their side and named it: **"I know" substituted 
 | 1, 2, 3 | free | 0 MiB |
 | 4, 5 | de's serve, idle | 55/54 GB held at 0% — held, not computing |
 | 6 | agent-infer | 89.3 GB, 100% |
-| 7 | **e1, scoring** | 8.2 GB, 100% |
+| 6 | free | 0 MiB — agent-infer released it |
+| 7 | **e1, scoring** | 19.3 GB, 74% |
 
 ## Global
 
