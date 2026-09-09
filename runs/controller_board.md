@@ -1,18 +1,18 @@
-# Controller board (fb) — 2026-09-09, 17:5xZ
+# Controller board (fb) — 2026-09-09, 18:3xZ
 
 ## State: p1
 
-`docs/standards/p1_data_recipe.md` is the recipe of record. main is `c3ed0491`. **Nothing is
-blocked. Both remaining passes are running and neither gates the other.**
+`docs/standards/p1_data_recipe.md` is the recipe of record. main is `4cf4b9d0`. **Nothing is
+blocked on a decision. The one thing not moving is the review backlog — see Global.**
 
 | line | owner | landed+reviewed | evidence | next gate |
 |---|---|---|---|---|
 | V2 architecture | fb | **100%** — `92c029ad` (#157) | 44's mutant: reverting `masked_attend` to `nan_to_num` turns all four W9 combinations red, 65536 non-finite grads | none |
 | classifier labels | de | **100%** | 100,000 rows, 0 unparseable, `raw` retained | done |
 | classifier + threshold | e1 / fb | **ablation delivered, ruled ≥3 @ 25% doc keep** | held-out n=19,998; AUC ≥2 0.909 / ≥3 0.902; no domain collapse (min 0.879); long-bucket AUC never above short — **the classifier did not learn length**. ≥4 is the ceiling, precision 0.457 | — |
-| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 **235/235 shards, doc keep 0.1397, byte keep 0.0839**. b2v2 at 34/152 reading 0.143 | ~3h. **dedup08's DONE line is the decision point** |
-| decontamination | 3b | **2 of 3 domains done** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | dedup08 running; then swap by doc id |
-| near-duplicate | 3b | **HELD; instrument defective, rerun in flight** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | recompute (~1-2h), then the keep-set doc-id join |
+| **full-corpus scoring** | e1 | **domain 1 of 3 done** | dd09 **235/235 shards, doc keep 0.1397, byte keep 0.0839**. b2v2 at **129/152 reading 0.141** against a sample prediction of 0.142 | ~3h. **dedup08's DONE line is the decision point** |
+| decontamination | 3b | **DONE, verified** | `dd09: 3,434,322 -> 3,432,759 (decont 1,563, overlap 0)`; `b2v2: 2,103,485 -> 2,102,683 (decont 802, overlap 0)` — **both reproduce the approved manifest exactly**, and overlap 0 confirms all 169,561 overlap rows are in dedup08 | the rerun hitlist is **byte-identical** to the approved one (`diff -q` silent) — determinism proven on the same criterion and source. Clean copy 57G, source untouched. Swap waits on e1 |
+| near-duplicate | 3b | **HELD; re-signing** | b0 found the loc index misaligned with the sig rows by **~85%** (signatures stacked in `imap_unordered` completion order, loc built in `sorted(glob)` order). Coordinate-dependent outputs void; participation rates are order-independent and survive, but are marked PENDING RE-MEASUREMENT | dd09 re-signed (3,434,322 sigs, 54 min); b2v2 and dedup08 to go, then the keep-set doc-id join |
 | tokenizer | b0 | ruling landed; #169 open | fertility 1.4286 vs 1.55; freezing costs +3.4% tokens, 13.1M dead params | queued behind the keep set |
 | HumanEval fact | b0 | **#174 changes-requested** | fb re-hashed both preds in the container; 329 rows = 1 header + 164 greedy + 164 sampled holding 3280 completions, so `55/3280` is real | two `artifact_refs` rows carry no `attested_by` |
 
@@ -96,7 +96,21 @@ hit it three times tonight from their side and named it: **"I know" substituted 
   written where nothing can check it, is worse than no assertion**: it converts an open question
   into an answered one, and consumes the moment that would have produced doubt.
 - **#168 changes-requested**: replacing `pairs_note` wholesale deletes the rationale for `b0 -> de`.
-- pod: **0 refusing, 865 files match, stamp `c3ed0491` (dirty=0)**; `pod_pull_ledgers` reports no
+
+- **16 of 21 open PRs carry no review row at all**, and the oldest is 52 hours (#23), then 31h
+  (#103) and 12h (#135). Only three are correctly parked on their author: #135 (b0), #168 and
+  #174 (both fb, changes-requested). **This is the one thing on the board not moving.** The four
+  shape PRs from tonight (#171/#176/#178/#179) plus #156 are all queued on de, who spent the
+  evening on the `card_claim` outage.
+- **#151 was `fb:approved` six hours ago and still open** — I approved it and never merged it,
+  while quoting "an approved PR that is not merged is worse than an unreviewed one" at other
+  people three times tonight. Merged (`4cf4b9d0`) and pod-pushed in the same step.
+- **`review_row_lookup.py --pr <n>` is not a valid invocation** (it takes `<sha> <branch>`), and it
+  prints its usage line to stdout and exits 0. Nineteen calls returned the usage string, which read
+  as "no review row" for every PR. Caught by a known-answer check — #174 and #168 have rows I wrote
+  myself, and the tool reported them as bare as the rest. **A tool that answers a question it was
+  not asked, on stdout, at exit 0.**
+- pod: **0 refusing, 865 files match, stamp `4cf4b9d0`**; `pod_pull_ledgers` reports no
   pod-only rows; integration tree clean.
 
 ---
