@@ -4162,6 +4162,9 @@ def _broken_stale_run():
     rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
     assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
     rows[0]["started"] = "2020-01-01 00:00"
+    # A future date must also FAIL: a negative age is indistinguishable from "just started"
+    # without an explicit branch, so the row would never go stale (4c, 2026-09-10).
+    rows.append(dict(rows[0], name="future_job", started="2099-01-01 00:00"))
     open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
     return d
 
@@ -7194,6 +7197,11 @@ def check_no_stale_running(root):
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
+        if age_h < 0:
+            return FAIL, (
+                f"row {r.get('name', '?')!r} has a future `started`: {r.get('started')!r} "
+                f"({-age_h:.0f}h in the future) -- its age cannot be determined"
+            )
         if age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
