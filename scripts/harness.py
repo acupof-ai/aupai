@@ -8105,10 +8105,14 @@ def check_owner_queue_depth(root):
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
-    # exited members stay in the roster so ledger rows naming them stay resolvable,
-    # but they hold no queue and must not be policed as idle (PR #119, tilerl 2026-09-09)
-    members = [m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
-               if m["name"] not in QUEUE_EXEMPT and m.get("state") != "exited"]
+    roster = json.load(open(roster_p, encoding="utf-8"))["members"]
+    # exited members stay in the roster so ledger rows naming them stay resolvable.
+    # They hold no queue and are not policed as idle, but they are REPORTED on their
+    # own line, not dropped: a member wrongly marked exited must stay visible -- the
+    # tilerl retraction (2026-09-09) was caught because this check kept naming it.
+    exited = [m["name"] for m in roster if m.get("state") == "exited"]
+    members = [m["name"] for m in roster
+               if m["name"] not in QUEUE_EXEMPT and m["name"] not in exited]
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     depth = {m: 0 for m in members}
     for t in rows:
@@ -8116,12 +8120,13 @@ def check_owner_queue_depth(root):
             if t.get("owner") in depth:
                 depth[t["owner"]] += 1
     empty = [m for m, n in sorted(depth.items()) if n == 0]
+    exited_note = f" | exited (not policed): {', '.join(sorted(exited))}" if exited else ""
     if empty:
-        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now"
+        return WARN, f"idle: no open unblocked task for {', '.join(empty)} -- controller assigns now" + exited_note
     short = [f"{m}={n}" for m, n in sorted(depth.items()) if n < QUEUE_MIN_OPEN]
     if short:
-        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills"
-    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items()))
+        return WARN, f"queue under {QUEUE_MIN_OPEN} open unblocked task(s): {', '.join(short)} -- controller refills" + exited_note
+    return PASS, ", ".join(f"{m}={n}" for m, n in sorted(depth.items())) + exited_note
 
 
 def _broken_owner_queue_depth():
@@ -8153,8 +8158,9 @@ def check_one_deliverable_per_owner(root):
     roster_p = os.path.join(root, "runs", "roster.json")
     if not os.path.exists(roster_p):
         return SKIP, "no runs/roster.json"
-    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]
-               if m.get("state") != "exited"}
+    # not filtered: an exited member with >1 open task is ownerless work needing
+    # reassignment, and the WARN naming it is what makes that visible (2026-09-09)
+    members = {m["name"] for m in json.load(open(roster_p, encoding="utf-8"))["members"]}
     rows = _read_tasks(os.path.join(root, "runs", "tasks.jsonl"))
     open_by_owner = {}
     for t in rows:
