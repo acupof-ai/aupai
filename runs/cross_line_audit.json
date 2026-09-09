@@ -1,0 +1,10 @@
+{
+ "asof": "2026-09-09 11:45",
+ "note": "协议 docs/standards/cross_line_audit_0909.md；抽样 scripts/audit_sample.py；一致率缺失的行不算数。读者为提议，fb 裁定中。",
+ "rows": [
+  {"line": "合成教科书", "owner": "b0", "n": 50, "readers": "tilerl, 3b（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
+  {"line": "合成练习", "owner": "44", "n": 50, "readers": "de, fb（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
+  {"line": "分类器输出", "owner": "e1", "n": 100, "readers": "3b, b0（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
+  {"line": "去污染剔除", "owner": "3b", "n": 50, "readers": "b0, e1（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"}
+ ]
+}
