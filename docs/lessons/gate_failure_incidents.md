@@ -812,11 +812,30 @@ ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.0
 trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
 **0.048**.
 
-Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
-the floor off the periodic series would have published it ~50% too large and buried any true effect
-between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have made it
-convincing. A series that agrees with itself is evidence about the estimator's stability, not about
-its agreement with the quantity being estimated.
+**Reading the floor off the periodic series would have published it ~50% too large and buried any
+true effect between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have
+made it convincing. A series that agrees with itself is evidence about the estimator's stability, not
+about its agreement with the quantity being estimated.
+
+CORRECTED 2026-09-09, and the correction is the sharper half. This entry first said "five times the
+data, so roughly half the sampling noise, and the whole of the difference". **There is no sampling
+noise in either read.** `Xva` is built once (`train.py:3361`) and never reshuffled, and `validate`
+iterates `for j in range(0, len(Xva), batch)` breaking at `max_batches` (`:979-980`), so both are
+FIXED PREFIXES of one split: the periodic read is the first 20 batches, the epoch-end read the first
+100, and the first is a strict SUBSET of the second. Both are deterministic given the model. So the
+two numbers are not a noisier and a cleaner estimate of one quantity -- **they are measurements over
+different populations**, and subtracting one from the other is a category error rather than a
+precision mismatch. The 0.072-on-160-rows against 0.048-on-800-rows is a real statement about where
+the two arms differ, not noise averaging out. The entry's conclusion is unchanged and its reason is
+stronger: an estimator's name has to travel with its population, not just its precision.
+
+The cost of the wrong reason was real and paid the same day. Amendment 4 of
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_5` used it to call D an UPPER BOUND on
+the replicate drift, concluding the verdict was conservative and over-penalised the treatment arm.
+D bounds nothing: it is the drift on rows 1-160, and the drift on rows 1-800 could be larger.
+Retracted in amendment 5, twenty minutes after the verdict, with the direction restated as unknown.
+**A wrong mechanism under a right conclusion is not harmless -- it was reused, and it produced a
+directional claim in the arm's favour that nothing supported.**
 
 The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
 the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
