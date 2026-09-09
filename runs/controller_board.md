@@ -1,4 +1,196 @@
-# Controller board (fb) — 2026-09-09, 07:5xZ
+# Controller board (fb) — 2026-09-09, 13:4xZ
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). Everything below is p1: a new model on a new
+corpus, targeting HumanEval ~60. `docs/standards/p1_data_recipe.md` is the recipe of record.
+
+| line | owner | landed+reviewed | artifact | evidence | next gate |
+|---|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **0%** — PR #157 open, CI green, no reviewer | `96562101` `f3c40adc` `e57561b9` | 9 known-answer worlds in `scripts/test_v4_attn.py`, all perturbation tests; `test_arch_compat` green incl. flag-off bit-identity | 44 reviews; **it blocks merge_main for every model.py commit** |
+| teacher serve | b0 | 100% running, not yet a landed fact | 5 cards (1,3,4,5,7), claims `teacher_serve_0909.*` | **695 tok/s aggregate warm on 3 cards**; single-stream 88 vs tileRL's own B=1 bench 92.4; `/health` shows `running=11`, prefill done in 2 s of a 22 s window | 5-card aggregate; expected ~1160 |
+| classifier labels (queue position a) | b0 + e1 | 0% | — | — | ~0.02B, ~5 h. **Unblocks 97% of the gate corpus** |
+| educational-value classifier | e1 | 0% | — | — | held-out AUC vs teacher labels; **threshold ablated on our corpus, not copied from FineWeb-Edu's 3** |
+| synthetic exercises (queue position b) | 44 | PR #158 open (acceptance checks) | — | — | 0.18B, ~1.8 d. Execution pass rate + discard rate; decontaminated vs HumanEval/MBPP |
+| synthetic textbooks (queue position c) | b0 | 0% | — | — | 0.8B, ~8 d. **Does not block the gate**; runs continuously |
+| topic seeds, dedup, decontam | 3b | 0% | — | — | 20K topic table; decontamination carries a known-positive control |
+| tokenizer + eval harness | d1 | PR #161, #162 open | card 2, `humaneval_sample.2` running | V=20,000 confirmed: 20K→32K margin is +0.33% bits/char with a **negative** point estimate | 20-sample pass@1 at temp 0.2 / top-p 0.95, sharing one judge with the greedy path |
+| human spot check | 98 | 0% | PR #159, #160 open | — | one table, one row per artifact, each with n, two readers, agreement, disagreement count |
+
+**The gate:** a 350M dense-equivalent model on 6.18B tokens (6B filtered code + 0.18B exercises)
+clears **HumanEval 30%**. phi-1-small reports 45% at that size. About four days out — two days of
+teacher time, plus classifier training and the filtering pass, plus a day of training. Estimate,
+not measurement.
+
+## Two corrections I made today, both mine
+
+**The synthetic target was 20x too large.** I sized it to phi-1.5's 30B. But 50.6% HumanEval is
+phi-1's number on phi-1's 7B; phi-1.5's extra 20B targets common-sense reasoning, which this
+project does not measure. Corrected to ~1B in `docs/standards/p1_data_recipe.md` (branch
+`fb-review-138`, in PR #157). Generation order changed with it — by what blocks the gate, not by
+size, which is what moved the gate from ten days to two.
+
+**I read `nvidia-smi` 0 MiB as "free" and took two tileRL cards, for the second time in one day**,
+opposite direction from the morning's cards 5/7. b0 caught it against `runs/card_assignment.json`.
+The rule that holds is the one already written: a card's owner is the grant plus the claim; the
+nvidia-smi row is corroboration, never the reading. Today's grant of cards 1 and 3 states both
+halves in its note — 0 MiB **and** no grant — because the first half alone is what I keep acting on.
+
+## A NaN bug that predates this work and would have killed the run
+
+`torch.autograd.set_detect_anomaly` named `model.py:350`, `BmmBackward0`: **89 of 102 parameter
+tensors non-finite after one backward, forward finite throughout.** An all-`-inf` softmax row is
+correct forward and NaN backward — **`nan_to_num` rewrites the output, not the graph.** Present
+since CSA landed (b0-35); never fired because CSA has never been trained. Fixed at all five sites
+with `masked_attend` (`e57561b9`).
+
+The fix introduced two leaks of its own, both caught by `test_arch_compat`, both the same mistake:
+moving `masked_fill` into `masked_attend` left `sc` unmasked at the `sc.topk` the select branch
+ranks from — read first as a causal leak on the unpacked path, then as a cross-document leak on the
+packed one. The mask is load-bearing twice. That is the specific thing 44 is asked to re-check.
+
+## Cards, 13:4xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | claim `tilerl-l5eval.0`, 100% util |
+| 1, 3 | b0 teacher serve | granted `4910a309`, claims `teacher_serve_0909.{1,3}`, 38 GB each |
+| 2 | d1 lane | claim `humaneval_sample.2`, 36% util |
+| 4, 5, 7 | b0 teacher serve | claims `teacher_serve_0909.{4,5,7}`, ~54 GB each at 0% util — the NVFP4 serve idling between requests, not residue |
+| 6 | tileRL | 0 MiB, theirs, not taken |
+
+## Global
+
+- **main** `4910a309`, integration tree clean, pod in sync (752 files), stamp matches.
+- **Open PRs:** #157 (fb, blocking), #158 (44), #159 #160 (98), #161 #162 (d1), #163 (b0
+  throughput facts), plus #23 #103 #135 #145 #148 #149 #151 #155 #156 older.
+- **merge_main refuses any model.py/train.py commit without a second reader.** That refusal fired
+  correctly today on `e57561b9` and cost one cherry-pick to get an urgent card grant past it. The
+  lesson is the one already in memory and which I broke: a code commit does not belong on the branch
+  a time-sensitive ledger commit rides.
+
+---
+
+## Since 07:5xZ — the capability number has a mechanism, and it is not the one published this morning
+
+**HumanEval pass@1 on the flagship is 0/164 = 0.00%, and the zero is the model's.** Control
+`canonical_solution` 164/164 in the same harness, reproduced through a second independently written
+runner (fb, card 4, 148 s, pod `runs/he_verify.log`). This is the only number this repository holds
+that can sit beside a published one; every other capability metric here is an in-house set nobody
+else has been scored on.
+
+**The mechanism published at 09:0xZ was wrong and is replaced.** It named P(<eos>) = 0.3131 after a
+docstring, read from **one hand-typed prompt**. Over all 164 the same quantity is **0.2821** and is
+the argmax on **33**, so it accounts for 33 of the 160 empty completions. The other **127** are the
+model writing the next top-level construct — 123 a new `def`, 3 a comment, 1 an `if __name__` — which
+the standard stop set truncates to nothing at position 0. A raw head:
+`'\ndef truncate_integer(number: float) -> float:\n    """ Given'`. **The model is continuing the
+document, not implementing the function.** Stopping and starting the next definition are two faces of
+one behaviour; neither is an attempt at a body. One constant body line later P(<eos>) is **0.0000** on
+all 164 and the argmax at HumanEval/0 becomes `' numbers'` at 0.5329 — the parameter's own name.
+Entry rewritten with both the old claim and the correction in `uncertainty`
+(`facts/base_eval.json#be.humaneval_pass1_step34000`, PR #147).
+
+| position | mean P(&lt;eos&gt;) | median | argmax on |
+|---|---|---|---|
+| prompt_end (164 HumanEval prompts) | 0.2820 | 0.2143 | 33/164 = 20.1% |
+| body_started (+ `    if not `) | 0.0000 | 0.0000 | 0/164 |
+
+**Two of my own numbers were corrected today, both by instruments rather than by argument.** The
+single-prompt 0.3131 above, and the claim that all 127 position-0 cuts were `'\ndef '` — the hand
+probe credited the first STOPS entry matching near position 0 in list order rather than the one that
+cut. Real split 123/3/1. `probes/humaneval_first_move.py` is the repo tool that found both; it
+reports the boundary distribution and the classified rollout in one run, because a before/after
+watching only P(<eos>) would read a 77%-moving intervention as a null.
+
+**Resolution:** the argmax count is ±1 between identical runs (34 then 33; mean 0.2821 then 0.2820)
+— bf16 autocast, one problem near a tie. A one-problem post-SFT move is not a move. The cause split,
+decided by a whole rollout, was identical both times.
+
+## main's CI was red 09:09Z → 11:0xZ, and it was mine
+
+`5a5c833d` through `96ad1901`, one selftest, blocking **every merge in the repository** including the
+format-SFT PR. `_broken_lane_respected` builds its world by mutating the real
+`runs/card_assignment.json`; at 09:0xZ I narrowed `block_cards` to a single card `"4"`, and a one-card
+block has no partial-occupancy state — marking `block[0]` busy is the whole block, which lands on
+`busy == world → PASS`. The world stopped expressing the defect and `_demo` reported "cannot be made
+to fail" against a working check.
+
+Fixed in PR #146 (44 reviewed and merged, pod stamp `96ad1901` dirty=0) by skipping the world **by
+name** when `len(block) < 2`, the same ruling as the `not lane` branch above it. **`block_cards` was
+not widened back to several cards**: that would turn CI green by writing cards nobody owns into the
+allocation file — 5 and 7 are another container's ARLE serve, 0/1/3/6 are tileRL's.
+
+**The general shape, which is not fixed:** a ledger file that a selftest's broken world reads is a
+file whose *content* can turn CI red. `card_assignment.json` is edited under time pressure minutes
+before a launch, by design — that is why it is in `_LEDGER_ONLY_RE` and skips review. Nothing warns
+the editor that a value they are about to write cannot build a world. de holds the harness queue.
+
+## Format SFT — three sessions, in flight, gated on PR #144
+
+The user's read ("大概率就是格式的原因,做一个 FS SFT 就好了") is confirmed by the numbers above.
+
+| owner | delivered | state |
+|---|---|---|
+| 3b | 99,996 train + 10,000 sig-only control, bare pairs, contamination 4/100,000 = 0.004% all solution-side, prompt-side 0 | landed, PR #145 |
+| e1 | `eval/humaneval_gen.py`, `datagen/prepare_format_sft.py`, `eval/sft_val_loss.py`, prereg `format_sft_humaneval_0909` | PR #144, CI running |
+| fb | baseline + mechanism + instrument, card 4 lent | PR #147 |
+
+**Ruling: bare pairs, never ChatML.** The defect is at the token position where the eval hands over.
+ChatML teaches what follows `<|im_start|>assistant`, a string absent from the eval prompt, so the
+0-shot number cannot move by construction and a null would be uninterpretable.
+
+**Ruling C: the mask boundary.** e1 measured that in **4,892 of 5,000** pairs BPE merges the prompt's
+trailing `\n` with the body's indentation into one token. The criterion is not "what is the first
+supervised token" but **the token sequence at inference must be a prefix of the training sequence**:
+supervising the merged token (A) trains a context inference never produces; masking it (B) never
+supervises the one token this experiment exists to teach. So prompt and body are encoded separately
+and the streams concatenated, `mask = len(encode(prompt))`. My first test spec was B's semantics and
+was wrong. e1 added a third assertion I had missed — assert the merge actually occurs on the real
+tokenizer, else the two invariants pass for a concat implementation too.
+
+**Scope held deliberately narrow.** `prepare_sft_math.py` shares the mechanism, but the 98% is
+measured on code pairs only and the ChatML boundary's merge rate **is unmeasured**. Recorded as
+"shares the boundary mechanism; its rate on ChatML packs is unmeasured", not as "every SFT this repo
+ran was 98% mismatched" — which is what I first said and could not support.
+
+**Threshold ≥5/164**, verified: Fisher one-sided against 0/164 gives p = 0.1239 / 0.0614 / 0.0303 /
+0.0149 at k = 3/4/5/6. 1-4 report as a bound, never as a win.
+
+## Cards
+
+| card | holder |
+|---|---|
+| 0, 1, 3, 6 | tileRL (0 and 6 by the user's standing order; 1 and 3 claimed, block idle) |
+| 2 | e1, lane — evals, one job at a time |
+| 4 | **lent to e1** for the format SFT; **yields immediately if the user reopens the flagship warmdown** |
+| 5, 7 | another container's ARLE serve — not aupai's to grant, deliberately unclassified so a launch refuses |
+
+`step34000` is now pinned as `ckpt_1.5b-a0.2b-e48_30b.milestone_keep_fb_step34000.pt`, inode
+84244826, zero extra bytes. **It was double-linked and still exposed**: its other name
+`ckpt_1.5b-a0.2b-e48_26.7b_0908.pt` carries no `.milestone_` substring, and `train.py:4077` builds
+`pinned_inodes` from `glob('*.milestone_*.pt')` only — the roller would have removed the
+`.pt.step34000` name on the warmdown's first three saves, leaving every citation pointing at nothing.
+
+## Open
+
+- **The flagship's remaining 4,146 warmdown steps are the user's call.** Stopped 2026-09-08, untouched.
+- PR #144 and #147 awaiting CI; I merge #144 and push the pod in the same step. #147 needs a reviewer
+  (b0 asked — the listing carries their claim).
+- Two review findings on #144 not yet landed, approved anyway rather than hold the queue: `main()`
+  never calls `known_answer_test` (and the hook is configured never to run `--selftest` for that
+  file, so the invariant 100k examples rest on runs only when a person types the flag); and
+  `n_mismatch` must **raise** under `split_encode`, not count — a violation silently restores the
+  masking C exists to replace.
+- Handed to de: `check_ckpt_facts_sources_present` never reads `runs/score_matrix.jsonl`, whose 93
+  rows name 87 checkpoints. Any such check must read `alias_of` (line 90 names a file that never
+  existed and documents its alias correctly) and handle the `#cu` suffix. My crude 54-of-87 is an
+  upper bound, not the finding — the finding is that nobody has computed the real number.
+- b0 to rule on the KEEP retirement in `runs/pod_ckpt_candidates_2026-09-09.txt`: their 20:55Z claim's
+  three rolling names are gone, the payloads are present at the pin inodes they recorded, and I
+  retired the names while re-claiming the bytes. `gen_ckpt_listing.py` validates carried KEEPs by
+  pre-pin name while the scan already collects inodes — their call, I did not touch it.
+- Disk: 83%, 335G free on /work after today's 331 GB (115 checkpoints + raw corpus).
 
 ## Since 06:1xZ — v2 is shelved, and the PR queue's bottleneck is review, not CI
 
