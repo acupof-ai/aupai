@@ -425,6 +425,13 @@ def sweep(execute=False, root=ROOT, out=sys.stdout):
             print(f"\n{len(rows)} sweepable; --execute to kill them by exact PID", file=out)
         return 0
     ledger = os.path.join(root, "runs", "sweeper.jsonl")
+    try:
+        from harness_core import refuse_in_integration_tree
+    except ImportError as e:
+        print(f"sweep: integration-tree guard unavailable ({e}); refusing to append", file=sys.stderr)
+        return 1
+    if refuse_in_integration_tree("appending to sweeper.jsonl", path=ledger):
+        return 1
     killed = skipped = 0
     with open(ledger, "a", encoding="utf-8") as fh:
         for p, cls, why in rows:
@@ -498,7 +505,11 @@ def _selftest():
         old = time.time() - 400000  # ~4.6 d, C1.2's measured age
         log_closed = os.path.join(d, "runs", "done_run.log")
         open(log_closed, "w").write("x\n")
-        os.utime(log_closed, (old, old))
+        # mtime derives from the run's END, not from now: (c) means "log not written since the
+        # close", and a now-relative mtime drifts past the hardcoded 2026-09-03 end -- the
+        # fixture went red on 2026-09-04 for that reason alone.
+        _end = time.mktime(time.strptime("2026-09-03 11:00", "%Y-%m-%d %H:%M"))
+        os.utime(log_closed, (_end - 100, _end - 100))
         log_live = os.path.join(d, "runs", "live_run.log")
         open(log_live, "w").write("x\n")
 
