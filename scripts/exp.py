@@ -463,6 +463,14 @@ def main():
     n.add_argument("--quiet-if-absent", action="store_true",
                    help="exit 0 without writing when the name has no open row. For automation "
                         "that annotates a row it did not create")
+    mo = sub.add_parser("monitor",
+                        help="record the monitor pid armed for a RUNNING row; does not close it")
+    mo.add_argument("--name", required=True)
+    mo.add_argument("--pid", required=True, type=int,
+                    help="the monitor process's pid, in the namespace that will check it")
+    mo.add_argument("--started", default=None,
+                    help="arm THIS row (its 'started' value). Required when a name has "
+                         "more than one open row")
     r = sub.add_parser("retract", help="withdraw a CLOSED row's result; appends, never rewrites")
     r.add_argument("--name", required=True)
     r.add_argument("--reason", required=True,
@@ -736,6 +744,18 @@ def main():
         notes = base.get("notes") or ""
         append(dict(base, notes=f"{notes} | {stamped}" if notes else stamped))
         print(f"logged note: {a.name} ({base.get('started')}) -> {a.text}")
+    elif a.action == "monitor":
+        # THE MONITOR'S PID ON THE ROW, so harness check `monitor_alive` can ask whether a
+        # running row's watcher is still alive. The monitor releases the run's cards when the
+        # job ends and notices log silence; a dead one does neither and nothing else says so.
+        # Same discipline as `note`: carries status="running" forward, appends, never rewrites,
+        # and a later `done` folds onto the same (name, started). A re-arm appends a new event
+        # with the new pid, which the fold takes as the row's latest state.
+        base = pick_open_row(a.name, a.started, "arming")
+        if base is None:
+            sys.exit(f"no open row for {a.name}; nothing to arm")
+        append(dict(base, monitor_pid=a.pid))
+        print(f"logged monitor: {a.name} ({base.get('started')}) -> pid {a.pid}")
     elif a.action == "retract":
         # WITHDRAWING A RESULT, not deleting a run. The row keeps its cmd, hypothesis, commit
         # and original result: what is being said is "this number does not stand", and a
