@@ -1,6 +1,29 @@
-# Controller board (fb) — 2026-09-09, 05:2xZ
+# Controller board (fb) — 2026-09-09, 06:1xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
+
+## ROUND CLOSED — the reweight does not enter the 30B mix, and the reason is power, not the bound
+
+**R final epoch-end val 1.819 against N1's 1.823: |R-N1| = 0.004, below F = 0.048 and D = 0.021 by
+factors of 12 and 5.** Ten metrics scored, none showing a readable effect; the two excursions past
+2x their floor go in OPPOSITE directions (math_v2_like better, humaneval_bpb worse), which is the
+noise signature. exp row `anneal_r_0909` closed at `0d75423d`, score matrix on the pod.
+
+**The sentence the 30B decision rests on is not the bound.** N1's entire anneal tail moved val
+1.854 -> 1.823 = **0.031**, against a threshold of 0.048. The phase being reweighted contributes
+less in total than the floor the reweight must clear. So the result is "this budget cannot resolve
+an effect of this size", never "no effect" — and any future anneal-phase test at 4B tokens is
+under-powered by construction.
+
+**The sharpest single item is a floor of exactly zero.** `minimal_pairs` overall: N1 and N2 both
+0.8014, floor 0.0000. Not agreement — **compensation**. Working the counts back from the
+per-dimension accuracies: N1 39+16+20+58+89 = **222** of 277, N2 38+13+17+64+90 = **222**, while
+`factual` moved 18.75 points between them. A floor of 0.0000 would have made R's +0.0108 read as an
+unbounded multiple of the noise, the most confident false positive in the whole matrix — **the
+metric with no visible noise was the one most able to manufacture an effect.** §285 said the floor
+is per metric; this says the floor must be measured at the resolution the effect would appear at.
+(R on the same basis: 225 of 277, three items, with `factual` down 25 points. Not a result. The rule
+is that "+0.0108 against a 0.0000 floor" never appears without 222/222 beside it.)
 
 ## The number this round exists to produce
 
