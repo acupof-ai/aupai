@@ -200,19 +200,34 @@
  "status": "2026-09-05T04:34Z fb: RL TEAM (tileRL) KEEPS CARDS 0 AND 6 (user ruling, relayed by the user). CARDS 1-5 AND 7 ARE aupai's from now; tileRL asks aupai for a third card, never takes one. aupai grants on 1-5,7: lane 7 -> tilerl P1 rerun (30 min, after b0's review ok); lane 5 -> e1 kda_shape_fault probe then control floor (log-string queued); 1,2,3,4 -> memory-grid cells (tilerl launches, one per card, 300 steps, world 1), 5 joins after e1; 1,2 -> MoE arm E1 (world 2) when b0's module merges, grid cells there finish first. Every older grant string below is history.",
  "note_resume1_cards": "resume 1 of 1.5b-a0.2b-e48_30b launches on cards 1,2,3,4,5,7 (world 6), the 09-06 block; block_cards is rewritten at the stop",
  "tilerl_session_exited": "2026-09-09 03:2xZ, reported by the user. NO MACHINE FIELD IS CHANGED BY THIS ENTRY and that is deliberate: block_cards stays '2,4,5,7' and cards 0 and 6 stay tileRL's. A session exiting does not revoke the user's standing order of 2026-09-06 ('0,6 tileRL'); only the user does. This file's own comment says a stale grant is worse than no grant, and writing 0 and 6 into block_cards on the strength of an exit would be exactly that. WHAT IS ACTUALLY TRUE ON THE CARDS, read 03:25Z: card 0 holds 32,783 MiB at 100% -- runs/claims/tilerl-l5eval.0.json, pid 3083582, acquired 2026-09-08 08:32, cmdline 'python3 -m tilerl.cli train --rl --model qwen38-27b ... --eval-n 500'. Its owning session is gone, so it is an ORPHAN: nothing is watching it, nothing will close its row, and its claim is 19 hours old. It is NOT killed -- it is another team's job, it may be producing something, and killing needs an instruction naming it. Cards 1, 3 and 6 are at 0 MiB. aupai holds 2,4,5,7 and arm R is on them. CORRECTED 03:4xZ: tileRL is NOT gone. A new claim tilerl-seed1curve.1.json was written 03:42:36 for card 1 (pid 1332000, grpo-gsm8k-27b, seed 1) and card 1 reads 27,659 MiB / 97%. So the count of GPU processes went 5 -> 6 for a legitimate reason on a tileRL card, not a spill into aupai's block. Cards now: 0 tileRL l5eval (the 19h orphan, owner session still gone), 1 tileRL seed1curve (fresh, claimed), 2/4/5/7 aupai arm R, 3 and 6 idle. R unaffected -- step 3990/7629 at 52% with no contention.",
- "_current_state_field": [
-  "`note` IS THE CURRENT STATE. `granted_by` is history and nothing else.",
-  "Added 2026-09-09 after both sides of an allocation dispute read this same file and",
-  "got opposite answers: fb quoted a 2026-09-08 `granted_by` string (aupai 4,5,6,7 /",
-  "tileRL 0,1,2,3) to challenge tilerl-27's record, while the `note` field one day newer",
-  "already said what tilerl-27 said. The stale entry did not answer the WRONG QUESTION --",
-  "it answered 'who owns which card' correctly, for yesterday. A field that answers the",
-  "right question in the wrong tense is caught only by a timestamp, and the timestamp is",
-  "what nobody reads. So: quote `note`, never `granted_by`.",
-  "A LOAN gets `released_at` on its `granted_by` entry: null means still held. Absence of",
-  "a release entry must never be what tells a reader a card came back (tilerl-27's rule).",
-  "Shapes here are read by scripts/launch_gate.py and scripts/harness.py -- `note`,",
-  "`block_cards`, `lane_card` and `granted_by` all have readers, so a schema change needs",
-  "the reader changed in the same PR or the gate goes quiet instead of red (aupai-89)."
- ]
+ "_current_state_field": {
+  "_read_this_first": "This file has 17 non-underscore fields and SEVEN of them read like an answer to 'who holds which card right now'. Only two are. Every field is classified below; a field not in this map is a field nobody has classified, and it must be treated as UNKNOWN, not as current.",
+  "_why_this_map_exists": "Twice in one day a reader took a stale field for the current one. 2026-09-09 13:3xZ: fb quoted a 2026-09-08 `granted_by` entry to challenge tilerl-27's correct record, while `note` -- one day newer -- said the opposite. 2026-09-09 16:0xZ: e1 read `cards` and got b0's old string. The first fix declared `note` current and `granted_by` history and classified NOTHING ELSE, which is why the second happened in a field the fix had not named. Reading the discriminating field is no protection when the field itself is the stale one; the file has to say which field is which. R15/§294.",
+  "CURRENT": {
+   "note": "The single current-state field. Card ownership, loans, and what changed. Rewrite it, do not append."
+  },
+  "MACHINE_PARSED": {
+   "block_cards": "scripts/launch_gate.py:658-714 parses this. The cards a training block holds.",
+   "lane_card": "Same parser. The card everything else queues on."
+  },
+  "HISTORY": {
+   "granted_by": "Append-only log of grants and returns, newest last. A closed grant carries `released_at`; an open one carries null. NEVER read the newest entry as current state -- a grant can be superseded by `note` without its row being rewritten.",
+   "superseded_2026_09_02": "A named-dead snapshot. Kept as history, correct by construction."
+  },
+  "STALE_PROSE": {
+   "_what_this_means": "Each of these was current when written and none has been rewritten since. They record a ruling, a reading, or a plan at a date. Where one disagrees with `note`, `note` wins. Do not delete them -- they carry rulings whose reasoning is not recorded anywhere else -- and do not read them as now.",
+   "cards": "Per-card prose, last accurate 2026-09-08. THIS IS THE ONE e1 MISREAD ON 2026-09-09.",
+   "status": "A 2026-09-05 user ruling on the aupai/tileRL split. The ruling stands; the card list in it does not.",
+   "granted": "A bare date, 2026-09-03. Answers nothing on its own.",
+   "verified": "A 2026-09-08 nvidia-smi reading taken before that day's grant. A reading, not a state.",
+   "launch_block_granted": "false since 2026-09-08. Not consulted by any launch path today.",
+   "next_grant": "A queued grant (e1-43 dense comparator) that has not been issued. A plan, not a holding.",
+   "theirs_baseline": "[0, 6] -- the user's standing order of 2026-09-06. Still true, and the only STALE_PROSE entry that is.",
+   "lane_note": "A 2026-09-05 user order reversing an E1 close. The order stands; its card assignments do not.",
+   "lane_to": "A 2026-09-06 post-run sequence for a block that has since stopped.",
+   "lane_two_card_exception": "A 2026-09-03 narrow exception (a link microbench needs two endpoints). Still the rule, not a holding.",
+   "note_resume1_cards": "The card list of a resume that has ended.",
+   "tilerl_session_exited": "A 2026-09-09 03:2xZ report that deliberately changed no machine field."
+  }
+ }
 }
