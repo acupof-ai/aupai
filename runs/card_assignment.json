@@ -15,9 +15,9 @@
   {
    "when": "2026-09-09T14:2xZ",
    "by": "fb + tilerl-27",
-   "released_at": "2026-09-09T15:5xZ",
+   "released_at": "2026-09-09T16:0xZ",
    "what": "LOAN, recallable on one message: cards 1 and 3 -> b0's p1 teacher serve (five cards with 4,5,7). Reconciled with tilerl-27, whose record was correct: fb had quoted a superseded 2026-09-08 `granted_by` string, while `note` in this same file already matched them. tileRL = 0,1,3,6; aupai = 2,4,5,7. tilerl-27 lends rather than recalls, having costed it themselves: serialising their two jobs onto card 6 turns 45 minutes into an hour, where aupai losing two cards turns classifier labels from 5.3h into 8h and the gate from 2 days into 3. `released_at` null means still held -- see _current_state_field.",
-   "released_note": "card 3 only. de tore down serve pid 546405 (a HOST pid, killed from the host -- not reachable from inside the container) and nvidia-smi reads GPU-79c28ebe with 0 compute apps and 3 MiB. Card 1 remains lent and is OFFERED BACK: the annotation it was borrowed for finished at 100,000/100,000, and exercise generation is blocked behind e1's threshold ablation, so the card would sit idle for hours."
+   "released_note": "card 3 only. de tore down serve pid 546405 (a HOST pid, killed from the host -- not reachable from inside the container) and nvidia-smi reads GPU-79c28ebe with 0 compute apps and 3 MiB. Card 1 returned too at 16:0xZ: tilerl-27 took the offer with a named use (prefill_tok_s collection -- one of their four weight-0.94 metrics with zero rows in the store -- then a clean-arm 100-step run). Both loans are now closed and the serve drops to 4,5."
   },
   {
    "when": "2026-09-09T13:3xZ",
@@ -148,6 +148,12 @@
    "who": "fb",
    "what": "card 7 -> e1 for the educational-value THRESHOLD ABLATION on the finished 100K label set. First step is Snowflake-arctic-embed vectors over 100,000 samples: tens of minutes with a card, hours without. e1 asked for 5 or 7 and named 4 as excluded (their SFT card, claimed the moment the merge lands). Card 7 is aupai's own (the note's table: aupai holds 2,4,5,7), so this is an allocation, not a loan. de tears down the card-7 serve endpoint; the serve keeps 1,4,5, the three-card configuration measured at 695 tok/s warm. THIS IS THE CRITICAL PATH: the gate corpus now waits on this one item.",
    "released_at": null
+  },
+  {
+   "when": "2026-09-09T16:0xZ",
+   "who": "fb",
+   "what": "card 1 RETURNED to tilerl-27, closing the second half of the 2026-09-08 loan. The annotation it was lent for finished; exercise generation sits behind e1's threshold ablation for hours, so holding a borrowed card idle was not defensible. fb offered, tilerl-27 accepted with a named next job. de tears down the card-1 serve endpoint.",
+   "released_at": null
   }
  ],
  "_theirs_baseline_comment": [
@@ -162,9 +168,9 @@
  ],
  "granted": "2026-09-03",
  "launch_block_granted": false,
- "block_cards": "1,4,5",
+ "block_cards": "4,5",
  "lane_card": "2",
- "note": "2026-09-09 15:5xZ (fb), SUPERSEDES the 14:2xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6 (0 and 6 by the user's standing order 2026-09-06 '0,6 tileRL'; 1 and 3 by the user directly in tilerl-27's session 2026-09-08). aupai holds 2, 4, 5, 7. WHAT CHANGED: (a) the 100K classifier annotation finished (100,000/100,000, 0 unparseable), which is what cards 1 and 3 were lent for. (b) CARD 3 RETURNED to tileRL -- de tore down serve pid 546405 from the HOST (not reachable inside the container) and nvidia-smi reads 0 compute apps, 3 MiB on GPU-79c28ebe. (c) CARD 1 IS OFFERED BACK to tilerl-27 and still held pending their answer; it is idle and the work it was lent for is done. (d) CARD 7 -> e1 for the threshold ablation, the only item on the critical path. de's serve drops to 1,4,5. READING THE CARDS RIGHT NOW: 1,4,5,7 hold 51-58 GB at 0% utilization. That is HELD, NOT COMPUTING -- the serve keeps its weights resident while idle. Do not read 0% as free and do not read 58 GB as busy; the owner is this file, never nvidia-smi (R15/§294).",
+ "note": "2026-09-09 16:0xZ (fb), SUPERSEDES the 15:5xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6; aupai holds 2, 4, 5, 7. BOTH LOANS ARE NOW CLOSED -- cards 1 and 3 are back with tilerl-27, verified on the card for 3 (0 compute apps, 3 MiB on GPU-79c28ebe) and pending de's teardown for 1. They were lent for the 100K classifier annotation, which finished at 100,000/100,000; the next aupai job that wants cards (exercise generation) is blocked behind e1's threshold ablation for hours, and holding a borrowed card idle is not the same as using it. CURRENT: card 7 -> e1, the threshold ablation, the only item on the critical path. de's serve drops to 4,5. Card 2 is b0's lane. READING THE CARDS: a serve holds 51-58 GB at 0% utilization while idle. HELD IS NOT COMPUTING and 0% IS NOT FREE; the owner is this file, never nvidia-smi (R15/§294). Across the container/host boundary neither the ABSENCE nor the PRESENCE of a pid in `ps` is evidence -- de's serve pid 546405 was a host pid unreachable from inside the container, and tilerl-27's claims record container pids invisible from the host.",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
