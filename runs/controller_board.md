@@ -1,4 +1,4 @@
-# Controller board (fb) — 2026-09-09, 05:0xZ
+# Controller board (fb) — 2026-09-09, 05:2xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
@@ -8,7 +8,7 @@
 |---|---|---|---|---|
 | N1 | 1337 | **1.823** | 7,629 | 4.00B |
 | N2 | 1338 | **1.871** | 7,629 | 4.00B |
-| R | 1337 | running, step 6140/7629 (80%), periodic val 1.872 at 6000 | 7,629 | 4.00B |
+| R | 1337 | running, step 7160/7629 (94%), in ANNEAL since 6866 | 7,629 | 4.00B |
 
 **F = 0.048.** Everything else about the two arms is identical: same mix
 (`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
@@ -202,8 +202,8 @@ is queued, and that decision is the user's — it sits in Open decisions below a
 | run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
 | launched | 2026-09-09 01:48Z by fb |
 | cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
-| progress | step 6140 / 7629, **80%**, 77K tok/s/gpu, 1.71 s/step, peak 49.53 GiB |
-| next reads | step 6500 — **~10 min out**, the LAST main-phase periodic read, so D freezes there. Epoch-end val ~05:4xZ. 3b owns both |
+| progress | step 7160 / 7629, **94%**, phase `[anneal]`, 1.71 s/step |
+| next reads | **epoch-end val at 7629, ~13 min out — the verdict.** 3b owns it, Monitor `b2ftlp566` armed on the `ep 1/1` line |
 
 ## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
 
@@ -257,15 +257,17 @@ scoring done by hand in the gap. The correct fix is one line in `run_ddp.sh`, wh
 **My own amendment 1 was the defect.** It required `D = |R-N1| at step 6500`: one draw of a quantity
 whose entire content is its spread. R's main phase is a same-seed replicate (§287), so every
 periodic read before the anneal at step 6866 measures numerical nondeterminism and nothing else.
-Twelve such reads, committed at `runs/anneal_r_vs_n1_drift_0909.tsv` **while the arm was still
+Thirteen such reads, committed at `runs/anneal_r_vs_n1_drift_0909.tsv` **while the arm was still
 running**, because a series that arrives after the verdict cannot constrain it:
 
 | | |
 |---|---|
+| reads | **13, window closed** (500..6500; 7000 is already `[anneal]`) |
 | range | [-0.021, +0.016] |
-| max\|d\| | **0.021** at step 4000 |
-| mean | -0.00264 |
+| max\|d\| | **D = 0.021** at step 4000, FINAL |
+| mean | -0.0026 |
 | sign changes | 3 |
+| last main-phase read | 6500: R 1.849 vs N1 1.854, \|d\| 0.005 |
 
 A 6500 read landing near the mean would have understated D about sevenfold. **D is now
 `max|R-N1|` over every main-phase periodic read, and it FREEZES at 6500** — the next periodic read,
@@ -283,59 +285,56 @@ one draw.** That is a better reason than the asymmetric-cost one I gave.
 the second time tonight one of my criteria expressed something narrower than the property asked
 (§287 was the first). 44 holds whether that pair is a shape.
 
-## Next gate — R
+## Next gate — the verdict at step 7629
 
-R's epoch-end val at ~05:2xZ, read **per metric** against the floor table above, never against a
-single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound and a result, not a
-failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
-Score by hand on a freed card after the chained pass exits nonzero.
+R's epoch-end val, ~13 min out, read **per metric** against the floor table — §285 is the reason a
+single aggregate is not enough. 3b owns the read; Monitor `b2ftlp566` is armed on the `ep 1/1` line.
 
-## Queue — 11 open, and the §-numbering chain is the only ordering constraint
+**The rule, in 3b's wording, which is better than mine:** the reweight moved val **iff |R-N1| at the
+final epoch-end read exceeds BOTH F = 0.048 and D = 0.021.** I had written `max(F, D)` — same
+threshold, but naming both floors means neither can be dropped silently.
 
-| PR | branch | state, 04:2xZ |
+**Two properties of the design, registered as amendment 4 (`0c4617d2`) BEFORE the number existed,
+because afterwards they read as excuse-making:**
+
+- **The estimator mismatch runs conservative, and that asymmetry has to be reported.** F is the
+  100-batch epoch-end read; D is a max over 20-batch periodic reads, so D carries 20-batch sampling
+  noise on top of the true replicate drift and is an **upper bound** on it. Applying it to a
+  100-batch comparison over-penalises R. Consequence: **a no-effect verdict carries this caveat and
+  an effect verdict does not.** No clean epoch-end D exists and that is structural — the epoch-end
+  R-vs-N1 comparison IS the verdict quantity, since R's anneal differs, so drift and effect are
+  separable only inside the replicate and the replicate has only periodic reads.
+- **The design is under-powered by construction.** N1's entire anneal tail moved val 1.854 -> 1.823
+  = **0.031**, against a threshold of max(F, D) = **0.048**. The phase being reweighted contributes
+  less in total than the floor the reweight must clear, and D alone is 68% of that contribution; a
+  reweight that doubled the anneal's whole effect would reach ~0.062, barely over F. **So a null
+  means "this budget cannot resolve an effect of this size", never "no effect"** — and the 30B mix
+  decision rests on that sentence, not on the bound.
+
+## Queue — 9 open, 10 merged tonight
+
+| PR | branch | state, 05:2xZ |
 |---|---|---|
-| #124 | 44-shapes-288-289 | **merges FIRST.** §288+§289, green on both CI events, MERGEABLE. Needs a review row — 44 asked de directly |
-| #105 | b0-47-code-decode | approved on content by de. CONFLICTING; b0 renumbers §289 → **§290** and resolves in one push, then de merges |
-| #125 | 44-v2spec-current | v2 spec: first arm CSA+DSA+SWA NoPE, HCA/partial-RoPE written UNBUILT not dropped, amendment_3. MERGEABLE. **fb reads before merge** |
-| #123 | 3b-frozen-args | joins the frozen launch line to train.py's parser |
-| #122 | 44-roster-exited-skip | revised per my objection: exited members get their own line, never dropped; fixture-tested |
-| #120 | 44-teacher-vocab | teacher vocab 248,320 |
-| #109 | e1-tokshards | ancestry FAIL names what the sideways move discarded |
-| #106 | 44-minicpm5-arch | conflict resolved, pushed `057b395d`, de's to merge |
-| #103 | 3b-runsmove | two closed research .md → docs/audits/ |
-| #92 | 98 | pod: refuse non-ASCII argv |
-| #23 | tilerl-cache-sidecar | b0 adopted; 3b's two findings being fixed |
+| #128 | fb-cite-amended3 | MERGEABLE. §285/§287 anchors to `@amended_3`; §287 gains the RUNTIME confirmation of its boundary — the log's phase label flips 6800 `[main]` -> 6900 `[anneal]`, against the 6866 the code computes. Every other claim in that entry was read off source, where a phase built from a different field gives the same reading of the same lines. 44 reviews |
+| #105 | b0-47-code-decode | §290 done, CI green, **CONFLICTING again** — main moved under it. de merges once b0 rebases |
+| #129 | b0-49-r4-wallclock | §291, CONFLICTING; unblocks when #105 lands |
+| #131 | de-98-guard-population | de's guard task, opened within the hour of de-84 closing |
+| #132 | b0-52-csa-doc-cu | b0's actual primary (b0-35) |
+| #122 #120 | 44 | need de |
+| #103 | 3b-runsmove | needs b0 |
+| #23 | tilerl-cache-sidecar | b0 adopted, tail work |
 
-**The §-chain is the only hard order in that list: #124, then b0's §290 push, then #105.**
-Everything else can land in any order. I ruled #124 first because it is green and its two
-sections are contiguous, while #105 is CONFLICTING and must be re-pushed regardless — so the
-renumber costs b0 nothing beyond a number he was already editing.
+**de-98's measured value beat my estimate, and how it beat it is the point.** I wrote "1 of 4
+unguarded ledgers" into `--produces`. de enumerated the filesystem: **3 of 10 guarded** — unguarded
+are review (no writer at all), ledger_resolutions, retro, milestones, msg_log, prereg, experiments.
+**My "4" was itself a list**, the three harness writers plus the one that had just bitten us, which
+is exactly the defect the acceptance condition was written to catch, committed by me in the act of
+writing it. Both numbers go in the close: the measurement and the estimate it replaced.
 
-**Why b0's green CI did not catch the collision, corrected from my first reading.** I told de the
-check sees only the branch's files. That is wrong. `.github/workflows/ci.yml` is
-`on: [push, pull_request]` with a bare `actions/checkout@v4`, so the pull_request run checks out
-the **merge ref** — it does test the merged tree, and #124 shows both runs green. The real gap is
-narrower: **the pull_request run tests the merge with main as of the last push to the PR, and main
-moving afterwards re-triggers nothing.** #105's last green run sits at head `8a182adc`, computed
-before §284-287 existed — a real merge test against a main that no longer exists. Stale-green, not
-blind. The durable fix is the repo setting (require branches up to date before merging), not
-another check, and 44 has the sentence if it becomes a shape.
-
-**#100 is how the bottleneck should break.** It sat approved-and-unmerged for 7h because the 09-07
-ruling puts the merge on the reviewer and de was asleep. I declined to merge it myself: a third
-party merging satisfies the rule's purpose and fails its letter, and the cost is not one facts
-table — it establishes that the reviewer step is skippable whenever a reviewer sleeps, which is the
-step that makes approval mean anything. **The clean route needed no exception, because nothing says
-a PR has one reviewer**: 44 independently reviewed it, became a roster reviewer of that PR, and
-merged and pod-pushed inside the ruling. Conflict was `facts/corpus_supply.json` only, resolved by
-union, 29 facts, JSON validated.
-
-**A trap 44 hit doing it**: #100's head branch is `fact-repro-table`, not `pr100`; two pushes went
-to a same-named new branch first. Worth a friction row.
-
-**I held my own PR after it was approved.** 44 approved #118 and the step-2500 read landed in the
-same minute, falsifying "monotone since 1000" and the residual built on it. Approval is not a
-reason to merge something you now know is wrong.
+Ruling on retro, which de asked for: **it gets the shared writer like the other five.** Eight rows
+all dated 2026-08-31 is evidence nobody has written since, not evidence the ledger is retired —
+different claims, only the first measured. Retiring it here would also be a carve-out in the very
+guard whose AST enumeration exists to make carve-outs impossible.
 
 ## Landed this tick — three defects, all found by reading rather than by a check
 
