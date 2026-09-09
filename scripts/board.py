@@ -75,21 +75,24 @@ def append(row):
     # predicate is now reachable without the cycle -- which is what the extraction was for. The
     # harness fallback stays: harness re-exports the name, so an older tree with no harness_core
     # still answers (de-71, 2026-09-07).
+    # The guarded append is shared (de-98): harness_core.append_ledger refuses in the
+    # integration tree and writes one line O_APPEND. The harness_core/harness fallback stays
+    # because board.py is imported by harness, so a module-level harness import would cycle.
     try:
-        from harness_core import refuse_in_integration_tree
+        from harness_core import append_ledger
     except Exception:
         try:
-            from harness import refuse_in_integration_tree
+            from harness import append_ledger
         except Exception as e:
             print(f"board: integration-tree guard unavailable ({type(e).__name__}: {e}); "
                   f"writing anyway -- check the branch by hand", file=sys.stderr)
-            refuse_in_integration_tree = None
-    if refuse_in_integration_tree is not None:
-        if refuse_in_integration_tree("posting to board.jsonl", path=BOARD):
-            raise SystemExit(1)
-    os.makedirs(os.path.dirname(BOARD), exist_ok=True)
-    with open(BOARD, "a", encoding="utf-8") as fh:
-        fh.write(json.dumps(row, ensure_ascii=False) + "\n")
+            append_ledger = None
+    if append_ledger is not None:
+        append_ledger(BOARD, row, "posting to board.jsonl")
+    else:
+        os.makedirs(os.path.dirname(BOARD), exist_ok=True)
+        with open(BOARD, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(row, ensure_ascii=False) + "\n")
 
 
 SEEN = os.path.join(ROOT, "runs", ".board_seen.json")
