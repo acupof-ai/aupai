@@ -128,15 +128,16 @@ estimate must match the inference distribution.
 5K labeled, 0 discards, all outputs clean single digits: 0=5.2% 1=64.4%
 2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
-high-score code, confirming the re-draw. Keep rates on the 18.8B-token base:
->=2 = 30.4% (~5.7B), >=3 = 26.7% (~5.0B), >=4 = 3.3% (~0.62B). The threshold
-region for the ablation is >=2 vs >=3, with >=3 the prior (score-2 is "glue
-code, nothing to learn", exactly what the filter exists to remove; score-3 is
-real logic). The ablation pins the point. The threshold is the ablation's
-OUTPUT, not a means to a token target (4c, 2026-09-09): the recipe's ~6B is
-phi-1's output at a 17% keep rate, not ours -- 17% of our 18.8B is 3.2B, and
-loosening the cut to hit a copied token number would invert phi-1's
-quality-over-quantity argument. If a strict threshold yields 3B, the gate runs
+high-score code, confirming the re-draw. Keep rates on the measured 18.25B-token
+base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured): >=2 = 30.4%
+(~5.55B), >=3 = 26.7% (~4.87B), >=4 = 3.3% (~0.60B). The threshold region for
+the ablation is >=2 vs >=3, with >=3 the prior (score-2 is "glue code, nothing
+to learn", exactly what the filter exists to remove; score-3 is real logic).
+The ablation pins the point. The threshold is the ablation's OUTPUT, not a
+means to a token target (4c, 2026-09-09): the recipe's ~6B is phi-1's output
+at a 17% keep rate, not ours -- 17% of our 18.25B is 3.1B, and loosening the
+cut to hit a copied token number would invert phi-1's quality-over-quantity
+argument. If a strict threshold yields 3B, the gate runs
 on 3B; the acceptance criterion is a 350M model clearing HumanEval 30%, never
 corpus size. Report keep rate and token count against phi-1's 17% with an
 explanation either way. Score 5 is nearly dead (0.1%) and collapses into 4 at
@@ -162,6 +163,15 @@ teacher labels, reported POOLED and PER DOMAIN (4c, 2026-09-09) -- the three
 domains have different filtering histories and the classifier must hold on
 each, not just on the pooled mix where dedup08's 53% doc share dominates.
 Keep rate stated against phi-1's ~17%; threshold ablation on our own corpus.
+AUC is also reported stratified by DOCUMENT LENGTH (<2KB / 2-10KB / >10KB,
+bounds from the measured distribution): length is a within-domain confound
+(4c, 2026-09-09) -- decontamination hits cluster in long docs (median 24,678B
+vs corpus 1,911B), so length correlates with license headers and
+import-regular professional files, and token-weighted training over-represents
+long docs; a long-bucket AUC markedly above the short bucket says the
+classifier learned length-as-proxy, which per-domain AUC cannot catch. Keep
+rate is reported in BOTH doc and token口径 -- if the classifier favors long
+docs the two diverge, and a token-only report hides it.
 
 The 50-high/50-low two-reader spot check plants 10 known-bad samples (4c,
 2026-09-09): a 99.5% agreement with kappa=0 is indistinguishable from a reader
@@ -170,9 +180,10 @@ before the agreement counts. The high/low grouping has structure, but the
 plant still matters -- a reader in the low group scoring low may just be
 echoing the group's label.
 
-## Open measurement
+## dedup08 token count (measured 2026-09-09)
 
-`code_dedup08`'s token count (~8.95B) is 4c's extrapolation from
-docs_kept/docs_in, not a reading -- its stats file has no tokens field. The
-keep-rate-to-token conversions above use it; measure the domain's tokens
-before the ablation reports token counts (4c's instruction, 2026-09-09).
+`code_dedup08`'s stats file has no tokens field; measured by the code_rp1t
+method (tokenizer.json over a 330MB sample, 49,439 docs, tok/byte 0.278848,
+extrapolated over 30.16 GB of shards): **8.41B tokens**, 6% below 4c's 8.95B
+docs-ratio extrapolation. Corpus base is 18.25B tokens, not 18.8B; the keep-rate
+conversions in the results section use the measured number.
