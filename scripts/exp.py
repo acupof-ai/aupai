@@ -122,13 +122,15 @@ def rows(raw=False):
 
 
 def append(row):
-    """One event. Append, never rewrite: see rows()."""
-    os.makedirs(os.path.dirname(LOG), exist_ok=True)
-    with open(LOG, "a", encoding="utf-8") as f:
-        f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    """One event. Append, never rewrite: see rows(). Guarded (de-98)."""
+    from harness_core import append_ledger
+    append_ledger(LOG, row, "appending to experiments.jsonl")
 
 
 def write(rs):
+    from harness_core import refuse_in_integration_tree
+    if refuse_in_integration_tree("rewriting experiments.jsonl", path=LOG):
+        raise SystemExit(1)
     os.makedirs(os.path.dirname(LOG), exist_ok=True)
     with open(LOG, "w", encoding="utf-8") as f:
         for r in rs:
