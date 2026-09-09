@@ -367,6 +367,106 @@ Separate from R13 because the fix differs. R13's fix moves a conclusion somewher
 
 Cannot see: any scanner whose search space includes its own source, in general. Implemented for one tool: `test_reachability_edges.py` asserts no edge is sourced from `reachability.py` itself, with a negative control, because `comment_edges` returning `{}` would satisfy that assertion vacuously.
 
+## R15. A discrimination must rest on a property the two sides do not share; a shared attribute cannot bear it, and the better the mirror the more confident the wrong call
+
+1 incident, 6 instances (2026-09-09), ~30 min of cross-team uncertainty about a live 88 GB process. `manual:` — no check knows two projects mirror each other. Checkable slice: an attribution between teams must cite a non-shareable field; a scanner can flag an attribution whose evidence is a flag, port, or feature name.
+
+The shape: a discrimination between two candidates rests on a property BOTH candidates share. Occupancy is shared by "free" and "owned-idle", so an empty nvidia-smi row cannot say which — and on 2026-09-09 the same pid and GPU UUID held 88 GB across two readings 17 minutes apart while utilization fell 100% -> 0%: memory held is shared by "computing" and "idle-holding", utilization is the field that discriminates. Names are shared by members and lookalikes, so a name cannot say who is on the team. Functional flags are shared by mirror projects, so `--spec-type auto --mtp-draft-tokens` cannot say whose binary is running. In every instance the discriminating field was in hand and was skipped as uninteresting — the ledger note, the socket column, the executable path — while a shared field was read as decisive. The failure direction is confidence, not laxity: the mirror is good precisely because the shared attribute really is present on both sides, so the wrong call arrives with evidence attached.
+
+The fixes are two, and the rule needs both. For the name-dispatch and arle instances the fix is to read the discriminating field that is already in hand — the socket column, the executable path. For the occupancy instance that fix is empty: the field WAS read, but the file held two fields answering the same question — `granted_by`, a day stale, and `note`, current — and nothing declared which was current, so the reader hit the stale half. The fix there is structural: the file declares its current-state field and marks history fields as history (the `_current_state_field` pattern, #166). A rule that only says "read what you have" gives no action for the third of instances where the reader did read, and read the wrong one.
+
+The sixth instance has two directions and is tilerl-27's, measured the same night: **cross-namespace, `ps` absence and presence are both non-evidence.** A host pid is invisible inside the container — de's serve (pid 546405) could not be found or killed from the container and was killed from the host; reading that view as "gone" would have handed an occupied card to tileRL. A container-internal pid does not resolve on the host — tilerl's own claim records one, and they confirmed the job was alive by 100% util, a device signal rather than a ledger signal. Identity non-portability was already the rule (GPU UUID + cmdline are the cross-boundary identity); this is query-result non-portability, and the costs are asymmetric: absence read as dead moves in on someone's running work, presence read as alive waits on something that is not there.
+
+- §294: an 88 GB process on card 6 attributed to tileRL on `--spec-type auto --mtp-draft-tokens`; the binary path `target/release-fast/arle` is agent-infer's crate profile output character for character, and tileRL has no Rust artifacts at all. Functionality is shared; the binary is not. Same day, same shape: three occupancy-as-allocation readings and a name-dispatch defect with four occurrences.
+
+Cannot see: whether a property is shared by definition — no check knows two projects' relationship is mirroring. Of a cmdline, the first field (executable path) is identity; the flags after it are not.
+
+## R16. A change that makes a criterion more precise can move its residual error from the lax side to the dangerous side; accuracy and cost-direction are independent
+
+1 incident (2026-09-09), learned from a near-miss, not an accident. `manual:` — no check asks, of a criterion change, which side the residual error now lands on. Checkable slice: a diff that tightens a predicate in claim/liveness/safety code (adds a conjunct) can be flagged for that question.
+
+The shape: a criterion is replaced by a strictly more accurate one — it distinguishes a case the old one could not, tests cover both directions, old behavior is preserved where intended. Every standard review question passes: the new criterion is correct, tested, compatible. No question asks where the residual misjudgment now lands, and the answer changed. The old criterion's only false reading was false-LIVE — a recycled pid reads alive, the card looks owned, nobody touches it, cost = an idle card. The new one adds false-STALE — a live process reads stale, the card looks free, someone acquires it, cost = two jobs on one card. The precision gain is real; the worst case got worse underneath it.
+
+Why it escapes review: "more precise" always sounds like an improvement, and it is — accuracy is genuinely higher. The residual-error direction is the asymmetric half, and nothing in the standard checklist examines it. tilerl-27's line: this class is hardest to see in review because the change really is better on every axis a review checks.
+
+- §295: `card_claim.py`'s liveness criterion, pid-exists -> pid-exists AND start-time-matches (#173). The old residual was a wasted card; the new residual is a card collision.
+
+Cannot see: whether a residual error's cost is asymmetric — that lives in what the predicate gates, not in the predicate. The fix is a review question, not a check: when a criterion changes, ask which side the residual lands on BEFORE asking whether the new one is more accurate.
+
+## R17. A positional join across two producers has no owner; a contract written only in a comment is a check that cannot fail, and it is worse than no check
+
+1 incident (2026-09-10), caught in review by measurement, not by reading the code. `manual:` — no check knows two files are consumed together by position. Checkable slice: where two artifacts are zipped by row, the ordering must have a single writer or an explicit join key; a scanner could flag positional joins over files with different producers, and comments that assert ordering invariants.
+
+The shape: two artifacts must correspond row by row. The producer of the loc index (`build_locs.py`, pod-only, never on main) states the contract in its header comment — "in the same order sig_one produced signatures" — and three lines below violates it with `sorted(glob)`, while the signatures are stacked in `imap_unordered` completion order. The contract was expressed in the one place it cannot be checked: a comment. That is worse than never expressing it: never expressed, the next reader asks "how do these align?" and investigates; expressed in a comment, the next reader reads the answer and stops. A correct assertion about code behavior, in a comment, is a check that cannot fail — it consumes the moment that would have produced doubt. Both producers were individually correct; the system was wrong by ~85% of rows.
+
+The second facet: the producer was not on main. Review of the consumer (`near_overlap.py`, which reads the loc files) could not see the file that decided the alignment — an artifact invisible to review decided whether two artifacts aligned.
+
+What survived is what never depended on the join — the order-independent statistic (participation as set membership); what died is everything coordinate-dependent (calibration pairs, hit coordinates).
+
+- §296: near_overlap signatures (completion order) and loc index (sorted-glob order), joined by row position under a comment-stated contract. b0 measured ~85% misaligned in #177's review.
+
+The fix shape is part of the rule: do not make the second producer reproduce the first's order — make the first persist its own ordering and delete the site where the guess happened (3b's choice in #177). And the guard must assert the property, not a proxy: equal lengths passes under any permutation; the #177 guard re-signs the doc at `loc[i]` and compares the signature.
+
+Adjacent to R13's "measured conclusion in a comment" (§280): that one is a conclusion in the wrong place; this one is a CONTRACT in the wrong place, and a contract has a counterparty — another process that depends on it.
+
+Cannot see: which artifacts are consumed together by position — that lives in the reader's code, not the writers'. A positional join over two files with different producers is the review question.
+
+## R18. A file transfer is unverified until the landed bytes are compared to the source; a syntactically valid corruption charges its error to the runtime before the corrupted line
+
+1 incident (2026-09-10), ~90 GPU-minutes burned. `manual:` — no check compares a script's pod bytes to its source after an argv transfer. Checkable slice: a script launched on the pod whose transfer path has no byte-verification; a scanner could flag pod launches of files not pushed via podput.
+
+The shape has two halves. First: a scoring script's pod bytes had `d[kept]` where the author intended `d['kept']` — the quotes were absent from the executed bytes. Whether they were lost in transit or were never in the source is UNKNOWABLE: the source bytes were never inspected before transfer, and the decisive bytes no longer exist on either side (the file is tracked in no branch; the pod copy was repaired at 17:44Z). What is verified is the absence that made either cause free: no byte-compare after transfer, and no read of the source before it. Second: the corrupted artifact was syntactically valid Python — `d[kept]` is a legal bare-name index — so nothing at parse, import, or launch time could object. The corrupted line was the per-domain summary, which executes only after a full domain's shards finish. The error arrived ~90 minutes in, at the most expensive point the script's own structure offers. The same loss in the loop body costs 3 seconds.
+
+- §297: e1's corpus scoring, 235-shard first domain, NameError at the summary line after ~90 min.
+
+The mechanism is NOT identified, and the obvious transit shape was tested and excluded: a heredoc through `~/bin/pod`'s argv preserves `d['kept']` byte-for-byte in the two shapes tried. The competing hypothesis — the source was already `d[kept]` — needs no mechanism at all, and it changes the fix: podput's sha256 compare would NOT have caught it, because it compares local against remote and both sides would match. The transfer-verification rule stands on its own, but it is not necessarily this incident's fix.
+
+The guard, in coverage order: a smoke execution of the post-domain path before the full run (transport-independent — catches the corruption whether it was born in the source or in transit, costs a minute); byte-compare after transfer (catches every TRANSIT corruption, costs a second; podput already does it).
+
+Cannot see: which side the corruption was born on — the traceback proves the executed bytes, not their origin, and the origin bytes are gone. The meta-shape is the day's: a value's state was assumed, not read — the source's contents this time, the same slot occupancy and name membership occupied in R15's instances.
+
+## R19. An instrument whose parser the watched data can break reports the failure it cannot distinguish and then stops watching; for a monitor, a false alarm that kills the instrument is worse than a missed alarm, because silence after the alarm reads as the all-clear
+
+1 incident (2026-09-10). `manual:` — no check inspects a monitor's parsing of its watched stream. Checkable slice: a monitor that packs multi-field readings with a delimiter that also appears in the carried payload (`tr '\n' '|'` feeding `cut -d'|'`); a scanner could flag a packing delimiter that is not escaped in the data it carries.
+
+A scoring monitor packed four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'`. The log line it carries is itself `... | dom 835145/2320870 (0.360) | 334 docs/s` — the data contains the delimiter, so field 2 ("error count") was the word `dom`, non-zero, and the watch broke out with SCORING ERROR on a healthy run, then was gone. Verified against the pod the same minute: 0 tracebacks, 2 processes alive, 115/298 shards.
+
+The asymmetry is the rule. A false negative leaves the monitor watching; it can still catch the next failure. A false positive that kills the instrument blinds it — after the false alarm there was no monitor at all — and to whoever reads the channel, "no events" and "all clear" are the same signal. A monitor's error channel must be unforgeable by the watched data, and the instrument's liveness must be independently observable: a dead monitor must look different from a quiet one.
+
+The rule has a third clause, earned by the re-arm's own gap (below): the instrument must report its own failed reads. An external liveness check watches the same channel and sees the same silence — a blind-but-alive process is byte-identical to a quiet one from outside — so only the instrument itself can report that it cannot see.
+
+- §298: 4c's scoring monitor over e1's corpus scoring, delimiter-in-data false alarm, instrument dead afterward.
+
+The fix as re-armed, in two stages (4c). Stage one: `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. That closed the unforgeable-signal half and left the liveness half open (44's reading, confirmed by 4c): the re-armed loop was `out=$(~/bin/pod ...) || true` with `if [ -n "$line" ]` gating the judgment body, so when the pod connection failed, `out` was empty and the whole body — stale counter included — was skipped. The instrument went permanently blind without a sound; dead and quiet were byte-identical in the channel. Stage two: three consecutive empty reads now emit MONITOR BLIND ("from here, silence means nothing"), repeated every twelfth, SIGHT RESTORED on recovery, plus a HEARTBEAT every 24 ticks carrying the blind count and the last line. Dead, blind, and quiet are now three distinguishable states.
+
+The rule's in-repo instance is `harness.py:_arm_monitor` (25241): clauses one and two hold — silence never overrides the verdict, and the observation is declared a LOG BYTES proxy, not process state (25360-25385) — but clause three fails hard. `cmd_launch` prints the monitor's pid (26256) and drops it: no exp row, no artifact (485 rows of `runs/experiments.jsonl`, zero pid/monitor keys), so a monitor's liveness is unanswerable after the fact. The only backstop, `no_stale_running` (24h local / 2h pod), judges the row's age, not the instrument. Fix: persist the monitor pid in the exp row and check it — no heartbeat needed (4c's finding, verified by 44; de's file, handed to de).
+
+## R20. A threshold's comparability is set by the set it acts on, not by its name or its value; two thresholds with the same name, value, and unit are incomparable when the sets differ
+
+1 incident (2026-09-10). `manual:` — no check compares two thresholds' sample spaces. Checkable slice: same-name, same-value thresholds applied to different feature sets (shingles, n-grams, populations); a scanner could flag thresholds whose metric name and value match but whose upstream feature extraction differs.
+
+A corpus pipeline carried two thresholds both named "jaccard 0.5". The domain dedup that built the corpora, and the instrument that measured the near-dup participation rate, act on char 5-gram shingles. A post-pass stage in the same pipeline decides near-duplication on exact normalized word 3-grams. Same name, same value, same unit (0-1) — different sets. A reader checking units sees identical instruments; the thing that differs is the set the Jaccard operates on, which lives in the shingle function, not in the threshold's name or the config field a reader sees first.
+
+The consequence is not academic: even if the post-pass had run over the three domains, it would remove a different band than the one the participation rate measures. The measured 23-26% band is defined on char-5-gram J; the post-pass's 0.5 is on word-3-gram J. The two 0.5s read as one decision executed twice; they are two decisions.
+
+The rule's general form: a threshold's meaning is the pair (value, set it acts on); comparability requires both. R6 says a number must carry its algorithm; this rule says the algorithm's first element — the population the metric is computed over — is the element that hides, because the unit-checking habit verifies the scale and stops there.
+
+- §299: 3b's finding in the p1 corpus pipeline, 2026-09-10.
+
+The incident's second half is a different face of the same rule: a default-off optional stage and a stage that ran differ in the build stats by one field — `near_dedup: ABSENT` versus present. Absence of a run record reads as "ran clean" unless the reader knows ABSENT means never ran. What is true of the threshold is true of the stage: the record's shape (which fields exist) carries the meaning, not the field's name.
+
+## R21. A retraction is a claim about the value's history and must be true of it; a value quoted out of its instrument's context is a different fact
+
+1 incident (2026-09-10). `manual:` — no check verifies a retraction's historical claim against the fact base. Checkable slice: a retraction stating a value had no source (or "was superseded") when the value exists in another instrument's config; a scanner could flag retraction phrases and check the named value against `facts/`.
+
+A near-dup discussion compared the estimator's 96 perms against "the build's 128". Both numbers are real: the three dedup tools are 96/12, and `build_corpus.py`'s MinHash is 128/16. But the p1 domains were built by the 96 tools, so the comparison that mattered — estimator against the build that actually ran — was 96 against 96, consistent. The 96-vs-128 mismatch was real as numbers but manufactured as an inconsistency: 128 was quoted from a different instrument's config into a context where it had never operated.
+
+Then the retraction: "128 has no source; I made it up." That was false too — 128 has a source, in `build_corpus.py`'s config and the fact base. The retraction moved the value a second time, from the wrong context to no context, and both movements manufactured a fact that existed in neither: first an inconsistency where there was agreement, then a sourcelessness where there was a source. The middle layer is the one that survived: the comparison was not fabricated but mis-aimed, and the conclusion (no inconsistency for this measurement) was right for the wrong reason.
+
+The rule: a value's basis is bound to the instrument that produced it. Quoted into another instrument's context it becomes a different fact, and a retraction is a quotation too — "no source" is a claim about where the value came from, checked like any other. A retraction must not be allowed to be less true than the claim it corrects.
+
+- §301: 4c's 128-perm retraction, 2026-09-10.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
