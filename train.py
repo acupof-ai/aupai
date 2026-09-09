@@ -354,10 +354,10 @@ class Cfg:
     # one name. csa_compress/csa_topk/csa_window are frozen for the same reason: they change
     # what the attention can see, not how fast it sees it.
     #
-    # REFUSES doc-packed input (`cu is not None`). A compressed block straddling a document
-    # boundary pools two documents into one entry and the top-k can then select across them --
-    # cross-document attention with no downstream mask able to undo it, and nothing in the loss
-    # showing it. eff.kda_document_isolation_violated is that failure in the KDA short_conv.
+    # DOC-PACKED INPUT (`cu is not None`) IS supported: blocks are built per document, so no
+    # compressed entry pools two documents, and compress/select/window are all masked by the
+    # block's owning document (model.py CompressedSparseAttention._forward_packed; isolation
+    # asserted in scripts/test_arch_compat.py cases 4 and 4b). The cu=None path is unchanged.
     csa = False
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
@@ -2113,6 +2113,39 @@ def _domain_cache_path(domain):
     return os.path.join(_token_cache_dir(), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
 
 
+def val_split_n(name, n_rows, mix):
+    """How many rows of domain `name` are held out for validation. THE ONE DEFINITION.
+
+    ONE FUNCTION BECAUSE TWO READERS MUST NOT DISAGREE HERE. The training loop below and
+    eval/ppl.py both need this number, and they need the SAME one: ppl.py's whole claim is
+    that it scores the rows the run held back. It had its own copy that read only the global
+    Cfg.val_frac, so for the five mix_e1_* arms -- every one of which sets `p_format`'s
+    val_frac to 0, plus its own s_inject_n* domain -- ppl.py scored rows the run had TRAINED
+    on and reported them as held out. Found by 4c, 2026-09-08. No decision rested on those
+    numbers (conversion_rate_0905's readout came from eval/novel_ops_4way.py and the five
+    e1_conv_* arms closed with no metrics), so this is a repair, not a retraction.
+
+    PER-DOMAIN OVERRIDE, and ONLY when the domain states one. `val_frac: 0` on a domain holds
+    back nothing; every domain without the key keeps the old expression byte for byte,
+    INCLUDING the max(1, ...) that turns a global Cfg.val_frac of 0.0 into one held-back row.
+    That distinction is not cosmetic: test_plan_length sets Cfg.val_frac = 0.0 globally, and
+    applying the zero branch there shifted every pool by one row and moved the fresh plan's
+    content hash at an identical row count. So the branch keys on the KEY's presence, not on
+    the value being zero.
+
+    It exists for a domain whose row count IS the measurement: experiment 1 injects the same
+    1,000 documents n times and reads a curve against n, and the 5% held back off the FRONT
+    made every arm's realised exposure count 0.95n while the axis said n -- measured before
+    launch, n64 wanted 1,625 rows and could draw 1,542. Only for a domain the run does not
+    validate on; every natural domain keeps the default.
+    """
+    dcfg = mix["domains"][name]
+    if "val_frac" in dcfg:
+        dvf = dcfg["val_frac"]
+        return 0 if dvf == 0 else min(max(1, int(n_rows * dvf)), Cfg.val_rows_max)
+    return min(max(1, int(n_rows * Cfg.val_frac)), Cfg.val_rows_max)
+
+
 def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
@@ -2678,25 +2711,9 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         seqs = _domain_seqs(name, tok, is_main, ddp)
         seqs, vseq = seqs if Cfg.fone else (seqs, None)
         # Capped: an uncapped 5% split of a 1.9M-row domain keeps 95K rows alive to read 4.8K.
-        # PER-DOMAIN OVERRIDE, and ONLY when the domain states one. `val_frac: 0` on a domain holds
-        # back nothing; every domain without the key keeps the old expression byte for byte,
-        # INCLUDING the max(1, ...) that turns a global Cfg.val_frac of 0.0 into one held-back row.
-        # That distinction is not cosmetic: test_plan_length sets Cfg.val_frac = 0.0 globally, and
-        # applying the zero branch there shifted every pool by one row and moved the fresh plan's
-        # content hash at an identical row count. So the branch keys on the KEY's presence, not on
-        # the value being zero.
-        #
-        # It exists for a domain whose row count IS the measurement: experiment 1 injects the same
-        # 1,000 documents n times and reads a curve against n, and the 5% held back off the FRONT
-        # made every arm's realised exposure count 0.95n while the axis said n -- measured before
-        # launch, n64 wanted 1,625 rows and could draw 1,542. Only for a domain the run does not
-        # validate on; every natural domain keeps the default.
-        _dcfg = mix["domains"][name]
-        if "val_frac" in _dcfg:
-            _dvf = _dcfg["val_frac"]
-            n_val = 0 if _dvf == 0 else min(max(1, int(len(seqs) * _dvf)), Cfg.val_rows_max)
-        else:
-            n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), Cfg.val_rows_max)
+        # The rule, and why the per-domain override keys on the KEY's presence, is in
+        # val_split_n -- eval/ppl.py calls the same function, deliberately.
+        n_val = val_split_n(name, len(seqs), mix)
         val.append(seqs[:n_val])
         pools[name] = seqs[n_val:]
         if Cfg.fone:
@@ -2949,6 +2966,8 @@ def main():
         "val_batches": "val batches per periodic check",
         "warmup": "warmup steps in absolute terms (default 20; a fraction lost 0.52 val at the 0.2b point -- eff.warmup_absolute_not_fractional)",
         "seed": "RNG seed for init, data order and dropout",
+        "sample_seed": "corpus-shuffle seed; unset follows --seed. Pin it across a seed sweep so "
+                       "the arms share one token cache and differ only in init (de-7)",
         "attn_every": "one attention layer every N blocks",
         # "heads %% (N+1)": argparse formats every help string with `% params`, so a
         # literal percent must be doubled. It was not, and --help has raised
@@ -3135,6 +3154,8 @@ def main():
     # nanochat's rates assume 1.77M tokens/step; at batch 24 x 8 (786K) unscaled they made the
     # loss bottom out at step 610 and climb, 3.45 -> 4.36 by step 1060 (val 3.03 -> 3.56).
     parser.add_argument("--lr_scale", type=float, required=True, help="multiplier on every optimizer lr")
+    parser.add_argument("--build_only", action="store_true",
+                        help="construct the model this launch line builds, print total/active params as JSON, exit before DDP and data (scripts/active_params.py)")
     args = parser.parse_args()
     # Apply by IS-NOT-NONE against the parser's own defaults, not by truthiness.
     # `and v` dropped every zero: --seed 0 kept Cfg.seed 42, --val_every 0 kept 500
@@ -3203,6 +3224,16 @@ def main():
 
     torch.manual_seed(Cfg.seed)
     torch.set_float32_matmul_precision("high")
+    if args.build_only:
+        # scripts/active_params.py: the model this launch line builds, counted, no DDP/data.
+        # Params are a property of the config, so --resume is ignored here on purpose.
+        _m = HybridLM(Cfg)
+        print(json.dumps({"total": sum(p.numel() for p in _m.parameters()),
+                          "active": _n_active_params(_m, Cfg),
+                          "d": Cfg.d, "layers": Cfg.layers, "heads": Cfg.heads,
+                          "ffn_hidden": Cfg.ffn_hidden, "moe_experts": Cfg.moe_experts,
+                          "attn_every": Cfg.attn_every}))
+        return
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
     is_main = not ddp or rank == 0

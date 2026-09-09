@@ -1,0 +1,45 @@
+# R val series -- the anneal-reweight arm of anneal_reweight_noise_floor_0908 (S285, S286).
+# R = mix_200m_4b_annealR.json, --seed 1337, --sample_seed 42, runs/anneal_r_0909.log.
+# N1 = mix_200m_4b_annealN.json, --seed 1337, --sample_seed 42, runs/anneal_n1_0908.log.
+# R and N1 are byte-identical outside _comment and nine 'anneal' values; the anneal
+# begins at step 6866 (anneal_frac 0.1 of 7629), so steps 500..6500 are the SAME-SEED
+# REPLICATE (drift, D) and steps 7000..7500 plus the final read are inside the anneal
+# (effect). The drift series with N1 beside it is runs/anneal_r_vs_n1_drift_0909.tsv.
+#
+# 'step' rows are train.py's periodic val: val_batches = 20 (train.py:408). The 'final'
+# row is the epoch-end val: val_batches_full = 100 (train.py:409), the estimator the
+# pre-registered criterion reads and the one train.py's own comment calls comparable
+# across runs. The two are DIFFERENT estimators of the same quantity and their gaps
+# differ by ~50%; never subtract one from the other (S286).
+#
+# The 'train' figure on the ep line is a single micro-batch (train.py:3926), not an
+# epoch mean: the N1/N2 null pair spreads 0.410 on it, 8.5x the val floor. It is
+# recorded here for completeness and is NOT part of any comparison.
+#
+# Extracted from the pod's runs/anneal_r_0909.log, which is pod-only and not in this
+# repository (R10). Extracted 2026-09-09.
+#
+# VERDICT (pre-registered rule, prereg amendment 3): the reweight moved val iff
+# |R_final - N1_final| exceeds BOTH F and D. F = |N1-N2| = 0.048 (100-batch).
+# D = max|R-N1| over the main-phase periodic reads = 0.021 at step 4000 (20-batch,
+# an upper bound on true same-seed drift). Observed: |1.819 - 1.823| = 0.004, below
+# both. NO EFFECT DETECTED -- and the design cannot resolve one this size: N1's whole
+# anneal tail moved 0.031 against a 0.048 floor, so a null here is a power statement,
+# not a zero.
+step	r_val
+500	2.578
+1000	2.347
+1500	2.267
+2000	2.209
+2500	2.137
+3000	2.110
+3500	2.062
+4000	2.024
+4500	1.986
+5000	1.944
+5500	1.906
+6000	1.872
+6500	1.849
+7000	1.838
+7500	1.835
+final	1.819

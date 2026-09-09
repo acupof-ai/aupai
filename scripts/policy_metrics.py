@@ -68,6 +68,7 @@ sys.path.insert(0, os.path.join(ROOT, "scripts"))
 # instead of vanishing -- which is the direction this file was already fixed in an hour earlier, so
 # the divergence resolves toward reporting rather than silence.
 from harness_core import fold_by_id as _folded  # noqa: E402
+from harness_core import refuse_in_integration_tree  # noqa: E402
 
 MISROUTE_RE = re.compile(
     r"misroute|wrong address|outside the team|bare (ListAgents )?name|matched on the substring", re.I
@@ -133,7 +134,7 @@ def _commits_on_main(date):
                 "log",
                 "main",
                 "--format=%cd",
-                "--date=short",
+                "--date=short-local",
                 f"--since={date}T00:00:00Z",
                 f"--until={date}T23:59:59Z",
             ],
@@ -141,6 +142,9 @@ def _commits_on_main(date):
             text=True,
             cwd=ROOT,
             timeout=30,
+            # --since/--until below are stated in Z, so the rendered %cd must be UTC too or the
+            # window and the label disagree by the machine's offset (+08:00 here).
+            env={**os.environ, "TZ": "UTC"},
         )
     except (OSError, subprocess.TimeoutExpired):
         return None
@@ -267,6 +271,8 @@ def compute(date):
 
 def write_row(date):
     row = compute(date)
+    if refuse_in_integration_tree("appending to policy_metrics.jsonl", path=LEDGER):
+        raise SystemExit(1)
     with open(LEDGER, "a", encoding="utf-8") as fh:
         fh.write(json.dumps(row, ensure_ascii=False) + "\n")
     return row
