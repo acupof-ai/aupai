@@ -3537,7 +3537,7 @@
   },
   {
    "id": "eff.csa_step_speed",
-   "claim": "the reference CSA-with-SWA implementation costs X per step vs the flash-varlen gated-MLA path at the v2 attention config, and the ratio decides whether the v2 first arm launches on the reference or waits for a fast path",
+   "claim": "the reference CSA-with-SWA implementation costs 8.157x per step vs the flash-varlen gated-MLA path at the v2 attention config -- past the pre-registered 1.15x threshold, so the v2 first arm does not launch on the reference and waits for a fast path",
    "value": "ratio 8.157x: CSA (m=4, csa_topk=512, n_win=128) 233.19 ms/step median (281,041 tok/s) vs control GatedMLA csa=False 28.59 ms/step (2,292,376 tok/s); mean 233.19, min 233.07, control mean 28.67/min 28.47. Pre-registered decision rule (exp csa_step_probe_0909 hypothesis): ratio <= 1.15 launchable on the reference, > 1.15 needs a fast path first -- 8.157 is past it, so the v2 first arm does not launch on the reference.",
    "measured": "2026-09-09",
    "source": "runs/csa_step_probe_0909.log (pod), exp row csa_step_probe_0909, instrument probes/csa_step_probe.py",
