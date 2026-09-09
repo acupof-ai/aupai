@@ -969,6 +969,29 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
+### §290 (2026-09-08, R11)
+
+**A check's population is a filename regex, and the regex is narrower than the check's name.** `check_deletion_list_no_tracked` (`scripts/harness.py::check_deletion_list_no_tracked`) refuses a deletion list that names a tracked file -- the rm would remove what a fresh checkout ships, with every gate green. Its population comes from one line:
+
+    re.search(r"(deletion_candidates|ckpt_candidates).*\.(md|txt)$", n)
+
+over `runs/`. Measured on the tree at `6bc6f0a4`: **6 files match, 3 deletion lists do not** -- `pod_disk_candidates_20260903.txt`, `pod_only_code_candidates_0906.txt`, `tilerl_22_prune_list.md`. The check is named for deletion lists and enumerates files whose names contain two specific strings. Nobody chose to exclude those three; they were never in the population, and nothing says so. This is R11's exact shape and the fourth-plus instance: **a predicate set answers the question it enumerates, not the one it is named for.**
+
+**The ordering constraint, and it is the part worth keeping.** The obvious fix -- widen the regex -- is the wrong first move, and I measured what it does rather than guessing. Running the check's own criterion over the three unmatched files: two produce zero hits, and `tilerl_22_prune_list.md` produces **7**:
+
+    runs/ab_base_a_first.log, runs/t57_recompile.log, runs/data_leg_206m_8b.log,
+    runs/pretrain_15b_s1.log, runs/b0_17_readout.log, runs/t57_steady.log, runs/t56_profile.log
+
+All 7 are tracked, all 7 sit in a markdown table -- and the table is titled **"The 7 stale snapshots, refreshed 2026-09-04"**, with columns `was` and `now`. It is a REFRESH record, not a deletion list. Every one of those files was made *more* complete; `ab_base_a_first.log` went from 8,359 bytes to 3,819,506. Widening the population first therefore produces seven FAILs that are all wrong, on the document that records work being done correctly.
+
+**And a wrong FAIL is not a neutral cost, it is how a check dies.** The operator who hits seven false refusals on a correct document does not narrow the criterion; they turn the check off, or add the file to an exclusion list, and the widening that was supposed to increase coverage ends by decreasing it. So: **fix the criterion before widening the population.** The criterion here needs to distinguish "this table lists files to delete" from "this table lists files that changed", which the current cell-shape test cannot -- it reads any bare path in any table cell as a candidate.
+
+That the check already contains a comment about exactly this class ("prose naming a file is not a deletion target ... a check that flagged it would be turned off") and still cannot tell a refresh table from a deletion table is the measurement: the author saw the failure mode, wrote the reason down, and the criterion still does not implement it.
+
+Cost: ~40 min, no defect shipped -- the narrow population meant the wrong FAIL never fired. That is the uncomfortable part: **the two defects were cancelling.** A too-narrow population hid a too-weak criterion, and fixing either one alone makes the check worse than leaving both.
+Evidence: `scripts/harness.py::check_deletion_list_no_tracked` (the regex and the cell test); `runs/tilerl_22_prune_list.md` under the heading "The 7 stale snapshots, refreshed 2026-09-04"; the three unmatched filenames under `runs/`, listed above; hit counts from running the check's own cell criterion over each.
+open: no check asserts that a population built from a filename pattern covers the files a human would put in that category. The cheap half is per-check: a check whose population comes from a pattern must print the count it matched AND the count it skipped in the same directory, so a reader sees the population rather than inferring it from the check's name.
+
 ## R12. An assertion whose result is anti-correlated with its own name
 
 ### §279 (2026-09-08, R12)
