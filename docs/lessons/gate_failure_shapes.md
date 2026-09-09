@@ -381,6 +381,18 @@ The sixth instance has two directions and is tilerl-27's, measured the same nigh
 
 Cannot see: whether a property is shared by definition — no check knows two projects' relationship is mirroring. Of a cmdline, the first field (executable path) is identity; the flags after it are not.
 
+## R16. A change that makes a criterion more precise can move its residual error from the lax side to the dangerous side; accuracy and cost-direction are independent
+
+1 incident (2026-09-09), learned from a near-miss, not an accident. `manual:` — no check asks, of a criterion change, which side the residual error now lands on. Checkable slice: a diff that tightens a predicate in claim/liveness/safety code (adds a conjunct) can be flagged for that question.
+
+The shape: a criterion is replaced by a strictly more accurate one — it distinguishes a case the old one could not, tests cover both directions, old behavior is preserved where intended. Every standard review question passes: the new criterion is correct, tested, compatible. No question asks where the residual misjudgment now lands, and the answer changed. The old criterion's only false reading was false-LIVE — a recycled pid reads alive, the card looks owned, nobody touches it, cost = an idle card. The new one adds false-STALE — a live process reads stale, the card looks free, someone acquires it, cost = two jobs on one card. The precision gain is real; the worst case got worse underneath it.
+
+Why it escapes review: "more precise" always sounds like an improvement, and it is — accuracy is genuinely higher. The residual-error direction is the asymmetric half, and nothing in the standard checklist examines it. tilerl-27's line: this class is hardest to see in review because the change really is better on every axis a review checks.
+
+- §295: `card_claim.py`'s liveness criterion, pid-exists -> pid-exists AND start-time-matches (#173). The old residual was a wasted card; the new residual is a card collision.
+
+Cannot see: whether a residual error's cost is asymmetric — that lives in what the predicate gates, not in the predicate. The fix is a review question, not a check: when a criterion changes, ask which side the residual lands on BEFORE asking whether the new one is more accurate.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.
