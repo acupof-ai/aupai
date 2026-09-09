@@ -522,7 +522,43 @@
     "hanzi_denominator": "3036 hanzi occurrences in the 600-row gate sample, 0.03% of the sample's tokens"
    },
    "uncertainty": "THE HANZI FAIL IS A COMPOSITION ARTIFACT, NOT A VOCAB DEFECT. The same frozen tokenizer reads 0.9806 on the default mix and 0.9895 on zh_web alone; tokenizer_report.py:144-154 documents this exact dependence (an English/LaTeX corpus measured 0.1594). On pure code the gate measures how the vocab handles Chinese comments -- a corner case, not the distribution. never_used 0.6192 is sample-size bound (10.2M tokens; the metric drops ~10x from 1.6M to 142M tokens on the old mix) but the direction is structural: a zh-web-fitted vocab carries 21,286 hanzi-bearing slots (64.9% of 32,773, tok.minicpm5_slot_budget_vs_ours) into a corpus where hanzi is 0.03% of tokens. chars/token 3.37 on code is BETTER than the default mix's 2.60 -- per-char compression is not the problem; slot allocation is.",
-   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was never run. Says nothing about a code-fitted candidate's gates -- no candidate was built.",
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was never run. Says nothing about a code-fitted candidate's gates -- no candidate was built. FOR THE P1 SIZING DECISION THIS ROW IS SUPERSEDED by tok.gates_p1_proxy_composition: pure code is not the p1 composition (p1 is ~3:1 prose:code per docs/standards/p1_data_recipe.md). The measurement itself stands.",
+   "status": "measured"
+  },
+  {
+   "id": "tok.gates_p1_proxy_composition",
+   "value": {
+    "english_prose_proxy": {
+     "prose_domain": "en_c4_stage2",
+     "never_used_frac": [0.6247, 0.6338, 0.6373],
+     "hanzi_whole_char": [0.3844, 0.0027, 0.001],
+     "chars_per_token": [3.4256, 3.4332, 3.3962],
+     "en_fertility": [1.463, 1.4592, 1.4914],
+     "ref_fertility": 1.4286,
+     "utilised": [0.3784, 0.3695, 0.3659],
+     "byte_fragment_tokens": [0.0166, 0.0161, 0.0151]
+    },
+    "chinese_prose_proxy": {
+     "prose_domain": "textbook",
+     "never_used_frac": [0.0855, 0.0843, 0.0831],
+     "hanzi_whole_char": [0.9943, 0.9927, 0.9936],
+     "chars_per_token": [2.0694, 2.076, 2.0751],
+     "en_fertility": [1.5135, 1.5574, 1.5155],
+     "ref_fertility": 1.4286,
+     "utilised": [0.9131, 0.9141, 0.9155],
+     "byte_fragment_tokens": [0.0559, 0.0561, 0.0569]
+    }
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/tokenizer_p1_proxy.py --prose-domain {en_c4_stage2,textbook} (b0, pod, seeds 7/13/21, 30M chars per seed at 3:1 prose:code; smoke-tested from the tree path, full-scale numbers from the identical pod run)",
+   "config": {
+    "p1_composition": "~20B synthetic textbooks + ~6B filtered code + ~0.18B exercises (docs/standards/p1_data_recipe.md, PR #154) ~= 3.3:1 prose:code",
+    "proxy": "the synthetic textbooks do not exist yet, so the prose half is a proxy. Two are measured because the recipe does not state the textbooks' language and the decision flips on it: en_c4_stage2 (English web, 0.0000 hanzi frac) reads as the phi-1-shape branch; textbook (the existing synthetic tutorials, 75.7% hanzi by chars, same content as textbook_30b) reads as the Chinese-prose branch",
+    "sample": "30M chars per seed, 3:1 prose:code by chars, code split 95/5 code_py_starcoder/code_py_rp1t, whole-doc, shuffled into one corpus key so _even_rows' 600-row gate sample sees the true mix",
+    "vocab": "data/tokenizer.json, 32,773 slots, 21,286 hanzi-bearing (64.9%, tok.minicpm5_slot_budget_vs_ours)"
+   },
+   "uncertainty": "never_used is tight within branch (three-seed ranges 0.0126 English, 0.0024 Chinese) but the between-branch gap (0.084 vs 0.63) is the whole decision and it is a language fork, not sampling noise. The recipe doc never states the synthetic textbooks' language; the circumstantial evidence points English (phi-1/phi-1.5 proportions, HumanEval acceptance gate, signature+docstring exercises, the doc itself is English) while the repo's only existing synthetic-textbook pipeline is Chinese. Raised to 4c 2026-09-09. hanzi whole-char on the English branch spans 0.001..0.384 across seeds because the 600-row gate sample catches whatever Chinese lives in code comments -- the gate measures corpus composition, not vocab quality (tokenizer_report.py:144-154 documents the same tokenizer reading 0.1594 on English/LaTeX and 0.9895 on zh_web), and never_used is the candidate replacement gate (reported, not gated, since PR #69).",
+   "boundary": "intrinsic gates; they screen, they do not rank (TokEval). No candidate vocabulary was built or fitted -- these are the frozen vocabulary's readings on the two proxy populations. The extrinsic test (two pretrains differing only in vocabulary, unfreeze condition 3) was not run. The deciding measurement for sizing is bits/char vs V on the real p1 composition, which needs a fresh sweep (the existing sweep, tok.vocab_sweep_32k_64k, was on the old bilingual mix) plus the never_used re-measure on the real synthetic textbooks when b0 ships the first batch, per 4c's standing instruction that the real sample wins over the proxy.",
    "status": "measured"
   }
  ]
