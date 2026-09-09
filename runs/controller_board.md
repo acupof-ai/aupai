@@ -1,4 +1,75 @@
-# Controller board (fb) — 2026-09-09, 11:3xZ
+# Controller board (fb) — 2026-09-09, 13:4xZ
+
+## State: p1, the whole program on one screen
+
+The 200M-active line is retired (user order today). Everything below is p1: a new model on a new
+corpus, targeting HumanEval ~60. `docs/standards/p1_data_recipe.md` is the recipe of record.
+
+| line | owner | landed+reviewed | artifact | evidence | next gate |
+|---|---|---|---|---|---|
+| V2 architecture (CSA+HCA, partial RoPE, AttnRes) | fb | **0%** — PR #157 open, CI green, no reviewer | `96562101` `f3c40adc` `e57561b9` | 9 known-answer worlds in `scripts/test_v4_attn.py`, all perturbation tests; `test_arch_compat` green incl. flag-off bit-identity | 44 reviews; **it blocks merge_main for every model.py commit** |
+| teacher serve | b0 | 100% running, not yet a landed fact | 5 cards (1,3,4,5,7), claims `teacher_serve_0909.*` | **695 tok/s aggregate warm on 3 cards**; single-stream 88 vs tileRL's own B=1 bench 92.4; `/health` shows `running=11`, prefill done in 2 s of a 22 s window | 5-card aggregate; expected ~1160 |
+| classifier labels (queue position a) | b0 + e1 | 0% | — | — | ~0.02B, ~5 h. **Unblocks 97% of the gate corpus** |
+| educational-value classifier | e1 | 0% | — | — | held-out AUC vs teacher labels; **threshold ablated on our corpus, not copied from FineWeb-Edu's 3** |
+| synthetic exercises (queue position b) | 44 | PR #158 open (acceptance checks) | — | — | 0.18B, ~1.8 d. Execution pass rate + discard rate; decontaminated vs HumanEval/MBPP |
+| synthetic textbooks (queue position c) | b0 | 0% | — | — | 0.8B, ~8 d. **Does not block the gate**; runs continuously |
+| topic seeds, dedup, decontam | 3b | 0% | — | — | 20K topic table; decontamination carries a known-positive control |
+| tokenizer + eval harness | d1 | PR #161, #162 open | card 2, `humaneval_sample.2` running | V=20,000 confirmed: 20K→32K margin is +0.33% bits/char with a **negative** point estimate | 20-sample pass@1 at temp 0.2 / top-p 0.95, sharing one judge with the greedy path |
+| human spot check | 98 | 0% | PR #159, #160 open | — | one table, one row per artifact, each with n, two readers, agreement, disagreement count |
+
+**The gate:** a 350M dense-equivalent model on 6.18B tokens (6B filtered code + 0.18B exercises)
+clears **HumanEval 30%**. phi-1-small reports 45% at that size. About four days out — two days of
+teacher time, plus classifier training and the filtering pass, plus a day of training. Estimate,
+not measurement.
+
+## Two corrections I made today, both mine
+
+**The synthetic target was 20x too large.** I sized it to phi-1.5's 30B. But 50.6% HumanEval is
+phi-1's number on phi-1's 7B; phi-1.5's extra 20B targets common-sense reasoning, which this
+project does not measure. Corrected to ~1B in `docs/standards/p1_data_recipe.md` (branch
+`fb-review-138`, in PR #157). Generation order changed with it — by what blocks the gate, not by
+size, which is what moved the gate from ten days to two.
+
+**I read `nvidia-smi` 0 MiB as "free" and took two tileRL cards, for the second time in one day**,
+opposite direction from the morning's cards 5/7. b0 caught it against `runs/card_assignment.json`.
+The rule that holds is the one already written: a card's owner is the grant plus the claim; the
+nvidia-smi row is corroboration, never the reading. Today's grant of cards 1 and 3 states both
+halves in its note — 0 MiB **and** no grant — because the first half alone is what I keep acting on.
+
+## A NaN bug that predates this work and would have killed the run
+
+`torch.autograd.set_detect_anomaly` named `model.py:350`, `BmmBackward0`: **89 of 102 parameter
+tensors non-finite after one backward, forward finite throughout.** An all-`-inf` softmax row is
+correct forward and NaN backward — **`nan_to_num` rewrites the output, not the graph.** Present
+since CSA landed (b0-35); never fired because CSA has never been trained. Fixed at all five sites
+with `masked_attend` (`e57561b9`).
+
+The fix introduced two leaks of its own, both caught by `test_arch_compat`, both the same mistake:
+moving `masked_fill` into `masked_attend` left `sc` unmasked at the `sc.topk` the select branch
+ranks from — read first as a causal leak on the unpacked path, then as a cross-document leak on the
+packed one. The mask is load-bearing twice. That is the specific thing 44 is asked to re-check.
+
+## Cards, 13:4xZ
+
+| card | holder | evidence |
+|---|---|---|
+| 0 | tileRL | claim `tilerl-l5eval.0`, 100% util |
+| 1, 3 | b0 teacher serve | granted `4910a309`, claims `teacher_serve_0909.{1,3}`, 38 GB each |
+| 2 | d1 lane | claim `humaneval_sample.2`, 36% util |
+| 4, 5, 7 | b0 teacher serve | claims `teacher_serve_0909.{4,5,7}`, ~54 GB each at 0% util — the NVFP4 serve idling between requests, not residue |
+| 6 | tileRL | 0 MiB, theirs, not taken |
+
+## Global
+
+- **main** `4910a309`, integration tree clean, pod in sync (752 files), stamp matches.
+- **Open PRs:** #157 (fb, blocking), #158 (44), #159 #160 (98), #161 #162 (d1), #163 (b0
+  throughput facts), plus #23 #103 #135 #145 #148 #149 #151 #155 #156 older.
+- **merge_main refuses any model.py/train.py commit without a second reader.** That refusal fired
+  correctly today on `e57561b9` and cost one cherry-pick to get an urgent card grant past it. The
+  lesson is the one already in memory and which I broke: a code commit does not belong on the branch
+  a time-sensitive ledger commit rides.
+
+---
 
 ## Since 07:5xZ — the capability number has a mechanism, and it is not the one published this morning
 
