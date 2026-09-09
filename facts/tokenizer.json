@@ -501,6 +501,28 @@
    "uncertainty": "single-draw values at the stated setting. never_used_frac's three-seed range at a fixed setting exceeds the 0.01 threshold, which is why it is reported and not gated (tok.never_used_not_decidable); the 0.0188 here is one draw and not a pass/fail",
    "boundary": "AGENTS.md pre-fetch gate for the 30B v2 mix, now by measurement on the exact fetch composition rather than by the wider-composition ruling in the mix file's _comment. ALL THRESHOLD GATES PASS: the 30B build is cleared to fetch. ref fertility is corpus-independent (REF_EN), so 1.4286 matches the role-dir run exactly; hanzi moved 0.9793 -> 0.9880 because the exact mix draws zh_web from 909 shards. NEVER-USED IS LOAD-BEARING FOR THIS CLEARANCE: 0.0188 is nearly twice the retired 0.01 threshold -- if never-used were still gated, this run FAILS and the 30B fetch is blocked. The un-gate decision (tok.never_used_not_decidable) is what makes the clearance possible, not a tidy-up; a reader who does not follow that citation will not see it. The cot supply half of e1-51 needs no new measurement: cs.cot_open_thoughts_landed counts the 776,084,377 unreachable tokens and carries the repair spec (re-render with a content field, rename shards to three digits), and the v2 mix names data/corpus/cot only by 4c's 2026-09-08 ruling -- the repair is a future-mix path, not a v2 one.",
    "status": "measured"
+  },
+  {
+   "id": "tok.p1_vocab_sweep_bits_per_char",
+   "value": {
+    "bits_per_char": {"16384": 2.0465, "20000": 2.0484, "24576": 2.0504, "32768": 2.0552, "frozen_oldmix_32773": 2.0546},
+    "bits_per_token": {"16384": 7.714, "20000": 7.8829, "24576": 8.0403, "32768": 8.2415, "frozen_oldmix_32773": 7.0249},
+    "chars_per_token": {"16384": 3.7693, "20000": 3.8484, "24576": 3.9213, "32768": 4.0102, "frozen_oldmix_32773": 3.4191},
+    "never_used_frac_on_800_eval_rows": {"16384": 0.0609, "20000": 0.0948, "24576": 0.1463, "32768": 0.2386},
+    "ref_fertility": {"16384": 1.3896, "20000": 1.3117, "24576": 1.2338, "32768": 1.1948},
+    "marginal_20k_to_32k": "+0.33% bits/char -- point estimate is that bigger V is slightly WORSE on this composition; no measurable compression gain from growing past 20K"
+   },
+   "measured": "2026-09-09",
+   "source": "scripts/build_p1_vocab_sweep.py (b0, pod); the script writes its results JSON and the four candidate tokenizers under data/vocab_sweep/ on the pod, regenerable from the script -- the candidates are derived artifacts and not committed, matching the old sweep (tok.vocab_sweep_32k_64k: no sweep artifact located)",
+   "config": {
+    "composition": "English proxy: en_c4_stage2 + code_py_starcoder/code_py_rp1t at a 3:0.95:0.05 byte budget -- the p1 composition's prose:code ratio, code split 95/5 like tok.gates_p1_proxy_composition",
+    "candidates": "fitted on the proxy at 16K/20K/24K/32K with build_tokenizer.py's trainer shape (initial_alphabet=ByteLevel.alphabet(), same specials); ONE held-out set, 800 rows from last-quartile shards, identical for every candidate",
+    "estimator": "tokenizer_sweep.bits_per_char, interpolated 3/2/1-gram over the token stream with fixed weights (0.55/0.30/0.15); n-gram model on 30000 train rows",
+    "frozen_reference": "data/tokenizer.json (32,773 slots, fitted on the old bilingual mix) scored on the same held-out set, to split fit effect from size effect"
+   },
+   "uncertainty": "The estimator's train-size dependence is measured, not assumed: at 3000 train rows the 16K->32K spread was +1.35%, at 30000 it is +0.43% -- the sign (bigger V slightly worse on bits/char) survives, the magnitude shrinks. The 20K->32K marginal is +0.33% at 30K. The repo's standing claim that bits/char is 'strictly monotone in size' (tokenizer_eval.py, the reason it cannot rank across sizes) does not hold on this composition at either train size. never_used is on 800 eval rows (~200K tokens) and is size-bound (tok.never_used_not_decidable); the load-bearing part is its direction -- larger V wastes more slots on the same text (6.1% at 16K to 23.9% at 32K).",
+   "boundary": "Intrinsic proxy; screens, does not rank (TokEval). The verdict on vocabulary size remains two pretrains differing only in vocabulary (unfreeze condition 3), not this sweep. This satisfies freeze condition 1 of the V=20,000 working target (4c, 2026-09-09): the 20K->32K segment is measured on the English proxy. Condition 2 (never_used re-measure on the first real synthetic textbooks) is still open -- the proxy is English WEB prose, not synthetic textbook prose, and 4c's standing instruction is that the real sample wins over the proxy. The embedding-param arithmetic at the pinned d's (scripts/p1_size.py, 4c 2026-09-09): shrinking 32,784->20,000 saves 13.1M tied params on p1-small (d=1024, 1.21% of 1.08B) and 26.2M on p1 (d=2048, 0.44% of 5.92B), and 39.0% of LM-head FLOP/token at both d's. The sweep conclusion itself is d-independent: bits/char does not depend on d, and the vocabulary is shared between p1-small and p1.",
+   "status": "measured"
   }
  ]
 }
