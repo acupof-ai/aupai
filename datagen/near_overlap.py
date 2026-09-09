@@ -4,9 +4,11 @@
 # dedup08 th=0.8); what remains is CROSS-domain overlap. Exact channel is measured
 # by exact_overlap.py; this measures the near channel [0.5, 1.0).
 #
-# Method: 96-perm MinHash char 5-gram (same shingle as the builds; 96 perms vs
-# the builds' 128, so the LSH threshold behavior differs), 24 bands x 4 rows
-# (LSH threshold ~0.45). Signatures checkpointed per domain.
+# Method: 96-perm MinHash char 5-gram (same shingle and perm count as the
+# builds: near_dedup_scale/code_dedup_build/dedup_keep_whole all use 96),
+# 24 bands x 4 rows (LSH threshold ~0.45; the builds use 12 bands x 8 rows,
+# ~0.73 -- this instrument deliberately casts a wider net). Signatures
+# checkpointed per domain.
 # Jaccard estimate: 50K-doc sample of each domain queried against the band
 # index built over ALL docs; participation = docs with >=1 est>=0.5 neighbor in
 # the other domain. Exact char-5gram Jaccard on a 100-pair sample calibrates est.
