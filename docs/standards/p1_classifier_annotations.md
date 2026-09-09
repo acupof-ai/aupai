@@ -152,6 +152,18 @@ threshold time. The full 100K labeling is threshold-independent -- every
 sample gets a 0-5 label and the cut is applied post-hoc -- so it proceeds
 before the ablation.
 
+## Full-run labels (de, 2026-09-09)
+
+100K labeled, 0 unparseable, schema (id, raw, score): 0=5.3% 1=64.3% 2=4.1%
+3=23.2% 4=3.0% 5=0.03%. Keep rates: >=2 = 30.4%, >=3 = 26.3%, >=4 = 3.07%.
+Bimodal (1+3 = 87.5%); a 56-sample stratified read (8 per level) confirms the
+teacher is NOT doing binary classification -- the six levels are coherent
+(0=non-code, 1=boilerplate, 2=test scaffolding/framework glue, 3=real logic,
+4=clean self-contained algorithms, 5=textbook). The bimodality is a corpus
+property, not a teacher behavior. The ablation sweeps >=2/>=3/>=4; >=5 is
+noise (n=34). The >=3 -> >=4 cliff (26.3% vs 3.07%) is real: the corpus holds
+~3% textbook-clean code.
+
 ## Classifier architecture (post-labels)
 
 FineWeb-Edu's method, not phi-1's random forest: a frozen Snowflake-arctic-embed
