@@ -22079,9 +22079,146 @@ def _checks_touching(paths, rev=None):
     return out
 
 
+def _tree_under_test(root):
+    """The tree the selftest actually ran against, as a printable stamp.
+
+    MEASURED 2026-09-08 (e1): a full `--selftest` went green on `db976f2b`, then a merge brought
+    main's 40 files and 2168 lines in and HEAD became `5d370780`. The green was still on screen
+    and still true of a tree that no longer existed, and nothing in its wording said which one.
+    "I verified it" carries a tense that points at a tree, and the OK line named no tree at all.
+
+    THE SHA IS THE WORKING TREE'S, NOT `HEAD`'s, and the distinction is the whole point. In the
+    incident above the two differed: the run happened on the tree checked out as `db976f2b`, and
+    reading `HEAD` at print time -- after a merge, in a long session, in another worktree -- would
+    stamp the run with a tree it never touched. An implementation that reads HEAD commits the very
+    error this stamp exists to expose.
+
+    DIRTY IS NOT A DETAIL. A sha plus uncommitted edits is not that sha's tree; the selftest ran
+    on something with no name, so the stamp says `+dirty` and the reader knows the sha alone does
+    not identify it. Untracked files are excluded -- they are not part of what any check reads
+    from git, and including them would mark nearly every working session dirty, which is the
+    permanent-amber shape that teaches people to ignore the field.
+
+    Fails soft: this decorates a result that has already been decided, so a git call that cannot
+    answer yields `tree unknown` rather than turning a passing selftest into a crash.
+    """
+    def _git(*a):
+        r = subprocess.run(["git", *a], cwd=root, capture_output=True, text=True)
+        return r.stdout.strip() if r.returncode == 0 else ""
+
+    sha = _git("rev-parse", "--short", "HEAD")
+    if not sha:
+        return "tree unknown"
+    # `diff --quiet HEAD` covers staged and unstaged together; --exit-code semantics mean
+    # returncode 1 is "differs", which is a normal answer and not an error.
+    d = subprocess.run(["git", "diff", "--quiet", "HEAD"], cwd=root, capture_output=True)
+    return f"tree {sha}+dirty" if d.returncode == 1 else f"tree {sha}"
+
+
+def _selftest_ok_line_names_the_tree_it_ran_on():
+    """The OK line must identify the tree, and must not borrow another one's identity.
+
+    THREE WORLDS:
+      A  a clean commit          -> the stamp is THAT commit's short sha, no +dirty
+      B  the same tree, modified -> same sha, marked +dirty
+      C  a second commit made after the stamp was taken -> the OLD stamp must NOT equal the new
+         HEAD, which is the merge case that produced this field
+
+    C is the one with teeth. An implementation that reads `HEAD` at print time passes A and B --
+    both have HEAD equal to the tree under test -- and fails only here, where the tree moved after
+    the run. That is exactly the shape being guarded: the green statement outliving its tree.
+    """
+    import shutil
+
+    d = _tmp_repo()
+    try:
+        def g(*a):
+            return subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+
+        g("init", "-q", "-b", "main", ".")
+        g("config", "user.email", "t@example.invalid")
+        g("config", "user.name", "t")
+        open(os.path.join(d, "f.txt"), "w").write("one\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "one")
+        first = g("rev-parse", "--short", "HEAD").stdout.strip()
+
+        a = _tree_under_test(d)
+        assert a == f"tree {first}", f"A: clean tree must stamp its own sha, got {a!r}"
+        assert "+dirty" not in a, f"A: a clean tree must not read dirty: {a!r}"
+
+        open(os.path.join(d, "f.txt"), "w").write("one modified\n")
+        b = _tree_under_test(d)
+        assert b == f"tree {first}+dirty", (
+            f"B: an edited tree is not the sha's tree and must say so, got {b!r}")
+
+        # A tracked edit is what dirty means; an untracked file is not, or every session is amber.
+        g("checkout", "-q", "--", "f.txt")
+        open(os.path.join(d, "scratch.tmp"), "w").write("x\n")
+        assert _tree_under_test(d) == f"tree {first}", "an untracked file must not read as dirty"
+        os.unlink(os.path.join(d, "scratch.tmp"))
+
+        # WORLD C: the stamp was taken, THEN the tree moved. This is the merge case.
+        stamped = _tree_under_test(d)
+        open(os.path.join(d, "f.txt"), "w").write("two\n")
+        g("add", "-A")
+        g("commit", "-q", "-m", "two")
+        second = g("rev-parse", "--short", "HEAD").stdout.strip()
+        assert second != first, "C: the world must actually advance, or it tests nothing"
+        assert stamped == f"tree {first}", (
+            f"C: the stamp must keep naming the tree the run happened on. It reads {stamped!r} "
+            f"against a HEAD now at {second} -- an implementation that resolves HEAD at PRINT "
+            f"time would relabel a finished run with a tree it never touched, which is the "
+            f"error this field exists to expose (measured: green on db976f2b, HEAD 5d370780).")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+
+    # AND THE CALL SITE, NOT ONLY THE HELPER. World C above proves `_tree_under_test` returns a
+    # VALUE rather than a live view -- which is true of any function returning a string, so it
+    # holds no matter where `_demo` calls it. MEASURED: moving the call from the top of `_demo`
+    # to just above the print (the whole defect) leaves worlds A-C green. That is §279's shape
+    # again, in the selftest written to prevent §279: the right property asserted about the
+    # wrong subject.
+    #
+    # Read from source, because the property is WHERE the call sits. `_demo` runs for minutes;
+    # a peer's merge landing mid-run moves HEAD under it, and only a stamp taken before the work
+    # names the tree the work saw. The assertion is ordering: the binding must precede every
+    # print that uses it, with no second binding in between.
+    _src = inspect.getsource(_demo)
+    _bind = _src.find("_tree_stamp = _tree_under_test(")
+    assert _bind >= 0, ("_demo does not bind _tree_stamp from _tree_under_test at all -- the OK "
+                        "line's tree is unsourced")
+    assert _src.count("_tree_stamp = ") == 1, (
+        "_tree_stamp is bound more than once in _demo; a later rebind is a print-time read "
+        "wearing the earlier one's name")
+    _first_print = min((i for i in (_src.find('print(f"harness self-test OK on'),
+                                    _src.find('print(f"harness selftest (FILTERED) on'))
+                        if i >= 0), default=-1)
+    assert _first_print > _bind, (
+        f"_tree_stamp is bound at offset {_bind} but a print using it starts at {_first_print}: "
+        f"the stamp must be taken BEFORE the checks run, not resolved at print time. A full "
+        f"selftest takes minutes and HEAD can move under it; a late read labels the result with "
+        f"a tree the run never touched.")
+    # The binding must be near the TOP of _demo -- before the checks, not merely before the
+    # print. 2000 characters is the head of the function by inspection, and a call that drifts
+    # below the first check world would silently start measuring a later tree.
+    assert _bind < 2000, (
+        f"_tree_stamp is bound {_bind} chars into _demo, i.e. after work has already run; it "
+        f"belongs at the top so the stamp names the tree the checks were measured on")
+    print("  selftest OK line names the tree it ran on: clean sha, +dirty on a tracked edit, "
+          "untracked ignored, and a stamp taken before a commit does not follow HEAD forward")
+
+
 def _demo(only=None):
     """Every check must FAIL on a world where its condition is violated."""
     import shutil
+
+    # TAKEN HERE, NOT AT THE PRINT. The stamp must name the tree the run STARTED on: a full
+    # selftest takes minutes, and a merge landing in another worktree during it would move HEAD
+    # under a run that never saw the new files. Reading it at the end would print the newest
+    # tree's sha against a result measured on the older one -- the exact substitution this field
+    # exists to make visible. See _selftest_ok_line_names_the_tree_it_ran_on world C.
+    _tree_stamp = _tree_under_test(ROOT)
 
     # The step gap: a card idle on the first reading and busy on the second is busy.
     global _busy_once
@@ -22541,9 +22678,9 @@ def _demo(only=None):
         # less coverage than the reader assumes.
         assert not untested, ("checks that cannot be made to fail:\n  "
                               + "\n  ".join(untested))
-        print(f"harness selftest (FILTERED): {len(only)} of {len(CHECKS)} checks verified on "
-              f"their broken worlds -- {', '.join(sorted(only))}. NOT run: the extra worlds, "
-              f"the repo-auth mirror, and the non-vacuous-PASS sweep. Run the full "
+        print(f"harness selftest (FILTERED) on {_tree_stamp}: {len(only)} of {len(CHECKS)} checks "
+              f"verified on their broken worlds -- {', '.join(sorted(only))}. NOT run: the extra "
+              f"worlds, the repo-auth mirror, and the non-vacuous-PASS sweep. Run the full "
               f"`harness check --selftest` before trusting this as coverage.")
         return 0
 
@@ -23068,6 +23205,7 @@ def _demo(only=None):
         _selftest_content_restored_read_failure,
         _selftest_unsigned_fast_forward_warns,
         _selftest_sideways_move_names_what_it_discarded,
+        _selftest_ok_line_names_the_tree_it_ran_on,
         _selftest_tasks_read_from_index,
         _selftest_root_durable_backup_ack,
         _selftest_merge_reverted_content,
@@ -23123,8 +23261,8 @@ def _demo(only=None):
     if skipped_direct:
         _tail += (f"; {len(skipped_direct)} direct selftest(s) SKIPPED: "
                   f"{', '.join(sorted(skipped_direct))}")
-    print(f"harness self-test OK ({_verified} of {len(CHECKS)} checks each verified to FAIL on a "
-          f"broken world; every PASS verified a non-zero count{_tail})")
+    print(f"harness self-test OK on {_tree_stamp} ({_verified} of {len(CHECKS)} checks each "
+          f"verified to FAIL on a broken world; every PASS verified a non-zero count{_tail})")
 
 
 STEPS = ("pretokenize", "point", "ladder", "fetch", "clean", "score", "dedup")
