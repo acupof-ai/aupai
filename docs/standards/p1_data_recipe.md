@@ -79,8 +79,9 @@ twice and inflates the keep rate with duplicates.
 |---|---|---|---|
 | `data/corpus/code_rp1t_dd09` | 6.24B | 3.43M | rp1t filter batch 1, MinHash-J 0.9 dedup (3.75M -> 3.43M) |
 | `data/corpus/code_rp1t_b2v2_dd` | 3.60B | 2.10M | rp1t filter batch 2 v2, **cross-deduped against dd09**: its stats read `b2v2 against code_rp1t_dd09 AND within b2v2; code_rp1t_dd09 kept whole` |
-| `data/corpus/code_dedup08` | 8.41B (measured 2026-09-09 UTC) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
-| total | **18.25B** | **11.78M** | |
+| `data/corpus/code_dedup08` | 8.41B (extrapolated from 30.16 GB of shards, 2026-09-09; pre-deletion) | 6.24M | starcoder-py + py_rp1t union, 0.8 dedup (6.39M -> 6.24M) |
+| `data/corpus/code_dedup08` (clean copy, post-deletion) | 8.509B (measured 2026-09-10, full 298-shard count, frozen tokenizer) | 6.06M | 178,941 docs removed: 169,561 exact-overlap + 9,380 decontamination |
+| total | **18.25B** | **11.78M** | extrapolated, pre-deletion gross |
 
 Excluded as upstream: `code_rp1t` (7.57B), `code_rp1t_b2` and `code_rp1t_b2v2` (4.89B),
 `code_py_starcoder` (8.74B), `code_py_rp1t` (0.42B). `code_rp1t_rest` and `code_rp1t_dd09_full`
@@ -89,8 +90,12 @@ are empty shells.
 `code_dedup08`'s figure was **derived, not read**: its stats file carries no `tokens` field, so
 8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. The
 threshold ablation measured it directly (bytes over 30.16 GB of shards, extrapolated): **8.41B**,
-6% below the derivation (docs/standards/p1_classifier_annotations.md, PR #164). The measured value
-is used downstream; the derivation stays as the prior.
+6% below the derivation (docs/standards/p1_classifier_annotations.md, PR #164). The extrapolated
+value was used downstream; the derivation stays as the prior. A full count over the post-deletion
+clean copy (all 298 shards, frozen tokenizer, 2026-09-10, `datagen/count_domain_tokens.py`)
+measured **8.509B tokens** / 6.06M docs; the extrapolation was 4.0% below the implied
+pre-deletion count (8.760B at 1,404 tok/doc) — an extrapolation labeled "measured" is why the
+gap went unnoticed.
 
 The `code_dedup08` residual overlap, open here as a name-based inference, was
 **measured 2026-09-09 (UTC)**: it is a union build of 283 starcoder shards plus 15
