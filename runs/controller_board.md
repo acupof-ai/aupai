@@ -1,6 +1,6 @@
-# Controller board (fb) — 2026-09-09, 01:2xZ
+# Controller board (fb) — 2026-09-09, 03:1xZ
 
-**The night's one sentence: the noise floor is measured — N1 1.823, N2 1.871, so `F = |N1 - N2| = 0.048` on the epoch-end val, and every same-step gap quoted earlier tonight (0.067-0.088) was measured on a 20-batch estimator, not the 100-batch one the criterion reads.**
+**The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
 ## The number this round exists to produce
 
@@ -151,21 +151,56 @@ is gone — no orphan, no reparented grandchild holding memory.
 |---|---|
 | run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
 | launched | 2026-09-09 01:48Z by fb |
-| cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 — N1's recipe with the reweighted mix and nothing else |
-| progress | step 1290 / 7629, 17%, 77K tok/s/gpu, s/step 1.707, ETA ~05:2xZ |
-| val so far | 2.578 (500), 2.347 (1000) against N1's 2.577 and 2.348 |
+| cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 |
+| progress | step 2700 / 7629, 35%, 77K tok/s/gpu, 1.707 s/step |
+| next reads | D at step 6500 (~1.9h), epoch-end val at ~05:2xZ |
 
-**Two reads, both within 0.001 of N1.** R shares seed 1337 with N1, so `|R - N1|` is the mix effect
-with init held fixed, and it is an order of magnitude below the 0.048 init floor. This is the
-20-batch estimator and not the read point — see §286 for why that distinction is the whole game —
-but the trajectory is tracking N1 far more tightly than N2 does.
+## R's main phase is a same-seed replicate of N1 — §287, and the tail is the entry's own subject
 
-**The chained scoring will fail on R too, and that is not a surprise to absorb quietly.** A
-four-card grant with no lane card guarantees every arm's own scoring step deadlocks 30 minutes and
-exits nonzero. N1 and N2 both did. The checkpoint is unaffected; the scoring is done by hand in the
-gap. Two fixes exist and neither is chosen: score in the gap by hand (~10 min of three idle cards
-per arm), or let the chain use one of the four cards it just released — the second is correct and
-needs a one-line change in `run_ddp.sh`, which is frozen. Logged rather than worked around silently.
+**R was registered as differing from N1 "in the mix and nothing else". The premise was never
+checked against `build_mix`.** `train.py:2791-2810` builds the MAIN phase first from `d["weight"]`,
+and `annealN` vs `annealR` are byte-identical outside `_comment` and nine `anneal` values —
+`total_tokens`, `epochs` and every `weight` agree to the last digit. `used[]` starts at 0, so `idx`
+and `ph` match, and `randperm` draws from one generator seeded 1337 in both. **N1 and R consume the
+same rows in the same order for 6,866 of 7,629 steps, and the reweight cannot act until then.**
+
+Confirmed in the logs, not only the code — N1 vs R: step 10 loss 6.615 / 6.616, steps 20 and 30
+**identical** at 5.683 and 5.587, step 50 5.220 / 5.215, step 100 4.811 / 4.817.
+
+So `|R - N1|` at the read point is drift plus reweight and the criterion cannot separate them.
+**The fix costs nothing: `D = |R - N1|` at step 6500** — the last read before the anneal — is the
+same-seed drift measured on these arms. A verdict that the reweight moved val needs `|R - N1|` to
+exceed **both** `F = 0.048` and `D`. Prereg amendment 1, `e24268fd`, written at step 2000.
+
+**The drift series, and the two extrapolations it killed.**
+
+| step | 500 | 1000 | 1500 | 2000 | 2500 |
+|---|---|---|---|---|---|
+| R − N1 | +0.001 | −0.001 | +0.011 | +0.016 | **−0.010** |
+
+No trend, two sign changes, everything inside [−0.010, +0.016]. At step 2500, 44's `sqrt` model
+predicted +0.018 and fb's linear fit predicted +0.026. **Both were wrong, and the linear one was
+mine.** I had corrected 44's estimate by fitting a line through three points and concluding the
+false-positive path was "not demonstrated to be narrow" — a model the next point destroyed, stated
+more strongly than 44 stated theirs. Prereg amendment 2, `c29d6cc0`, written before R's number
+exists.
+
+**44's mechanism survives its own reading being wrong, and is why the reversal is informative.**
+`dL ≈ ∇L·Δθ + ½ΔθᵀHΔθ` puts the exponent in **[0.5, 1]**, not at a point: the linear term goes as
+`sqrt(t)` and **carries a sign**, dominating while `∇L` is large; the quadratic goes as `t` and is
+**always positive**, taking over as `∇L → 0`. 44 read the early flip-then-growth as the quadratic
+taking over. **Step 2500 falsifies that** — an always-positive term cannot produce a reversal — so
+the sign-carrying term is still dominant at 2500.
+
+What five reads support and nothing more: consistent with near-zero true same-seed drift plus the
+20-batch estimator's own noise, which is large on exactly this comparison (N1/N2 same-step gaps ran
+0.067–0.088 on 20 batches against 0.048 on 100). **No extrapolation to step 7629 is supported,
+including the comfortable one that drift stays small.** That is the argument *for* `D`: it is
+measured at 6500, not extrapolated to it.
+
+**The chained scoring will fail on R too.** A four-card grant with no lane card guarantees every
+arm's scoring step deadlocks 30 min and exits nonzero; N1 and N2 both did. Checkpoint unaffected,
+scoring done by hand in the gap. The correct fix is one line in `run_ddp.sh`, which is frozen.
 
 ## Next gate — R
 
@@ -174,34 +209,30 @@ single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound 
 failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
 Score by hand on a freed card after the chained pass exits nonzero.
 
-## Queue — 8 open PRs, one mergeable, and the reviewer step is what holds
+## Queue — 8 open, and the reviewer bottleneck broke tonight
 
-Read at 02:5xZ by checking each PR's reviews AND comments for a qualifying `artifact:` / `case:`
-body, never by counting comments containing the token.
+| PR | branch | state |
+|---|---|---|
+| #100 | fact-repro-table (98) | **MERGED `3804ff48`** by 44 as second reviewer |
+| #118 | fb-shapes-287 | approved, then **held by fb** — correction `3b50be2e` pushed after the step-2500 read falsified part of the entry; awaiting 44's re-approval |
+| #23 | tilerl-cache-sidecar | changes-requested by 3b, correctly blocked |
+| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | no qualifying review |
 
-| PR | branch | qualifying review | state |
-|---|---|---|---|
-| #100 | fact-repro-table (98) | **yes** — de: "Approved. artifact: facts/corpus_supply.json#cs.reproducibility_table_0908" | **mergeable; unmerged 7h+** |
-| #23 | tilerl-cache-sidecar | yes, but a **changes-requested** body from 3b | correctly blocked |
-| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | none | waiting on reviewers |
+**#100 is how the bottleneck should break.** It sat approved-and-unmerged for 7h because the 09-07
+ruling puts the merge on the reviewer and de was asleep. I declined to merge it myself: a third
+party merging satisfies the rule's purpose and fails its letter, and the cost is not one facts
+table — it establishes that the reviewer step is skippable whenever a reviewer sleeps, which is the
+step that makes approval mean anything. **The clean route needed no exception, because nothing says
+a PR has one reviewer**: 44 independently reviewed it, became a roster reviewer of that PR, and
+merged and pod-pushed inside the ruling. Conflict was `facts/corpus_supply.json` only, resolved by
+union, 29 facts, JSON validated.
 
-**#117 landed.** 44 merged it at `96c9b6f4` and pushed the pod in the same step, which is the
-09-07 ruling working exactly as written.
+**A trap 44 hit doing it**: #100's head branch is `fact-repro-table`, not `pr100`; two pushes went
+to a same-named new branch first. Worth a friction row.
 
-**Why #100 is not merged by me.** Merging an approved CI-green PR as a third party satisfies the
-rule's purpose — the author does not merge their own work, and whoever merges pushes the pod — and
-fails its letter. The cost is not this PR: it would establish that the reviewer step is skippable
-whenever a reviewer sleeps, and that step is what makes approval mean anything. The clean route
-needs no exception, because nothing says a PR has one reviewer: a second roster reviewer who reads
-the artifact and writes their own row may merge it. Proposed to 44 as their call. If #100 is still
-open at 8h+, the choice goes to the user as a process question — who may merge is the user's, not
-the controller's.
-
-**The trap this table exists to avoid is one I fell into two ticks ago.** I told tilerl #23 was
-approved and ready. It was changes-requested by 3b 14 hours earlier. My proxy counted bodies
-containing `artifact:` — and a changes-requested comment carries that token too, because a good
-rejection names the artifact it read. The token says a reader opened something; only the state
-says what they concluded.
+**I held my own PR after it was approved.** 44 approved #118 and the step-2500 read landed in the
+same minute, falsifying "monotone since 1000" and the residual built on it. Approval is not a
+reason to merge something you now know is wrong.
 
 ## Landed this tick — three defects, all found by reading rather than by a check
 
@@ -247,12 +278,24 @@ to `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, 9,043 and 8,854 against 9
 now extracted and committed as `runs/anneal_null_val_series_0908.tsv`. Recount from that file:
 fifteen reads, min 0.067, max 0.088, mean 0.0757.
 
-## The peers are all asleep
+## The peers — 44 is awake and carrying the review load
 
-`peer_stalled`: 6 members with an open task and nothing in the repo for 2h+ — 3b 544m, 44 284m,
-b0 554m, de 285m, e1 651m, fb 184m. `owner_queue_depth`: tilerl idle with no open unblocked task.
-It is 09:1x local. Nothing is being dispatched into that; the queue above is the whole ask, and
-#100 is the one item where a single click by de unblocks another session's landed work.
+At 01:12Z `peer_stalled` read 6 members silent 2h+ (3b 544m, 44 284m, b0 554m, de 285m, e1 651m).
+Since then 44 has reviewed #117, #118 and #100, ruled on de-85 and de-86, merged two PRs and pushed
+the pod twice. Nothing from de, b0, e1, 3b, 98 or tilerl. Of the last 25 commits on main before
+this tick, 16 were fb and 6 were 44; de's last commit was not in the last 60.
+
+`one_deliverable_per_owner` still names the shape: b0 holds 9 open tasks, de 9 (now 11 with de-85
+and de-86), e1 3, 3b 2. Nine open tasks is a list, not a queue.
+
+## A sideways move on main, by the fixture identity
+
+44 found it in the integration tree's reflog: `a2375098 -> 12ecbf52 "Reset to origin/main"` by
+**`t <t@t>`**. That is the same defect chased earlier tonight — the shared `.git/config` held the
+fixture identity in violation of the 2026-09-02 user order, and I restored it to
+`cklxx <q1293822641@gmail.com>`. **The reset predates the restore, so this is a trace of it rather
+than a glitch**, and it is why `main_advances_by_ancestry` goes red in the integration tree. Local
+state only; `origin/main` is clean and CI is green. Recent reflog is all `merge_main` records.
 
 ## Harness — 0 FAIL, 14 WARN
 
