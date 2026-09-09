@@ -202,13 +202,14 @@
  "tilerl_session_exited": "2026-09-09 03:2xZ, reported by the user. NO MACHINE FIELD IS CHANGED BY THIS ENTRY and that is deliberate: block_cards stays '2,4,5,7' and cards 0 and 6 stay tileRL's. A session exiting does not revoke the user's standing order of 2026-09-06 ('0,6 tileRL'); only the user does. This file's own comment says a stale grant is worse than no grant, and writing 0 and 6 into block_cards on the strength of an exit would be exactly that. WHAT IS ACTUALLY TRUE ON THE CARDS, read 03:25Z: card 0 holds 32,783 MiB at 100% -- runs/claims/tilerl-l5eval.0.json, pid 3083582, acquired 2026-09-08 08:32, cmdline 'python3 -m tilerl.cli train --rl --model qwen38-27b ... --eval-n 500'. Its owning session is gone, so it is an ORPHAN: nothing is watching it, nothing will close its row, and its claim is 19 hours old. It is NOT killed -- it is another team's job, it may be producing something, and killing needs an instruction naming it. Cards 1, 3 and 6 are at 0 MiB. aupai holds 2,4,5,7 and arm R is on them. CORRECTED 03:4xZ: tileRL is NOT gone. A new claim tilerl-seed1curve.1.json was written 03:42:36 for card 1 (pid 1332000, grpo-gsm8k-27b, seed 1) and card 1 reads 27,659 MiB / 97%. So the count of GPU processes went 5 -> 6 for a legitimate reason on a tileRL card, not a spill into aupai's block. Cards now: 0 tileRL l5eval (the 19h orphan, owner session still gone), 1 tileRL seed1curve (fresh, claimed), 2/4/5/7 aupai arm R, 3 and 6 idle. R unaffected -- step 3990/7629 at 52% with no contention.",
  "_current_state_field": {
   "_read_this_first": "This file has 17 non-underscore fields and SEVEN of them read like an answer to 'who holds which card right now'. Only two are. Every field is classified below; a field not in this map is a field nobody has classified, and it must be treated as UNKNOWN, not as current.",
-  "_why_this_map_exists": "Twice in one day a reader took a stale field for the current one. 2026-09-09 13:3xZ: fb quoted a 2026-09-08 `granted_by` entry to challenge tilerl-27's correct record, while `note` -- one day newer -- said the opposite. 2026-09-09 16:0xZ: e1 read `cards` and got b0's old string. The first fix declared `note` current and `granted_by` history and classified NOTHING ELSE, which is why the second happened in a field the fix had not named. Reading the discriminating field is no protection when the field itself is the stale one; the file has to say which field is which. R15/§294.",
+  "_why_this_map_exists": "Twice in one day a reader took a stale field for the current one. 2026-09-09 13:3xZ: fb quoted a 2026-09-08 `granted_by` entry to challenge tilerl-27's correct record, while `note` -- one day newer -- said the opposite. 2026-09-09 16:0xZ: e1 read `cards` and got b0's old string. The first fix declared `note` current and `granted_by` history and classified NOTHING ELSE, which is why the second happened in a field the fix had not named. Reading the discriminating field is no protection when the field itself is the stale one; the file has to say which field is which. R15/§294. THIRD INSTANCE, one hour after the first two and inside this very map: fb classified `cards` as STALE_PROSE -- 'let it rot' -- without grepping for its readers. It has three in this repo and a fourth in another project. The map that was written to stop a field being misread was itself written by guessing instead of reading, which is the same act it exists to prevent.",
   "CURRENT": {
    "note": "The single current-state field. Card ownership, loans, and what changed. Rewrite it, do not append."
   },
   "MACHINE_PARSED": {
    "block_cards": "scripts/launch_gate.py:658-714 parses this. The cards a training block holds.",
-   "lane_card": "Same parser. The card everything else queues on."
+   "lane_card": "Same parser. The card everything else queues on.",
+   "cards": "PARSED BY THREE CODE PATHS AND STALE SINCE 2026-09-08 -- the dangerous combination, and this entry is a correction of what this map said an hour earlier. (1) launch_gate.py:666-680 `owner(idx)` returns cards[N] as prose, by exact key or by a range key covering N, and the card gate reads it. (2) launch_gate.py:2001 derives the 'held' set from cards' KEYS minus block and lane. (3) harness.py:21810 runs `_parse_lend_window` over cards['6'] -- the tileRL lend window is parsed out of that string, and its comment records four merges taken red when the live note drifted from a pinned clock. tileRL's own pod_run.sh guard reads this field too, over the network of two projects. WHAT IT CANNOT EXPRESS: a LOAN. Cards 1 and 3 read 'tileRL' here for the whole window they were lent to de's serve, because loans are written only in `note`. tilerl-27's guard classified card 1 as theirs and allowed a job onto it -- the guard ran correctly on a field that does not encode the question. That is the 2026-09-09 13:3xZ incursion, and its cause is this field, not the operator. DO NOT let it rot and do not make it current-state prose (that would be a second current-state field, the shape that failed twice today). It is replaced by an explicit machine field -- see _planned_holders_field."
   },
   "HISTORY": {
    "granted_by": "Append-only log of grants and returns, newest last. A closed grant carries `released_at`; an open one carries null. NEVER read the newest entry as current state -- a grant can be superseded by `note` without its row being rewritten.",
@@ -216,7 +217,6 @@
   },
   "STALE_PROSE": {
    "_what_this_means": "Each of these was current when written and none has been rewritten since. They record a ruling, a reading, or a plan at a date. Where one disagrees with `note`, `note` wins. Do not delete them -- they carry rulings whose reasoning is not recorded anywhere else -- and do not read them as now.",
-   "cards": "Per-card prose, last accurate 2026-09-08. THIS IS THE ONE e1 MISREAD ON 2026-09-09.",
    "status": "A 2026-09-05 user ruling on the aupai/tileRL split. The ruling stands; the card list in it does not.",
    "granted": "A bare date, 2026-09-03. Answers nothing on its own.",
    "verified": "A 2026-09-08 nvidia-smi reading taken before that day's grant. A reading, not a state.",
@@ -228,6 +228,20 @@
    "lane_two_card_exception": "A 2026-09-03 narrow exception (a link microbench needs two endpoints). Still the rule, not a holding.",
    "note_resume1_cards": "The card list of a resume that has ended.",
    "tilerl_session_exited": "A 2026-09-09 03:2xZ report that deliberately changed no machine field."
-  }
+  },
+  "_planned_holders_field": [
+   "OPEN, fb 2026-09-10. One field, machine-read, single source, answering exactly: for each card,",
+   "who OWNS it and who is USING it right now. Requirements, two of them from tilerl-27 and both",
+   "earned tonight:",
+   "  1. `lent_to` is an EXPLICIT value, never inferred from the absence of a release. This ledger",
+   "     has already been bitten twice by absence read as the permissive answer: `released_at` was",
+   "     inferred from there being no release row, and `pid: null` took the whole read path down",
+   "     (card_claim.py:478, all three projects, 2026-09-09).",
+   "  2. It may answer UNKNOWN. tilerl-27's guard treats unknown as refuse and asks for no safe",
+   "     default -- so the field must be accurate when it answers, not permissive when it cannot.",
+   "Cost: it changes launch_gate.py:666/2001 and harness.py:21810, so it is code and goes through a",
+   "PR with a reader. Until it lands, tilerl-27's guard requires `cards` == tileRL AND `note`",
+   "showing no active loan -- their stopgap, and it errs toward refusing, which is the right side."
+  ]
  }
 }
