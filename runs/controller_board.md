@@ -76,8 +76,22 @@ producer of the same value. tileRL's row, so theirs to clear.
 
 ## Global
 
-- **23 PRs open**, up from 20: #187 (98, the spot-check wording), #191/#193 (44, §299-§301 + R20/R21),
-  #192, #194 (e1, the ratio ruling), #195. de's queue drained #173 and #167.
+- **PRs open: 21 -> 14, by collapsing a seven-deep stack.** Measured: #171 -> #176 -> #178 ->
+  #179 -> #184 -> #191 -> #193 was a linear stack, one author (44), one reviewer (de), **seven
+  PRs and zero review rows**, #171 open six hours. The whole stack is 3 files and **272 lines**,
+  39 per PR. The stack existed for a real reason — all three files are shared and parallel PRs
+  would collide on the rule table and AGENTS.md's compressed table — but it converts one modest
+  document change into seven reviews and six potential rebases, and a change to #171 reorders all
+  six above it. In six hours it bought no review at all.
+  **Ruled: collapse it.** 44 retargeted #193 to main (verified: `base=main`, `MERGEABLE`,
+  +272/-1, 3 files) and closed the other six; branches and commits are retained on origin
+  (checked three of them). de now reads 272 lines once instead of seven times, and each rule's
+  evidence is still in its own § entry so it can still be checked incident by incident.
+  I stated the one fact that would overturn the ruling — de already reading #171 and working up
+  the stack — and 44 checked it before executing: de had reviewed #173, #167 and #188 and none of
+  the seven. Nothing was interrupted.
+  Remaining without a review row: #196 (de), #195 (3b), #193 (44), #187 (98). Parked correctly on
+  their authors: #174, #169, #168, #158, #156, #149, #148, #135, #103, #23.
 - **#188 (de): CI went red on the defective commit, exactly as predicted.** `69347d69` =
   `completed failure`, `bbbcce8f` (EVIDENCE declared) = success, and 44's full `--selftest`
   printed `EVIDENCE stale: []; undeclared: ['no_future_started']`. The hook could not catch it —
