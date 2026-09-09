@@ -74,8 +74,8 @@ re-choose the threshold — a different decision needing its own argument
 The calibrated 0.5 post-pass (`_near_dedup_postpass` in build_corpus.py,
 128-perm, exact normalized word-3-gram Jaccard 0.5) exists as a separate
 stage but never ran on these three domains: their stats stamps are
-stage-2-shaped (`near_dedup: ABSENT`), so the [0.5, 0.9) band is intact by
-construction, not missed by a 0.5 pass. The post-pass also decides on
+stage-2-shaped (no `near_dedup` key; the post-pass adds one when it runs), so
+the [0.5, 0.9) band is intact by construction, not missed by a 0.5 pass. The post-pass also decides on
 word-3-gram Jaccard, a different overlap notion than this instrument's
 char 5-gram.
 
