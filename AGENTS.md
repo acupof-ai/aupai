@@ -297,7 +297,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | A predicate set answers the question it enumerates, not the one it is named for; assert its population against the filesystem, never against a list; to measure a correction for an instrument, call the instrument; fix the criterion before widening the population | 6 | §275 §276 §277 §278 §289 §290 |
 | A green line whose result is anti-correlated with its own name; assert the property, not a message that accompanies it, never a line that can pass by not running, and make every mutation run name the assertion that died | 1 | §279 |
 | Information already present, but not in a form that can be treated as a conclusion: a measured conclusion in a comment, a weak criterion wearing a strong one's clothes, a half-correct sentence, a number correct under a different question | 2 | §280 §281 |
-| An instrument searching a space that contains its own text; signature is the tool's own source appearing as a source in its own output | 1 | §282 |
+| An instrument searching a space that contains its own text; signature is the tool's own source appearing as a source in its own output, or its own executing path matching its own deletion glob | 2 | §282 §293 |
 
 New shapes land in the incidents doc first and this table follows.
 
