@@ -166,7 +166,7 @@ def ckpt_sha256(path):
 
 
 def artifact_path(ckpt, demos, demo_lang="zh", hf=False, no_rep_stop=False, temperature=0.0,
-                  run=None, root=None):
+                  k=1, run=None, root=None):
     """The predictions path for one cell. THE ONLY PLACE THIS NAME IS BUILT.
 
     It used to be an expression inside main(), which meant a reader that wanted the path had to
@@ -189,6 +189,7 @@ def artifact_path(ckpt, demos, demo_lang="zh", hf=False, no_rep_stop=False, temp
                      + (".hf" if hf else "")
                      + (".norepstop" if no_rep_stop else "")
                      + (f".t{temperature}" if temperature else "")
+                     + (f".k{k}" if k > 1 else "")
                      + ".jsonl")
     return versioned_path(p, run) if run else p
 
@@ -214,6 +215,7 @@ def build_header(args, ckpt_sha, vocab_id, tok_fp, n_evals):
         "arm": "control" if args.hf else "ours",
         "rep_stop": not args.no_rep_stop,
         "temperature": args.temperature,
+        "k": args.k,
         "n_evals": n_evals,
         "written_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
@@ -431,6 +433,9 @@ def main():
     ap.add_argument("--tokenizer", default=TOK_PATH)
     ap.add_argument("--temperature", type=float, default=0.0,
                     help="sampling temperature; 0 = greedy")
+    ap.add_argument("--k", type=int, default=1,
+                    help="samples per problem for pass@k (k>1 needs --temperature>0; "
+                         "reports pass@1 and pass@k)")
     ap.add_argument("--out", default=None, help="write JSON summary to this path")
     ap.add_argument("--force", action="store_true",
         help="overwrite an existing predictions file (default: refuse; the rows are the only copy)")
@@ -472,6 +477,14 @@ def main():
              "are rebuilt from the existing rows, so acc and answer-present cover the whole set "
              "and not just the tail.")
     args = ap.parse_args()
+    if args.k > 1 and args.temperature == 0.0:
+        sys.exit(f"--k {args.k} at temperature 0: the k samples would be identical to the "
+                 "greedy answer and pass@k would equal pass@1 by construction. Pass "
+                 "--temperature (0.8 is the panel's value).")
+    if args.k > 1 and args.resume:
+        sys.exit("--resume with --k>1 is unsupported: the resume seen-set keys on the question "
+                 "and would treat one of k samples as a complete cell. A pass@k run is a fresh "
+                 "full-set measurement (the artifact versions by k, so no collision).")
 
     if args.hf:
         # Loaded here rather than through load_checkpoint: that path builds a HybridLM from a
@@ -534,9 +547,10 @@ def main():
     # naming a file that did not exist. run= is NOT passed to open_artifact below, because that
     # would version an already-versioned name (verified: preds_x.r1.r1.jsonl).
     out_path = artifact_path(args.ckpt, args.demos, args.demo_lang, args.hf,
-                             args.no_rep_stop, args.temperature, args.run)
+                             args.no_rep_stop, args.temperature, args.k, args.run)
     correct = total = 0
     n_box = 0
+    n_prob = passk = degen = 0  # k>1 only: problems scored, problems with >=1 right, all-identical problems
     # RESUME REBUILDS THE COUNTS, not just the skip-set. Counting only the newly generated rows
     # would report acc over the tail while the file holds the whole set -- a partial-population
     # number wearing the whole population's label.
@@ -588,6 +602,13 @@ def main():
                 prompts, pvals = fone.encode_prompts(texts_in, tok, num_id)
             else:
                 prompts, pvals = [tok.encode(t).ids for t in texts_in], None
+            if args.k > 1:
+                # k samples per problem: replicate the prompt rows, then group the outputs by
+                # problem (sample i of problem j lands at i*B + j). Sampling is per-row
+                # independent, so this is k independent draws at the prompt's temperature.
+                prompts = prompts * args.k
+                if pvals is not None:
+                    pvals = pvals * args.k
             with torch.no_grad():
                 # THE TOKENIZER IS PASSED, WHICH IS WHAT TURNS rep_stop ON. train.generate_batch
                 # gates it on `rep_stop = rep_stop and tokenizer is not None`, and the original
@@ -605,81 +626,125 @@ def main():
                     out = generate_batch(model, prompts, args.max_new, args.device,
                                          args.temperature, pvals, tokenizer=tok,
                                          rep_stop=not args.no_rep_stop)
-            out_ids, out_vals = out if fone_on else (out, [None] * len(batch))
-            for r, ids, vs in zip(batch, out_ids, out_vals):
-                if args.hf:
-                    gen = hf_tok.decode(ids, skip_special_tokens=True)
+            out_ids, out_vals = out if fone_on else (out, [None] * len(prompts))
+            B = len(batch)
+            for j, r in enumerate(batch):
+                if args.k > 1:
+                    id_list = [out_ids[i * B + j] for i in range(args.k)]
+                    val_list = [out_vals[i * B + j] for i in range(args.k)] if fone_on else [None] * args.k
                 else:
-                    gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
-                ok = score(gen, r["output"], args.demo_lang)
-                correct += int(ok)
-                total += 1
-                turn = model_turn(gen, args.demo_lang)
-                # THE ANSWER-PRESENT TEST CALLS answer_marker(), the same predicate the scorer
-                # uses -- ONE function, not a re-spelled disjunction. Hardcoded `"答案是" in turn`,
-                # this metric would count an English-demo generation answering "The answer is: 42"
-                # as producing NO answer, and answer-present is the ONE layer where the arms might
-                # genuinely differ. Spelling out `"\\boxed" in turn or ANS_RE.search(turn)` here was
-                # already better than a constant and STILL not enough: l1_2x2_diagnose imported
-                # ANS_RE as "the marker", lost the boxed branch, and reported 0/497 for a cell whose
-                # rate is 37.0%. A predicate spread over two operators can be half-copied.
-                #
-                # PINNED 2026-09-03Z, BEFORE the shared-decoder rerun produced any number (6e's
-                # ruling, my scope refinement). Turning rep_stop OFF on both arms makes
-                # answer-present ambiguous, because a looping generation now runs to max_new and
-                # the answer can sit BEFORE the loop starts. Two readings were available:
-                #   (a) a marker ANYWHERE in the model's turn  <- PINNED
-                #   (b) the generation terminates normally AND ends with an answer
-                # (a), because the question is whether the model PRODUCES an answer, not whether it
-                # stops. Stopping is what rep_stop measured, and we just removed it from the
-                # variables. (b) would score "answered correctly but could not stop" as a failure --
-                # which is our arm's known behaviour, so (b) writes the conclusion into the
-                # definition. Position-independent, hence `answer_marker(turn) is not None` and
-                # never a check on where the marker sits.
-                #
-                # SCOPE: the model's TURN, not the raw buffer. model_turn cuts at the point the
-                # model opens a fabricated next problem, and 43.5% of 3-demo generations do that.
-                # Counting markers in the raw buffer would credit an answer to a question the model
-                # invented for itself -- the same defect the last-box rule had before model_turn
-                # existed. So "anywhere" is bounded by the turn, and that bound is the reason the
-                # metric is about the question that was ASKED.
-                #
-                # Pinned before the run because a definition chosen after the numbers exist is
-                # indistinguishable from one chosen to make them look good.
-                n_box += int(answer_marker(turn) is not None)
-                fout.write(json.dumps({"q": r["instruction"], "gen": gen, "ok": ok},
-                                      ensure_ascii=False) + "\n")
-                # FLUSHED PER ROW, because the restartability marker promises an interrupt costs
-                # one batch. Python buffers ~8 KB and a row here is ~1 KB, so without this a
-                # Ctrl-C drops the last several rows and the resume regenerates them -- the
-                # promise would be true of the loop and false of the file, which is exactly the
-                # distinction that made open_artifact's mode="w" a silent truncation.
-                fout.flush()
+                    id_list, val_list = [out_ids[j]], [out_vals[j]]
+                c = 0
+                gens = []
+                for i, (ids, vs) in enumerate(zip(id_list, val_list)):
+                    if args.hf:
+                        gen = hf_tok.decode(ids, skip_special_tokens=True)
+                    else:
+                        gen = fone.decode_text(ids, vs, tok, num_id) if fone_on else tok.decode(ids)
+                    ok = score(gen, r["output"], args.demo_lang)
+                    c += int(ok)
+                    gens.append(gen)
+                    row = {"q": r["instruction"], "gen": gen, "ok": ok}
+                    if args.k > 1:
+                        row["sample"] = i
+                    fout.write(json.dumps(row, ensure_ascii=False) + "\n")
+                    # FLUSHED PER ROW, because the restartability marker promises an interrupt costs
+                    # one batch. Python buffers ~8 KB and a row here is ~1 KB, so without this a
+                    # Ctrl-C drops the last several rows -- for k>1, up to k rows per problem.
+                    fout.flush()
+                correct += c
+                total += args.k if args.k > 1 else 1
+                if args.k > 1:
+                    # pass@k cell: one problem, k samples. pass@1 is the Monte Carlo mean (c/k per
+                    # problem, averaged); pass@k is 1 if any sample is right. degen counts problems
+                    # whose k samples are all identical -- the wiring check, because at temperature
+                    # 0 every problem would be degenerate and pass@k would equal pass@1 by
+                    # construction (the guard above refuses that combination).
+                    n_prob += 1
+                    passk += int(c > 0)
+                    if len(set(gens)) == 1:
+                        degen += 1
+                    n_box += int(any(answer_marker(model_turn(g, args.demo_lang)) is not None
+                                     for g in gens))
+                else:
+                    turn = model_turn(gens[0], args.demo_lang)
+                    # THE ANSWER-PRESENT TEST CALLS answer_marker(), the same predicate the scorer
+                    # uses -- ONE function, not a re-spelled disjunction. Hardcoded `"答案是" in turn`,
+                    # this metric would count an English-demo generation answering "The answer is: 42"
+                    # as producing NO answer, and answer-present is the ONE layer where the arms might
+                    # genuinely differ. Spelling out `"\\boxed" in turn or ANS_RE.search(turn)` here was
+                    # already better than a constant and STILL not enough: l1_2x2_diagnose imported
+                    # ANS_RE as "the marker", lost the boxed branch, and reported 0/497 for a cell whose
+                    # rate is 37.0%. A predicate spread over two operators can be half-copied.
+                    #
+                    # PINNED 2026-09-03Z, BEFORE the shared-decoder rerun produced any number (6e's
+                    # ruling, my scope refinement). Turning rep_stop OFF on both arms makes
+                    # answer-present ambiguous, because a looping generation now runs to max_new and
+                    # the answer can sit BEFORE the loop starts. Two readings were available:
+                    #   (a) a marker ANYWHERE in the model's turn  <- PINNED
+                    #   (b) the generation terminates normally AND ends with an answer
+                    # (a), because the question is whether the model PRODUCES an answer, not whether it
+                    # stops. Stopping is what rep_stop measured, and we just removed it from the
+                    # variables. (b) would score "answered correctly but could not stop" as a failure --
+                    # which is our arm's known behaviour, so (b) writes the conclusion into the
+                    # definition. Position-independent, hence `answer_marker(turn) is not None` and
+                    # never a check on where the marker sits.
+                    #
+                    # SCOPE: the model's TURN, not the raw buffer. model_turn cuts at the point the
+                    # model opens a fabricated next problem, and 43.5% of 3-demo generations do that.
+                    # Counting markers in the raw buffer would credit an answer to a question the model
+                    # invented for itself -- the same defect the last-box rule had before model_turn
+                    # existed. So "anywhere" is bounded by the turn, and that bound is the reason the
+                    # metric is about the question that was ASKED.
+                    #
+                    # Pinned before the run because a definition chosen after the numbers exist is
+                    # indistinguishable from one chosen to make them look good.
+                    n_box += int(answer_marker(turn) is not None)
             # THE DENOMINATOR IS THE WHOLE EVAL SET, not the slice this process generated. With
             # --resume, `evals` is filtered to the unscored remainder while `total` counts the
             # resumed rows too, so `total/len(evals)` would print 400/97 and the accuracy would
             # look like it was measured on 97 problems. n_target is fixed BEFORE the loop: my
             # first version recomputed it from `total` each iteration, which made it grow with
             # the numerator and always read n/n.
-            if total % 64 < args.batch or total == n_target:
-                print(f"  {total}/{n_target} acc={correct / total:.1%}", flush=True)
+            done = n_prob if args.k > 1 else total
+            if done % 64 < args.batch or done == n_target:
+                if args.k > 1:
+                    print(f"  {done}/{n_target} pass@1={correct / total:.1%} "
+                          f"pass@{args.k}={passk / done:.1%}", flush=True)
+                else:
+                    print(f"  {done}/{n_target} acc={correct / done:.1%}", flush=True)
 
     # attest what was WRITTEN, not what was requested: --run versions the path, and
     # attesting preds_path recorded a hash for a file this run never touched.
     attest(out_path)  # the citation contract: the writer proves these bytes existed
     delta = 1.4 / (total ** 0.5)
     acc = correct / total
-    print(f"L1 math-500 few-shot: {correct}/{total} = {acc:.1%}")
-    print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
-          f"instrument exists iff acc > {2 * delta:.1%}")
-    print(f"answer-present rate {n_box / total:.1%}")
+    if args.k > 1:
+        # THE WIRING CHECK. If temperature did not reach the sampler, every problem's k samples
+        # are identical and pass@k == pass@1 by construction -- the metric would look fine and
+        # measure nothing. One non-degenerate problem proves the samples are independent draws.
+        assert n_prob > 0, "no problems scored"
+        assert degen < n_prob, (
+            f"all {n_prob} problems produced {args.k} identical samples -- temperature is not "
+            "wired through to the sampler, so pass@k would equal pass@1")
+        pass1, passk_rate = acc, passk / n_prob
+        print(f"L1 math-500 few-shot pass@1: {correct}/{total} = {pass1:.1%}")
+        print(f"L1 math-500 few-shot pass@{args.k}: {passk}/{n_prob} = {passk_rate:.1%}")
+        print(f"degenerate-problem rate (all {args.k} samples identical): {degen}/{n_prob}")
+        print(f"answer-present rate (any of {args.k} samples) {n_box / n_prob:.1%}")
+    else:
+        print(f"L1 math-500 few-shot: {correct}/{total} = {acc:.1%}")
+        print(f"binomial delta={delta:.1%} -> 2*delta={2 * delta:.1%}; "
+              f"instrument exists iff acc > {2 * delta:.1%}")
+        print(f"answer-present rate {n_box / total:.1%}")
     print(f"preds saved: {out_path}")
 
     if args.out:
         with open(args.out, "w", encoding="utf-8") as f:
-            json.dump({"correct": correct, "total": total, "acc": acc,
+            summary = {"correct": correct, "total": total, "acc": acc,
                         "binomial_delta": delta, "answer_present_rate": n_box / total,
                         "demos": args.demos, "temperature": args.temperature,
+                        "k": args.k,
                         "demo_lang": args.demo_lang, "arm": "control" if args.hf else "ours",
                         "rep_stop": not args.no_rep_stop,
                         "ckpt": os.path.basename(args.ckpt.rstrip("/")),
@@ -687,7 +752,11 @@ def main():
                         # matched to each other and to the checkpoint. Without it the summary is
                         # the third thing whose only link to a checkpoint is a filename.
                         "ckpt_sha256": ckpt_sha256(args.ckpt),
-                        "preds_path": out_path}, f, ensure_ascii=False)
+                        "preds_path": out_path}
+            if args.k > 1:
+                summary.update({"pass1": pass1, f"pass@{args.k}": passk_rate,
+                                "n_problems": n_prob, "degenerate_problems": degen})
+            json.dump(summary, f, ensure_ascii=False)
 
 
 if __name__ == "__main__":
