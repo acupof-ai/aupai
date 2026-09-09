@@ -229,7 +229,7 @@ steps. AUC is rank-sum with ties averaged (self-test: perfect separation
 
 AUC, held out:
 
-| cut | pooled | dd09 | b2v2_dd | rp1t_dd09 | <2KB | 2-10KB | >10KB |
+| cut | pooled | code_dedup08 | code_rp1t_b2v2_dd | code_rp1t_dd09 | <2KB | 2-10KB | >10KB |
 |---|---|---|---|---|---|---|---|
 | >=2 | 0.909 | 0.909 | 0.898 | 0.891 | 0.916 | 0.894 | 0.884 |
 | >=3 | 0.902 | 0.904 | 0.883 | 0.879 | 0.910 | 0.887 | 0.876 |
