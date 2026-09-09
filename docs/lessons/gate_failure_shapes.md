@@ -411,6 +411,20 @@ Adjacent to R13's "measured conclusion in a comment" (§280): that one is a conc
 
 Cannot see: which artifacts are consumed together by position — that lives in the reader's code, not the writers'. A positional join over two files with different producers is the review question.
 
+## R18. A file transfer is unverified until the landed bytes are compared to the source; a syntactically valid corruption charges its error to the runtime before the corrupted line
+
+1 incident (2026-09-10), ~90 GPU-minutes burned. `manual:` — no check compares a script's pod bytes to its source after an argv transfer. Checkable slice: a script launched on the pod whose transfer path has no byte-verification; a scanner could flag pod launches of files not pushed via podput.
+
+The shape has two halves. First: a scoring script's source had `d['kept']`; the bytes that ran on the pod had `d[kept]` — quotes lost in transit through the pod argv path. The transfer had no verification step: podput (base64) verifies sha256 after landing; the argv path verifies nothing, so the corruption was invisible until the line executed. Second: the corrupted artifact was syntactically valid Python — `d[kept]` is a legal bare-name index — so nothing at parse, import, or launch time could object. The corrupted line was the per-domain summary, which executes only after a full domain's shards finish. The error arrived ~90 minutes in, at the most expensive point the script's own structure offers. The same loss in the loop body costs 3 seconds.
+
+- §297: e1's corpus scoring, 235-shard first domain, NameError at the summary line after ~90 min.
+
+The mechanism of the strip is NOT identified. The obvious shape — a heredoc through `~/bin/pod`'s argv — was tested after the incident and preserves quotes in the two shapes tried; e1's exact send command is not recorded. What is established is the absence that mattered: no byte-compare after the transfer. A heredoc can be safe; a transfer without a compare cannot be known safe.
+
+The guard, in coverage order: byte-compare after transfer (catches every corruption, costs a second; podput already does it); failing that, a smoke execution of the post-domain path before the full run (catches the class, costs a minute).
+
+Cannot see: which hop mangled the bytes — the traceback proves the executed bytes, not the transport. The rule does not need the mechanism: the absence of a post-transfer compare is the defect, and it is verified.
+
 ## Design cause: integration happens in a shared writable working tree
 
 User ruling 2026-09-05: analyse to the root, not the surface. The incidents below are ONE cause with surfaces; a shape that names the operator's slip (a timeout wrapper, a cp -r, a stash) as the cause is the surface reading, and this section exists so the doc says so.

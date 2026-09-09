@@ -1426,3 +1426,31 @@ Guard criterion: where two artifacts are joined by position, the ordering must h
 Cost: the coordinate-dependent half of a decontamination instrument's output — calibration and hit coordinates — was silently wrong; the order-independent half reported correctly, which is why the wrong half looked fine.
 Evidence: `datagen/build_locs.py` on the pod, 1,066 bytes, header comment and `sorted(glob)` (4c, read in container 2026-09-10; not on main — `git cat-file -e origin/main:datagen/build_locs.py` fails); `datagen/near_overlap.py` #177 diff (`sign_domain` completion-order loc persistence, the deleted rebuild path, the content guard); b0's misalignment measurement in the #177 review, recorded in the code comment; 4c's order-independence verification.
 open: no scanner flags a positional join over two files with different producers, or a comment asserting an ordering invariant. The checkable slice is mechanical — a zip/row-index join over two artifacts with different writer paths — but no check knows which files are consumed together. And no gate refuses a pod-only script that produces a consumed artifact.
+
+## R18. An unverified transfer; a corruption that defends itself by remaining valid
+
+### §297 (2026-09-10, R18)
+
+**A quote-stripped script ran on the pod for ~90 minutes before reaching the one line the corruption had touched — the per-domain summary — and died there, burning the first domain's GPU time.**
+
+e1's corpus scoring script (`data/p1/score_corpus.py`) finished the first domain (235 shards, ~90 minutes) and crashed at the summary line:
+
+```
+File "/work/aupai/data/p1/score_corpus.py", line 66
+    print(f"== {dom} DONE: keep doc {d[kept]/d[scored]:.4f} ...")
+NameError: name 'kept' is not defined
+```
+
+The source had `d['kept']`; the executed bytes had `d[kept]`. The quotes were lost in transit: the script went to the pod through `~/bin/pod`'s argv path, not through podput. (4c read the traceback in the container; the file has since been repaired and the log overwritten by the restart, so the corrupted bytes themselves no longer exist.)
+
+Two halves, both verified; the mechanism between them not.
+
+**Half one — the transfer was unverified.** podput's contract is base64 plus a sha256 compare after landing (the pod_push output line "verified on the pod: N file(s) sha256 match"). The argv path has no compare: the bytes that land are the bytes that run, and nothing notices if they differ from the source. The corruption was invisible until execution. Tested after the incident (44): the obvious invocation — a heredoc through `~/bin/pod`'s argv, outer double quotes — preserves `d['kept']` byte-for-byte, both as a one-liner and as the exact crash line. So the strip's mechanism is NOT the obvious heredoc path; e1's exact send command is not recorded, and the hop that mangled the bytes is unidentified. What is established is the absence that made the strip free: no byte-compare after the transfer. A heredoc can be safe; a transfer without a compare cannot be known safe.
+
+**Half two — the corruption defended itself by remaining valid.** `d[kept]` is syntactically legal Python: a subscript with a bare-name key. Parse, import, and launch all pass; only executing the line objects. The line was the per-domain summary — the last line to run in a domain's ~90-minute loop. The error's arrival time is set by where the corrupted line sits in the runtime order, and it sat at the most expensive point. The same quote loss in the loop body costs 3 seconds.
+
+The guard, in coverage order: byte-compare after transfer (catches every corruption, costs a second; podput already does it); failing that, a smoke execution of the post-domain path before the full run (catches the class, costs a minute). The CLAUDE.md rule (podput, base64) already existed; what it lacked was the sentence saying the argv path is not a safe substitute — not because it mangles bytes, it need not — but because it verifies nothing.
+
+Cost: ~90 GPU-minutes of a first-domain run, plus the debugging. The repaired run restarted from disk stats (the shard stats were persisted — the restart log shows "stats recomputed from disk (all shards skipped)"), so the loss was the recompute, not the data.
+Evidence: the traceback (4c, read in container 2026-09-10); the repaired file and restarted log on the pod (`runs/p1_score_corpus.log`, past the crash and into domain 2 at review time); the quote-survival test (44, two shapes, heredoc via `~/bin/pod` argv, both preserved); podput's sha256 verification line (this repo's pod_push output).
+open: the hop that stripped the quotes is unidentified — e1's exact send command was not recorded. No gate refuses a pod launch of a script that arrived by a path with no byte-verification.
