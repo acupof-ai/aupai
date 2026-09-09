@@ -2,9 +2,9 @@
   "facts": [
     {
       "id": "distill.teacher_vocab",
-      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, no added tokens; auxiliary tokenizer.arle.bin 7,207,591 bytes. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x.",
-      "measured": "2026-09-08",
-      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587), vocab.json (248044)",
+      "value": "Qwen3.8-27B tokenizer: BPE, vocab 248,044 (247,587 merges), tokenizer_class Qwen2Tokenizer, model_max_length 262,144, eos=<|im_end|>, pad=<|endoftext|>, no added tokens; auxiliary tokenizer.arle.bin 7,207,591 bytes. The model's embedding table is 248,320 (248,044 padded to a multiple of 128 = 1940x128), read from model.safetensors; that is the operative output dimension for any logits-level comparison. Our vocab: 32,773 (facts/tokenizer.json#tok.vocab_size). Ratio 7.57x either way.",
+      "measured": "2026-09-09",
+      "source": "read on the pod: /work/Qwen3.8-27B-NVFP4/tokenizer_config.json, tokenizer.json (model.type=BPE, len(model.vocab)=248044, len(model.merges)=247587), vocab.json (248044); model.language_model.embed_tokens.weight [248320, 5120] from model.safetensors header (2026-09-09)",
       "config": {
         "teacher_dir": "/work/Qwen3.8-27B-NVFP4",
         "ours": "data/tokenizer.json"
@@ -18,7 +18,7 @@
       "measured": "2026-09-08",
       "source": "derived from distill.teacher_vocab + facts/tokenizer.json#tok.vocab_size + the freeze record",
       "config": {
-        "teacher_vocab": 248044,
+        "teacher_vocab": 248320,
         "ours_vocab": 32773,
         "freeze_date": "2026-08-29"
       },
