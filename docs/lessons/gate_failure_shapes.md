@@ -223,7 +223,7 @@ Cannot see: whether a number's population matches the vision it is reported unde
 
 ## R4. Failures must be loud: checks before the write, raise or exit nonzero, never print-and-continue
 
-15 incidents (9 infra, 5 model), ~3h each, 42h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
+16 incidents (10 infra, 5 model), ~3h each, 45h. `manual:` loud-failure is a code-review property; some selftests assert exit codes, but no general check verifies that a failure path raises rather than prints.
 
 - §13: a world-build step silently failed; the check ran on an empty population and passed. A silent failure is indistinguishable from success.
 - §51: an observation channel swallowed the signal; the check read the channel's default, not the observation.
@@ -232,6 +232,8 @@ Cannot see: whether a number's population matches the vision it is reported unde
 - §265: a GREEN pull request turned the base RED, and every other open PR then failed on a defect none of them contained. PR CI runs on the merge of the PR into the base as it stands at that moment; nothing re-runs the base's own selftest against the base afterwards. PR #7 was green when merged and carried a `globals()["ROOT"]` patch into main, where the core-reexport guard flags that pattern by name; the fix was on a separate branch, because the guard first fired on CI for a LATER PR. #4 and #5 each burned two rounds on a message naming a file they do not touch, so the reader's first hypothesis is their own change. Until a post-merge job reads the base: a PR failing on code it does not touch is a base failure until proven otherwise, and merging main into it is the test.
 
 Cannot see: whether a print-and-continue path exists in code not covered by a selftest (§7, §25, §59, §136, §166, §181, §188, §193, §197, §204); whether a loud failure was READ correctly by the command that checked for it (§251); whether a broken world is red for its own mutation or for something else (§256) — checkable by running each `_broken_*` twice, priced out at 104 worlds.
+
+- §288: a socket field accepts any `uds:...` string and no writer checks the file exists; two sessions wrote a "socket" built from a listagents ref within one hour (de-85's rows, and the dispatch of them). The ref is the same shape as a socket suffix and the roster prints them in adjacent columns. Anything sent to the placeholder reaches nobody; the write must refuse a path that does not exist.
 
 ## R7. Retractions travel as wide as the ruling and name the todos they void; constraints are machine checks, not prose
 
@@ -314,6 +316,7 @@ Adjacent, filed elsewhere: §272 (R2) computes a property's population with the 
 Also the reason a selftest is built from the real tree rather than a fixture wherever it can be: a fixture is a population the author chooses, and the author is the person who already chose wrong once.
 
 Cannot see: whether a hand-enumerated population is complete, in general. What IS checkable, per instance, is that no member of a sub-population is missed by the predicate that should subsume it, and that the output states the size of the population it scanned — 78 ledgers, 64 of 64 rows truncated — so a reader can compare it to the one they meant.
+- §289: rebuilding the six-person assignment from tasks.jsonl silently dropped two conversation-assigned items (b0-48, e1's spec-close package -- zero rows each). The register answers "what is registered", not "what was assigned"; completeness has to be asserted against the owners, not the list.
 
 ## R12. A green line whose result is anti-correlated with its own name; assert the property, not a message that accompanies it, and never a line that can pass by not running
 
