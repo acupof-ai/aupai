@@ -646,7 +646,7 @@ open: unenforceable by a repo scan — the failing form is a shell command in a 
 
 RENUMBERED FROM §248, and the renumber is its own instance of the same rule. This text was written and staged as §248, then LOST: it was carried aside to /tmp during a behind-main merge and never restored afterwards, so nothing was committed while I reported to the user that it had landed. tilerl filed a different §248 in the gap. The hand-carry that dropped it is exactly what the tilerl-31 staged-index carry in `scripts/merge_main.sh` now automates -- the fix and the loss met in the same hour.
 
-### §288 (2026-09-08, R4)
+### §291 (2026-09-08, R4)
 A wall-clock gate samples a PHASE of the operation it interrupts, and the phase decides what state the kill leaves. N1 (the anneal N arm) first launched 2026-09-08 14:49Z from the pod's `anneal_arms.sh`, in the version before PR #111: `--seed 1337`, no `--sample_seed`, so `_sample_seed()` fell back to `Cfg.seed` = 1337 while the nine caches were stamped 42. `same_seed` was False for every domain, so the launch retokenized the whole mix; the 120s startup gate SIGTERMed it while `math_owm_stage2` was tokenizing. The write order in `_domain_seqs` is `_encode_domain` -> `torch.save(data, cache)` -> `.vocab` -> `.srcfp` -> `.seed` (train.py:2225-2244), and the kill landed before `torch.save`, so no durable state changed at all: all nine caches stayed stamped 42. The 16:59Z relaunch carried `--sample_seed 42` (PR #111's pin, in the train.py pushed to the pod that afternoon), `same_seed` held, nothing retokenized, and the run finished at final val 1.823. **The gate that killed the run also saved the caches, by accident.** The counterfactual is one duration away: had `math_owm_stage2` tokenized inside the deadline, the same gate fires after `torch.save` and before the `.seed` write, leaving a cache shuffled at 1337 stamped 42 -- and the next launch's `fresh` is True (same vocab, same source, same seed, mtime fresh), so it trains on the wrong-order cache in silence. The resume-cursor misinterpretation the `.seed` stamp exists to prevent (de-7) would arrive through the stamp's own write window. The loud kill -- timeout reported, run dead, launch nonzero -- was the benign one; the silent one needs only a shorter tokenize. A deadline measured from launch knows nothing about the interrupted operation's intermediate state, and nothing in the gate's output says which world it left behind.
 
 The same shape one level up, in the gate's sizing: `_derive_gate_timeout` sizes the deadline from cache bytes on disk, and a cache that EXISTS but is stale -- seed, vocabulary, or source mismatch -- is bytes on disk. It is sized as a warm load while the job does a cold one's work. The all-cold case already refuses rather than falls back (2026-08-31); the stale-cache case is the remaining hole, and closing it needs the gate to read the stamps, not the bytes: the seed and vocabulary comparisons are cheap file reads against the launch's own flags, and only the source fingerprint needs a recompute.
@@ -1242,3 +1242,51 @@ Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json`
 runs and is committed at close -- §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
 one thing; the assertion would be over the built plan, not over the mix files.
+
+
+### §288 (2026-09-09, R4)
+
+**A socket field accepts a dead address and every writer takes it: two sessions independently
+wrote a "socket" built from a listagents ref within one hour.**
+
+de's de-85 rows (`runs/tasks.jsonl`, ids de-85) carry `"socket": "uds:/tmp/cc-socks/4e353c.sock"`
+-- `4e353c` is de's listagents ref, not a socket; no such file ever existed. One row knows it:
+"Note the socket in this row is a placeholder built from de's listagents ref, not read from
+runs/roster.json -- correct it before relying on it." fb made the identical substitution
+dispatching de-85 the same hour. The field's grammar admits any `uds:...` string and no writer
+checks the file exists, so a value that looks like an address is accepted as one, and anything
+sent to it reaches nobody.
+
+Why the field invites it: a listagents ref is a hex string of the same shape as a socket suffix,
+and the roster prints both in adjacent columns (`listagents_ref` beside `socket`). The fix is a
+check at the write: a socket row whose path does not exist refuses, the way a card claim refuses
+a held card. R13 is the secondary reading -- the ref was resolvable information stored in a field
+that cannot use it -- but the failure that bit is R4: the write never failed.
+
+Evidence: `runs/tasks.jsonl` de-85 rows (2026-09-09 02:05); the roster note corrected in #119
+("A ref is not a socket, and a row carrying one addresses nobody"). Cost: not measured -- no
+message is known to have been lost, because a lost message leaves no trace; that is the shape.
+
+### §289 (2026-09-09, R11)
+
+**A rebuild from the register answers "what work is registered", not "what work was assigned" --
+two real items were silently absent from a complete-looking assignment.**
+
+The 2026-09-09 03:3xZ rebuild of the six-person assignment enumerated `runs/tasks.jsonl`. Two
+items assigned in conversation had no row: b0 named `b0-48` as ready to push (zero rows in
+tasks.jsonl), and e1's "spec-close package" -- `prereg_registers_recipe_values` -- appears zero
+times in tasks.jsonl and zero times in harness.py. Neither existed to be rebuilt, so the rebuild
+dropped both while looking complete.
+
+The population the rebuild needed is "work a session is actually doing", which lives in messages
+and branch heads; the population it enumerated was "work with a ledger row". R11's fix is
+structural: the population must come from the source, not a list -- here, asking each owner
+"what are you doing that has no row" before declaring the assignment complete, or requiring
+assignment to exist only when registered. The register cannot show the work it does not contain,
+and a rebuild that asserts completeness against the register asserts against a list.
+
+Evidence: `grep b0-48 runs/tasks.jsonl` -> 0 rows (2026-09-09); `grep prereg_registers_recipe_values`
+-> 0 in tasks.jsonl and 0 in harness.py; the rebuild is `runs/controller_board.md`'s assignment
+section (b397eb97). Cost: none realised -- both surfaced in the same hour's conversation and were
+re-attached; the cost that did occur is that the rebuild's completeness was unverifiable from its
+own output.
