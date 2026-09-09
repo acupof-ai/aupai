@@ -8,10 +8,11 @@
   "the run it was made for, so the next launcher would have read it as licence to take",
   "cards 4 and 7 -- which hold the USER'S OWN work in another container. The rule above",
   "cuts both ways: a card's owner is not the nvidia-smi row, and it is not a superseded",
-  "grant either."
+  "grant either.",
+  "cards[] entries may be objects instead of prose: {\"owner\": \"aupai\"|\"tilerl\" (a decision, no expiry), \"note\": prose, \"observed_block\": {\"asserted_at\", \"probe\", \"expect\", \"target?\"}} for a blocking FACT with a re-runnable probe. check card_observed_blocks_fresh re-runs every probe per commit and FAILs the moment it no longer holds, so an observation cannot outlive its fact the way the 09:0xZ ARLE-serve note did (gone for hours, file still said HELD). target \"pod\" (default) runs in the container and skips when the pod is unreachable; \"local\" runs in the shell. While a block stands the card refuses; when it expires the classifier falls back to owner, never to unclassified. Old string notes keep parsing."
  ],
  "granted_by": [
-  "user 2026-09-08 (\"做呗\") -- four cards return to aupai; tilerl-27 said they need four tonight (0 level-5 eval, 3 GSM8K steps_to_score to 16:00Z, +1 for the 1x8 vs 2x4 arm, +1 conditional reserve confirmed/released at 16:00Z). fb allocates 4,5,6,7 to aupai and leaves 1,2 for tileRL's two pending arms; 0 and 3 are running theirs. First job: 3b's three anneal arms on mix_200m_4b (N1/N2 seed-noise floor, R reweighted), the user's \"先跑 3B 数据看看\"",
+  "user 2026-09-08 (\"\u505a\u5457\") -- four cards return to aupai; tilerl-27 said they need four tonight (0 level-5 eval, 3 GSM8K steps_to_score to 16:00Z, +1 for the 1x8 vs 2x4 arm, +1 conditional reserve confirmed/released at 16:00Z). fb allocates 4,5,6,7 to aupai and leaves 1,2 for tileRL's two pending arms; 0 and 3 are running theirs. First job: 3b's three anneal arms on mix_200m_4b (N1/N2 seed-noise floor, R reweighted), the user's \"\u5148\u8dd1 3B \u6570\u636e\u770b\u770b\"",
   "user 2026-09-08 direct to tilerl-27 (all eight to tileRL); fb recorded",
   "fb 2026-09-08T~10Z (lent aupai's six to tileRL; aupai GPU work still stopped)",
   "fb 2026-09-08T08:5xZ (user order: release every card, cleanup first)",
