@@ -15724,6 +15724,92 @@ def _assert_card_ownership(root):
     return None
 
 
+def check_card_observed_blocks(root=ROOT):
+    """Every cards[] observed_block still holds: its probe re-runs and its expect matches.
+
+    An observed_block is a FACT, not a decision -- "another container holds this card",
+    asserted at a time, carrying a probe a check can re-run. This is the alarm the 2026-09-09
+    incident lacked: the 09:0xZ note "HELD BY ANOTHER CONTAINER, 97 GiB" outlived the ARLE
+    serve by hours and nothing went red, so tilerl-27 under-used card 5 and warmdown planning
+    counted cards from a wrong file. A prose observation cannot be re-checked, so it cannot
+    expire; a probed one can, and this FAILs in the under-use direction -- while the block
+    stands the classifier refuses the card (fail closed), and when the world moves on this
+    names the card the same day so the file gets corrected.
+
+    A probe with target "pod" (the default) runs in the container through the pod wrapper and
+    SKIPs when the pod is unreachable: a dead tunnel is not an expired observation
+    (pod_reachable's lesson). target "local" runs through the local shell; the broken world
+    uses it so the selftest runs anywhere. A probe that errors or times out has stopped
+    holding.
+
+    Malformed entries FAIL too: a block a human cannot re-run is a block that cannot expire,
+    which is the defect this field exists to remove.
+    """
+    blocks = [(c, n["observed_block"]) for c, n in _card_map(root).items()
+              if isinstance(n, dict) and isinstance(n.get("observed_block"), dict)]
+    if not blocks:
+        return PASS, "no observed_block entries"
+    stale, skipped, bad = [], [], []
+    pod_bin = os.environ.get("HARNESS_POD_BIN") or os.path.expanduser("~/bin/pod")
+    for c, ob in blocks:
+        probe, expect, asserted = ob.get("probe"), ob.get("expect"), ob.get("asserted_at")
+        if not isinstance(probe, str) or not probe or not isinstance(expect, str) \
+                or not isinstance(asserted, str) or not asserted:
+            bad.append(c)
+            continue
+        target = str(ob.get("target") or "pod").lower()
+        got, holds = "", False
+        try:
+            if target == "pod":
+                ok, _why = pod_reachable()
+                if not ok:
+                    skipped.append(c)
+                    continue
+                r = subprocess.run([pod_bin, probe], capture_output=True, text=True, timeout=30)
+            else:
+                r = subprocess.run(probe, shell=True, capture_output=True, text=True, timeout=30)
+            got = (r.stdout or r.stderr or "").strip()
+            holds = r.returncode == 0 and expect in r.stdout
+        except (OSError, subprocess.TimeoutExpired) as e:
+            got = f"{e.__class__.__name__}"
+        if not holds:
+            stale.append((c, asserted, probe, got[-120:]))
+    if bad:
+        return FAIL, ("cards[] observed_block entries missing asserted_at/probe/expect on "
+                      f"card(s) {_csv(sorted(bad))} -- a block nobody can re-run cannot expire, "
+                      "which is the defect this field exists to remove")
+    if stale:
+        return FAIL, (f"{len(stale)} observed_block(s) outlived the fact they recorded: "
+                      + "; ".join(f"card {c}: asserted {a}, probe {p!r} no longer holds "
+                                  f"(got {got!r})" for c, a, p, got in stale)
+                      + ". The observation is stale, not the card: delete or re-assert the "
+                      "block; the owner field decides who owns it")
+    msg = f"{len(blocks)} observed_block(s) hold"
+    if skipped:
+        msg += f", {len(skipped)} skipped (pod unreachable)"
+    return PASS, msg
+
+
+def _broken_card_observed_blocks():
+    """The REAL grant file with one observed_block whose probe no longer holds."""
+    import shutil
+    d = _tmp_repo()
+    os.makedirs(os.path.join(d, "runs"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "runs", "card_assignment.json"),
+                os.path.join(d, "runs", "card_assignment.json"))
+    p = os.path.join(d, "runs", "card_assignment.json")
+    with open(p, encoding="utf-8") as fh:
+        a = json.load(fh)
+    a.setdefault("cards", {})["9"] = {
+        "owner": "aupai",
+        "observed_block": {"asserted_at": "2026-09-09T09:00Z", "probe": "false",
+                           "expect": "x", "target": "local"},
+    }
+    with open(p, "w", encoding="utf-8") as fh:
+        json.dump(a, fh)
+    return d
+
+
 def check_allocation_reads_the_grant(root):
     """The cards a training launch GETS are the cards the grant file GIVES.
 
@@ -17152,6 +17238,16 @@ CHECKS = [
         _broken_allocation_reads_the_grant,
     ),
     (
+        "card_observed_blocks_fresh",
+        "every cards[] observed_block's probe still holds, and the entry is well-formed",
+        "an observation written into card prose outlived the fact it recorded by hours and "
+        "nothing went red: the 09:0xZ 'HELD BY ANOTHER CONTAINER, 97 GiB' note kept card 5 "
+        "reading as blocked after the ARLE serve was gone, so tilerl-27 under-used it and "
+        "warmdown planning miscounted cards (4c, 2026-09-09)",
+        check_card_observed_blocks,
+        _broken_card_observed_blocks,
+    ),
+    (
         "env_importable",
         "every third-party module the repo imports is installed",
         "a container restart dropped the writable layer; SFT died on ModuleNotFoundError and read as a code bug",
@@ -17947,6 +18043,7 @@ EVIDENCE = {
     "card_held_without_claim": "pod", "lane_respected": "pod", "no_foreground_pod_training": "pod", "root_durable": "pod",
     # repo: the two card-source files are both tracked, so this answers the same anywhere
     "allocation_reads_the_grant": "repo",
+    "card_observed_blocks_fresh": "repo",
     # repo: harness.py and the hook are both tracked, so the worlds' shape answers the same
     # anywhere. `auth=?` is not a third value -- an unregistered check prints it and is then
     # neither mirrored on the pod nor gated, which is a check outside the rule rather than
@@ -21995,6 +22092,75 @@ def _selftest_card_lend_expires():
             "wording FAILs, absent PASSes")
 
 
+def _selftest_card_observed_blocks():
+    """The object form of a cards[] note: owner decides, an observed_block expires by its probe.
+
+    A SEPARATE FUNCTION from _selftest_card_lend_expires, because that one SKIPS whenever the
+    live file carries no parseable lend -- the usual state -- and these cases depend on the
+    live file only as a world base, not on any lend in it. Folded in, they would run in the
+    one hour a window is open and never otherwise: the registered broken world covers the
+    check's FAIL half, this covers the classifier's third state and the check's PASS half.
+
+    The third state is the one 4c said must not be guessed (2026-09-09): an expired block
+    falls BACK to the owner, never to unclassified. A fact that moved must not read as a card
+    with no owner.
+    """
+    import copy
+    import shutil as _sh
+    import tempfile as _tf
+
+    live_p = os.path.join(ROOT, "runs", "card_assignment.json")
+    if not os.path.isfile(live_p):
+        raise SelftestSkip("no runs/card_assignment.json to derive worlds from")
+    with open(live_p, encoding="utf-8") as fh:
+        live = json.load(fh)
+
+    def world(mut):
+        d = copy.deepcopy(live)
+        mut(d)
+        t = _tf.mkdtemp(prefix="oblock_")
+        os.makedirs(os.path.join(t, "runs"), exist_ok=True)
+        with open(os.path.join(t, "runs", "card_assignment.json"), "w") as f:
+            json.dump(d, f)
+        return t
+
+    _block = {"asserted_at": "2026-09-09T09:00Z", "probe": "echo held", "expect": "held",
+              "target": "local"}
+    # THE CLASSIFIER, straight: owner decides; no owner refuses; the block's three verdicts.
+    assert _classify_card_note({"owner": "aupai"}) == "ours"
+    assert _classify_card_note({"owner": "tilerl"}) == "theirs"
+    assert _classify_card_note({}) == "unclassified"
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block}) == "theirs", (
+        "an UNMEASURED block must fail closed: nobody re-ran the probe, so it has not expired")
+    assert _classify_card_note({"owner": "aupai", "observed_block": _block},
+                               probe_holds=True) == "theirs"
+    _expired = _classify_card_note({"owner": "aupai", "observed_block": _block},
+                                   probe_holds=False)
+    assert _expired == "ours", (
+        f"an expired block must fall back to the owner, got {_expired!r} -- the third state "
+        "must never be unclassified, or a fact that moved reads as a card with no owner")
+    # THE CHECK RE-RUNS THE PROBE. A holding block passes; a malformed one FAILs, because a
+    # block nobody can re-run cannot expire (the stale half is the registered broken world).
+    t_hold = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": _block}))
+    try:
+        _st, _ = check_card_observed_blocks(t_hold)
+        assert _st == PASS, f"a holding observed_block FAILED: {_st}"
+    finally:
+        _sh.rmtree(t_hold, ignore_errors=True)
+    t_bad = world(lambda d: d["cards"].__setitem__(
+        "9", {"owner": "aupai", "observed_block": {"asserted_at": "t"}}))
+    try:
+        _st2, _ = check_card_observed_blocks(t_bad)
+        assert _st2 == FAIL, f"a malformed observed_block did not FAIL: {_st2}"
+    finally:
+        _sh.rmtree(t_bad, ignore_errors=True)
+    return ("object-form cards[] entries: owner decides (aupai->ours, tilerl->theirs, "
+            "none->unclassified); an observed_block is theirs while live or unmeasured and "
+            "falls back to the owner when the probe expires, never to unclassified; the check "
+            "passes a holding probe and FAILs a malformed block")
+
+
 def _selftest_facts_ephemeral_only_source():
     """A fact whose ONLY evidence is a /tmp path FAILs; one with something openable beside it
     does not.
@@ -23839,6 +24005,7 @@ def _demo(only=None):
         _selftest_exp_reclassify_monitor_close,
         _selftest_main_in_no_worktree_discriminates,
         _selftest_card_lend_expires,
+        _selftest_card_observed_blocks,
         _selftest_facts_ephemeral_only_source,
         _selftest_facts_retracted_value_names_what_died,
         _selftest_check_timeout_skips,
