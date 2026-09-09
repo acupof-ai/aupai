@@ -16458,6 +16458,63 @@ def _broken_fixture_not_live_state():
     return d
 
 
+def check_shared_config_not_fixture_identity(root):
+    """The shared repo's git identity is not a test-fixture signature.
+
+    A selftest that runs `git config user.name t` under a leaked GIT_DIR writes the SHARED
+    .git/config instead of its temp world -- GIT_DIR overrides both -C and cwd. It flipped
+    this repo's author identity to t <t@t> on 2026-09-07 (de's manual pod_push.sh --selftest
+    run, friction near_miss row), and 558 commits landed as t before anyone read
+    `git log --format=%an`. The hook strips GIT_* before the selftests it invokes, and the
+    hook's config-digest guard brackets only that loop -- a manual `--selftest` run is
+    outside it, which is the path that fired. This check is the backstop: whatever vector
+    flips the config, the next `harness check` (every commit's hook, plus CI) goes red.
+
+    THE FIXTURE SIGNATURES, NOT THE COMMANDED IDENTITY. The repo's identity is one human's
+    and may legitimately change; the fixture literals are the values that are never
+    legitimate. Census of the tree's fixture identities, 2026-09-09 (grep user.name/email
+    literals across *.py and *.sh): name=t (42), email=t@t (38), email=t@example.invalid
+    (15), name=T (14, merge_main.sh's fixtures), email=t@t.t (2), email=a@b (1). A new
+    fixture identity must be added here or it leaks past this check. An unset identity
+    (the pod) passes.
+    """
+    _FIXTURE_NAMES = {"t", "T"}
+    _FIXTURE_EMAILS = {"t@t", "t@example.invalid", "t@t.t", "a@b"}
+    name = subprocess.run(["git", "-C", root, "config", "user.name"],
+                          capture_output=True, text=True).stdout.strip()
+    email = subprocess.run(["git", "-C", root, "config", "user.email"],
+                           capture_output=True, text=True).stdout.strip()
+    if name in _FIXTURE_NAMES or email in _FIXTURE_EMAILS:
+        return FAIL, (f"the shared git identity is a fixture signature ({name} <{email}>). "
+                      f"A selftest wrote .git/config under a leaked GIT_DIR -- the manual "
+                      f"--selftest path is outside the hook's digest guard. Find the selftest "
+                      f"that ran last and restore the identity the repo used before it")
+    return PASS, (f"shared git identity is {name or '<unset>'} <{email or '<unset>'}>, "
+                  f"not a fixture signature")
+
+
+def _broken_shared_config_not_fixture_identity():
+    """A repo whose config was flipped to the merge_main fixture identity must FAIL.
+
+    The world holds the real scripts/merge_main.sh because the selftest's meta-check
+    requires a repo-real path; the check reads only git config, so the FAIL comes from
+    the two config lines below, not the file. The T/t@t pair is merge_main.sh's own
+    fixture identity, exercising the name=T branch.
+    """
+    import shutil
+    d = _tmp_repo()
+    sh = lambda *a: subprocess.run(["git", "-C", d, *a], capture_output=True, text=True)
+    sh("init", "-q", "-b", "main")
+    sh("config", "user.name", "T")
+    sh("config", "user.email", "t@t")
+    os.makedirs(os.path.join(d, "scripts"), exist_ok=True)
+    shutil.copy(os.path.join(ROOT, "scripts", "merge_main.sh"),
+                os.path.join(d, "scripts", "merge_main.sh"))
+    sh("add", "-A")
+    sh("commit", "-qm", "base")
+    return d
+
+
 CHECKS = [
     (
         "fixture_not_live_state",
@@ -16469,6 +16526,17 @@ CHECKS = [
         "believe the test is isolated",
         check_fixture_not_live_state,
         _broken_fixture_not_live_state,
+    ),
+    (
+        "shared_config_not_fixture_identity",
+        "the shared repo's git identity is not the t <t@t> fixture signature",
+        "2026-09-07: a manual pod_push.sh --selftest with GIT_DIR exported wrote the fixture "
+        "identity into the shared .git/config (GIT_DIR overrides -C and cwd), and 558 commits "
+        "landed as t <t@t> before anyone read git log --format=%an. The hook's config-digest "
+        "guard brackets only the selftests the hook itself runs; a manual --selftest is "
+        "outside it. This check is the backstop that fires on the next commit after any flip",
+        check_shared_config_not_fixture_identity,
+        _broken_shared_config_not_fixture_identity,
     ),
     (
         "no_hardcoded_cache_path",
@@ -17320,6 +17388,10 @@ EVIDENCE = {
     "mutation_asserted_took": "repo",
     # repo: it reads tracked test files with ast and answers the same anywhere.
     "fixture_not_live_state": "repo",
+    # repo: it reads the shared .git/config's user.name/email, which every worktree of this
+    # repository shares and CI's checkout carries. Green here IS green on main. On the pod the
+    # identity is unset, which the check passes by design.
+    "shared_config_not_fixture_identity": "repo",
     # repo: the subject is git ls-files joined against pod_drift.SCOPE, both of which are the
     # checkout's. On the pod git ls-files is empty, so the check degrades to its own SKIP before
     # the auth rule is ever consulted.
@@ -23460,6 +23532,17 @@ _FROZEN_KEYS = (
     # segment and it silently becomes the MoE-24 arm at the same parameter count.
     "moe_experts", "moe_top_k", "moe_shared", "moe_expert_ffn", "moe_layers",
     "moe_latent", "moe_shared_ffn",
+    # FROZEN, and NOT beside `seed` in the allow-list even though it is a seed. `seed` is there
+    # as "the quantity that is supposed to vary"; this one decides WHICH ROWS the run reads, so
+    # two ladder points that disagree on it differ in their data and not only in D -- which is
+    # the one thing the ladder exists to isolate. train.py's `_build_row_cursor` already refuses
+    # a resume whose cursor was written at another sample_seed (the pool is shuffled differently,
+    # so the row count indexes other documents), but that covers one run in two halves; nothing
+    # compares two SEPARATE points, and ladder_cfg_consistent is what does.
+    #   The flag exists so a seed sweep can pin it: unset, `_sample_seed` follows Cfg.seed, so
+    # --seed alone reshuffles the corpus and folds row-order variance into what was meant to be
+    # an init-variance measurement (de-7; the anneal N1/N2 arms, 09-08).
+    "sample_seed",
 )
 
 # Architecture constants with no CLI flag. They cannot drift via a launch, so
@@ -23484,6 +23567,7 @@ _UNFROZEN_ALLOWLIST = {
     "seed",               # the quantity that is supposed to vary
     "name", "mix", "resume", "max_steps",  # run management
     "save_every",         # checkpoint cadence, an operational knob, not a recipe key
+    "build_only",         # inspection flag (scripts/active_params.py): builds the model, prints params, exits before training
     "fp8",                # training precision, not architecture
     # Beside fp8 and for the same reason: a precision knob, not architecture. It exists because
     # --fp8 performs TWO things -- the bf16 cast AND convert_to_fp8_compute -- so dropping it to
