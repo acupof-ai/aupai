@@ -36,15 +36,15 @@
     },
     {
       "name": "b0",
-      "socket": "uds:/tmp/cc-socks/92633.sock",
+      "socket": "uds:/tmp/cc-socks/2558.sock",
       "role": "research",
       "topics": [
         "mix",
         "architecture"
       ],
-      "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b).",
-      "listagents_name": "lessons-62",
-      "listagents_ref": "a7fc18"
+      "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). 2026-09-09: corrected after a resume -- the session ran out of context and relaunched as lessons-d1 [0e4d13] on socket 2558.sock; the old 92633.sock is dead (its pid no longer exists). A resume keeps the work and changes the label, so this entry is corrected after every resume rather than carried stale.",
+      "listagents_name": "lessons-d1",
+      "listagents_ref": "0e4d13"
     },
     {
       "name": "e1",
