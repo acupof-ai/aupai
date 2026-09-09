@@ -1756,6 +1756,28 @@ _within = (_csa(_q, _k2, _v2, cu=_cu)[:, :10] - _yc[:, :10]).abs().max().item()
 assert _within > 1e-6, (
     f"a perturbation is invisible inside its own document (delta {_within:.2e}); the "
     f"cross-document assertion above is then asserting over a dead path")
+
+# 4b. DOCUMENTS SHORTER THAN A BLOCK still isolate and stay visible within themselves
+#     (de's edge on this PR): blocks are per-document, so a 1- and a 3-token doc each get
+#     their own partial block, visible to themselves and to nothing across the boundary.
+_csa16 = model.CompressedSparseAttention(_CfgCsaOn, 4, 16).double()
+_q16, _k16, _v16 = (torch.randn(1, 20, 4, 16, dtype=torch.double) for _ in range(3))
+_cu16 = torch.tensor([0, 1, 4, 20], dtype=torch.int32)   # docs of len 1, 3, 16
+_y16 = _csa16(_q16, _k16, _v16, cu=_cu16)
+assert torch.isfinite(_y16).all(), "CSA produced non-finite output on sub-block-length docs"
+_k16b, _v16b = _k16.clone(), _v16.clone()
+_k16b[:, 0] += 7.0
+_v16b[:, 0] += 7.0
+assert (_csa16(_q16, _k16b, _v16b, cu=_cu16)[:, 1:] - _y16[:, 1:]).abs().max().item() == 0.0, (
+    "a 1-token document leaked across its boundary")
+_k16c, _v16c = _k16.clone(), _v16.clone()
+_k16c[:, 2] += 7.0
+_v16c[:, 2] += 7.0
+_y16c = _csa16(_q16, _k16c, _v16c, cu=_cu16)
+assert (_y16c[:, 4:] - _y16[:, 4:]).abs().max().item() == 0.0, (
+    "the 3-token document leaked into the next document")
+assert (_y16c[:, 1:4] - _y16[:, 1:4]).abs().max().item() > 1e-6, (
+    "a 3-token document is invisible inside itself -- its partial block and window are dead")
 print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all {_T - 1} "
       f"perturbed positions; doc-packed input isolated (cross-doc delta 0.0, within-doc "
-      f"{_within:.2e})")
+      f"{_within:.2e}); sub-block-length docs isolated and self-visible")
