@@ -3584,6 +3584,56 @@
       "uncertainty": "single card, single run; the reference is O(T^2) in the select gather and materialises (B,H,T,2048) scores in PyTorch -- this is the REFERENCE implementation cost, not the architecture cost; a fused select/window kernel is the fast path. Correctness is unaffected (test_arch_compat cases 1/4/4b green on main).",
       "boundary": "attention-module step, not full-model step (no MoE, no loop); same-card same-shape A/B so the ratio is the number that matters, the absolute tok/s are module-level",
       "status": "recorded"
+    },
+    {
+      "id": "eff.teacher_serve_warm_throughput",
+      "value": "700 tok/s aggregate (233/card) on 3xH20, warm; 32 concurrent x 512 tokens, round-robin 3 ports",
+      "measured": "2026-09-09",
+      "source": "teacher_throughput.py 8010,8011,8012 32 512 (pod); exp row runs/experiments.jsonl#teacher_serve_0909",
+      "config": {
+        "model": "Qwen3.8-27B-NVFP4",
+        "stack": "tilerl serve (worktree tilerl-dd, origin/main e4aaf8c)",
+        "flags": "--max-ctx 4096 --max-batch 32 --slots 32",
+        "cards": "4,5,7",
+        "concurrency": 32,
+        "max_tokens": 512,
+        "kv_blocks": 8192,
+        "warm": "JIT cached (248s one-time)"
+      },
+      "uncertainty": "two warm runs: 695 and 726 tok/s; stable within 5%",
+      "boundary": "real HTTP load with tokenization and prefill, not a synthetic microbenchmark; tilerl B=32 synthetic bench is 662 tok/s/card on H100",
+      "status": "measured"
+    },
+    {
+      "id": "eff.teacher_serve_single_stream",
+      "value": "88.0 tok/s single-stream, warm, 512 tokens",
+      "measured": "2026-09-09",
+      "source": "teacher_throughput.py 8010 1 512 (pod); exp row runs/experiments.jsonl#teacher_serve_0909",
+      "config": {
+        "model": "Qwen3.8-27B-NVFP4",
+        "stack": "tilerl serve",
+        "cards": "4",
+        "concurrency": 1,
+        "max_tokens": 512,
+        "warm": true
+      },
+      "uncertainty": "single run; tilerl B=1 synthetic bench is 92.4 tok/s (5% gap, within load-shape variance)",
+      "boundary": "single-stream decode speed; batch aggregate is 233/card at B~11 (2.6x speedup)",
+      "status": "measured"
+    },
+    {
+      "id": "eff.teacher_serve_jit_warmup",
+      "value": "248s one-time JIT compilation (7 decode graphs); cold throughput 249 tok/s vs warm 700 tok/s (2.8x)",
+      "measured": "2026-09-09",
+      "source": "serve_teacher_4.log on pod (tilerl serve startup); exp row runs/experiments.jsonl#teacher_serve_0909",
+      "config": {
+        "model": "Qwen3.8-27B-NVFP4",
+        "stack": "tilerl serve",
+        "kernel_cache": "TileLang JIT, not cached across restarts"
+      },
+      "uncertainty": "measured once; warmup time may vary with batch shape count",
+      "boundary": "one-time cost per serve process start; not per-request",
+      "status": "measured"
     }
   ]
 }
