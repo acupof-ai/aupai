@@ -779,7 +779,9 @@ Two more from the same pair. **`mc_ceval` moved 23.1 to 27.7 -- a 4.6-point floo
 larger than most gaps ever quoted on that metric at this scale. And **`domain_loss`'s aggregate
 movement is 93% two domains**: per-domain init noise runs from 0.0001 (`code_py_rp1t`) to 0.1394
 (`chatml`), a factor of 1,400, and the two loudest -- `chatml` 0.1394 and `chat_qa` 0.0988 -- are the
-two smallest slices in the mix at 7,974 and 7,838 rows. (0.1394 + 0.0988) / 9 = 0.0265 of the
+two smallest slices in the mix. `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, the field both
+null arms read: chatml **9,043** and chat_qa **8,854**, against code_py_rp1t 97,722 and
+code_py_starcoder 2,139,719 -- 11x and 237x larger. (0.1394 + 0.0988) / 9 = 0.0265 of the
 aggregate's 0.0285. An arm compared on that mean is compared on those two domains with seven along
 for the ride.
 
@@ -806,13 +808,13 @@ a reported arm-vs-control delta was placed against a floor on the SAME metric.
 Both print as `val`. The periodic `step N val` line is the 20-batch estimate; the epoch-end
 `ep 1/1 ... val` line is the 100-batch one, and the code's own comment says which of the two is
 comparable across runs. The same-step gap between the two null arms, read off the periodic series,
-ran 0.088 at step 500 down to 0.072 at 7500 -- fourteen reads, mean 0.077, no trend, which is exactly
-the shape of a stable measurement. At the read point the criterion actually names, the floor is
+ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.088, mean 0.076, no
+trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
 **0.048**.
 
 Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
 the floor off the periodic series would have published it ~50% too large and buried any true effect
-between 0.048 and 0.077** -- and the consistency of the fourteen reads is what would have made it
+between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have made it
 convincing. A series that agrees with itself is evidence about the estimator's stability, not about
 its agreement with the quantity being estimated.
 
@@ -822,8 +824,10 @@ presentation -- here the digits are honest and the SAMPLE SIZE is the unstated b
 
 Nothing was published: the 0.077 reached this session's messages and the controller board, both
 corrected in the same commit that measured 0.048, and 44 verified it reached no other repo artifact.
-Evidence: `train.py:408-409`; `runs/anneal_n1_0908.log` and `runs/anneal_n2_0908.log`; board at
-`31b3d360`.
+Evidence: `train.py:408-409`; `runs/anneal_null_val_series_0908.tsv`, both arms' fifteen periodic
+reads and both epoch-end reads, committed here; board at `31b3d360`. The arm logs themselves are
+pod-only and are not in this repository -- 44's R10 finding on PR #117, which is why the series was
+extracted and committed rather than cited in place.
 open: no check. A metric name that resolves to two estimators is not detectable from the log line;
 the fix would be to print the batch count beside the number, which edits `train.py` (frozen).
 
