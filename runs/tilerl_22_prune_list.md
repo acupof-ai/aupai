@@ -1,3 +1,9 @@
+---
+question: Which of the 63 N6 runs/ prune candidates did tilerl-22 evaluate, and what was the verdict?
+status: recorded
+source: tilerl-22, pair b0, 2026-09-04
+---
+
 # tilerl-22: N6 runs/ prune — the listing, and why nothing is deleted
 
 Owner tilerl, pair b0, 2026-09-04. **Verdict: KEEP ALL 63. Nothing deleted from

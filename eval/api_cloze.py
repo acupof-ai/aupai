@@ -637,6 +637,36 @@ def load_items(path):
     return header, items
 
 
+def _bounds_identity_mismatch(bounds, cfg):
+    """None when the checkpoint shares the stamped bounds' run identity, else a reason.
+
+    Readout 2 is an arm-MINUS-control difference of within_region_gap, and the bounds are
+    stamped from the CONTROL checkpoint as a fixed reference -- byte-identical across
+    checkpoints of different runs. The measured failure (de-84): ckpt_anneal_n1/n2
+    (mix_200m_4b_annealN, seed 1337/1338) scored against bounds naming mix_200m_8b/seed 42
+    printed gaps of 0.0008 and 0.0. Only mix and seed are run identity here: the saved
+    cfg carries no world field (_plan_world is stripped at save), and vocab_id matches
+    even across runs sharing the frozen vocabulary, so neither can tell runs apart.
+    """
+    diffs = []
+    b_mix = os.path.basename(bounds.get("mix") or "")
+    c_mix = os.path.basename(cfg.get("mix") or "")
+    if b_mix != c_mix:
+        diffs.append(f"mix bounds={bounds.get('mix')!r} ckpt={cfg.get('mix')!r}")
+    b_seed = bounds.get("seed")
+    if b_seed is not None and b_seed != cfg.get("seed"):
+        diffs.append(f"seed bounds={b_seed} ckpt={cfg.get('seed')}")
+    if not diffs:
+        return None
+    return ("bounds stamped from a different run (" + "; ".join(diffs) + "); "
+            "readout 2 is arm-minus-control and needs the same run identity")
+
+
+def _bounds_skip_out(bounds, ckpt, reason):
+    """The row a skip writes: the reason and the identity fields, and NO metric number."""
+    return {"skipped": reason, "bounds": bounds, "ckpt": ckpt}
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--build", action="store_true")
@@ -699,6 +729,18 @@ def main():
     # at all. The signature check in the selftest below is what covers this now.
     model, cfg = load_checkpoint(a.ckpt, device=a.device, dtype=torch.bfloat16)
     tok = load_tokenizer(a.tokenizer, cfg)
+    _skip = _bounds_identity_mismatch(header["bounds"], cfg)
+    if _skip is not None:
+        # A SKIP ROW, NOT A NUMBER: the gap must not print at all. score_matrix records
+        # this dict under metrics.api_cloze, so the skip is visible in the row.
+        out = _bounds_skip_out(header["bounds"], a.ckpt, _skip)
+        print(f"  SKIP: {_skip}")
+        if a.json:
+            print(json.dumps(out, ensure_ascii=False))
+        if a.out:
+            with open(a.out, "w", encoding="utf-8") as fh:
+                json.dump(out, fh, ensure_ascii=False)
+        return 0
     model.eval()
 
     res = {}
@@ -1144,6 +1186,23 @@ def _selftest():
         "main() must pass cfg to load_tokenizer, not None: cfg is what enables the "
         "vocab_real and vocab_id cross-check, and None skips it silently (loader.py:118)"
     )
+
+    # 13. THE BOUNDS IDENTITY CHECK (de-84). Known-answer pair on the measured case:
+    #     a checkpoint whose own mix/seed differs from the stamped bounds must SKIP,
+    #     never print a gap; a matching one must score. ckpt_anneal_n1/n2
+    #     (mix_200m_4b_annealN, seed 1337/1338) scored against bounds naming
+    #     mix_200m_8b/seed 42 printed gaps of 0.0008 and 0.0.
+    b = {"mix": "mix_200m_8b.json", "seed": 42, "world": 2}
+    assert _bounds_identity_mismatch(b, {"mix": "data/mix_200m_8b.json", "seed": 42}) is None
+    r = _bounds_identity_mismatch(b, {"mix": "data/mix_200m_4b_annealN.json", "seed": 1337})
+    assert r is not None and "mix" in r and "seed" in r, r
+    # a None seed in the bounds is a control without row_cursor_seed: not comparable,
+    # not a mismatch -- a field that cannot identify a run must not refuse every run
+    assert _bounds_identity_mismatch({"mix": "mix_200m_8b.json", "seed": None},
+                                     {"mix": "data/mix_200m_8b.json", "seed": 1337}) is None
+    # the skip row carries the reason and NO number: no regions, no gap
+    out = _bounds_skip_out(b, "ckpt_anneal_n1_0908.pt", r)
+    assert out["skipped"] == r and "within_region_gap" not in out and "regions" not in out
 
     print("api_cloze selftest OK: the region pair on the control's real numbers "
           f"(N={n_rows}, pool={n_pool}, allocation {alloc} = 8.01x the {80380} cursor, "

@@ -1,3 +1,9 @@
+---
+question: Which evaluation/held-out findings and cleanup items did e1 hand to 44 for state_0904.md?
+status: recorded
+source: runs/audit_0904/eval_heldout.md (20 findings) + C6/C11/C12 cleanup items
+---
+
 ## e1 → 44 for `docs/standards/state_0904.md`: evaluation and held-out, three lists
 
 Area: evaluation and held-out (owner e1, pair 3b). Source: `runs/audit_0904/eval_heldout.md`,

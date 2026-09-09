@@ -1,26 +1,47 @@
 #!/usr/bin/env python3
 """Reachability analysis: which .py/.sh files are reachable from the entry points.
 
+Read by whoever is deciding what to delete. Its output is runs/reachability.txt.
+
 Edge kinds:
   ENTRY    — cited in AGENTS.md tables, run_ddp.sh, CI, harness, score_matrix, or run by
              the pre-commit hook's SELFTEST_FILES map
   import   — Python import or shell command citation (transitive, BFS from ENTRY)
   registry — dynamic dispatch: run_eval._load_module, algorithms lazy-import table
   docs     — cited in docs/**, AGENTS.md, EXPERIMENTS.md
-  facts    — cited in a facts/*.json source field
-  exps     — cited in a runs/experiments.jsonl cmd field
+  facts    — cited anywhere in a facts/*.json, not only its source field
+  ledger   — cited anywhere in ANY runs/*.jsonl, not only experiments.jsonl's cmd
+  comment  — named in another file's comments or docstrings
 
-Files with no edge are "none" — the deletion candidates for t26.
+Files with no edge are "none" — the deletion candidates.
+
+THE LAST THREE EDGE KINDS WERE ADDED 2026-09-08, and the measurement that forced them is
+the point of this note. `experiments_edges` read ONE field of ONE of the 32 runs/*.jsonl,
+reaching 53 files, while the report's "unreachable (deletion candidates)" line read as a
+verdict about every citation in the repo. Counted on the same tree the same day: the 12
+ledgers that carry any citation reach 222 files (review 128, tasks 115, experiments 53,
+friction 50, retro 25, prereg 23, board 22, score_matrix 13, milestones 5,
+ledger_resolutions 2, policy_metrics 2, fable5_audit_sample 1), code comments reach 242,
+and facts/*.json reach 129 across 14 facts. So the tool was answering about roughly a
+tenth of the citations and printing a conclusion about all of them.
+
+That is why every verdict now prints WHICH edge kinds were checked to reach it, and why
+the footer prints the population each count was taken over. A conclusion whose population
+is invisible cannot be checked by its reader, and this tool's readers delete files.
 
 Usage: python scripts/reachability.py > runs/reachability.txt
 """
 import glob
-import json
 import os
 import re
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+# This file's own repo-relative path. comment_edges() excludes it as a citation SOURCE:
+# FATE below names 47 paths in prose, and reading a past ruling as a live citation would
+# make this tool mark every file it has ever judged as reachable.
+SELF_PATH = os.path.relpath(os.path.abspath(__file__), ROOT)
 
 # Fate rulings from fb (2026-08-31). DELETE files are cited by no doc, fact, run
 # row, or registry. KEEP files must become reachable or return to the list.
@@ -111,10 +132,26 @@ NEEDS_A_FREE_CARD = (
     "bench_eff/bench_opt.py",
 )
 
+# DIRECTORIES NEVER WALKED, named here rather than inlined, because this set decides the
+# denominator of every count this script prints.
+#
+# .venv IS THE ONE THAT MATTERS AND IT WAS NEVER TESTED. Measured 2026-09-08: the
+# integration tree /Users/bytedance/code/aupai carries a .venv holding 13,128 .py/.sh files
+# against 537 the repo owns -- 96% of the paths a walk from the root would visit. Every
+# worktree, including the one this exclusion was written in, has NO .venv, so this entry had
+# never once been exercised. An exclusion that has never been triggered and a correct
+# exclusion look identical in the source; only the second one survives someone editing the
+# list. That is why it is named, counted, and printed with the output.
+#
+# The debt count depends on it directly: over a tree with a .venv, "files with no purpose
+# line" would measure how much third-party code pip installed, and would move every time
+# someone added a package.
+EXCLUDED_DIRS = {".git", ".venv", "__pycache__", "node_modules", ".ruff_cache"}
+
 # Collect all .py/.sh files (excluding noise)
 ALL_FILES = set()
 for dirpath, dirnames, filenames in os.walk(ROOT):
-    dirnames[:] = [d for d in dirnames if d not in (".git", ".venv", "__pycache__", "node_modules", ".ruff_cache")]
+    dirnames[:] = [d for d in dirnames if d not in EXCLUDED_DIRS]
     for fn in filenames:
         if fn.endswith((".py", ".sh")):
             ALL_FILES.add(os.path.relpath(os.path.join(dirpath, fn), ROOT))
@@ -130,8 +167,8 @@ for _f in ALL_FILES:
 
 def git_last_commit(path):
     r = subprocess.run(
-        ["git", "log", "-1", "--format=%h %ad", "--date=short", "--", path],
-        cwd=ROOT, capture_output=True, text=True,
+        ["git", "log", "-1", "--format=%h %ad", "--date=short-local", "--", path],
+        cwd=ROOT, capture_output=True, text=True, env={**os.environ, "TZ": "UTC"},
     )
     return r.stdout.strip() or "never"
 
@@ -329,7 +366,13 @@ def docs_edges():
 
 
 def facts_edges():
-    """Scripts cited in JSON files (facts/*.json, scripts/*_baseline.json, etc.)."""
+    """Scripts cited ANYWHERE in facts/*.json and the JSON configs beside them.
+
+    Whole-text, not a named field. The first version read only `source`, which is one of
+    several fields a fact can name a producer in -- `method`, `command` and free prose in
+    `note` all carry paths, and a fact that names its producer in prose is exactly as much
+    evidence as one that names it in `source`.
+    """
     edges = {}
     for pattern in ("facts/*.json", "scripts/*_baseline.json", "data/*.json"):
         for path in glob.glob(os.path.join(ROOT, pattern)):
@@ -343,24 +386,124 @@ def facts_edges():
     return edges
 
 
-def experiments_edges():
-    """Scripts cited in runs/experiments.jsonl cmd fields."""
+def ledger_edges():
+    """Scripts cited anywhere in ANY runs/*.jsonl — every ledger, every field.
+
+    REPLACES a version that read runs/experiments.jsonl's `cmd` field and nothing else.
+    Two separate narrowings, and each one alone would have been enough to make the
+    "unreachable" list wrong:
+
+    ONE LEDGER OF 32. Measured 2026-09-08: review.jsonl cites 128 files and tasks.jsonl
+    115, each more than double experiments.jsonl's 53. A script named only in the review
+    that ruled on it, or only in the task that commissioned it, was invisible.
+
+    ONE FIELD. A row records its script in whichever field its writer used -- `cmd`,
+    `evidence`, `artifact`, `blocked`, `cause`, or prose in `result`. Parsing JSON to reach
+    a chosen field reproduces the same defect one level down, so this reads the raw line:
+    a path in a ledger row is a citation wherever in the row it sits.
+
+    The cost of the wider net is a file cited by a row that merely mentions it in passing.
+    That is the right way to be wrong here -- this list is read by someone about to delete,
+    and a false "live" costs a second look while a false "dead" costs the file.
+    """
     edges = {}
-    p = os.path.join(ROOT, "runs", "experiments.jsonl")
-    if not os.path.isfile(p):
-        return edges
-    for line in open(p, encoding="utf-8"):
-        line = line.strip()
-        if not line:
-            continue
+    for path in sorted(glob.glob(os.path.join(ROOT, "runs", "*.jsonl"))):
+        rel = os.path.relpath(path, ROOT)
         try:
-            row = json.loads(line)
-        except json.JSONDecodeError:
+            fh = open(path, encoding="utf-8", errors="ignore")
+        except OSError:
             continue
-        cmd = row.get("cmd", "")
-        for f in _resolve_script(cmd):
-            edges.setdefault(f, ("exps", "experiments.jsonl"))
+        with fh:
+            for line in fh:
+                for f in _resolve_script(line):
+                    edges.setdefault(f, ("ledger", rel))
     return edges
+
+
+# Comment and docstring lines, for comment_edges. A citation inside `subprocess.run([...])`
+# is already an import/shell edge; this is for the prose that says "produced by X" or
+# "superseded by Y", which no code-level scan can see.
+_COMMENT_RE = re.compile(r'^\s*(#|"""|\'\'\'|"|\')')
+
+
+def comment_edges():
+    """Scripts named in another file's comments or docstrings — 242 files, measured 2026-09-08.
+
+    The largest single edge kind in the repo and the one with no code-level trace at all.
+    A file whose only mention is `# superseded by scripts/foo.py` in the file that
+    superseded it is dead by every other measure here, and deleting the survivor because
+    nothing "reaches" it is the failure this prevents.
+
+    THIS FILE IS EXCLUDED AS A SOURCE, and leaving it in was a real defect measured while
+    writing this function. FATE above names 47 paths in comments and KEEP strings. Reading
+    them as citations rescued 12 files on the first run -- including every path FATE had
+    ever ruled on -- so the tool would have marked as reachable exactly the files it had
+    previously reported as candidates, and no future run could ever list them again. An
+    instrument that searches a space containing its own text measures itself; the ruling
+    "KEEP scripts/foo.py, it is live" is a record of a past verdict, not evidence that
+    anyone calls it.
+
+    Self-citations are dropped for the same reason one level down: a docstring naming its
+    own file says nothing about whether anyone else needs it.
+    """
+    edges = {}
+    for f in sorted(ALL_FILES):
+        if f == SELF_PATH:
+            continue
+        text = _read(f)
+        if not text:
+            continue
+        prose = "\n".join(L for L in text.splitlines() if _COMMENT_RE.match(L))
+        if not prose:
+            continue
+        for target in _resolve_script(prose):
+            if target != f:
+                edges.setdefault(target, ("comment", f))
+    return edges
+
+
+# --- Purpose, read from the file itself ---
+
+# Every edge kind this tool knows how to look for. Printed with each "unreferenced" verdict
+# so the verdict carries the population it was taken over, rather than only its conclusion.
+EDGE_KINDS = ("ENTRY", "import", "registry", "docs", "facts", "ledger", "comment")
+
+
+def purpose(path):
+    """The file's own one-line statement of what it is for, or "" if it has none.
+
+    READ FROM THE FILE, never written here. A purpose column typed into this generator is a
+    second place to drift out of date, and it would be satisfied by whoever wrote the
+    generator rather than by whoever owns the file. Taking it from the source makes the
+    count of files WITHOUT one a measurement: it shrinks only when someone writes a real
+    line, and this script cannot fake it.
+
+    First docstring line, else the first `#` comment line that is not a shebang, encoding
+    marker, or ruff/type directive.
+    """
+    text = _read(path)
+    if not text:
+        return ""
+    m = re.search(r'^\s*(?:[ruRbB]{0,2})("""|\'\'\')(.*?)(?:\1|$)', text, re.DOTALL | re.MULTILINE)
+    if m:
+        first = m.group(2).strip().splitlines()
+        if first and first[0].strip():
+            return first[0].strip()
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if s.startswith("#!") or "coding:" in s or s.startswith(("# ruff:", "# type:", "# noqa")):
+            continue
+        if s.startswith("#"):
+            body = s.lstrip("#").strip()
+            if body:
+                return body
+        # Stop at the first line of real code: a comment further down is about that code,
+        # not about the file.
+        if not s.startswith("#"):
+            break
+    return ""
 
 
 # --- Main ---
@@ -375,11 +518,11 @@ def main():
 
     # Collect additional citation edges
     all_edges = {}
-    for edge_fn in (registry_edges, docs_edges, facts_edges, experiments_edges):
+    for edge_fn in (registry_edges, docs_edges, facts_edges, ledger_edges, comment_edges):
         for f, (kind, source) in edge_fn().items():
             all_edges.setdefault(f, (kind, source))
 
-    # Citation edges are transitive: a file reached via registry/docs/facts/exps
+    # Citation edges are transitive: a file reached via registry/docs/facts/ledger/comment
     # also reaches everything it imports.
     citation_reached = set(all_edges.keys()) - bfs_reachable
     if citation_reached:
@@ -407,6 +550,17 @@ def main():
             return "import"
         return "none"
 
+    # WHAT THIS RUN LOOKED AT. Printed before the table because it is the population every
+    # count below is taken over, and a count whose population is invisible cannot be checked
+    # by its reader. Measured 2026-09-08: the same scanner faces 537 files in a worktree and
+    # 13,665 in the integration tree, which carries a .venv -- no code change, no error, no
+    # mention in the output. So the tree and the exclusions are printed, not assumed.
+    print(f"TREE: {ROOT}")
+    print(f"POPULATION: {len(ALL_FILES)} .py/.sh files, excluding {', '.join(sorted(EXCLUDED_DIRS))}")
+    print(f"EDGE KINDS CHECKED: {', '.join(EDGE_KINDS)}")
+    print(f"LEDGERS READ: {len(glob.glob(os.path.join(ROOT, 'runs', '*.jsonl')))} runs/*.jsonl, "
+          f"every field of every row")
+    print()
     # Printed with the table, not only in this file's docstring: the committed
     # listing is what someone reads before deleting, and a warning that lives only
     # in the generator is a warning they never see.
@@ -415,28 +569,52 @@ def main():
     print("glob is live while invisible here -- vet_programs.py:37 globs math_programs_l*_ext*.py,")
     print("23 generators. Before deleting anything, grep for glob/importlib on its directory.")
     print()
-    print(f"{'PATH':<55} {'LINES':>6}  {'LAST COMMIT':<20}  {'REACHED FROM':<45}  FATE")
-    print("-" * 130)
+    print("AND A CITATION IS NOT A FIXED POINT. The strongest evidence for deleting a file is")
+    print("RUNNING it and finding it does nothing -- 'already done; skipping', 'appended 0'.")
+    print("That is a property of the file no future caller can change. 'Nothing cites it' only")
+    print("says nobody calls it today; one added line makes it live again. Unreferenced is not")
+    print("sufficient grounds on its own.")
+    print()
+    print(f"{'PATH':<55} {'LINES':>6}  {'LAST COMMIT':<20}  {'REACHED FROM':<38}  {'PURPOSE':<60}  FATE")
+    print("-" * 190)
     unreachable = []
+    no_purpose = []
     for f in sorted(ALL_FILES):
         lines = file_lines(f)
         commit = git_last_commit(f)
         ep = reaching(f)
         fate = FATE.get(f, "")
+        p = purpose(f)
+        if not p:
+            no_purpose.append(f)
+            p = "NO PURPOSE LINE"
         if ep == "none":
             unreachable.append(f)
-        print(f"{f:<55} {lines:>6}  {commit:<20}  {ep:<45}  {fate}")
+        print(f"{f:<55} {lines:>6}  {commit:<20}  {ep:<38}  {p[:60]:<60}  {fate}")
 
-    print(f"\n{'='*130}")
+    print(f"\n{'='*190}")
     delete_count = sum(1 for f in unreachable if FATE.get(f, "").startswith("DELETE"))
     keep_count = sum(1 for f in unreachable if FATE.get(f, "").startswith("KEEP"))
     print(f"Total: {len(ALL_FILES)} files, {len(eps)} entry points, "
           f"{len(bfs_reachable)} BFS-reachable, {len(all_edges)} citation edges, "
           f"{len(unreachable)} unreachable ({delete_count} DELETE, {keep_count} KEEP)")
+    # THE READABILITY DEBT, over the repo's own files only. The denominator is the whole
+    # point: counted over a tree with a .venv this would fold in tens of thousands of
+    # third-party files and become a number that moves every time someone installs a
+    # package -- the size of pip, not the size of what we owe.
+    print(f"Readability debt: {len(no_purpose)} of {len(ALL_FILES)} files have NO PURPOSE LINE "
+          f"({100 * len(no_purpose) / max(1, len(ALL_FILES)):.1f}%) -- no docstring and no "
+          f"leading comment saying what the file is for")
     if unreachable:
-        print("\nUnreachable (deletion candidates):")
+        print(f"\nUnreachable after checking all {len(EDGE_KINDS)} edge kinds "
+              f"({', '.join(EDGE_KINDS)}) -- deletion candidates, and each still needs a")
+        print("fixed-point run before it is deleted:")
         for f in unreachable:
             print(f"  {f:<55} {FATE.get(f, '')}")
+    if no_purpose:
+        print(f"\nNO PURPOSE LINE ({len(no_purpose)}):")
+        for f in no_purpose:
+            print(f"  {f}")
 
 
 if __name__ == "__main__":

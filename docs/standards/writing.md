@@ -1,3 +1,9 @@
+---
+question: What writing rules bind every document, commit message, ledger row, retro row, reply, and message in this repo?
+status: recorded
+source: user order 2026-08-31; Fidelity section added on the user's order
+---
+
 # Writing standard
 
 Applies to every document, commit message, register row, retro row, reply, and message

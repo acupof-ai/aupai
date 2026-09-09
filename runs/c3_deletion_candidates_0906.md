@@ -1,3 +1,9 @@
+---
+question: Which files did the C3 cleanup list as deletion candidates on 2026-09-06, and what is their deletion state?
+status: open
+source: owner 3b, task 3b-16; user standing order 2026-09-05 (no deletion without an explicit named instruction)
+---
+
 # C3 deletion candidates — FINAL LIST, awaiting the user's named instruction
 
 Owner 3b, task 3b-16. Produced 2026-09-06. **Nothing has been deleted.** The user's

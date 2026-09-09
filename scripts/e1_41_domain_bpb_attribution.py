@@ -60,8 +60,8 @@ REFUSAL_MARKERS = ("REFUSING", "round-trip")
 def _commit_time(sha):
     """Author time of sha as 'YYYY-MM-DD HH:MM', or None."""
     r = subprocess.run(["git", "-C", ROOT, "log", "-1", "--format=%ad",
-                        "--date=format:%Y-%m-%d %H:%M", sha],
-                       capture_output=True, text=True)
+                        "--date=format-local:%Y-%m-%d %H:%M", sha],
+                       capture_output=True, text=True, env={**os.environ, "TZ": "UTC"})
     return r.stdout.strip() or None
 
 
@@ -71,9 +71,10 @@ def _row_landed(ckpt):
     The row's own `ts` is absent on these (they came off the pod through pod_push), so the
     commit that introduced the line is the only timestamp the repo holds for it.
     """
-    r = subprocess.run(["git", "-C", ROOT, "log", "--format=%ad", "--date=format:%Y-%m-%d %H:%M",
+    r = subprocess.run(["git", "-C", ROOT, "log", "--format=%ad",
+                        "--date=format-local:%Y-%m-%d %H:%M",
                         "--all", "-S", ckpt, "--", "runs/score_matrix.jsonl"],
-                       capture_output=True, text=True)
+                       capture_output=True, text=True, env={**os.environ, "TZ": "UTC"})
     times = [t for t in r.stdout.strip().splitlines() if t.strip()]
     return times[-1] if times else None
 

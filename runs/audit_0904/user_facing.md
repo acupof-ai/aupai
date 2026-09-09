@@ -1,8 +1,10 @@
-# Audit: user-facing statements (98)
-
-question: Every number and verdict the user sees on the progress page, in EXPERIMENTS.md, and in the controller's board replies — traced to a fact id, ledger row, or score_matrix row; the untraceable and the un-amended-retracted listed.
+---
+question: Every number and verdict the user sees on the progress page, in EXPERIMENTS.md, and in the controller's board replies — traced to a fact id, ledger row, or score_matrix row; what is untraceable or un-amended-retracted?
 status: open
 source: user order 2026-09-04 (aed940e8); artifacts: ~/.aupai-progress.jsonl (608 lines), EXPERIMENTS.md, runs/board.jsonl, runs/experiments.jsonl, runs/score_matrix.jsonl, facts/*.json
+---
+
+# Audit: user-facing statements (98)
 
 ## 1. Scope
 

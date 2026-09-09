@@ -1,3 +1,9 @@
+---
+question: Do facts/*.json and the docs say what their artifacts say, on 2026-09-04?
+status: measured
+source: user order 2026-09-04; committed 2026-09-04 03:49Z (afe2c0a0)
+---
+
 # Audit 2026-09-04 — facts and documents (area owner: 44)
 
 View: host worktree /Users/bytedance/code/aupai-44 (branch 44) + pod via ~/bin/pod. Report committed 2026-09-04 03:49Z (afe2c0a0; the draft's "~12:40Z" was laptop local, UTC+8 — same zone class as the controller's return). All pod stats from this session.

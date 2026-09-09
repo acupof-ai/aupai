@@ -1,7 +1,7 @@
 ---
 question: What did the 1.5b-a0.2b-e48_30b run establish — does MoE-48 continued from its 8B checkpoint hold the 8B separation through 26.7B tokens, and what did the run cost?
 status: measured
-source: runs/experiments.jsonl (rows started 2026-09-07 05:03, 05:15; stop row ended 16:31; resume rows 17:51-18:32 2026-09-07), runs/prereg.jsonl#moe48_30b_0907 with amendments 1-12, pod log /work/aupai/runs/1.5b-a0.2b-e48_30b.log, runs/score_matrix.jsonl (rows measured 2026-09-07/08; domain_bpb retractions stamped 2026-09-08T07:44Z), runs/review.jsonl (domain_bpb ruling, 2026-09-08T05:2xZ), runs/moe_diag.jsonl, runs/friction.jsonl, facts/efficiency.json, ckpt_1.5b-a0.2b-e48_26.7b_0908.pt row_cursor (read 2026-09-08), PR #79 (domain_bpb divisor fix, incident 277), closure ruling (user order, relayed 4c 2026-09-08)
+source: runs/experiments.jsonl (rows started 2026-09-07 05:03, 05:15; stop row ended 16:31; resume rows 17:51-18:32 2026-09-07), runs/prereg.jsonl#moe48_30b_0907@amended_12 with amendments 1-12, pod log /work/aupai/runs/1.5b-a0.2b-e48_30b.log, runs/score_matrix.jsonl (rows measured 2026-09-07/08; domain_bpb retractions stamped 2026-09-08T07:44Z), runs/review.jsonl (domain_bpb ruling, 2026-09-08T05:2xZ), runs/moe_diag.jsonl, runs/friction.jsonl, facts/efficiency.json, ckpt_1.5b-a0.2b-e48_26.7b_0908.pt row_cursor (read 2026-09-08), PR #79 (domain_bpb divisor fix, incident 277), closure ruling (user order, relayed 4c 2026-09-08)
 ---
 
 # MoE-48 30B leg, 2026-09-07 → 08
@@ -124,7 +124,7 @@ The stop is 332 steps before warmdown_start (34,332), so the endpoint never had 
 
 All numbers from runs/score_matrix.jsonl (pod ledger, rows measured 2026-09-07/08) and the review row runs/review.jsonl 2026-09-08T05:2xZ. The endpoint row is `ckpt_1.5b-a0.2b-e48_26.7b_0908.pt` (the renamed `.step34000`).
 
-The registered bar (runs/prereg.jsonl#moe48_30b_0907, readout_1_bar) names the 8B **endpoint** row: domain_bpb and nll_per_byte must not rise for the run to count as a continuation. The domain_bpb half of the bar cannot be adjudicated as written: both rows' levels are retracted (†), and the leg is closed unclaimed before any re-score (section 10). The nll/byte half stands and improved (0.7075 → 0.6754), but it is one annealed row against one constant-LR row, so it does not carry the bar alone.
+The registered bar (runs/prereg.jsonl#moe48_30b_0907@amended_12, readout_1_bar) names the 8B **endpoint** row: domain_bpb and nll_per_byte must not rise for the run to count as a continuation. The domain_bpb half of the bar cannot be adjudicated as written: both rows' levels are retracted (†), and the leg is closed unclaimed before any re-score (section 10). The nll/byte half stands and improved (0.7075 → 0.6754), but it is one annealed row against one constant-LR row, so it does not carry the bar alone.
 
 | row | lambada acc | nll/byte | humaneval per-task | humaneval byte-w | domain_bpb mean |
 |---|---|---|---|---|---|

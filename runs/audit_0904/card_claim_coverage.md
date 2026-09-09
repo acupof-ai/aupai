@@ -1,3 +1,9 @@
+---
+question: Why is the card-claim acquire point not where it looks (de-55)?
+status: measured
+source: de-55; measured on the pod 2026-09-04
+---
+
 # Card-claim coverage: why the acquire point is not where it looks (de-55)
 
 Measured 2026-09-04. Prompted by `runs/claims` being empty on the pod while lane jobs had held

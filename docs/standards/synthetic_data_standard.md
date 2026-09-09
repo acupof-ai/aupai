@@ -1,3 +1,9 @@
+---
+question: What checkable criteria must synthetic pretraining data meet before it is bought or built?
+status: recorded
+source: written 2026-08-29, before any purchase or build
+---
+
 # What counts as good synthetic pretraining data
 
 Written 2026-08-29, before we buy or build any. Every criterion below is checkable, because
