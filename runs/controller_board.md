@@ -145,63 +145,107 @@ header comment, where no check reads it.
 **N2 released its cards cleanly.** All four went to 0 MiB and `runs/claims/anneal_n2_0908.2-4-5-7.json`
 is gone — no orphan, no reparented grandchild holding memory.
 
-## Running now — N2's score matrix, card 2
+## Running now — arm R, cards 2,4,5,7
 
-`/work/aupai/runs/score_n2.sh`, log `runs/score_n2.log`, launched 01:17Z. `domain_loss` running.
+| | |
+|---|---|
+| run | R, the anneal reweight, `runs/anneal_r_0909.log`, exp row `anneal_r_0909` |
+| launched | 2026-09-09 01:48Z by fb |
+| cfg verified | `mix data/mix_200m_4b_annealR.json seed 1337 sample_seed 42 (pinned) anneal_frac 0.1`, batch 16 accum 2, world 4 — N1's recipe with the reweighted mix and nothing else |
+| progress | step 1290 / 7629, 17%, 77K tok/s/gpu, s/step 1.707, ETA ~05:2xZ |
+| val so far | 2.578 (500), 2.347 (1000) against N1's 2.577 and 2.348 |
 
-**Its auto-scoring had already failed, exactly as predicted.** `run_ddp.sh` chains a score pass
-after training, it needs a lane card, and this grant deliberately has none — so it spun 30 minutes
-and exited:
+**Two reads, both within 0.001 of N1.** R shares seed 1337 with N1, so `|R - N1|` is the mix effect
+with init held fixed, and it is an order of magnitude below the 0.048 init floor. This is the
+20-batch estimator and not the read point — see §286 for why that distinction is the whole game —
+but the trajectory is tracking N1 far more tightly than N2 does.
 
-```
-FATAL: no free lane card in 30min -- ckpt_anneal_n2_0908.pt unscored, training succeeded
-       but this run produced NO metrics.
-FATAL: scoring failed for ckpt_anneal_n2_0908.pt (rc=1) -- exiting nonzero
-```
-
-The checkpoint is unaffected and the training row is real; only the chained scoring died. The
-pod's exp row auto-closed as `status=error` with `result="val 1.871, scoring FAILED rc=1 -- no
-metrics"` and `finding="chained close by run_ddp.sh; finding pending a human reading"`. That row
-is being replaced with the human reading now that the score matrix is running by hand in the gap.
-
-**This is a design fault, not an incident, and it will fire again on R.** A four-card grant with
-no lane card guarantees that every arm's own scoring step deadlocks for 30 minutes and exits
-nonzero. Two fixes exist and neither has been chosen: score in the inter-arm gap by hand (what I
-am doing, costs ~10 min of three idle cards per arm), or give the chain permission to use one of
-the four cards it just released. The second is correct and needs a one-line change in
-`run_ddp.sh`, which is frozen. Logged rather than worked around silently.
+**The chained scoring will fail on R too, and that is not a surprise to absorb quietly.** A
+four-card grant with no lane card guarantees every arm's own scoring step deadlocks 30 minutes and
+exits nonzero. N1 and N2 both did. The checkpoint is unaffected; the scoring is done by hand in the
+gap. Two fixes exist and neither is chosen: score in the gap by hand (~10 min of three idle cards
+per arm), or let the chain use one of the four cards it just released — the second is correct and
+needs a one-line change in `run_ddp.sh`, which is frozen. Logged rather than worked around silently.
 
 ## Next gate — R
 
-Launch `bash runs/anneal_arms.sh r` on 2,4,5,7 the moment the score matrix releases card 2.
-`--seed 1337`, same as N1, so `|R - N1|` carries the reweight and nothing else. ~3.7h.
-Read at the epoch-end val line, against F = 0.048.
+R's epoch-end val at ~05:2xZ, read **per metric** against the floor table above, never against a
+single aggregate — §285 is the reason. `|R - N1| <= 0.048` on val is a bound and a result, not a
+failed run; the pre-registered rule is `runs/prereg.jsonl#anneal_reweight_noise_floor_0908`.
+Score by hand on a freed card after the chained pass exits nonzero.
 
-## Queue — 8 open PRs, all CI-green, and only one is actually mergeable
+## Queue — 8 open PRs, one mergeable, and the reviewer step is what holds
 
-Measured 01:12Z by reading each PR's reviews *and* comments for a qualifying `artifact:` / `case:`
-body, not by counting comments that contain the token:
+Read at 02:5xZ by checking each PR's reviews AND comments for a qualifying `artifact:` / `case:`
+body, never by counting comments containing the token.
 
 | PR | branch | qualifying review | state |
 |---|---|---|---|
-| #100 | fact-repro-table (98) | **yes** — de: "Approved. artifact: facts/corpus_supply.json#cs.reproducibility_table_0908, the full 62-row table" | **mergeable now; de has not merged for 6h+** |
-| #23 | tilerl-cache-sidecar | yes, but it is a **changes-requested** body from 3b | correctly blocked |
-| #109 | e1-tokshards | no | waiting on reviewer |
-| #106 | 44-minicpm5-arch | no | waiting on reviewer |
-| #105 | b0-47-code-decode | no | waiting on reviewer |
-| #103 | 3b-runsmove | no | waiting on reviewer |
-| #102 | b0-46-score-matrix-trace | no | waiting on reviewer |
-| #92 | 98 (pod non-ASCII argv) | no | waiting on reviewer |
+| #100 | fact-repro-table (98) | **yes** — de: "Approved. artifact: facts/corpus_supply.json#cs.reproducibility_table_0908" | **mergeable; unmerged 7h+** |
+| #23 | tilerl-cache-sidecar | yes, but a **changes-requested** body from 3b | correctly blocked |
+| #109 #106 #105 #103 #102 #92 | e1 / 44 / b0 / 3b / b0 / 98 | none | waiting on reviewers |
+
+**#117 landed.** 44 merged it at `96c9b6f4` and pushed the pod in the same step, which is the
+09-07 ruling working exactly as written.
+
+**Why #100 is not merged by me.** Merging an approved CI-green PR as a third party satisfies the
+rule's purpose — the author does not merge their own work, and whoever merges pushes the pod — and
+fails its letter. The cost is not this PR: it would establish that the reviewer step is skippable
+whenever a reviewer sleeps, and that step is what makes approval mean anything. The clean route
+needs no exception, because nothing says a PR has one reviewer: a second roster reviewer who reads
+the artifact and writes their own row may merge it. Proposed to 44 as their call. If #100 is still
+open at 8h+, the choice goes to the user as a process question — who may merge is the user's, not
+the controller's.
 
 **The trap this table exists to avoid is one I fell into two ticks ago.** I told tilerl #23 was
-approved and ready to merge. It was changes-requested by 3b 14 hours earlier. My proxy counted
-comment bodies containing `artifact:` or `case:` — and a changes-requested comment carries those
-tokens too, because a good rejection names the artifact it read. **The token says a reader opened
-something; only the state says what they concluded.** Both are now read on every pass.
+approved and ready. It was changes-requested by 3b 14 hours earlier. My proxy counted bodies
+containing `artifact:` — and a changes-requested comment carries that token too, because a good
+rejection names the artifact it read. The token says a reader opened something; only the state
+says what they concluded.
 
-`scripts/review_row_lookup.py --pr <n>` does not take a bare PR number — the usage is
-`[--pr] <sha> <branch>`. Eight calls returned usage text, which is not a "no review found" answer
-and was not read as one.
+## Landed this tick — three defects, all found by reading rather than by a check
+
+**de-85 (`fc6fd165`, amended `74fb76e7`) — the shared-file claim is broken in two dimensions.**
+Measured, not inferred. VISIBILITY: fb held AGENTS.md in `../aupai-fb`, and
+`claim-file acquire --path AGENTS.md --owner testprobe` from the integration tree returned
+`claimed AGENTS.md for testprobe` rc=0 with no warning; each tree's `claim-file list` showed only
+its own. Probe released immediately. LIFETIME: `merge_main.sh fb` printed
+`released 1 claim(s): AGENTS.md` while PR #117 — the branch that actually edits AGENTS.md — was
+open and unmerged, so the file sat unclaimed with an outstanding edit. Cause of both is two lines:
+`file_claim.py:32-33` builds `CLAIM_DIR` from the tree the script lives in, and `.gitignore:48`
+ignores `runs/claims/`. **The rule this implements exists to stop three between-session collisions
+and cannot stop any of them** — the hook enforces that the author declared it in their own tree,
+which is a record, not mutual exclusion. 44 ruled it one task, two dimensions: fixing visibility
+alone leaves merge_main releasing early, fixing lifetime alone leaves two sessions blind.
+
+**de-86 (`33c379da`) — a closed row's status is unreachable by every supported writer.**
+`exp.py done` refuses a closed row, `note` refuses a closed row, `amend` takes only
+`--reading_artifact` / `--finding` / `--decision`. Each refusal is correct alone; together they
+leave no path. Observable consequence: the two null arms of one experiment carry different statuses
+for the same event, and N2 cannot be fixed. 44's design constraint is in `--reading` as a
+constraint on the fix — the ledger unions across branches and folds last-row-wins, so the
+correction must be an **appended** status-correction event, never a rewrite; a rewrite grows a
+duplicate id, which is the 2026-08-31 t39/t40 failure. The negative case is the one that keeps it
+honest: the same command must still refuse a close that is merely being re-run, or "correct a wrong
+status" becomes "overwrite any close".
+
+**The pod/local contradiction is ruled (`daded540`).** `pod_push` reported "1 row(s) where both
+sides state a different non-empty value" without naming it; `python3 scripts/pod_pull_ledgers.py`
+with no flags names it and prints the differing fields — pod_push reports the count, pod_pull_ledgers
+reports the row. It is `anneal_n1_0908 @ 2026-09-08 16:59`. Pod side is run_ddp.sh's chained close,
+true about the COMMAND and silent about the run; local side carries the same 1.823 with its basis
+and its reading. Ruled to local. Same shape as the `b0_p5_ctrl_bf16` ruling.
+
+## §284 §285 §286 landed — PR #117, merged 96c9b6f4
+
+Written by fb from 44's candidates, reviewed by 44 twice. 44's two findings on the first round were
+both real and the second was worse than they read it: **chatml 7,974 / chat_qa 7,838 were the R
+ARM's row counts**, read from `runs/anneal_r_0909.log` under the *reweighted* mix — a claim about
+the null pair sized from the arm the null pair exists to be compared against. Corrected everywhere
+to `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, 9,043 and 8,854 against 97,722 and
+2,139,719. The other finding was R10's own shape: §286 cited two logs that exist only on the pod,
+now extracted and committed as `runs/anneal_null_val_series_0908.tsv`. Recount from that file:
+fifteen reads, min 0.067, max 0.088, mean 0.0757.
 
 ## The peers are all asleep
 
