@@ -7,6 +7,15 @@
 # quantity and their gaps differ by ~50%; that is S286.
 # Extracted from the pod's runs/anneal_n1_0908.log and runs/anneal_n2_0908.log,
 # which are pod-only and not in this repository (44's R10 finding on PR #117).
+#
+# EPOCH-END LINE, BOTH FIELDS. train.py's runlog prints `ep 1/1 train <t> val <v>`:
+#   N1  ep 1/1 train 1.734 val 1.823 13427s
+#   N2  ep 1/1 train 1.324 val 1.871 13222s
+# val gap +0.048 (100 batches, the estimator the criterion reads).
+# train gap -0.410 -- OPPOSITE SIGN AND 8.5x LARGER, from a seed-only pair. The train field is
+# NOT an epoch mean: `last = loss.item() * Cfg.accum` is set on log steps only, so it is ONE
+# MICRO-BATCH at the last log step. Two numbers on one line in the same units, and only one of
+# them estimates anything. Do not compare the train field across runs.
 step	n1_val	n2_val	gap
 500	2.577	2.665	+0.088
 1000	2.348	2.431	+0.083
