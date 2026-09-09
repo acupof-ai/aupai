@@ -15,7 +15,7 @@
 isolates weight init and dropout.
 
 **The correction that matters, and it lands against my own reporting.** I quoted the same-step
-gaps all night — 0.088 at step 500, 0.071 at 7000, 0.072 at 7500, "mean 0.077, no trend" — and
+gaps all night — 0.088 at step 500, 0.071 at 7000, 0.072 at 7500, "mean 0.076, no trend" — and
 treated them as the floor's scale. They are not the same quantity. `train.py:408-409`:
 
 ```
@@ -23,11 +23,11 @@ val_batches = 20
 val_batches_full = 100  # fixed prefix, so the epoch-end number is comparable across runs
 ```
 
-The periodic `step N val` line is a **20-batch** estimate. The `ep 1/1 ... val` line is a
+The periodic `step N val` line is a **20-batch** estimate (fifteen reads, min 0.067, max 0.088, mean 0.076; series committed as `runs/anneal_null_val_series_0908.tsv`). The `ep 1/1 ... val` line is a
 **100-batch** one, and train.py's own comment says which of the two is comparable across runs.
 Five times the data, so roughly half the sampling noise — which is the whole of the drop from
 0.072 at step 7500 to 0.048 at the end. **Had I read the floor off the periodic series, I would
-have published a floor ~50% too large and buried any true effect between 0.048 and 0.077.**
+have published a floor ~50% too large and buried any true effect between 0.048 and 0.076.**
 The criterion in `runs/anneal_arms.sh` said "final val" and was right for a reason nobody had
 stated: it names the estimator, not just the time.
 
@@ -72,8 +72,10 @@ not a scalar to clear — on these aggregates the sign itself is not stable betw
 
 **The domain aggregate is 93% two domains.** Per-domain init noise spans a factor of 1,400:
 `code_py_rp1t` 0.0001 and `code_py_starcoder` 0.0020 at one end, `chatml` **0.1394** and `chat_qa`
-**0.0988** at the other. Those two are the smallest slices in the mix (7,974 and 7,838 rows, 0.88
-and 0.89 epochs), so their held-out splits are the smallest. Of the aggregate's 0.0285 movement,
+**0.0988** at the other. Those two are the smallest slices in the mix -- `mix_200m_4b_annealN.json`'s
+`pool_rows_estimated`, the field both null arms read, is **9,043** for chatml and **8,854** for
+chat_qa against 97,722 for code_py_rp1t and 2,139,719 for code_py_starcoder, 11x and 237x larger --
+so their held-out splits are the smallest. Of the aggregate's 0.0285 movement,
 (0.1394 + 0.0988) / 9 = 0.0265 is those two — **93%**. An arm compared on the unweighted mean is
 being compared on chatml and chat_qa with seven domains along for the ride.
 
