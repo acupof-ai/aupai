@@ -38,26 +38,26 @@
   },
   {
    "name": "b0",
-   "socket": "uds:/tmp/cc-socks/92633.sock",
+   "socket": "uds:/tmp/cc-socks/56758.sock",
    "role": "research",
    "topics": [
     "mix",
     "architecture"
    ],
-   "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it.",
-   "listagents_name": "lessons-62",
-   "listagents_ref": "a7fc18"
+   "note": "architecture, LR scaling, the mix generator; model extraction out of train.py (b0-8) for the structure-experiment platform ListAgents name lessons-62 as of 2026-09-03 14:3xZ (reached fb directly for the first time that day; earlier relays went via 3b). REVIEWER REASSIGNED 2026-09-09 by fb: tilerl exited, and the fixed pair tilerl<->b0 left b0 with no second reader and b0's open PRs #105 and #102 with no reviewer. New pair b0<->de. This is a controller reassignment forced by an exit, not a change to the user's 2026-08-31 pairing order; it is the minimum edit that keeps every roster member paired, and the user can overrule it. SOCKET CORRECTED 2026-09-09 after a resume. Identity verified: the roster's 92633.sock pid is dead and the file absent; PR #102 head 98f005d2 on b0-46-score-matrix-trace and #105 head 8a182adc on b0-47-code-decode match exactly; review.jsonl rows 277/278/281/292/293 read reviewer=b0; c4c0a7af exists.",
+   "listagents_name": "lessons-d1",
+   "listagents_ref": "0e4d13"
   },
   {
    "name": "e1",
-   "socket": "uds:/tmp/cc-socks/66482.sock",
+   "socket": "uds:/tmp/cc-socks/56034.sock",
    "role": "research",
    "topics": [
     "launch_gate"
    ],
-   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03.",
-   "listagents_name": "lessons-58",
-   "listagents_ref": "e0c880"
+   "note": "tokenizer, FoNE, launch-gate; recipe reconciliation gate (e1-9), milestone_profile throughput number (e1-10). Session lessons-03 (13136) died 01:51Z on an API 400 with its branch fully in main; back 02:05Z as lessons-58. The 'departed' ruling rested on the socket ENOENT and the session missing from ListAgents; lessons-e1 answering 不是 was a name collision, not evidence. ListAgents name lessons-58 as of 2026-09-03. SOCKET CORRECTED 2026-09-09 after a resume: was lessons-58 / 92... Identity verified against becd96f7, 18bd3842, f53aed11 and 7c121c37 on main, all present with matching subjects. A resume changes the label and the socket while the work continues -- that is the general case, not an exception, and this file is the one that has to be corrected each time.",
+   "listagents_name": "lessons-eb",
+   "listagents_ref": "75ded7"
   },
   {
    "name": "3b",
