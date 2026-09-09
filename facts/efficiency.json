@@ -3566,6 +3566,24 @@
         "train loss confirms",
         "train and val agree"
       ]
+    },
+    {
+      "id": "eff.csa_step_speed",
+      "claim": "the reference CSA-with-SWA implementation costs 8.157x per step vs the flash-varlen gated-MLA path at the v2 attention config -- past the pre-registered 1.15x threshold, so the v2 first arm does not launch on the reference and waits for a fast path",
+      "value": "ratio 8.157x: CSA (m=4, csa_topk=512, n_win=128) 233.19 ms/step median (281,041 tok/s) vs control GatedMLA csa=False 28.59 ms/step (2,292,376 tok/s); mean 233.19, min 233.07, control mean 28.67/min 28.47. Pre-registered decision rule (exp csa_step_probe_0909 hypothesis): ratio <= 1.15 launchable on the reference, > 1.15 needs a fast path first -- 8.157 is past it, so the v2 first arm does not launch on the reference.",
+      "measured": "2026-09-09",
+      "source": "runs/csa_step_probe_0909.log (pod), exp row csa_step_probe_0909, instrument probes/csa_step_probe.py",
+      "config": {
+        "shape": "d=1024, heads=8, hd=128, latent=256 (GatedMLA defaults at the 1.5b-a0.2b-e48 recipe)",
+        "batch_seq": "B=16, T=4096, bf16, packed cu path with one document per row (cu=[0,T,2T,...])",
+        "csa": "csa_compress=4, csa_topk=512, csa_window=128 (prereg v2_loop_moe_csa_0908 treatment)",
+        "control_path": "GatedMLA csa=False -> flash_attn_varlen_func (HAS_FA=True on the pod), the production path",
+        "protocol": "forward+backward, alternating control/treatment, median of 20 after 3 warmup, torch.cuda.synchronize around each timed region, single H20 card 2",
+        "decision_rule": "ratio <= 1.15: launchable (kernel penalty smaller than the loop 1.5x FLOP multiplier it would confound, ~0.6 wall-day cheaper than a kernel); > 1.15: fast path first"
+      },
+      "uncertainty": "single card, single run; the reference is O(T^2) in the select gather and materialises (B,H,T,2048) scores in PyTorch -- this is the REFERENCE implementation cost, not the architecture cost; a fused select/window kernel is the fast path. Correctness is unaffected (test_arch_compat cases 1/4/4b green on main).",
+      "boundary": "attention-module step, not full-model step (no MoE, no loop); same-card same-shape A/B so the ratio is the number that matters, the absolute tok/s are module-level",
+      "status": "recorded"
     }
   ]
 }
