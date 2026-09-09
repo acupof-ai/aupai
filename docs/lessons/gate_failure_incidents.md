@@ -793,7 +793,7 @@ is in the report.
 
 Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
 `runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`. 44 recomputed both means from the raw rows and
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3`. 44 recomputed both means from the raw rows and
 got 0.0285 and 0.0089.
 open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
 a reported arm-vs-control delta was placed against a floor on the SAME metric.
@@ -1229,9 +1229,12 @@ hours before the read point, not the 5.5 this entry first claimed (44 caught the
 asking why two arms that should track each other were diverging at all.
 Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
 `data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
-`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_2` (`e24268fd`, corrected at `c29d6cc0`);
-`runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
-runs and is committed at close -- §286's fix applied before the fact this time.
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_3` (amendment 1 `e24268fd`, corrected at
+`c29d6cc0`; amendment 3 redefines D as the spread rather than one draw);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column, and `runs/anneal_r_vs_n1_drift_0909.tsv`
+for R against it -- committed at step 5500 with the arm still running, not at close, because the
+drift it records is what the criterion reads and a series that arrives after the verdict cannot
+constrain it. §286's fix applied before the fact this time.
 open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
 one thing; the assertion would be over the built plan, not over the mix files.
 
