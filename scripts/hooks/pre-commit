@@ -512,10 +512,21 @@ def main():
     # NO COUNTER: scripts/test_hookstaged_sweep.py lifts these lines verbatim from `_sweep_dirs = `
     # onward and exec's them, so any name bound ABOVE that line is a NameError in the test. Every
     # name this block uses is bound inside it, and each removal already prints its own line.
+    #
+    # LIVE COPIES ARE NOT STALE. The scope above holds the directory of every registered selftest
+    # file, which includes scripts/hooks/ -- so this sweep can reach the copy an OUTER run is at
+    # that moment executing as its own __file__. It did: 2026-09-09, a merge staging this file had
+    # its .hookstaged_pre-commit unlinked by a nested run's sweep, and the outer selftest died
+    # reading its own source after every world had passed. The parent exports the paths it owns in
+    # AUPAI_HOOK_LIVE_COPIES and nested runs inherit it, so "in use" is read from the process that
+    # created the file rather than guessed from an mtime.
     _sweep_dirs = {os.path.dirname(os.path.join(repo_root(), f)) for f in _registered_selftest_paths()}
     _sweep_dirs.add(repo_root())
+    _live = {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}
     for _dir in _sweep_dirs:
         for _stale in glob.glob(os.path.join(_dir, ".hookstaged_*")):
+            if os.path.abspath(_stale) in _live:
+                continue
             try:
                 os.unlink(_stale)
                 print(f"hook: removed stale {os.path.relpath(_stale, repo_root())} (a killed hook "
@@ -2570,6 +2581,9 @@ def main():
             flag = PARTIAL.get(f) or SELFTEST_FLAG.get(f, "--selftest")
             _env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
             _env["TMPDIR"] = _env["TEMP"] = _env["TMP"] = st_tmp
+            _env["AUPAI_HOOK_LIVE_COPIES"] = os.pathsep.join(
+                sorted({os.path.abspath(p) for p in staged_copies}
+                       | {p for p in os.environ.get("AUPAI_HOOK_LIVE_COPIES", "").split(os.pathsep) if p}))
             # INTERPRETER BY EXTENSION. This was sys.executable unconditionally, which is correct
             # for every .py in the map and silently wrong for the first .sh added to it: python3
             # would run the shell script, exit 1 on the first line, and the hook would report the
@@ -3476,10 +3490,20 @@ def _selftest():
     # coverage it was printed to describe -- the same shape as a selftests timing line that
     # includes zero files. Counts the `# WORLD <n>` markers, so a world added without a marker
     # is the only way to be miscounted now.
-    _n = len({w for pair in re.findall(r"#\s*WORLDS?\s+([0-9]+[a-z]?)(?:/([0-9]+[a-z]?))?",
-                                       open(__file__, encoding="utf-8").read())
-              for w in pair if w})
-    print("pre-commit selftest: %s (%d worlds)" % ("FAIL" if fails else "ok", _n),
+    # try/except, because this read is ACCOUNTING and the verdict above it is already decided.
+    # Measured 2026-09-09: a merge that staged this file ran the staged copy as
+    # scripts/hooks/.hookstaged_pre-commit, a NESTED run's top-of-main sweep unlinked it mid-flight,
+    # and this line raised FileNotFoundError on its own __file__ -- refusing a commit whose worlds
+    # had all passed, with a traceback that named no world. A count that cannot be read is reported
+    # as unknown; it never converts a green verdict into a refusal.
+    try:
+        _n = len({w for pair in re.findall(r"#\s*WORLDS?\s+([0-9]+[a-z]?)(?:/([0-9]+[a-z]?))?",
+                                           open(__file__, encoding="utf-8").read())
+                  for w in pair if w})
+        _worlds = "%d worlds" % _n
+    except OSError as e:
+        _worlds = "world count unavailable (%s: %s)" % (type(e).__name__, __file__)
+    print("pre-commit selftest: %s (%s)" % ("FAIL" if fails else "ok", _worlds),
           file=sys.stderr)
     return 1 if fails else 0
 
