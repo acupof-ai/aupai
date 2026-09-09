@@ -10806,6 +10806,20 @@ def check_frozen_keys_complete(root):
     return PASS, f"{len(flags)} parser flags, all in frozen set or allow-list"
 
 
+def _frozen_flag_tokens(frozen):
+    """The flag tokens a frozen config emits. THE ONE EXPRESSION both call sites use --
+    a second copy in _run_point was the defect this check existed to catch elsewhere:
+    frozen_args_parse guards this function, so a copy it does not call is unguarded.
+
+    A null-valued key emits nothing: absence IS the Cfg default, and `loop: null`
+    rendered as `--loop None` was the bug. A bool is an argparse store_true flag the
+    caller's own CLI owns, never a --flag value pair."""
+    cfg_to_flag = {"d": "dim"}
+    return [v for k in _FROZEN_KEYS
+            if not isinstance(frozen[k], bool) and frozen[k] is not None
+            for v in (f"--{cfg_to_flag.get(k, k)}", str(frozen[k]))]
+
+
 def _frozen_launch_argv(root):
     """The flag tokens `run point` builds from the frozen config, or (None, why).
 
@@ -10823,10 +10837,7 @@ def _frozen_launch_argv(root):
     absent = [k for k in _FROZEN_KEYS if k not in frozen]
     if absent:
         return None, f"key(s) absent from the frozen config: {', '.join(absent)}"
-    _cfg_to_flag = {"d": "dim"}
-    return [v for k in _FROZEN_KEYS
-            if not isinstance(frozen[k], bool) and frozen[k] is not None
-            for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))], ""
+    return _frozen_flag_tokens(frozen), ""
 
 
 def check_frozen_args_parse(root):
@@ -10857,8 +10868,13 @@ def check_frozen_args_parse(root):
     # from the caller's own command line at launch, so a probe without them fails for the
     # wrong reason. Values are irrelevant -- --help exits before any of them is used.
     filler = ["--name", "_frozen_args_parse_probe", "--lr_scale", "1"]
+    # train.py imports local modules (fone, model) at module scope, and a selftest world
+    # copies only train.py plus the config -- without ROOT on sys.path the subprocess dies
+    # on ModuleNotFoundError before argparse runs, in BOTH the broken and the clean twin,
+    # so the selftest's FAIL is independent of the mutation (b0's review of PR #123).
+    env = {**os.environ, "PYTHONPATH": ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")}
     r = subprocess.run([sys.executable, train_py, *argv, *filler, "--help"],
-                       cwd=root, capture_output=True, text=True, timeout=120)
+                       cwd=root, capture_output=True, text=True, timeout=120, env=env)
     if r.returncode != 0:
         tail = (r.stderr or r.stdout or "").strip().splitlines()
         return FAIL, (f"train.py refuses the frozen ladder launch line: "
@@ -23465,15 +23481,12 @@ def _run_point(step_args, forced):
         # A null-valued frozen key EMITS NOTHING, and this is a fix rather than a special
         # case. `loop: null` was rendered as the two tokens `--loop None`, which argparse
         # refuses ("expected 2 arguments"), so `run point` on a ladder mix could not launch
-        # at all -- the frozen recipe emitted a command line its own trainer rejects. It
-        # went unseen because the ladder has not been rerun since --loop landed, and no
-        # check compares the emitted flags against train.py's parser. null means "the Cfg
-        # default", so the flag's absence is exactly what it asks for; _strip_frozen still
-        # refuses a caller who passes a value, because the key stays in _FROZEN_KEYS.
-        _cfg_to_flag = {"d": "dim"}
-        frozen_args = [v for k in _FROZEN_KEYS
-                       if not isinstance(frozen[k], bool) and frozen[k] is not None
-                       for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
+        # at all -- the frozen recipe emitted a command line its own trainer rejects. null
+        # means "the Cfg default", so the flag's absence is exactly what it asks for;
+        # _strip_frozen still refuses a caller who passes a value, because the key stays in
+        # _FROZEN_KEYS. The comp is _frozen_flag_tokens, shared with the check that guards
+        # it (frozen_args_parse) -- a copy here would be unguarded (b0's review of PR #123).
+        frozen_args = _frozen_flag_tokens(frozen)
         print(
             f"run point: cards={','.join(cards)} (granted) "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
