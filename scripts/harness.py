@@ -4166,6 +4166,32 @@ def _broken_stale_run():
     return d
 
 
+def _broken_future_started():
+    """A running row whose started date is in the future: negative age, must FAIL not silently pass."""
+    d = _tmp_repo()
+    subprocess.run(
+        [
+            sys.executable,
+            os.path.join(HERE, "exp.py"),
+            "--root",
+            d,
+            "start",
+            "--name",
+            "future_job",
+            "--cmd",
+            "x",
+        ],
+        check=True,
+        capture_output=True,
+    )
+    p = os.path.join(d, "runs", "experiments.jsonl")
+    rows = [json.loads(x) for x in open(p, encoding="utf-8") if x.strip()]
+    assert rows and rows[0]["status"] == "running", "exp.py start no longer opens a running row"
+    rows[0]["started"] = "2099-01-01 00:00"
+    open(p, "w").write("".join(json.dumps(r) + "\n" for r in rows))
+    return d
+
+
 def check_mix_not_unfiltered(root):
     doms, err = read_mix(os.path.join(root, cfg_default("mix")))
     if err:
@@ -7194,6 +7220,11 @@ def check_no_stale_running(root):
         except Exception:
             return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
         age_h = (time.time() - t) / 3600
+        if age_h < 0:
+            return FAIL, (
+                f"row {r.get('name', '?')!r} has a future `started`: {r.get('started')!r} "
+                f"({-age_h:.0f}h in the future) -- its age cannot be determined"
+            )
         if age_h > _STALE_RUNNING_H:
             rows.append(f"{r.get('name', '?')} {age_h:.0f}h")
     if rows:
@@ -17417,6 +17448,13 @@ CHECKS = [
         _broken_stale_run,
     ),
     (
+        "no_future_started",
+        "no experiments.jsonl row has a 'started' date in the future",
+        "a future date gives a negative age, always under the stale threshold, so the row never goes stale",
+        check_no_stale_running,
+        _broken_future_started,
+    ),
+    (
         "no_ghost_running",
         "a running row older than 2h has a live process (pod only)",
         "a finished-but-unrecorded run looked alive for up to 24h under no_stale_running alone",
@@ -18071,7 +18109,7 @@ EVIDENCE = {
     "mix_not_unfiltered": "repo", "no_oversized_blob": "repo", "non_shard_jsonl_excluded": "repo",
     "spawned_scripts_exist": "repo", "entrypoint_help": "repo", "merge_complete": "repo",
     "merge_keeps_parent_paths": "repo",
-    "no_stale_running": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
+    "no_stale_running": "repo", "no_future_started": "repo", "restartability": "repo", "gemm_dims_aligned": "repo",
     "guard_on_path": "repo", "tasks_paired_and_prior": "repo", "tasks_closed_by_commit": "repo", "owner_queue_depth": "repo",
     "peer_stalled": "repo",
     "one_deliverable_per_owner": "repo",
