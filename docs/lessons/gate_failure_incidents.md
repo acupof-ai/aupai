@@ -1100,6 +1100,18 @@ Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
 Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
 open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
 
+### §293 (2026-09-09, R14)
+
+**A guard's cleanup sweep deleted the file the guard was executing from.** The hook's selftest runner copies each staged selftest blob to `.hookstaged_<name>` beside its source and runs the copy. When a merge stages `scripts/hooks/pre-commit` itself, the hook becomes one of those blobs: the outer run's selftest phase invokes `scripts/hooks/.hookstaged_pre-commit` as a NESTED hook run, and the nested run's first act in main() is the stale-copy sweep -- glob `.hookstaged_*` over every registered selftest directory. The outer run's executing copy matches that glob. The sweep unlinked it mid-flight and the outer selftest died reading its own `__file__`, after all fourteen worlds had passed. The failure read as a flaky selftest, not as a guard that had just deleted itself.
+
+Same rule as §282, different verb: the instrument's own population contains itself. §282 read its own prose as data; this one's own runtime artifact matched its own deletion pattern. The fix has the same shape -- remove the instrument from its own action space -- and the obvious narrower fix is wrong: the sweep must still delete stale copies OF THE HOOK, because a killed run leaves them exactly where a live run's copy sits. PR #142 (merged 3558eb15) has the parent export its staged copies (`AUPAI_HOOK_LIVE_COPIES`, abspathed, unioned with any inherited value) and nested runs skip declared paths; undeclared stale copies are still swept and each removal is still announced. The detectable signature extends with this instance: the tool's own executing path matches its own glob.
+
+Why it survived the 2026-09-05 privatisation: it is not a shared-tree surface. A nested run happens inside one hook process's selftest phase on any tree, private or shared; the sweep and the executed copy sit in the same directory by construction.
+
+Evidence: the 2026-09-09 merge that died reading `__file__` after 14 worlds passed; `scripts/hooks/pre-commit:2561` (the copy), `:523-536` (the sweep), `:2568` (the export); `scripts/test_hookstaged_sweep.py`, which lifts the sweep block verbatim and asserts both directions on one planted file -- a declared copy survives, an undeclared one is removed AND announced, no plantable slot is a FAILURE not a skip, and the sweep's position before every exit path is read from source. Mutation-verified by 44 on the real hook, 2026-09-09: the skip condition replaced by `if False:` deletes the declared copy and the survival half goes red; the whole guarded body replaced by `pass` leaves all nine planted probes and the undeclared live probe in place and the undeclared half goes red. The same PR hardened the world-count read of `__file__` (try/except OSError) -- the accounting side of the same self-reference, and how the death surfaced.
+
+open: no general check that a guard's action population excludes its own runtime artifacts; the per-tool shape is `test_reachability_edges.py`'s, with the signature extended from "own source in own output" to "own executing path in own deletion set".
+
 ### §284 (2026-09-09, R3)
 
 **A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
