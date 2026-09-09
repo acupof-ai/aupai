@@ -1,6 +1,6 @@
 ---
 question: What exactly does the 27B teacher annotate for the p1 educational-value classifier, and at what budget?
-status: recorded
+status: measured (2026-09-10 GPU runs); spec sections recorded
 owner: e1
 source: docs/standards/p1_data_recipe.md (phi-1 filtering, FineWeb-Edu classifier card)
 ---
@@ -94,7 +94,8 @@ roughly doubling the code-token budget.
 
 4c's composition decision (2026-09-09): the p1 filtered code draws from three
 domains, not all nine -- code_rp1t_dd09 (6.24B tokens), code_rp1t_b2v2_dd
-(3.60B), code_dedup08 (~8.95B), ~18.8B total. The other five code domains are
+(3.60B), code_dedup08 (~8.95B at draw time; 8.41B measured after, see
+Ablation), ~18.8B total. The other five code domains are
 upstream stages and are not fed. e1 draws 100K rows from the three,
 proportional to token share (33,210 / 19,160 / 47,630), seed 42, reservoir per
 domain, rows of `{id, text}` (id = domain + shard + doc index; text = the head
@@ -123,7 +124,8 @@ Before the full run, label a 5,000-sample enlarged pilot drawn from the same
 three domains as the full run, proportional to token share (1,660 / 958 /
 2,382): it is the first-N slice of the full 100K draw (seed 42), so pilot and
 full stay comparable and nothing is re-drawn. At the pilot's >=3 rate (~17%)
-the enlarged pilot holds ~850 positives, a keep-rate half-width of ~1.2pp,
+the enlarged pilot holds ~850 positives, a 95% binomial half-width of ~1.0pp
+(p=0.17, n=5000),
 enough to select the threshold region; the threshold itself is pinned on the
 full 100K ablation (acceptance criterion), not on the pilot. The enlargement
 is drawn from the three deduped domains rather than code_rp1t because the
