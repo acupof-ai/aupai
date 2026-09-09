@@ -60,6 +60,15 @@ accepts "no cd at all"       'nvidia-smi'
 accepts "cd, pipeline"       'cd /work/aupai && ls runs | head -3'
 accepts "ampersand inside"   'cd /work/aupai && grep -c "a && b" AGENTS.md'
 
+# MUST REFUSE: non-ASCII in argv. The transport mangles it silently (measured
+# 2026-09-08: a Chinese grep pattern through the wrapper returned zero hits with
+# no error -- a false negative that looks like a clean result). The refusal is
+# the known-answer test: if the wrapper ever passes non-ASCII through, this goes
+# red. The override must still reach tn for the verified-bytes case.
+refuses "non-ascii argv" 'echo 小明'
+out=$(POD_ALLOW_NONASCII=1 PATH="$stub:$PATH" "$POD" 'echo 小明' 2>&1)
+printf '%s' "$out" | grep -q 'TN-CALLED' || { echo "FAIL [non-ascii override]: did not reach tn -- $out"; fail=1; }
+
 # MUST ACCEPT: an `&` that is not a background operator, with a `cd` present. These
 # are the false positives the widening could have produced, and they are the
 # load-bearing half -- a guard in front of every pod command that eats a legitimate
@@ -90,5 +99,5 @@ printf '%s' "$out" | grep -q 'container view' || { echo "FAIL: --view not handle
 out=$("$PODPUT" /etc/hosts relative/path.txt 2>&1); rc=$?
 [ $rc -ne 0 ] && printf '%s' "$out" | grep -q 'absolute' || { echo "FAIL: podput took a relative remote path"; fail=1; }
 
-[ $fail -eq 0 ] && echo "pod/podput refusals: all cases pass (8 refuse, 14 accept, 2 flag)"
+[ $fail -eq 0 ] && echo "pod/podput refusals: all cases pass (9 refuse, 15 accept, 2 flag)"
 exit $fail

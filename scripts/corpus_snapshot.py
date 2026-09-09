@@ -2,12 +2,14 @@
 """Freeze what data/corpus/* IS right now, for every domain, whether or not it was
 built with provenance.
 
-Reproducibility and detectability are different properties and only one of them can
-still be recovered. 30 of 49 domains carry a content fingerprint but no filters_fp,
-and 5 carry nothing: for those, WHICH filter code produced the bytes is gone and no
-snapshot brings it back. What a snapshot does buy is the other half -- from now on a
-changed byte is detectable, and the eventual rebuild has something to diff against
-instead of a rebuild nobody can compare to anything.
+Knowing the filter code and detecting a changed byte are different properties, and only
+one of them can still be recovered. 30 of 49 domains carry a content fingerprint but no
+filters_fp, and 5 carry nothing: for those, WHICH filter code produced the bytes is gone
+and no snapshot brings it back. Neither property is byte-reproducibility -- see _tier.
+
+What a snapshot does buy is the other half -- from now on a changed byte is detectable,
+and the eventual rebuild has something to diff against instead of a rebuild nobody can
+compare to anything.
 
     python scripts/corpus_snapshot.py                 # write runs/corpus_snapshot.json
     python scripts/corpus_snapshot.py --check         # compare live dirs to the snapshot
@@ -36,12 +38,26 @@ OUT = os.path.join(ROOT, "runs", "corpus_snapshot.json")
 
 def _tier(stats):
     """Which provenance tier this domain sits in. The tier is a property of when it was
-    built, not of the domain: filters_fp arrived after most of the web shards did."""
+    built, not of the domain: filters_fp arrived after most of the web shards did.
+
+    THE TIER NAMES WHAT THE STAMP CAN PROVE, NOT WHETHER A REBUILD WOULD MATCH. The top tier was
+    called `reproducible` until 2026-09-08 and that label produced a real wrong instruction: it
+    was read at face value, 14 of 49 domains were called rebuildable, and the instruction had to
+    be withdrawn. filters_fp is a SHA-1 over exactly three files -- filters/pass1_garbage.py,
+    pass2_garbage.py, pass3_garbage.py, the PIPELINE_FILTERS tuple at corpus_fingerprint.py:53.
+    It does not cover the tokenizer, build_corpus.py itself, the source snapshot, worker count,
+    shard ordering, or whether the near-dedup pass ran (a separate `near_dedup` stamp field;
+    code_rp1t carries False). A matching filters_fp proves the GARBAGE FILTERS were identical and
+    nothing else, and no domain in any tier is shown byte-reproducible by its stamp alone.
+
+    `filters_known` is the honest name for what the field carries: the filter code is known and
+    comparable. `content_only` says a changed byte is detectable but the code that produced it is
+    unrecoverable. Paired with cs.provenance_tiers_0903's tier_rule, which reads the same."""
     if stats is None:
         return "none"
     if stats.get("filters_fp"):
-        return "reproducible"
-    return "detectable"
+        return "filters_known"
+    return "content_only"
 
 
 def snap_domain(d):
@@ -80,7 +96,7 @@ def build(corpus=None):
     doms = sorted(x for x in os.listdir(corpus) if os.path.isdir(os.path.join(corpus, x)))
     return {
         "corpus_dir": corpus,
-        # The filter code AS OF THE SNAPSHOT. For a 'reproducible' domain compare it to
+        # The filter code AS OF THE SNAPSHOT. For a 'filters_known' domain compare it to
         # stats_filters_fp; for the other two tiers it is NOT what produced the bytes and
         # says only which code a rebuild would use.
         "filters_fp_now": fp_filters(ROOT),
