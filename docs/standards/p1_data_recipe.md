@@ -90,9 +90,30 @@ are empty shells.
 8.95B is `docs_kept/docs_in = 6239038/6389842 = 97.6%` applied to its 9.17B of inputs. Measure it
 before any threshold decision rests on it.
 
-One residual overlap is open and owned by 3b: `code_dedup08` contains `code_py_rp1t`, which is
-probably a Python subset of `code_rp1t` and therefore probably overlaps `code_rp1t_dd09`, bounded
-at 0.42B = 2.2%. "Probably" is an inference from the names and doc counts, not a measurement.
+The `code_dedup08` residual overlap, open here as a name-based inference, was
+**measured 2026-09-10**: it is a union build of 283 starcoder shards plus 15
+`code_py_rp1t` shards, and those 15 are by construction a third copy of
+dd09/b2v2 content. The exact-overlap channel deleted 169,561 dedup08 docs,
+almost all on those 15 shards; the 283 starcoder shards were barely touched.
+The dd09<->b2v2 near-overlap (22.9%/26.3% participation, est J>=0.5) is
+PENDING RE-MEASUREMENT after the loc/sig realignment (PR #177); near-dedup
+deletion is not approved. Operational detail stays in the pod's
+`data/decontam/NOTES.md`.
+
+### Which clean corpus p1 reads (source of truth)
+
+The 2026-09-09/10 decontamination pass produced two artifacts that both read
+as "the clean corpus". They serve different uses:
+
+- `data/corpus_clean/<domain>/` (pod, 57G) — clean source copies, for any use
+  that does NOT go through the quality classifier.
+- the classifier's keep set minus the deleted doc ids — **what p1 training
+  reads**. The keep set is decontaminated by doc id after e1's scoring run.
+
+The corpus swap (old source dirs renamed aside, clean copies renamed into
+place, old kept) happens after e1's scoring finishes, per 4c's plan (b).
+This section is the tracked authority; the manifests and per-pass numbers
+live in the pod's `data/decontam/NOTES.md`.
 
 ### The 6B is not a target
 
