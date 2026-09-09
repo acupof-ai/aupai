@@ -96,7 +96,10 @@ The `code_dedup08` residual overlap, open here as a name-based inference, was
 dd09/b2v2 content. The exact-overlap channel deleted 169,561 dedup08 docs, 138.6K (82%) of them
 on those 15 rp1t shards and 31.0K (18%) spread over the 283 starcoder shards
 (b0, pod count 2026-09-10); per-shard rate differs ~9x, so the starcoder
-side was barely touched relative to its size.
+side was barely touched relative to its size. An earlier draft of this
+section bounded the overlap at 0.42B = 2.2% from names and doc counts; that
+bound assumed the overlap was diffuse across the domain, and it is in fact
+concentrated on the 15 rp1t shards.
 The dd09<->b2v2 near-overlap (22.9%/26.3% participation, est J>=0.5) is
 PENDING RE-MEASUREMENT after the loc/sig realignment (PR #177); near-dedup
 deletion is not approved. Operational detail stays in the pod's
