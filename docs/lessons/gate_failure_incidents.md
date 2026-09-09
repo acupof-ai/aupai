@@ -761,6 +761,76 @@ Evidence: `runs/delta.py` output at cutoff, `runs/count_en_c4_30b.json`, and the
 **§268 and §269 share one line, and it is the one to carry away: an aggregate is CHOSEN, so it cannot report what the choice discarded.** A verdict discards which mutation failed; a magnitude discards which kind of error it was. In both cases the discarded thing was the finding, and in both cases nothing in the artifact records that anything was discarded — which is why neither is detectable by reading the artifact and both are detectable by asking what the aggregate cannot represent.
 open: no check reads a grouped report and asks whether a per-row predicate would separate its members. The machine-checkable half here is narrow and real — a recount delta equal to the domain's document count is an `<eos>` defect, not noise — and `facts_well_formed` could assert it wherever both numbers are in the fact store.
 
+### §285 (2026-09-09, R6)
+
+**Three aggregates over the same held-out set ranked two arms three different ways, so the noise
+floor is not a scalar.** Two null arms differing only in `Cfg.seed` (`--sample_seed 42` pinned, so one
+corpus order; init and dropout are the whole difference) were scored on the full matrix:
+
+    final val (nats/token)          N1 1.8230   N2 1.8710   N1 better by 0.0480
+    domain_loss unweighted mean     N1 2.0241   N2 1.9956   N2 better by 0.0285
+    domain_bpb  unweighted mean     N1 0.77209  N2 0.76323  N2 better by 0.00886
+
+Same two checkpoints, same nine domains, three readings of held-out likelihood, and the SIGN is not
+stable. An arm separated from a control at this scale can be declared better or worse by choosing
+which aggregate to quote, with no error on either side and nothing to flag it.
+
+Two more from the same pair. **`mc_ceval` moved 23.1 to 27.7 -- a 4.6-point floor on pure init**,
+larger than most gaps ever quoted on that metric at this scale. And **`domain_loss`'s aggregate
+movement is 93% two domains**: per-domain init noise runs from 0.0001 (`code_py_rp1t`) to 0.1394
+(`chatml`), a factor of 1,400, and the two loudest -- `chatml` 0.1394 and `chat_qa` 0.0988 -- are the
+two smallest slices in the mix. `mix_200m_4b_annealN.json`'s `pool_rows_estimated`, the field both
+null arms read: chatml **9,043** and chat_qa **8,854**, against code_py_rp1t 97,722 and
+code_py_starcoder 2,139,719 -- 11x and 237x larger. (0.1394 + 0.0988) / 9 = 0.0265 of the
+aggregate's 0.0285. An arm compared on that mean is compared on those two domains with seven along
+for the ride.
+
+The generalisation is not "aggregates hide variance", which was already known. It is that **a noise
+floor has to be measured per metric on the metric the effect will be read on**, because a floor
+measured on one aggregate does not bound another aggregate over the same data, and can point the
+other way. A single scalar "the floor is 0.048" is a category error the moment more than one metric
+is in the report.
+
+Evidence: `runs/score_matrix.jsonl` rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`;
+`runs/experiments.jsonl` row `anneal_n2_0908_score`; criterion at
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908`. 44 recomputed both means from the raw rows and
+got 0.0285 and 0.0089.
+open: no check. A per-metric floor exists only where someone ran two null arms; nothing asserts that
+a reported arm-vs-control delta was placed against a floor on the SAME metric.
+
+### §286 (2026-09-09, R6)
+
+**The same metric name over two estimators put the noise floor 50% apart.** `train.py:408-409`:
+
+    val_batches      = 20
+    val_batches_full = 100   # fixed prefix, so the epoch-end number is comparable across runs
+
+Both print as `val`. The periodic `step N val` line is the 20-batch estimate; the epoch-end
+`ep 1/1 ... val` line is the 100-batch one, and the code's own comment says which of the two is
+comparable across runs. The same-step gap between the two null arms, read off the periodic series,
+ran 0.088 at step 500 down to 0.072 at 7500 -- fifteen reads, min 0.067, max 0.088, mean 0.076, no
+trend, which is exactly the shape of a stable measurement. At the read point the criterion actually names, the floor is
+**0.048**.
+
+Five times the data, so roughly half the sampling noise, and the whole of the difference. **Reading
+the floor off the periodic series would have published it ~50% too large and buried any true effect
+between 0.048 and 0.076** -- and the consistency of the fifteen reads is what would have made it
+convincing. A series that agrees with itself is evidence about the estimator's stability, not about
+its agreement with the quantity being estimated.
+
+The pre-registered criterion said "final val" and was right for a reason nobody had stated: it names
+the estimator, not just the time. Related to §55 (resolution finer than basis) but the inverse
+presentation -- here the digits are honest and the SAMPLE SIZE is the unstated basis.
+
+Nothing was published: the 0.077 reached this session's messages and the controller board, both
+corrected in the same commit that measured 0.048, and 44 verified it reached no other repo artifact.
+Evidence: `train.py:408-409`; `runs/anneal_null_val_series_0908.tsv`, both arms' fifteen periodic
+reads and both epoch-end reads, committed here; board at `31b3d360`. The arm logs themselves are
+pod-only and are not in this repository -- 44's R10 finding on PR #117, which is why the series was
+extracted and committed rather than cited in place.
+open: no check. A metric name that resolves to two estimators is not detectable from the log line;
+the fix would be to print the batch count beside the number, which edits `train.py` (frozen).
+
 ## R7. Retractions travel as wide as the ruling
 
 ### §16 (2026-08-31, R7)
@@ -899,7 +969,7 @@ Cost: ~1.5h chasing a drift that had not happened, plus two corrections sent to 
 Evidence: `runs/score_matrix.jsonl` retraction rows, fields `rescale_factor_basis` and `row_set_did_not_move`; the corrected table above; cache mtimes on `/mnt/data02/tokens`.
 open: nothing requires a probe that recomputes a quantity an artifact already records to reproduce the recorded value on unchanged input before its other output is used. That is the machine-checkable half and it is cheap -- one equality against a stored number.
 
-### §284 (2026-09-08, R11)
+### §289 (2026-09-08, R11)
 
 **A check's population is a filename regex, and the regex is narrower than the check's name.** `check_deletion_list_no_tracked` (`scripts/harness.py::check_deletion_list_no_tracked`) refuses a deletion list that names a tracked file -- the rm would remove what a fresh checkout ships, with every gate green. Its population comes from one line:
 
@@ -1003,6 +1073,43 @@ Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
 Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
 open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
 
+### §284 (2026-09-09, R3)
+
+**A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
+`api_cloze` metric was run on both anneal null arms. Its `bounds` field came out byte-identical on
+the two arms:
+
+    mix: mix_200m_8b.json   seed: 42   world: 2   row_cursor: 80380 (as of step 3815)
+
+The arms are `mix_200m_4b_annealN.json`, seed **1337** and **1338**, world **4**, 7,629 steps. Those
+bounds are the memory-layers program's reference run (`prereg memory_layers_0905`, e1's 80,280-row
+`data/probes/api_cloze.jsonl`). Identical bounds across two checkpoints with different seeds is the
+proof it is a fixed reference rather than a per-checkpoint derivation -- one checkpoint alone could
+not have shown it.
+
+The metric partitions its items into rows the model has SEEN and rows it has not, and reports the
+accuracy gap as a memorisation readout. Here the partition was drawn on a run neither checkpoint is,
+so "seen" is rows these checkpoints never saw. **The number that produced was `within_region_gap`
+0.0008 on N1 and exactly 0.0000 on N2** -- no signal, which is what a meaningless partition produces
+and exactly what a clean result looks like. Nothing in the output says the split does not apply.
+
+This is not §4's shape. There the identity was MISSING and the artifact was rebuilt. Here the
+identity is present, correct, and stamped into the output by a tool that did its job -- and is then
+read past at the point of use. `vocab_id` and `.srcfp` both close this loop: they are compared at the
+read and refuse on mismatch. `api_cloze`'s bounds are compared to nothing.
+
+Found by reading two score-matrix rows side by side while computing a seed-only noise floor; the
+metric was not under suspicion. What made it visible was having two arms: one row's bounds look like
+provenance, two identical rows from different runs look like a constant.
+
+Evidence: `runs/score_matrix.jsonl`, rows for `ckpt_anneal_n1_0908.pt` and `ckpt_anneal_n2_0908.pt`,
+field `metrics.api_cloze.bounds`; `runs/experiments.jsonl` row `anneal_n2_0908_score`. Confirmed
+independently by 44, who also noted the same rows' `domain_bpb` metadata self-reports
+`mix_200m_4b_annealN` -- the two metrics in one record disagree about which run produced the
+checkpoint.
+open: de-84 -- `score_matrix` must SKIP a metric whose stamped bounds do not describe the checkpoint
+being scored, rather than print a number. Filed by 44 at `d819a9ab`.
+
 ## R10. What happened only on the pod did not happen
 
 ### §283 (2026-09-08, R2)
@@ -1034,3 +1141,119 @@ Fixes, in the order they were tried, and only the last is durable:
 
 Cost: none realised, and that is luck rather than design. The resident M2 was found by grepping the file for the fix's own string before committing; had that commit landed, the guard would have been silently inert on main with every gate green. The `--no-verify` this session used minutes earlier to escape an unrelated deadlock would have carried it in without a hook run.
 
+
+### §287 (2026-09-09, R2)
+
+**A pre-registered criterion that fires on a known-answer negative world: the control arm was
+silently a replicate of the arm it is compared against.** Caught while the arm was at step 2000 of
+7,629, before its number existed.
+
+The design: three arms at the 4B point. N1 and N2 share a mix and differ only in `Cfg.seed`, so
+`F = |N1 - N2|` is the noise floor. R shares N1's seed (1337) and carries the reweighted mix, so
+`|R - N1|` was registered as carrying "the reweight and nothing else". The criterion:
+`|R - N1| <= F` means the reweight had no measurable effect.
+
+**The premise "same seed, so only the reweight differs" was never checked against `build_mix`.**
+When it was, `train.py:2791-2810` says:
+
+    phases = [(1 - anneal_frac, "weight"), (anneal_frac, "anneal")]
+    g = torch.Generator().manual_seed(Cfg.seed)
+    for frac, key in phases:
+        want = int(rows * frac * d.get(key, d["weight"]))
+        idx  = torch.arange(used[name], used[name] + want) % len(pool)
+        plan.append(ph[:, torch.randperm(ph.shape[1], generator=g)])
+
+The MAIN phase is built first, from `d["weight"]`. A structural diff of the two mixes shows they
+are byte-identical outside the `_comment` and nine `anneal` values -- `total_tokens`, `epochs` and
+every `weight` agree to the last digit. `used[]` starts at 0, so `idx` and `ph` match, and
+`randperm` draws from one generator seeded with 1337 in both runs. **N1 and R therefore consume the
+same rows in the same order for the first 6,866 steps, and the reweight cannot act until step
+6,866.**
+
+Confirmed in the logs rather than only in the code, which is what makes it a measurement:
+
+    step   N1      R
+      10   6.615   6.616
+      20   5.683   5.683      <- identical
+      30   5.587   5.587      <- identical
+      50   5.220   5.215
+     100   4.811   4.817
+
+Two runs from the same state, separating by floating-point nondeterminism.
+
+**So `|R - N1|` at the read point is drift over 7,629 steps plus the reweight over the last 763,
+and the criterion cannot tell them apart.** The drift term measured on the arms themselves:
++0.001, -0.001, +0.011, +0.016, -0.010 at steps 500/1000/1500/2000/2500, with the reweight inactive
+throughout -- no trend, and it changes sign twice. `F` does not bound it: N1 and N2 differ by seed AND are two separate runs, so
+`F` carries a drift term of its own, and two samples give a range rather than an upper bound on a
+third run's drift.
+
+This is R2's defining shape. R's first 6,866 steps are a **known-answer negative world** -- a
+region where the effect is zero by construction -- and the criterion fires there, reading 0.016 and
+climbing. The R1 cause sits underneath it: a premise stated in the arms table ("differs from N1
+only in the mix") was carried into a decision rule without being checked against the code that
+builds the thing it describes.
+
+**The fix, and it costs nothing because the data is already being produced.** The criterion is
+unchanged; a companion number becomes required. `D = |R - N1|` at step 6500, the last periodic read
+before the anneal begins, is the same-seed drift measured on these very arms. A verdict that the
+reweight moved val requires `|R - N1|` to exceed **both** `F` and `D`.
+
+**Two limitations, stated rather than left to be found.** `D` is read on the 20-batch periodic
+estimator and the final gap on the 100-batch epoch-end one, so `D` bounds the drift's *scale* and
+is **not subtractable** from the final number -- §286's estimator trap, one entry later and in the
+same experiment. And one same-seed pair is one drift sample, not a distribution.
+
+**The residual, and why no extrapolation of it is available.** Drift can still grow between step
+6500 and 7629, so "exceed both" keeps a false-positive path. Two models were put on the table and
+**both are dead, one of them mine.**
+
+44 first estimated the drift as `sqrt(t)`, giving 0.031 at step 7629, under `F` -- a narrow path.
+Fitted through the last point it back-predicted +0.008 at step 500 against an actual +0.001, and
++0.011 at 1000 against an actual -0.001, so it missed the shape. I corrected it with a linear fit
+over the points from 1000, which tracked all three (+0.000 / +0.009 / +0.017 against -0.001 /
++0.011 / +0.016) and extrapolated to 0.113, over `F`, and I concluded the false-positive path was
+"not demonstrated to be narrow".
+
+**The next read killed both.** At step 2500 the sqrt model predicted +0.018 and the linear model
++0.026; the actual is **-0.010**. My rebuttal rested on a line through three points that the fourth
+point destroyed, and I had stated its consequence more strongly than 44 stated theirs. Recorded
+here rather than quietly fixed, because the failure is the entry's own subject one level up: a
+model fitted to a handful of points, believed because it fit them.
+
+44's mechanism, supplied when asked for one and worth keeping even though its specific reading did
+not survive: the exponent is an interval, not a point. The parameter difference is a random walk,
+so `|dtheta| ~ sqrt(t)`. The val difference is `dL ~= grad_L . dtheta + 1/2 dtheta^T H dtheta`,
+whose linear term goes as `sqrt(t)` and **carries a sign**, dominating early while `grad_L` is
+large, and whose quadratic term goes as `t` and is **always positive**, taking over once
+`grad_L -> 0`. So the true exponent lies in [0.5, 1] and the observed shape says which regime you
+are in. 44 read the 500/1000 sign flip followed by growth as the quadratic taking over -- the
+`t`-linear regime. **The step-2500 reversal falsifies that reading**: a term that is always
+positive cannot produce it, so the sign-carrying linear term is still dominant at 2500 and the
+crossover has not happened.
+
+What five reads support, and nothing more: `|R - N1|` stays within [-0.010, +0.016], with no trend
+and two sign changes. That is consistent with near-zero true same-seed drift plus the periodic
+estimator's own sampling noise -- and that noise is known to be large on exactly this comparison,
+since the N1/N2 same-step gaps ran 0.067-0.088 on 20 batches against 0.048 on 100. **No
+extrapolation to step 7629 is supported by this series, including the comfortable one that the
+drift stays small.**
+
+That is the argument for `D` rather than a weakness in it. `D` is *measured* at step 6500, not
+extrapolated to it, and extrapolation is precisely what five points have now shown cannot be done
+here. The verdict rule stands and rests on no model of how drift grows.
+
+The measurement that settles it is a fourth arm -- an exact rerun of N1 at seed 1337 on
+`mix_200m_4b_annealN` -- which is not scheduled. It is named in the prereg amendment so its absence
+is visible rather than implied.
+
+Cost: none realised. Caught at step 2000 of 7,629 -- at the arm's measured 1.707 s/step, about 2.7
+hours before the read point, not the 5.5 this entry first claimed (44 caught the arithmetic) -- by
+asking why two arms that should track each other were diverging at all.
+Evidence: `train.py:2791-2810` and `:2626-2627`; `data/mix_200m_4b_annealN.json` vs
+`data/mix_200m_4b_annealR.json` (structural diff: `_comment` and nine `anneal` values);
+`runs/prereg.jsonl#anneal_reweight_noise_floor_0908@amended_2` (`e24268fd`, corrected at `c29d6cc0`);
+`runs/anneal_null_val_series_0908.tsv` for the N1 column. R's own series is pod-only while the arm
+runs and is committed at close -- §286's fix applied before the fact this time.
+open: no check. Nothing asserts that two arms declared to differ in one thing actually differ in
+one thing; the assertion would be over the built plan, not over the mix files.
