@@ -1,4 +1,54 @@
-# Controller board (fb) — 2026-09-09, 06:1xZ
+# Controller board (fb) — 2026-09-09, 07:5xZ
+
+## Since 06:1xZ — v2 is shelved, and the PR queue's bottleneck is review, not CI
+
+**v2's first arm will not run as specified, and the budget argument is the hard half.**
+`runs/prereg.jsonl#v2_loop_moe_csa_0908@amended_4`. Three build blockers, each independent and each
+fixable: `model.py:1635` refuses 0 KDA layers under NoPE by design (waits on partial RoPE); `Cfg.csa`
+is in no parser dict (`train.py:2942-3005`), so CSA is code-edit-only; the reference CSA kernel is
+233.19 vs 28.59 ms/step = **8.157x** against this row's own pre-registered <=1.15x gate (PR #140).
+What is not fixable at this budget: control 6*N*D = **3.60e19** FLOPs and treatment **5.40e19**, both
+**below the 1e20 lower edge** of the regime where `facts/smelt_deeploop.json#smelt.ce_gain` reports
+6.8-10.0%. And this repository already ran the two-arm test at 7.34e17, where the loop **lost** at
+equal compute: `#repo.loop_not_adopted_equal_compute`, -0.043905 nat (t -32.49, 544/576 blocks),
+-0.038320 humaneval gold BPB (t -6.45, 123/164 tasks) — 26% more tokens beat the loop for the same
+FLOPs. Launching as specified re-derives a measured negative. **The question that survives is the
+crossover**, between our 7.34e17 loss and SMELT's claimed 1e20 gain; that is a different experiment.
+
+**The PR queue is not blocked on CI.** 11 open PRs, CI green on all but one in progress,
+**zero rows in `runs/review.jsonl` for any of them** (only #139 carries an `artifact:` PR comment).
+Assigned by pair: de 6 (#120 #122 #139 #137 #140 #141), 44 2 (#134 #128), b0 2 (#103 #135). de's
+six include b0's three — tilerl's session exited, the fixed pair tilerl<->b0 left b0 with no second
+reader, so b0<->de. Forced by an exit, not a change to the user's 2026-08-31 pairing order.
+#134 merged by 44 at `682f80f4` with the pod push in the same step, which is the flip working.
+
+**PR #142 — a hook bug that refuses every branch that has merged main.** `_sweep_dirs` covers the
+directory of every registered selftest file, which includes `scripts/hooks/`, so a commit that
+stages the hook has its live `.hookstaged_pre-commit` unlinked by a nested run's sweep; the outer
+selftest then dies on `open(__file__)` at `:3464` **after all fourteen worlds passed**, with a
+traceback naming no world. The crash is in the world COUNT, not an assertion. Fixed two ways, both
+with negative controls: the count can no longer change the verdict, and the parent publishes what it
+owns in `AUPAI_HOOK_LIVE_COPIES` so nested sweeps skip it (env unset -> nothing protected, i.e. the
+pre-fix behaviour, so the fix cannot pass by disabling the sweep). It is a race, so it does not
+reproduce every run — which is why it read as "your hook change is broken" for two attempts.
+
+**Cards.** aupai 2,4,5,7 — all four idle. tileRL 0,1,3,6, all four held, boundary re-confirmed by
+their own session after they took card 2 in error and returned it in 8 minutes. **The flagship's
+remaining 4,146 steps do NOT need six cards**: world 6 `--batch 8 --accum 4` = 192 sequences/step;
+world 4 `--accum 6` = 4x8x6 = **192**, so `total_steps = len(Xtr) // (batch*accum)`
+(`train.py:3717`, `Xtr` per-rank) is unchanged at 38,146 and `warmdown_start` at 34,332 — same LR
+curve, ~1.5x wall clock (**~5.1h EXTRAPOLATED from resume1's 2.97 s/step, not measured**). Launch
+line staged. **Waiting on the user: the run was stopped by their order 2026-09-08, and only they
+reopen it.**
+
+**Ledger.** `anneal_r_0909`'s pod/local conflict ruled local (`runs/ledger_resolutions.jsonl`): the
+pod row's `scoring FAILED rc=1 -- no metrics` describes the FIRST attempt only; the rescore
+succeeded and `runs/score_matrix.jsonl` holds `ckpt_anneal_r_0909.pt` with all ten metrics. Both
+sides agree on val 1.819; they disagreed only on whether a reading exists.
+
+---
+
+# Round record — 2026-09-09, 06:1xZ
 
 **The night's one sentence: the noise floor is 0.048 on val and per-metric beyond it, and arm R turns out to be a same-seed replicate of N1 for 6,866 of its 7,629 steps — so the pre-registered criterion could have fired on drift alone, and the fix (`D` measured at step 6500) was written into the prereg while R was at step 2000.**
 
@@ -31,7 +81,7 @@ is that "+0.0108 against a 0.0000 floor" never appears without 222/222 beside it
 |---|---|---|---|---|
 | N1 | 1337 | **1.823** | 7,629 | 4.00B |
 | N2 | 1338 | **1.871** | 7,629 | 4.00B |
-| R | 1337 | running, step 7160/7629 (94%), in ANNEAL since 6866 | 7,629 | 4.00B |
+| R | 1337 | **1.819** | 7,629 | 4.00B |
 
 **F = 0.048.** Everything else about the two arms is identical: same mix
 (`mix_200m_4b_annealN.json`), same `--sample_seed 42` so one corpus order, same recipe. The pair
