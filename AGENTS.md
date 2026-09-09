@@ -300,6 +300,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | An instrument searching a space that contains its own text; signature is the tool's own source appearing as a source in its own output | 1 | §282 |
 | A discrimination must rest on a property the two sides do not share; of a cmdline the first field is identity, the flags after it are not; cross-namespace, ps absence and presence are both non-evidence | 1 | §294 |
 | A criterion made more precise can move its residual error from the lax side to the dangerous side; ask which side the residual lands on before asking whether the new criterion is more accurate | 1 | §295 |
+| Two artifacts joined by position must have one writer of the ordering or an explicit join key; a cross-process row-i-to-row-i convention has no owner, and the alignment check must re-derive content, not compare lengths | 1 | §296 |
 
 New shapes land in the incidents doc first and this table follows.
 

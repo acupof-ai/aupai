@@ -1404,3 +1404,21 @@ Guard criterion: when a predicate in a claim/liveness/safety path gains a conjun
 Cost: none realized — caught in review. The cost that did not occur is a card collision under a false STALE.
 Evidence: `scripts/card_claim.py` #173 diff (`_start_time`, `_pid_reused`, the two selftest cases); the old criterion and the null crash at main `card_claim.py:478` (`int(None)`); tilerl-27's formulation and 4c's case, 2026-09-09.
 open: no checklist or scanner flags a predicate-tightening diff for the residual-direction question. The checkable slice is mechanical — a diff adding a conjunct to a predicate in claim/liveness code — but no review gate consumes it.
+
+## R17. A positional join across two producers has no owner
+
+### §296 (2026-09-10, R17)
+
+**Two artifacts that had to correspond row by row, produced by two code paths with different ordering guarantees, joined by a convention nobody wrote down — ~85% of rows misaligned, found by measurement in review, not by reading the code.**
+
+`datagen/near_overlap.py` builds MinHash signatures per domain and a loc index (shard, row coordinates) for the same docs. `sign_domain` stacks signatures in `imap_unordered` completion order; the loc files were built in `sorted(glob)` order. The exact-J calibration and the hit-pair coordinates join the two by row position — "row i of the sigs is row i of the locs" — and no line of code states that. It was not violated; it was never expressed, so nothing could check it. Both producers were individually correct.
+
+Measured by b0 in #177's review: ~85% of rows misaligned. Consequence: every coordinate-dependent output was wrong — the exact-J calibration pairs, the shard/row of each hit. The participation rate survived because it is order-independent: a doc either has a >=0.5 neighbor or it does not, and set membership does not care which row it sits on. The misalignment measurement is b0's; the order-independence half of the reasoning was verified separately by 4c.
+
+The fix (#177, 3b's choice): `sign_domain` now persists the locs in the same completion order it stacks the sigs — one writer for the ordering — and the old rebuild path is deleted. Not "make the second path reproduce the first's order": delete the site where the order was guessed. The guard asserts the property rather than a proxy: length equality passes under any permutation, so the guard re-signs the doc at `loc[i]` and compares the signature to `sigs[i]`, 14 docs per domain, seeded.
+
+Guard criterion: where two artifacts are joined by position, the ordering must have a single writer or the join must use an explicit key. A cross-process "row i ↔ row i" is a convention with no owner. And the alignment check must re-derive content, not compare lengths.
+
+Cost: the coordinate-dependent half of a decontamination instrument's output — calibration and hit coordinates — was silently wrong; the order-independent half reported correctly, which is why the wrong half looked fine.
+Evidence: `datagen/near_overlap.py` #177 diff (`sign_domain` completion-order loc persistence, the deleted rebuild path, the content guard); b0's misalignment measurement in the #177 review, recorded in the code comment; 4c's order-independence verification, 2026-09-10.
+open: no scanner flags a positional join over two files with different producers. The checkable slice is mechanical — a zip/row-index join over two artifacts with different writer paths — but no check knows which files are consumed together.
