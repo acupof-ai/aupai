@@ -298,7 +298,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | A green line whose result is anti-correlated with its own name; assert the property, not a message that accompanies it, never a line that can pass by not running, and make every mutation run name the assertion that died | 1 | §279 |
 | Information already present, but not in a form that can be treated as a conclusion: a measured conclusion in a comment, a weak criterion wearing a strong one's clothes, a half-correct sentence, a number correct under a different question | 2 | §280 §281 |
 | An instrument searching a space that contains its own text; signature is the tool's own source appearing as a source in its own output | 1 | §282 |
-| A discrimination must rest on a property the two sides do not share; of a cmdline the first field is identity, the flags after it are not | 1 | §294 |
+| A discrimination must rest on a property the two sides do not share; of a cmdline the first field is identity, the flags after it are not; cross-namespace, ps absence and presence are both non-evidence | 1 | §294 |
 
 New shapes land in the incidents doc first and this table follows.
 
