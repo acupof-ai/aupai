@@ -138,6 +138,12 @@ _CHECK_TIMEOUTS = {
     # measurement is crossed again. 30s is ~5x the solo worst, the same ratio as the
     # entries below, and still far under a hang.
     "doc_flags_parse": 30,
+    # Measured on this laptop 2026-09-08: 11.87 / 11.36 / 10.85s, and essentially all of it
+    # is `import torch` at the top of train.py -- argparse itself is microseconds. The check
+    # cannot dodge that cost without dropping the real parser for a re-implementation, which
+    # is the thing it exists not to do. 60s is ~5x the worst measurement, matching the ratio
+    # the entries around it use, and still nowhere near a hang.
+    "frozen_args_parse": 60,
     "eval_sft_template_contamination": 90,
     # Measured on the pod, 2026-09-01: 0.8s to load the 1.5GB pack, 0.2s to flatten
     # 192M tokens, and 0.127s per probe x 76 probes = 9.7s of search. It was never
@@ -11100,6 +11106,97 @@ def check_frozen_keys_complete(root):
     return PASS, f"{len(flags)} parser flags, all in frozen set or allow-list"
 
 
+def _frozen_flag_tokens(frozen):
+    """The flag tokens a frozen config emits. THE ONE EXPRESSION both call sites use --
+    a second copy in _run_point was the defect this check existed to catch elsewhere:
+    frozen_args_parse guards this function, so a copy it does not call is unguarded.
+
+    A null-valued key emits nothing: absence IS the Cfg default, and `loop: null`
+    rendered as `--loop None` was the bug. A bool is an argparse store_true flag the
+    caller's own CLI owns, never a --flag value pair."""
+    cfg_to_flag = {"d": "dim"}
+    return [v for k in _FROZEN_KEYS
+            if not isinstance(frozen[k], bool) and frozen[k] is not None
+            for v in (f"--{cfg_to_flag.get(k, k)}", str(frozen[k]))]
+
+
+def _frozen_launch_argv(root):
+    """The flag tokens `run point` builds from the frozen config, or (None, why).
+
+    THE SAME EXPRESSION AS _run_point, factored out so it can be tested without launching
+    seven cards. Inline, its only exercise was a real ladder launch, and the ladder has not
+    been rerun since --loop landed -- which is how `--loop None` sat in it unnoticed.
+    """
+    fpath = os.path.join(root, "data", "mix_scale_run_config.json")
+    if not os.path.exists(fpath):
+        return None, "data/mix_scale_run_config.json not present"
+    try:
+        frozen = json.load(open(fpath, encoding="utf-8"))
+    except ValueError as e:
+        return None, f"data/mix_scale_run_config.json unparseable: {e}"
+    absent = [k for k in _FROZEN_KEYS if k not in frozen]
+    if absent:
+        return None, f"key(s) absent from the frozen config: {', '.join(absent)}"
+    return _frozen_flag_tokens(frozen), ""
+
+
+def check_frozen_args_parse(root):
+    """train.py's own parser accepts the command line `run point` builds from the frozen
+    ladder config.
+
+    THE TWO SIDES WERE NEVER JOINED. frozen_keys_complete asserts every parser flag is
+    classified, and ladder_config_frozen asserts every frozen key has a value -- both green
+    while the emitted line was one argparse refused. `loop: null` rendered as the two tokens
+    `--loop None`, and --loop takes two ints: `harness run point` on any mix_scale_* mix
+    exited 2 before reaching a card. Nobody saw it because the ladder has not been rerun
+    since --loop landed, and the only exercise of that expression was a real launch.
+
+    ARGPARSE IS THE ORACLE, not a re-implementation of it. A second copy of the type rules
+    here would agree with itself and miss whatever the real parser does that the copy does
+    not -- nargs, choices, a custom type. Run in a subprocess so a parser that calls
+    sys.exit cannot take the check down with it, and against `python train.py --help`, which
+    parses argv fully and exits 0 before any training code runs. The import of torch at
+    train.py's top still happens, which is the ~11s cost _CHECK_TIMEOUTS budgets.
+    """
+    train_py = os.path.join(root, "train.py")
+    if not os.path.exists(train_py):
+        return SKIP, "train.py missing"
+    argv, why = _frozen_launch_argv(root)
+    if argv is None:
+        return SKIP, why
+    # The recipe flags argparse requires that the frozen config does not carry: they come
+    # from the caller's own command line at launch, so a probe without them fails for the
+    # wrong reason. Values are irrelevant -- --help exits before any of them is used.
+    filler = ["--name", "_frozen_args_parse_probe", "--lr_scale", "1"]
+    # train.py imports local modules (fone, model) at module scope, and a selftest world
+    # copies only train.py plus the config -- without ROOT on sys.path the subprocess dies
+    # on ModuleNotFoundError before argparse runs, in BOTH the broken and the clean twin,
+    # so the selftest's FAIL is independent of the mutation (b0's review of PR #123).
+    env = {**os.environ, "PYTHONPATH": ROOT + os.pathsep + os.environ.get("PYTHONPATH", "")}
+    r = subprocess.run([sys.executable, train_py, *argv, *filler, "--help"],
+                       cwd=root, capture_output=True, text=True, timeout=120, env=env)
+    if r.returncode != 0:
+        tail = (r.stderr or r.stdout or "").strip().splitlines()
+        return FAIL, (f"train.py refuses the frozen ladder launch line: "
+                      f"{tail[-1] if tail else f'exit {r.returncode}'} -- "
+                      f"`harness run point` cannot launch a ladder point")
+    return PASS, f"{len(argv) // 2} frozen flag(s) accepted by train.py's parser"
+
+
+def _broken_frozen_args_parse():
+    """The REAL frozen config with a key whose value train.py's parser rejects -- exactly
+    the shape `loop: null` had, mutated rather than hand-written."""
+    import shutil
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "train.py"), os.path.join(d, "train.py"))
+    p = os.path.join(d, "data", "mix_scale_run_config.json")
+    shutil.copy(os.path.join(ROOT, "data", "mix_scale_run_config.json"), p)
+    obj = json.load(open(p, encoding="utf-8"))
+    obj["batch"] = "sixteen"  # --batch is type=int
+    json.dump(obj, open(p, "w", encoding="utf-8"))
+    return d
+
+
 def _broken_frozen_keys_complete():
     """The real train.py with a new architecture flag added to the parser --
     exactly how the eight missing fields escaped notice."""
@@ -17223,6 +17320,13 @@ CHECKS = [
         _broken_frozen_keys_complete,
     ),
     (
+        "frozen_args_parse",
+        "train.py's parser accepts the launch line `run point` builds from the frozen config",
+        "`loop: null` rendered as `--loop None`, which --loop's nargs=2 refuses, so `harness run point` on any ladder mix exited 2 before reaching a card -- with frozen_keys_complete and ladder_config_frozen both green, because neither joins the emitted flags to the parser that reads them",
+        check_frozen_args_parse,
+        _broken_frozen_args_parse,
+    ),
+    (
         "ladder_cfg_consistent",
         "all six ladder checkpoints record the same cfg (except mix)",
         "a code edit to chunk_size/layers/optimizer params between points is invisible to the frozen list (no CLI flag) and to pod_drift (manifest regenerated); this is the only check that sees it",
@@ -17678,7 +17782,7 @@ EVIDENCE = {
     "gpu_entry_points_claim": "repo",
     # repo: it reads the committed ledger, not machine state.
     "friction_kinds_cover_ledger": "repo",
-    "mix_30b_contract": "repo", "frozen_keys_complete": "repo",
+    "mix_30b_contract": "repo", "frozen_keys_complete": "repo", "frozen_args_parse": "repo",
 }
 
 
@@ -23982,9 +24086,16 @@ def _run_point(step_args, forced):
         # Only the renames, not the negations: reversing no_attn_res->attn_res would emit
         # "--no_attn_res 1", the opposite of what it says. Bools never reach here today,
         # which is why an inverted map would have been silent.
-        _cfg_to_flag = {"d": "dim"}
-        frozen_args = [v for k in _FROZEN_KEYS if not isinstance(frozen[k], bool)
-                       for v in (f"--{_cfg_to_flag.get(k, k)}", str(frozen[k]))]
+        #
+        # A null-valued frozen key EMITS NOTHING, and this is a fix rather than a special
+        # case. `loop: null` was rendered as the two tokens `--loop None`, which argparse
+        # refuses ("expected 2 arguments"), so `run point` on a ladder mix could not launch
+        # at all -- the frozen recipe emitted a command line its own trainer rejects. null
+        # means "the Cfg default", so the flag's absence is exactly what it asks for;
+        # _strip_frozen still refuses a caller who passes a value, because the key stays in
+        # _FROZEN_KEYS. The comp is _frozen_flag_tokens, shared with the check that guards
+        # it (frozen_args_parse) -- a copy here would be unguarded (b0's review of PR #123).
+        frozen_args = _frozen_flag_tokens(frozen)
         print(
             f"run point: cards={','.join(cards)} (granted) "
             + " ".join(f"{k}={frozen[k]}" for k in _FROZEN_KEYS)
