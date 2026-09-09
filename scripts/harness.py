@@ -7245,6 +7245,62 @@ def check_no_ghost_running(root):
     return PASS, "every running row has a live process"
 
 
+def _pid_alive(pid):
+    """os.kill(pid, 0) accepts a zombie: an exited child nobody reaped keeps its pid.
+    /proc state Z is dead. Linux only -- the check that uses it is pod-only."""
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    try:
+        with open(f"/proc/{pid}/stat") as sf:
+            return sf.read().rsplit(")", 1)[1].split()[0] != "Z"
+    except OSError:
+        return True  # no procfs: the signal probe already answered
+
+
+def check_monitor_alive(root):
+    # A running row's monitor releases its cards when the job ends and notices the log go
+    # silent. A dead monitor on a running row does neither, and nothing else says so: the
+    # job can be perfectly alive while its watcher is gone. Pod-only: the pid was read in
+    # the pod's container namespace and is meaningless anywhere else.
+    if not pod_drift.is_pod(root):
+        return SKIP, "dev checkout; monitor pids live on the pod"
+    p = os.path.join(root, "runs", "experiments.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "runs/experiments.jsonl not present"
+    evs = []
+    with open(p, encoding="utf-8") as f:
+        for line in f:
+            try:
+                evs.append(json.loads(line))
+            except Exception:
+                continue
+    dead = []
+    for r in _exp_fold(evs):
+        if r.get("status") != "running":
+            continue
+        mpid = r.get("monitor_pid")
+        if not mpid:
+            continue  # opened before this field existed, or the arm-time write failed
+        try:
+            mpid = int(mpid)
+        except (TypeError, ValueError):
+            return FAIL, f"row {r.get('name', '?')!r} has a non-integer monitor_pid: {mpid!r}"
+        try:
+            t = time.mktime(time.strptime(str(r.get("started", "")), "%Y-%m-%d %H:%M"))
+        except Exception:
+            return FAIL, f"row {r.get('name', '?')!r} has no readable `started`: {r.get('started')!r}"
+        if (time.time() - t) / 3600 < 2:
+            continue  # grace, matching no_ghost_running: a launch in flight has no monitor yet
+        if not _pid_alive(mpid):
+            dead.append(f"{r.get('name', '?')} (monitor pid {mpid})")
+    if dead:
+        return FAIL, (f"running rows whose monitor is dead: {', '.join(dead[:6])}; "
+                      f"re-arm the monitor or close the row with exp.py done")
+    return PASS, "every running row with a monitor_pid has a live monitor"
+
+
 def check_guard_on_path(root):
     """Deleting the guard's call site must show up as a FAIL, not just a raise in CI."""
     src_path = os.path.join(root, "train.py")
@@ -11830,6 +11886,38 @@ def _broken_ghost_running():
     shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
     with open(os.path.join(d, "runs", "experiments.jsonl"), "a", encoding="utf-8") as f:
         f.write(json.dumps({"started": "2026-08-29 00:00", "name": "ghost_run_xyz", "status": "running"}) + "\n")
+    return d
+
+
+def _broken_monitor_alive():
+    """A REAL exp.py start row armed by the REAL exp.py monitor verb with a pid that died
+    immediately, backdated past the 2h grace. Both writers are the real ones; the only
+    hand-mutated bytes are the started stamps, which the grace requires."""
+    import re
+    import shutil
+
+    d = _tmp_repo()
+    shutil.copy(os.path.join(ROOT, "runs", "experiments.jsonl"), os.path.join(d, "runs", "experiments.jsonl"))
+    sp = subprocess.Popen([sys.executable, "-c", ""])
+    dead_pid = sp.pid
+    sp.wait()
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "--root", d,
+         "start", "--name", "mon_dead_xyz", "--cmd", "true"],
+        check=True, capture_output=True,
+    )
+    subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"), "--root", d,
+         "monitor", "--name", "mon_dead_xyz", "--pid", str(dead_pid)],
+        check=True, capture_output=True,
+    )
+    lp = os.path.join(d, "runs", "experiments.jsonl")
+    lines = open(lp, encoding="utf-8").read().splitlines(keepends=True)
+    for i, ln in enumerate(lines):
+        if "mon_dead_xyz" in ln:
+            lines[i] = re.sub(r'"started": "[^"]*"', '"started": "2026-08-29 00:00"', ln, count=1)
+    with open(lp, "w", encoding="utf-8") as f:
+        f.writelines(lines)
     return d
 
 
@@ -17424,6 +17512,13 @@ CHECKS = [
         _broken_ghost_running,
     ),
     (
+        "monitor_alive",
+        "a running row's monitor pid is still alive (pod only)",
+        "a dead monitor leaks the run's cards when the job ends and never fires the log-silence alert",
+        check_monitor_alive,
+        _broken_monitor_alive,
+    ),
+    (
         "corpus_filters_fp",
         "every stamped corpus domain records the filters that built it, and they still match",
         "PROVENANCE recorded the build command but not the filter version; the same command before and after a filters/ edit yields different corpora",
@@ -18023,7 +18118,7 @@ CHECKS = [
 EVIDENCE = {
     # pod: evidence exists only on the training box
     "env_importable": "pod", "mix_shards_present": "pod", "tokenizer_roundtrip": "pod",
-    "pinned_ids": "pod", "no_ghost_running": "pod", "corpus_filters_fp": "pod",
+    "pinned_ids": "pod", "no_ghost_running": "pod", "monitor_alive": "pod", "corpus_filters_fp": "pod",
     "score_input_fresh": "pod", "sft_pack_holdout": "pod", "sft_pack_uncontaminated": "pod",
     # pod: it reads the first line of every shard, and data/corpus/* is gitignored -- a laptop
     # sees only data/corpus/sample, so the 148 files here are the sample and the pod's ~3,459
@@ -26252,6 +26347,20 @@ def _launch_after_row(args, cmd, cards, launcher, gate_note):
 
     monitor_pid = _arm_monitor(args.name, proc.pid, log_path, output_path=args.output,
                                started=launch_started)
+    # RECORD THE MONITOR ON THE ROW (44's handoff, de-82). Without this, nothing can ask
+    # whether a running row's watcher is still alive: the pid was printed and dropped. A
+    # failure here must not fail the launch -- the job is already running, it only goes
+    # unwatched -- so it is a WARN, and monitor_alive SKIPs rows with no monitor_pid.
+    _r = subprocess.run(
+        [sys.executable, os.path.join(HERE, "exp.py"),
+         "monitor", "--name", args.name,
+         *(("--started", launch_started) if launch_started else ()),
+         "--pid", str(monitor_pid)],
+        capture_output=True, text=True,
+    )
+    if _r.returncode != 0:
+        print(f"WARN: monitor pid {monitor_pid} not recorded on the exp row: "
+              f"{(_r.stderr or _r.stdout).strip()[:150]}", file=sys.stderr)
 
     print(f"launched {args.name} (pid {proc.pid}, monitor {monitor_pid}) on cards {cards}")
     print(f"  log: {log_path}")
