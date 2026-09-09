@@ -4975,6 +4975,182 @@ def _broken_ckpt_facts_sources():
     return d
 
 
+def check_score_matrix_ckpts_present(root):
+    """Every runs/score_matrix.jsonl row's checkpoint resolves against the pod listing.
+
+    The same defect as ckpt_facts_sources_present in a second file: a fact citing a gone
+    checkpoint FAILs, a score_matrix row citing one was silent (4c, 2026-09-09; the basename
+    scan's 54 was an upper bound -- the true count is this check's own WARN line). The tiers
+    differ because the files differ. Facts are current evidence, so an absent source is a
+    fact defect. Score_matrix rows are DATED measurements -- `measured` is the row's epoch,
+    and a pruned checkpoint cannot be un-pruned -- so:
+
+    - row names a deletion-CANDIDATE (in the listing, not KEEP-claimed). Three bands off the
+      listing's generation time (4c, 2026-09-09), because regenerating a listing is routine and
+      must not equal a repo-wide freeze -- the pre-commit hook runs the full suite, so a fresh
+      listing with cited-but-unclaimed candidates would refuse every commit until triage
+      completes, and a freeze teaches people not to refresh (a stale listing is what made
+      ckpt_facts_sources_present report false absents the same morning):
+      - age < 6h (grace) -> WARN: the triage has not had time;
+      - 6h-24h (the claim window) -> FAIL: pressure while a KEEP claim can still be written
+        and before the 24h deletion (the written rule: broadcast, delete after 24h unclaimed);
+      - past 24h -> WARN: the deletion process stalled, and a permanent FAIL freezes every
+        commit for a failure the row's author cannot act on ('red nobody acts on is no signal').
+      A listing with no parsed date FAILs: loud on the unknown.
+    - row names a checkpoint ABSENT from the listing -> WARN, named: the measurement stands
+      as dated history but cannot be re-derived. A permanent FAIL here would be the
+      'red nobody acts on is no signal' rule -- the only available action is annotation.
+
+    Resolution (the two traps 4c measured 2026-09-09, both handled by construction):
+    - `#cu` is a variant selector, not part of the filename: _ckpt_names' token class stops
+      at '#', so 'ckpt_x.pt#cu' extracts 'ckpt_x.pt' (19 rows).
+    - `alias_of` names the real file when the row's ckpt never existed as one: train.py
+      writes only the suffixless final, so a stopped run's rows cite the intended final and
+      carry the alias. The alias target is what must resolve; a name scan that ignores it
+      false-FAILs a correct row (the 30b row: ckpt_1.5b-a0.2b-e48_30b.pt -> the 26.7b final).
+    - only ckpt_* names are ours; an external baseline row (pythia-160m-step2000) is not a
+      pod checkpoint and is not scanned.
+    """
+    listings = sorted(glob.glob(os.path.join(root, "runs", "pod_ckpt_candidates_*.txt")))
+    if not listings:
+        return SKIP, "no runs/pod_ckpt_candidates_*.txt"
+    date, keep, cands = _parse_ckpt_listing(listings[-1])
+    GRACE_H, WINDOW_H = 6.0, 24.0
+    age_h = None
+    if date:
+        try:
+            listed = datetime.datetime.strptime(date, "%Y-%m-%d %H:%MZ").replace(
+                tzinfo=datetime.timezone.utc)
+            age_h = (datetime.datetime.now(datetime.timezone.utc) - listed).total_seconds() / 3600.0
+        except ValueError:
+            age_h = None
+
+    def _band():
+        # 'grace' (WARN) / 'window' (FAIL) / 'stale' (WARN); no parsed date -> 'window'.
+        if age_h is None:
+            return "window"
+        if age_h < GRACE_H:
+            return "grace"
+        if age_h <= WINDOW_H:
+            return "window"
+        return "stale"
+
+    p = os.path.join(root, "runs", "score_matrix.jsonl")
+    if not os.path.exists(p):
+        return SKIP, "no runs/score_matrix.jsonl"
+    n_rows = 0
+    bad, stale, grace, warned = [], [], [], []
+    for i, ln in enumerate(open(p, encoding="utf-8"), 1):
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            r = json.loads(ln)
+        except json.JSONDecodeError:
+            continue
+        names = _ckpt_names(str(r.get("ckpt", "")))
+        if not names:
+            continue  # external baseline or empty; not a pod checkpoint
+        n_rows += 1
+        alias_names = _ckpt_names(str(r.get("alias_of", "")))
+        for name in sorted(names):
+            targets = [name] + sorted(alias_names)
+            if any(t in keep for t in targets):
+                continue
+            cand = next((t for t in targets if t in cands), None)
+            if cand:
+                via = f" (alias_of {cand})" if cand != name else ""
+                band = _band()
+                if band == "window":
+                    bad.append(f"row {i} -> {name}{via} (deletion-candidate {date}, not KEEP-claimed)")
+                elif band == "grace":
+                    grace.append(f"row {i} -> {name}{via} (deletion-candidate {date}, listing in "
+                                 f"grace period; not KEEP-claimed)")
+                else:
+                    stale.append(f"row {i} -> {name}{via} (deletion-candidate {date}, claim window "
+                                 f"passed; not KEEP-claimed)")
+            else:
+                warned.append(f"row {i} -> {name} (absent from listing {date}; dated history)")
+    if bad:
+        both = "; ".join(bad + stale + grace + warned)
+        return FAIL, f"{len(bad)} FAIL + {len(stale)} stale-window + {len(grace)} grace + " \
+                     f"{len(warned)} WARN: score_matrix row(s) name doomed/gone checkpoints " \
+                     f"(listing {date}): {both}."
+    if stale or grace or warned:
+        return WARN, f"{n_rows} row(s) cite checkpoints; {len(grace)} name a candidate in a " \
+                     f"listing's grace period, {len(stale)} past its claim window, {len(warned)} " \
+                     f"absent from the listing (dated history, cannot be re-derived; listing " \
+                     f"{date}): " + "; ".join(grace + stale + warned) + "."
+    return PASS, f"{n_rows} row(s) cite checkpoints; every name is KEEP-claimed or resolves " \
+                 f"against the listing ({date}, {len(cands)} candidates)."
+
+
+def _broken_score_matrix_ckpts():
+    """The real score_matrix with one appended row naming a REAL deletion-candidate under
+    a #cu suffix: the check must FAIL, and extracting the name without stripping #cu
+    lands on the absent tier (WARN only), so the world pins the variant-selector rule too."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    assert listings, "broken world found no candidates listing"
+    lp = listings[-1]
+    # Pin the listing INSIDE the FAIL band (6h-24h old): a younger date lands in grace
+    # (WARN), an older one in stale-window (WARN) -- the world must exercise the red branch.
+    txt = open(lp, encoding="utf-8").read()
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
+    open(lp, "w", encoding="utf-8").write(
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    _date, keep, cands = _parse_ckpt_listing(lp)
+    victim = next((n for n in cands if n not in keep), None)
+    assert victim, "broken world found no unkept candidate to name"
+    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": f"{victim}#cu", "measured": "2026-09-09",
+                             "metrics": {}}) + "\n")
+    return d
+
+
+def _selftest_score_matrix_alias_resolves():
+    """An absent ckpt name whose alias_of names a KEPT file is not a gone row; an absent
+    name whose alias names a deletion-CANDIDATE is FAIL-named through the alias. 4c's trap
+    1 (2026-09-09): a name scan that ignores alias_of false-FAILs the 30b row."""
+    import shutil
+    d = _tmp_repo_shaped()
+    runs = os.path.join(d, "runs")
+    if os.path.isdir(runs) and not os.path.islink(runs):
+        shutil.rmtree(runs)
+    shutil.copytree(os.path.join(ROOT, "runs"), runs)
+    listings = sorted(glob.glob(os.path.join(runs, "pod_ckpt_candidates_*.txt")))
+    lp = listings[-1]
+    # Same FAIL-band pin as _broken_score_matrix_ckpts (6h-24h old): the candidate alias
+    # must be FAIL-named, not WARN-named as grace or stale-window.
+    txt = open(lp, encoding="utf-8").read()
+    pinned = (datetime.datetime.now(datetime.timezone.utc)
+              - datetime.timedelta(hours=12)).strftime("%Y-%m-%d %H:%MZ")
+    open(lp, "w", encoding="utf-8").write(
+        re.sub(r"listed \d{4}-\d{2}-\d{2} \d{2}:\d{2}Z", f"listed {pinned}", txt, count=1))
+    _date, keep, cands = _parse_ckpt_listing(lp)
+    kept = next(iter(keep))
+    cand = next(n for n in cands if n not in keep)
+    with open(os.path.join(runs, "score_matrix.jsonl"), "a", encoding="utf-8") as fh:
+        fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_kept_alias.pt",
+                             "alias_of": kept, "measured": "2026-09-09", "metrics": {}}) + "\n")
+        fh.write(json.dumps({"ckpt": "ckpt_alias_selftest_cand_alias.pt",
+                             "alias_of": cand, "measured": "2026-09-09", "metrics": {}}) + "\n")
+    _s, ev = check_score_matrix_ckpts_present(d)
+    assert "ckpt_alias_selftest_kept_alias.pt" not in ev, \
+        f"an absent name with a KEPT alias was named as gone: {ev}"
+    assert "ckpt_alias_selftest_cand_alias.pt" in ev, \
+        f"an absent name with a deletion-candidate alias was not FAIL-named: {ev}"
+    shutil.rmtree(d, ignore_errors=True)
+    print("  score_matrix_ckpts: absent name with kept alias stays silent; "
+          "candidate alias FAIL-named through the alias")
+
+
 def check_keep_claim_reasons_live(root):
     """A KEEP claim whose reason cites a RETRACTED fact must WARN named: the reason
     died but the claim did not. ckpt_facts_sources_present only checks fact->ckpt
@@ -11935,8 +12111,9 @@ def cmd_friction(argv):
     `minutes_lost` IS A SELF-REPORT AND THE OUTPUT SAYS SO. It is the field a reader will
     want to sum, and a sum of estimates printed beside measured counts reads as measured
     (this repo's most common defect shape). So the summary prints the count as the number
-    and the minutes as `~N min (self-reported)`, and a row may omit minutes entirely
-    rather than inventing one.
+    and the minutes as `~N min (self-reported)`, and a row of any other kind may omit minutes
+    entirely rather than inventing one -- near_miss/process_failure/hook rows must carry it
+    (friction_minutes_required).
 
     Rows are events, never folded: two merges blocked by the same cause are two rows, which
     is the whole point of counting by cause."""
@@ -11950,7 +12127,8 @@ def cmd_friction(argv):
     a.add_argument("--blocked", required=True, help="what could not proceed")
     a.add_argument("--fix", default="", help="what unblocked it, or empty if nothing did yet")
     a.add_argument("--minutes", type=int, default=None,
-                   help="SELF-REPORTED minutes lost; omit rather than guess")
+                   help="SELF-REPORTED minutes lost; REQUIRED for near_miss/process_failure/hook "
+                        "(friction_minutes_required), omit rather than guess for other kinds")
     a.add_argument("--who", default=None, help="defaults to the current branch")
     a.add_argument("--commit", action="store_true",
                    help="commit the row path-scoped in this call, so the ledger never sits "
@@ -17016,6 +17194,13 @@ CHECKS = [
         _broken_ckpt_facts_sources,
     ),
     (
+        "score_matrix_ckpts_present",
+        "no runs/score_matrix.jsonl row names a checkpoint on the deletion list unkept, or one absent from the pod listing",
+        "a score_matrix row citing a pruned checkpoint was silent while the same defect in a fact source FAILed; the basename scan's 54 was an upper bound, nobody had computed the true count (4c, 2026-09-09)",
+        check_score_matrix_ckpts_present,
+        _broken_score_matrix_ckpts,
+    ),
+    (
         "run_commits_resolve",
         "every experiments row's commit names an object this repository holds",
         "p500m_20b_0902's 00:03 row carried cec145b, which resolves to nothing here; it surfaced only because the pod's copy of that row disagreed in that one field, and the cause was exp.git_commit writing 8 chars via rev-parse --short on one path and 7 via a hardcoded slice on the other",
@@ -17836,6 +18021,7 @@ EVIDENCE = {
     "getattr_cfg_names_exist": "repo",
     "launch_line_vs_oom_facts": "repo",
     "ckpt_facts_sources_present": "repo",
+    "score_matrix_ckpts_present": "repo",
     # "both": the question joins two filesystems -- the pod holds the rows, the repository
     # holds what it is missing -- so neither side alone can answer it. It runs wherever a
     # local ledger and ~/bin/pod are both present, and SKIPs on the pod, where there is no
@@ -23673,6 +23859,7 @@ def _demo(only=None):
         _selftest_peer_stalled_names_the_fixture,
         _selftest_one_deliverable_names_the_fixture,
         _selftest_owner_queue_depth_unreachable_members,
+        _selftest_score_matrix_alias_resolves,
         _selftest_review_present_legacy,
         _selftest_inline_citations_are_scanned,
     ):
