@@ -433,9 +433,11 @@ A scoring monitor packed four pod readings into one string with `tr '\n' '|'` an
 
 The asymmetry is the rule. A false negative leaves the monitor watching; it can still catch the next failure. A false positive that kills the instrument blinds it — after the false alarm there was no monitor at all — and to whoever reads the channel, "no events" and "all clear" are the same signal. A monitor's error channel must be unforgeable by the watched data, and the instrument's liveness must be independently observable: a dead monitor must look different from a quiet one.
 
+The rule has a third clause, earned by the re-arm's own gap (below): the instrument must report its own failed reads. An external liveness check watches the same channel and sees the same silence — a blind-but-alive process is byte-identical to a quiet one from outside — so only the instrument itself can report that it cannot see.
+
 - §298: 4c's scoring monitor over e1's corpus scoring, delimiter-in-data false alarm, instrument dead afterward.
 
-The fix as re-armed: `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. The prefix closes the unforgeable-signal half. The liveness half — a heartbeat a reader can distinguish from silence — was not added and is the open residue (44's reading of the re-arm).
+The fix as re-armed, in two stages (4c). Stage one: `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. That closed the unforgeable-signal half and left the liveness half open (44's reading, confirmed by 4c): the re-armed loop was `out=$(~/bin/pod ...) || true` with `if [ -n "$line" ]` gating the judgment body, so when the pod connection failed, `out` was empty and the whole body — stale counter included — was skipped. The instrument went permanently blind without a sound; dead and quiet were byte-identical in the channel. Stage two: three consecutive empty reads now emit MONITOR BLIND ("from here, silence means nothing"), repeated every twelfth, SIGHT RESTORED on recovery, plus a HEARTBEAT every 24 ticks carrying the blind count and the last line. Dead, blind, and quiet are now three distinguishable states.
 
 ## Design cause: integration happens in a shared writable working tree
 
