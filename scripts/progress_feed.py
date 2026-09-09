@@ -152,6 +152,28 @@ def _age(opened, now):
     return f"{mins // (60 * 24)}d"
 
 
+def audit_section():
+    # cross-line manual audit (docs/standards/cross_line_audit_0909.md): one row
+    # per data line, agreement rate or the row does not count.
+    p = os.path.join(REPO, "runs", "cross_line_audit.json")
+    if not os.path.exists(p):
+        return ""
+    d = json.load(open(p, encoding="utf-8"))
+    out = ['<div class=audit><h2>跨线抽检（0909）</h2><table>',
+           '<tr><th>线</th><th>n</th><th>读者</th><th>一致率</th><th>κ</th><th>分歧</th><th>判定</th></tr>']
+    for r in d["rows"]:
+        c = lambda v: "—" if v is None else html.escape(str(v))
+        out.append(f'<tr><td>{html.escape(r["line"])}（{html.escape(r["owner"])}）</td>'
+                   f'<td>{c(r.get("n"))}</td><td>{c(r.get("readers"))}</td>'
+                   f'<td>{c(r.get("agree"))}</td><td>{c(r.get("kappa"))}</td>'
+                   f'<td>{c(r.get("disagree"))}</td><td>{c(r.get("verdict"))}</td></tr>')
+    out.append("</table>")
+    if d.get("note"):
+        out.append(f'<div class=su>{html.escape(d["note"])}</div>')
+    out.append("</div>")
+    return "".join(out)
+
+
 def control_section():
     if not os.path.exists(CONTROL):
         return ""
@@ -403,6 +425,7 @@ def render(rows):
                     parts.append(f'<div class=bar><i style="width:{pct}%;background:{colour}"></i></div>')
                 parts.append(f'<div class=su>{html.escape(c["sub"])}</div>{asof_html}</div>')
             parts.append('</div>')
+    parts.append(audit_section())
     parts.append(control_section())
     parts.append(roadmap_section())
     parts.append(memory_section())
