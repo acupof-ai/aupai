@@ -1,0 +1,18 @@
+HumanEval: 164 problems
+CONTROL canonical_solution pass = 164/164 = 100.0%  (must be ~100)
+CONTROL wrong-answer: constant-False on HumanEval/0 -> FAIL (must FAIL)
+CONTROL empty-completion: empty/newline/pass score 0/164 each (must be 0)
+CONTROL strip: 164/164 prompts carry a docstring the sig-only arm removes
+  20/164  pass@1 = 1/20 = 5.00%   (103s)
+  40/164  pass@1 = 2/40 = 5.00%   (166s)
+  60/164  pass@1 = 3/60 = 5.00%   (216s)
+  80/164  pass@1 = 3/80 = 3.75%   (238s)
+  100/164  pass@1 = 3/100 = 3.00%   (278s)
+  120/164  pass@1 = 3/120 = 2.50%   (300s)
+  140/164  pass@1 = 3/140 = 2.14%   (337s)
+  160/164  pass@1 = 3/160 = 1.88%   (360s)
+  164/164  pass@1 = 3/164 = 1.83%   (362s)
+
+HUMANEVAL pass@1 (greedy) = 3/164 = 1.83%
+empty-completion split: eos_first 70/164, stop_at_0 2/164 (total empty 72/164 = 43.9%)
+preds saved: /work/aupai/data/eval/preds_humaneval_ckpt_format_sft_0909.pt.postsft.jsonl
