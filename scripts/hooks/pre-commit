@@ -1665,6 +1665,13 @@ def main():
         # union world and overwrite somebody's amendment without saying so.
         "scripts/prereg_merge.py",
         "scripts/test_sft_pack.py", "scripts/test_arch_compat.py",
+        # The p1 attention path: partial RoPE, HCA, and the pool_per_doc lift out of CSA. CPU,
+        # ~2s. Registered in the same commit as the file, the same deadlock check_sft_ready
+        # below records. Every world is a perturbation test because all three ways this path
+        # breaks are silent -- a causal or cross-document leak makes training loss BETTER and
+        # only surfaces later as a generation collapse, which is how the CSA compress branch's
+        # own leak survived until someone perturbed a key and watched earlier outputs move.
+        "scripts/test_v4_attn.py",
         # Added in the same commit as the file itself: selftests_are_gated refuses to
         # register a path that does not exist, so registering from main first would have
         # been red until the file landed, and landing the file first is red the other way.
