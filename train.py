@@ -2113,6 +2113,39 @@ def _domain_cache_path(domain):
     return os.path.join(_token_cache_dir(), f"tokens_{domain}{'_fone' if Cfg.fone else ''}.pt")
 
 
+def val_split_n(name, n_rows, mix):
+    """How many rows of domain `name` are held out for validation. THE ONE DEFINITION.
+
+    ONE FUNCTION BECAUSE TWO READERS MUST NOT DISAGREE HERE. The training loop below and
+    eval/ppl.py both need this number, and they need the SAME one: ppl.py's whole claim is
+    that it scores the rows the run held back. It had its own copy that read only the global
+    Cfg.val_frac, so for the five mix_e1_* arms -- every one of which sets `p_format`'s
+    val_frac to 0, plus its own s_inject_n* domain -- ppl.py scored rows the run had TRAINED
+    on and reported them as held out. Found by 4c, 2026-09-08. No decision rested on those
+    numbers (conversion_rate_0905's readout came from eval/novel_ops_4way.py and the five
+    e1_conv_* arms closed with no metrics), so this is a repair, not a retraction.
+
+    PER-DOMAIN OVERRIDE, and ONLY when the domain states one. `val_frac: 0` on a domain holds
+    back nothing; every domain without the key keeps the old expression byte for byte,
+    INCLUDING the max(1, ...) that turns a global Cfg.val_frac of 0.0 into one held-back row.
+    That distinction is not cosmetic: test_plan_length sets Cfg.val_frac = 0.0 globally, and
+    applying the zero branch there shifted every pool by one row and moved the fresh plan's
+    content hash at an identical row count. So the branch keys on the KEY's presence, not on
+    the value being zero.
+
+    It exists for a domain whose row count IS the measurement: experiment 1 injects the same
+    1,000 documents n times and reads a curve against n, and the 5% held back off the FRONT
+    made every arm's realised exposure count 0.95n while the axis said n -- measured before
+    launch, n64 wanted 1,625 rows and could draw 1,542. Only for a domain the run does not
+    validate on; every natural domain keeps the default.
+    """
+    dcfg = mix["domains"][name]
+    if "val_frac" in dcfg:
+        dvf = dcfg["val_frac"]
+        return 0 if dvf == 0 else min(max(1, int(n_rows * dvf)), Cfg.val_rows_max)
+    return min(max(1, int(n_rows * Cfg.val_frac)), Cfg.val_rows_max)
+
+
 def _domain_seqs(domain, tok, is_main, ddp, workers=1):
     """Tokenize data/corpus/<domain>/*.jsonl once (rank 0), cache next to TOKEN_CACHE, [N, seq+1].
 
@@ -2678,25 +2711,9 @@ def build_mix(cfg_path, tok, is_main, ddp, rank=0, world=1, row_cursor=None,
         seqs = _domain_seqs(name, tok, is_main, ddp)
         seqs, vseq = seqs if Cfg.fone else (seqs, None)
         # Capped: an uncapped 5% split of a 1.9M-row domain keeps 95K rows alive to read 4.8K.
-        # PER-DOMAIN OVERRIDE, and ONLY when the domain states one. `val_frac: 0` on a domain holds
-        # back nothing; every domain without the key keeps the old expression byte for byte,
-        # INCLUDING the max(1, ...) that turns a global Cfg.val_frac of 0.0 into one held-back row.
-        # That distinction is not cosmetic: test_plan_length sets Cfg.val_frac = 0.0 globally, and
-        # applying the zero branch there shifted every pool by one row and moved the fresh plan's
-        # content hash at an identical row count. So the branch keys on the KEY's presence, not on
-        # the value being zero.
-        #
-        # It exists for a domain whose row count IS the measurement: experiment 1 injects the same
-        # 1,000 documents n times and reads a curve against n, and the 5% held back off the FRONT
-        # made every arm's realised exposure count 0.95n while the axis said n -- measured before
-        # launch, n64 wanted 1,625 rows and could draw 1,542. Only for a domain the run does not
-        # validate on; every natural domain keeps the default.
-        _dcfg = mix["domains"][name]
-        if "val_frac" in _dcfg:
-            _dvf = _dcfg["val_frac"]
-            n_val = 0 if _dvf == 0 else min(max(1, int(len(seqs) * _dvf)), Cfg.val_rows_max)
-        else:
-            n_val = min(max(1, int(len(seqs) * Cfg.val_frac)), Cfg.val_rows_max)
+        # The rule, and why the per-domain override keys on the KEY's presence, is in
+        # val_split_n -- eval/ppl.py calls the same function, deliberately.
+        n_val = val_split_n(name, len(seqs), mix)
         val.append(seqs[:n_val])
         pools[name] = seqs[n_val:]
         if Cfg.fone:
