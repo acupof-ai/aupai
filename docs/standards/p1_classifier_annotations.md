@@ -59,6 +59,13 @@ The model is a reasoning model: requests MUST set `reasoning_effort: "none"`
 the 2-token budget is consumed by thinking tokens and no digit is produced.
 Verified on the pilot (de, 2026-09-09).
 
+Request-shape caveat for re-runs: `reasoning_effort` is a chat-completions
+field while the model is served as a base completion; the exact endpoint,
+body, and how the field was passed are de's serve implementation, not pinned
+here. This spec pins the prompt text and the output contract; a re-run must
+first verify on a small batch that the current serve produces parseable digits
+within the 2-token budget before scaling, exactly as the pilot did.
+
 ## Truncation
 
 `{code}` = the first 350 characters of the file (imports, docstring,
@@ -128,39 +135,46 @@ estimate must match the inference distribution.
 5K labeled, 0 discards, all outputs clean single digits: 0=5.2% 1=64.4%
 2=3.7% 3=23.4% 4=3.2% 5=0.1%. The distribution shifted from the 1K code_rp1t
 pilot (1: 73.8% -> 64.4%, 3: 15.5% -> 23.4%): the deduped domains carry more
-high-score code, confirming the re-draw. Keep rates on the 18.25B-token GROSS
-base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured): >=2 = 30.4%
-(~5.55B), >=3 = 26.7% (~4.87B), >=4 = 3.3% (~0.60B). GROSS, not unique:
+high-score code, confirming the re-draw. Keep rates (DOCUMENT口径) on the
+18.25B-token GROSS base (dd09 6.24B + b2v2_dd 3.60B + dedup08 8.41B measured):
+>=2 = 30.4%, >=3 = 26.7%, >=4 = 3.3%. Token yields need the doc/byte ratio
+1.66 (measured on the 100K sample, three points 1.656-1.665): >=2 ~3.3B,
+>=3 ~2.9B, >=4 ~0.36B -- and the final yield uses the keep set's OWN tok/byte,
+measured directly, not the domain average. GROSS, not unique:
 dedup08 is a UNION build (283 starcoder shards + 15 rp1t shards), and the
-15 rp1t shards' 157,684 docs (2.53%) overlap dd09|b2v2 constructively -- 4c
-ruled them deleted in a separate pass (2026-09-09), after which dedup08's
-tokens are RE-MEASURED, not ratio-extrapolated (rp1t and starcoder shards have
-no reason to share a length distribution, and length is a strong confound in
-this corpus). The conversions stay gross until that re-measurement lands; the
-pool is 18.25B gross and near-unique (starcoder body overlap measured
-0.3-0.75%). The threshold region for the ablation is >=2 vs >=3, with >=3 the
-prior (score-2 is "glue code, nothing to learn", exactly what the filter exists
-to remove; score-3 is real logic). The ablation pins the point. The threshold
-is the ablation's OUTPUT, not a means to a token target (4c, 2026-09-09): the
-recipe's ~6B is phi-1's output at a 17% keep rate, not ours -- 17% of our
-gross 18.25B is 3.1B, and loosening the cut to hit a copied token number would
-invert phi-1's quality-over-quantity argument. If a strict threshold yields 3B, the gate runs
-on 3B; the acceptance criterion is a 350M model clearing HumanEval 30%, never
-corpus size. Report keep rate and token count against phi-1's 17% with an
-explanation either way. Score 5 is nearly dead (0.1%) and collapses into 4 at
-threshold time. The full 100K labeling is threshold-independent -- every
-sample gets a 0-5 label and the cut is applied post-hoc -- so it proceeds
-before the ablation.
+15 rp1t shards' docs overlap dd09|b2v2 constructively -- the earlier estimate
+was 157,684 docs (2.53%); the exact-overlap channel has since MEASURED 169,561
+deletable dedup08 docs (138.6K on the 15 rp1t shards + 31.0K on starcoder
+shards; b0 pod count, 2026-09-10, p1_data_recipe.md on main). 4c ruled them
+deleted in a separate pass (2026-09-09); the keep set is filtered by the
+deleted doc ids post-scoring (fixed cut makes this commute), after which
+dedup08's tokens are RE-MEASURED, not ratio-extrapolated (rp1t and starcoder
+shards have no reason to share a length distribution, and length is a strong
+confound in this corpus). The conversions stay gross until that re-measurement
+lands; the pool is 18.25B gross and near-unique (starcoder body overlap
+measured 0.3-0.75%). The threshold region for the ablation is >=2 vs >=3,
+with >=3 the prior (score-2 is "glue code, nothing to learn", exactly what the
+filter exists to remove; score-3 is real logic). The ablation pins the point.
+The threshold is the ablation's OUTPUT, not a means to a token target
+(4c, 2026-09-09): the recipe's ~6B is phi-1's output at a 17% TOKEN keep
+rate, not ours -- 17% of our gross 18.25B is 3.1B, and loosening the cut to
+hit a copied token number would invert phi-1's quality-over-quantity argument.
+If a strict threshold yields 3B, the gate runs on 3B; the acceptance criterion
+is a 350M model clearing HumanEval 30%, never corpus size. Report keep rate
+and token count against phi-1's 17% with an explanation either way. Score 5
+is nearly dead (0.1%) and collapses into 4 at threshold time. The full 100K
+labeling is threshold-independent -- every sample gets a 0-5 label and the
+cut is applied post-hoc -- so it proceeds before the ablation.
 
 ## Full-run labels (de, 2026-09-09)
 
 100K labeled, 0 unparseable, schema (id, raw, score): 0=5.3% 1=64.3% 2=4.1%
 3=23.2% 4=3.0% 5=0.03%. Keep rates: >=2 = 30.4%, >=3 = 26.3%, >=4 = 3.07%.
-Bimodal (1+3 = 87.5%); a 56-sample stratified read (8 per level) confirms the
-teacher is NOT doing binary classification -- the six levels are coherent
-(0=non-code, 1=boilerplate, 2=test scaffolding/framework glue, 3=real logic,
-4=clean self-contained algorithms, 5=textbook). The bimodality is a corpus
-property, not a teacher behavior. The ablation sweeps >=2/>=3/>=4; >=5 is
+Bimodal (1+3 = 87.5%); a 56-sample stratified read across the six levels
+confirms the teacher is NOT doing binary classification -- the six levels are
+coherent (0=non-code, 1=boilerplate, 2=test scaffolding/framework glue,
+3=real logic, 4=clean self-contained algorithms, 5=textbook). The bimodality
+is a corpus property, not a teacher behavior. The ablation sweeps >=2/>=3/>=4; >=5 is
 noise (n=34). The >=3 -> >=4 cliff (26.3% vs 3.07%) is real: the corpus holds
 ~3% textbook-clean code.
 
@@ -178,13 +192,16 @@ scores the same 350-char head the teacher labeled, so train and inference see
 the same truncation.
 
 Model as built: `Snowflake/snowflake-arctic-embed-l` (335M, 1024-dim, CLS
-pooling per its 1_Pooling/config.json), fetched from ModelScope. The 110M v1
-(`Snowflake/snowflake-arctic-embed`) does not exist on ModelScope and
-hf-mirror returns "Repository not found" for it, and huggingface.co is
-unreachable from the pod (errno 99); the -l is the same family and recipe and
-was the only reachable member. Measured: 100K heads in 163s on one card
-(~613 docs/s, batch 256, fp16), so the full 11.8M-doc corpus is ~5.3h on one
-card -- the "hours on one card" estimate holds at 335M.
+pooling per its 1_Pooling/config.json), fetched from ModelScope. The 109M-class
+members: the v1 plain id `Snowflake/snowflake-arctic-embed` is unreachable
+(ModelScope 404, hf-mirror "Repository not found", huggingface.co errno 99
+from the pod); `-embed-m` (109M, 768-dim) IS reachable on both mirrors under
+re-upload namespaces. Chose `-l` (official Snowflake namespace on ModelScope)
+over `-m` (re-upload namespace): same family and training recipe, official
+publisher, at ~3x the inference cost (5.3h vs ~1.8h for the full corpus,
+accepted). Measured: 100K heads in 163s on one card (~613 docs/s, batch 256,
+fp16), so the full 11.8M-doc corpus is ~5.3h on one card -- the "hours on one
+card" estimate holds at 335M.
 
 Evaluation (acceptance in `p1_data_recipe.md`): held-out AUC against the
 teacher labels, reported POOLED and PER DOMAIN (4c, 2026-09-09) -- the three
@@ -277,3 +294,22 @@ quality floor.
 Per-domain tok/byte, measured (330MB sample per domain, tokenizer.json, +1
 eos/doc): dd09 0.306557, b2v2_dd 0.306274, dedup08 0.278723. These convert
 byte keep to token keep; the stats-file ratios are not used.
+
+## Run artifacts
+
+Pod paths (pod `/work/aupai/data/p1/`); the scripts move to `datagen/p1/` in
+a follow-up PR so they carry review and re-run provenance.
+
+| artifact | path | produced by |
+|---|---|---|
+| 100K sample (id, head 350 chars) | `classifier_full_100k.jsonl` | `sample_reservoir.py` (seed 42, token-weighted 33210/19160/47630) |
+| 100K teacher labels (id, raw, score) | `classifier_labels_100k.jsonl` | de's serve, 0 unparseable |
+| doc lengths (id, bytes) | `classifier_lengths.jsonl` | `join_lengths.py` |
+| embeddings (100K x 1024, float16, L2-normed) | `arctic_embeds_100k.npy` + `.ids.json` | `embed_100k.py` (arctic-embed-l, batch 256, 163s, card 7) |
+| deployed head (>=3, all 100K) | `head_ge3_w.npy`, `head_ge3_bias.txt` (bias, cut -0.258355) | `deploy_head.py` |
+| keep set (full corpus, >=3 @ cut) | `keep_set/<domain>/<shard>.jsonl` + `manifest.json` | `score_corpus.py` (fixed cut, atomic writes, resumable) |
+| ablation log (AUC tables, sweep) | `runs/p1_train_head.log` | `train_head.py` |
+
+experiments.jsonl rows: `classifier_pilot_1k`, `classifier_pilot_5k`,
+`classifier_labels_100k`, `classifier_ablation_0910`. The yield band is
+preregistered: `runs/prereg.jsonl#p1_keep_yield_0909`.
