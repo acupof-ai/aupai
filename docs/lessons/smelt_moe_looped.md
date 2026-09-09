@@ -6,6 +6,8 @@ source: arXiv 2609.01343 (SMELT, 2026-09-01) + arXiv 2607.13491 (DeepLoop, 2026-
 
 # SMELT 与 DeepLoop:可执行判决
 
+**状态(2026-09-08):决策已改,原判断未被测量推翻。** v2 包在 token/param ≈ 20 上 MoE 48/top-3(30B token ÷ 1.5B active params,推出来的;v2 架构包与对照定义见 runs/prereg.jsonl#v2_loop_moe_csa_0908 与 docs/lessons/next_version_v4_loop.md),早于下面判决的"MoE 留到 token/param > 40"。改它的是一次排期决定(用户 2026-09-08),不是测量:本文没有任何数字被新数据打掉。能真正推翻原判断的结果是:v2 的 MoE 臂在 ~20 tok/param、等 FLOP 对照下不输 dense——即 §2-Q2 的"专家欠训练"在 20–40 区间不 bind。在该测量落地前,§2-Q4 的成本项(all-to-all L12 3.26–3.73% 可接受、L32 8.69–9.94% 否决;激活 1.22×)仍作为 v2 MoE 的已知成本引用。
+
 **判决:现在不做。500M@20B 落地后做一次纯 looping A/B(DeepLoop 的 α/β 缩放 + 中间半层 loop 2×,不带 MoE);MoE 部分留到 token/param > 40 之后。A/B 之前必须先测的第一个数是 AttnRes 跨循环的 O(L²) 成本——那是硬约束,测不过就整条线不做。**
 
 用户给的链接(2607.13491)是 DeepLoop,不是 SMELT;SMELT 的真实 ID 是 2609.01343。两篇都做,DeepLoop 是第二个正主不是背景文献。
