@@ -1729,14 +1729,33 @@ assert bool((_first_vis & ~_last_vis).any()), (
     f"is asserting over a world where the leak it was written for cannot occur -- pick a T and "
     f"m where an incomplete block is visible to some query")
 
-# 4. DOC-PACKED INPUT IS REFUSED, NOT SILENTLY MISHANDLED. A compressed block straddling a `cu`
-#    boundary pools two documents and the top-k can select across them; nothing downstream can
-#    undo it and the loss does not show it.
-_refused = False
-try:
-    _csa(_q, _k, _v, cu=torch.tensor([0, 10, 20], dtype=torch.int32))
-except NotImplementedError as _e:
-    _refused = "document" in str(_e).lower()
-assert _refused, "CSA accepted doc-packed input instead of refusing; it would train cross-document attention"
+# 4. DOC-PACKED INPUT IS ISOLATED, NOT REFUSED. cu=[0,10,20] splits the 20 positions into
+#    two documents; blocks are built per document, so a perturbation in document 0 must not
+#    move any output in document 1, in any branch. The old refusal is gone -- CSA now runs on
+#    the packed training path, which is the whole point.
+_cu = torch.tensor([0, 10, 20], dtype=torch.int32)
+_yc = _csa(_q, _k, _v, cu=_cu)
+assert torch.isfinite(_yc).all(), "CSA produced non-finite output on doc-packed input"
+_cross = []
+for _t in range(10):
+    _k2, _v2 = _k.clone(), _v.clone()
+    _k2[:, _t] += 7.0
+    _v2[:, _t] += 7.0
+    _d = (_csa(_q, _k2, _v2, cu=_cu)[:, 10:] - _yc[:, 10:]).abs().max().item()
+    if _d > 1e-12:
+        _cross.append((_t, _d))
+assert not _cross, (
+    f"CSA leaks across documents: perturbing doc 0 moved doc 1 outputs at {_cross[:4]}. "
+    f"Blocks must be built per document and every branch masked to the same document")
+# and the perturbation IS visible inside its own document, so the isolation is not a blanket
+# zero -- a dead path passes the cross-document assertion for free.
+_k2, _v2 = _k.clone(), _v.clone()
+_k2[:, 5] += 7.0
+_v2[:, 5] += 7.0
+_within = (_csa(_q, _k2, _v2, cu=_cu)[:, :10] - _yc[:, :10]).abs().max().item()
+assert _within > 1e-6, (
+    f"a perturbation is invisible inside its own document (delta {_within:.2e}); the "
+    f"cross-document assertion above is then asserting over a dead path")
 print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all {_T - 1} "
-      f"perturbed positions; doc-packed input refused")
+      f"perturbed positions; doc-packed input isolated (cross-doc delta 0.0, within-doc "
+      f"{_within:.2e})")
