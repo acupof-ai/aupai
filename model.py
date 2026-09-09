@@ -247,13 +247,16 @@ class CompressedSparseAttention(nn.Module):
     proposes a kernel. A fast wrong answer to the architecture question would cost more than the
     slow right one.
 
-    DOCUMENT ISOLATION IS NOT IMPLEMENTED HERE AND IS REFUSED, NOT IGNORED. `cu` marks document
-    boundaries in the packed stream; a compressed block straddling a boundary would pool tokens
-    from two documents into one entry, and the top-k could then select a block belonging to
-    another document -- cross-document attention that no mask downstream can undo, invisible in
-    the loss. eff.kda_document_isolation_violated is the same failure in the KDA short_conv and
-    it went unnoticed for days. So `cu is not None` raises: the packed-training path must not
-    silently train a model whose attention crosses documents.
+    DOCUMENT ISOLATION WITH `cu`. `cu` marks document boundaries in the packed stream. Blocks
+    are built PER DOCUMENT -- a compressed entry never pools two documents -- and every branch
+    is masked to the query's own document: compress and select by the block's owning document,
+    window by the same-document mask. The residual rule is one rule across all three branches:
+    a document's tail is its own partial block, pooled over the positions it holds and visible
+    only once its last member is past the query (the same blk_last <= t rule as the unpacked
+    path); a query before that sees no block of its document and is covered by the window
+    branch. A block that straddled a boundary would be a second rule, and a second rule is
+    where the leak comes back. eff.kda_document_isolation_violated is the same failure in the
+    KDA short_conv, and it went unnoticed for days.
     """
 
     def __init__(self, cfg, h, hd):
@@ -274,12 +277,7 @@ class CompressedSparseAttention(nn.Module):
 
     def forward(self, q, k, v, cu=None):
         if cu is not None:
-            raise NotImplementedError(
-                "CSA has no document-boundary handling: a compressed block straddling a `cu` "
-                "boundary pools two documents into one entry and the top-k can select across "
-                "them, which is cross-document attention that leaves no trace in the loss. "
-                "Refusing rather than training it silently -- run CSA with doc packing off, or "
-                "implement per-document blocks first.")
+            return self._forward_packed(q, k, v, cu)
         B, T, H, D = q.shape
         qh = q.transpose(1, 2)                                # B,H,T,D
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
@@ -333,6 +331,82 @@ class CompressedSparseAttention(nn.Module):
         ar = torch.arange(T, device=q.device)
         m_win = causal & ((ar[:, None] - ar[None, :]) < self.n_win)
         y_win = torch.softmax(full.masked_fill(~m_win[None, None], float("-inf")), dim=-1) @ vh
+
+        g = torch.sigmoid(self.branch_gate(q)).transpose(1, 2).unsqueeze(-1)   # B,H,T,3,1
+        y = g[..., 0, :] * y_cmp + g[..., 1, :] * y_sel + g[..., 2, :] * y_win
+        return y.transpose(1, 2)                                # B,T,H,D
+
+    def _forward_packed(self, q, k, v, cu):
+        """The cu path: per-document blocks, every branch masked to the query's document.
+        See the class docstring for the residual rule. cu indexes the flat B*T stream
+        (train.py's doc_cu_seqlens: every row start and every position after an <eos>);
+        documents never span rows, so per-batch block numbering is exact."""
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)                                # B,H,T,D
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        pos = torch.arange(B * T, device=q.device)
+        cu_l = cu.to(pos.dtype)
+        doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
+        doc_start = cu_l[doc]                                         # (B,T)
+        nb_doc = (cu_l[1:] - cu_l[:-1] + self.m - 1) // self.m        # blocks per doc
+        offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
+        first_doc = doc[:, 0]
+        # per-batch block id: doc's global offset + within-doc block, minus the batch's first
+        # doc's offset, so block ids run 0..NB-1 inside each batch
+        block_id = (offset[doc] + (pos.view(B, T) - doc_start) // self.m
+                    - offset[first_doc][:, None])                    # (B,T)
+        NB = int((offset[doc[:, -1]] + nb_doc[doc[:, -1]]
+                  - offset[first_doc]).max().item())
+
+        # --- pool K/V per document block ----------------------------------------------
+        idx = block_id[:, None, :, None].expand(B, H, T, D)
+        kc = kh.new_zeros(B, H, NB, D)
+        vc = vh.new_zeros(B, H, NB, D)
+        kc.scatter_add_(2, idx, kh)
+        vc.scatter_add_(2, idx, vh)
+        # count REAL positions per block in float32: bf16 cannot hold every count up to T
+        # exactly, and a partial block must be a mean over what it holds
+        cnt = q.new_zeros(B, NB, dtype=torch.float32)
+        cnt.scatter_add_(1, block_id, torch.ones(B, T, device=q.device))
+        cnt = cnt.clamp(min=1)
+        kc = kc / cnt[:, None, :, None].to(kc.dtype)
+        vc = vc / cnt[:, None, :, None].to(vc.dtype)
+
+        # block metadata: last position (the blk_last <= t visibility rule, unchanged),
+        # owning document (cross-document refusal), and the pad-slot marker (NB is a max over
+        # batches, so shorter batches carry empty slots that must stay invisible)
+        blk_last = torch.full((B, NB), -1, device=q.device, dtype=torch.long)
+        blk_last.scatter_reduce_(1, block_id, pos.view(B, T), reduce="amax",
+                                 include_self=True)
+        blk_doc = torch.zeros(B, NB, dtype=torch.long, device=q.device)
+        blk_doc.scatter_(1, block_id, doc)
+        ar = torch.arange(T, device=q.device)
+        vis = ((blk_last >= 0)[:, None, :]
+               & (blk_last[:, None, :] <= ar[None, :, None])
+               & (blk_doc[:, None, :] == doc[:, :, None]))       # (B,T,NB)
+
+        # --- compress: same three lines as the unpacked path, over per-document blocks ----
+        sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
+        sc = sc.masked_fill(~vis[:, None], float("-inf"))
+        y_cmp = torch.nan_to_num(torch.softmax(sc, dim=-1) @ vc, nan=0.0)
+
+        # --- select: top-k blocks, attended at full resolution, same document only --------
+        kk = min(self.topk, NB)
+        sel = torch.zeros(B, H, T, NB, dtype=torch.bool, device=q.device)
+        sel.scatter_(-1, sc.topk(kk, dim=-1).indices, True)
+        sel &= vis[:, None]                    # a -inf block can still be picked when kk>visible
+        pos_sel = sel.gather(3, block_id[:, None, :, None].expand(B, H, T, T))
+        same = doc[:, :, None] == doc[:, None, :]
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        m_sel = pos_sel & same[:, None] & causal[None, None]
+        y_sel = torch.nan_to_num(
+            torch.softmax(full.masked_fill(~m_sel, float("-inf")), dim=-1) @ vh, nan=0.0)
+
+        # --- window: the last n_win tokens inside the document ---------------------------
+        m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        y_win = torch.softmax(full.masked_fill(~m_win[:, None], float("-inf")),
+                              dim=-1) @ vh
 
         g = torch.sigmoid(self.branch_gate(q)).transpose(1, 2).unsqueeze(-1)   # B,H,T,3,1
         y = g[..., 0, :] * y_cmp + g[..., 1, :] * y_sel + g[..., 2, :] * y_win
