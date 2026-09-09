@@ -302,6 +302,7 @@ Rules and their enforcing checks live in `docs/lessons/gate_failure_shapes.md`; 
 | A criterion made more precise can move its residual error from the lax side to the dangerous side; ask which side the residual lands on before asking whether the new criterion is more accurate | 1 | §295 |
 | Two artifacts joined by position must have one writer of the ordering or an explicit join key; a contract written only in a comment is a check that cannot fail, and the producer of a consumed artifact must be on main | 1 | §296 |
 | A file transfer is unverified until the landed bytes are compared to the source; a syntactically valid corruption charges its error to the runtime before the corrupted line | 1 | §297 |
+| An instrument whose parser the watched data can break reports the failure it cannot distinguish and then stops watching; a false alarm that kills the instrument is worse than a missed alarm, because silence after the alarm reads as the all-clear | 1 | §298 |
 
 New shapes land in the incidents doc first and this table follows.
 
