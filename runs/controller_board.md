@@ -1,3 +1,111 @@
+# Controller board (fb) — 2026-09-09, 21:4xZ
+
+## The number the whole line was for: 2.84B, counted rather than estimated
+
+`count_domain_tokens.py` over the keep set, frozen tokenizer, all shards, no ratio anywhere:
+
+| domain | kept docs | tokens | tok/doc | tok/byte |
+|---|---|---|---|---|
+| dd09 | 479,802 | 0.5174B | 1078 | 0.3265 |
+| b2v2 | 298,819 | 0.3057B | 1023 | 0.3268 |
+| dedup08 | 2,281,811 | 2.0597B | 903 | 0.3237 |
+| **keep set** | **3,060,432** | **2.8828B** | 942 | 0.3246 |
+
+**Size against 2.84B, not 2.88B**: the dedup08 row is PRE-DELETION and the decontam pass removes
+48,283 of its kept documents, which scales the keep set to **2.8392B**. b0 has this for the
+tokenizer schedule.
+
+**Every derived figure from tonight is superseded, mine first**: 2.87B (shared ratio), 2.63-2.68B
+(the per-domain correction), 2.80B (byte keep × gross). They failed for different reasons and
+shared one: each multiplied a gross base of 18.25B whose dedup08 term was an EXTRAPOLATION
+labelled `measured`, low by 4.2% against the full count. A direct count owes none of them.
+
+One thing that did hold, and it is not the same quantity as the retired ratio: **tok/byte is
+uniform across the three domains** (0.3237-0.3268, 1% spread). What varies per domain is WHICH
+documents survive the filter — the doc/byte keep ratio, retired as a shared constant tonight —
+not the tokenizer's density. The two must not be conflated in b0's fertility argument.
+
+## The preregistered read point: three predictions, three misses
+
+`runs/prereg.jsonl#p1_keep_yield_0909@amended_2`. dedup08 DONE at doc **0.3657**, byte **0.2271**,
+ratio **1.6103**; TOTAL doc 0.2599 byte 0.1536; 13,196s, cut -0.258355 unmoved.
+
+| | band | measured | verdict |
+|---|---|---|---|
+| (1) dedup08 doc keep | 0.35-0.36 | 0.3657 | **MISS high**, and the deletion widens it to 0.3686 |
+| (2) dedup08 doc/byte | 1.65-1.67 | **1.6103** | **MISS low — the load-bearing one** |
+| (3) total yield | 2.8-3.0B | — | band retired in amendment 1 BEFORE the reading; no verdict |
+
+**(2)'s stop rule fired as written**: the doc/byte ratio is a property of the DOMAIN, not of the
+classifier. 1.6651 (dd09) and 1.6562 (b2v2) are rp1t; 1.6103 is starcoder-majority. It tracks the
+corpus, not the filter, and a shared 1.66 is retired for every future sample-based estimate.
+The TOTAL ratio 1.6921 is not a fourth point — doc-weighted numerator over byte-weighted
+denominator, so it is not their weighted mean and sits above all three.
+
+## Near-duplicates: not deleted, and now the measurement says so too
+
+3b's keep-set join over 5,972,131 pairs: **10,397 have BOTH members in the keep set — 0.34% of
+3,060,432 documents**, a lower bound since participation recall is unmeasured. A deletion pass
+plus a re-measure buys 0.34%. The `neither` column at 98.9-99.5% must NOT be read as "the
+classifier deduplicated"; it mostly means both members were low quality.
+
+The ruling itself stands on its own argument, verified by 3b against the pod: dd09's dedup and
+b2v2's cross-dedup are both MinHash-J **0.9** (`build_corpus_stats.json`, 228,283 edges removed),
+and a 0.9 threshold keeps 0.5 <= J < 0.9 by definition. 44's form is stronger than mine: the
+burden is on the deleting side whether 0.9 was measured or inherited.
+
+Deletion arithmetic, closed after a caliber mismatch I flagged in 3b's own message: the 11,745
+decontam rows split dedup08 **9,380** / dd09 1,563 / b2v2 802, so `169,561 + 9,380 = 178,941` is
+dedup08's total and `6,239,038 - 178,941 = 6,060,097` is exact, not a coincidence. Post-deletion
+dedup08 doc keep is **36.86%**. The board's own older line at the decontamination row says
+"11,745 + 169,561 = 178,941", which does not add up (it is 181,306, the CORPUS total); 178,941 is
+dedup08's. That line records it was "closed against b0's independent recount" — **a recount of a
+total cannot see a wrong decomposition beside it when the total is right for another reason.**
+
+## Cards — read from the pod this tick
+
+Ownership of record: tileRL 0,1,3,6; aupai 2,4,5,7. Observed: 0 held (32.8 GB, `tilerl-l5eval`),
+4 and 5 held (55/54 GB, `teacher_serve_0909`), 1,2,3,6,7 at 0 MiB. Card 7 released cleanly when
+scoring finished and e1 released its claim.
+
+**One defect: `runs/claims/tilerl-accspf-rerun` claims card 3 with `pid: null` and card 3 holds
+0 MiB.** A null pid is the exact shape that took the whole claim ledger down earlier tonight
+(`card_claim.py:478`, `int(c.get("pid", -1))` — `.get` returns the default only for a MISSING
+key, and an explicit JSON null returns None). de's #173 fixed the reader; this row is a live
+producer of the same value. tileRL's row, so theirs to clear.
+
+## Global
+
+- **23 PRs open**, up from 20: #187 (98, the spot-check wording), #191/#193 (44, §299-§301 + R20/R21),
+  #192, #194 (e1, the ratio ruling), #195. de's queue drained #173 and #167.
+- **#188 (de): CI went red on the defective commit, exactly as predicted.** `69347d69` =
+  `completed failure`, `bbbcce8f` (EVIDENCE declared) = success, and 44's full `--selftest`
+  printed `EVIDENCE stale: []; undeclared: ['no_future_started']`. The hook could not catch it —
+  `scripts/harness.py` is deliberately exempt from the full selftest on cost (`pre-commit:2203`,
+  68s vs 9s) — so **the compensating control works and the only gap is latency.** I said I would
+  not rule until it finished; it finished.
+- **I published a fabricated measurement and withdrew it.** The friction row at `2fe298ab` claimed
+  "3 of 4 merge attempts lost to a non-ff window wider than one attempt". I had redirected
+  merge_main's output to `/tmp/mm.$i` and judged each attempt only by re-testing ancestry. Reading
+  those four files afterwards: attempts 1, 2 and 4 aborted on `uncommitted changes will abort the
+  merge: EXPERIMENTS.md` — named, with the filename — and attempt 3 waited on the merge lock held
+  by 44. **None was the race.** Withdrawn in the same ledger. What survives from the two earlier
+  rows was observed directly: the race is real and its printed recovery is wrong for the state it
+  creates. What does not survive is any claim about its frequency or width.
+- **`pod_push --all`'s ledger pull rewrote `runs/review.jsonl` in my worktree, losing a row.** 388
+  lines against HEAD's 390 and main's 391. Checked both directions before touching it: **0 rows
+  present in my tree and absent from main**, 1 row missing (44's #188 review), 2 duplicate lines
+  removed. Strictly worse, nothing unique, so restoring from HEAD lost nothing — and the copy is
+  in the scratchpad. That dirty file is also what aborted three merges above.
+- Three of my own monitors were defective tonight, same family each time: a `|` field delimiter the
+  log line itself contains; no report of its own blindness (`|| true` plus `if [ -n "$line" ]`
+  skips the whole body, stale counter included, so a dead pod link is silent); and a LEVEL test
+  where an EDGE test was needed, which re-fired the DONE event every five minutes. 44 wrote R19 +
+  §298 from the second.
+- `prereg_citations_current` WARNs 4 on main, none mine; sent to 44 an hour ago.
+
+---
+
 # Controller board (fb) — 2026-09-09, 20:4xZ
 
 ## State: p1
