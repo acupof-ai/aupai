@@ -143,7 +143,8 @@ high-score code, confirming the re-draw. Keep rates (document unit) on the
 (measured on the 100K sample, three points 1.656-1.665; the full-corpus run
 then broke the shared ratio -- see structural finding 1): >=2 ~3.3B,
 >=3 ~2.9B, >=4 ~0.36B -- and the final yield uses the keep set's OWN tok/byte,
-measured directly, not the domain average. GROSS, not unique:
+measured directly, not the domain average (LANDED 2026-09-10: 2.8116B
+post-deletion, see below). GROSS, not unique:
 dedup08 is a UNION build (283 starcoder shards + 15 rp1t shards), and the
 15 rp1t shards' docs overlap dd09|b2v2 constructively -- the earlier estimate
 was 157,684 docs (2.53%); the exact-overlap channel has since MEASURED 169,561
@@ -157,9 +158,19 @@ straddling -0.258355 keeps one side and misaligns the greedy id match;
 count unmeasured, expected 0, 4c 2026-09-09), after which
 dedup08's tokens are RE-MEASURED, not ratio-extrapolated (rp1t and starcoder
 shards have no reason to share a length distribution, and length is a strong
-confound in this corpus). The conversions stay gross until that re-measurement
-lands; the pool is 18.25B gross and near-unique (starcoder body overlap
-measured 0.3-0.75%). The threshold region for the ablation is >=2 vs >=3,
+confound in this corpus). The re-measurement LANDED 2026-09-10 (3b full
+census, runs/count_keep.log; e1 spot-check 0.3263 vs census 0.3237 tok/byte
+on 3,250 docs spread over all 298 shards, within sampling noise):
+post-deletion KEEP SET (score >= cut -- not the unfiltered clean-copy 8.509B
+in the dedup08-token-count section below) = 2,811,615,700 tokens (dd09
+511,318,349 / b2v2 302,591,677 / dedup08 1,997,705,674), frozen tokenizer
+with +1 eos/doc.
+dedup08 post-deletion doc keep = 36.86% ((2,281,811 - 48,283) /
+(6,239,038 - 178,941)); the 48,283 deleted-in-keep docs = 61,967,002 tokens
+(data/decontam/deleted_in_keep_tokens_0910.json). Census bytes are CONTENT
+bytes (dedup08 6,362,156,143) -- the manifest's 6,849,704,609 are raw-line
+envelope bytes including source/url; the two must not be mixed. The pool was
+18.25B gross and near-unique (starcoder body overlap measured 0.3-0.75%). The threshold region for the ablation is >=2 vs >=3,
 with >=3 the prior (score-2 is "glue code, nothing to learn", exactly what the
 filter exists to remove; score-3 is real logic). The ablation pins the point.
 The threshold is the ablation's OUTPUT, not a means to a token target
