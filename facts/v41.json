@@ -1,24 +1,221 @@
 {
-  "facts": [
-    {
-      "id": "v41.size_derivation_0910",
-      "value": "Small-scale CSA2 config derived for the p1 model (task ae-2, V4.1 Step 0; corrected after 3b's PR #213 review): L=12, d=1024, heads=8, MoE 48/top-3/1-shared with expert_ffn=1728 (ffn_hidden=6912 under the existing equal-active parity), giving 352.3M active params/token (33.6M tied embedding + 318.8M layers) and 3.22B total (name 3.2b-a352m-e48). Per-layer attention params per paper Fig. 4: only Full computes Main K/V -- S = 4d^2 (Q + SWA K/V/O), F = 7d^2 + idx, X = 5d^2 + idx, R = 5d^2 (Main KV and Top-K reused). CSA2: m=8 tokens/entry, top_k=64, n_win=128, indexer 4 heads x 64 dim (latent 256 = d//4). Mode placement composes with PR #216 (0e-2): n_swa_only_layers=2 owns the first-two pure-SWA placement in HybridLM's kind loop, and csa2_modes=\"F,R,R,R,X,R,R,R,R,R\" owns the ten non-SWA layers: layer 2 Full, eight Reuse, and one X at layer 6 that is Reindex-DEFERRED (fb ruling 2026-09-10): Step 2 ships Full/Reuse only, so the module runs X as Reuse until Reindex lands; the slot names the mid-stack selection refresh point rather than a live mode. Global KV = 512 B/token (one Full layer, 4096 B/entry amortized over m=8, bf16) vs 49,152 B/token dense at the same width (12 layers x 2 x d x 2 B) -- 96x smaller. top_k is not effectively dense: 640 keys/query (64x8 + 128) = 15.6% of dense 4096, and the indexer discards 87.5% of the 512 scored entries before attention; indexer cost 131K MACs/query = 3.1% of dense QK. At top_k=128 the attended fraction is 28.1% -- 64 is the default, 128 the A/B ceiling.",
-      "measured": "2026-09-10",
-      "source": "python3 scripts/v41_size.py (this commit); arithmetic printed by the script, which asserts every constraint above and fails loud if one stops holding. Corrected 2026-09-10 after 3b's changes-requested review on PR #213 (Reuse/Reindex save 2d^2 by reusing Main KV)",
-      "config": {
-        "paper_values_that_do_not_transfer": "32 indexer heads x 128, 64 core heads x 512, latent 1280, top_k 512, m=2 encoder/1 decoder, 40 layers, n_win 128 -- all 552B / seq 64K-1M (DeepSeek_V41_Tech_Report.pdf section 2)",
-        "what_is_borrowed_not_derived": "L=12 was a gap-map suggestion (fb, 2026-09-10; the gap map was a workflow agent's output, not a committed file -- confirmed by fb 2026-09-10 -- so the actual basis is this derivation from the report plus the 352.3M budget); n_win=128 (paper value, Step 3 A/Bs 128 vs 256); MoE 48/top-3/1-shared (pivot ruling, reuse MoEFFN as-is)",
-        "active_param_equation": "per layer per Fig. 4: S = 4d^2 + ffn (Q + SWA K/V/O), F = 7d^2 + idx + ffn (adds Main K/V/O), X = 5d^2 + idx + ffn, R = 5d^2 + ffn (Main KV and Top-K reused); idx = 2*d*256 on F/X; ffn = 4*3*d*1728; embedding d*32784 once, tied head. ffn_hidden=6912 is the parity reference only -- all 12 layers are MoE, so it adds no active params",
-        "kv_bytes_equation": "dense = LAYERS * 2 * d * 2 B = 49,152 B/token; CSA2 = Full_layers * 2 * d * 2 B / m = 512 B/token; X/R layers store no global KV",
-        "density_equation": "attended keys/query = top_k*m + n_win = 640; entries/layer = T/m = 512; selectivity = top_k/entries = 12.5%",
-        "ffn_hidden_consequence": "fb ruling 2026-09-10: do NOT relax MoEFFN's equal-active parity check -- set ffn_hidden = (top_k+shared)*expert_ffn = 6912 so the config stays within the check; de wires the value in Step 1",
-        "review_correction": "3b's changes-requested review on PR #213 found the first version counted R and X at 7d^2 (Main K/V computed per layer); the correct count is 5d^2 (Main KV reused), an overcount of 2d^2 x 9 reuse-family layers = 18.87M. At expert_ffn=1536 the corrected count was 324.0M, 26M under target; expert_ffn=1728 restores 352.3M. The assertion band tightened from 300-400M to 340-360M so the class is caught next time. (3b's review quoted 321.9M, which assumes 10 overcounted layers; the map has 9.)",
-        "composition_with_pr216": "0e-2 (PR #216) puts PureSWA + n_swa_only_layers in HybridLM's kind loop; this derivation's S,S prefix is owned by that field (n_swa_only_layers=2) and csa2_modes owns only the ten non-SWA layers. Open divergence flagged to 0e and de: PR #216's PureSWA reads cfg.csa_window (default 256) while de-103's CSA2 module reads csa2_n_win (128) -- one model must have one SWA width, so PureSWA should read csa2_n_win when the CSA2 module lands.",
-        "swa_kv_caveat": "SWA KV is stored uncompressed at the gate (49,152 B/token); bounded replay (Step 7) is what makes the persistent total small, and it is deferred past the gate"
-      },
-      "uncertainty": "Derivation, not a measurement: the param and byte counts are exact given the assumptions; the assumptions themselves (Q shared, separate KV/O per branch, one Full serving nine Reuse layers, expert_ffn as the active-budget knob) are untested at this scale. The paper runs one Full per ~17 reuse layers at 552B; one per nine here is conservative. m=8 vs m=4 and top_k=64 vs 128 are start values in fb's ranges, not fitted optima. The Reuse/Reindex param count (5d^2) is 3b's correction of the first version's 7d^2.",
-      "boundary": "Holds at d=1024, L=12, seq 4096, bf16. FP4 KV, the hierarchical sparse indexer, CED topology and bounded replay are deferred past the gate (pivot); the KV number is the gate-run number, not the deployment number. The gate's ~350M target is met at 352.3M active; if the gap map's L=12 was meant at a different width, the expert_ffn knob changes, not the architecture.",
-      "status": "recorded"
-    }
-  ]
+ "facts": [
+  {
+   "id": "v41.size_derivation_0910",
+   "value": "Small-scale CSA2 config derived for the p1 model (task ae-2, V4.1 Step 0; corrected after 3b's PR #213 review): L=12, d=1024, heads=8, MoE 48/top-3/1-shared with expert_ffn=1728 (ffn_hidden=6912 under the existing equal-active parity), giving 352.3M active params/token (33.6M tied embedding + 318.8M layers) and 3.22B total (name 3.2b-a352m-e48). Per-layer attention params per paper Fig. 4: only Full computes Main K/V -- S = 4d^2 (Q + SWA K/V/O), F = 7d^2 + idx, X = 5d^2 + idx, R = 5d^2 (Main KV and Top-K reused). CSA2: m=8 tokens/entry, top_k=64, n_win=128, indexer 4 heads x 64 dim (latent 256 = d//4). Mode placement composes with PR #216 (0e-2): n_swa_only_layers=2 owns the first-two pure-SWA placement in HybridLM's kind loop, and csa2_modes=\"F,R,R,R,X,R,R,R,R,R\" owns the ten non-SWA layers: layer 2 Full, eight Reuse, and one X at layer 6 that is Reindex-DEFERRED (fb ruling 2026-09-10): Step 2 ships Full/Reuse only, so the module runs X as Reuse until Reindex lands; the slot names the mid-stack selection refresh point rather than a live mode. Global KV = 512 B/token (one Full layer, 4096 B/entry amortized over m=8, bf16) vs 49,152 B/token dense at the same width (12 layers x 2 x d x 2 B) -- 96x smaller. top_k is not effectively dense: 640 keys/query (64x8 + 128) = 15.6% of dense 4096, and the indexer discards 87.5% of the 512 scored entries before attention; indexer cost 131K MACs/query = 3.1% of dense QK. At top_k=128 the attended fraction is 28.1% -- 64 is the default, 128 the A/B ceiling.",
+   "measured": "2026-09-10",
+   "source": "python3 scripts/v41_size.py (this commit); arithmetic printed by the script, which asserts every constraint above and fails loud if one stops holding. Corrected 2026-09-10 after 3b's changes-requested review on PR #213 (Reuse/Reindex save 2d^2 by reusing Main KV)",
+   "config": {
+    "paper_values_that_do_not_transfer": "32 indexer heads x 128, 64 core heads x 512, latent 1280, top_k 512, m=2 encoder/1 decoder, 40 layers, n_win 128 -- all 552B / seq 64K-1M (DeepSeek_V41_Tech_Report.pdf section 2)",
+    "what_is_borrowed_not_derived": "L=12 was a gap-map suggestion (fb, 2026-09-10; the gap map was a workflow agent's output, not a committed file -- confirmed by fb 2026-09-10 -- so the actual basis is this derivation from the report plus the 352.3M budget); n_win=128 (paper value, Step 3 A/Bs 128 vs 256); MoE 48/top-3/1-shared (pivot ruling, reuse MoEFFN as-is)",
+    "active_param_equation": "per layer per Fig. 4: S = 4d^2 + ffn (Q + SWA K/V/O), F = 7d^2 + idx + ffn (adds Main K/V/O), X = 5d^2 + idx + ffn, R = 5d^2 + ffn (Main KV and Top-K reused); idx = 2*d*256 on F/X; ffn = 4*3*d*1728; embedding d*32784 once, tied head. ffn_hidden=6912 is the parity reference only -- all 12 layers are MoE, so it adds no active params",
+    "kv_bytes_equation": "dense = LAYERS * 2 * d * 2 B = 49,152 B/token; CSA2 = Full_layers * 2 * d * 2 B / m = 512 B/token; X/R layers store no global KV",
+    "density_equation": "attended keys/query = top_k*m + n_win = 640; entries/layer = T/m = 512; selectivity = top_k/entries = 12.5%",
+    "ffn_hidden_consequence": "fb ruling 2026-09-10: do NOT relax MoEFFN's equal-active parity check -- set ffn_hidden = (top_k+shared)*expert_ffn = 6912 so the config stays within the check; de wires the value in Step 1",
+    "review_correction": "3b's changes-requested review on PR #213 found the first version counted R and X at 7d^2 (Main K/V computed per layer); the correct count is 5d^2 (Main KV reused), an overcount of 2d^2 x 9 reuse-family layers = 18.87M. At expert_ffn=1536 the corrected count was 324.0M, 26M under target; expert_ffn=1728 restores 352.3M. The assertion band tightened from 300-400M to 340-360M so the class is caught next time. (3b's review quoted 321.9M, which assumes 10 overcounted layers; the map has 9.)",
+    "composition_with_pr216": "0e-2 (PR #216) puts PureSWA + n_swa_only_layers in HybridLM's kind loop; this derivation's S,S prefix is owned by that field (n_swa_only_layers=2) and csa2_modes owns only the ten non-SWA layers. Open divergence flagged to 0e and de: PR #216's PureSWA reads cfg.csa_window (default 256) while de-103's CSA2 module reads csa2_n_win (128) -- one model must have one SWA width, so PureSWA should read csa2_n_win when the CSA2 module lands.",
+    "swa_kv_caveat": "SWA KV is stored uncompressed at the gate (49,152 B/token); bounded replay (Step 7) is what makes the persistent total small, and it is deferred past the gate"
+   },
+   "uncertainty": "Derivation, not a measurement: the param and byte counts are exact given the assumptions; the assumptions themselves (Q shared, separate KV/O per branch, one Full serving nine Reuse layers, expert_ffn as the active-budget knob) are untested at this scale. The paper runs one Full per ~17 reuse layers at 552B; one per nine here is conservative. m=8 vs m=4 and top_k=64 vs 128 are start values in fb's ranges, not fitted optima. The Reuse/Reindex param count (5d^2) is 3b's correction of the first version's 7d^2.",
+   "boundary": "Holds at d=1024, L=12, seq 4096, bf16. FP4 KV, the hierarchical sparse indexer, CED topology and bounded replay are deferred past the gate (pivot); the KV number is the gate-run number, not the deployment number. The gate's ~350M target is met at 352.3M active; if the gap map's L=12 was meant at a different width, the expert_ffn knob changes, not the architecture.",
+   "status": "recorded"
+  },
+  {
+   "id": "v41.smoke_first_steps_f_0910",
+   "value": "First optimizer steps of the V4.1 flat attention stack (CSA2 Full/Reuse + 2 PureSWA + partial RoPE 64, dense FFN 3072, 200.8M params) ran EAGER (torch.compile suppressed after Inductor SliceView, de-106): loss 7.974/5.763/6.177 at steps 10/20/30, no NaN in 30 steps, gnorm 6.06/2.98/1.07, peak 25.2 GiB/rank. Throughput 1K/7K/12K tok/s/gpu at step 10/20/30 (s/step 49.07/9.71/5.47, warmup skew); the step-30 12K is still the EAGER uncompiled value and is not comparable to compiled controls until de-106 lands. Run v41_smoke_0910f: batch 2 accum 8 seq 4096, fp8, world 8, no grad_ckpt, save_every 100000, stopped by controller at step 30 so de could reproduce the compile failure on cards 6/7; no checkpoint written. Loss at 50/100/200 not measured -- the run was stopped at 30; MoE balance not applicable (dense FFN run, moe_experts=0).",
+   "measured": "2026-09-10",
+   "source": "runs/v41_smoke_0910f.log step 10/20/30 lines (committed this PR, pod commit a9b4ba00); runs/experiments.jsonl v41_smoke_0910f",
+   "config": {
+    "run": "v41_smoke_0910f",
+    "arch": "V4.1 flat: csa csa2, csa2 modes F+R default, n_swa_only_layers=2, rope_dims=64, no attn_res, dense ffn_hidden=3072, moe_experts=0",
+    "dim": 1024,
+    "layers": 12,
+    "heads": 8,
+    "seq": 4096,
+    "batch_per_rank": 2,
+    "accum": 8,
+    "world": 8,
+    "dtype": "bf16 weights + fp8 Float8Linear GEMMs",
+    "grad_ckpt": false,
+    "mode": "eager; COMPILE_SUPPRESS_ERRORS=1 after InductorError NotImplementedError SliceView in _forward_csa2 entries_per_doc (de-106)",
+    "mix": "data/mix_smoke_warmup.json (0.20B)",
+    "loss_steps": {
+     "10": 7.974,
+     "20": 5.763,
+     "30": 6.177
+    },
+    "gnorm_steps": {
+     "10": 6.06,
+     "20": 2.98,
+     "30": 1.07
+    },
+    "peak_gib_per_rank": 25.2,
+    "tok_s_gpu_steps": {
+     "10": 1000,
+     "20": 7000,
+     "30": 12000,
+     "note": "window means over the previous 10 steps on the warmup ramp; eager only"
+    },
+    "nan": "none in 30 steps",
+    "checkpoint": "none written (--save_every 100000, controller kill at step 30)",
+    "stopped": "controller kill 2026-09-10 14:10Z to release cards 6/7 for de-106 compile repro"
+   },
+   "uncertainty": "three step points on the LR warmup ramp (warmup 20); the step-20->30 uptick is one window, not a trend. Throughput is eager and deliberately not a compiled number.",
+   "status": "measured",
+   "boundary": "Proves the V4.1 attention stack builds, backprops finite bf16/fp8 grads and steps without NaN in eager. Says nothing about compiled throughput, loss beyond step 30, MoE balance, or HumanEval capability; no checkpoint exists for downstream scoring."
+  },
+  {
+   "id": "v41.smoke_oom_ladder_0910",
+   "value": "Four V4.1 smoke launches OOMed before optimizer step 1 in the eager CSA2/SWA path, including the DENSE 200.8M model, which proves the ~92 GiB term is attention-score materialisation, not parameter/optimizer state: MoE batch16/accum1 rank1 92.23 GiB in use (+4.56); MoE batch8/accum2 rank0 93.35 (+2.00); MoE batch4/accum4+grad_ckpt rank3 93.81 (+2.25); DENSE batch16/accum1 rank1 94.13 (+4.00). Only dense batch2/accum8 (run f) fit, peak 25.2 GiB.",
+   "measured": "2026-09-10",
+   "source": "runs/v41_smoke_0910.log, runs/v41_smoke_0910b.log, runs/v41_smoke_0910c.log, runs/v41_smoke_0910d.log, runs/v41_smoke_0910e.log (torch.OutOfMemoryError lines, committed this PR); runs/experiments.jsonl rows a-e",
+   "config": {
+    "v41_smoke_0910": {
+     "result": "failed at torch.compile before step 1",
+     "error": "torch._inductor.exc.InductorError NotImplementedError SliceView, all ranks",
+     "time": "2026-09-10T13:35:48Z",
+     "batch": 16,
+     "model": "MoE 3.21B total",
+     "owner": "de-106"
+    },
+    "v41_smoke_0910b": {
+     "result": "OOM before step 1 in eager",
+     "rank1_inuse_gib": 92.23,
+     "tried_gib": 4.56,
+     "allocated_gib": 90.91,
+     "batch": 16,
+     "accum": 1,
+     "grad_ckpt": false,
+     "model": "MoE 3.21B total / 342.9M active"
+    },
+    "v41_smoke_0910c": {
+     "result": "OOM before step 1 in eager",
+     "rank0_inuse_gib": 93.35,
+     "tried_gib": 2.0,
+     "allocated_gib": 91.92,
+     "batch": 8,
+     "accum": 2,
+     "grad_ckpt": false,
+     "model": "MoE 3.21B total"
+    },
+    "v41_smoke_0910d": {
+     "result": "OOM before step 1 in eager",
+     "rank3_inuse_gib": 93.81,
+     "tried_gib": 2.25,
+     "allocated_gib": 92.12,
+     "batch": 4,
+     "accum": 4,
+     "grad_ckpt": true,
+     "model": "MoE 3.21B total"
+    },
+    "v41_smoke_0910e": {
+     "result": "OOM before step 1 in eager",
+     "rank1_inuse_gib": 94.13,
+     "tried_gib": 4.0,
+     "allocated_gib": 92.7,
+     "batch": 16,
+     "accum": 1,
+     "grad_ckpt": false,
+     "model": "DENSE 200.8M, ffn 3072"
+    },
+    "card_capacity_gib": 95.22
+   },
+   "uncertainty": "in-use figures are single-rank torch allocator readings at the OOM instant; ranks agree within 0.2 GiB.",
+   "status": "measured",
+   "boundary": "grad_ckpt did not help at MoE batch 4 because the OOM is the forward score tensor, which checkpointing the residual does not remove. The dense run isolates the cause but does not size the MoE training batch once attention is fixed (compiled SDPA/flash path is expected not to materialise scores)."
+  },
+  {
+   "id": "v41.compile_sliceview_block_0910",
+   "value": "Every V4.1 smoke launch fails torch.compile at the first CSA2 forward: InductorError NotImplementedError SliceView, originating in model.py _forward_csa2 -> entries_per_doc (model.py:606 on a823bd1a), all 8 ranks. COMPILE_SUPPRESS_ERRORS=1 forces eager fallback, which then exposes the score-materialisation OOM. First occurrence 2026-09-10T13:35:48Z. No optimizer step has ever run compiled.",
+   "measured": "2026-09-10",
+   "source": "runs/v41_smoke_0910.log:835 InductorError SliceView; identical blocks in runs/v41_smoke_0910b.log and runs/v41_smoke_0910c.log",
+   "config": {
+    "torch": "2.11.0+cu129 pod container",
+    "site": "model.py CompressedSparseAttention._forward_csa2/entries_per_doc scatter_add_ gather path",
+    "workaround": "COMPILE_SUPPRESS_ERRORS=1 eager fallback",
+    "fix_task": "de-106"
+   },
+   "uncertainty": "root op inside entries_per_doc not minimised; the Inuctor stack names SliceView at a boundaries lowering, candidate ops are the bk.scatter_add_(2, flat, kh) zero-padded block gather and its views.",
+   "status": "measured"
+  },
+  {
+   "id": "v41.per_rank_memory_budget_0910",
+   "value": "Per-rank fixed memory under DDP (no sharding) for the V4.1 p1 MoE config (3,209.5M params; element groups counted by scripts/v41_memcount.py instantiating the model, asserts pin the totals): bf16 weights 5.98 GiB; bf16 grads 5.98 GiB; Muon Nesterov momentum bf16 5.91 GiB (zeros_like grad over the Muon groups: 3,057.65M stacked experts + 117.18M dense 2D matrices); AdamW m+v fp32 on embeddings+routers 0.26 GiB; fixed total 18.12 GiB/rank plus a 50 MiB DDP bucket and CUDA context. fp32 masters are OFF (run_ddp.sh passes only --fp8; 8 of 113 historical launches ever used --fp32_master); switching them on adds 11.96 GiB. Persistent fp8 weight copies do not exist: torchao Float8Linear stores the bf16 weight and casts per call (pod verification post-conversion: all parameter storage bf16, zero fp8 parameter tensors). The dense 200.8M variant (runs e/f) fixed total is 1.31 GiB (weights 0.37, grads 0.37, Muon momentum 0.31, embed AdamW 0.25). Largest term in MoE: three replicated ~6 GiB expert tensors -- weights, grads and momentum are 17.9 GiB of the 18.1; every rank holds all 48 experts.",
+   "measured": "2026-09-10",
+   "source": "scripts/v41_memcount.py output 2026-09-10 (committed this PR); train.py MasterWeights:1040, build_optimizers:1202, Muon.step momentum zeros_like, run_ddp.sh:136 --fp8 only; fp8 persistence checked on the pod torchao build (Float8Linear.weight dtype bf16)",
+   "config": {
+    "counter": "scripts/v41_memcount.py (CPU; asserts 3209.5M / 200.8M elements and the GiB totals)",
+    "moe_param_groups_elements_millions": {
+     "muon_expert_3d": 3057.65,
+     "muon_dense_2d": 117.18,
+     "embed_head": 33.62,
+     "arq_3d": 0.39,
+     "moe_router_adamw": 0.59,
+     "scalar_1d": 0.03
+    },
+    "weights_bf16_gib": 5.98,
+    "grads_bf16_gib": 5.98,
+    "muon_momentum_bf16_gib": 5.91,
+    "adamw_embed_router_mv_fp32_gib": 0.26,
+    "fp32_masters": "off; adds 11.96 GiB if enabled",
+    "fp8_persistent_weight_copies_gib": 0,
+    "ddp_bucket_cap_mib": 50,
+    "fixed_total_gib": 18.12,
+    "dense_fixed_total_gib": 1.31
+   },
+   "uncertainty": "AdamW embed state counted as 8 bytes/el (m,v fp32 fused); allocator fragmentation and NCCL/CUDA context (~0.5-1 GiB) excluded from the formula.",
+   "status": "measured",
+   "boundary": "Fixed terms at 18.2 GiB leave ~77 GiB for activations on a 95.22 GiB H20: the MoE 3.21B model does NOT need expert sharding on fixed terms alone at the p1 config. The binding constraint today is the eager attention-score materialisation (see v41.attention_score_bytes_0910); revisit sharding only if compiled training activations + experts exceed the residual."
+  },
+  {
+   "id": "v41.attention_score_bytes_0910",
+   "value": "Bytes of the materialised attention scores in the EAGER CSA2/SWA forward, T=4096, H=8, L=12, CSA2 m=8: every CSA2 layer forms full = qh@kh^T (B,H,T,T) plus the concatenated softmax tensor (B,H,T,NB+T), and each of the 2 PureSWA layers also forms (B,H,T,T) eagerly; that is ~12 full T x T score matrices live along the forward without grad checkpointing. Dense full-score materialisation: per layer bf16 4.00 GiB at B=16, 2.00 at B=8, 1.00 at B=4, 0.50 at B=2; x12 layers: 48/24/12/6 GiB bf16 (96/48/24/12 GiB fp32 softmax workspace). Compressed-entry scores B x H x T x (T/m): 0.50/0.25/0.125/0.062 GiB per layer bf16, 6/3/1.5/0.75 GiB x12. The full-window term dominates >8:1. Against 95.22 GiB and the ~18.2 GiB MoE fixed terms, no B>=4 fits eager even dense (dense B=16 OOMed at 94.13); only B=2 fits (25.2 GiB measured peak). The compiled path is the fix: flash/SDPA attention never materialises T x T scores, after which this table ceases to describe training memory.",
+   "measured": "2026-09-10",
+   "source": "arithmetic on model.py _forward_csa2 lines 640-656 and PureSWA.forward:725; cross-checked against the four measured OOMs and run-f peak (v41.smoke_oom_ladder_0910)",
+   "config": {
+    "T": 4096,
+    "H": 8,
+    "L": 12,
+    "m": 8,
+    "n_win": 128,
+    "dtype_bf16_bytes": 2,
+    "dtype_fp32_bytes": 4,
+    "full_txT_per_layer_gib_bf16": {
+     "B16": 4.0,
+     "B8": 2.0,
+     "B4": 1.0,
+     "B2": 0.5
+    },
+    "full_txT_all_12_layers_gib_bf16": {
+     "B16": 48.0,
+     "B8": 24.0,
+     "B4": 12.0,
+     "B2": 6.0
+    },
+    "full_txT_all_12_fp32_workspace_gib": {
+     "B16": 96.0,
+     "B8": 48.0,
+     "B4": 24.0,
+     "B2": 12.0
+    },
+    "compressed_Txm_per_layer_gib_bf16": {
+     "B16": 0.5,
+     "B8": 0.25,
+     "B4": 0.125,
+     "B2": 0.0625
+    },
+    "compressed_all_12_gib_bf16": {
+     "B16": 6.0,
+     "B8": 3.0,
+     "B4": 1.5,
+     "B2": 0.75
+    },
+    "eager_fit_95gib": "B=2 only (25.2 GiB measured dense; MoE adds ~17.3 GiB fixed, still fits at B=2)",
+    "note": "SWA masks are bool B,H,T,T (48 GiB/12 GiB at B16/B4 x12) but broadcast lazily; the dominant resident terms are score, sc_cat, mask_cat, softmax w"
+   },
+   "uncertainty": "Peak simultaneous liveness is shorter than the L-times sum (allocator frees per layer), so the x12 column is an upper bound; the observed OOMs at 92-94 GiB for B=8/16 put realised peak within ~1.8x of it. Backward keeps scores alive for bwd, which grad_ckpt at residual boundaries does not release mid-forward.",
+   "status": "measured",
+   "boundary": "Describes eager mode only. Predicts nothing after de-106 routes the attention GEMMs through flash/SDPA; the memory question then reverts to the fixed budget plus normal activations."
+  }
+ ]
 }
