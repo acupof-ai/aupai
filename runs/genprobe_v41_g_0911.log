@@ -1,0 +1,9 @@
+[card_claim] claimed 6 for -
+==== HumanEval/0 ok= False len 110
+'def is_close_elements(numbers):\n    """\n    if is_close_elements(numbers):\n        return True\n    return True'
+==== HumanEval/2 ok= False len 113
+'def truncate_number(number):\n    """\n    if number is None:\n        return 0.5\n    return truncate_number(number)'
+==== HumanEval/7 ok= False len 1098
+'def filter_by_substring(strings):\n    """\n    if substring is None:\n        return []\n    for substring in substring:\n        substring = substring.substring(substring)\n        substring = substring.substring(substring)\n'
+==== HumanEval/45 ok= False len 1187
+'def triangle_area(a, h):\n    if h == h:\n        return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    return 1\n    ret'

@@ -56,6 +56,7 @@ run_group() {
   done
   env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
     --level L3 --first "$first" --last "$last" --exec-workers "$EW" \
+    --raw "$RAW" \
     --tag "$tag" --stats-name "stats_$tag.json" --out "$OUT" \
     || { echo "CONVERT_FAILED $tag -- raw RETAINED"; return 1; }
 
