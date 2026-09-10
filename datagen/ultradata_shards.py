@@ -16,6 +16,7 @@ Output: data/corpus/ultradata_<level>_py/<prefix>_NNN.jsonl (100MB shards,
 {"content","source","url"}) plus build_corpus_stats.json.
 """
 import argparse
+import glob
 import hashlib
 import json
 import os
@@ -82,6 +83,9 @@ def main():
     ap.add_argument("--limit-rows", type=int, default=0, help="stop after N rows (dry run)")
     args = ap.parse_args()
     out = args.out or f"data/corpus/ultradata_{args.level.lower()}_py"
+    prefix = f"ultradata_{args.level.lower()}_py"
+    for stale in glob.glob(os.path.join(out, f"{prefix}_*.jsonl")):
+        os.remove(stale)
 
     bench = load_benchmarks()
     control = planted_control(bench)
@@ -94,7 +98,7 @@ def main():
     kept_chars = 0
     kept_tokens = 0
     total = 0
-    writer = ShardWriter(out, f"ultradata_{args.level.lower()}_py")
+    writer = ShardWriter(out, prefix)
 
     for i in range(args.first, args.last + 1):
         path = os.path.join(args.raw, shard_name(args.level, i))
@@ -150,13 +154,14 @@ def main():
         "tokens_config": f"{args.tokenizer}, exact per-doc ids + one <eos> per doc "
                          "(code_rp1t convention)",
         "filters": "decontam(humaneval,mbpp)+exact-dedup",
+        "workers": 1,
         "n_shards": writer.n,
         "filters_fp": fp_of(__file__, sys.modules["datagen.gen_exercises"].__file__),
         "fingerprint": fingerprint,
         "near_dedup": False,
         "near_dedup_note": "exact dedup only; near-dedup not run at small scale",
         "total_rows": total,
-        "discard": stats,
+        "reasons": dict(stats),
     }
     with open(os.path.join(out, "build_corpus_stats.json"), "w", encoding="utf-8") as fh:
         json.dump(record, fh, indent=1)
