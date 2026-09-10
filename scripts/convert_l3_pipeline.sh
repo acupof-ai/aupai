@@ -48,11 +48,23 @@ for g in $(seq 0 $((NG - 1))); do
   man="$MLOG/deleted_l3_$tag.manifest"
   { echo "# deleted after verified conversion of group $tag (shards $first-$last)"
     for p in "${paths[@]}"; do stat -c '%s %n' "$p"; done; } > "$man"
-  env PYTHONPATH=/work/aupai python3 - <<PY
-import json
-s = json.load(open("$OUT/stats_$tag.json"))
-assert s["total_rows"] > 0 and s["n_shards"] > 0, s
-print("MANIFEST_OK $tag", s["total_rows"], s["kept"], s["n_shards"])
+  env PYTHONPATH=/work/aupai python3 - "$first" "$last" "$OUT" "$tag" <<'PY'
+import json, sys
+import pyarrow.parquet as pq
+
+first, last, out, tag = int(sys.argv[1]), int(sys.argv[2]), sys.argv[3], sys.argv[4]
+s = json.load(open(f"{out}/stats_{tag}.json"))
+assert sum(s["reasons"].values()) == s["total_rows"], (
+    f"bucket sum {sum(s['reasons'].values())} != total_rows {s['total_rows']}")
+expected = 0
+for i in range(first, last + 1):
+    p = (f"/data00/aupai_raw/ultradata/UltraData-Code-L3-py-part-{i:05d}"
+         "-of-00147.parquet")
+    expected += pq.ParquetFile(p).metadata.num_rows
+assert s["total_rows"] == expected, (
+    f"total_rows {s['total_rows']} != parquet rows {expected} -- some input not traversed")
+assert s["n_shards"] > 0
+print("MANIFEST_OK", tag, "rows", expected, "kept", s["kept"], "shards", s["n_shards"])
 PY
   for p in "${paths[@]}"; do rm -f "$p"; done
   echo "GROUP_DELETED $tag $(wc -l < "$man") paths"
