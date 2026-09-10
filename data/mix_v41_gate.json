@@ -1,0 +1,46 @@
+{
+ "total_tokens": 110740000000,
+ "domains": {
+  "code_ultra_l2": {
+   "weight": 0.5407,
+   "epochs": 1,
+   "anneal": 0.5407
+  },
+  "code_ultra_l3": {
+   "weight": 0.2868,
+   "epochs": 1,
+   "anneal": 0.2868
+  },
+  "code_py_starcoder": {
+   "weight": 0.0718,
+   "epochs": 1,
+   "anneal": 0.0718
+  },
+  "math_owm_stage2": {
+   "weight": 0.053,
+   "epochs": 1,
+   "anneal": 0.053
+  },
+  "code_keep_p1": {
+   "weight": 0.0228,
+   "epochs": 1,
+   "anneal": 0.0228
+  },
+  "en_c4_stage2": {
+   "weight": 0.0179,
+   "epochs": 1,
+   "anneal": 0.0179
+  },
+  "cot": {
+   "weight": 0.0036,
+   "epochs": 1,
+   "anneal": 0.0036
+  },
+  "code_py_rp1t": {
+   "weight": 0.0034,
+   "epochs": 1,
+   "anneal": 0.0034
+  }
+ },
+ "_comment": "V4.1 HumanEval gate mix (user pivot 2026-09-10, target DeepSeek-V4.1-Flash, data=openbmb/UltraData-Code). One epoch, constant weight=supply share, anneal=weight (same convention as mix_scale_*). Every count is in the NEW gate-mix vocabulary fp f1f860970d15d623 (32768 tokens, [NUM]=32767), which packs code to ~0.90 of the frozen 32773 vocabulary; do not compare these to frozen-unit counts. MEASURED new-vocab tokens (98, PR #243 facts/corpus_supply.json#cs.v41_gate_token_caches_rebuilt_f1f86097_0911, exact encode): code_py_starcoder 7,951,977,919; math_owm_stage2 5,869,046,731; en_c4_stage2 1,985,230,029; cot 400,121,214; code_py_rp1t 379,623,923 (subtotal 16.586B). ESTIMATE new-vocab tokens, byte/sample extrapolation (replace with 0e's measured totals before launch): code_ultra_l2 59.9B = frozen-unit naive full-set 66.6B (3-shard sample 1.679B x 119/3; 21.5% exact-dup in sample, assumed stationary) x measured new/frozen token ratio 0.8989; code_ultra_l3 31.8B = frozen-unit 34.5B (3-of-147 sample 0.704B x 147/3, zero dups) x 0.9206; code_keep_p1 2.53B = frozen-unit 2,811,615,700 census (data/p1/keep_set manifest, post-deletion) x 0.90 code-domain ratio. New-vocab ratios from scripts/tokenizer_ultra_ruling.py held-out (facts/tokenizer.json#tok.ultra_freeze_tax_0910). TOTAL 110.7B is an ESTIMATE dominated by the two extrapolated UltraData domains (82.7% of weight); the exact new-unit full totals are ~12h out (0e, all 147 L3 shards on disk, 119 L2). Domain NAMES ARE FINAL for the launch line even if weights move: code_ultra_l2 (L2 natural code), code_ultra_l3 (L3 task/analysis/solution/test), code_keep_p1 (the 2.8116B classifier keep set; lives at data/p1/keep_set/{code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08}, 685 nested jsonl, and must be presented to the loader as a flat data/corpus/code_keep_p1/*.jsonl domain before launch -- a launch prerequisite, not a rename). Weights re-normalise to the measured totals once 0e lands them."
+}
