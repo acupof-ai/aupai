@@ -1,16 +1,20 @@
 #!/bin/bash
-# Option-2 L3 pipeline (fb 2026-09-11): one shard group at a time.
-#   wait-for-shards (valid parquet footer) -> convert group -> verify stats
-#   -> write deleted_<tag>.manifest naming every raw path -> rm those paths.
-# The manifest is the deletion record fb requires before any raw shard is
-# removed. The L3 keep predicates live in datagen/ultradata_shards.py
-# (ud_solution_exec.execute AND 3b's non-triviality floor once merged).
+# Option-2 L3 pipeline (fb 2026-09-11): NG groups run CONCURRENTLY, each owning
+# a disjoint shard range. Per group: wait for valid parquet footers -> convert
+# -> assert row conservation -> write deleted_<tag>.manifest naming every raw
+# path -> rm them. Aggregate group stats after every group finishes.
+#
+# Disk: the guarded fetch (fetch_l3_guarded.sh, 160G free floor) is the backstop.
+# Groups only wait for shards, never fetch, so a paused fetch stalls late groups
+# without corrupting early ones; each group frees its own raw after verification.
 set -u
 cd /work/aupai
 RAW=/data00/aupai_raw/ultradata
 OUT=data/corpus/code_ultra_l3
 MLOG=runs/ultra_groups/manifests
 EW=${EW:-24}
+NG=${NG:-10}
+NSH=147
 mkdir -p runs/ultra_groups "$MLOG"
 
 footer_ok() {
@@ -25,27 +29,24 @@ with open(p, "rb") as f:
 PY
 }
 
-NG=10; NSH=147
-SIZE=$(( (NSH + NG - 1) / NG ))
-for g in $(seq 0 $((NG - 1))); do
-  first=$((g * SIZE + 1)); last=$((g * SIZE + SIZE)); [ $last -gt $NSH ] && last=$NSH
-  [ $first -gt $NSH ] && continue
-  tag=$(printf "g%02d" "$g")
-  paths=()
+run_group() {
+  g=$1
+  local SIZE=$(( (NSH + NG - 1) / NG ))
+  local first=$((g * SIZE + 1)); local last=$((g * SIZE + SIZE))
+  [ $last -gt $NSH ] && last=$NSH
+  [ $first -gt $NSH ] && return 0
+  local tag; tag=$(printf "g%02d" "$g")
+  local paths=() p
   for i in $(seq $first $last); do
     p="$RAW/UltraData-Code-L3-py-part-$(printf '%05d' $i)-of-00147.parquet"
-    until footer_ok "$p"; do
-      kb=$(df --output=avail / | tail -1 | tr -d ' ')
-      [ "$kb" -lt 157286400 ] && { echo "DISK_WAIT $kb KB before shard $i"; sleep 120; } || sleep 30
-    done
+    until footer_ok "$p"; do sleep 60; done
     paths+=("$p")
   done
   env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
     --level L3 --first "$first" --last "$last" --exec-workers "$EW" \
-    --tag "$tag" --stats-name "stats_$tag.json" --out "$OUT" \
-    2>&1 | tee "runs/ultra_groups/l3_$tag.log"
+    --tag "$tag" --stats-name "stats_$tag.json" --out "$OUT"
 
-  man="$MLOG/deleted_l3_$tag.manifest"
+  local man="$MLOG/deleted_l3_$tag.manifest"
   { echo "# deleted after verified conversion of group $tag (shards $first-$last)"
     for p in "${paths[@]}"; do stat -c '%s %n' "$p"; done; } > "$man"
   env PYTHONPATH=/work/aupai python3 - "$first" "$last" "$OUT" "$tag" <<'PY'
@@ -67,8 +68,20 @@ assert s["n_shards"] > 0
 print("MANIFEST_OK", tag, "rows", expected, "kept", s["kept"], "shards", s["n_shards"])
 PY
   for p in "${paths[@]}"; do rm -f "$p"; done
-  echo "GROUP_DELETED $tag $(wc -l < "$man") paths"
+  echo "GROUP_DELETED $tag $((${#paths[@]})) paths"
+}
+export -f run_group footer_ok
+export RAW OUT MLOG EW NSH NG
+
+pids=""
+for g in $(seq 0 $((NG - 1))); do
+  ( run_group "$g" ) > "runs/ultra_groups/l3_g$(printf '%02d' "$g").log" 2>&1 &
+  pids="$pids $!"
 done
+rc=0
+for p in $pids; do wait "$p" || rc=1; done
+[ $rc -ne 0 ] && { echo "GROUP_FAILURE rc=$rc -- no aggregate"; exit 1; }
+
 env PYTHONPATH=/work/aupai python3 datagen/ultradata_shards.py \
   --level L3 --aggregate "stats_g*.json" --out "$OUT" \
   2>&1 | tee runs/ultra_groups/l3_aggregate.log
