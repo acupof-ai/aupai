@@ -1808,6 +1808,21 @@ assert (_swa(_sq, _sk2, _sv2)[:, :8] - _sy0[:, :8]).abs().max().item() > 1e-6, (
     "the perturbation is invisible INSIDE the window too -- the window branch is dead"
 )
 
+# 1b. csa2_n_win TAKES PRECEDENCE over csa_window, so the pure-SWA layers and de-103's CSA2
+#     window branch share one width (ae's divergence, de's ruling 2026-09-10). With width 4,
+#     position 0 is visible only to queries 0..3.
+class _CfgSwaN(_CfgSwa):
+    csa2_n_win = 4
+
+
+_sw4 = model.PureSWA(_CfgSwaN, 4, 16).double()
+assert (_sw4(_sq, _sk2, _sv2)[:, 4:] - _sw4(_sq, _sk, _sv)[:, 4:]).abs().max().item() == 0.0, (
+    "csa2_n_win did not narrow the window: position 0 moved queries at distance >= 4"
+)
+assert (_sw4(_sq, _sk2, _sv2)[:, :4] - _sw4(_sq, _sk, _sv)[:, :4]).abs().max().item() > 1e-6, (
+    "csa2_n_win=4 made the window dead inside its own range"
+)
+
 # 2. CAUSALITY. Perturbing position t must not move outputs before t.
 _sleaks = []
 for _t in range(1, 20):
