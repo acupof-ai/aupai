@@ -213,7 +213,27 @@ def check_sft_math_parser(out):
     if start is None or stop is None or stop <= start:
         out.append(("FAIL", "could not delimit sft_math.py's parser region"))
         return False
-    ns = {"argparse": ap, "SFT_DATA": "data/sft/sft_all.pt", "ROOT": ROOT, "os": os}
+    # Module-level CONSTANTS the parser region references (SAVE_INTERVAL since
+    # 148e6027 made --save_every's default the constant instead of a literal).
+    # Read from source, not hardcoded: a hardcoded copy tests the wrong default
+    # the day sft_math changes the value, and this check went red for exactly
+    # this gap -- the region gained a module-level reference and the ns dict was
+    # not updated, with no CI running this gate to notice. Literal Assigns only;
+    # a non-literal module name the region loads fails here again, on purpose.
+    region_ast = ast.Module(body=main.body[start:stop], type_ignores=[])
+    region_free = {n.id for n in ast.walk(region_ast)
+                   if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+    consts = {}
+    for stmt in tree.body:
+        if (isinstance(stmt, ast.Assign) and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Name)
+                and stmt.targets[0].id in region_free):
+            try:
+                consts[stmt.targets[0].id] = ast.literal_eval(stmt.value)
+            except ValueError:
+                pass  # non-literal (e.g. an os.path.join): covered below if needed
+    ns = {"argparse": ap, "SFT_DATA": "data/sft/sft_all.pt", "ROOT": ROOT,
+          "os": os, **consts}
     try:
         exec(compile(ast.Module(body=main.body[start:stop], type_ignores=[]), "<p>", "exec"), ns)  # noqa: S102
     except Exception as e:  # noqa: BLE001
