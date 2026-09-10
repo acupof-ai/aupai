@@ -1277,7 +1277,37 @@ def _unclassified_cards(root=None, now=None):
     return {c: note for c, note in _card_map(root).items()
             if _classify_card_note(note, baseline_theirs=(c in base), now=now) == "unclassified"}
 
-def _close_row(name, status, result, finding, decision, root=None, writer=""):
+def _open_row_started(name, root=None):
+    """The 'started' stamp of name's currently-open run, or "".
+
+    The stamp is exp.py's to mint (minute resolution), so the launcher reads it back after
+    `exp.py start` rather than guessing a clock. Every automated close of the row then keys on
+    (name, started): a bare-name close is REFUSED when two rows of one name are open, which is
+    the normal relaunch shape, and the refusal silently left the dead run's row running.
+    """
+    path = os.path.join(root or ROOT, "runs", "experiments.jsonl")
+    try:
+        events = []
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if not line.strip():
+                    continue
+                try:
+                    events.append(json.loads(line))
+                except ValueError:
+                    continue
+    except OSError:
+        return ""
+    # The fold, never a raw scan: a running event followed by its terminal event is CLOSED
+    # (terminal-wins regardless of position), and a raw last-running read would reopen it.
+    latest = ""
+    for row in _exp_fold(events):
+        if row.get("name") == name and row.get("status") == "running":
+            latest = max(latest, str(row.get("started") or ""))
+    return latest
+
+
+def _close_row(name, status, result, finding, decision, root=None, writer="", started=None):
     """Close an exp row. `root` exists for the selftest: exp.py takes no ambient
     override (the ledger gets no env var), so a test that cannot redirect it writes
     into the real ledger -- which is exactly what happened (four 'arts' rows,
@@ -1307,6 +1337,13 @@ def _close_row(name, status, result, finding, decision, root=None, writer=""):
             "--result", result, "--finding", finding, "--decision", decision, "--status", status]
     if writer:
         cmd += ["--writer", writer]
+    # THE ROW THE LAUNCH OPENED, not whichever open row exp.py's bare name match picks. Names
+    # repeat by design (a relaunch under the same name is the normal case), and with two open
+    # rows of one name exp.py done REFUSES a bare close, so a monitor/supervisor death close
+    # silently did nothing and both rows stayed running. The caller read this stamp back at
+    # launch and every fatal path threads it. None keeps the pre-existing bare-call behaviour.
+    if started:
+        cmd += ["--started", started]
     r = subprocess.run(cmd, capture_output=True, text=True)
     if r.returncode != 0:
         print(f"WARN: could not close the row for {name}: exp.py exited {r.returncode}: "
