@@ -1,0 +1,542 @@
+{
+ "config": {
+  "dirs": [
+   "data/corpus/code_ultra_l2_sample",
+   "data/corpus/code_ultra_l3_sample"
+  ],
+  "shards": 3,
+  "seeds": [
+   7,
+   13,
+   21
+  ],
+  "target_v": 20000,
+  "counts": {
+   "data/corpus/code_ultra_l2_sample": {
+    "n_docs": 52294,
+    "n_fit": 21323,
+    "n_eval": [
+     10542,
+     10080,
+     10349
+    ],
+    "fit_bytes": 80000803,
+    "eval_bytes": [
+     40001952,
+     40489920,
+     39510421
+    ],
+    "shards": [
+     "code_ultra_l2_sample_000.jsonl",
+     "code_ultra_l2_sample_001.jsonl",
+     "code_ultra_l2_sample_002.jsonl"
+    ]
+   },
+   "data/corpus/code_ultra_l3_sample": {
+    "n_docs": 36518,
+    "n_fit": 14343,
+    "n_eval": [
+     7342,
+     7403,
+     7430
+    ],
+    "fit_bytes": 80001506,
+    "eval_bytes": [
+     40016807,
+     40000734,
+     39984799
+    ],
+    "shards": [
+     "code_ultra_l3_sample_000.jsonl",
+     "code_ultra_l3_sample_001.jsonl",
+     "code_ultra_l3_sample_002.jsonl"
+    ]
+   }
+  }
+ },
+ "draws": {
+  "7": {
+   "data/corpus/code_ultra_l2_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.151586,
+      "never used frac": 0.544202,
+      "utilised": 0.458304,
+      "undertrained frac": 0.05178,
+      "byte-fragment tokens": 0.030569,
+      "en fertility": 1.400731,
+      "ref fertility": 1.428571,
+      "renyi": 0.45211
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.449809,
+      "never used frac": 0.02584,
+      "utilised": 0.97175,
+      "undertrained frac": 0.00815,
+      "byte-fragment tokens": 0.02845,
+      "en fertility": 1.235362,
+      "ref fertility": 1.454545,
+      "renyi": 0.425985
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.272011,
+      "never used frac": 0.101333,
+      "utilised": 0.8972,
+      "undertrained frac": 0.04735,
+      "byte-fragment tokens": 0.032651,
+      "en fertility": 1.282683,
+      "ref fertility": 1.311688,
+      "renyi": 0.43781
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "data/corpus/code_ultra_l3_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.23113,
+      "never used frac": 0.708828,
+      "utilised": 0.294267,
+      "undertrained frac": 0.011381,
+      "byte-fragment tokens": 0.023391,
+      "en fertility": 1.164445,
+      "ref fertility": 1.428571,
+      "renyi": 0.503994
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.478628,
+      "never used frac": 0.215686,
+      "utilised": 0.7831,
+      "undertrained frac": 0.03045,
+      "byte-fragment tokens": 0.024904,
+      "en fertility": 1.051457,
+      "ref fertility": 1.454545,
+      "renyi": 0.467693
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.247385,
+      "never used frac": 0.319653,
+      "utilised": 0.68055,
+      "undertrained frac": 0.04655,
+      "byte-fragment tokens": 0.024639,
+      "en fertility": 1.157668,
+      "ref fertility": 1.311688,
+      "renyi": 0.484108
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "pooled": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.191018,
+      "never used frac": 0.540388,
+      "utilised": 0.462118,
+      "undertrained frac": 0.049736,
+      "byte-fragment tokens": 0.027011,
+      "en fertility": 1.269615,
+      "ref fertility": 1.428571,
+      "renyi": 0.477279
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.464215,
+      "never used frac": 0.012008,
+      "utilised": 0.9854,
+      "undertrained frac": 0.00275,
+      "byte-fragment tokens": 0.026677,
+      "en fertility": 1.131027,
+      "ref fertility": 1.454545,
+      "renyi": 0.452075
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.259603,
+      "never used frac": 0.086183,
+      "utilised": 0.91215,
+      "undertrained frac": 0.0392,
+      "byte-fragment tokens": 0.028614,
+      "en fertility": 1.213978,
+      "ref fertility": 1.311688,
+      "renyi": 0.464582
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   }
+  },
+  "13": {
+   "data/corpus/code_ultra_l2_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.182603,
+      "never used frac": 0.550631,
+      "utilised": 0.451866,
+      "undertrained frac": 0.049095,
+      "byte-fragment tokens": 0.029815,
+      "en fertility": 1.332103,
+      "ref fertility": 1.428571,
+      "renyi": 0.454109
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.476293,
+      "never used frac": 0.0266,
+      "utilised": 0.9708,
+      "undertrained frac": 0.00875,
+      "byte-fragment tokens": 0.028113,
+      "en fertility": 1.211877,
+      "ref fertility": 1.454545,
+      "renyi": 0.427722
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.307302,
+      "never used frac": 0.105234,
+      "utilised": 0.8932,
+      "undertrained frac": 0.0446,
+      "byte-fragment tokens": 0.03135,
+      "en fertility": 1.245702,
+      "ref fertility": 1.311688,
+      "renyi": 0.439196
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "data/corpus/code_ultra_l3_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.321147,
+      "never used frac": 0.709259,
+      "utilised": 0.293961,
+      "undertrained frac": 0.012571,
+      "byte-fragment tokens": 0.02369,
+      "en fertility": 1.163516,
+      "ref fertility": 1.428571,
+      "renyi": 0.505428
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.581992,
+      "never used frac": 0.217966,
+      "utilised": 0.78085,
+      "undertrained frac": 0.0339,
+      "byte-fragment tokens": 0.025148,
+      "en fertility": 1.05598,
+      "ref fertility": 1.454545,
+      "renyi": 0.468898
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.340301,
+      "never used frac": 0.317221,
+      "utilised": 0.6831,
+      "undertrained frac": 0.04935,
+      "byte-fragment tokens": 0.024898,
+      "en fertility": 1.148831,
+      "ref fertility": 1.311688,
+      "renyi": 0.484953
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "pooled": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.250217,
+      "never used frac": 0.547216,
+      "utilised": 0.455253,
+      "undertrained frac": 0.046868,
+      "byte-fragment tokens": 0.026826,
+      "en fertility": 1.222123,
+      "ref fertility": 1.428571,
+      "renyi": 0.477204
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.528212,
+      "never used frac": 0.013072,
+      "utilised": 0.98415,
+      "undertrained frac": 0.00365,
+      "byte-fragment tokens": 0.026657,
+      "en fertility": 1.114682,
+      "ref fertility": 1.454545,
+      "renyi": 0.451365
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.323676,
+      "never used frac": 0.089021,
+      "utilised": 0.9092,
+      "undertrained frac": 0.03555,
+      "byte-fragment tokens": 0.028148,
+      "en fertility": 1.186265,
+      "ref fertility": 1.311688,
+      "renyi": 0.46374
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   }
+  },
+  "21": {
+   "data/corpus/code_ultra_l2_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.177311,
+      "never used frac": 0.560197,
+      "utilised": 0.442315,
+      "undertrained frac": 0.043847,
+      "byte-fragment tokens": 0.028817,
+      "en fertility": 1.366624,
+      "ref fertility": 1.428571,
+      "renyi": 0.454341
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.469213,
+      "never used frac": 0.0266,
+      "utilised": 0.9707,
+      "undertrained frac": 0.009,
+      "byte-fragment tokens": 0.027022,
+      "en fertility": 1.227444,
+      "ref fertility": 1.454545,
+      "renyi": 0.42704
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.29799,
+      "never used frac": 0.098546,
+      "utilised": 0.8997,
+      "undertrained frac": 0.0438,
+      "byte-fragment tokens": 0.030348,
+      "en fertility": 1.267831,
+      "ref fertility": 1.311688,
+      "renyi": 0.438328
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "data/corpus/code_ultra_l3_sample": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.217772,
+      "never used frac": 0.711412,
+      "utilised": 0.291704,
+      "undertrained frac": 0.011015,
+      "byte-fragment tokens": 0.043694,
+      "en fertility": 1.165675,
+      "ref fertility": 1.428571,
+      "renyi": 0.498348
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.471944,
+      "never used frac": 0.220196,
+      "utilised": 0.7786,
+      "undertrained frac": 0.0334,
+      "byte-fragment tokens": 0.046752,
+      "en fertility": 1.049632,
+      "ref fertility": 1.454545,
+      "renyi": 0.461639
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.234705,
+      "never used frac": 0.325835,
+      "utilised": 0.67445,
+      "undertrained frac": 0.046,
+      "byte-fragment tokens": 0.044897,
+      "en fertility": 1.157317,
+      "ref fertility": 1.311688,
+      "renyi": 0.478647
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   },
+   "pooled": {
+    "frozen_32k": {
+     "metrics": {
+      "chars/token": 3.197598,
+      "never used frac": 0.556783,
+      "utilised": 0.445733,
+      "undertrained frac": 0.042321,
+      "byte-fragment tokens": 0.036276,
+      "en fertility": 1.233706,
+      "ref fertility": 1.428571,
+      "renyi": 0.475143
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "ultra_v20000": {
+     "metrics": {
+      "chars/token": 3.47059,
+      "never used frac": 0.012869,
+      "utilised": 0.9843,
+      "undertrained frac": 0.00355,
+      "byte-fragment tokens": 0.036973,
+      "en fertility": 1.112962,
+      "ref fertility": 1.454545,
+      "renyi": 0.448332
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    },
+    "proxy_p1_v20000": {
+     "metrics": {
+      "chars/token": 3.265752,
+      "never used frac": 0.083751,
+      "utilised": 0.9143,
+      "undertrained frac": 0.03645,
+      "byte-fragment tokens": 0.03776,
+      "en fertility": 1.194488,
+      "ref fertility": 1.311688,
+      "renyi": 0.460692
+     },
+     "gates": {
+      "round-trip lossless": true,
+      "all 256 bytes present": true,
+      "_bytes": 256
+     }
+    }
+   }
+  }
+ }
+}
