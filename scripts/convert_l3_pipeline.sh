@@ -12,10 +12,22 @@ cd /work/aupai
 RAW=/data00/aupai_raw/ultradata
 OUT=data/corpus/code_ultra_l3
 MLOG=runs/ultra_groups/manifests
-EW=${EW:-24}
+EW=${EW:-0}
 NG=${NG:-10}
 NSH=147
 mkdir -p runs/ultra_groups "$MLOG"
+
+# NG groups x EW sandboxes must fit on the cores: oversubscription lets a
+# CPU-bound candidate hit the 15s wall timeout waiting for a core, scoring
+# exec_timeout/FAIL and making the histogram incomparable to the calibrated,
+# un-contended exec-pass 0.45 / keep_l3 0.272 (3b #238).
+CORES=$(nproc)
+[ "$EW" -eq 0 ] && EW=$((CORES / NG))
+if [ $((NG * EW)) -gt "$CORES" ]; then
+  echo "REFUSE: NG*EW=$((NG * EW)) > nproc=$CORES (oversubscription risks wall-timeout false FAILs)"
+  exit 2
+fi
+echo "cores=$CORES groups=$NG exec-workers/group=$EW sandboxes=$((NG * EW))"
 
 footer_ok() {
   python3 - "$1" <<'PY'
