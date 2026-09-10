@@ -503,6 +503,38 @@
    "status": "measured"
   },
   {
+   "id": "tok.p1_freeze_tax_real_composition",
+   "value": "On the real p1 composition (synthetic English programming textbooks + the three deduped code domains at token-share 0.332/0.191/0.477, 88:12 code:textbooks), the frozen 32,773-slot vocabulary uses more tokens per byte than the 20,000-slot candidate fitted on the English proxy (scripts/build_p1_vocab_sweep.py): textbooks +0.9%, code +3.8%, full mix +3.4% (three seeds 7/13/21; chars/token frozen 3.127-3.201 vs candidate 3.232-3.298 on the mix). Mechanism: the frozen vocab spends 64.9% of its slots on hanzi-bearing tokens (tok.minicpm5_slot_budget_vs_ours) and reads never_used 0.69-0.71 on this composition (reported, not gated). All four gates pass or are undefined for the frozen vocab: round-trip lossless, 256/256 bytes, ref fertility 1.4286 <= 1.55 (REF_EN fixed string, corpus-independent), hanzi whole-char undefined (no hanzi in the p1 composition; recorded 0.9913 on the old composition). The tax is a lower bound: the candidate was proxy-fitted (3:1 prose:code), and a vocab fitted on the real 88:12 composition would beat it. This is the evidence for 4c's 2026-09-09 rebuild ruling (docs/standards/p1_data_recipe.md, PR #166).",
+   "measured": "2026-09-09",
+   "source": "scripts/tokenizer_p1_real.py (this repo) run on the pod over seeds 7/13/21; the 20K candidate fitted on the English proxy by the p1 vocab-size sweep (facts/tokenizer.json#tok.p1_vocab_sweep_bits_per_char, PR #162); the frozen vocab data/tokenizer.json",
+   "config": {
+    "seeds": [
+     7,
+     13,
+     21
+    ],
+    "code_domains": [
+     "code_rp1t_dd09",
+     "code_rp1t_b2v2_dd",
+     "code_dedup08"
+    ],
+    "code_shares": [
+     0.332,
+     0.191,
+     0.477
+    ],
+    "code_chars_sampled": 4000000,
+    "code_frac": 0.88,
+    "textbooks": "data/p1/textbooks_pilot.jsonl, ALL non-empty lines (load_textbooks has no cap), identical chapter count across seeds 7/13/21; the seed varies only the shuffle and the code-side sampling",
+    "candidate_vocab": 20000,
+    "candidate_fit": "English proxy (en_c4_stage2 + code_py_starcoder + code_py_rp1t, 3:0.95:0.05)",
+    "frozen_vocab": 32773
+   },
+   "uncertainty": "held-out vs fit overlap ~0.3%: the candidate fit on the proxy domains and was measured on the three dedup domains + synthetic textbooks (different domains; textbooks generated post-fit); the random sampler can draw from shards inside the fit's front-read region, ~0.3% of the code corpus, so at most 0.3% of the 3.4% tax is contamination. The tax is a lower bound (proxy-fitted candidate), not a reading on a real-composition fit.",
+   "boundary": "The tax is tokens per byte of content, not quality. It prices compression only; it does not price the +13.1M embedding parameters (4% of 323M active) of the 32K frozen vocab vs the 20K target, nor the deviation from the p1-small V=20K config. Rebuild cost is hours: no checkpoints to invalidate, no packs to rebuild, the V=20K sweep is not re-run.",
+   "status": "measured"
+  },
+  {
    "id": "tok.gates_new_code_distribution",
    "value": {
     "roundtrip_lossless": true,
