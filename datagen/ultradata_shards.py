@@ -128,8 +128,8 @@ def main():
     for i in range(args.first, args.last + 1):
         path = os.path.join(args.raw, shard_name(args.level, i))
         if not os.path.exists(path):
-            print(f"MISSING {path} -- run fetch_ultradata.py first", flush=True)
-            continue
+            raise SystemExit(f"MISSING {path} -- run fetch_ultradata.py first; "
+                             "refusing to emit a zero-row stats for an unread shard")
         pf = pq.ParquetFile(path)
         for batch in pf.iter_batches(batch_size=2048 if args.level == "L3" else 8192,
                                      columns=None):
