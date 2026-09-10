@@ -301,7 +301,7 @@ def _is_mount(path):
 #: The eight sessions in this round and each one's reviewer. A delivery gets a second
 #: reader who is not its author: the controller review with 44 caught four evidenced
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
-REVIEW_PAIRS = {"de": "44", "44": "de", "b0": "de", "3b": "b0", "fb": "44", "e1": "3b", "tilerl": "b0", "98": "fb"}  # keep in sync with runs/roster.json pairs; a hardcoded copy drifts (b0->tilerl, missing 98, found by 3b 2026-09-10)
+REVIEW_PAIRS = {'de': '44', '44': 'de', 'b0': 'de', '3b': 'b0', 'fb': '44', 'e1': '3b', 'tilerl': 'b0', '98': 'fb', 'ae': 'de', '0e': '3b', '66': 'de'}  # keep in sync with runs/roster.json pairs; ae/0e/66 added 2026-09-10 post-restart; de-102 replaces this literal with a roster.json read
 #: How long a dirty or untracked file may sit before the check names it. ONE constant
 #: for both: they measure the same thing (work parked in a tree others share) and split
 #: values -- 30 min for dirty, 24 h for untracked -- meant the noisier half fired on
