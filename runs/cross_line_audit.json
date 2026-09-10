@@ -1,5 +1,5 @@
 {
- "asof": "2026-09-10 04:50",
+ "asof": "2026-09-10 04:50+08:00",
  "note": "协议 docs/standards/cross_line_audit_0909.md；抽样 scripts/audit_sample.py；一致率缺失的行不算数。分类器行用的是 e1 的验收样本（50 高 + 50 低 + 10 planted 对照），读者 e1+98 实测，替代了提议的 3b+b0；其余三行读者仍为提议，fb 裁定中。",
  "rows": [
   {
