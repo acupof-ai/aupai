@@ -12,7 +12,7 @@ HumanEval file covers the python slice of MultiPL-E. Exact dedup is by
 normalized-content hash. Tokens are counted EXACTLY with the frozen tokenizer
 (per-doc ids + one <eos>, the code_rp1t convention).
 
-Output: data/corpus/ultradata_<level>_py/<prefix>_NNN.jsonl (100MB shards,
+Output: data/corpus/code_ultra_<level>/<prefix>_NNN.jsonl (100MB shards,
 {"content","source","url"}) plus build_corpus_stats.json.
 """
 import argparse
@@ -82,8 +82,8 @@ def main():
     ap.add_argument("--tokenizer", default="data/tokenizer.json")
     ap.add_argument("--limit-rows", type=int, default=0, help="stop after N rows (dry run)")
     args = ap.parse_args()
-    out = args.out or f"data/corpus/ultradata_{args.level.lower()}_py"
-    prefix = f"ultradata_{args.level.lower()}_py"
+    out = args.out or f"data/corpus/code_ultra_{args.level.lower()}"
+    prefix = os.path.basename(out.rstrip("/"))
     for stale in glob.glob(os.path.join(out, f"{prefix}_*.jsonl")):
         os.remove(stale)
 
