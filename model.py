@@ -174,7 +174,7 @@ class DeltaRecurrence(nn.Module):
             # ShortConvolution would isolate too, but it is a Triton kernel, opaque to inductor,
             # and would give back part of the 3.44x on all nine KDA layers.
             pos = torch.arange(B * T, device=x.device)
-            doc_start = cu[:-1].to(torch.long)[torch.bucketize(pos, cu[1:], right=True)]
+            doc_start = cu[:-1].to(torch.long)[_doc_id_per_pos(pos, cu[1:])]
             y = None
             for i in range(K):
                 tap = ((pos - (K - 1 - i)) >= doc_start).to(x.dtype).view(B, 1, T)
@@ -274,6 +274,21 @@ def masked_attend(sc, mask, v):
     return torch.softmax(sc, dim=-1) @ v * alive.to(v.dtype)
 
 
+def _doc_id_per_pos(pos, boundaries):
+    """Document id per flat position: right-bucketize over the sorted document ends.
+
+    Equivalent to torch.bucketize(pos, boundaries, right=True) -- the id is the count
+    of boundaries <= pos. Implemented as a broadcast comparison instead of bucketize:
+    under torch.compile the CUDA bucketize lowering takes the stride of the boundaries
+    TensorBox (inductor lowering._boundaries_helper), and the cu[1:] slice (after the
+    int32->long cast) is a SliceView whose get_stride raises NotImplementedError
+    (de-106, v41_smoke_0910 compile failure). .contiguous()/.clone() are elided back to
+    the view by the compiler. boundaries has one entry per packed document (B<=16), so
+    the (flat_pos, B) comparison is a small pointwise op and fuses.
+    """
+    return (pos[:, None] >= boundaries[None, :]).sum(dim=-1, dtype=torch.long)
+
+
 def _doc_blocks(q, cu, m):
     """Per-document m-token block assignment and the visibility mask.
 
@@ -290,7 +305,7 @@ def _doc_blocks(q, cu, m):
     B, T, _, _ = q.shape
     pos = torch.arange(B * T, device=q.device)
     cu_l = cu.to(pos.dtype)
-    doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
+    doc = _doc_id_per_pos(pos, cu_l[1:]).view(B, T)   # (B,T) doc id per pos
     doc_start = cu_l[doc]                                         # (B,T)
     nb_doc = (cu_l[1:] - cu_l[:-1] + m - 1) // m                  # blocks per doc
     offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
@@ -741,7 +756,7 @@ class PureSWA(nn.Module):
         qh = q.transpose(1, 2)
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
         pos = torch.arange(B * T, device=q.device)
-        doc = torch.bucketize(pos, cu.to(pos.dtype)[1:], right=True).view(B, T)
+        doc = _doc_id_per_pos(pos, cu.to(pos.dtype)[1:]).view(B, T)
         same = doc[:, :, None] == doc[:, None, :]
         causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
         ar = torch.arange(T, device=q.device)
@@ -879,7 +894,7 @@ class PartialRoPE(nn.Module):
             return torch.arange(T, device=device).expand(B, T)
         pos = torch.arange(B * T, device=device)
         cu_l = cu.to(pos.dtype)
-        doc = torch.bucketize(pos, cu_l[1:], right=True)
+        doc = _doc_id_per_pos(pos, cu_l[1:])
         return (pos - cu_l[doc]).view(B, T)
 
     def forward(self, x, pos):
@@ -1049,7 +1064,7 @@ class GatedMLA(nn.Module):
             # no row is fully masked and no NaN appears.
             if cu is not None:
                 pos = torch.arange(B * T, device=q.device)
-                doc = torch.bucketize(pos, cu[1:].to(pos.dtype), right=True).view(B, T)
+                doc = _doc_id_per_pos(pos, cu[1:].to(pos.dtype)).view(B, T)
                 mask = (doc[:, :, None] == doc[:, None, :]) & torch.ones(
                     T, T, dtype=torch.bool, device=q.device).tril()
                 mask = mask[:, None]
