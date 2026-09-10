@@ -375,7 +375,7 @@ class Cfg:
     csa2 = False
     csa2_m = 8                # tokens per learned entry
     csa2_top_k = 64           # entries selected per query
-    csa2_n_win = 128          # SWA window width in tokens
+    csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
     csa2_indexer_heads = 4    # indexer heads, must divide heads
     csa2_indexer_dim = 64     # indexer low dim
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
