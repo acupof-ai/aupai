@@ -1,10 +1,46 @@
 {
- "asof": "2026-09-09 11:45",
- "note": "协议 docs/standards/cross_line_audit_0909.md；抽样 scripts/audit_sample.py；一致率缺失的行不算数。读者为提议，fb 裁定中。",
+ "asof": "2026-09-10 04:50",
+ "note": "协议 docs/standards/cross_line_audit_0909.md；抽样 scripts/audit_sample.py；一致率缺失的行不算数。分类器行用的是 e1 的验收样本（50 高 + 50 低 + 10 planted 对照），读者 e1+98 实测，替代了提议的 3b+b0；其余三行读者仍为提议，fb 裁定中。",
  "rows": [
-  {"line": "合成教科书", "owner": "b0", "n": 50, "readers": "tilerl, 3b（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
-  {"line": "合成练习", "owner": "44", "n": 50, "readers": "de, fb（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
-  {"line": "分类器输出", "owner": "e1", "n": 100, "readers": "3b, b0（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"},
-  {"line": "去污染剔除", "owner": "3b", "n": 50, "readers": "b0, e1（提议）", "agree": null, "kappa": null, "disagree": null, "verdict": "待抽样"}
+  {
+   "line": "合成教科书",
+   "owner": "b0",
+   "n": 50,
+   "readers": "tilerl, 3b（提议）",
+   "agree": null,
+   "kappa": null,
+   "disagree": null,
+   "verdict": "待抽样"
+  },
+  {
+   "line": "合成练习",
+   "owner": "44",
+   "n": 50,
+   "readers": "de, fb（提议）",
+   "agree": null,
+   "kappa": null,
+   "disagree": null,
+   "verdict": "待抽样"
+  },
+  {
+   "line": "分类器输出",
+   "owner": "e1",
+   "n": 110,
+   "readers": "e1, 98（实测）",
+   "agree": "0.727 / 0.636（98 / e1 vs teacher，exact）",
+   "kappa": "0.593 / 0.489；读者间 0.554",
+   "disagree": "34 处读者间分歧全差 1 分；≥3 二值化后 98 vs teacher 1.000、e1 0.809（21 处全为 e1=2、teacher≥3 的单向偏严）——但样本在切点附近零质量，该数衡量两桶可分而非切点一致；planted 10/10 双方打 1，PASS",
+   "verdict": "建议 keep：head 两端在 teacher 刻度上真实可分（3.32 vs 0.74），planted 10/10。切点行为不在本样本内（high50 全 ≥3、low50 全 <3，切点附近零质量，二值化一致率量的是桶可分不是边界一致）——它站在 held-out AUC 0.902（n=19,998）上。带信息的数：teacher 判 ≥3 的文档里 e1 读成 2 的 21 条、反向 0，98 双向 0——单向刻度差，teacher 的 ≥3 比人松。"
+  },
+  {
+   "line": "去污染剔除",
+   "owner": "3b",
+   "n": 50,
+   "readers": "b0, e1（提议）",
+   "agree": null,
+   "kappa": null,
+   "disagree": null,
+   "verdict": "待抽样"
+  }
  ]
 }
