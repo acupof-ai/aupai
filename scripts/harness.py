@@ -14011,13 +14011,6 @@ def _run_holds_the_block(root):
             return True, str(a.get("note", ""))[:60]
     except (OSError, ValueError):
         pass
-    # The fresh-log fallback exists ONLY because pod_push skips runs/, so the pod's
-    # card_assignment.json can be stale while a run is live. In a git tree the grant is
-    # synced and authoritative, so do not scan runs/*.log mtime there: in a CI clone every
-    # tracked file's mtime is checkout time, which made a committed run log false-arm this
-    # predicate and then fail frozen_paths on the banner sha the shallow push-event clone
-    # does not contain (the PR-event clone fetches the base and passed). de-107 is the
-    # sibling ledger defect; this is the environment-predicate half (#233 push red).
     if not pod_drift.is_pod(root):
         return False, "no block grant; fresh-log fallback is pod-only, a git tree trusts the grant"
     now = time.time()
