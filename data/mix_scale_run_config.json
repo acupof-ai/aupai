@@ -44,5 +44,14 @@
   "csa": false,
   "csa_compress": 16,
   "csa_topk": 8,
-  "csa_window": 256
+  "csa_window": 256,
+  "csa2": false,
+  "csa2_m": 8,
+  "csa2_top_k": 64,
+  "csa2_n_win": 128,
+  "csa2_indexer_heads": 4,
+  "csa2_indexer_dim": 64,
+  "csa2_modes": "F,R,R,R,X,R,R,R,R,R",
+  "rope_dims": 0,
+  "n_swa_only_layers": 2
 }
