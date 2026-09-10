@@ -1782,6 +1782,300 @@ print(f"CSA: off constructs nothing, on adds {len(_added)} params; causal at all
       f"perturbed positions; doc-packed input isolated (cross-doc delta 0.0, within-doc "
       f"{_within:.2e}); sub-block-length docs isolated and self-visible")
 
+# ---------------------------------------------------------------------------
+# CSA2 (de-103): learned entries + dedicated indexer + one softmax over entries + SWA.
+# Same property suite as CSA, plus the indexer's own leak path and a gradient for the
+# non-differentiable top-k's parameters.
+# ---------------------------------------------------------------------------
+class _CfgCsa2On(_CfgCsaOff):
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8   # 2 divides heads=4; each indexer head scores its group's mean
+
+
+class _CfgCsa2M1(_CfgCsa2On):
+    csa2_m = 1                             # the paper's uncompressed-main-KV special case
+
+
+# 1. FINITE ON A CLEAN INPUT, packed and unpacked.
+_csa2 = model.CompressedSparseAttention(_CfgCsa2On, 4, 16).double()
+_T2 = 20
+torch.manual_seed(11)
+_q2, _k2, _v2 = (torch.randn(1, _T2, 4, 16, dtype=torch.double) for _ in range(3))
+_x2 = torch.randn(1, _T2, 64, dtype=torch.double)
+_y2 = _csa2(_q2, _k2, _v2, x=_x2)
+assert torch.isfinite(_y2).all(), "CSA2 produced non-finite output on a clean input"
+_cu2 = torch.tensor([0, 10, 20], dtype=torch.int32)
+_y2c = _csa2(_q2, _k2, _v2, cu=_cu2, x=_x2)
+assert torch.isfinite(_y2c).all(), "CSA2 produced non-finite output on a doc-packed input"
+
+# 2. CAUSALITY BY PERTURBATION, now covering THREE leak paths: the learned entries, the
+#    SWA window, and the indexer selection (a future block ranked top-k).
+_leaks = []
+for _t in range(1, _T2):
+    _k3, _v3 = _k2.clone(), _v2.clone()
+    _k3[:, _t] += 7.0
+    _v3[:, _t] += 7.0
+    _d = (_csa2(_q2, _k3, _v3, x=_x2)[:, :_t] - _y2[:, :_t]).abs().max().item()
+    if _d > 1e-12:
+        _leaks.append((_t, _d))
+assert not _leaks, (
+    f"CSA2 leaks the future: perturbing position t moved outputs BEFORE t at {_leaks[:4]}. "
+    f"Check the entry visibility mask AND the indexer mask -- isc must be masked before topk")
+
+# 3. THE INDEXER MASK IS LOAD-BEARING, NOT JUST PRESENT. At t=1 no block is complete
+#    (m=4), so vis is empty there: an unmasked topk would still pick a block, the masked
+#    one picks nothing, and the output equals PLAIN WINDOWED ATTENTION exactly -- the
+#    entry branch contributes zero rather than a silent fallback.
+_m2 = _CfgCsa2On.csa2_m
+with torch.no_grad():
+    _kc3, _, _vis3, _ = model.entries_per_doc(
+        _q2, _k2.transpose(1, 2), _v2.transpose(1, 2),
+        torch.arange(0, _T2 + 1, _T2, dtype=torch.int32), _m2,
+        _csa2.compress_k, _csa2.compress_v)
+    _kc3g = _kc3.view(1, _csa2.ih, 4 // _csa2.ih, _kc3.shape[-2], 16).mean(2)
+    _iq3 = _csa2.indexer_q(_x2).view(1, _T2, _csa2.ih, _csa2.di)
+    _ik3 = torch.einsum("bhnd,hde->bhne", _kc3g, _csa2.ik_weight)
+    _isc3 = (_iq3.transpose(1, 2) @ _ik3.transpose(-1, -2))
+assert _vis3[0, 1].sum() == 0, "t=1 has a visible block at m=4; the test premise is wrong"
+assert torch.isfinite(_isc3[0, :, 1]).any(), (
+    "the unmasked indexer has no finite scores at t=1 -- nothing for the mask to block, "
+    "so this assertion would pass over a world where the leak cannot occur")
+with torch.no_grad():
+    _qh, _kh, _vh = _q2.transpose(1, 2), _k2.transpose(1, 2), _v2.transpose(1, 2)
+    _full = (_qh @ _kh.transpose(-1, -2)) * (16 ** -0.5)
+    _ar = torch.arange(_T2)
+    _mw = (torch.ones(_T2, _T2, dtype=torch.bool).tril()
+           & ((_ar[:, None] - _ar[None, :]) < _CfgCsa2On.csa2_n_win))
+    _ref = torch.softmax(_full.masked_fill(~_mw[None, None], float("-inf")), -1) @ _vh
+_dwin = (_y2[:, 1] - _ref[:, :, 1]).abs().max().item()
+assert _dwin < 1e-12, (
+    f"CSA2 at t=1 (no visible block) differs from plain windowed attention by {_dwin:.2e} "
+    f"-- the entry branch must contribute exactly zero, not a silent fallback")
+
+# 4. CROSS-DOCUMENT ISOLATION, and the perturbation is visible inside its own document.
+_cross = []
+for _t in range(10):
+    _k3, _v3 = _k2.clone(), _v2.clone()
+    _k3[:, _t] += 7.0
+    _v3[:, _t] += 7.0
+    _d = (_csa2(_q2, _k3, _v3, cu=_cu2, x=_x2)[:, 10:] - _y2c[:, 10:]).abs().max().item()
+    if _d > 1e-12:
+        _cross.append((_t, _d))
+assert not _cross, f"CSA2 leaks across documents at {_cross[:4]}"
+_k3, _v3 = _k2.clone(), _v2.clone()
+_k3[:, 5] += 7.0
+_v3[:, 5] += 7.0
+_within2 = (_csa2(_q2, _k3, _v3, cu=_cu2, x=_x2)[:, :10] - _y2c[:, :10]).abs().max().item()
+assert _within2 > 1e-6, (
+    f"a perturbation is invisible inside its own document (delta {_within2:.2e}); the "
+    f"cross-document assertion is then asserting over a dead path")
+
+# 5. BACKWARD IS FINITE THROUGH EVERY PARAMETER, and the indexer gets a gradient at all.
+#    The hard top-k is non-differentiable; without the straight-through softmax the
+#    indexer parameters would have NO grad and could never learn.
+_csa2.zero_grad()
+_y2.sum().backward()
+_bad = [n for n, p in _csa2.named_parameters()
+        if p.grad is None or not torch.isfinite(p.grad).all()]
+assert not _bad, f"CSA2 backward missing or non-finite grads at: {_bad}"
+assert _csa2.ik_weight.grad is not None and _csa2.indexer_q.weight.grad is not None, (
+    "the indexer got no gradient -- the straight-through path is gone and the top-k is "
+    "a dead selector")
+
+# 6. m=1 IS THE UNCOMPRESSED SPECIAL CASE: no compressor is built, and the path still runs.
+_csa2m1 = model.CompressedSparseAttention(_CfgCsa2M1, 4, 16).double()
+assert _csa2m1.compress_k is None and _csa2m1.compress_v is None, (
+    "m=1 built a compressor; the paper's uncompressed-main-KV special case is identity")
+assert torch.isfinite(_csa2m1(_q2, _k2, _v2, x=_x2)).all(), "CSA2 m=1 produced non-finite output"
+
+# 7. csa2 WITHOUT csa IS A CONSTRUCTION ERROR, not a silent no-op -- at both construction
+#    sites: the module directly, and GatedMLA (which builds the arm only when csa is on,
+#    so the refusal must live there too, not only inside the module).
+class _CfgCsa2Alone(_CfgCsa2On):
+    csa = False
+try:
+    model.CompressedSparseAttention(_CfgCsa2Alone, 4, 16)
+except ValueError:
+    pass
+else:
+    raise AssertionError("csa2=True without csa=True constructed silently; the arm/variant "
+                         "convention must refuse")
+try:
+    model.GatedMLA(_CfgCsa2Alone)
+except ValueError:
+    pass
+else:
+    raise AssertionError("csa2=True without csa=True constructed silently through GatedMLA "
+                         "-- the refusal must fire at the layer level, where the arm is built")
+
+# 8. STATE_DICT: csa2 on adds the new parameters and drops branch_gate.
+_on2 = model.GatedMLA(_CfgCsa2On)
+_added2 = sorted(set(_on2.state_dict()) - set(_off.state_dict()))
+assert _added2 == ["csa.compress_k.bias", "csa.compress_k.weight",
+                   "csa.compress_v.bias", "csa.compress_v.weight",
+                   "csa.ik_weight", "csa.indexer_q.weight"], (
+    f"CSA2 on adds unexpected parameters: {_added2}")
+assert not [k for k in _on2.state_dict() if "branch_gate" in k], (
+    "csa2 still carries the deleted branch gate")
+print(f"CSA2: finite packed+unpacked; causal at all {_T2 - 1} perturbed positions; indexer "
+      f"mask load-bearing (t=1 output == window-only, {_dwin:.1e}); cross-doc delta 0.0, "
+      f"within-doc {_within2:.2e}; backward finite on {len(list(_csa2.parameters()))} params "
+      f"with indexer grad; m=1 uncompressed; csa2-alone refuses; {len(_added2)} new state_dict keys")
+
+# ── CSA2 Reuse (3b-20): Full emits a KV package, Reuse consumes it ────────────
+# The acceptance contract: a Reuse layer's output CHANGES when its source package
+# changes, does NOT change when a neighbouring Reuse layer's parameters change,
+# and Reuse adds zero global-branch parameters of its own.
+_mla_f = model.GatedMLA(_CfgCsa2On).double()
+_mla_r = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+assert isinstance(_mla_r.csa, model.CSA2Reuse), "csa2_mode=R must build CSA2Reuse"
+torch.manual_seed(31)
+_xr = torch.randn(1, 20, 64, dtype=torch.double)
+_cur = torch.tensor([0, 12, 20], dtype=torch.int32)
+_yf = _mla_f(_xr, cu=_cur)
+_pkg = _mla_f._pkg
+assert _pkg is not None and _pkg.nb == 5, (
+    f"Full must emit a package (20 tokens, m=4, 2 docs -> 5 blocks), got nb={_pkg.nb if _pkg else None}")
+_mla_r._pkg = _pkg
+_yr = _mla_r(_xr, cu=_cur)
+assert torch.isfinite(_yr).all(), "Reuse produced non-finite output"
+
+# (a) SOURCE-CHANGE PROPAGATES. Block 0 is the only complete block at t=3..6, so it
+# is selected there for every head -- mutating it must move the output.
+# Indexing note: kc is [B,H,NB,D], so block 0 of every head is [:, :, 0, :];
+# [..., 0, :, :] would select HEAD 0 of every block instead.
+for _field in ("kc", "vc"):
+    _alt = _pkg._replace(**{_field: getattr(_pkg, _field).clone()})
+    with torch.no_grad():
+        getattr(_alt, _field)[:, :, 0, :] += 7.0
+    _mla_r._pkg = _alt
+    _d = (_mla_r(_xr, cu=_cur) - _yr).abs().max().item()
+    assert _d > 1e-6, f"Reuse output unchanged by a {_field} mutation ({_d:.2e})"
+_alt = _pkg._replace(topk_idx=_pkg.topk_idx.clone())
+with torch.no_grad():
+    _alt.topk_idx[...] = 0          # every query selects block 0 only
+_mla_r._pkg = _alt
+assert (_mla_r(_xr, cu=_cur) - _yr).abs().max().item() > 1e-6, (
+    "Reuse output unchanged by a topk_idx mutation")
+
+# (b) NEIGHBOUR INVARIANCE: a second Reuse layer's parameters are not read here.
+_mla_r2 = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+_mla_r2.load_state_dict(_mla_r.state_dict())
+_mla_r2._pkg = _pkg
+assert (_mla_r2(_xr, cu=_cur) - _yr).abs().max().item() == 0.0, (
+    "identical Reuse weights+package gave different outputs -- shared state slipped in")
+with torch.no_grad():
+    _mla_r2.qg.weight += 0.5
+    _mla_r2.o.weight += 0.5
+_mla_r2._pkg = _pkg
+assert (_mla_r2(_xr, cu=_cur) - _yr).abs().max().item() > 1e-6, (
+    "a Reuse layer is blind to its own parameters")
+_mla_r._pkg = _pkg
+assert (_mla_r(_xr, cu=_cur) - _yr).abs().max().item() == 0.0, (
+    "Reuse output moved when a NEIGHBOURING Reuse layer's parameters changed")
+
+# (c) ZERO GLOBAL-BRANCH PARAMETERS: the Reuse module itself is parameter-free,
+# and the layer's params are exactly Full's minus the global-branch set.
+assert len(list(model.CSA2Reuse(_CfgCsa2On, 4, 16).parameters())) == 0, (
+    "CSA2Reuse must hold no parameters of its own")
+_pf, _pr = set(_mla_f.state_dict()), set(_mla_r.state_dict())
+assert _pr <= _pf, f"Reuse carries params Full lacks: {sorted(_pr - _pf)}"
+assert sorted(_pf - _pr) == ["csa.compress_k.bias", "csa.compress_k.weight",
+                             "csa.compress_v.bias", "csa.compress_v.weight",
+                             "csa.ik_weight", "csa.indexer_q.weight"], (
+    f"Reuse must drop exactly the global-branch params, got {sorted(_pf - _pr)}")
+
+# (d) MASKING AT THE CONSUMER, by perturbation: block 1 (positions 4..7) is
+# invisible before t=4; the last block belongs to doc 2 and is invisible in doc 1.
+_pkg_k = _pkg._replace(kc=_pkg.kc.clone())
+with torch.no_grad():
+    _pkg_k.kc[:, :, 1, :] += 7.0
+_mla_r._pkg = _pkg_k
+assert (_mla_r(_xr, cu=_cur)[:, :4] - _yr[:, :4]).abs().max().item() == 0.0, (
+    "a package entry for a future block moved a past output -- causal leak")
+_pkg_v = _pkg._replace(vc=_pkg.vc.clone())
+with torch.no_grad():
+    _pkg_v.vc[:, :, -1, :] += 7.0
+_mla_r._pkg = _pkg_v
+assert (_mla_r(_xr, cu=_cur)[:, :12] - _yr[:, :12]).abs().max().item() == 0.0, (
+    "a package entry from another document moved this doc's output -- doc leak")
+
+# (e) A PACKAGE CANNOT CROSS STREAMS: built for one cu, refused against another.
+_mla_r._pkg = _pkg
+try:
+    _mla_r(_xr, cu=torch.tensor([0, 20], dtype=torch.int32))
+except ValueError:
+    pass
+else:
+    raise AssertionError("Reuse read a package against a different packed stream")
+# and no package at all is a forward error, not a silent zero-branch
+_mla_r0 = model.GatedMLA(_CfgCsa2On, csa2_mode="R").double()
+try:
+    _mla_r0(_xr, cu=_cur)
+except ValueError:
+    pass
+else:
+    raise AssertionError("Reuse ran with no package (a Reuse-first stack must refuse)")
+
+# (f) END-TO-END THREADING through HybridLM._body: the slot is set, the Reuse
+# layer receives that exact package, a Full-weight perturbation reaches it, and
+# the slot is cleared after the forward.
+class _CfgReuseStack(_CfgPaDense):
+    layers, attn_every, attn_hybrid = 2, 1, True
+    csa, csa2 = True, True
+    csa2_m, csa2_top_k, csa2_n_win = 4, 2, 8
+    csa2_indexer_heads, csa2_indexer_dim = 2, 8
+    csa2_modes, n_swa_only_layers = "F,R", 0
+    rope_dims = 8  # all-attention stack: lifts the zero-KDA refusal
+
+
+_stack = HybridLM(_CfgReuseStack).double()
+assert isinstance(_stack.blocks[0].mixer.csa, model.CompressedSparseAttention)
+assert isinstance(_stack.blocks[1].mixer.csa, model.CSA2Reuse)
+assert _stack.csa2_modes == {0: "F", 1: "R"}
+_seen = []
+_stack.blocks[1].mixer.csa.register_forward_pre_hook(
+    lambda _m, _a: _seen.append(_a[-1]))
+torch.manual_seed(32)
+_idx = torch.randint(0, 256, (1, 20))
+_y1 = _stack(_idx)[0]
+assert len(_seen) == 1 and _seen[0] is not None and _seen[0].nb == 5, (
+    "the Reuse layer did not receive the Full layer's package through _body")
+with torch.no_grad():
+    _stack.blocks[0].mixer.csa.compress_k.weight += 0.3
+assert (_stack(_idx)[0] - _y1).abs().max().item() > 1e-6, (
+    "the Reuse layer's output did not move when its source package changed")
+assert _stack.blocks[0].mixer._pkg is None and _stack.blocks[1].mixer._pkg is None, (
+    "the package slot outlived the forward -- a stale package would reach the next caller")
+
+
+class _CfgReuseFirst(_CfgReuseStack):
+    csa2_modes = "R,F"
+
+
+try:
+    HybridLM(_CfgReuseFirst)
+except ValueError:
+    pass
+else:
+    raise AssertionError("a Reuse-first mode map constructed -- the package source is missing")
+
+
+class _CfgReuseCkpt(_CfgReuseStack):
+    grad_ckpt = True
+
+
+try:
+    HybridLM(_CfgReuseCkpt)
+except ValueError:
+    pass
+else:
+    raise AssertionError("grad_ckpt + Reuse constructed -- the stash is not a checkpoint input")
+print("CSA2Reuse: source-change propagates (kc/vc/topk_idx); neighbour-change invariant; "
+      "zero global-branch params (6 keys dropped); causal+doc masking exact; stream mismatch, "
+      "no-package, Reuse-first and grad_ckpt refuse; F,R body threads the package and clears the slot")
+
 # ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
 # Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
 # invisible (its softmax weight is exactly 0), and the perturbation must be visible where

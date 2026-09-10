@@ -362,7 +362,26 @@ class Cfg:
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
     csa_window = 256     # sliding-window width, always exact
-    csa2_n_win = 128     # CSA2/PureSWA window width (V4.1); de-103's Step-0 config of record
+    # de-103: CSA2 (DeepSeek-V4.1, tech report §2.3) -- the V4.1 variant of the csa arm,
+    # so csa2=True needs csa=True (model.py refuses otherwise). Learned non-overlapping
+    # m-token entries replace the mean pool, a dedicated indexer (indexer-Q from the layer
+    # input, indexer-K projected from the entries) selects top-k, one softmax over
+    # [selected entries ; SWA window]. Field names per ae-2's Step-0 config (PR #213):
+    # the csa_compress/csa_topk/csa_window prefix belongs to the old CSA class and is not
+    # reused. The m>1 combine is a head-shared Linear -- the paper publishes no combine
+    # weights, so it is a choice to A/B, not a paper value. CLI flags land with the
+    # gate-run wiring; until then these are code-only fields.
+    # csa2_n_win is shared with PureSWA (0e-2): one field, both readers.
+    csa2 = False
+    csa2_m = 8                # tokens per learned entry
+    csa2_top_k = 64           # entries selected per query
+    csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
+    csa2_indexer_heads = 4    # indexer heads, must divide heads
+    csa2_indexer_dim = 64     # indexer low dim
+    # 3b-20: per-layer CSA2 modes over the non-SWA attention layers (ae-2's Step-0
+    # map). F=Full (emits the KV package), R=Reuse (consumes it, 5d^2 params),
+    # X=Reindex (deferred; shares the Reuse path until its own indexer lands).
+    csa2_modes = "F,R,R,R,X,R,R,R,R,R"
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
