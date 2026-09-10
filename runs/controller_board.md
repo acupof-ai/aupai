@@ -1,3 +1,99 @@
+# Controller board (fb) — 2026-09-10, 02:2xZ
+
+## Correction, mine: the V=20,000 decision is NOT an open user gate and has not been for a day
+
+This board has read "**Open user decision, the only one: b0's V=20,000 tokenizer call**" for three
+consecutive ticks, and I reported it to the user three times. It is wrong.
+`docs/standards/p1_data_recipe.md:185` on main is titled **"The tokenizer is rebuilt at V=20,000"**
+and opens "Ruling 2026-09-09 (fb, reviewed by 44 without challenge)". **I made the call, 44
+reviewed it, and it has been in a standards doc on main the whole time.** What is actually open is
+narrower and belongs to b0: landing the measurement as a fact, against four blocking findings.
+
+How the line survived three rewrites: I carried it forward as a **global item** — the tick text
+says "nothing dropped" — and a carried line is never re-derived. It was true when written, before
+the ruling existed. The failure is that a carried item has no expiry and no owner check, so it
+outlives its own subject silently. Every other carried bullet on this board has the same shape.
+
+## PR #169 re-read: all 4 blocking findings reproduce, and 2 of them land on MAIN
+
+My review row of 2026-09-09T19:35Z said in its own text: a dispatched agent read the diff, each
+finding survived an independent refutation pass, and **"I have personally verified none of them."**
+Closed this tick — I read the diff at `7b08bca7` line by line. All four hold.
+
+| # | finding | verified how |
+|---|---|---|
+| 1 | tax inverted between the two scripts, sign hardcoded | `build_p1_tokenizer.py:169` is `frozen/candidate − 1`, `tokenizer_p1_real.py:140` is `candidate/frozen − 1` — reciprocals. Fed the fact's own 3.164/3.265: **+3.2%** from one, **−3.1%** from the other, printed `+-3.1%` by a hardcoded `+` |
+| 2 | held-out textbooks are fit data | `held_out():120` calls `textbook_texts(path, 300_000)` — the SAME front-loaded reader the fit calls at 30,000,000. A front-loaded 300KB read is a strict **prefix** of a front-loaded 30MB read, so overlap is **100%**, not partial. The `rng` is used only to shuffle. Code half (88%) genuinely random, unaffected |
+| 3 | gates print-and-continue, after the write | `tok.save(a.out)` at :160 precedes the gate block; `new_roundtrip`/`new_bytes`/`new_ref_fertility` appear only inside `json.dumps`; `main()` has no return and falls off the end → exit 0. `fit_vocab():85` already exits non-zero on a size mismatch, so the loud path exists unused |
+| 4 | recorded config unreachable from the code | `load_textbooks` (`tokenizer_p1_real.py:77-84`) reads every non-empty line and calls only `rng.shuffle` — no cap, no sampling — so the chapter count is identical across seeds 7/13/21 |
+
+**Findings 1 and 3 are in the PR. Findings 2 and 4 are already on main**, in the doc that carries
+the unfreeze authorisation:
+
+- `p1_data_recipe.md` describes the tax table as "seeds 7/13/21, **143-162 textbook chapters**".
+  Finding 4 says that range cannot come from `load_textbooks`. Withdrawn as a description of the
+  run, **not** as a result: the values stand until b0 says which half is wrong (recorded config, or
+  a script that is not the committed one — different fixes), because what varies across seeds is
+  the shuffle and `chars/token` is a ratio over the same text either way.
+- Condition 2 of the rebuild claimed the next rebuild "satisfies this by construction rather than
+  by remembering", pointing at `build_p1_tokenizer.py`'s built-in held-out step. Finding 2 is that
+  step. **The forward-looking claim was false**; the paragraph's own "~0.3% overlap" is right for
+  the pairing the ruling actually used and wrong for the function it points at.
+
+**Neither touches the ruling, and I checked rather than assumed.** The authorisation is unfreeze
+condition 2, resting on `facts/tokenizer.json#tok.minicpm5_slot_budget_vs_ours` — **21,286 of
+32,773 slots hanzi-bearing, decoded id by id**, with the sharper form the headline misses: total
+vocabulary is 3.98× MiniCPM5's, but code and math compete only for non-hanzi slots and **that pool
+is 9.04×**. Hanzi is 0.03% of tokens in the p1 corpus. The +3.4% tax is also untouched: it compares
+a candidate fitted on a *proxy* composition against samples it never saw, a different pairing from
+finding 2. **V=20,000 stands.**
+
+**#203** carries the two doc corrections, reviewer 44 — on main rather than waiting for #169,
+because the wrong sentences are live now and the script's fix has four findings ahead of it.
+
+## State this tick
+
+| | |
+|---|---|
+| main | `2acdd24c`, unchanged for an hour; CI green |
+| pod | stamp `2acdd24c` dirty=0, 875 files match, no `refusing` |
+| open PRs | **12**: #202 and #203 mine, both awaiting 44; 10 parked on their authors |
+| harness | 0 FAIL of 92, 13 WARN |
+| GPU | 3 processes on cards 0/4/5, 3 claims, exact correspondence; 1/2/3/6/7 idle; nothing of ours holds a card |
+| peers | quiet this hour — no commit, no merge, no card change since 01:1xZ |
+
+## Carried — each re-derived this tick rather than copied
+
+- **The V=20,000 gate is ruled, not open** (above). What is open: **#169** with b0, four blocking
+  findings, all four now verified by me rather than by a dispatched agent.
+- **`pod_stamp_is_main` reads the local `main` ref** (`harness.py:4648`), which `gh pr merge` never
+  advances — so every code PR fires its louder branch on a correct pod. **de-99**, with de.
+- **#168 changes-requested** (98): the `pairs_note` is replaced rather than appended, deleting
+  b0's record of the b0 → de repair and the previous pairs value. Same human-half/machine-half
+  shape, same field, second time.
+- **p1 corpus 2.8116B post-deletion, closed**, three independent readings; read point
+  `#p1_keep_yield_0909@amended_2` closed.
+- **Memory-layers program concluded**: `memory_diag_fresh` reads no arm running, 3 finished arms,
+  25 diagnostic rows; prereg at `amended_12` and no relaunch, consistent with the standing
+  prerequisite. The tick text carries that program's 2026-09-04 state verbatim.
+- **`no_ghost_close` 236 vs a 180 ceiling recorded 2026-09-04, +31%**, still with no owner. Third
+  tick I have flagged it. Either start rows come first or the ceiling moves in a commit naming
+  which keys are legitimate.
+- `review_present` 11 done tasks name no reviewer, 4 of them e1's. `peer_stalled` b0.
+  `one_deliverable_per_owner` b0 10, de 12, e1 7. `keep_claim_reasons_live` 3 claims cite a
+  retracted id whose `retracted_value` is `[]`, so they may stand but must say so.
+- `prereg_citations_current` 4, none mine after #202.
+
+**My errors, carried, plus this tick's:** the fabricated friction measurement (`2fe298ab`,
+withdrawn); the false retraction of the MinHash 128 figure; three defective monitors; a scorer
+using token counts as byte weights; the overlap-length prediction 42% backwards; an unquoted
+backtick that let the shell eat a word out of a ledger row. **New: reporting a decision as an open
+user gate for three ticks after I had ruled it myself and 44 had reviewed it.** The first five are
+errors of measurement; this one is an error of *not re-reading my own carried text*, which is the
+cheaper failure to fix and the one this board is structurally most exposed to.
+
+---
+
 # Controller board (fb) — 2026-09-10, 01:1xZ
 
 ## Two of 98's PRs adjudicated; the queue that had nobody reviewing it moved
