@@ -160,6 +160,18 @@
    "by": "fb",
    "released_at": null,
    "what": "GRANT, not a loan: card 7 joins the p1 teacher serve. block_cards 4,5 -> 4,5,7, lane_card stays 2. Reaches the measured three-card rate of 695 tok/s (facts/efficiency.json#eff.teacher_serve_warm_throughput) instead of the unmeasured two-card extrapolation, taking the ~0.8B textbook artifact from ~20 days to 13.3. Owner of the serve is de (docs/standards/p1_data_recipe.md:265, task de-101). Card 7 is aupai's under this file's own ownership line and held no compute app at 04:37Z; nothing is recalled from tileRL, which has taken up its own 1 and 6. The fourth card is deliberately NOT granted: it would have to be the lane card 2."
+  },
+  {
+   "when": "2026-09-10T09:4xZ",
+   "by": "fb",
+   "released_at": "2026-09-10T09:4xZ",
+   "what": "RELEASED the 4,5,7 teacher-serve block: generation superseded by UltraData-Code (0e-3). Serve left idle, cards returned to the pool."
+  },
+  {
+   "when": "2026-09-10T12:3xZ",
+   "by": "fb",
+   "released_at": null,
+   "what": "USER ORDER all eight GPUs to the V4.1 training round (\"把所有显卡都拿来你也用\", 2026-09-10). block_cards = 0,1,2,3,4,5,6,7, world 8, no lane card (NGPU=8 shape, same as p500m_20b_0902): the V4.1 first gate run trains on all eight together. Executed before writing: the three idle teacher serves (tilerl.cli serve qwen38-27b ports 8010/8011/8012, host pids 381933/419114/1593663, cards 4/5/7, 0% util) stopped by exact PID, all three stat=Z, nvidia-smi reads 0 MiB on all eight, stale claims teacher_serve_0909.{4,5,7}.json removed on the pod. tileRL held no running job at recall time: cards 0,1,3,6 read 0 MiB and runs/claims/ had no tileRL entry; the RL jobs had ended. This is a recall of the whole machine for V4.1, not a loan -- it supersedes the 2026-09-06 0,6 standing allocation while the V4.1 block stands; theirs_baseline [0,6] is left as the baseline the cards return to when the block dissolves. tileRL notified via socket."
   }
  ],
  "_theirs_baseline_comment": [
@@ -173,10 +185,10 @@
   6
  ],
  "granted": "2026-09-03",
- "launch_block_granted": false,
- "block_cards": "4,5,7",
- "lane_card": "2",
- "note": "2026-09-10 04:4xZ (fb), SUPERSEDES the 2026-09-09 16:0xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6 (0 and 6 by the user's standing order of 2026-09-06); aupai holds 2, 4, 5, 7. GRANT: card 7 joins the p1 teacher serve, so block_cards becomes 4,5,7 and card 2 stays the lane. WHY, with the number: teacher generation is the binding constraint on the acceptance gate and has produced 0 of ~0.98B tokens (docs/standards/p1_data_recipe.md:66,69). The serve runs on 2 cards today. facts/efficiency.json#eff.teacher_serve_warm_throughput measured 695 tok/s aggregate warm AT THREE CARDS (two runs, 695 and 726, within 5%), so 4,5,7 is the configuration the measurement was taken at rather than an extrapolation: 0.8e9/695 = 13.3 days for the textbooks against ~20 days at two cards, where the two-card figure is itself linear extrapolation from 695/3 and is NOT measured. Card 7 is aupai's, holds no compute app, and tileRL has taken up its own 1 and 6, so this costs tileRL nothing and recalls nothing from anyone. A FOUR-CARD SERVE IS NOT GRANTED AND IS A SEPARATE DECISION: the only fourth card available is 2, which is the lane, and consuming it leaves no card for evals, probes or the 50-sample spot checks that de-101 and 44-42 both close against. That is the trade the lane rule exists to prevent, and the ~10-day figure it buys is extrapolated, not measured. My 03:5xZ board head recommended four cards without stating that it consumes the lane; corrected here. VERIFIED BEFORE WRITING: nvidia-smi at 04:37Z reads compute apps on GPU-55d10af7 (card 0, tileRL), GPU-59a8df25 (card 1, tileRL), GPU-ae00e4c1 (card 4, aupai teacher_serve_0909 :8010, 55.1 GB), GPU-ed6dc9b2 (card 5, aupai teacher_serve_0909 :8011, 54.4 GB). Cards 2, 3, 6, 7 hold none. Ownership is read from this file's grant, never inferred from nvidia-smi (my own 03:2xZ head misattributed 4 and 5 to tileRL by reading the card rows without joining them to the claim names).",
+ "launch_block_granted": true,
+ "block_cards": "0,1,2,3,4,5,6,7",
+ "lane_card": null,
+ "note": "2026-09-10 12:3xZ (fb), USER ORDER: ALL EIGHT GPUs -> the V4.1 first gate run, world 8, no lane (NGPU=8). Executed: teacher serves pids 381933/419114/1593663 (ports 8010-8012, cards 4/5/7) stopped, all stat=Z, nvidia-smi 0 MiB on 0-7, stale claims removed on the pod; tileRL's cards 0,1,3,6 already held no running job. The 2026-09-06 0,6 tileRL allocation is superseded WHILE THIS BLOCK STANDS; theirs_baseline [0,6] is the return state when the block dissolves. Previous state: block_cards empty after the 09:4xZ teacher-serve release.",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
@@ -186,14 +198,38 @@
   "granted": "2026-09-06T07:2xZ fb: GRANTED. e1 launches via harness launch --training the moment b0 reports the score_matrix done; world 6, b8 a4, 10,172 steps; ETA is an estimate (ratio measured at world 2), re-cost if the first 100 steps exceed 2.5 s/step"
  },
  "cards": {
-  "0": "tileRL, by the user directly in tilerl-27's session 2026-09-08, and 0 and 6 additionally by the standing order of 2026-09-06 (\"0,6 tileRL\").",
-  "6": "tileRL, by the user directly in tilerl-27's session 2026-09-08, and 0 and 6 additionally by the standing order of 2026-09-06 (\"0,6 tileRL\").",
-  "5": "GRANTED 2026-09-09 13:0xZ -> b0: the p1 teacher. Serve the 27B (NVFP4; the bf16 copy is broken, MMLU 0.0%) through tileRL's engine and generate the ~20B-token synthetic textbook set of docs/standards/p1_data_recipe.md. FIRST DELIVERABLE IS A MEASUREMENT, not tokens: the serve's actual tok/s with batching. 20B tokens out of a 27B is the schedule-dominant cost of the whole plan and nothing downstream can be sized against an estimate. Supersedes the stale e1 grant on 4 (format SFT, process ended at step 200/209) and fb's warmdown grant on 5 and 7 (the run was killed at user order 12:2xZ; the 30B leg is retired and nothing resumes from .step34000).",
-  "7": "GRANTED 2026-09-09 13:0xZ -> b0: the p1 teacher. Serve the 27B (NVFP4; the bf16 copy is broken, MMLU 0.0%) through tileRL's engine and generate the ~20B-token synthetic textbook set of docs/standards/p1_data_recipe.md. FIRST DELIVERABLE IS A MEASUREMENT, not tokens: the serve's actual tok/s with batching. 20B tokens out of a 27B is the schedule-dominant cost of the whole plan and nothing downstream can be sized against an estimate. Supersedes the stale e1 grant on 4 (format SFT, process ended at step 200/209) and fb's warmdown grant on 5 and 7 (the run was killed at user order 12:2xZ; the 30B leg is retired and nothing resumes from .step34000).",
-  "3": "tileRL, by the user directly in tilerl-27's session 2026-09-08, and 0 and 6 additionally by the standing order of 2026-09-06 (\"0,6 tileRL\").",
-  "4": "GRANTED 2026-09-09 13:0xZ -> b0: the p1 teacher. Serve the 27B (NVFP4; the bf16 copy is broken, MMLU 0.0%) through tileRL's engine and generate the ~20B-token synthetic textbook set of docs/standards/p1_data_recipe.md. FIRST DELIVERABLE IS A MEASUREMENT, not tokens: the serve's actual tok/s with batching. 20B tokens out of a 27B is the schedule-dominant cost of the whole plan and nothing downstream can be sized against an estimate. Supersedes the stale e1 grant on 4 (format SFT, process ended at step 200/209) and fb's warmdown grant on 5 and 7 (the run was killed at user order 12:2xZ; the 30B leg is retired and nothing resumes from .step34000).",
-  "1": "tileRL, by the user directly in tilerl-27's session 2026-09-08, and 0 and 6 additionally by the standing order of 2026-09-06 (\"0,6 tileRL\").",
-  "2": "LANE 2026-09-09 13:0xZ -> the lane card, one job at a time, for de's eval harness, e1's classifier probes and 44's exercise-pipeline checks. Supersedes the stale e1 grant of 08:5xZ (eval/code_fewshot.py on the 30B checkpoint; that process is gone and the checkpoint line is retired)."
+  "0": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "1": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "2": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "3": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "4": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "5": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "6": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  },
+  "7": {
+   "owner": "aupai",
+   "note": "V4.1 training block by USER ORDER 2026-09-10 12:3xZ: all eight GPUs recalled to the V4.1 first gate run (world 8, no lane). Cards 0 and 6 are tileRL's in theirs_baseline by the 2026-09-06 standing order; 1 and 3 were tileRL's since 2026-09-08 -- all four recalled for V4.1 and return to the tileRL allocation when the block dissolves."
+  }
  },
  "lane_note": "2026-09-05T15:1xZ fb (USER ORDER): E1 close REVERSED -- MoE judged on val loss at equal wall-clock and tokens plus score_matrix, not speed. E1' arms, 1B tokens each, --bf16: dense on 1,2; MoE-24 on 3,4; latent-MoE (d_latent 512) on whichever pair frees; 48-expert 30-step memory probe on the first free card. block_cards 1,2,3,4 = b0's two concurrent world-2 arms. 5+7 -> e1 experiment-1 control_arm (unchanged); 0,6 tileRL. || 2026-09-05T08:11Z fb: 5+7 -> e1 experiment-1 arms, sequential; 1,2 -> E1 (block_cards); 3,4 free; 0,6 tileRL. || 2026-09-05T05:54Z fb: pool = 3,4,5,7 free; 1,2 reserved for E1; 0,6 tileRL. Next grants: e1 experiment-1 arms (5,7 and 3,4 as world size requires) after its row is reviewed. || 2026-09-05T05:47Z fb: user standard -- only incremental results, no reproductions. Struck: memory grid, P1 rerun, cache discriminator, readout 0. Live grants: 1,2 E1 at module merge; 3,4 SFT p04/p16; 5 e1 control floor only if a readout consumes it; 7 free. || 2026-09-05T05:44Z fb: lane_card null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[]. Memory grid CANCELLED (user: do not verify what the prior already says); cards 1,2 -> MoE E1 at module merge, 3,4 -> SFT p04/p16 (3b), 5 -> e1 control floor, 7 -> tilerl P1 rerun. || 2026-09-05T05:42Z fb: lane_card set to null -- every non-training job names its card with `harness launch --cards` (e1 d4296bb9), validated against cards[] below; a lane derived by the launcher no longer exists. || 2026-09-05T04:34Z fb: lane 7 -> tilerl P1 rerun; lane 5 -> e1 shape-fault probe then control floor. || 2026-09-05T04:26Z fb: lane 7 -> tilerl P1 rerun (RL-team grant, 30 min, one job). || 2026-09-05T03:21Z fb: lane 7 -> tilerl MoE microbench (RL-team grant, 2 h, one job); lane 5 idle. || 2026-09-05T01:42Z fb: lane 7 -> e1 arm_token_corr (RL-team grant, one job); lane 5 idle (control floor waits for a card grant)",
  "superseded_2026_09_02": {
