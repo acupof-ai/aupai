@@ -284,3 +284,14 @@ Basis: main, not the worktree file -- the local friction.jsonl had diverged (row
 | defect: save_every doesn't suppress the epoch-end save | 1 | n/r | **unfixed** |
 | hook: test_launch_claims AST walk misses the refactor | 1 | ~25 | fix carried |
 | other (136 mechanisms, count=1) | 136 | mixed | mixed |
+
+## 2026-09-10 (341 rows, 155 mechanisms; basis 55b27e73 = main at 04:30Z, ran 04:39Z; dedup count — raw 347 lines, union-merge duplicates)
+
+| cause | count | minutes | resolution |
+|---|---|---|---|
+| override: AUPAI_BEHIND_MAIN_OK=1 bypass behind-main refusal | 114 | ~3 | **open** (task #44, owner 44: post-freeze cut; 1/114 fix) |
+| merge: git push origin main exited nonzero; main advanced locally | 69 | n/r | **open** (task #49, owner 44: stop pushing local main; 0/69 fix) |
+| hook/near_miss/process_failure: minutes_lost not reported | 4 | ~25 | **unfixed** (0/4 fix) |
+| gate: (2 rows, ~44 min self-reported) | 2 | ~44 | fix carried (2/2) |
+| merge: (2 rows, ~8 min self-reported) | 2 | ~8 | fix carried (2/2) |
+| other (150 mechanisms, count=1) | 150 | mixed | mixed |
