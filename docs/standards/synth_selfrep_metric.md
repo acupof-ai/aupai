@@ -17,24 +17,24 @@ ratio — absolute numbers mean nothing without the baseline.
 
 ### R1. Distinct-8gram rate (vocabulary collapse)
 
-Streaming. Hash every 8-gram of the content field; keep hashes divisible by 2^p
-(the "kth hash" estimator — bounded memory, unbiased for the distinct count).
-distinct_rate = distinct_8grams / total_8grams.
+Streaming. Hash every 8-gram of the content field; keep a SET of hashes divisible
+by 2^p (the "kth hash" estimator — bounded memory, unbiased for the distinct
+count: distinct ≈ |set| · 2^p). distinct_rate = distinct_8grams / total_8grams.
 
 Collapsed synthetic text reuses the same phrasing → low distinct rate.
 phi-1-quality text should approach the web baseline.
 
 ### R2. Near-duplicate rate at low threshold (reskin band)
 
-MinHash signature per doc on a 200K-doc sample; Jaccard estimate via signature
-equality (reuses near_dedup_scale.py machinery). Report the pair-rate in the
+MinHash signature per doc (64-perm, multiply-shift mod 2^64) on a 20K-doc
+sample; Jaccard estimate via signature equality. Report the pair-rate in the
 **reskin band J in [0.3, 0.7)** — exact dedup removes J>=0.85; the [0.3, 0.7)
 band is what "same template, different skin" looks like. Baseline: same-band
 rate on real code. The synthetic rate should not exceed the baseline's.
 
 ### R3. Cluster mass (semantic concentration)
 
-TF-IDF (char 2-3gram) + k-means (k=200) on a 100K-doc sample. Report the mass
+TF-IDF (char 2-3gram) + k-means (k=200) on a 50K-doc sample. Report the mass
 of the top-10 clusters. Reskinned content concentrates in few clusters.
 Baseline: top-10 mass on the same-size real-code sample.
 
