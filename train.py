@@ -362,13 +362,19 @@ class Cfg:
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
     csa_window = 256     # sliding-window width, always exact
+    csa2_n_win = 128     # CSA2/PureSWA window width (V4.1); de-103's Step-0 config of record
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
     # instead of from KDA.
     hca = False
     hca_compress = 128   # positions pooled into one HCA entry; V4's m'=128
+    swa = False          # pure sliding-window attention (V4.1 Step 3); per-layer under attn_hybrid
     attn_hybrid = False  # interleave CSA/HCA per attention layer instead of one global flag
+    # V4.1 Step 3 (task 0e-2): first N attention layers are pure SWA (no global branch), as
+    # DeepSeek-V4.1-Flash places them. Takes effect only under attn_hybrid; 0 reproduces the old
+    # interleave byte for byte, so legacy configs are unaffected.
+    n_swa_only_layers = 2
     # rope_dims 0 = NoPE, which is what every checkpoint before p1 trained under
     # (dsv4.nope_rope_break). Nonzero rotates the LAST rope_dims of each head and is what makes
     # attn_every=1 legal -- HybridLM refuses a zero-KDA stack without it, because a stack with
