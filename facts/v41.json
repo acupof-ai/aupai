@@ -1,0 +1,22 @@
+{
+  "facts": [
+    {
+      "id": "v41.size_derivation_0910",
+      "value": "Small-scale CSA2 config derived for the p1 model (task ae-2, V4.1 Step 0): L=12, d=1024, heads=8, MoE 48/top-3/1-shared with expert_ffn=1536 (ffn_hidden=6144 under the existing equal-active parity), giving 342.9M active params/token (33.6M tied embedding + 309.3M layers) and 2.89B total (name 2.9b-a343m-e48). CSA2: m=8 tokens/entry, top_k=64, n_win=128, indexer 4 heads x 64 dim (latent 256 = d//4). Flat mode map S,S,F,R,R,R,X,R,R,R,R,R: first two layers pure SWA, layer 2 Full, one Reindex at layer 6, eight Reuse. Global KV = 512 B/token (one Full layer, 4096 B/entry amortized over m=8, bf16) vs 49,152 B/token dense at the same width (12 layers x 2 x d x 2 B) -- 96x smaller. top_k is not effectively dense: 640 keys/query (64x8 + 128) = 15.6% of dense 4096, and the indexer discards 87.5% of the 512 scored entries before attention; indexer cost 131K MACs/query = 3.1% of dense QK. At top_k=128 the attended fraction is 28.1% -- 64 is the default, 128 the A/B ceiling.",
+      "measured": "2026-09-10",
+      "source": "python3 scripts/v41_size.py (this commit); arithmetic printed by the script, which asserts every constraint above and fails loud if one stops holding",
+      "config": {
+        "paper_values_that_do_not_transfer": "32 indexer heads x 128, 64 core heads x 512, latent 1280, top_k 512, m=2 encoder/1 decoder, 40 layers, n_win 128 -- all 552B / seq 64K-1M (DeepSeek_V41_Tech_Report.pdf section 2)",
+        "what_is_borrowed_not_derived": "L=12 (gap map suggestion, relayed by fb 2026-09-10; the gap map itself is not locatable in any tree); n_win=128 (paper value, Step 3 A/Bs 128 vs 256); MoE 48/top-3/1-shared (pivot ruling, reuse MoEFFN as-is)",
+        "active_param_equation": "per layer: Q shared d^2 + 2x(K,V,O) at 3d^2 for dual-attention layers (SWA-only first two: 4d^2) + indexer 2*d*256 on F/X layers + active FFN 4*3*d*1536; embedding d*32784 once, tied head",
+        "kv_bytes_equation": "dense = LAYERS * 2 * d * 2 B = 49,152 B/token; CSA2 = Full_layers * 2 * d * 2 B / m = 512 B/token; X/R layers store no global KV",
+        "density_equation": "attended keys/query = top_k*m + n_win = 640; entries/layer = T/m = 512; selectivity = top_k/entries = 12.5%",
+        "ffn_hidden_consequence": "MoEFFN's equal-active parity check (model.py) refuses expert_ffn=1536 unless ffn_hidden becomes (top_k+shared)*expert_ffn = 6144; the parity's dense control was the V2 A/B, now abandoned, so alternatively relax the check -- de's call in Step 1",
+        "swa_kv_caveat": "SWA KV is stored uncompressed at the gate (49,152 B/token); bounded replay (Step 7) is what makes the persistent total small, and it is deferred past the gate"
+      },
+      "uncertainty": "Derivation, not a measurement: the param and byte counts are exact given the assumptions; the assumptions themselves (Q shared, separate KV/O per branch, one Full serving nine Reuse layers, expert_ffn as the active-budget knob) are untested at this scale. The paper runs one Full per ~17 reuse layers at 552B; one per nine here is conservative. m=8 vs m=4 and top_k=64 vs 128 are start values in fb's ranges, not fitted optima.",
+      "boundary": "Holds at d=1024, L=12, seq 4096, bf16. FP4 KV, the hierarchical sparse indexer, CED topology and bounded replay are deferred past the gate (pivot); the KV number is the gate-run number, not the deployment number. The gate's ~350M target is met at 342.9M active; if the gap map's L=12 was meant at a different width, the expert_ffn knob changes, not the architecture.",
+      "status": "recorded"
+    }
+  ]
+}
