@@ -1,0 +1,1076 @@
+pod code: 16dff830abb05da23ccba08becf0f93536ecfccb (clean, synced 2026-09-10T14:59:44Z, manifest verified)
+W0910 15:00:49.783000 2649850 torch/distributed/run.py:851] 
+W0910 15:00:49.783000 2649850 torch/distributed/run.py:851] *****************************************
+W0910 15:00:49.783000 2649850 torch/distributed/run.py:851] Setting OMP_NUM_THREADS environment variable for each process to be 1 in default, to avoid your system being overloaded, please further tune the variable for optimal performance in your application as needed. 
+W0910 15:00:49.783000 2649850 torch/distributed/run.py:851] *****************************************
+corpus_fp: {'textbook': '3f237c5191cb8571', 'wiki': '44eb88458cfb3ed5', 'en': '9f37cb35219bb617', 'math': 'e1e86aa0b594c5ed', 'code': '5bb775eae9029669', 'chat': '080fdd63401b4ff9'}
+cache read: 8,370 MiB (8.17 GiB) over 6 cache(s)
+     6.00 GiB  textbook
+     0.92 GiB  wiki
+     0.60 GiB  en
+     0.30 GiB  math
+     0.21 GiB  code
+     0.14 GiB  chat
+/usr/local/lib/python3.12/dist-packages/torch/distributed/c10d_logger.py:83: UserWarning: barrier(): using the device under current context. You can specify `device_id` in `init_process_group` to mute this warning.
+  return func(*args, **kwargs)
+[rank0]:[W910 15:01:06.377992988 ProcessGroupNCCL.cpp:5188] Guessing device ID based on global rank. This can cause a hang if rank to GPU mapping is heterogeneous. You can specify device_id in init_process_group()
+mix: textbook 35833 rows = 0.09 epochs
+mix: wiki 5468 rows = 0.10 epochs
+mix: en 3577 rows = 0.10 epochs
+mix: math 1817 rows = 0.10 epochs
+mix: code 1281 rows = 0.10 epochs
+mix: chat 849 rows = 0.10 epochs
+mix: 48825 rows = 0.20B tokens scheduled
+FP8 compute enabled
+params 3209.5M | tokens 6103 | seqs 6103 | device cuda:0 | world 8 | fa True | fp8 True
+cfg batch 4 accum 4 seq 4096 grad_ckpt False doc_mask True attn_res False/0 softcap 15.0 warmup 20 epochs 1 lr_scale 1.0 mix data/mix_smoke_warmup.json fone False seed 42 sample_seed 42 (follows seed) warmdown 0.65 anneal_frac 0.0 val_every 500 attn_every 1
+cfg non-default: accum=4, anneal_frac=0.0, attn_every=1, attn_res=False, batch=4, csa=True, csa2=True, ffn_hidden=6912, mix='data/mix_smoke_warmup.json', moe_arm='v41smoke', moe_expert_ffn=1728, moe_experts=48, rope_dims=64
+[rank1]:W0910 15:01:35.961000 2649960 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank3]:W0910 15:01:36.029000 2649962 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank5]:W0910 15:01:36.067000 2649964 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank1]:W0910 15:01:36.636000 2649960 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank3]:W0910 15:01:36.689000 2649962 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank5]:W0910 15:01:36.734000 2649964 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 15:01:36.917000 2649959 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank7]:W0910 15:01:37.006000 2649966 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank2]:W0910 15:01:37.022000 2649961 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank4]:W0910 15:01:37.086000 2649963 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank6]:W0910 15:01:37.141000 2649965 torch/_logging/_internal.py:1279] [0/0] Profiler record function <class 'torch.autograd.profiler.record_function'> will be ignored
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank0]:W0910 15:01:37.591000 2649959 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank7]:W0910 15:01:37.663000 2649966 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank2]:W0910 15:01:37.687000 2649961 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank4]:W0910 15:01:37.730000 2649963 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break from `Tensor.item()`, consider setting:
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     torch._dynamo.config.capture_scalar_outputs = True
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] or:
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     env TORCHDYNAMO_CAPTURE_SCALAR_OUTPUTS=1
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] to include these operations in the captured graph.
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] Graph break: from user code at:
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2657, in forward
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     hidden = self.norm(self._body(emb, cu))
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2572, in _body
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 2144, in forward
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     x = x + self.mixer(self.n1(x), cu)
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 1045, in forward
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 535, in forward
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     return self._forward_csa2(q, k, v, cu, x)
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 621, in _forward_csa2
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 384, in entries_per_doc
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]   File "/work/aupai/model.py", line 318, in _doc_blocks
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0]     - offset[first_doc]).max().item())
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+[rank6]:W0910 15:01:37.829000 2649965 torch/_dynamo/variables/tensor.py:1379] [4/0] 
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 10/381 3% [main] | loss 7.651 | lr 5.00e-03 (muon 5.00e-03 embed 5.00e-02 scalar 7.50e-02 arq 5.00e-03 moe_router 5.00e-03) | gnorm 7.47 | 0.01B tok | 2K tok/s/gpu | MFU 1% | peak 72.64GiB | ETA 4.2h | s/step 40.5274
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 20/381 5% [main] | loss 5.851 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 1.40 | 0.01B tok | 5K tok/s/gpu | MFU 4% | peak 72.62GiB | ETA 2.7h | s/step 12.7805
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 30/381 8% [main] | loss 6.065 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.76 | 0.02B tok | 9K tok/s/gpu | MFU 6% | peak 72.57GiB | ETA 2.0h | s/step 7.6512
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 40/381 10% [main] | loss 4.635 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.52 | 0.02B tok | 9K tok/s/gpu | MFU 6% | peak 72.63GiB | ETA 1.6h | s/step 7.6572
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 50/381 13% [main] | loss 4.946 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.44 | 0.03B tok | 9K tok/s/gpu | MFU 6% | peak 72.62GiB | ETA 1.4h | s/step 7.6535
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 60/381 16% [main] | loss 4.639 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.45 | 0.03B tok | 14K tok/s/gpu | MFU 10% | peak 72.54GiB | ETA 1.2h | s/step 4.5403
+step 70/381 18% [main] | loss 4.742 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.54 | 0.04B tok | 18K tok/s/gpu | MFU 12% | peak 72.56GiB | ETA 1.0h | s/step 3.7116
+step 80/381 21% [main] | loss 4.789 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.46 | 0.04B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.9h | s/step 3.6131
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 90/381 24% [main] | loss 3.839 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.53 | 0.05B tok | 12K tok/s/gpu | MFU 8% | peak 72.56GiB | ETA 0.8h | s/step 5.5318
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 100/381 26% [main] | loss 3.833 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.47 | 0.05B tok | 14K tok/s/gpu | MFU 10% | peak 72.55GiB | ETA 0.8h | s/step 4.6064
+step 110/381 29% [main] | loss 3.778 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.50 | 0.06B tok | 18K tok/s/gpu | MFU 13% | peak 72.57GiB | ETA 0.7h | s/step 3.5446
+step 120/381 31% [main] | loss 4.151 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.43 | 0.06B tok | 19K tok/s/gpu | MFU 13% | peak 72.57GiB | ETA 0.6h | s/step 3.5218
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 130/381 34% [main] | loss 3.603 | lr 1.00e-02 (muon 1.00e-02 embed 1.00e-01 scalar 1.50e-01 arq 1.00e-02 moe_router 1.00e-02) | gnorm 0.43 | 0.07B tok | 14K tok/s/gpu | MFU 10% | peak 72.56GiB | ETA 0.6h | s/step 4.5224
+step 140/381 37% [main] | loss 3.107 | lr 9.99e-03 (muon 9.99e-03 embed 9.99e-02 scalar 1.50e-01 arq 9.99e-03 moe_router 9.99e-03) | gnorm 0.42 | 0.07B tok | 19K tok/s/gpu | MFU 13% | peak 72.55GiB | ETA 0.5h | s/step 3.5159
+step 150/381 39% [main] | loss 3.110 | lr 9.91e-03 (muon 9.91e-03 embed 9.91e-02 scalar 1.49e-01 arq 9.91e-03 moe_router 9.91e-03) | gnorm 0.40 | 0.08B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.5h | s/step 3.6386
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 160/381 42% [main] | loss 3.200 | lr 9.76e-03 (muon 9.76e-03 embed 9.76e-02 scalar 1.46e-01 arq 9.76e-03 moe_router 9.76e-03) | gnorm 0.43 | 0.08B tok | 14K tok/s/gpu | MFU 10% | peak 72.55GiB | ETA 0.5h | s/step 4.5881
+step 170/381 45% [main] | loss 2.956 | lr 9.54e-03 (muon 9.54e-03 embed 9.54e-02 scalar 1.43e-01 arq 9.54e-03 moe_router 9.54e-03) | gnorm 0.35 | 0.09B tok | 18K tok/s/gpu | MFU 12% | peak 72.56GiB | ETA 0.4h | s/step 3.7371
+step 180/381 47% [main] | loss 2.859 | lr 9.24e-03 (muon 9.24e-03 embed 9.24e-02 scalar 1.39e-01 arq 9.24e-03 moe_router 9.24e-03) | gnorm 0.33 | 0.09B tok | 19K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.4h | s/step 3.5287
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 190/381 50% [main] | loss 2.883 | lr 8.88e-03 (muon 8.88e-03 embed 8.88e-02 scalar 1.33e-01 arq 8.88e-03 moe_router 8.88e-03) | gnorm 0.39 | 0.10B tok | 12K tok/s/gpu | MFU 8% | peak 72.57GiB | ETA 0.4h | s/step 5.4338
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 200/381 52% [main] | loss 2.733 | lr 8.47e-03 (muon 8.47e-03 embed 8.47e-02 scalar 1.27e-01 arq 8.47e-03 moe_router 8.47e-03) | gnorm 0.30 | 0.10B tok | 11K tok/s/gpu | MFU 8% | peak 72.57GiB | ETA 0.4h | s/step 5.9822
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 210/381 55% [main] | loss 2.985 | lr 8.00e-03 (muon 8.00e-03 embed 8.00e-02 scalar 1.20e-01 arq 8.00e-03 moe_router 8.00e-03) | gnorm 0.30 | 0.11B tok | 14K tok/s/gpu | MFU 10% | peak 72.56GiB | ETA 0.2h | s/step 4.5387
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 220/381 58% [main] | loss 2.931 | lr 7.48e-03 (muon 7.48e-03 embed 7.48e-02 scalar 1.12e-01 arq 7.48e-03 moe_router 7.48e-03) | gnorm 0.23 | 0.12B tok | 14K tok/s/gpu | MFU 10% | peak 72.57GiB | ETA 0.2h | s/step 4.6644
+step 230/381 60% [main] | loss 2.590 | lr 6.93e-03 (muon 6.93e-03 embed 6.93e-02 scalar 1.04e-01 arq 6.93e-03 moe_router 6.93e-03) | gnorm 0.23 | 0.12B tok | 19K tok/s/gpu | MFU 13% | peak 72.55GiB | ETA 0.2h | s/step 3.5211
+step 240/381 63% [main] | loss 3.018 | lr 6.36e-03 (muon 6.36e-03 embed 6.36e-02 scalar 9.54e-02 arq 6.36e-03 moe_router 6.36e-03) | gnorm 0.21 | 0.13B tok | 18K tok/s/gpu | MFU 13% | peak 72.57GiB | ETA 0.2h | s/step 3.5653
+step 250/381 66% [main] | loss 3.169 | lr 5.76e-03 (muon 5.76e-03 embed 5.76e-02 scalar 8.64e-02 arq 5.76e-03 moe_router 5.76e-03) | gnorm 0.18 | 0.13B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.2h | s/step 3.5574
+step 260/381 68% [main] | loss 2.836 | lr 5.16e-03 (muon 5.16e-03 embed 5.16e-02 scalar 7.74e-02 arq 5.16e-03 moe_router 5.16e-03) | gnorm 0.18 | 0.14B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.1h | s/step 3.5453
+step 270/381 71% [main] | loss 2.899 | lr 4.56e-03 (muon 4.56e-03 embed 4.56e-02 scalar 6.84e-02 arq 4.56e-03 moe_router 4.56e-03) | gnorm 0.18 | 0.14B tok | 19K tok/s/gpu | MFU 13% | peak 72.55GiB | ETA 0.1h | s/step 3.5101
+step 280/381 73% [main] | loss 2.393 | lr 3.97e-03 (muon 3.97e-03 embed 3.97e-02 scalar 5.95e-02 arq 3.97e-03 moe_router 3.97e-03) | gnorm 0.18 | 0.15B tok | 18K tok/s/gpu | MFU 13% | peak 72.55GiB | ETA 0.1h | s/step 3.6227
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 290/381 76% [main] | loss 2.119 | lr 3.40e-03 (muon 3.40e-03 embed 3.40e-02 scalar 5.10e-02 arq 3.40e-03 moe_router 3.40e-03) | gnorm 0.16 | 0.15B tok | 14K tok/s/gpu | MFU 10% | peak 72.55GiB | ETA 0.1h | s/step 4.6224
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+step 300/381 79% [main] | loss 2.564 | lr 2.86e-03 (muon 2.86e-03 embed 2.86e-02 scalar 4.29e-02 arq 2.86e-03 moe_router 2.86e-03) | gnorm 0.14 | 0.16B tok | 14K tok/s/gpu | MFU 10% | peak 72.56GiB | ETA 0.1h | s/step 4.5897
+step 310/381 81% [main] | loss 2.934 | lr 2.36e-03 (muon 2.36e-03 embed 2.36e-02 scalar 3.53e-02 arq 2.36e-03 moe_router 2.36e-03) | gnorm 0.15 | 0.16B tok | 18K tok/s/gpu | MFU 12% | peak 72.53GiB | ETA 0.1h | s/step 3.6491
+step 320/381 84% [main] | loss 2.440 | lr 1.90e-03 (muon 1.90e-03 embed 1.90e-02 scalar 2.85e-02 arq 1.90e-03 moe_router 1.90e-03) | gnorm 0.14 | 0.17B tok | 18K tok/s/gpu | MFU 13% | peak 72.57GiB | ETA 0.1h | s/step 3.6422
+step 330/381 87% [main] | loss 2.628 | lr 1.50e-03 (muon 1.50e-03 embed 1.50e-02 scalar 2.25e-02 arq 1.50e-03 moe_router 1.50e-03) | gnorm 0.14 | 0.17B tok | 18K tok/s/gpu | MFU 12% | peak 72.56GiB | ETA 0.1h | s/step 3.6900
+step 340/381 89% [main] | loss 2.693 | lr 1.16e-03 (muon 1.16e-03 embed 1.16e-02 scalar 1.74e-02 arq 1.16e-03 moe_router 1.16e-03) | gnorm 0.14 | 0.18B tok | 18K tok/s/gpu | MFU 13% | peak 72.57GiB | ETA 0.0h | s/step 3.5475
+step 350/381 92% [main] | loss 2.216 | lr 8.88e-04 (muon 8.88e-04 embed 8.88e-03 scalar 1.33e-02 arq 8.88e-04 moe_router 8.88e-04) | gnorm 0.13 | 0.18B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.0h | s/step 3.5492
+step 360/381 94% [main] | loss 2.677 | lr 6.85e-04 (muon 6.85e-04 embed 6.85e-03 scalar 1.03e-02 arq 6.85e-04 moe_router 6.85e-04) | gnorm 0.13 | 0.19B tok | 19K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.0h | s/step 3.5221
+step 370/381 97% [main] | loss 2.589 | lr 5.55e-04 (muon 5.55e-04 embed 5.55e-03 scalar 8.33e-03 arq 5.55e-04 moe_router 5.55e-04) | gnorm 0.43 | 0.19B tok | 18K tok/s/gpu | MFU 12% | peak 72.56GiB | ETA 0.0h | s/step 3.6862
+step 380/381 100% [main] | loss 3.422 | lr 5.02e-04 (muon 5.02e-04 embed 5.02e-03 scalar 7.52e-03 arq 5.02e-04 moe_router 5.02e-04) | gnorm 0.13 | 0.20B tok | 18K tok/s/gpu | MFU 13% | peak 72.56GiB | ETA 0.0h | s/step 3.6397
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/torch/_dynamo/variables/functions.py:2082: UserWarning: Dynamo does not know how to trace the builtin `torch._C._distributed_c10d.pybind11_detail_function_record_v1_system_libstdcpp_gxx_abi_1xxx_use_cxx11_abi_1._broadcast_coalesced.` This function is either a Python builtin (e.g. _warnings.warn) or a third-party C/C++ Python extension (perhaps created with pybind).
+If it is a Python builtin, please file an issue on GitHub so the PyTorch team can add support for it and see the next case for a workaround.
+If it is a third-party C/C++ Python extension, please either wrap it into a PyTorch-understood custom operator (see https://pytorch.org/tutorials/advanced/custom_ops_landing_page.html for more details) or, if it is traceable, use `torch.compiler.allow_in_graph`.
+  torch._dynamo.utils.warn_once(explanation + "\n" + "\n".join(hints))
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+/usr/local/lib/python3.12/dist-packages/triton/language/semantic.py:1670: UserWarning: tl.where with a non-boolean condition is deprecated and will error out in a future triton release. Got int8
+  warnings.warn(
+ep 1/1 train 3.422 val 2.829 2199s
+saved /work/aupai/ckpt_v41_smoke_0910g.pt
+/work/aupai/runs/v41_smoke_0910g.log: no curves found
+/work/aupai/scripts/harness.py:4385: SyntaxWarning: invalid escape sequence '\w'
+  """Concrete checkpoint filenames named in a fact's source/config text.
+/work/aupai/scripts/harness.py:4432: SyntaxWarning: invalid escape sequence '\w'
+  """-> (listing_date, keep_set, {candidate: (mtime, section)}).
+note   the grant states lane_card: null -- no lane card under this block, so a non-training GPU job has nowhere to land here. Complementing the block would hand it cards outside the grant.
+no lane card in the allocation
+FATAL: no free lane card in 30min -- ckpt_v41_smoke_0910g.pt unscored, training succeeded but this run produced NO metrics. Re-score: CUDA_VISIBLE_DEVICES=<lane> python eval/score_matrix.py --ckpt ckpt_v41_smoke_0910g.pt --json runs/score_matrix.jsonl
+FATAL: scoring failed for ckpt_v41_smoke_0910g.pt (rc=1) -- exiting nonzero
