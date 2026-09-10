@@ -362,19 +362,10 @@ class Cfg:
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
     csa_window = 256     # sliding-window width, always exact
-    # de-103: CSA2 (DeepSeek-V4.1, tech report §2.3) -- the V4.1 variant of the csa arm,
-    # so csa2=True needs csa=True (model.py refuses otherwise). Learned non-overlapping
-    # m-token entries replace the mean pool, a dedicated indexer (indexer-Q from the layer
-    # input, indexer-K projected from the entries) selects top-k, one softmax over
-    # [selected entries ; SWA window]. Field names per ae-2's Step-0 config (PR #213):
-    # the csa_compress/csa_topk/csa_window prefix belongs to the old CSA class and is not
-    # reused. The m>1 combine is a head-shared Linear -- the paper publishes no combine
-    # weights, so it is a choice to A/B, not a paper value. CLI flags land with the
-    # gate-run wiring; until then these are code-only fields.
     csa2 = False
     csa2_m = 8                # tokens per learned entry
     csa2_top_k = 64           # entries selected per query
-    csa2_n_win = 128          # SWA window width in tokens
+    csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
     csa2_indexer_heads = 4    # indexer heads, must divide heads
     csa2_indexer_dim = 64     # indexer low dim
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
@@ -383,7 +374,12 @@ class Cfg:
     # instead of from KDA.
     hca = False
     hca_compress = 128   # positions pooled into one HCA entry; V4's m'=128
+    swa = False          # pure sliding-window attention (V4.1 Step 3); per-layer under attn_hybrid
     attn_hybrid = False  # interleave CSA/HCA per attention layer instead of one global flag
+    # V4.1 Step 3 (task 0e-2): first N attention layers are pure SWA (no global branch), as
+    # DeepSeek-V4.1-Flash places them. Takes effect only under attn_hybrid; 0 reproduces the old
+    # interleave byte for byte, so legacy configs are unaffected.
+    n_swa_only_layers = 2
     # rope_dims 0 = NoPE, which is what every checkpoint before p1 trained under
     # (dsv4.nope_rope_break). Nonzero rotates the LAST rope_dims of each head and is what makes
     # attn_every=1 legal -- HybridLM refuses a zero-KDA stack without it, because a stack with

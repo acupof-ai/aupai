@@ -120,6 +120,8 @@ def main():
     GREEDY_EXPECTED_PASS, GREEDY_EXPECTED_EMPTY = 3, 72
     greedy_pass = greedy_empty = 0
     sample_pass = 0.0
+    ctrl_pass = 0
+    sample_empty = 0
     with open_artifact(preds_path, force=args.force, run=args.run) as fout:
         out_path = fout.name
         fout.write(json.dumps({
@@ -164,6 +166,8 @@ def main():
                 samples.append({"gen": c, "ok": judge(p, c)})
             c = sum(s["ok"] for s in samples)
             sample_pass += c / args.n
+            ctrl_pass += int(judge(p, p["canonical_solution"]))
+            sample_empty += sum(not s["gen"].strip() for s in samples)
             fout.write(json.dumps(
                 {"phase": "sample", "task_id": p["task_id"], "c": c, "samples": samples},
                 ensure_ascii=False) + "\n")
@@ -171,6 +175,24 @@ def main():
             if i % 20 == 0 or i == len(probs):
                 print(f"  sample {i}/{len(probs)}  pass@1(n={args.n}) = "
                       f"{100 * sample_pass / i:.2f}%  ({time.time() - t0:.0f}s)", flush=True)
+
+        # The known-answer control through the SAMPLED phase's own judge call, plus
+        # the sample empty rate: a pass@1 that quietly counts empty completions as
+        # failures is a format number, and a sampled figure without its control is
+        # not a figure (e1-58).
+        n_samples = len(probs) * args.n
+        fout.write(json.dumps(
+            {"phase": "sample_summary", "control_canonical_pass": ctrl_pass,
+             "control_n": len(probs), "sample_empty": sample_empty,
+             "sample_empty_n": n_samples}, ensure_ascii=False) + "\n")
+        print(f"\nCONTROL canonical_solution through sampled path = "
+              f"{ctrl_pass}/{len(probs)} (must be {len(probs)})", flush=True)
+        print(f"sampled empty completions = {sample_empty}/{n_samples} = "
+              f"{100 * sample_empty / n_samples:.1f}%", flush=True)
+        if ctrl_pass != len(probs):
+            sys.exit(
+                f"SAMPLED CONTROL FAILED: canonical_solution scored {ctrl_pass}/{len(probs)} "
+                "through the sampled phase's judge -- the pass@1 above is not a figure.")
 
     attest(out_path)
     print(f"\nHUMANEVAL pass@1 (n={args.n}, temp={args.temp}, top_p={args.top_p}) = "
