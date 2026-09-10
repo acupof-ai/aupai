@@ -62,42 +62,40 @@ def read_level(d, shards, cap_chars, rng):
     return rows, got
 
 
-def draw(corpus_root, dirs, shards, fit_chars, eval_chars, seed):
-    """Per level: (fit rows, eval rows, byte counts). Fit uses the seed-7 draw;
-    eval draws are independent per seed in run()."""
+def draw(corpus_root, dirs, shards, fit_chars, eval_chars, n_seeds, seed):
+    """Per level: fit rows and n_seeds DISJOINT held-out segments. Read fit +
+    n_seeds*eval bytes, cut the fit, then shuffle the tail with one fixed RNG and
+    slice it into contiguous byte-budgeted segments -- the metrics are
+    order-invariant token counts, so three reshuffles of one pool give three
+    identical columns (the 3b review finding); the spread has to come from
+    disjoint documents."""
     rng = random.Random(seed)
     fit, ev, counts = {}, {}, {}
     for d in dirs:
-        rows, got = read_level(os.path.join(corpus_root, d), shards, fit_chars + eval_chars, rng)
+        rows, got = read_level(os.path.join(corpus_root, d), shards,
+                               fit_chars + n_seeds * eval_chars, rng)
         rng.shuffle(rows)
         cut = next(i for i in range(len(rows))
                    if sum(len(r.encode("utf-8")) for r in rows[:i]) >= fit_chars)
         fit[d] = rows[:cut]
-        ev[d] = rows[cut:]
+        tail = rows[cut:]
+        parts, i = [], 0
+        for _ in range(n_seeds):
+            picked, used = [], 0
+            while i < len(tail) and used < eval_chars:
+                picked.append(tail[i])
+                used += len(tail[i].encode("utf-8"))
+                i += 1
+            parts.append(picked)
+        ev[d] = parts
         counts[d] = {
-            "n_docs": len(rows), "n_fit": cut, "n_eval": len(rows) - cut,
+            "n_docs": len(rows), "n_fit": cut,
+            "n_eval": [len(p) for p in parts],
             "fit_bytes": sum(len(r.encode("utf-8")) for r in rows[:cut]),
-            "eval_bytes": sum(len(r.encode("utf-8")) for r in rows[cut:]),
+            "eval_bytes": [sum(len(r.encode("utf-8")) for r in p) for p in parts],
             "shards": [os.path.basename(f) for f in sorted(glob.glob(os.path.join(corpus_root, d, "*.jsonl")))[:shards]],
         }
     return fit, ev, counts
-
-
-def eval_rows(ev, seed, cap_chars):
-    """Independent per-seed held-out subsample, capped per level."""
-    rng = random.Random(seed)
-    out = {}
-    for d, rows in ev.items():
-        rows = rows[:]
-        rng.shuffle(rows)
-        got, picked = 0, []
-        for r in rows:
-            picked.append(r)
-            got += len(r.encode("utf-8"))
-            if got >= cap_chars:
-                break
-        out[d] = picked
-    return out
 
 
 def measure(tok_path, corpus):
@@ -115,8 +113,9 @@ def main():
     ap.add_argument("--root", default=ROOT_DEFAULT, help="repo root (defaults to this script's repo)")
     ap.add_argument("--corpus_dirs", default="data/corpus/code_ultra_l2,data/corpus/code_ultra_l3")
     ap.add_argument("--shards", type=int, default=3)
-    ap.add_argument("--fit_chars", type=int, default=120_000_000, help="per level")
-    ap.add_argument("--eval_chars", type=int, default=80_000_000, help="per held-out draw, per level")
+    ap.add_argument("--fit_chars", type=int, default=80_000_000, help="per level")
+    ap.add_argument("--eval_chars", type=int, default=40_000_000,
+                    help="per held-out segment, per level (disjoint across seeds)")
     ap.add_argument("--target_v", type=int, default=TARGET_V)
     ap.add_argument("--candidate_out", default="/tmp/ultra_v20000.json")
     ap.add_argument("--json", default="")
@@ -125,7 +124,8 @@ def main():
     dirs = [d.strip() for d in a.corpus_dirs.split(",") if d.strip()]
     frozen = os.path.join(a.root, "data", "tokenizer.json")
     proxy = os.path.join(a.root, "data", "vocab_sweep", "p1_v20000.json")
-    fit, ev_hold, counts = draw(a.root, dirs, a.shards, a.fit_chars, a.eval_chars, 7)
+    fit, ev_parts, counts = draw(a.root, dirs, a.shards, a.fit_chars, a.eval_chars,
+                                 len(SEEDS), 7)
     fit_rows = [r for d in dirs for r in fit[d]]
     random.Random(7).shuffle(fit_rows)
     print(f"fitting V={a.target_v} on {len(fit_rows)} docs "
@@ -140,8 +140,8 @@ def main():
 
     result = {"config": {"dirs": dirs, "shards": a.shards, "seeds": list(SEEDS),
                          "target_v": a.target_v, "counts": counts}, "draws": {}}
-    for seed in SEEDS:
-        corpus = eval_rows(ev_hold, seed, a.eval_chars)
+    for si, seed in enumerate(SEEDS):
+        corpus = {d: ev_parts[d][si] for d in dirs}
         result["draws"][str(seed)] = {}
         # per level and pooled: collect() aggregates every key in the corpus dict, so
         # per-level numbers need their own call
