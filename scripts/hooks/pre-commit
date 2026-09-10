@@ -1026,6 +1026,12 @@ def main():
         # mutants: collision check off, copy-not-link, count gate off, existing-copy check
         # off; all four red.
         "datagen/build_dd09_full.py",
+        # The synthetic-exercise acceptance checks (p1_data_recipe.md, 44's line). Registered
+        # because its decontamination half is the one that reports "0 hits" when it never ran,
+        # so the selftest plants a HumanEval problem as a known-positive control and asserts it
+        # is caught; the same selftest covers execution (pass/fail/timeout), diversity
+        # (monoculture flagged) and the spotcheck agreement math.
+        "datagen/exercise_checks.py",
         # The multiprocess batch counter for a whole directory, and the second reader that
         # confirmed en_c4_30b. Same convention as count_tokens.py by calling it; its own
         # selftest asserts ids + one <eos> per document plus the two exclusions
