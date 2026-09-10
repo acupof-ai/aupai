@@ -101,7 +101,7 @@ def main():
     prefix = os.path.basename(out.rstrip("/"))
 
     if args.aggregate:
-        aggregate(out, args.aggregate, prefix)
+        aggregate(out, args.aggregate, prefix, args.tokenizer)
         return
 
     tag = f"_{args.tag}" if args.tag else ""
@@ -222,38 +222,79 @@ def main():
     print(f"DONE {json.dumps(record, indent=1)}", flush=True)
 
 
-def aggregate(out, pattern, prefix):
-    """Sum group stats_<tag>.json into one canonical build_corpus_stats.json."""
+def aggregate(out, pattern, prefix, tokenizer_path):
+    """Sum group stats, then run the GLOBAL exact-dedup pass groups cannot do:
+    stream every tagged group shard through one content-hash set, re-emit the
+    survivors as final prefix_NNN shards, recount tokens exactly, and only then
+    remove the tagged intermediates. Bytes are not mix-legal until this runs.
+    """
     paths = sorted(glob.glob(os.path.join(out, pattern)))
     if not paths:
         raise SystemExit(f"aggregate: no stats match {pattern} in {out}")
     records = [json.load(open(p, encoding="utf-8")) for p in paths]
-    summed = {}
-    for key in ("kept", "kept_chars", "kept_tokens", "tokens", "total_rows", "n_shards"):
-        summed[key] = sum(r.get(key, 0) for r in records)
     reasons = {}
     for r in records:
         for k, v in r.get("reasons", {}).items():
             reasons[k] = reasons.get(k, 0) + v
-    n_jsonl = len(glob.glob(os.path.join(out, f"{prefix}_*.jsonl")))
+    group_kept = sum(r.get("kept", 0) for r in records)
+
+    tagged = sorted(glob.glob(os.path.join(out, f"{prefix}_g??_*.jsonl")))
+    if not tagged:
+        raise SystemExit(f"aggregate: no tagged group shards {prefix}_g??_*.jsonl in {out}")
+    tok = Tokenizer.from_file(tokenizer_path)
+    for stale in glob.glob(os.path.join(out, f"{prefix}_[0-9][0-9][0-9].jsonl")):
+        os.remove(stale)
+    seen = set()
+    kept = 0
+    kept_chars = 0
+    kept_tokens = 0
+    scanned = 0
+    cross_dup = 0
+    writer = ShardWriter(out, prefix, tag="")
+    for shard in tagged:
+        for line in open(shard, encoding="utf-8"):
+            scanned += 1
+            rec = json.loads(line)
+            sig = hashlib.sha1(_norm(rec["content"]).encode()).hexdigest()
+            if sig in seen:
+                cross_dup += 1
+                continue
+            seen.add(sig)
+            writer.write(rec)
+            kept += 1
+            kept_chars += len(rec["content"])
+            kept_tokens += len(tok.encode(rec["content"]).ids) + 1
+    writer.close()
+    assert scanned == group_kept, (
+        f"tagged shards hold {scanned} rows, group stats say kept {group_kept}")
+    for shard in tagged:
+        os.remove(shard)
+
+    # cross_group_dup rows are a subset of group-kept, so move them out of
+    # "kept": aggregate reasons must still partition total input rows
+    # (final kept + every reject bucket + cross_group_dup == total_rows).
+    reasons["kept"] = kept
+    reasons["cross_group_dup"] = cross_dup
+    final_shards = sorted(glob.glob(os.path.join(out, f"{prefix}_[0-9]*.jsonl")))
     canonical = {
         "domain": os.path.basename(out.rstrip("/")),
         "source": records[0].get("source", "").split(" shards ")[0]
                   + f" shards, {len(records)} parallel groups",
-        "kept": summed["kept"],
-        "kept_chars": summed["kept_chars"],
-        "kept_tokens": summed["kept_tokens"],
-        "tokens": summed["tokens"],
+        "kept": kept,
+        "kept_chars": kept_chars,
+        "kept_tokens": kept_tokens,
+        "tokens": kept_tokens,
         "tokens_status": "measured",
-        "tokens_config": records[0].get("tokens_config", ""),
-        "filters": records[0].get("filters", ""),
+        "tokens_config": f"{tokenizer_path}, exact per-doc ids + one <eos> per doc, "
+                         "recounted after the global dedup pass",
+        "filters": records[0].get("filters", "") + "+global-exact-dedup",
         "workers": records[0].get("workers", 1),
-        "n_shards": n_jsonl,
+        "n_shards": len(final_shards),
         "filters_fp": records[0].get("filters_fp", ""),
-        "fingerprint": fp_of(*sorted(glob.glob(os.path.join(out, f"{prefix}_*.jsonl")))),
+        "fingerprint": fp_of(*final_shards),
         "near_dedup": False,
-        "near_dedup_note": "exact dedup within groups only; cross-group dedup not run",
-        "total_rows": summed["total_rows"],
+        "near_dedup_note": "exact dedup global across all groups; near-dedup not run",
+        "total_rows": sum(r.get("total_rows", 0) for r in records),
         "reasons": reasons,
         "groups": [os.path.basename(p) for p in paths],
     }
