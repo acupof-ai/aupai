@@ -1362,7 +1362,7 @@
    "source": "scripts/pretokenize_domains.py (repo driver over train._domain_seqs; 32 fork workers x RAYON_NUM_THREADS=5, CPU only, CUDA_VISIBLE_DEVICES empty) writing pod /data00/tokens_<domain>.pt; rows and sha256 prefixes are the driver's REPORT lines read back from the caches",
    "config": {
     "cache_dir": "/data00 (the /mnt/data02 NVMe mount was gone after restart; mkdir ENOENT, fb 2026-09-10; train._token_cache_dir default used, AUPAI_TOKEN_CACHE_DIR unset)",
-    "tokenizer": "data/tokenizer.json frozen V=20000 rebuild (vocab stamp beside every cache)",
+    "tokenizer": "data/tokenizer.json as it was on the pod at build time: vocab_real=32773 (build_tokenizer assert), vocab_id 0bce3584bc24f255 (the .vocab stamp beside every cache, read back 2026-09-10)",
     "sample_seed": "42 (Cfg.seed; sample_seed unset), stream shuffled random.Random(42)",
     "convention": "ids + one <eos> per doc, then truncated to a multiple of 4097; code_py_starcoder packed 8,786,913,743 vs raw full-pass 8,786,916,332 (cs.code_py_starcoder_landed), delta 2,589 = the dropped tail < one row",
     "per_domain": {
@@ -1400,7 +1400,8 @@
     "total_packed_tokens": 18561516123,
     "total_rows": 4530512,
     "total_bytes": 74245883398,
-    "first_run_note": "the first execution used an identical pre-commit copy of the driver pushed to the pod and its log was muted by a flattened double redirect (CLAUDE.md pod rule: the outer >/dev/null overrode the inner log redirect); caches and stamps were unaffected, four domains finished before the process was killed by exact PID and the committed driver was run for the fifth; seconds for the first four are mtime-reconstructed, starcoder's 385s measured"
+    "first_run_note": "the first execution used an identical pre-commit copy of the driver pushed to the pod and its log was muted by a flattened double redirect (CLAUDE.md pod rule: the outer >/dev/null overrode the inner log redirect); caches and stamps were unaffected, four domains finished before the process was killed by exact PID and the committed driver was run for the fifth; seconds for the first four are mtime-reconstructed, starcoder's 385s measured",
+    "pending_rebuild": "ae-5 tokenizer rebuild (20K vs 32K, measured 2026-09-10) was not merged at cache-build time; when it merges and pod-pushes, these five caches go stale on vocab_id and must be rebuilt with the same driver. Keep the caches in place until then: in-flight smoke checkpoints carry 0bce3584bc24f255 and must keep loading."
    },
    "uncertainty": "seconds for 4 of 5 domains are completion-mtime deltas (约); token and row counts are exact",
    "boundary": "pool tokens are the on-disk packed stream after tail truncation, not the raw document token count; does not cover the UltraData domains (0e owns those) or the smoke domains fb encoded",
