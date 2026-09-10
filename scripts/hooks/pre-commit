@@ -1581,6 +1581,9 @@ def main():
         "mathbank/emit_novel_ops_4way.py",
         "scripts/test_serve_history.py",
         "scripts/test_tokenizer_fp_name.py",
+        # p1 tokenizer scripts: held-out disjoint by construction, one tax convention,
+        # gates fail loud (PR #169's four findings).
+        "scripts/test_p1_tokenizer_scripts.py",
         "scripts/test_facts_olmes_urls.py",
         "scripts/test_reachability_fresh.py",
         # The score-matrix rewrite trace: the writer half (eval/score_matrix.py) and the

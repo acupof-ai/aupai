@@ -12,14 +12,14 @@
  "members": [
   {
    "name": "fb",
-   "socket": "uds:/tmp/cc-socks/67870.sock",
+   "socket": "uds:/tmp/cc-socks/99800.sock",
    "role": "controller",
    "topics": [
     "*"
    ],
-   "note": "rulings, card allocation, launch; the run's supervisor of record Socket verified 2026-09-06 12:2xZ: PPID of this session's shell is 67870, cwd /Users/bytedance/code/aupai (integration tree; worktree ../aupai-fb).",
-   "listagents_name": "aupai-4c",
-   "listagents_ref": "61638d",
+   "note": "Controller session CONTINUES across resume (same session, label changed aupai-4c -> aupai-96). Socket uds:/tmp/cc-socks/99800.sock, listagents ref 96dfeb, verified 2026-09-10 17:1xZ from the from= address of the controller's own outbound messages and PPID. Earlier sockets 67870 (aupai-4c) and 61638d are dead after the restart. Rulings, card allocation, launch; worktree /Users/bytedance/code/aupai-fb.",
+   "listagents_name": "aupai-96",
+   "listagents_ref": "96dfeb",
    "ref": "61638d"
   },
   {
