@@ -378,6 +378,10 @@ class Cfg:
     csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
     csa2_indexer_heads = 4    # indexer heads, must divide heads
     csa2_indexer_dim = 64     # indexer low dim
+    # 3b-20: per-layer CSA2 modes over the non-SWA attention layers (ae-2's Step-0
+    # map). F=Full (emits the KV package), R=Reuse (consumes it, 5d^2 params),
+    # X=Reindex (deferred; shares the Reuse path until its own indexer lands).
+    csa2_modes = "F,R,R,R,X,R,R,R,R,R"
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
