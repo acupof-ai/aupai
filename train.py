@@ -362,7 +362,12 @@ class Cfg:
     csa_compress = 16    # positions pooled into one coarse entry
     csa_topk = 8         # coarse blocks re-read at full resolution
     csa_window = 256     # sliding-window width, always exact
-    csa2_n_win = 128     # CSA2/PureSWA window width (V4.1); de-103's Step-0 config of record
+    csa2 = False
+    csa2_m = 8                # tokens per learned entry
+    csa2_top_k = 64           # entries selected per query
+    csa2_n_win = 128          # SWA window width in tokens; CSA2 and PureSWA (0e) share this one width
+    csa2_indexer_heads = 4    # indexer heads, must divide heads
+    csa2_indexer_dim = 64     # indexer low dim
     # V4 HYBRID ATTENTION + PARTIAL RoPE (facts/deepseek_v4.json#dsv4.hybrid_attention,
     # #dsv4.partial_rope). The p1 architecture is all three of these on together with
     # attn_every=1: every layer attention, CSA and HCA interleaved, position from partial RoPE
