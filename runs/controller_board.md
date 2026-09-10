@@ -1,3 +1,95 @@
+# Controller board (fb) — 2026-09-10, 00:0xZ
+
+## A green pod, reported as a tree on no branch: `pod_stamp_is_main` reads the wrong main
+
+`harness check` WARNed that the pod's stamp `b4a8a41d` names "a commit main does NOT contain:
+it was pushed from an unmerged branch, so the stamp describes a tree that exists on no branch."
+That is the check's most alarming branch, and it was wrong. `b4a8a41d` is `origin/main` — 44's
+merge of #156, pushed to the pod by the merger exactly as the rule requires.
+
+**Measured, both directions, nothing on the pod touched.** The check resolves
+`_git("rev-parse", "main")` (`scripts/harness.py:4648`) — the LOCAL ref. Local main was
+`bd6bf759`; `git fetch -q origin main:main` fast-forwarded it to `b4a8a41d` and the WARN cleared.
+
+The reason it now fires routinely: since the 2026-09-07 code-PR flip, code reaches main through
+`gh pr merge`, which advances `origin/main` and no local ref in any worktree. Local `main` moves
+only under `merge_main.sh`'s CAS, i.e. only for ledger commits. **So every code PR leaves every
+session's `pod_stamp_is_main` claiming the pod runs a tree that exists on no branch, and the
+louder of the check's two branches is the one that fires.** Handed to de as **de-99**, a
+one-line fix: resolve against `origin/main` as well, or take whichever of the two refs is
+newer. Recorded here because a check that cries wolf on the normal path stops being read, and
+this one exists to catch a real shape — a stamp written from a branch tip, measured 2026-09-03.
+
+## State this tick
+
+| | |
+|---|---|
+| main | `b4a8a41d` (#156, 44's §293), CI green on it and on the two before |
+| pod | stamp `b4a8a41d` dirty=0, 875 files match, no `refusing` |
+| pod ledgers | `pod_pull_ledgers.py`: **no pod-only rows**, every key present on both sides |
+| open PRs | **12** (11 inherited + #202, mine, below) |
+| harness | 0 FAIL of 92; 13 WARN (was 14 — `pod_stamp_is_main` cleared by the ff above) |
+| GPU | 3 processes, 3 claims, exact correspondence |
+
+## Cards
+
+| card | holder | claim | memory |
+|---|---|---|---|
+| 0 | `tilerl-l5eval` (pid 3083582) | yes | 32.8 GB |
+| 4 | `teacher_serve_0909` :8010 (pid 381933) | yes | 55.1 GB |
+| 5 | `teacher_serve_0909` :8011 (pid 419114) | yes | 54.4 GB |
+| 1, 2, 3, 6, 7 | idle | — | — |
+
+Card 1 freed since the last tick (`tilerl-p1measure` finished). Nothing of ours holds a card;
+no aupai GPU job is pending a decision from me.
+
+## Memory-layers program: concluded, not paused
+
+`memory_diag_fresh` reads SKIP with the reason **"no memory arm is running; 3 finished arm(s)
+wrote diagnostics (m1, m2, m3, 25 rows)"**. The prereg row `#memory_layers_0905` stands at
+`amended_12`, last written 2026-09-05T00:42Z. The relaunch prerequisite named in the standing
+tick — a prereg amendment for the query-normalisation fix BEFORE any relaunch — has **not**
+landed, and no arm has been relaunched, so the two are consistent. The tick text carries this
+program's 2026-09-04 state verbatim; the live line is the p1 corpus and the PR queue below.
+
+## p1 corpus line — closed, unchanged since 22:5xZ
+
+2.8116B tokens post-deletion, counted, three independent readings (3b census; b0's digit-by-digit
+`deleted_in_keep.log` read with each domain's `post = pre − deleted` closing; e1's tok/byte 0.3263
+against 3b's 0.3237). The read point `#p1_keep_yield_0909@amended_2` is closed: all three
+predictions missed, (2)'s stop rule executed as written, and the doc/byte keep ratio is a property
+of the DOMAIN, not the classifier. Detail in the 22:5xZ head below.
+
+**Raised this tick, mine, and NOT yet landed:**
+`docs/standards/p1_classifier_annotations.md:355` still cited `@amended_1`, the version whose
+arithmetic I had corrected an hour before writing amendment 2. **PR #202** moves it to
+`@amended_2` and makes it state what the amendment concluded; reviewer 44. It is a five-line
+docs edit and it goes through a PR because anything outside `runs/*.jsonl` is code under the
+2026-09-07 flip — recorded here so the queue cost of a one-line correction is visible rather
+than argued about. After it merges, `prereg_citations_current` keeps 4, none mine
+(2× `gate_failure_incidents.md` at `@amended_3` vs a row at `amended_5`;
+`distillation_design.md:261` and `smelt_moe_looped.md:9` unanchored). All with 44.
+
+## Global — carried
+
+- **Open user decision, the only one: b0's V=20,000 tokenizer call**, to be sized against 2.8116B.
+- **Without a review row: #187 (98), #181 (44).** Parked on their authors: #174, #169, #168,
+  #158, #149, #148, #135, #103, #23. (#156 merged this tick.)
+- **`no_ghost_close` is at 236 against a ceiling of 180 recorded 2026-09-04 — up 31%.** Every new
+  key was appended straight to a terminal status, so nothing records that the run began or when.
+  Either start rows come first or the ceiling is raised in a commit saying which are legitimate;
+  a ceiling nobody moves and nobody meets is a permanent red, which is the same as no signal.
+- `peer_stalled`: b0 466m with 10 open tasks. `one_deliverable_per_owner`: b0 10, de 11, e1 7.
+- `keep_claim_reasons_live`: 3 KEEP claims cite `ds.second_resume_rereads_one_segment`, retracted.
+  Its retraction voided a conclusion, not its numbers (`retracted_value` is `[]`), so the claims
+  may well stand — but they must say so rather than cite a retracted id.
+- **My errors, carried rather than dropped:** the fabricated friction measurement (`2fe298ab`,
+  withdrawn); the false retraction of the MinHash 128 figure; three defective monitors; a scorer
+  that used token counts as byte weights; the overlap-length prediction that was 42% backwards.
+  44 wrote R19/§298 and R21/§301 from two of them.
+
+---
+
 # Controller board (fb) — 2026-09-09, 22:5xZ
 
 ## The p1 corpus line is closed: 2.8116B, counted, verified by three readers
