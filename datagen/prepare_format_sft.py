@@ -27,8 +27,9 @@ rate on ChatML packs is unmeasured (their boundary is
 <|im_start|>assistant\\n, a different merge). Decide whether to fix the math
 path after this run's numbers.
 
-Filter: 1,123/99,996 train prompts carry no docstring. They are dropped (count
-in build_stats.filtered_no_docstring): the negative control needs the train
+Filter: 1,121/99,996 train prompts carry no docstring (measured at the first
+pack build, 2026-09-09). They are dropped (count in
+build_stats.filtered_no_docstring): the negative control needs the train
 side docstring-pure, or "docstring arm moves, sig-only arm does not" has no
 clean reading.
 
