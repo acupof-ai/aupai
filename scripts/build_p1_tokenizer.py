@@ -23,7 +23,8 @@ data/tokenizer.json, whose ids every live checkpoint inherits. The swap is a
 separate decision.
 
     python scripts/build_p1_tokenizer.py \
-        --code_dirs code_rp1t_dd09_kept,code_rp1t_b2v2_dd_kept,code_dedup08_kept \
+        --corpus data/p1/keep_set \
+        --code_dirs code_rp1t_dd09,code_rp1t_b2v2_dd,code_dedup08 \
         --textbooks data/p1/textbooks_pilot.jsonl
 """
 import argparse
@@ -95,11 +96,11 @@ def fit_vocab(target, texts):
     return tok
 
 
-def _sample_random(domain, want_bytes, rng):
+def _sample_random(corpus, domain, want_bytes, rng):
     """Random sample across shards, disjoint from domain_texts' front-loaded fit read
     (the corpus is ~100x the fit budget, so a random draw lands outside it)."""
     import glob
-    fs = sorted(glob.glob(os.path.join(CORPUS, domain, "*.jsonl")))
+    fs = sorted(glob.glob(os.path.join(corpus, domain, "*.jsonl")))
     if not fs:
         sys.exit(f"no shards for {domain}")
     rows, got = [], 0
@@ -135,13 +136,13 @@ def gate_failures(label, m, g):
     return fails
 
 
-def held_out(code_dirs, code_shares, textbooks_path, fit_tb_budget, seed=17):
+def held_out(corpus, code_dirs, code_shares, textbooks_path, fit_tb_budget, seed=17):
     """Code half: random sample across shards. Textbook half: chapters after the fit
     prefix (skip_bytes = the fit read's budget), disjoint by construction."""
     rng = random.Random(seed)
     rows = []
     for d, share in zip(code_dirs, code_shares, strict=True):
-        rows += _sample_random(d, int(2_000_000 * share), rng)  # ~2M chars code held-out
+        rows += _sample_random(corpus, d, int(2_000_000 * share), rng)  # ~2M chars code held-out
     tb = textbook_texts(textbooks_path, 300_000, skip_bytes=fit_tb_budget)
     rng.shuffle(rows), rng.shuffle(tb)
     return rows, tb
@@ -149,8 +150,16 @@ def held_out(code_dirs, code_shares, textbooks_path, fit_tb_budget, seed=17):
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--code_dirs", required=True,
-                    help="comma-separated filtered code domains (classifier keep set), under data/corpus/")
+    ap.add_argument(
+        "--code_dirs",
+        required=True,
+        help="comma-separated filtered code domains (classifier keep set), under --corpus",
+    )
+    ap.add_argument(
+        "--corpus",
+        default=CORPUS,
+        help="corpus root holding the code domains (default: data/corpus; the p1 keep set is data/p1/keep_set)",
+    )
     ap.add_argument("--code_shares", default=DEFAULT_CODE_SHARES)
     ap.add_argument("--textbooks", required=True, help="synthetic textbook jsonl")
     ap.add_argument("--code_frac", type=float, default=DEFAULT_CODE_FRAC)
@@ -173,7 +182,7 @@ def main():
 
     texts = []
     for d, share in zip(code_dirs, code_shares, strict=True):
-        docs = domain_texts(CORPUS, d, code_budget * share)
+        docs = domain_texts(a.corpus, d, code_budget * share)
         print(f"  fit {d}: {len(docs)} docs, {sum(len(x.encode()) for x in docs)/1e6:.1f}M bytes", flush=True)
         texts += docs
     tb = textbook_texts(a.textbooks, tb_budget)
@@ -190,7 +199,7 @@ def main():
     tok.save(tmp)
 
     # gates + the tax, now a READING on the real composition (was an inference at proxy-fit)
-    code_ho, tb_ho = held_out(code_dirs, code_shares, a.textbooks, tb_budget)
+    code_ho, tb_ho = held_out(a.corpus, code_dirs, code_shares, a.textbooks, tb_budget)
     subsets = {"code_held_out": code_ho}
     if tb_ho:
         subsets["textbooks_held_out"] = tb_ho
