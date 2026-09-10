@@ -513,7 +513,9 @@ class CompressedSparseAttention(nn.Module):
             nn.init.zeros_(self.branch_gate.weight)
             nn.init.zeros_(self.branch_gate.bias)
 
-    def forward(self, q, k, v, cu=None, x=None):
+    def forward(self, q, k, v, cu=None, x=None, pkg=None):
+        # pkg is the incoming cross-layer package (3b-20). Full mode ignores it and
+        # REPLACES the slot with its own; GatedMLA calls one shape for F and R.
         if self.csa2:
             return self._forward_csa2(q, k, v, cu, x)
         if cu is not None:
@@ -618,7 +620,8 @@ class CompressedSparseAttention(nn.Module):
         isc = isc.masked_fill(~vis[:, None], float("-inf"))
         kk = min(self.topk, NB)
         sel = torch.zeros(B, self.ih, T, NB, dtype=torch.bool, device=q.device)
-        sel.scatter_(-1, isc.topk(kk, dim=-1).indices, True)
+        _topk = isc.topk(kk, dim=-1).indices
+        sel.scatter_(-1, _topk, True)
         sel &= vis[:, None]                    # a -inf block can still be picked when kk>visible
         sel = sel.repeat_interleave(self.h // self.ih, dim=1)    # B,H,T,NB
         # straight-through: hard selection in the forward, softmax over the indexer
@@ -647,6 +650,10 @@ class CompressedSparseAttention(nn.Module):
         s = torch.where(alive, s, torch.zeros_like(s))
         w = torch.softmax(s, dim=-1) * alive.to(sc_cat.dtype)
         y = (w[..., :NB] * ste) @ vc + w[..., NB:] @ vh
+        # Full mode EMITS the cross-layer package (3b-20): the learned entries, the
+        # projected indexer-K, the unexpanded top-k indices and the block count.
+        # Reuse layers read this and own no global-branch parameters of their own.
+        self._pkg = CSA2Package(kc=kc, vc=vc, ik=ik, topk_idx=_topk, nb=NB, cu=cu)
         return y.transpose(1, 2)                                # B,T,H,D
 
     def _forward_packed(self, q, k, v, cu):
@@ -744,6 +751,91 @@ class PureSWA(nn.Module):
         return y.transpose(1, 2)                                # B,T,H,D
 
 
+class CSA2Package(NamedTuple):
+    """The cross-layer KV package a Full CSA2 layer emits and Reuse layers consume.
+
+    kc/vc: learned main-KV entries (B,H,NB,D), separate K and V -- a latent would force
+    projections on the consumer and break the 5d^2 Reuse budget. ik: the projected
+    indexer-K (B,ih,NB,di); Reuse does not read it, it rides along for the Reindex (X)
+    path, which scores the shared entries with its own indexer. topk_idx: the selection
+    at indexer-head resolution (B,ih,T,kk); consumers expand h/ih themselves. nb: the
+    block count, the only field the consumer cannot recompute -- it rebuilds vis from
+    its own cu and checks the count matches, so a package cannot be read against a
+    different packed stream than the one it was built for.
+    """
+
+    kc: torch.Tensor
+    vc: torch.Tensor
+    ik: torch.Tensor
+    topk_idx: torch.Tensor
+    nb: int
+    cu: torch.Tensor
+
+
+class CSA2Reuse(nn.Module):
+    """CSA2 Reuse mode (tech report §2.3.1): a Full layer's package, one softmax.
+
+    Parameter-free BY CONSTRUCTION (3b-20 acceptance): the main KV entries, the
+    indexer-K and the top-k selection arrive in `pkg`, so this module holds no
+    global-branch parameters of its own -- the layer's 5d^2 (qg, the SWA KV's kv_up,
+    o) live in GatedMLA as in every layer. The layer's OWN k/v are the SWA window KV
+    only: the paper keeps SWA strictly layer-wise, even in the decoder.
+
+    Selection is the source's hard top-k, so a reused index carries no gradient to
+    the source indexer; the entries themselves DO train from every consumer, since
+    the attention scores and values differentiate through pkg.kc/pkg.vc. Visibility
+    is recomputed at the consumer from its own cu (the block arithmetic is identical
+    for every layer of one packed stream), which is what keeps masking exact without
+    carrying a (B,T,NB) mask in the package.
+    """
+
+    def __init__(self, cfg, h, hd):
+        super().__init__()
+        self.h, self.hd = h, hd
+        self.m = int(getattr(cfg, "csa2_m", 8))
+        self.topk = int(getattr(cfg, "csa2_top_k", 64))
+        self.n_win = int(getattr(cfg, "csa2_n_win", 128))
+        self.ih = int(getattr(cfg, "csa2_indexer_heads", 4))
+        self.scale = hd ** -0.5
+
+    def forward(self, q, k, v, cu=None, x=None, pkg=None):
+        if pkg is None:
+            raise ValueError(
+                "csa2 Reuse layer ran with no KV package: the body must place a Full "
+                "layer before the first Reuse layer (csa2_modes[0] must be F)")
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)                                # B,H,T,D
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)         # the layer's OWN SWA KV
+        if cu is None:
+            cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
+        _, doc, vis, NB = _doc_blocks(q, cu, self.m)
+        if NB != pkg.nb or not torch.equal(pkg.cu, cu):
+            raise ValueError(
+                f"csa2 package was built for a different packed stream: package "
+                f"nb={pkg.nb}, cu={pkg.cu.tolist()} vs consumer nb={NB}, cu={cu.tolist()}")
+        kk = min(self.topk, NB)
+        sel = torch.zeros(B, self.ih, T, NB, dtype=torch.bool, device=q.device)
+        sel.scatter_(-1, pkg.topk_idx[..., :kk], True)
+        # a -inf row at the source (no complete block yet) picks arbitrary indices;
+        # the consumer's own vis zeros them, exactly as at the source
+        sel = (sel & vis[:, None]).repeat_interleave(self.h // self.ih, dim=1)
+        sc = (qh @ pkg.kc.transpose(-1, -2)) * self.scale     # B,H,T,NB
+        ar = torch.arange(T, device=q.device)
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        same = doc[:, :, None] == doc[:, None, :]
+        m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        sc_cat = torch.cat([sc, full], dim=-1)                # B,H,T,NB+T
+        mask_cat = torch.cat([vis[:, None] & sel,
+                              m_win[:, None].expand(B, H, T, T)], dim=-1)
+        alive = mask_cat.any(-1, keepdim=True)
+        s = sc_cat.masked_fill(~mask_cat, float("-inf"))
+        s = torch.where(alive, s, torch.zeros_like(s))
+        w = torch.softmax(s, dim=-1) * alive.to(sc_cat.dtype)
+        y = w[..., :NB] @ pkg.vc + w[..., NB:] @ vh
+        return y.transpose(1, 2)                              # B,T,H,D
+
+
 class PartialRoPE(nn.Module):
     """RoPE on the LAST `dims` of each head only (facts/deepseek_v4.json#dsv4.partial_rope).
 
@@ -811,7 +903,7 @@ class GatedMLA(nn.Module):
     holds.
     """
 
-    def __init__(self, cfg, inner=None, heads=None, latent=None):
+    def __init__(self, cfg, inner=None, heads=None, latent=None, csa2_mode=None):
         super().__init__()
         self.d_in = cfg.d                                  # the residual: read and written
         self.d = inner if inner is not None else cfg.d     # the working width
@@ -853,8 +945,18 @@ class GatedMLA(nn.Module):
             raise ValueError(
                 "csa2=True needs csa=True: csa2 is the V4.1 variant of the csa arm, not a "
                 "second arm -- GatedMLA constructs the module only when csa is on")
-        self.csa = CompressedSparseAttention(cfg, self.h, self.hd) if getattr(
-            cfg, "csa", False) else None
+        if csa2_mode in ("R", "X") and not getattr(cfg, "csa2", False):
+            raise ValueError(
+                f"csa2_mode={csa2_mode} needs csa2=True: Reuse/Reindex are CSA2 modes, not "
+                "attention arms")
+        if csa2_mode == "R" or csa2_mode == "X":
+            # Reuse, and until its own indexer lands Reindex: the parameter-free consumer
+            # of a Full layer's package. X deliberately shares this path -- the package
+            # carries ik so its indexer can be added without a rewrite (3b-20).
+            self.csa = CSA2Reuse(cfg, self.h, self.hd)
+        else:
+            self.csa = CompressedSparseAttention(cfg, self.h, self.hd) if getattr(
+                cfg, "csa", False) else None
         # HCA (dsv4.hybrid_attention): the other half of V4's hybrid attention. CSA and HCA are
         # both constructed only when their flag is on, for the same state_dict reason as above.
         self.hca = HeavilyCompressedAttention(cfg, self.h, self.hd) if getattr(
@@ -925,7 +1027,10 @@ class GatedMLA(nn.Module):
             y = self.swa(q, k, v, cu)
             return self.o(y.reshape(B, T, self.d) * torch.sigmoid(gate))
         if self.csa is not None:
-            y = self.csa(q, k, v, cu, x)
+            y = self.csa(q, k, v, cu, x, getattr(self, "_pkg", None))
+            # Full mode REPLACES the package slot; Reuse owns no _pkg and leaves it.
+            if hasattr(self.csa, "_pkg"):
+                self._pkg = self.csa._pkg
             y = y.reshape(B, T, self.d)
             return self.o(y * torch.sigmoid(gate))
         if HAS_FA and cu is not None:
@@ -1980,7 +2085,7 @@ def _mem_layers(cfg):
 
 class Block(nn.Module):
 
-    def __init__(self, cfg, is_attn=False, memory=None, moe=False, attn_kind=None):
+    def __init__(self, cfg, is_attn=False, memory=None, moe=False, attn_kind=None, csa2_mode=None):
         super().__init__()
         self.n1 = RMSNorm(cfg.d)
         # head_mixed replaces the layer-level alternation entirely: EVERY block gets both mixers,
@@ -1996,7 +2101,8 @@ class Block(nn.Module):
         # booleans is how they come to disagree.
         if attn_kind is not None and is_attn and not _hm:
             cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"), swa=(attn_kind == "swa"))
-        self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
+        self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (
+            GatedMLA(cfg, csa2_mode=csa2_mode) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
         # THE FFN IS REPLACED, NOT SUPPLEMENTED, and that is the structural difference from the
         # memory arm. The memory pool ADDED a branch and left the dense parameter count identical
@@ -2172,10 +2278,43 @@ class HybridLM(nn.Module):
         if _n_swa < 0:
             raise ValueError(f"n_swa_only_layers must be >= 0, got {_n_swa}")
         kind = {}
+        csa2_modes = {}
         if _hyb:
+            _csa2_on = bool(getattr(cfg, "csa2", False))
+            _toks = []
+            if _csa2_on:
+                # CSA2 mode map (ae-2's Step-0 config): every non-SWA attention layer is
+                # F(ull), R(euse) or X(reindex). The first CSA2 layer MUST be Full -- a
+                # Reuse layer with no source raises at forward, but catching it here names
+                # the config instead of the forward.
+                _toks = [t.strip() for t in str(getattr(cfg, "csa2_modes", "")).split(",")
+                         if t.strip()]
+                _n_csa2 = len(attn_idx) - _n_swa
+                if _n_csa2 == 0:
+                    raise ValueError(
+                        "csa2 is on but every attention layer is SWA-only "
+                        f"(n_swa_only_layers={_n_swa} >= {len(attn_idx)} attention layers)")
+                if len(_toks) != _n_csa2:
+                    raise ValueError(
+                        f"csa2_modes has {len(_toks)} modes for {_n_csa2} CSA2 layers "
+                        f"({len(attn_idx)} attention - {_n_swa} SWA-only): one per non-SWA layer")
+                if any(t not in ("F", "R", "X") for t in _toks):
+                    raise ValueError(f"csa2_modes entries must be F/R/X, got {_toks}")
+                if _toks[0] != "F":
+                    raise ValueError(f"csa2_modes[0] must be F (the package source), got {_toks[0]}")
+                if getattr(cfg, "grad_ckpt", False):
+                    raise ValueError(
+                        "grad_ckpt with CSA2 Reuse layers is refused: the package is stashed "
+                        "on the mixer, not passed as a checkpoint input, so block recomputation "
+                        "would read the original forward's entries and backward would traverse "
+                        "a freed graph. Run Reuse without grad_ckpt, or make the package a "
+                        "checkpoint input first")
             for n, i in enumerate(attn_idx):
                 if n < _n_swa:
                     kind[i] = "swa"
+                elif _csa2_on:
+                    kind[i] = "csa"
+                    csa2_modes[i] = _toks[n - _n_swa]
                 else:
                     kind[i] = "csa" if n < 2 or n % 2 == 0 else "hca"
         self.blocks = nn.ModuleList(
@@ -2183,10 +2322,12 @@ class HybridLM(nn.Module):
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
                    memory=(self.memory if i in self.mem_layers else None),
                    moe=(i in self.moe_layers),
-                   attn_kind=kind.get(i))
+                   attn_kind=kind.get(i),
+                   csa2_mode=csa2_modes.get(i))
              for i in range(cfg.layers)]
         )
         self.attn_kinds = kind
+        self.csa2_modes = csa2_modes
         self.norm = RMSNorm(cfg.d)
         # A/B (4): ONE shared value-embedding table for every MLA layer, or None when off.
         #
@@ -2394,15 +2535,36 @@ class HybridLM(nn.Module):
         elif isinstance(m, nn.Conv1d):
             nn.init.normal_(m.weight, std=0.02)  # not PyTorch's kaiming default
 
+    def _clear_pkg(self):
+        # The package is per-forward activations, not state: a stale slot would be
+        # reused by any forward reaching a Reuse layer without a Full layer before it
+        # -- the same wrong-number shape as the stale _ve cleared in forward() below.
+        for b in self.blocks:
+            if isinstance(b.mixer, GatedMLA):
+                b.mixer._pkg = None
+
     def _body(self, x, cu=None):
         ckpt = self.grad_ckpt and self.training
         if not self.attn_res:
+            pkg = None
             for b in self.blocks:
+                # CSA2 package slot (3b-20): SWA/non-GatedMLA blocks ignore it, a Full
+                # layer replaces it, a Reuse layer consumes it. Stashed on the mixer
+                # rather than threaded through Block.forward/sublayers so the AttnRes
+                # path and every checkpoint boundary stay untouched -- the _ve precedent.
+                if isinstance(b.mixer, GatedMLA):
+                    b.mixer._pkg = pkg
                 x = torch.utils.checkpoint.checkpoint(b, x, cu, use_reentrant=False) if ckpt else b(x, cu)
+                if isinstance(b.mixer, GatedMLA):
+                    pkg = b.mixer._pkg
+            self._clear_pkg()
             return x
         # Block AttnRes (Fig. 2): `done` = completed block reps, `partial` = intra-block running sum
         done, partial, n = [Source.of(x)], [], 0
+        pkg = None
         for bi, b in enumerate(self.blocks):
+            if isinstance(b.mixer, GatedMLA):
+                b.mixer._pkg = pkg
             for ar, norm, f in b.sublayers(cu):
                 h = ar(done + partial)
                 # AttnRes stays outside the checkpoint: only [B,T] logits on the tape, never [B,T,D]
@@ -2412,6 +2574,8 @@ class HybridLM(nn.Module):
                 n += 1
                 if n in self.ar_block_ends:
                     done, partial = done + partial, []
+            if isinstance(b.mixer, GatedMLA):
+                pkg = b.mixer._pkg
             # THE MEMORY IN THE attn_res PATH, placed here by 4c's ruling 2026-09-05 and NOT a
             # sublayer. The control trained with attn_res True (ck["cfg"] of
             # ckpt_b0_headmix_armA.pt, and 50 AttnRes tensors are in its weights, 51,200 params =
@@ -2434,6 +2598,7 @@ class HybridLM(nn.Module):
                     partial = [Source.of(upd)]
                 else:
                     done = done[:-1] + [Source.of(upd)]
+        self._clear_pkg()
         return self.final_ar(done + partial)
 
     def lm_logits(self, hidden):
