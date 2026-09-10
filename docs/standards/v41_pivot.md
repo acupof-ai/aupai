@@ -55,3 +55,23 @@ unchanged: HumanEval pass@1 >= 30% at ~350M (docs/standards/p1_data_recipe.md:25
 - **The data recipe does NOT change.** The 2.8116B code keep set, the synthetic exercises and
   textbooks, the tokenizer — all are model-independent. Textbook/exercise generation resumes for
   the V4.1 gate run; only the model that trains on them changes.
+
+## Update 2026-09-10: faithful V4.1, loop deferred to a flagged A/B (user order)
+
+User order: follow V4.1 faithfully AND add loop. Resolved as two tracks because the repo's own
+2026-09-08 SMELT/DeepLoop ruling (docs/lessons/smelt_moe_looped.md) gives negative evidence at our
+scale, and weight-looping interacts with two V4.1 components without a proof:
+
+- **Build faithfully now:** CED (encoder/decoder split, decoder global KV projected from H_{L/2},
+  Eq.1), CSA2 (Full/Reuse/Reindex), SWA in every layer with SWA-only first layers, partial RoPE,
+  KDA/HCA dropped, MoE per block. This is the FIRST gate model — trained without weight-sharing.
+- **Weight loop is an optional flag, not the default:** DeepLoop alpha/beta residual scaling
+  (beta=(8N)^{-1/2}, alpha=(2N)^{1/2}) plus an intermediate-half-loop 2x, behind a config flag,
+  off for the baseline. Do NOT wire it into the forward path until the baseline trains.
+- **Decide loop by an A/B after the baseline lands**, not before. The repo's evidence: SMELT gains
+  are at 1e20-1e21 FLOPs and 56-91 tokens/param; at 350M active and our token budget the estimate
+  is a few points with a confidence lower bound near zero. Two interactions must be settled before
+  the A/B is trusted: AttnRes across loops is O(L^2) (+26-35% wall time measured at L12), and the
+  DeepLoop stability bound assumes a standard residual stream that CED's projected decoder KV does
+  not provide. AttnRes is within-half only for now and is a candidate to disable on this line.
+- CSA2's cross-layer KV/top-k reuse is NOT the weight loop — it stays on in the faithful baseline.
