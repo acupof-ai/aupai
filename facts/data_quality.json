@@ -1113,6 +1113,91 @@
    "uncertainty": "+-0.0018 (n=4200, binomial 95%: 0.20%-0.59%)",
    "boundary": "Measured on code_py_starcoder only, which is the domain the sheet's representatives come from. It does not bound the rp1t side, and it does not say anything about the opposite error -- two excerpts of the SAME file that look different because the difference falls inside the first 400 chars.",
    "status": "measured"
+  },
+  {
+   "id": "dq.ultradata_l2_toptier_0910",
+   "value": "Hand-read top-tier yield of openbmb/UltraData-Code L2 (natural GitHub python) is 6.4% (26/409, 95% Wilson CI 4.4-9.2%) on a stratified sample of 70 per dataset category across parquet shard 1 (612,143 rows). By category, hand KEEP rate: DATA 14/68=20.6%, ALGO 7/70=10.0%, TOOL 3/68=4.4%, WEB 2/66=3.0%, CONFIG 0/68, TEST 0/69 (pooled CONFIG+TEST 0/137, upper 95% CI 2.7%). The dataset's own quality_score is NOT a usable filter: KEEP mean 5.49 vs CUT 5.44, rates flat 4-9% across score bands 3-8, and TEST has the highest mean score (6.23) with 0 KEEP. Dominant CUT reasons: vendored_generated (pip/_vendor, bundled CPython stdlib/tests), boilerplate CRUD/glue, trivial, and non-algorithmic test fixtures/mocks. ast.parse passes 396/409 (96.9%; 13 syntax errors, 6 in TOOL). Mechanical rule adopted (fb ruling 2026-09-10): drop category in {CONFIG,TEST}; at shard-1 census weights that removes 21.1% of rows with ~zero top-tier loss.",
+   "measured": "2026-09-11",
+   "source": "3b-21 stratified hand-read, n=420 (70x6 categories) from data/raw UltraData-Code-L2-py-part-00001; 42 LLM readers + 10% blind double-read (agreement 88.9%); ast.parse objective; dataset category+quality_score columns. Instrument datagen/ud_solution_exec.py unrelated; sampling/audit scratch in _3btmp (not committed).",
+   "config": {
+    "sample": "70 per category x 6 categories, seed 20260910, parquet L2 shard 1 of 119",
+    "keep_rate_by_category": {
+     "DATA": 0.206,
+     "ALGO": 0.1,
+     "TOOL": 0.044,
+     "WEB": 0.03,
+     "CONFIG": 0.0,
+     "TEST": 0.0
+    },
+    "category_population_shard1": {
+     "TOOL": 0.309,
+     "ALGO": 0.251,
+     "TEST": 0.138,
+     "WEB": 0.137,
+     "DATA": 0.092,
+     "CONFIG": 0.073
+    },
+    "quality_score_non_monotonic": "KEEP mean 5.49 vs CUT 5.44; TEST highest mean 6.23 with 0/69 KEEP",
+    "ast_parse_ok": 0.969,
+    "double_read_agreement": 0.889,
+    "mechanical_rule": "drop category in {CONFIG,TEST} (fb 2026-09-10)",
+    "tier_definition": "substantive correct program logic worth a coding LLM learning; excludes boilerplate/config/vendored/fixtures/trivial"
+   },
+   "uncertainty": "One parquet shard of 119 (stratification is within-shard); category proportions and yield can shift across shards. Hand labels carry a 11% double-read disagreement; Wilson CIs on small per-category KEEP counts are wide (ALGO 4.9-19.2%). Category is monotonic with yield on average but is not a per-doc guarantee -- 79% of DATA and 90% of ALGO are still CUT, and a few good docs sit in TOOL/WEB.",
+   "boundary": "L2 python shard 1 on 2026-09-11, post decontam/dedup sampling of the raw parquet (filters only remove rows). Says nothing about non-python L2 levels or about the other 118 shards; full-set re-measure after conversion bounds it. The category rule is a cheap mechanical pre-filter, not a content classifier.",
+   "status": "measured"
+  },
+  {
+   "id": "dq.ultradata_l3_toptier_0910",
+   "value": "Hand-read top-tier yield of openbmb/UltraData-Code L3 (synthetic task+analysis+solution+test) is 39.2% (153/390, 95% CI 34.5-44.2%) on 100 per full_content_format (4 formats), flat across formats (34-42%). The production keep predicate 'solution passes its own bundled test on execution' (datagen/ud_solution_exec.py, fb ruling) yields 45.0% (180/400). Joined on the same 390 rows, that exec predicate vs hand top-tier gives precision 42.9% (75/175 kept rows are top-tier; CI 35.8-50.3) and recall 49.0% (75/153; CI 41.2-56.9): of kept rows 100 are low-value (98 trivial passing exercises -- print/one-builtin/hello-world whose tests trivially pass), and 78 good docs are cut (52 substantive algorithms plus ~13 faithful chardet/prober/textbook structures whose BUNDLED TEST contradicts the stated spec while the solution is correct). Exec-pass is an executability signal, not an instructional-value filter; used alone it admits a majority of trivial content and discards about half the genuine algorithms. Wrong-test good code (good solution / incorrect test) is ~13/390 = 3.3%. STAGE-2 FLOOR (fb ruling 2026-09-11, calibrated on these rows): keep_l3 = exec-pass AND nontrivial(solution), where nontrivial is a static ast floor (node count >= 90 OR (>=3 branch/loop control points with >=2 loops)), datagen/ud_solution_exec.py. Joint on n=390: precision 67.9% (vs 42.9% exec-only), recall 47.1% (vs 49.0%, only -2pt), joint yield 27.2% (bootstrap 95% 22.6-31.5%). The floor removes 66 of the trivial-pass false positives and loses 3/75 compact substantive pass-set docs. Recall stays ~47% because the good-code/wrong-test false negatives are not recoverable by a content floor (accepted as lost).",
+   "measured": "2026-09-11",
+   "source": "3b-21 stratified hand-read n=400 (100x4 formats) seed 20260910 from UltraData-Code-L3-py-part-00001-of-00147; objective per-row execute() from datagen/ud_solution_exec.py run on the pod over the exact sampled ids (180 pass/220 fail); 48 LLM readers (42 first pass full-content rejudge of an 89-doc truncation artifact + 6 double-read).",
+   "config": {
+    "sample": "100 per format x 4 formats, seed 20260910, parquet L3 shard 1 of 147",
+    "hand_keep_by_format": {
+     "commented standard order": 0.412,
+     "solution-first order": 0.398,
+     "standard order": 0.337,
+     "test-first order": 0.423
+    },
+    "exec_predicate_yield": 0.45,
+    "confusion_vs_hand": {
+     "n": 390,
+     "tp": 75,
+     "fp": 100,
+     "fn": 78,
+     "tn": 137,
+     "precision": 0.429,
+     "recall": 0.49
+    },
+    "fp_composition": "98/100 are trivial passing exercises",
+    "fn_composition": "52 substantive + ~13 good-code-wrong-test (test contradicts spec)",
+    "exec_sandbox": "-I -B subprocess, empty temp cwd, scrubbed env, RLIMIT_CPU 10/12s, RLIMIT_AS 8GiB, 15s wall; pass iff exit 0",
+    "double_read_agreement": 0.889,
+    "truncation_artifact_note": "first pass capped full_content at 6000 chars and mislabeled 89 long docs broken_truncated; corrected by full-content rejudge (yield moved 28.5% -> 39.2%)",
+    "stage2_floor": {
+     "rule": "ast nodes>=90 OR (control_flow>=3 AND loops>=2)",
+     "function": "datagen/ud_solution_exec.nontrivial/keep_l3",
+     "joint_precision": 0.679,
+     "joint_recall": 0.471,
+     "joint_yield": 0.272,
+     "joint_precision_ci95": [
+      0.59,
+      0.768
+     ],
+     "joint_recall_ci95": [
+      0.389,
+      0.545
+     ],
+     "joint_yield_ci95": [
+      0.226,
+      0.315
+     ]
+    }
+   },
+   "uncertainty": "One parquet shard of 147, within-shard stratification; 11% double-read disagreement concentrated in the good-code/wrong-test boundary (whether to rescue a failing test). Precision/recall CIs are +-7pt. The hand labels judge solution+analysis instructional value; a different phi-1 threshold would move the rates. exec yield itself is deterministic given the sandbox.",
+   "boundary": "L3 python shard 1, 2026-09-11, raw parquet rows. Does not generalise to the other 146 shards or non-python levels until full-set measurement. The confusion matrix characterises the exec predicate AS A SOLE filter; a stage-2 nontriviality/content filter would change precision, and not running exec over the good-code/wrong-test class would recover part of recall. No downstream model-quality claim is made from execution alone.",
+   "status": "measured"
   }
  ]
 }
