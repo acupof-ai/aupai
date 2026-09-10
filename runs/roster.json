@@ -12,14 +12,14 @@
  "members": [
   {
    "name": "fb",
-   "socket": "uds:/tmp/cc-socks/67870.sock",
+   "socket": "uds:/tmp/cc-socks/99800.sock",
    "role": "controller",
    "topics": [
     "*"
    ],
-   "note": "rulings, card allocation, launch; the run's supervisor of record Socket verified 2026-09-06 12:2xZ: PPID of this session's shell is 67870, cwd /Users/bytedance/code/aupai (integration tree; worktree ../aupai-fb).",
-   "listagents_name": "aupai-4c",
-   "listagents_ref": "61638d",
+   "note": "Controller session CONTINUES across resume (same session, label changed aupai-4c -> aupai-96). Socket uds:/tmp/cc-socks/99800.sock, listagents ref 96dfeb, verified 2026-09-10 17:1xZ from the from= address of the controller's own outbound messages and PPID. Earlier sockets 67870 (aupai-4c) and 61638d are dead after the restart. Rulings, card allocation, launch; worktree /Users/bytedance/code/aupai-fb.",
+   "listagents_name": "aupai-96",
+   "listagents_ref": "96dfeb",
    "ref": "61638d"
   },
   {
@@ -133,8 +133,9 @@
   "3b": "b0",
   "fb": "44",
   "e1": "3b",
-  "tilerl": "b0"
+  "tilerl": "b0",
+  "98": "fb"
  },
  "refreshed": "2026-09-09T03:5xZ by fb: five of seven entries pointed at dead sockets in one morning (b0, e1, 3b, de corrected with identity evidence; tilerl's session gone but the team working). A resume changes label and socket while the work continues.",
- "pairs_note": "2026-09-09 fb: b0's reviewer was `tilerl` and tilerl's session is unreachable, so b0 had NO reachable second reader and its open PRs #105 and #102 had no reviewer at all. b0 -> de. tilerl -> b0 is kept because tileRL is working (a fresh card-1 claim at 03:42) and only its session pointer is dead; the b0 -> tilerl direction is dropped because it names nobody reachable. de now second-reads both 44 and b0. WHY THIS ENTRY EXISTS AT ALL: fb recorded the b0<->de repair in the member NOTES and left `pairs` -- the machine-readable half -- saying `b0: tilerl`. That is the same human-half/machine-half split that made a card grant read `launch_block_granted=false` while its prose announced a grant, which 3b caught on fb two days ago. b0 caught this one. Previous value: {\"de\": \"44\", \"44\": \"de\", \"tilerl\": \"b0\", \"b0\": \"tilerl\", \"3b\": \"b0\", \"fb\": \"44\", \"e1\": \"3b\"}"
+ "pairs_note": "2026-09-09 fb: b0's reviewer was `tilerl` and tilerl's session is unreachable, so b0 had NO reachable second reader and its open PRs #105 and #102 had no reviewer at all. b0 -> de. tilerl -> b0 is kept because tileRL is working (a fresh card-1 claim at 03:42) and only its session pointer is dead; the b0 -> tilerl direction is dropped because it names nobody reachable. de now second-reads both 44 and b0. WHY THIS ENTRY EXISTS AT ALL: fb recorded the b0<->de repair in the member NOTES and left `pairs` -- the machine-readable half -- saying `b0: tilerl`. That is the same human-half/machine-half split that made a card grant read `launch_block_granted=false` while its prose announced a grant, which 3b caught on fb two days ago. b0 caught this one. Previous value: {\"de\": \"44\", \"44\": \"de\", \"tilerl\": \"b0\", \"b0\": \"tilerl\", \"3b\": \"b0\", \"fb\": \"44\", \"e1\": \"3b\"} || 2026-09-10 98: 98 was in no pair -- nobody reviewed its PRs. fb takes 98's review (fb is on no generation/annotation/decontamination line). Added `98: fb`. The pair is one-directional: `harness review add` restricts --reviewer to 3b/44/b0/de/e1/fb/tilerl, so 98 has a reviewer but cannot be one."
 }
