@@ -1014,6 +1014,12 @@ def main():
         # rates. An occurrence-counting R1 (the bug found in review) is a constant metric
         # that passes any eyeball; the selftest is the only place that shape is caught.
         "datagen/synth_selfrep.py",
+        # The UltraData L3 solution-execution keep predicate (3b). Registered because the
+        # production L3 keep-filter imports this exact execute(): audit yield and filter must
+        # be one code path, so a verdict misclassification (assertion fail scored PASS, a
+        # sleeping hang not TIMEOUT, an empty solution kept) would ship rows silently. The
+        # selftest is the known-answer PASS/FAIL/TIMEOUT/empty world.
+        "datagen/ud_solution_exec.py",
         "scripts/corpus_snapshot.py",
         # The exact token counter behind cs.code_rp1t_landed and cs.code_dedup08_landed.
         # Registered because it is the instrument that CORRECTS a measurement-basis defect:
