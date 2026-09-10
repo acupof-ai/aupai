@@ -18,7 +18,7 @@ from collections import Counter
 import numpy as np
 
 TOK = re.compile(r"[a-z0-9]+|[一-鿿]")
-P = 12  # kth-hash modulus 2^P: expected 2^-P of hashes kept
+P = 12  # kth-hash modulus 2^P: expected 2^-P of distinct hashes kept
 
 
 def h64(s):
@@ -26,7 +26,7 @@ def h64(s):
 
 
 def stream_mode(paths, field):
-    kept8 = 0
+    kept = set()  # SET of passing hashes: the kth-hash estimator counts DISTINCT 8-grams
     total8 = 0
     seen_doc = set()
     dup_doc = 0
@@ -40,6 +40,8 @@ def stream_mode(paths, field):
             text = str(d.get(field, ""))
             toks = TOK.findall(text.lower())
             n_doc += 1
+            # text[:4096] prefix hash: over-counts dups that share a prefix. Acceptable for a
+            # repetition metric whose target is wholesale reskin, not prefix reuse.
             dh = h64(text[:4096])
             if dh in seen_doc:
                 dup_doc += 1
@@ -47,16 +49,17 @@ def stream_mode(paths, field):
                 seen_doc.add(dh)
             for i in range(len(toks) - 7):
                 total8 += 1
-                if h64(" ".join(toks[i:i + 8])) % (1 << P) == 0:
-                    kept8 += 1
-    est_distinct = kept8 * (1 << P)
-    print(json.dumps({
+                h = h64(" ".join(toks[i:i + 8]))
+                if h % (1 << P) == 0:
+                    kept.add(h)
+    est_distinct = len(kept) * (1 << P)
+    return {
         "docs": n_doc,
         "exact_dup_rate": round(dup_doc / max(n_doc, 1), 5),
         "total_8grams": total8,
         "distinct_8gram_rate": round(est_distinct / max(total8, 1), 5),
-        "estimator": f"kth-hash p={P}, kept={kept8}",
-    }, ensure_ascii=False, indent=2))
+        "estimator": f"kth-hash p={P}, kept={len(kept)}",
+    }
 
 
 # ---------- sample mode (R2/R3) ----------
@@ -65,16 +68,18 @@ PERMS = 64
 RNG = np.random.default_rng(20260909)
 A = RNG.integers(1, 1 << 32, size=PERMS, dtype=np.uint64)
 B = RNG.integers(0, 1 << 32, size=PERMS, dtype=np.uint64)
-MERSENNE = np.uint64((1 << 61) - 1)
 
 
 def minhash(tokens):
-    """64-perm MinHash signature over the token set. None if empty."""
+    """64-perm MinHash signature over the token set. None if empty.
+
+    Multiply-shift mod 2^64 (uint64 wrap), not a prime-modulus universal hash:
+    adequate for a comparative band-rate, which is all R2 is.
+    """
     if not tokens:
         return None
     hs = np.array([h64(t) for t in set(tokens)], dtype=np.uint64)
-    V = (A[None, :] * hs[:, None] + B[None, :]) & MERSENNE  # (n_tokens, PERMS)
-    return V.min(axis=0)
+    return (A[None, :] * hs[:, None] + B[None, :]).min(axis=0)
 
 
 def reskin_band(sigs):
@@ -145,15 +150,48 @@ def sample_mode(path, field, n):
                      ensure_ascii=False, indent=2))
 
 
+def _selftest():
+    import os
+    import tempfile
+    # Known-answer control: N identical docs, each with no internal 8-gram repeat.
+    # exact_dup=(N-1)/N; R1 distinct rate = 1/N (the set estimates distinct = one doc's worth).
+    N = 4
+    doc = " ".join(f"tok{i}" for i in range(100000))
+    fd, path = tempfile.mkstemp(suffix=".jsonl")
+    try:
+        with os.fdopen(fd, "w") as f:
+            for _ in range(N):
+                f.write(json.dumps({"content": doc}) + "\n")
+        s = stream_mode([path], "content")
+        assert s["exact_dup_rate"] == (N - 1) / N, s
+        assert 0.15 < s["distinct_8gram_rate"] < 0.40, s  # true 1/N = 0.25
+    finally:
+        os.unlink(path)
+    # identical signatures -> every pair Jaccard 1.0, all in the >=0.7 band
+    pairs, band = reskin_band(np.zeros((10, PERMS), dtype=np.uint64))
+    assert pairs == 45 and band[">=0.7"] == 45, (pairs, band)
+    # disjoint signatures -> Jaccard 0, no band hits
+    sigs = np.arange(10 * PERMS, dtype=np.uint64).reshape(10, PERMS)
+    pairs, band = reskin_band(sigs)
+    assert pairs == 45 and sum(band.values()) == 0, (pairs, band)
+    print("selftest OK")
+
+
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--mode", choices=["stream", "sample"], required=True)
-    ap.add_argument("--corpus", nargs="+", required=True)
+    ap.add_argument("--mode", choices=["stream", "sample"])
+    ap.add_argument("--corpus", nargs="+")
     ap.add_argument("--field", default="content")
     ap.add_argument("--n", type=int, default=100000)
+    ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
+    if args.selftest:
+        _selftest()
+        return
+    if not args.mode or not args.corpus:
+        ap.error("--mode and --corpus are required unless --selftest")
     if args.mode == "stream":
-        stream_mode(args.corpus, args.field)
+        print(json.dumps(stream_mode(args.corpus, args.field), ensure_ascii=False, indent=2))
     else:
         sample_mode(args.corpus[0], args.field, args.n)
 
