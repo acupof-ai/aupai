@@ -1342,6 +1342,29 @@
    "boundary": "Says nothing about pass@k at k>1 or about temperature: every number here is greedy. Says nothing about the model after any SFT -- runs/prereg.jsonl#format_sft_humaneval_0909 is the before/after that uses these as the baseline. The cause split is measured at 40 raw tokens, so a problem whose model output would have started a body after 40 tokens is counted as stop_at_0; the 280-token production run's 97.6% empty rate bounds how much that can matter.",
    "status": "measured",
    "artifact_sha256": "b2adeeae8b383b6f0c615746a397f25c8abe44da4afb29cd10e6c4bbf0463fd3"
+  },
+  {
+   "id": "be.humaneval_pass1_format_sft_0909",
+   "value": "HumanEval pass@1 on ckpt_format_sft_0909.pt (format SFT from the step34000 weights on sig[+docstring]->body pairs), docstring arm, 164 problems, same exec+SIGALRM judge and STOPS list as the baseline. GREEDY: 3/164 = 1.83% (baseline step34000 was 0/164). SAMPLED pass@1 (n=20, temp=0.2, top_p=0.95, seed=1337): 55/3280 = 1.68% (= 2.75/164 expected passing per problem). The prereg criterion (>=5/164 = moved off the floor) is NOT met: 3/164 is indistinguishable from noise, reported as a bound, never a win. THE EMPTY-COMPLETION RATE DROPPED AND THE FAILURE MODE FLIPPED: empty 160/164 = 97.6% (baseline) -> 72/164 = 43.9%, and the empty_kind split reversed -- baseline stop_at_0 127 / eos_first 33 (document continuation, the model writes the next def) became post-SFT eos_first 70 / stop_at_0 2 (the model ends the turn). So the SFT killed document-continuation (stop_at_0 127->2) but the model now emits <eos> immediately instead of writing a body (eos_first 33->70): the interface shifted from 'continue the file' to 'end the turn', and pass@1 did not move with it. Controls in the same harness: canonical_solution 164/164, constant-False FAIL, empty/newline/pass 0/164 each, strip 164/164.",
+   "measured": "2026-09-09",
+   "source": "eval/humaneval_gen.py (greedy arm + empty_kind split, log runs/he_after_sft_0909.log, preds data/eval/preds_humaneval_ckpt_format_sft_0909.pt.postsft.jsonl sha256 56330405dc43d2c34944ac248d3835d4163347b061ccc1b4c4b6a3762bb9ca1f) + eval/humaneval_sample.py (sampled arm, log /tmp/he_sample.log, preds data/eval/preds_humaneval_sample_ckpt_format_sft_0909.pt.p1_sample_0909.jsonl sha256 63709c6adb4c776428a0eb0e1de6500516bfdd3afe7042d8d28c6729ab7382f9). Baseline: facts/base_eval.json#be.humaneval_pass1_step34000. Prereg: runs/prereg.jsonl#format_sft_humaneval_0909.",
+   "config": {
+    "ckpt": "ckpt_format_sft_0909.pt",
+    "protocol": "0-shot, prompt field verbatim, max_new 280, STOPS truncation, exec of the official test + check(entry_point) under a 6s SIGALRM",
+    "n_problems": 164,
+    "greedy": "pass@1 3/164 = 1.83%; empty 72/164 = 43.9% (eos_first 70, stop_at_0 2)",
+    "sampled": "n=20, temp=0.2, top_p=0.95, seed=1337; pass@1 = 55/3280 = 1.68% (2.75/164); empty 1437/3280 = 43.8% (aggregate -- the sampled harness records an empty boolean, not empty_kind)",
+    "judge": "same exec+SIGALRM judge and STOPS list for both arms; canonical_solution control 164/164 in the same harness, so the score is the model's and not the judge's",
+    "baseline": "ckpt_1.5b-a0.2b-e48_30b.pt.step34000: 0/164, empty 160/164 = 97.6% (stop_at_0 127, eos_first 33) -- fact be.humaneval_pass1_step34000",
+    "criterion": "prereg format_sft_humaneval_0909: >=5/164 = moved off the floor (Fisher one-sided vs 0/164, p=0.030 at k=5, p=0.124 at k=3); 3/164 is below the threshold"
+   },
+   "uncertainty": "3/164 vs the 0/164 baseline: Fisher one-sided p=0.124 (prereg), not significant; the prereg floor-move threshold is >=5 (p=0.030). Sampled pass@1 55/3280 has binomial SE ~0.22pt and agrees with greedy (1.83%) within noise. The empty_kind split is from the greedy arm only; the sampled arm's 43.8% empty is the aggregate without the eos_first/stop_at_0 split. The 14.0% Code-500 comparator is a different problem set. The code pretraining domains are contamination-UNSCANNED, so this is an internal before/after, NOT comparable to public tables.",
+   "boundary": "Says nothing about pass@k at k>1 (only pass@1 is reported; the n=20 samples could be re-scored for pass@5/10). Says nothing about the sig-only arm (--strip-docstrings, the prereg's negative control) -- that arm is not in this run. The empty_kind split is greedy-only.",
+   "status": "measured",
+   "artifact_sha256": {
+    "preds_humaneval_ckpt_format_sft_0909.pt.postsft.jsonl": "56330405dc43d2c34944ac248d3835d4163347b061ccc1b4c4b6a3762bb9ca1f",
+    "preds_humaneval_sample_ckpt_format_sft_0909.pt.p1_sample_0909.jsonl": "63709c6adb4c776428a0eb0e1de6500516bfdd3afe7042d8d28c6729ab7382f9"
+   }
   }
  ]
 }
