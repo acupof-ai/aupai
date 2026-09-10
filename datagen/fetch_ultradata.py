@@ -26,6 +26,7 @@ def footer_ok(path):
 def fetch(level, first, last, dest):
     n = N_SHARDS[level]
     os.makedirs(dest, exist_ok=True)
+    failed = 0
     for i in range(first, last + 1):
         name = f"UltraData-Code-{level}-py-part-{i:05d}-of-{n:05d}.parquet"
         out = os.path.join(dest, name)
@@ -39,8 +40,10 @@ def fetch(level, first, last, dest):
                             f"{BASE}/data/UltraData-Code-{level}/py/{name}"])
         if r.returncode != 0 or not footer_ok(out):
             print(f"FAIL {name} rc={r.returncode} footer={footer_ok(out)}", flush=True)
+            failed += 1
             continue
         print(f"OK {name} ({os.path.getsize(out)} bytes, {time.time() - t0:.0f}s)", flush=True)
+    return failed
 
 
 def main():
@@ -49,7 +52,7 @@ def main():
     ap.add_argument("--first", type=int, default=1)
     ap.add_argument("--last", type=int, default=3)
     ap.add_argument("--dest", default="data/raw/ultradata")
-    fetch(**vars(ap.parse_args()))
+    raise SystemExit(1 if fetch(**vars(ap.parse_args())) else 0)
 
 
 if __name__ == "__main__":
