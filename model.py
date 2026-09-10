@@ -548,14 +548,15 @@ class PureSWA(nn.Module):
 
     The window mask is the same lines as CompressedSparseAttention's window branch:
     causal & (ar[:,None] - ar[None,:]) < n_win, intersected with the same-document
-    mask on the packed path. n_win reads cfg.csa_window, so the paper's 128-vs-256
-    A/B is a config change. Placement is HybridLM's n_swa_only_layers.
+    mask on the packed path. n_win reads cfg.csa2_n_win (de-103's CSA2 field) with
+    fallback to cfg.csa_window, so the pure-SWA layers and the CSA2 window branch
+    share one width. Placement is HybridLM's n_swa_only_layers.
     """
 
     def __init__(self, cfg, h, hd):
         super().__init__()
         self.h, self.hd = h, hd
-        self.n_win = int(getattr(cfg, "csa_window", 256))
+        self.n_win = int(getattr(cfg, "csa2_n_win", getattr(cfg, "csa_window", 256)))
         if self.n_win < 1:
             raise ValueError(f"swa needs positive csa_window, got {self.n_win}")
         self.scale = hd ** -0.5
