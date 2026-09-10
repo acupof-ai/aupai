@@ -274,6 +274,49 @@ def masked_attend(sc, mask, v):
     return torch.softmax(sc, dim=-1) @ v * alive.to(v.dtype)
 
 
+def _doc_blocks(q, cu, m):
+    """Per-document m-token block assignment and the visibility mask.
+
+    The shared arithmetic of pool_per_doc (mean pooling, HCA) and entries_per_doc
+    (learned compression, CSA2). Two of this file's recorded incidents are a
+    compressed block that straddled a document boundary and a block gated on its
+    FIRST position instead of its last, so the subtle part has ONE implementation
+    and the reducers differ.
+
+    Returns (block_id, doc, vis, NB): per-position block id (B,T), per-position
+    document id (B,T), the (B,T,NB) visibility mask (block complete and past the
+    query, same document, real slot), and the block count.
+    """
+    B, T, _, _ = q.shape
+    pos = torch.arange(B * T, device=q.device)
+    cu_l = cu.to(pos.dtype)
+    doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
+    doc_start = cu_l[doc]                                         # (B,T)
+    nb_doc = (cu_l[1:] - cu_l[:-1] + m - 1) // m                  # blocks per doc
+    offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
+    first_doc = doc[:, 0]
+    # per-batch block id: doc's global offset + within-doc block, minus the batch's first
+    # doc's offset, so block ids run 0..NB-1 inside each batch
+    block_id = (offset[doc] + (pos.view(B, T) - doc_start) // m
+                - offset[first_doc][:, None])                    # (B,T)
+    NB = int((offset[doc[:, -1]] + nb_doc[doc[:, -1]]
+              - offset[first_doc]).max().item())
+
+    # block metadata: last position (the blk_last <= t visibility rule, unchanged),
+    # owning document (cross-document refusal), and the pad-slot marker (NB is a max over
+    # batches, so shorter batches carry empty slots that must stay invisible)
+    blk_last = torch.full((B, NB), -1, device=q.device, dtype=torch.long)
+    blk_last.scatter_reduce_(1, block_id, pos.view(B, T), reduce="amax",
+                             include_self=True)
+    blk_doc = torch.zeros(B, NB, dtype=torch.long, device=q.device)
+    blk_doc.scatter_(1, block_id, doc)
+    ar = torch.arange(T, device=q.device)
+    vis = ((blk_last >= 0)[:, None, :]
+           & (blk_last[:, None, :] <= ar[None, :, None])
+           & (blk_doc[:, None, :] == doc[:, :, None]))       # (B,T,NB)
+    return block_id, doc, vis, NB
+
+
 def pool_per_doc(q, kh, vh, cu, m):
     """Mean-pool K/V into blocks of `m` PER DOCUMENT, with the visibility mask.
 
@@ -289,19 +332,7 @@ def pool_per_doc(q, kh, vh, cu, m):
     the per-position block id and the per-position document id.
     """
     B, T, H, D = q.shape
-    pos = torch.arange(B * T, device=q.device)
-    cu_l = cu.to(pos.dtype)
-    doc = torch.bucketize(pos, cu_l[1:], right=True).view(B, T)   # (B,T) doc id per pos
-    doc_start = cu_l[doc]                                         # (B,T)
-    nb_doc = (cu_l[1:] - cu_l[:-1] + m - 1) // m                  # blocks per doc
-    offset = torch.cumsum(nb_doc, 0) - nb_doc                     # first block id per doc
-    first_doc = doc[:, 0]
-    # per-batch block id: doc's global offset + within-doc block, minus the batch's first
-    # doc's offset, so block ids run 0..NB-1 inside each batch
-    block_id = (offset[doc] + (pos.view(B, T) - doc_start) // m
-                - offset[first_doc][:, None])                    # (B,T)
-    NB = int((offset[doc[:, -1]] + nb_doc[doc[:, -1]]
-              - offset[first_doc]).max().item())
+    block_id, doc, vis, NB = _doc_blocks(q, cu, m)
 
     # --- pool K/V per document block ----------------------------------------------
     idx = block_id[:, None, :, None].expand(B, H, T, D)
@@ -316,20 +347,38 @@ def pool_per_doc(q, kh, vh, cu, m):
     cnt = cnt.clamp(min=1)
     kc = kc / cnt[:, None, :, None].to(kc.dtype)
     vc = vc / cnt[:, None, :, None].to(vc.dtype)
-
-    # block metadata: last position (the blk_last <= t visibility rule, unchanged),
-    # owning document (cross-document refusal), and the pad-slot marker (NB is a max over
-    # batches, so shorter batches carry empty slots that must stay invisible)
-    blk_last = torch.full((B, NB), -1, device=q.device, dtype=torch.long)
-    blk_last.scatter_reduce_(1, block_id, pos.view(B, T), reduce="amax",
-                             include_self=True)
-    blk_doc = torch.zeros(B, NB, dtype=torch.long, device=q.device)
-    blk_doc.scatter_(1, block_id, doc)
-    ar = torch.arange(T, device=q.device)
-    vis = ((blk_last >= 0)[:, None, :]
-           & (blk_last[:, None, :] <= ar[None, :, None])
-           & (blk_doc[:, None, :] == doc[:, :, None]))       # (B,T,NB)
     return kc, vc, vis, block_id, doc
+
+
+def entries_per_doc(q, kh, vh, cu, m, compress_k, compress_v):
+    """Learned non-overlapping m-token KV entries (DeepSeek-V4.1 CSA2, tech report §2.3).
+
+    Same blocks and visibility as pool_per_doc; the reducer is a learned linear over
+    the zero-padded m-token block instead of a mean. The paper removes V4-CSA's
+    overlap and absolute positional embedding but does not publish the m>1 combine
+    weights, so a head-shared Linear over the concatenated m positions is the
+    chosen form (de-103) -- a gated weighted mean is the alternative. A document's
+    tail block keeps its real positions and zero-pads the rest. m=1 is the paper's
+    uncompressed-main-KV special case: compress_k/v are None and the gathered block
+    IS the KV, unchanged.
+
+    Returns (kc, vc, vis, doc): compressed K/V as (B,H,NB,D), the (B,T,NB)
+    visibility mask and the per-position document id.
+    """
+    B, T, H, D = q.shape
+    block_id, doc, vis, NB = _doc_blocks(q, cu, m)
+    cu_l = cu.to(torch.long)
+    off = (torch.arange(B * T, device=q.device).view(B, T) - cu_l[doc]) % m
+    flat = (block_id * m + off)[:, None, :, None].expand(B, H, T, D)
+    bk = kh.new_zeros(B, H, NB * m, D)
+    bv = vh.new_zeros(B, H, NB * m, D)
+    bk.scatter_add_(2, flat, kh)
+    bv.scatter_add_(2, flat, vh)
+    if compress_k is None:  # m=1: the gathered block is the KV itself
+        return bk.view(B, H, NB, D), bv.view(B, H, NB, D), vis, doc
+    kc = compress_k(bk.reshape(B * H, NB, m * D)).view(B, H, NB, D)
+    vc = compress_v(bv.reshape(B * H, NB, m * D)).view(B, H, NB, D)
+    return kc, vc, vis, doc
 
 
 class HeavilyCompressedAttention(nn.Module):
@@ -423,13 +472,50 @@ class CompressedSparseAttention(nn.Module):
             raise ValueError(f"csa needs positive csa_compress/csa_topk/csa_window, got "
                              f"{self.m}/{self.topk}/{self.n_win}")
         self.scale = hd ** -0.5
-        # The branch gate. Zero-init so all three branches start at sigmoid(0)=0.5 and none is
-        # born dominant; the model discovers the mixture rather than inheriting my guess of it.
-        self.branch_gate = nn.Linear(hd, 3, bias=True)
-        nn.init.zeros_(self.branch_gate.weight)
-        nn.init.zeros_(self.branch_gate.bias)
+        # CSA2 (DeepSeek-V4.1, tech report §2.3): the V4.1 replacement for this class,
+        # behind cfg.csa2. Learned non-overlapping m-token entries replace the mean pool,
+        # a dedicated indexer (indexer-Q from the layer input H, indexer-K projected from
+        # the entries) selects top-k, and ONE softmax runs over [selected entries ; SWA
+        # window keys]. No branch gate, no full-resolution select branch. Full Mode only:
+        # cross-layer Reuse/Reindex is a later step. The paper publishes no m>1 combine
+        # weights, so the compressor is a head-shared Linear over the m positions -- a
+        # choice to A/B, not a paper value. The indexer's hard top-k is non-differentiable,
+        # so selection carries a straight-through softmax for its gradient -- also an
+        # engineering choice, flagged in the PR, since the paper does not say how the
+        # indexer learns.
+        self.csa2 = bool(getattr(cfg, "csa2", False))
+        if self.csa2:
+            if not getattr(cfg, "csa", False):
+                raise ValueError(
+                    "csa2=True needs csa=True: csa2 is the V4.1 variant of the csa arm, "
+                    "not a second arm -- GatedMLA constructs the module only when csa is on")
+            self.m = int(getattr(cfg, "csa2_m", 8))
+            self.topk = int(getattr(cfg, "csa2_top_k", 64))
+            self.n_win = int(getattr(cfg, "csa2_n_win", 128))
+            if self.m < 1 or self.topk < 1 or self.n_win < 1:
+                raise ValueError(f"csa2 needs positive m/top_k/n_win, got "
+                                 f"{self.m}/{self.topk}/{self.n_win}")
+            self.di = int(getattr(cfg, "csa2_indexer_dim", 64))  # indexer low dim
+            self.ih = int(getattr(cfg, "csa2_indexer_heads", 4))  # indexer heads (<= h)
+            if self.di < 1 or self.h % self.ih:
+                raise ValueError(f"csa2_indexer_dim must be positive and csa2_indexer_heads="
+                                 f"{self.ih} must divide heads={self.h}")
+            # m=1 is the paper's uncompressed-main-KV special case: no compressor.
+            self.compress_k = nn.Linear(self.hd * self.m, self.hd) if self.m > 1 else None
+            self.compress_v = nn.Linear(self.hd * self.m, self.hd) if self.m > 1 else None
+            self.indexer_q = nn.Linear(cfg.d, self.ih * self.di, bias=False)
+            self.ik_weight = nn.Parameter(torch.empty(self.ih, self.hd, self.di))
+            nn.init.normal_(self.ik_weight, std=0.02)
+        else:
+            # The branch gate. Zero-init so all three branches start at sigmoid(0)=0.5 and none is
+            # born dominant; the model discovers the mixture rather than inheriting my guess of it.
+            self.branch_gate = nn.Linear(hd, 3, bias=True)
+            nn.init.zeros_(self.branch_gate.weight)
+            nn.init.zeros_(self.branch_gate.bias)
 
-    def forward(self, q, k, v, cu=None):
+    def forward(self, q, k, v, cu=None, x=None):
+        if self.csa2:
+            return self._forward_csa2(q, k, v, cu, x)
         if cu is not None:
             return self._forward_packed(q, k, v, cu)
         B, T, H, D = q.shape
@@ -493,6 +579,74 @@ class CompressedSparseAttention(nn.Module):
 
         g = torch.sigmoid(self.branch_gate(q)).transpose(1, 2).unsqueeze(-1)   # B,H,T,3,1
         y = g[..., 0, :] * y_cmp + g[..., 1, :] * y_sel + g[..., 2, :] * y_win
+        return y.transpose(1, 2)                                # B,T,H,D
+
+    def _forward_csa2(self, q, k, v, cu, x):
+        """CSA2: learned entries, indexer top-k, ONE softmax over entries + SWA window.
+
+        Full Mode only (tech report §2.3.1): the layer builds its own entries and runs
+        its own indexer; cross-layer Reuse/Reindex is a later step. One code path for
+        packed and unpacked inputs -- the unpacked case is one document per batch row,
+        handed to entries_per_doc through the trivial cu, as HCA does.
+
+        `x` is the layer input H; the indexer-Q is projected from it and stays
+        DISTINCT from the attention Q (fb ruling 2026-09-10: the distinction is
+        load-bearing). GatedMLA passes it; a caller that does not gets ValueError
+        rather than a silent fallback to q.
+        """
+        if x is None:
+            raise ValueError("csa2 needs the layer input x for the indexer-Q; pass it")
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)                                # B,H,T,D
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        if cu is None:
+            cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
+        kc, vc, vis, doc = entries_per_doc(q, kh, vh, cu, self.m,
+                                           self.compress_k, self.compress_v)
+        NB = kc.shape[2]
+
+        # --- indexer: score entries, mask BEFORE top-k, select -----------------------
+        # The mask is load-bearing twice, as in CSA: topk ranks from THIS tensor, so an
+        # unmasked score lets it pick a block the query cannot see (a future block or
+        # another document's), and the attention below must never see it either.
+        # Indexer heads are FEWER than attention heads (ae-2: 4 vs 8): each indexer head
+        # scores the mean of its group's entries, and its selection serves the group.
+        iq = self.indexer_q(x).view(B, T, self.ih, self.di)
+        kc_g = kc.view(B, self.ih, self.h // self.ih, NB, D).mean(dim=2)
+        ik = torch.einsum("bhnd,hde->bhne", kc_g, self.ik_weight)   # B,ih,NB,di
+        isc = torch.einsum("bthd,bhnd->bhtn", iq, ik) * (self.di ** -0.5)
+        isc = isc.masked_fill(~vis[:, None], float("-inf"))
+        kk = min(self.topk, NB)
+        sel = torch.zeros(B, self.ih, T, NB, dtype=torch.bool, device=q.device)
+        sel.scatter_(-1, isc.topk(kk, dim=-1).indices, True)
+        sel &= vis[:, None]                    # a -inf block can still be picked when kk>visible
+        sel = sel.repeat_interleave(self.h // self.ih, dim=1)    # B,H,T,NB
+        # straight-through: hard selection in the forward, softmax over the indexer
+        # scores in the backward so the indexer gets a gradient (the hard top-k has none)
+        alive = vis[:, None].any(-1, keepdim=True)               # B,1,T,1
+        s = torch.where(alive, isc, torch.zeros_like(isc))
+        soft_sel = (torch.softmax(s, dim=-1) * alive.to(isc.dtype)
+                    ).repeat_interleave(self.h // self.ih, dim=1)  # B,H,T,NB
+        ste = sel.to(soft_sel.dtype) + soft_sel - soft_sel.detach()
+
+        # --- one softmax over [selected entries ; SWA window keys] ------------------
+        sc = (qh @ kc.transpose(-1, -2)) * self.scale            # B,H,T,NB
+        ar = torch.arange(T, device=q.device)
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        same = doc[:, :, None] == doc[:, None, :]
+        m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        sc_cat = torch.cat([sc, full], dim=-1)                   # B,H,T,NB+T
+        mask_cat = torch.cat([vis[:, None] & sel,
+                              m_win[:, None].expand(B, H, T, T)], dim=-1)
+        # masked_attend's body, split so the straight-through selector gates the ENTRY
+        # WEIGHTS: y = (w_entry * ste) @ vc + w_win @ vh. Gating values instead would
+        # materialise a (T,NB,D) tensor the matmul never holds.
+        alive = mask_cat.any(-1, keepdim=True)
+        s = sc_cat.masked_fill(~mask_cat, float("-inf"))
+        s = torch.where(alive, s, torch.zeros_like(s))
+        w = torch.softmax(s, dim=-1) * alive.to(sc_cat.dtype)
+        y = (w[..., :NB] * ste) @ vc + w[..., NB:] @ vh
         return y.transpose(1, 2)                                # B,T,H,D
 
     def _forward_packed(self, q, k, v, cu):
@@ -709,7 +863,7 @@ class GatedMLA(nn.Module):
         # case in scripts/test_arch_compat.py asserts that against a saved reference, because
         # "I did not mean to change the default" is not a measurement.
         if self.csa is not None:
-            y = self.csa(q, k, v, cu)
+            y = self.csa(q, k, v, cu, x)
             y = y.reshape(B, T, self.d)
             return self.o(y * torch.sigmoid(gate))
         if HAS_FA and cu is not None:
