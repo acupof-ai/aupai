@@ -43,15 +43,20 @@ unchanged: HumanEval pass@1 >= 30% at ~350M (docs/standards/p1_data_recipe.md:25
 
 ## Decisions taken now (controller, with the gap-map reasoning)
 
-- Build flat CSA2 first; CED is a measured A/B, not in the first gate run. Rationale: at 4K
-  single-shot HumanEval prompts the prefill-FLOP saving (CED's payoff) is negligible, while CED adds
-  a second forward mode, the Eq.1 KV path, and an AttnRes-boundary decision.
+- SUPERSEDED 2026-09-10 by the user's option A (faithful V4.1): CED is IN SCOPE as Step 5 (6
+  encoder + 6 decoder at L=12, Eq.1 decoder package from H_{L/2}, teacher-forced, no prefill
+  skip), owned by de as de-105. The flat CSA2 stack still ships first: it is the CED encoder and
+  the control arm. The first gate run uses whichever of the two is trainable when the UltraData
+  shards land; the other is the A/B.
 - **KDA deleted on this line.** V4.1 carries position by RoPE; a KDA+CSA2 hybrid is unaddressed by
   the paper and CED makes it near-impossible (recurrent state cannot flow into H_{L/2}-projected
   decoder KV). HCA not wired into new layers; its shared helpers stay.
 - **AttnRes**: do not carry across the CED boundary; evaluate within-half only if CED is built.
 - MoE: reuse MoEFFN as-is, all blocks, 48/top-3/1-shared — the 384-expert / top-6 / expert-2304
   numbers are 552B-only. Keep SiTU-GLU; do not add SwiGLU clamp without an A/B.
-- **The data recipe does NOT change.** The 2.8116B code keep set, the synthetic exercises and
-  textbooks, the tokenizer — all are model-independent. Textbook/exercise generation resumes for
-  the V4.1 gate run; only the model that trains on them changes.
+- **The data recipe CHANGED 2026-09-10 (user order).** Teacher synthesis (textbooks, exercises;
+  de-101 / 0e-1) is stopped and dropped. The p1 code+exercise corpus is openbmb/UltraData-Code L2
+  (natural code) and L3 (exercises with tests), python subsets, fetched from hf-mirror,
+  decontaminated against HumanEval/MBPP, mixed with the existing math/CoT/en domains (task 0e-3,
+  PR #221). Only the highest-quality tier is kept; the 2.8116B keep set stays as a domain. The
+  tokenizer is re-measured on an UltraData sample before the gate run (ae).
