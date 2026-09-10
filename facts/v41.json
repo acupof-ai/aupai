@@ -346,6 +346,81 @@
    "uncertainty": "tok/s are rounded integer K window means; i and g differ by one smoke run (compiled kernel version + flash path), so same-number agreement is a smoke-level equivalence, not a parity test.",
    "status": "measured",
    "boundary": "Establishes the compiled training batch ceiling: B4 fits with headroom, B8 does not. No capability inference (0.2B smoke tokens); flash-vs-eager numerics agree at smoke precision but were not compared bitwise."
-  }
+  },
+  {
+   "id": "v41.humaneval_v41_smoke_g_0911",
+   "value": "HumanEval gate instrument on the first V4.1 checkpoint (ckpt_v41_smoke_0910g.pt, CSA2/SWA/RoPE64 MoE 48, 381 steps, 0.2B smoke tokens): greedy pass@1 = 0/164, empty 52/164 (20/40/60/80/100/120/140/164 partial counts all 0 pass). This is a SMOKE/UNDER-TRAINING number, NOT the gate target (pass@1 >= 30%) and not comparable to the 2026-09-09 trained SFT (3/72 greedy on a different stack). The instrument itself is proven working: the architecture-agnostic cfg-driven loader builds the model, all 164 generations run, the shared judge/STOPS/truncate path is byte-identical to eval/humaneval_gen (imported), and every known-answer control passed through the sampled path -- canonical_solution 164/164, constant-False on HumanEval/0 fails as required, empty/newline/pass 0/164. A follow-up raw 4-prompt probe (0/2/7/45, gen loop without truncation) ruled out decode/wiring bugs: all completions are on-prompt, correctly-indented def/docstring code that emits eos cleanly at max_new (110-1187 chars), with no format junk, one-token loops or prompt leakage; the bodies are semantically degenerate (e.g. unconditional return True, repeated return 1), the expected output of 381 steps of warmup training. The humaneval_sample quality gate therefore (3,72)-hard-gated the sampled arm, so no n=1 sampled rows were scored.",
+   "measured": "2026-09-11",
+   "source": "runs/humaneval_v41_g_0910_summary.log (all greedy partial counts + 4 controls, committed this PR); runs/genprobe_v41_g_0911.log raw-generation probe on prompts 0/2/7/45; data/eval/preds_humaneval_sample_ckpt_v41_smoke_0910g.pt.p1_v41g_0910.jsonl (165 rows, sha 80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d, attested in runs/artifact_refs.jsonl)",
+   "config": {
+    "runner": "eval/humaneval_sample.py --n 1 greedy continuation format, card 6, 1058 s greedy",
+    "pass1_greedy": 0,
+    "n_problems": 164,
+    "empty": 52,
+    "partial_pass_counts": {
+     "20": 0,
+     "40": 0,
+     "60": 0,
+     "80": 0,
+     "100": 0,
+     "120": 0,
+     "140": 0,
+     "164": 0
+    },
+    "controls": {
+     "canonical_solution": "164/164",
+     "constant_false_H0": "fails as required",
+     "empty_newline_pass": "0/164 each",
+     "strip_docstring": "164/164 prompts carry docstring"
+    },
+    "sampled_arm": "not run: quality-gate requires 3/72 to reproduce the trained-SFT reference",
+    "probe": "4 prompts raw gen, all well-formed on-prompt code, 0 ok; eos clean, no wiring bug",
+    "gate_status": "instrument ready; model nowhere near gate; evaluation re-runs on a trained V4.1 checkpoint",
+    "artifact_sha256": "80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d"
+   },
+   "uncertainty": "A 0.2B-token smoke has no training-trajectory variance estimate; 0/164 is a point reading on one seed, not a convergence claim. Comparisons to the trained SFT are across architectures and training amounts.",
+   "status": "measured",
+   "boundary": "Proves the 66-2 architecture-agnostic conclusion on real hardware and bounds the current model at essentially zero coding ability. Says nothing about the gate mix or the 0.5B+ token trained V4.1 runs to come.",
+   "artifact_sha256": {
+    "preds_humaneval_sample_ckpt_v41_smoke_0910g.pt.p1_v41g_0910.jsonl": "80cc9f1dac1ee2e8d566582ce18907ac94026b332259e7bdd5fdc619d4f03f4d"
+   }
+  },
+  {
+   "id": "v41.external_moe_kernel_bench_0911",
+   "value": "ADOPT/SKIP ruling for external MoE kernels on the p1 V4.1 stack (H20 = SM90, torch 2.11.0+cu129, d=1024, 48 experts, top-3 + 1 shared, expert_ffn=1728, seq 4096, batch 4-8). SKIP both on H20 as of 2026-09-11, decided by CPU/API reading before any card time: (1) DeepGEMM 'Mega MoE' and 'Mega Gate' (PR #432, merged 2026-09-10, v2.6.1->2.80) ship ONLY sm100_* kernel implementations (csrc/jit_kernels/impls/sm100_bf16_mega_gate.hpp, sm100_bf16_mega_moe.hpp, sm100_fp8_fp4_mega_moe.hpp; deep_gemm/include/deep_gemm/impls/sm100_*.cuh), gated __CUDA_ARCH__ >= 1000 with Blackwell UMMA/TMA descriptors; no sm90 variant exists. Their Hopper coverage stops at the older m_grouped_* GEMMs, the same op class as our torch._grouped_mm. Mega MoE additionally mandates multi-process symmetric memory (PyTorch >= 2.9; single-rank size==1 path exists but is a rendezvous no-op). The claimed ~20% faster MoE backward and 30-75% Mega Gate gains do not transfer to SM90. (2) deepseek-ai/tilekernels (TileLang 0.1.14 present on the pod) DOES support SM90, but tile_kernels/moe/ is routing/dispatch/combine primitives only (topk_gate, get_fused_mapping, expand_to_fused, reduce_fused, aux_fi, group_count, inplace_unique_group_indices, normalize_weight): there is no expert grouped GEMM (that is DeepGEMM's layer), and the only autograd gate wrapper, modeling/engram/engram_gate.py (EngramGateFn), computes sigmoid(signed_sqrt(dot(RMSNorm(x),RMSNorm(k)))) — a different routing function from our fp32 softmax + selection-only expert_bias MoEFFN gate, so no drop-in and no direct bit-parity. The routing primitives remain a candidate for a future microbenchmark of the dispatch chain alone; neither package can replace model.MoEFFN end-to-end on H20, so no wrapper work is justified. The pod already carries sgl-deep-gemm 0.1.0+cu129 with the mega Python bindings, consistent with the source reading (kernels absent at runtime for SM90).",
+   "measured": "2026-09-11",
+   "source": "https://github.com/deepseek-ai/DeepGEMM/pull/432 (merged 2026-09-10); https://github.com/deepseek-ai/DeepGEMM tree deep_gemm/mega/__init__.py and csrc/jit_kernels/impls (all sm100_*); https://github.com/deepseek-ai/tilekernels tree tile_kernels/moe and tile_kernels/modeling/engram/engram_gate.py; pod: nvidia-smi compute_cap 9.0, sgl-deep-gemm 0.1.0+cu129 installed, tilelang 0.1.14, tile-kernels not installed; model.py:1476 MoEFFN uses torch._grouped_mm, fp32 softmax router with selection-only bias",
+   "config": {
+    "hardware": "H20 SM90 compute_capability (9,0)",
+    "torch": "2.11.0+cu129",
+    "target_shape": {
+     "d": 1024,
+     "experts": 48,
+     "top_k": 3,
+     "shared": 1,
+     "expert_ffn": 1728,
+     "seq": 4096,
+     "batch": [
+      4,
+      8
+     ]
+    },
+    "deepgemm_pr432": {
+     "mega_gate": "sm100-only (bf16, UMMA)",
+     "mega_moe": "sm100-only bf16/fp8_fp4, symmetric memory, PT>=2.9",
+     "hopper_path": "m_grouped_* only",
+     "ruling": "SKIP on H20"
+    },
+    "tilekernels": {
+     "sm90": true,
+     "moe_coverage": "routing/dispatch/combine primitives, no expert GEMM",
+     "autograd_gate": "engram sigmoid-RMSNorm, mismatches softmax+bias",
+     "ruling": "SKIP for end-to-end; routing microbench optional later"
+    },
+    "gpu_benchmark": "not run: nothing to adopt on SM90; runtime arch capture would only restate the source gate"
+   },
+   "uncertainty": "A future TileKernels routing-primitive microbenchmark might show a dispatch-chain speedup independent of expert GEMMs; not assessed and not blocking anything. DeepGEMM could add sm90 Mega kernels later; this ruling is of the 2026-09-10 merge.",
+   "status": "measured",
+   "boundary": "CPU/API-source conclusion: no runtime timing, peak bytes, or bit-parity numbers exist because neither candidate offers a runnable H20 code path for the benchmark shape. Reopen if upstream ships sm90 Mega kernels."  }
  ]
 }
