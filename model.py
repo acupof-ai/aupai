@@ -538,6 +538,58 @@ class CompressedSparseAttention(nn.Module):
         return y.transpose(1, 2)                                # B,T,H,D
 
 
+class PureSWA(nn.Module):
+    """Pure sliding-window attention: CSA's window branch, alone (V4.1 Step 3, task 0e-2).
+
+    V4.1's first two layers are SWA-only -- every layer has a local SWA branch and the
+    first two have no global branch. Parameter-free by construction: the q/k/v
+    projections and the output gate live in GatedMLA, exactly as for CSA, so a SWA
+    layer's state_dict is a strict subset of a CSA layer's.
+
+    The window mask is the same lines as CompressedSparseAttention's window branch:
+    causal & (ar[:,None] - ar[None,:]) < n_win, intersected with the same-document
+    mask on the packed path. n_win reads cfg.csa2_n_win (de-103's CSA2 field) with
+    fallback to cfg.csa_window, so the pure-SWA layers and the CSA2 window branch
+    share one width. Placement is HybridLM's n_swa_only_layers.
+    """
+
+    def __init__(self, cfg, h, hd):
+        super().__init__()
+        self.h, self.hd = h, hd
+        self.n_win = int(getattr(cfg, "csa2_n_win", getattr(cfg, "csa_window", 256)))
+        if self.n_win < 1:
+            raise ValueError(f"swa needs positive csa_window, got {self.n_win}")
+        self.scale = hd ** -0.5
+
+    def forward(self, q, k, v, cu=None):
+        if cu is not None:
+            return self._forward_packed(q, k, v, cu)
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)                                # B,H,T,D
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        ar = torch.arange(T, device=q.device)
+        m_win = causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        y = torch.softmax(full.masked_fill(~m_win[None, None], float("-inf")), dim=-1) @ vh
+        return y.transpose(1, 2)                                # B,T,H,D
+
+    def _forward_packed(self, q, k, v, cu):
+        # doc id per position, same bucketize as pool_per_doc (which see for the cu layout)
+        B, T, H, D = q.shape
+        qh = q.transpose(1, 2)
+        kh, vh = k.transpose(1, 2), v.transpose(1, 2)
+        pos = torch.arange(B * T, device=q.device)
+        doc = torch.bucketize(pos, cu.to(pos.dtype)[1:], right=True).view(B, T)
+        same = doc[:, :, None] == doc[:, None, :]
+        causal = torch.ones(T, T, dtype=torch.bool, device=q.device).tril()
+        ar = torch.arange(T, device=q.device)
+        m_win = same & causal & ((ar[:, None] - ar[None, :]) < self.n_win)
+        full = (qh @ kh.transpose(-1, -2)) * self.scale
+        y = torch.softmax(full.masked_fill(~m_win[:, None], float("-inf")), dim=-1) @ vh
+        return y.transpose(1, 2)                                # B,T,H,D
+
+
 class PartialRoPE(nn.Module):
     """RoPE on the LAST `dims` of each head only (facts/deepseek_v4.json#dsv4.partial_rope).
 
@@ -649,12 +701,15 @@ class GatedMLA(nn.Module):
         # both constructed only when their flag is on, for the same state_dict reason as above.
         self.hca = HeavilyCompressedAttention(cfg, self.h, self.hd) if getattr(
             cfg, "hca", False) else None
-        if self.csa is not None and self.hca is not None:
+        # Pure SWA (V4.1 Step 3): the window branch alone, for the first n_swa_only_layers.
+        self.swa = PureSWA(cfg, self.h, self.hd) if getattr(cfg, "swa", False) else None
+        if sum(x is not None for x in (self.csa, self.hca, self.swa)) > 1:
             raise ValueError(
-                "csa and hca are both on for this layer. V4 INTERLEAVES them across layers -- it "
-                "does not stack them inside one -- so a layer is one or the other. HybridLM picks "
-                "per layer from cfg.attn_kind; setting both on cfg means every layer would run "
-                "both branches and the arm would be neither architecture.")
+                "csa, hca and swa are mutually exclusive in one layer. V4 INTERLEAVES them "
+                "across layers -- it does not stack them inside one -- so a layer is one of "
+                "them. HybridLM picks per layer from cfg.attn_kind / n_swa_only_layers; "
+                "setting more than one on cfg means every layer would run multiple branches "
+                "and the arm would be neither architecture.")
         # PARTIAL RoPE (dsv4.partial_rope). Zero = off, which is what every existing checkpoint
         # was trained under (dsv4.nope_rope_break: this stack is NoPE and position comes from
         # KDA). It carries no parameters and its one buffer is non-persistent, so turning it on
@@ -708,6 +763,9 @@ class GatedMLA(nn.Module):
         # branch existed -- no reordering, no re-association, nothing recomputed. The parity
         # case in scripts/test_arch_compat.py asserts that against a saved reference, because
         # "I did not mean to change the default" is not a measurement.
+        if self.swa is not None:
+            y = self.swa(q, k, v, cu)
+            return self.o(y.reshape(B, T, self.d) * torch.sigmoid(gate))
         if self.csa is not None:
             y = self.csa(q, k, v, cu)
             y = y.reshape(B, T, self.d)
@@ -1779,7 +1837,7 @@ class Block(nn.Module):
         # (the two constructors and the both-on refusal), and a second source for the same two
         # booleans is how they come to disagree.
         if attn_kind is not None and is_attn and not _hm:
-            cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"))
+            cfg = _CfgView(cfg, csa=(attn_kind == "csa"), hca=(attn_kind == "hca"), swa=(attn_kind == "swa"))
         self.mixer = HeadMix(cfg, ratio=_hm) if _hm else (GatedMLA(cfg) if is_attn else DeltaRecurrence(cfg))
         self.n2 = RMSNorm(cfg.d)
         # THE FFN IS REPLACED, NOT SUPPLEMENTED, and that is the structural difference from the
@@ -1945,18 +2003,23 @@ class HybridLM(nn.Module):
         # stacked inside one. Off by default, and off means every layer reads cfg.csa/cfg.hca as
         # before, so no existing arm changes shape.
         #
-        # The first two attention layers are CSA and not HCA, which is the one place this departs
-        # from copying V4-Flash verbatim (its first two are pure SWA). Reason, not preference:
-        # HCA at m'=128 has no window branch, so a query in the first 128 positions of its
-        # document sees no complete block and attends to nothing. Whatever occupies the bottom of
-        # the stack has to cover that prefix exactly, and CSA's window branch does; SWA would too,
-        # but that is a third attention class to implement and CSA already contains it.
+        # n_swa_only_layers (V4.1, task 0e-2): the first N attention layers are pure SWA -- V4.1's
+        # first two layers carry no global branch. The earlier remark below ("SWA would be a third
+        # attention class to implement") is now resolved: PureSWA is that class. N=0 reproduces
+        # the old interleave exactly, so every existing hybrid arm keeps its shape. This is also
+        # where ae-2's CSA2 mode map composes: it assigns the non-SWA layers' kinds.
         _hyb = bool(getattr(cfg, "attn_hybrid", False))
         attn_idx = [i for i in range(cfg.layers) if i % cfg.attn_every == cfg.attn_every - 1]
+        _n_swa = int(getattr(cfg, "n_swa_only_layers", 0))
+        if _n_swa < 0:
+            raise ValueError(f"n_swa_only_layers must be >= 0, got {_n_swa}")
         kind = {}
         if _hyb:
             for n, i in enumerate(attn_idx):
-                kind[i] = "csa" if n < 2 or n % 2 == 0 else "hca"
+                if n < _n_swa:
+                    kind[i] = "swa"
+                else:
+                    kind[i] = "csa" if n < 2 or n % 2 == 0 else "hca"
         self.blocks = nn.ModuleList(
             # every `attn_every` blocks (was `i == cfg.attn_every - 1`: one attention layer total)
             [Block(cfg, is_attn=(i % cfg.attn_every == cfg.attn_every - 1),
