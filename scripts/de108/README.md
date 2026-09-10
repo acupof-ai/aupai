@@ -25,6 +25,11 @@ ragged-gather backward are not yet landed; report at gather-backward parity.
 - `check_ragged_ordering.py` (CPU): argsort(stable,descending) packs each query's
   valid selected entries first so the first `n_sel` gathered slots are exactly the
   selected set.
+- `check_ragged_gather_backward.py` (CPU float64): `torch.gather` followed by a boolean
+  compress is differentiable end to end -- autograd scatter-adds the ragged gradient
+  back to kc/vc, accumulating when an entry is selected by more than one query. So the
+  custom flash Function only returns grads to the ragged inputs; no manual scatter is
+  written. This was the open risk for the backward.
 
 ## Flash hooks verified
 
