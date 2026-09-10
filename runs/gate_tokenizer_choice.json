@@ -1,0 +1,183 @@
+{
+ "config": {
+  "domains": [
+   "code_ultra_l2_sample",
+   "code_ultra_l3_sample",
+   "code_py_starcoder",
+   "code_py_rp1t",
+   "math_owm_stage2",
+   "cot",
+   "en_c4_stage2"
+  ],
+  "sizes": [
+   20000,
+   32768
+  ],
+  "seed": 7,
+  "fit_bytes_per_domain": 40000000,
+  "eval_bytes_per_domain": 20000000,
+  "d_model": 1024,
+  "chat_specials": [
+   "<|im_start|>",
+   "<|im_end|>",
+   "<|think|>",
+   "<|/think|>",
+   "[NUM]"
+  ],
+  "counts": {
+   "code_ultra_l2_sample": {
+    "n_docs": 16093,
+    "fit_docs": 10722,
+    "eval_docs": 5371,
+    "fit_bytes": 40004267,
+    "eval_bytes": 19996915
+   },
+   "code_ultra_l3_sample": {
+    "n_docs": 11210,
+    "fit_docs": 7438,
+    "eval_docs": 3772,
+    "fit_bytes": 40087569,
+    "eval_bytes": 19914642
+   },
+   "code_py_starcoder": {
+    "n_docs": 12324,
+    "fit_docs": 8093,
+    "eval_docs": 4231,
+    "fit_bytes": 40003495,
+    "eval_bytes": 20001328
+   },
+   "code_py_rp1t": {
+    "n_docs": 8237,
+    "fit_docs": 5543,
+    "eval_docs": 2694,
+    "fit_bytes": 40000530,
+    "eval_bytes": 20017114
+   },
+   "math_owm_stage2": {
+    "n_docs": 11847,
+    "fit_docs": 7932,
+    "eval_docs": 3915,
+    "fit_bytes": 40000118,
+    "eval_bytes": 20000364
+   },
+   "cot": {
+    "n_docs": 42148,
+    "fit_docs": 28167,
+    "eval_docs": 13981,
+    "fit_bytes": 40000050,
+    "eval_bytes": 20000339
+   },
+   "en_c4_stage2": {
+    "n_docs": 27303,
+    "fit_docs": 18071,
+    "eval_docs": 9232,
+    "fit_bytes": 40001321,
+    "eval_bytes": 20000038
+   }
+  }
+ },
+ "candidates": {
+  "20000": {
+   "path": "data/tok_gate_v20000.json",
+   "vocab": 20000,
+   "per_domain": {
+    "code_ultra_l2_sample": {
+     "tokens_per_byte": 0.29017385931779976,
+     "chars_per_token": 3.4137271993743474,
+     "n_docs": 5371
+    },
+    "code_ultra_l3_sample": {
+     "tokens_per_byte": 0.2787420431660283,
+     "chars_per_token": 3.5830515246850685,
+     "n_docs": 3772
+    },
+    "code_py_starcoder": {
+     "tokens_per_byte": 0.2959000522365315,
+     "chars_per_token": 3.3656510533093944,
+     "n_docs": 4231
+    },
+    "code_py_rp1t": {
+     "tokens_per_byte": 0.26993721472535953,
+     "chars_per_token": 3.7029929873315957,
+     "n_docs": 2694
+    },
+    "math_owm_stage2": {
+     "tokens_per_byte": 0.29584921554427707,
+     "chars_per_token": 3.3383854771904846,
+     "n_docs": 3915
+    },
+    "cot": {
+     "tokens_per_byte": 0.33438383219404433,
+     "chars_per_token": 2.986543686329864,
+     "n_docs": 13981
+    },
+    "en_c4_stage2": {
+     "tokens_per_byte": 0.24783252911819467,
+     "chars_per_token": 4.013848841760379,
+     "n_docs": 9232
+    }
+   },
+   "gates": {
+    "round-trip lossless": true,
+    "all 256 bytes present": true,
+    "_bytes": 256
+   },
+   "pooled_tokens_per_byte": 0.28754889740453027,
+   "padded_cfg_vocab": 20032,
+   "embed_params_tied_M": 20.512768,
+   "embed_params_untied_M": 41.025536,
+   "ref_fertility": 1.3116883116883118
+  },
+  "32768": {
+   "path": "data/tok_gate_v32768.json",
+   "vocab": 32768,
+   "per_domain": {
+    "code_ultra_l2_sample": {
+     "tokens_per_byte": 0.28092458261686865,
+     "chars_per_token": 3.5261221601655506,
+     "n_docs": 5371
+    },
+    "code_ultra_l3_sample": {
+     "tokens_per_byte": 0.2742533860262213,
+     "chars_per_token": 3.6416947014990684,
+     "n_docs": 3772
+    },
+    "code_py_starcoder": {
+     "tokens_per_byte": 0.28716873199619547,
+     "chars_per_token": 3.467983145523591,
+     "n_docs": 4231
+    },
+    "code_py_rp1t": {
+     "tokens_per_byte": 0.2623701898285637,
+     "chars_per_token": 3.8097910963168715,
+     "n_docs": 2694
+    },
+    "math_owm_stage2": {
+     "tokens_per_byte": 0.2862935894566719,
+     "chars_per_token": 3.449810827010103,
+     "n_docs": 3915
+    },
+    "cot": {
+     "tokens_per_byte": 0.3300820051100134,
+     "chars_per_token": 3.0254661186909173,
+     "n_docs": 13981
+    },
+    "en_c4_stage2": {
+     "tokens_per_byte": 0.23371320594490871,
+     "chars_per_token": 4.256337616566255,
+     "n_docs": 9232
+    }
+   },
+   "gates": {
+    "round-trip lossless": true,
+    "all 256 bytes present": true,
+    "_bytes": 256
+   },
+   "pooled_tokens_per_byte": 0.2792591106142939,
+   "padded_cfg_vocab": 32768,
+   "embed_params_tied_M": 33.554432,
+   "embed_params_untied_M": 67.108864,
+   "ref_fertility": 1.1688311688311688
+  }
+ }
+}
