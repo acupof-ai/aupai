@@ -24367,6 +24367,12 @@ _FROZEN_KEYS = (
     # wide the exact window is), so a resume that moved one would alter the receptive field
     # mid-run while the loss curve carried a single name.
     "csa", "csa_compress", "csa_topk", "csa_window",
+    # V4 HYBRID + PARTIAL ROPE (p1). hca is a different attention FUNCTION and attn_hybrid decides
+    # per layer which function runs, so either one changing mid-run is a different model wearing
+    # one run's name -- head_mixed's argument, not attn_every's. rope_dims changes what every
+    # existing weight MEANS (dsv4.nope_rope_break: the stack was NoPE), and hca_compress changes
+    # what HCA can see -- the same receptive-field argument as the csa shape knobs above.
+    "hca", "hca_compress", "attn_hybrid", "rope_dims",
     # b0-17: untie_head acts only at __init__ (model.py:359) -- the arm's weights carry the
     # architecture and a resume silently ignores the flag, which is the drift this set catches.
     # head_lr is NOT here: it is the A/B knob that exists to take two values (1e's ruling

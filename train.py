@@ -3007,6 +3007,11 @@ def main():
                           "moe_expert_ffn). Exists because the latent variant spends its parity "
                           "budget on three shapes, and a free shared width is what makes an exact "
                           "parity-and-parameter match possible",
+        "rope_dims": "partial RoPE: rotate the LAST rope_dims of each head (0 = NoPE; must be positive, even, <= head_dim)",
+        "csa_compress": "CSA: positions pooled into one coarse entry",
+        "csa_topk": "CSA: coarse blocks re-read at full resolution",
+        "csa_window": "CSA: sliding-window width, always exact",
+        "hca_compress": "HCA: positions pooled into one HCA entry (V4 m'=128)",
     }.items():
         parser.add_argument(f"--{name}", type=int, default=None, required=name in RECIPE_REQUIRED,
                             help=f"{help_} (default: Cfg.{name})")
@@ -3028,6 +3033,9 @@ def main():
         "attn_res_dyn_q": "AttnRes input-dependent pseudo-query",
         "fone": "Fourier number embedding: one [NUM] per number, value in, digits out",
         "mem_sparse": "sparse memory: nn.Embedding(sparse=True) COO grads (--no-mem_sparse forces a dense grad on the whole table)",
+        "csa": "Compressed Sparse Attention inside GatedMLA (b0-35)",
+        "hca": "Heavily Compressed Attention, the V4 hybrid's other half",
+        "attn_hybrid": "interleave CSA/HCA per attention layer (V4) instead of one global flag",
     }.items():
         parser.add_argument(f"--{name}", action=argparse.BooleanOptionalAction,
                             default=None, required=name in RECIPE_REQUIRED, help=help_)
@@ -3244,7 +3252,11 @@ def main():
                           "active": _n_active_params(_m, Cfg),
                           "d": Cfg.d, "layers": Cfg.layers, "heads": Cfg.heads,
                           "ffn_hidden": Cfg.ffn_hidden, "moe_experts": Cfg.moe_experts,
-                          "attn_every": Cfg.attn_every}))
+                          "attn_every": Cfg.attn_every,
+                          "csa": Cfg.csa, "csa_compress": Cfg.csa_compress,
+                          "csa_topk": Cfg.csa_topk, "csa_window": Cfg.csa_window,
+                          "hca": Cfg.hca, "hca_compress": Cfg.hca_compress,
+                          "attn_hybrid": Cfg.attn_hybrid, "rope_dims": Cfg.rope_dims}))
         return
     ddp, rank, world, local = setup_ddp()
     device = f"cuda:{local}" if ddp else ("cuda:0" if torch.cuda.is_available() else "cpu")
