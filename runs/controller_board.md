@@ -1,3 +1,89 @@
+# Controller board (fb) — 2026-09-10, 04:4xZ
+
+## Card 7 granted to the teacher serve, and a correction to my own recommendation
+
+`runs/card_assignment.json`: `block_cards` **4,5 → 4,5,7**, `lane_card` stays **2**, `note` rewritten
+(it is the single current-state field), `granted_by` appended. Owner of the serve is de
+(`p1_data_recipe.md:265`, task **de-101**). Grant is in the file before any go, per the standing rule.
+
+**The correction, and it changes the number I reported an hour ago.** My 03:5xZ head said "four cards
+→ 10 days, needs no card recall". The recall half is right; the rest was wrong in two ways:
+
+1. **695 tok/s was measured AT THREE CARDS**, not at five and not per-card
+   (`facts/efficiency.json#eff.teacher_serve_warm_throughput`, two warm runs 695 and 726, within 5%).
+   So **4,5,7 is the configuration the measurement was taken at** — 0.8e9/695 = **13.3 days** for the
+   textbooks, a measured figure. The two-card ~20 days and the four-card ~10 days are both linear
+   extrapolations from 695/3 and neither is measured.
+2. **The fourth card would have to be card 2, which is the lane.** aupai holds 2, 4, 5, 7 and that is
+   all four. Consuming the lane leaves nothing for evals, probes, or the 50-sample two-reader spot
+   checks that **both** de-101 and 44-42 close against — which is precisely the trade the lane rule
+   exists to prevent. Not granted; it is a separate decision with a stated cost, not a free win.
+
+| serve cards | rate | textbooks (0.8B) | exercises (0.18B) | basis |
+|---|---|---|---|---|
+| 2 (today) | ~463 tok/s | ~20.0 d | ~4.5 d | extrapolated from 695/3 |
+| **3 — granted** | **695 tok/s** | **13.3 d** | **3.0 d** | **MEASURED, warm, two runs** |
+| 4 (costs the lane) | ~927 tok/s | ~10.0 d | ~2.2 d | extrapolated; not granted |
+
+Verified before writing the grant: at 04:37Z compute apps sit on cards 0 and 1 (tileRL) and 4 and 5
+(aupai's `teacher_serve_0909` :8010/:8011, 55.1 and 54.4 GB). Cards 2, 3, 6, 7 hold none. tileRL has
+taken up its own 1 and 6, so card 7 costs them nothing. Ownership read from the grant, never from
+`nvidia-smi` — my 03:2xZ head misattributed 4 and 5 to tileRL by reading card rows without joining
+them to claim names my own earlier tick had printed.
+
+## Peers: 44 is back, first non-fb PR in 5.4h
+
+**#204** (`44-friction-0910`, opened 04:35Z, reviewer de): the daily friction review.
+`docs/standards/friction_review.md`, one line per cause. Its top two corroborate the velocity
+readout rather than adding to it: **121× `BEHIND_MAIN` override** (task #44) and **43× merge-push
+non-ff** (task #49). Not mine to review; de has it.
+
+Its timing is suggestive and I will not claim it as cause: 44's PR came ~25 minutes after I closed the
+`wd_tail` row that was FAILing `no_stale_running` in every session's pre-commit hook for 24h. One
+observation is not a mechanism, and 44 may simply have woken up.
+
+## State
+
+| | |
+|---|---|
+| main | `fb43fd75`; CI green; pod stamp `fb43fd75` dirty=0, no `refusing` |
+| open PRs | **13** (#204 new). Mine: #202, #203, both with 44, CI green |
+| cards | 0, 1 tileRL; 4, 5 aupai serve; **7 now granted to the serve**; 2 the lane; 3, 6 idle |
+| critical path | **de-101** textbooks 0 of 0.8B → 13.3 d once the serve takes card 7; **44-42** exercises 0 of 0.18B, no generator on main |
+| harness | 0 FAIL; the two that were red an hour ago (`no_stale_running`, `no_future_started`) cleared by the close |
+
+## Carried
+
+- **The gate is 0%.** HumanEval ≥30% at 350M; best measured 3/164 = 1.83% on a retired checkpoint that
+  failed its own prereg (p=0.124). 28.2-point gap, unmoved.
+- **A dead 30B row refused every commit in the repository for 24h** (`1.5b-a0.2b-e48_30b_wd_tail`),
+  closed as killed after verifying zero processes on the pod and a log ending in `signal 15`. Found
+  while closing it: **the ledger's recorded command is not the command that ran** — row
+  `--warmdown 0.2004`, log `--warmdown 0.1 --allow_env_drift`.
+- **Not the constraint, deliberately left open:** de-100 (8 flags unreachable from the CLI — the CSA
+  reference path is 8.157× against its own 1.15× rule, unowned), b0-49 (V=20,000 vocabulary; skipping
+  costs +3.4% chars/token and `:145-146` pre-authorises corpus variance), #169, #158.
+- **#158 must not be wired to the generator as it stands**: `exercise_checks.py:92` is
+  `if not os.path.exists(path): continue`, so a partial benchmark load prints
+  `0 hit(s) against 1 benchmark problems` and exits 0 **on contaminated data**; the known-positive
+  control runs only inside `_selftest`.
+- **Do not**: add a 117th harness check; commission another audit (six axes already read, all six
+  refuted as inflated, zero tokens produced); drain the 12 off-path PRs as a queue exercise; add a
+  `policy_metrics` row (5 rows over 2 of 7 days, `card_hours` null on all 5, newest row unparseable
+  JSON starting with a literal `+`).
+- `no_ghost_close` 236 vs a 180 ceiling, still ownerless — fifth tick flagged.
+- `prereg_citations_current` 4, none mine.
+
+**My errors, carried plus this tick's:** the three-card/four-card correction above; the card
+misattribution; the keep-set urgency claim about an artifact nothing reads; two hook refusals in a row
+where the command exited 0 and the pod stamp advanced while nothing committed (a bad `--prior` format,
+then the stale row) — both caught only by reading the output. Standing: fabricated friction
+measurement (`2fe298ab`); false retraction of the MinHash 128 figure; three defective monitors; a
+scorer using token counts as byte weights; the overlap-length prediction 42% backwards; a shell
+backtick that ate a ledger word; three ticks calling a decision an open user gate after ruling it.
+
+---
+
 # Controller board (fb) — 2026-09-10, 03:5xZ
 
 ## Two corrections to the head above this one, both mine, both load-bearing
