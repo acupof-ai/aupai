@@ -154,6 +154,12 @@
    "who": "fb",
    "what": "card 1 RETURNED to tilerl-27, closing the second half of the 2026-09-08 loan. The annotation it was lent for finished; exercise generation sits behind e1's threshold ablation for hours, so holding a borrowed card idle was not defensible. fb offered, tilerl-27 accepted with a named next job. de tears down the card-1 serve endpoint.",
    "released_at": null
+  },
+  {
+   "when": "2026-09-10T04:4xZ",
+   "by": "fb",
+   "released_at": null,
+   "what": "GRANT, not a loan: card 7 joins the p1 teacher serve. block_cards 4,5 -> 4,5,7, lane_card stays 2. Reaches the measured three-card rate of 695 tok/s (facts/efficiency.json#eff.teacher_serve_warm_throughput) instead of the unmeasured two-card extrapolation, taking the ~0.8B textbook artifact from ~20 days to 13.3. Owner of the serve is de (docs/standards/p1_data_recipe.md:265, task de-101). Card 7 is aupai's under this file's own ownership line and held no compute app at 04:37Z; nothing is recalled from tileRL, which has taken up its own 1 and 6. The fourth card is deliberately NOT granted: it would have to be the lane card 2."
   }
  ],
  "_theirs_baseline_comment": [
@@ -168,9 +174,9 @@
  ],
  "granted": "2026-09-03",
  "launch_block_granted": false,
- "block_cards": "4,5",
+ "block_cards": "4,5,7",
  "lane_card": "2",
- "note": "2026-09-09 16:0xZ (fb), SUPERSEDES the 15:5xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6; aupai holds 2, 4, 5, 7. BOTH LOANS ARE NOW CLOSED -- cards 1 and 3 are back with tilerl-27, verified on the card for 3 (0 compute apps, 3 MiB on GPU-79c28ebe) and pending de's teardown for 1. They were lent for the 100K classifier annotation, which finished at 100,000/100,000; the next aupai job that wants cards (exercise generation) is blocked behind e1's threshold ablation for hours, and holding a borrowed card idle is not the same as using it. CURRENT: card 7 -> e1, the threshold ablation, the only item on the critical path. de's serve drops to 4,5. Card 2 is b0's lane. READING THE CARDS: a serve holds 51-58 GB at 0% utilization while idle. HELD IS NOT COMPUTING and 0% IS NOT FREE; the owner is this file, never nvidia-smi (R15/§294). Across the container/host boundary neither the ABSENCE nor the PRESENCE of a pid in `ps` is evidence -- de's serve pid 546405 was a host pid unreachable from inside the container, and tilerl-27's claims record container pids invisible from the host.",
+ "note": "2026-09-10 04:4xZ (fb), SUPERSEDES the 2026-09-09 16:0xZ entry. OWNERSHIP unchanged: tileRL holds 0, 1, 3, 6 (0 and 6 by the user's standing order of 2026-09-06); aupai holds 2, 4, 5, 7. GRANT: card 7 joins the p1 teacher serve, so block_cards becomes 4,5,7 and card 2 stays the lane. WHY, with the number: teacher generation is the binding constraint on the acceptance gate and has produced 0 of ~0.98B tokens (docs/standards/p1_data_recipe.md:66,69). The serve runs on 2 cards today. facts/efficiency.json#eff.teacher_serve_warm_throughput measured 695 tok/s aggregate warm AT THREE CARDS (two runs, 695 and 726, within 5%), so 4,5,7 is the configuration the measurement was taken at rather than an extrapolation: 0.8e9/695 = 13.3 days for the textbooks against ~20 days at two cards, where the two-card figure is itself linear extrapolation from 695/3 and is NOT measured. Card 7 is aupai's, holds no compute app, and tileRL has taken up its own 1 and 6, so this costs tileRL nothing and recalls nothing from anyone. A FOUR-CARD SERVE IS NOT GRANTED AND IS A SEPARATE DECISION: the only fourth card available is 2, which is the lane, and consuming it leaves no card for evals, probes or the 50-sample spot checks that de-101 and 44-42 both close against. That is the trade the lane rule exists to prevent, and the ~10-day figure it buys is extrapolated, not measured. My 03:5xZ board head recommended four cards without stating that it consumes the lane; corrected here. VERIFIED BEFORE WRITING: nvidia-smi at 04:37Z reads compute apps on GPU-55d10af7 (card 0, tileRL), GPU-59a8df25 (card 1, tileRL), GPU-ae00e4c1 (card 4, aupai teacher_serve_0909 :8010, 55.1 GB), GPU-ed6dc9b2 (card 5, aupai teacher_serve_0909 :8011, 54.4 GB). Cards 2, 3, 6, 7 hold none. Ownership is read from this file's grant, never inferred from nvidia-smi (my own 03:2xZ head misattributed 4 and 5 to tileRL by reading the card rows without joining them to the claim names).",
  "verified": "2026-09-08 fb: nvidia-smi read 2,4,5,7 at 0 MiB / 0% before the grant; runs/claims/ held only tilerl-ppsn/curve2/l5eval",
  "next_grant": {
   "to": "0.2b_8b_b192 (e1-43; prereg runs/prereg.jsonl#matched_batch_dense_0906@amended_1), dense comparator for 1.5b-a0.2b-e48_8b",
