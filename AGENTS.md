@@ -88,6 +88,7 @@ Pre-0830v1 conclusions are zeroed: no checkpoint, run, or recipe is a baseline. 
 | Reachability | `python scripts/reachability.py` — which scripts are reachable from entry points; `runs/reachability.txt` is the committed listing with fate rulings |
 | Provision an empty pod | `bash scripts/bootstrap_pod.sh [verify\|fetch\|build\|vocab\|check]` — idempotent, one stage at a time, stopping on error rather than feeding a broken artifact forward. Launching the pretrain is deliberately NOT a stage |
 | Count cleaned code | `python datagen/count_cleaned_code.py` — token counts over cleaned corpus domains |
+| Pretokenize mix domains on CPU | `python scripts/pretokenize_domains.py <domain> [--workers 32]` — builds tokens\_<domain>.pt + stamps via train.\_domain\_seqs, refuses co-resident cache IO through cache\_guard; set CUDA\_VISIBLE\_DEVICES empty and RAYON\_NUM\_THREADS so workers×threads ≤ nproc |
 | Checkpoint info | `python scripts/ckpt_info.py <ckpt>` — config, vocab_id, step count from a checkpoint |
 | Amend a prereg row | `python3 scripts/harness.py prereg amend --id <row> --text "<what changes and why>"` — the ONLY writer. N is read from the row (max suffix over both `amended_N` and `amendment_N`), never passed: moe_0905 has no amendment 2 because a human typed the next number. Writes the date and the text together, so `prereg_amendments_dated` cannot go red by omission |
 | Perplexity | `python eval/ppl.py --ckpt <ckpt>` — perplexity over a text sample |
