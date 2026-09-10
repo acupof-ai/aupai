@@ -738,8 +738,25 @@ class PureSWA(nn.Module):
         self.scale = hd ** -0.5
 
     def forward(self, q, k, v, cu=None):
+        # flash varlen with a causal left window: query t reads keys [t-n_win+1, t],
+        # n_win keys. window_size=(n_win-1, 0) is that window; the packed and unpacked
+        # paths share one call, a missing cu is the trivial per-row boundaries. This
+        # removes the B*H*T*T score materialization eager otherwise OOMs on (de-106:
+        # 8.6 GiB fp32/layer at B=16 T=4096).
+        if HAS_FA:
+            B, T, H, D = q.shape
+            if cu is None:
+                cu = torch.arange(0, B * T + 1, T, device=q.device, dtype=torch.int32)
+            qf, kf, vf = (t.reshape(B * T, H, D) for t in (q, k, v))
+            y = flash_attn_varlen_func(
+                qf, kf, vf, cu_seqlens_q=cu, cu_seqlens_k=cu,
+                max_seqlen_q=T, max_seqlen_k=T, causal=True,
+                window_size=(self.n_win - 1, 0), softmax_scale=self.scale)
+            if isinstance(y, tuple):
+                y = y[0]
+            return y.view(B, T, H, D)
         if cu is not None:
-            return self._forward_packed(q, k, v, cu)
+            return self._fallback_packed(q, k, v, cu)
         B, T, H, D = q.shape
         qh = q.transpose(1, 2)                                # B,H,T,D
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
@@ -750,8 +767,8 @@ class PureSWA(nn.Module):
         y = torch.softmax(full.masked_fill(~m_win[None, None], float("-inf")), dim=-1) @ vh
         return y.transpose(1, 2)                                # B,T,H,D
 
-    def _forward_packed(self, q, k, v, cu):
-        # doc id per position, same bucketize as pool_per_doc (which see for the cu layout)
+    def _fallback_packed(self, q, k, v, cu):
+        # No flash_attn: materialized window mask, per-document (correctness fallback).
         B, T, H, D = q.shape
         qh = q.transpose(1, 2)
         kh, vh = k.transpose(1, 2), v.transpose(1, 2)
