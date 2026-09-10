@@ -2,9 +2,12 @@
 """Execute an UltraData-Code L3 solution against its bundled test (3b, 2026-09-10).
 
 One predicate shared by the quality audit and the production L3 keep-filter (fb
-ruling 2026-09-10): an L3 row is kept iff its solution, run together with the
-dataset's own test in a fresh sandbox, exits 0. The audit's n=400 yield estimate
-and the full-set conversion call this same function.
+ruling 2026-09-10): execute() runs a solution against the dataset's own test in a
+fresh sandbox. Ruling 2026-09-11 added nontrivial(), a static AST floor, because
+exec-pass alone admits mostly trivial passing exercises (precision 43% on the
+3b-21 audit); keep_l3() is the conjunction (exec-pass AND non-trivial), precision
+68% at ~unchanged recall. The audit's n=400 yield and the full-set conversion call
+these same functions.
 
 Composition: a temp candidate.py of  solution + "\\n\\n" + test + "\\n"  run as a
 fresh process. Isolated mode -I (no user site/PYTHONPATH), bytecode off, cwd is
@@ -28,6 +31,50 @@ ERR_TAIL = 400                       # chars of stderr kept for triage
 PASS = "pass"
 FAIL = "fail"       # nonzero exit: assertion error, runtime/syntax/name error
 TIMEOUT = "timeout"
+
+# Stage-2 non-triviality floor (fb ruling 2026-09-11, calibrated on the 3b-21 n=390
+# labelled L3 rows). Exec-pass alone admits mostly trivial passing exercises
+# (precision 43%); this AST floor lifts joint precision to 68% at ~unchanged recall.
+# A solution is non-trivial if it is a sizeable program OR contains a genuine
+# algorithmic core (>=3 branch/loop control points AND a loop).
+NODES_MIN = 90
+CF_MIN = 3          # if/if-exp/match + for/while control points
+LOOPS_MIN = 2
+
+
+def nontrivial(solution):
+    """Stage-2 floor: is the solution above the trivial-exercise bar?
+
+    Static (ast), no execution. True iff the solution parses AND
+    (ast node count >= NODES_MIN OR (control-flow points >= CF_MIN with >= LOOPS_MIN
+    loops)). The OR branch keeps compact-but-real algorithms that a pure size
+    threshold cuts (calibration lost only 3/75 substantive pass-set docs at this
+    setting). Unparseable/empty -> False.
+    """
+    import ast
+
+    try:
+        tree = ast.parse(solution or "")
+    except SyntaxError:
+        return False
+    nodes = 0
+    cf = 0
+    loops = 0
+    for n in ast.walk(tree):
+        nodes += 1
+        if isinstance(n, (ast.For, ast.AsyncFor, ast.While)):
+            loops += 1
+            cf += 1
+        elif isinstance(n, (ast.If, ast.IfExp, ast.Match)):
+            cf += 1
+    return nodes >= NODES_MIN or (cf >= CF_MIN and loops >= LOOPS_MIN)
+
+
+def keep_l3(solution, test):
+    """The L3 keep rule: solution executes against its test AND clears the
+    non-triviality floor. Returns bool; use execute() directly for triage detail."""
+    verdict, _ = execute(solution, test)
+    return verdict == PASS and nontrivial(solution)
 
 
 def execute(solution, test, _limits=(CPU_SOFT, CPU_HARD, AS_BYTES), _wall=WALL_TIMEOUT):
@@ -96,6 +143,26 @@ def _selftest():
         assert execute(np_sol, "assert f() == 3")[0] == PASS
     except ImportError:
         pass
+
+    # nontrivial() floor: print-only / single-builtin exercises are CUT
+    assert nontrivial("print(input())") is False
+    assert nontrivial("def f(x):\n    return abs(x)") is False
+    # syntax-broken solution is not nontrivial even if long
+    assert nontrivial("x = (\n" + "\n".join(["a = 1"] * 40)) is False
+    # a sizeable program clears the node-count branch
+    big = "\n".join(f"v{i} = {i}" for i in range(NODES_MIN + 5))
+    assert nontrivial(big) is True
+    # a compact real algorithm under the node bar clears the control-flow+loop branch
+    compact = (
+        "def f(a):\n"
+        "    for i in range(len(a)):\n"
+        "        if a[i] < 0:\n"
+        "            for j in range(i):\n"
+        "                if a[j] == -a[i]:\n"
+        "                    return i\n"
+        "    return -1\n"
+    )
+    assert nontrivial(compact) is True
     print("ud_solution_exec selftest OK")
 
 
