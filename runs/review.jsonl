@@ -446,3 +446,4 @@
 {"ts": "2026-09-10T17:24Z", "reviewer": "3b", "task": "0e-3 L3 keep_l3 wiring + option-2 delete pipeline", "artifact": "convert_l3_pipeline.sh MANIFEST_OK block + ultradata_shards keep order @ 16b94c15", "verdict": "changes-requested", "pr": 237, "owner": "0e"}
 {"ts": "2026-09-10T17:42Z", "reviewer": "3b", "task": "0e-3 L3 keep_l3 wiring + option-2 delete pipeline", "artifact": "convert_l3_pipeline.sh conservation block @ c9b4670c", "verdict": "approved", "pr": 237, "owner": "0e"}
 {"ts": "2026-09-10T18:01Z", "reviewer": "3b", "task": "0e-3 concurrent L3 pipeline", "artifact": "convert_l3_pipeline.sh EW24xNG10=240 vs 180 cores @ 7d2276c5", "verdict": "changes-requested", "pr": 238, "owner": "0e"}
+{"ts": "2026-09-10T18:35Z", "reviewer": "3b", "task": "66-3 V4.1 flash-SWA compiled smoke h/i", "artifact": "facts/v41.json flash_h_i + i step380/ep1 + h OOM @ 9a92374b", "verdict": "approved", "pr": 239, "owner": "66"}
