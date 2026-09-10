@@ -46,7 +46,7 @@ run_group() {
   local tag; tag=$(printf "g%02d" "$g")
   local paths=() p
   for i in $(seq $first $last); do
-    p="$RAW/UltraData-Code-L2-py-part-$(printf '%05d' $i)-of-$NSH.parquet"
+    p="$RAW/UltraData-Code-L2-py-part-$(printf '%05d' $i)-of-$(printf '%05d' $NSH).parquet"
     until footer_ok "$p"; do sleep 60; done
     paths+=("$p")
   done
