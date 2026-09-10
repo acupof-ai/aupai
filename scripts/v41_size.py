@@ -43,14 +43,19 @@ IDX_HEADS = 4  # indexer heads
 IDX_DIM = 64  # indexer per-head dim; 4x64 = 256 = D//4 latent
 BYTES = 2  # bf16; FP4 KV is deferred past the gate (pivot)
 
-# flat-stack mode map, one entry per layer:
-#   S = pure SWA (paper: first two layers are SWA-only)
+# Mode placement composes with PR #216 (0e-2): n_swa_only_layers owns the
+# first-N pure-SWA placement in HybridLM's kind loop, and csa2_modes owns the
+# non-SWA layers. One SWA width across the whole model: csa2_n_win -- PR #216's
+# PureSWA must read the same field (it reads csa_window today; the divergence
+# is flagged to 0e/de, not reconciled here).
+N_SWA_ONLY = 2  # paper: first two layers are SWA-only; owned by n_swa_only_layers
+# csa2 mode map over the remaining LAYERS - N_SWA_ONLY layers:
 #   F = Full     (own main KV + indexer K, fresh top-K; stores global KV)
 #   X = Reindex, DEFERRED: Step 2 ships Full/Reuse only (pivot build order), so
 #       until Reindex lands the module runs X as Reuse. The slot is kept in the
 #       map so the mid-stack selection refresh has a named place, not a live mode
 #   R = Reuse    (reuses the nearest preceding F/X's main KV AND top-K)
-MODE_MAP = "S,S,F,R,R,R,X,R,R,R,R,R"
+CSA2_MODES = "F,R,R,R,X,R,R,R,R,R"
 
 
 def active_params():
@@ -76,7 +81,7 @@ def active_params():
         "X": 5 * d2 + idx + ffn,
         "R": 5 * d2 + ffn,
     }
-    modes = MODE_MAP.split(",")
+    modes = ["S"] * N_SWA_ONLY + CSA2_MODES.split(",")
     layers = sum(per[m] for m in modes)
     active = layers + emb
     # total = non-FFN params + ALL experts (active already counts the 4/layer
@@ -94,7 +99,7 @@ def kv_bytes_per_token():
     over the M tokens an entry covers. X/R store nothing (they reuse F's KV)."""
     dense_per_layer = 2 * D * BYTES
     dense = LAYERS * dense_per_layer
-    n_full = MODE_MAP.split(",").count("F")
+    n_full = CSA2_MODES.split(",").count("F")
     csa2 = n_full * dense_per_layer / M
     return dense, csa2, n_full
 
@@ -118,20 +123,19 @@ def density():
 
 
 def check_mode_map(modes):
-    assert len(modes) == LAYERS, f"mode map has {len(modes)} entries, need {LAYERS}"
-    assert modes[:2] == ["S", "S"], "paper: first two layers are SWA-only"
-    first_csa2 = next(i for i, m in enumerate(modes) if m != "S")
-    assert modes[first_csa2] == "F", "the first CSA2 layer must be Full (nothing to reuse)"
-    for i, m in enumerate(modes):
+    assert modes[:N_SWA_ONLY] == ["S"] * N_SWA_ONLY, "first N layers are n_swa_only_layers"
+    csa2 = modes[N_SWA_ONLY:]
+    assert len(csa2) == LAYERS - N_SWA_ONLY, f"csa2 map has {len(csa2)} entries, need {LAYERS - N_SWA_ONLY}"
+    assert csa2[0] == "F", "the first CSA2 layer must be Full (nothing to reuse)"
+    for i, m in enumerate(csa2):
         if m in "XR":
-            prior = [j for j in range(i) if modes[j] in "FX"]
-            assert prior, f"layer {i} ({m}) has no preceding Full/Reindex to reuse"
-    # spacing: how many CSA2 layers one Full's KV serves (paper encoder bulk:
-    # one Full at the top serves ~17 Reuse layers)
-    fulls = [i for i, m in enumerate(modes) if m == "F"]
-    bounds = fulls[1:] + [LAYERS]
+            prior = [j for j in range(i) if csa2[j] in "FX"]
+            assert prior, f"csa2 layer {i} ({m}) has no preceding Full/Reindex to reuse"
+    # spacing: how many CSA2 layers one Full's KV serves (paper encoder bulk: ~17)
+    fulls = [i for i, m in enumerate(csa2) if m == "F"]
+    bounds = fulls[1:] + [len(csa2)]
     served = max(b - f for f, b in zip(fulls, bounds, strict=True)) - 1
-    return first_csa2, served
+    return N_SWA_ONLY, served
 
 
 def main():
@@ -139,7 +143,6 @@ def main():
     dense_kv, csa2_kv, n_full = kv_bytes_per_token()
     dens = density()
     first_csa2, max_gap = check_mode_map(modes)
-
     # the checks: fail loud if a proposed value stops satisfying its constraint
     assert 340e6 < active < 360e6, f"active {active / 1e6:.1f}M outside ~350M (band 340-360)"
     assert M in (4, 8) or 4 <= M <= 8, "m must start in 4..8 (fb)"
@@ -175,7 +178,8 @@ def main():
     )
     print()
     print(
-        f"mode map:            {MODE_MAP}  (first CSA2 = Full at layer {first_csa2}, "
+        f"mode map:            n_swa_only_layers = {N_SWA_ONLY}, "
+        f'csa2_modes = "{CSA2_MODES}"  (first CSA2 = Full at layer {first_csa2}, '
         f"one Full serves {max_gap} reuse layers; paper encoder bulk runs ~17)"
     )
     print()
@@ -186,7 +190,8 @@ def main():
         f"  moe_expert_ffn = {MOE_EXPERT_FFN}  ffn_hidden = {(MOE_TOP_K + MOE_SHARED) * MOE_EXPERT_FFN}"
     )
     print(f"  csa2_m = {M}  csa2_top_k = {TOP_K}  csa2_n_win = {N_WIN}")
-    print(f'  csa2_indexer_heads = {IDX_HEADS}  csa2_indexer_dim = {IDX_DIM}  csa2_modes = "{MODE_MAP}"')
+    print(f'  n_swa_only_layers = {N_SWA_ONLY}  csa2_modes = "{CSA2_MODES}"')
+    print(f"  csa2_indexer_heads = {IDX_HEADS}  csa2_indexer_dim = {IDX_DIM}")
     print("  csa2_modes: X is Reindex-DEFERRED (fb ruling 2026-09-10) -- the module runs it as")
     print("  Reuse until Step 2 ships Reindex; the slot names the mid-stack refresh point")
     print("  (csa_compress/csa_topk/csa_window belong to the old CSA class Step 1 rewrites")
