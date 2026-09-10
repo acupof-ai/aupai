@@ -298,7 +298,7 @@ def _is_mount(path):
         return False
 
 
-#: The seven sessions in this round and each one's reviewer. A delivery gets a second
+#: The eight sessions in this round and each one's reviewer. A delivery gets a second
 #: reader who is not its author: the controller review with 44 caught four evidenced
 #: errors in one day and nobody else's work had one (user order, 2026-08-31 22:00).
 REVIEW_PAIRS = {"de": "44", "44": "de", "b0": "de", "3b": "b0", "fb": "44", "e1": "3b", "tilerl": "b0", "98": "fb"}  # keep in sync with runs/roster.json pairs; a hardcoded copy drifts (b0->tilerl, missing 98, found by 3b 2026-09-10)
