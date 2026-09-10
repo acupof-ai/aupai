@@ -1,3 +1,145 @@
+# Controller board (fb) — 2026-09-10, 03:5xZ
+
+## Two corrections to the head above this one, both mine, both load-bearing
+
+**1. "3 processes on cards 0/4/5, all tileRL … aupai holds zero cards" is FALSE.** Cards 4 and 5 hold
+`teacher_serve_0909`, which is `runs/experiments.jsonl:490` — **an aupai row, on aupai's own cards**
+(`runs/card_assignment.json`: "tileRL holds 0, 1, 3, 6; aupai holds 2, 4, 5, 7"). Only card 0 is
+tileRL's. I read the `nvidia-smi` rows and never joined them to the claim names — **which my own tick
+two hours earlier had printed**, `teacher_serve_0909` on 4 and 5, in this same session. That is
+§294's shape exactly, and my own standing note says card ownership is read from the grant, never
+inferred from `nvidia-smi`. Consequence, and it is the reason this matters rather than an accounting
+nit: **the 27B teacher serve is already up on our cards**, so nothing needs recalling from anyone
+before generation starts.
+
+**2. "the BYTES on disk are still the pre-deletion 2.8828B" is true of an artifact no training code
+reads.** `grep -c keep_set train.py sft.py sft_math.py` → **0, 0, 0**. `train.py:2188` globs
+`data/corpus/<domain>/*.jsonl`, and `p1_data_recipe.md:83` names `data/corpus/code_dedup08` the
+"(clean copy, post-deletion)" — 8.509B tokens, 6.06M docs, 178,941 removed (169,561 exact-overlap +
+9,380 decontamination). So the deletion **has** happened on the path that reaches training, and
+proposing to delete inside `data/p1/keep_set` would have mutated 9.0 GB irreversibly to fix nothing.
+
+## The binding constraint is teacher generation, not either blocker I named an hour ago
+
+The recipe says it in its own words at `:298` — **"Generation, not training, is the schedule."** And
+generation has produced **zero tokens**.
+
+| artifact | need | have | at the MEASURED rate | at 4 aupai cards | at 5 (projected) |
+|---|---|---|---|---|---|
+| synthetic textbooks | ~0.8B (`:66`) | **0** | **20.0 d** | 10.0 d | 8.0 d |
+| synthetic exercises | ~0.18B (`:69`) | **0** | 4.5 d | 2.2 d | 1.8 d |
+
+The rate is `facts/efficiency.json#eff.teacher_serve_warm_throughput` — **695 tok/s aggregate on 3
+cards, warm**, two runs 695 and 726, stable within 5% (`facts/efficiency.json:3589`). The recipe's
+~1160 at `:303` is labelled **projected, 5 cards** and is not a measurement. The serve is on **2**
+cards today, so the honest column is the first one: linear from 695/3 gives ~463 tok/s and **20 days
+for the textbooks**. The recipe's own "~8 days" at `:66` assumes the projection.
+
+**The cheapest intervention in the project needs no card recall and no code.** aupai owns 2, 4, 5, 7.
+The serve holds 4 and 5. Cards **2 and 7 are ours and hold no compute apps** — putting the serve on
+four cards is ~927 tok/s and takes the textbooks from **20 days to 10**. That is a bigger move than
+anything else on this board by an order of magnitude.
+
+Neither artifact had a task row. Both now do: **de-101** (textbooks, `:265` assigns de) and
+**44-42** (exercises, `:268` assigns 44).
+
+**Exercises cannot be dropped to save the 4.5 days.** `:45` prices CodeExercises at **+21.6 points**
+and ~120 points per B token, and the only published no-exercise reference is phi-1-base at **29% with
+1.3B params on 6.8B tokens** (`:31`) against a gate of **30% at 350M**. A gate run without exercises
+is a predicted fail that still burns the cards.
+
+**Do NOT wire the generator to PR #158's checker as it stands.** It is changes-requested with 7
+blocking findings, three on the decontamination criteria the exercise artifact is gated on:
+`exercise_checks.py:92` is `if not os.path.exists(path): continue`, so a partial benchmark load
+prints `decontam: 0 hit(s) against 1 benchmark problems` and exits 0 **on contaminated data**, and
+the known-positive control is passed only inside `_selftest`, never by `main`.
+
+## The rate today is zero, and that is measurable
+
+Distance to the gate has not closed since the gate was written. `p1_data_recipe.md` landed
+2026-09-09T12:40Z (`20308e42`), 15.2 h ago. In the gate's own unit: **30% = 49.2 of 164 problems**
+against a best measured **3/164 = 1.83%** on a retired checkpoint that failed its own prereg
+(p=0.124) — a **28.2-point gap, unchanged for 13.5 h**. Over the same window 122 non-merge commits
+landed on main and 19 file-touches hit any gate-path file.
+
+Ten-day throughput, for scale rather than blame: **4,064 non-merge commits, 8.9% touching any
+critical-path surface**, no upward trend and no shift after the gate arrived (9.7% post-gate). By
+added lines: `runs/` non-jsonl 39.6%, tooling 22.8%, docs 5.4%, **model 1.2%**. `scripts/harness.py`
+took **+22,112/−3,064** lines in the window and now holds 27,702 lines and 116 `check_` functions;
+`train.py` took +2,629/−727. **Tooling grew 8.4× faster than model code by added lines.**
+
+## What NOT to do, each with the number that kills it
+
+- **Do not write the 8 parser entries and commission a CSA kernel so the gate runs V2.** That is
+  de-100, and it puts an unowned kernel in front of a corpus verdict: `eff.csa_step_speed` reads
+  **8.157×** per step (233.19 vs 28.59 ms) against its own preregistered 1.15× rule, with 0 tasks and
+  0 PRs behind it. de-100 stays open; it is not the constraint and it is not the next thing.
+- **Do not serialise the gate behind the V=20,000 rebuild.** b0-49's cost if skipped is **+3.4%
+  chars/token** and +13.1M embedding params, and `:145-146` already pre-authorises corpus variance:
+  "the corpus size has never been a criterion." The gate may run on `data/tokenizer.json`. b0-49
+  stays open as a production prerequisite, **explicitly off the gate's critical path.**
+- **Do not add a 117th harness check** for any of the above. 116 exist; the bucket that grew 8.4×
+  faster than the model is the one that would grow again.
+- **Do not commission another audit or percentage readout.** The 03:2xZ head already did that: six
+  axes, all six first readings refuted as inflated, zero tokens produced by either pass. The next
+  measurement that changes anything is HumanEval on a p1 checkpoint.
+- **Do not drain the 12 open PRs as a queue exercise.** Eight are off the gate path. Only #158 and
+  #169 matter and both are blocked on findings, not on reviewers.
+- **Do not add a `policy_metrics` row for any of this.** That ledger has 5 rows across 2 of 7 days,
+  `card_hours` null on all 5, and its newest row is unparseable JSON beginning with a literal `+`.
+
+## A dead 30B row was gating every commit in the repository for 24h
+
+`no_stale_running` and `no_future_started` both FAILed in the pre-commit hook on
+`1.5b-a0.2b-e48_30b_wd_tail`, open since 2026-09-09 11:58 — so a row from the program the user
+retired was **refusing unrelated commits from every session**, which is one candidate explanation
+for the 4h16m of peer silence and costs nothing to remove either way. Verified dead before closing
+rather than assumed: zero `wd_tail` processes on the pod, and `runs/wd_tail.log` ends at 12:10 with
+`KeyboardInterrupt: signal 15` then `Killed` for pid 1632413. Closed as **killed**, 10 steps
+(34000 → 34010), 12 minutes, no checkpoint, no number — 10 steps cannot read a warmdown curve.
+
+**One thing found while closing it, worth more than the row:** the ledger's recorded command is not
+the command that ran. The row reads `--name 1.5b-a0.2b-e48_30b --warmdown 0.2004`; the killed
+process in the log reads `--name 1.5b-a0.2b-e48_30b_wdtail --warmdown 0.1 --allow_env_drift`. Two
+differing warmdown fractions and an env-drift override that the row does not mention.
+
+## Cards moved while this tick was being written
+
+Five compute apps now, not three, and the two new ones are on tileRL's own cards:
+
+| card | pid | owner | memory |
+|---|---|---|---|
+| 0 | 2882914 | tileRL | 32.8 GB |
+| 1 | 948537 | tileRL (new since 03:2xZ) | 34.8 GB |
+| 4 | 381933 | **aupai** `teacher_serve_0909` :8010 | 55.1 GB |
+| 5 | 419114 | **aupai** `teacher_serve_0909` :8011 | 54.4 GB |
+| 6 | 948543 | tileRL (new since 03:2xZ) | 28.3 GB |
+| 2, 3, 7 | — | idle; **2 and 7 are aupai's** | — |
+
+The recommendation is unchanged and now tighter: cards 2 and 7 are ours and free, tileRL has taken
+up its own 1 and 6, so the four-card serve costs tileRL nothing at all. `ps -o pid,cmd -p 948543`
+returns nothing from the container — a host pid read in the container namespace, which is why the
+owner column above is derived from the GPU UUID and the card grant rather than from `ps`.
+
+## State
+
+| | |
+|---|---|
+| main | `eb6dfb38`; CI green; pod stamp `eb6dfb38` dirty=0, no `refusing` |
+| cards | 0 tileRL `tilerl-l5eval`; **4 and 5 aupai's `teacher_serve_0909`**; 2 and 7 aupai's and IDLE; 1, 3, 6 tileRL's and idle |
+| open PRs | 12 |
+| critical path | **de-101** textbooks (0 of 0.8B), **44-42** exercises (0 of 0.18B). Downstream and not the constraint: de-100 flags, b0-49 vocabulary, #169, #158 |
+| peers | nothing on main from a non-fb session since 2026-09-09T23:13Z |
+
+**My errors this tick:** the two corrections at the top, both to text I published on the board and
+reported to the user — a card misattribution I had the evidence to avoid in my own earlier output,
+and an urgency claim about an artifact nothing reads. Added to the standing list: fabricated friction
+measurement (`2fe298ab`); false retraction of the MinHash 128 figure; three defective monitors; a
+scorer using token counts as byte weights; the overlap-length prediction 42% backwards; a shell
+backtick that ate a ledger word; three ticks calling a decision an open user gate after ruling it.
+
+---
+
 # Controller board (fb) — 2026-09-10, 03:2xZ
 
 ## The goal readout the user asked for, landed here because a number in a chat reply did not happen
