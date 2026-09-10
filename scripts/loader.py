@@ -38,7 +38,7 @@ def vocab_fingerprint(tok):
 # build_tokenizer sets Cfg.num_id from that call, with scripts/test_num_id_resolve.py asserting it
 # reads the tokenizer's own id rather than a literal.
 EOS_ID = 1
-NUM_ID = 32772
+NUM_ID = 32767  # V4.1 gate tokenizer (rebuilt 2026-09-10): [NUM] is the final id
 
 
 def load_checkpoint(path, device="cpu", dtype=None, fone_ok=True, claim=True):
@@ -140,12 +140,11 @@ def load_tokenizer(path, cfg):
     """Load the tokenizer and VERIFY it matches the checkpoint: size == cfg.vocab_real,
     then fingerprint == cfg.vocab_id. An old checkpoint without vocab_id only warns.
 
-    vocab_REAL, not vocab: cfg.vocab (32784) is vocab_real (32773) padded to a multiple
-    of 16 so the head hits the aligned cuBLAS kernel, and this line asks a question about
-    TOKENS. The docstring said cfg.vocab while the code asserted vocab_real -- harmless
-    here, but the same conflation in build_tokenizer.py targeted 32779 merges and would
-    have emitted a 32784-token vocabulary that this very assert then rejects on every
-    existing checkpoint."""
+    vocab_REAL, not vocab: cfg.vocab is the embedding width (padded to a multiple of 64 so
+    the head hits the aligned cuBLAS kernel); this line asks a question about TOKENS. As of
+    the 2026-09-10 V4.1 rebuild vocab_real == cfg.vocab == 32768 (zero padding); the older
+    32773-real / 32784-padded pair needed the distinction the lesson here still names --
+    conflating the two targets extra merges and emits a vocab the assert rejects."""
     from tokenizers import Tokenizer
 
     assert os.path.exists(path), (
