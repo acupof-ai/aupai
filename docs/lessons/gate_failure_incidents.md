@@ -1100,6 +1100,18 @@ Cost: ~20 min, caught before commit by printing per-item rescue sources (§281).
 Evidence: `scripts/reachability.py::comment_edges` and its `SELF_PATH` exclusion; `scripts/test_reachability_edges.py`, whose first case asserts no edge is sourced from the tool's own comments, with a negative control because `comment_edges` returning `{}` would satisfy it vacuously; `harness.py:1755`.
 open: implemented for this one tool. The general check -- any scanner whose search space includes its own source -- is not written.
 
+### §293 (2026-09-09, R14)
+
+**A guard's cleanup sweep deleted the file the guard was executing from.** The hook's selftest runner copies each staged selftest blob to `.hookstaged_<name>` beside its source and runs the copy. When a merge stages `scripts/hooks/pre-commit` itself, the hook becomes one of those blobs: the outer run's selftest phase invokes `scripts/hooks/.hookstaged_pre-commit` as a NESTED hook run, and the nested run's first act in main() is the stale-copy sweep -- glob `.hookstaged_*` over every registered selftest directory. The outer run's executing copy matches that glob. The sweep unlinked it mid-flight and the outer selftest died reading its own `__file__`, after all fourteen worlds had passed. The failure read as a flaky selftest, not as a guard that had just deleted itself.
+
+Same rule as §282, different verb: the instrument's own population contains itself. §282 read its own prose as data; this one's own runtime artifact matched its own deletion pattern. The fix has the same shape -- remove the instrument from its own action space -- and the obvious narrower fix is wrong: the sweep must still delete stale copies OF THE HOOK, because a killed run leaves them exactly where a live run's copy sits. PR #142 (merged 3558eb15) has the parent export its staged copies (`AUPAI_HOOK_LIVE_COPIES`, abspathed, unioned with any inherited value) and nested runs skip declared paths; undeclared stale copies are still swept and each removal is still announced. The detectable signature extends with this instance: the tool's own executing path matches its own glob.
+
+Why it survived the 2026-09-05 privatisation: it is not a shared-tree surface. A nested run happens inside one hook process's selftest phase on any tree, private or shared; the sweep and the executed copy sit in the same directory by construction.
+
+Evidence: the 2026-09-09 merge that died reading `__file__` after 14 worlds passed; `scripts/hooks/pre-commit:2590` (the copy), `:523-536` (the sweep), `:2597` (the export); `scripts/test_hookstaged_sweep.py`, which lifts the sweep block verbatim and asserts both directions on one planted file -- a declared copy survives, an undeclared one is removed AND announced, no plantable slot is a FAILURE not a skip, and the sweep's position before every exit path is read from source. Mutation-verified by 44 on the real hook, 2026-09-09: the skip condition replaced by `if False:` deletes the declared copy and the survival half goes red; the whole guarded body replaced by `pass` leaves all nine planted probes and the undeclared live probe in place and the undeclared half goes red. The same PR hardened the world-count read of `__file__` (try/except OSError) -- the accounting side of the same self-reference, and how the death surfaced.
+
+open: no general check that a guard's action population excludes its own runtime artifacts; the per-tool shape is `test_reachability_edges.py`'s, with the signature extended from "own source in own output" to "own executing path in own deletion set".
+
 ### §284 (2026-09-09, R3)
 
 **A stamped identity that describes a different run, read without a refusal.** `eval/score_matrix.py`'s
@@ -1352,3 +1364,167 @@ What made it recoverable rather than worse: the tree had DIVERGED, not merely fa
 Evidence: `readlink -f "$(git rev-parse --git-common-dir)/hooks/pre-commit"` resolving into the integration tree; `.hookstaged_code_fewshot.py: error: unrecognized arguments: --selftest` reproduced after `bb44710b`; `grep -c 'code_fewshot.py": "--selfcheck"'` returning 0 on the deployed file and 1 on main; `git log --oneline origin/main..839400c0` showing the two-commit divergence; hook line 1298 (`SELFTEST_FILES`), line 2225 (`SELFTEST_FLAG`), `eval/code_fewshot.py:209`. Verified by 3b end to end on a worktree at `7d314fcd`, running the patched hook directly with the file staged: clean tree green and `--selfcheck` 6/6 rc=0, against a one-token mutation of the known-answer comparison giving REFUSING 0/6 rc=1 -- red in both directions, which is what says the selftest discriminates rather than merely passes. **It had never run under the hook before this.**
 
 open: no check compares the deployed hook against the hook on main. It is one `git diff origin/main -- scripts/hooks/pre-commit` in the integration tree, reported rather than enforced, since a session cannot fix another tree's checkout; the value is that the gap becomes visible instead of being discovered by a refused commit. None exists.
+
+## R15. A shared attribute cannot bear a discrimination
+
+### §294 (2026-09-09, R15)
+
+**An 88 GB process on card 6, attributed to tileRL on its flags; the binary path was agent-infer's, character for character.**
+
+Card 6 carried an 88 GB process invisible inside the container, with no ledger row. tilerl-27 asked whose it was. The host cmdline was `target/release-fast/arle serve --model-path /mnt/data02/Qwen3.8-27B-NVFP4 --spec-type auto --mtp-draft-tokens 2 ...` (host pid 1171892). fb attributed it to tileRL on the ground that `--spec-type auto --mtp-draft-tokens 2` is tileRL's stack. tilerl-27 rebutted from the binary: `agent-infer/Cargo.toml:78,122` declares `name = "arle"` and `:134` declares `[profile.release-fast]`, so `target/release-fast/arle` is that crate's default output path exactly; tileRL is uv-managed Python and has no Rust artifacts, so it cannot produce that path on any machine. agent-infer is the reference implementation aupai mirrors (seam, tape, KV transfer), which is why it has speculative decoding and MTP too. **功能是共享的,二进制不是 — the functionality is shared; the binary is not.**
+
+The same shape four times earlier the same day, all fb's, all caught by someone else: three readings of an empty nvidia-smi row as an allocation decision (morning, cards 5 and 7; midday, format_sft on 1,2,3,4 for ~40 minutes; 13:3xZ, card 1, on the stated ground that it "carries no grant"), and one name-dispatch defect with four occurrences (aupai-dd addressed as b0, lessons-d1 as d1, e1's rulings to lessons-e1, 3b's whole line to lessons-31). The discriminating fields were in hand every time — the card note, the roster's socket column, the executable path — and a shared field was read as decisive each time.
+
+The third instance needs its own fix named. The 13:3xZ card-1 reading did not skip the discriminating field — it read `granted_by`, which was a day stale, while the same file's `note` field said the opposite. Two fields answered one question and the file did not say which was current, so "read the field you have" gives no action: the reader did, and hit the stale half. The fix is the file declaring its current-state field and marking history fields as history — `_current_state_field`, landed in #166.
+
+The arle process itself supplied the same lesson a second way, on the utilization axis. Two readings 17 minutes apart, same pid, same GPU UUID:
+
+    ~/bin/pod "nvidia-smi --query-compute-apps=pid,gpu_uuid,used_memory --format=csv,noheader"
+    2026-09-09T15:41Z
+    1283503, GPU-88e98123-7d0d-a20d-8cb6-48ac951d2815, 88346 MiB
+
+    ~/bin/pod "nvidia-smi --query-gpu=index,gpu_uuid,memory.used,utilization.gpu --format=csv,noheader"
+    2026-09-09T15:41Z
+    6, GPU-88e98123-7d0d-a20d-8cb6-48ac951d2815, 88365 MiB, 0 %
+
+At 15:2xZ the same UUID read 88343 MiB / 100%. Memory held is shared by "computing" and "idle-holding"; utilization is the field that discriminates. The readings are ephemeral — no rerun reproduces them — so the command, output, and timestamps above ARE the basis, not a pointer to a ledger file.
+
+**Sixth instance, two directions, same rule — tilerl-27's, measured the same night.** Cross-namespace, `ps` absence and presence are both non-evidence. Direction one: de's serve (pid 546405, a host pid) is invisible inside the container — container `ps` cannot find it and container `kill` cannot hit it; it was killed from the host. Reading the container view as "the process is gone" would have handed an occupied card to tileRL. Direction two: tilerl's claim records container-internal pids, which do not resolve in the host namespace; they confirmed their own job was alive by 100% util — a device signal, not a ledger signal. The existing rule says identity is not portable across namespaces (GPU UUID + cmdline are the cross-boundary identity); this says the query result is not portable either, and the failure costs are asymmetric: absence read as dead moves in on someone's running work, presence read as alive waits on something that is not there.
+
+Guard criterion: a cross-project attribution cites only non-shareable identity — binary path, cgroup, package-manager artifacts, language. Never config flags, model paths, ports, or feature names: a mirror project shares those by construction. Of a cmdline the first field is identity; the flags after it are not. A process's presence or absence established in one namespace is no evidence of either in another — the device signal (GPU UUID, utilization) is the cross-namespace field. And where a file holds two fields answering one question, the file must declare which is current state — reading the discriminating field is no protection when the field itself is the stale one.
+
+Cost: ~30 min of cross-team uncertainty about a live 88 GB process on a card everyone is accounting for.
+Evidence: host cmdline and pid 1171892 (fb's handoff, 2026-09-09); nvidia-smi readings above (fb, 15:2xZ and 15:41Z, same pid/UUID); the two namespace directions (tilerl-27, via fb, 2026-09-09: de's serve pid 546405 a host pid, invisible and unkillable from the container; tilerl's claim a container pid, unresolvable on the host, alive confirmed by 100% util); `agent-infer/Cargo.toml:78,122,134` (tilerl-27); `runs/card_assignment.json` note and `_current_state_field` (the three occupancy readings and the fix); `runs/roster.json` `not_on_this_team` (the four dispatches); `runs/controller_board.md` card table (the resolved attribution).
+open: no scanner flags an attribution whose evidence is a shared-attribute field. The checkable slice is mechanical — a cross-team claim whose evidence cites a flag, port, or feature name — but no check knows where cross-team attributions are written.
+
+## R16. Precision can move the residual error to the dangerous side
+
+### §295 (2026-09-09, R16)
+
+**A strictly more accurate liveness criterion whose residual error moved from "card sits idle" to "two jobs on one card" — caught in review before it ever decided a real card.**
+
+`card_claim.py` decides whether a card claim is stale. The old criterion: the claim's pid is dead. The new one (#173): the pid is dead OR alive with a changed start time — pid-reuse detection, because `/proc/<pid>` cannot distinguish a recycled pid from the original process. The new criterion is strictly more accurate: it separates a case the old one could not, the selftest covers both directions (a claim whose pid was reused reads stale; one whose start time matches stays live), and claims without a recorded start time keep the old behavior by design (`_pid_reused` returns False on a missing or unreadable start time).
+
+The residual error changed sides. Old criterion, only false reading: a recycled pid reads alive -> the claim reads LIVE -> the card looks owned -> nobody touches it -> cost: an idle card. New criterion's added false reading: a live process reads STALE — the unreadable case is guarded to the safe direction, but a wrong recorded start time is not — -> the card looks free -> someone acquires it -> cost: two jobs on one card. The precision gain is real and the worst case got worse, and no standard review question examines the second half.
+
+Why it escapes review (tilerl-27's formulation, the core of the rule): this class is hardest to see in review because "more precise" always sounds good. Review checks whether the new criterion is correct (yes), tested (yes, both directions), and compatible with old behavior (yes). All three hold. None asks where the residual error now lands.
+
+Learned from an incident that did not happen, not one that did — the #173 review caught the direction before the criterion ever decided a real card. Same file, same hour, a third defect of a different shape: `card_claim.py:530` (main) did `int(c.get("pid", -1))`, which crashes on a JSON null — the schema allowed what the read path could not handle, and `.get`'s default only covers an absent key. The null row was not written by acquire: acquire's `pid=None` resolves to `os.getppid()` (`card_claim.py:962`), so the writer path cannot produce a null — the null in the ledger was a hand-written pod row (de's finding, #193 review). The schema's gap was real; the attributed cause was not.
+
+Guard criterion: when a predicate in a claim/liveness/safety path gains a conjunct, the review asks two questions in order — which side the residual error lands on under the new predicate, then whether the new predicate is more accurate. Accuracy gains do not hold the cost direction fixed, and the cost direction is the asymmetric half.
+
+Cost: none realized — caught in review. The cost that did not occur is a card collision under a false STALE.
+Evidence: `scripts/card_claim.py` #173 diff (`_start_time`, `_pid_reused`, the two selftest cases); the old criterion and the null crash at main `card_claim.py:530` (`int(None)`), with the null row traced to a hand-written pod row rather than acquire (`pid=None` → `os.getppid()`, `card_claim.py:962`); tilerl-27's formulation and 4c's case, 2026-09-09.
+open: no checklist or scanner flags a predicate-tightening diff for the residual-direction question. The checkable slice is mechanical — a diff adding a conjunct to a predicate in claim/liveness code — but no review gate consumes it.
+
+## R17. A positional join across two producers has no owner; a contract written only in a comment is a check that cannot fail
+
+### §296 (2026-09-10, R17)
+
+**Two artifacts that had to correspond row by row; the alignment contract was written in a comment three lines above the code that violated it, and the producer was not on main — ~85% of rows misaligned, found by measurement in review, not by reading the code.**
+
+`datagen/near_overlap.py` builds MinHash signatures per domain and a loc index (shard, row coordinates) for the same docs. `sign_domain` stacks signatures in `imap_unordered` completion order. The loc files were built by `datagen/build_locs.py` — a 1,066-byte script on the pod, never on main — whose header comment states the contract: "Reconstruct <dom>.loc.json for near_overlap.py: (shard, row) per valid doc, in the same order sig_one produced signatures." Three lines below, it enumerates `for sp in sorted(glob.glob(pat))`. The signatures are not in sorted-glob order; they are in completion order. The comment asserts the alignment; the code violates it; nothing can fail.
+
+This is worse than the contract never being written. Never written, the next reader asks how the two artifacts align and goes looking. Written in a comment, the next reader reads the answer and stops looking — the comment turned an open question into an answered one, and the answer is wrong. A correct assertion about code behavior, in a comment, is a check that cannot fail, and it consumes the moment that would have produced doubt. (Adjacent to §280's "measured conclusion in a comment": that is a conclusion misplaced; this is a contract misplaced, and a contract has a counterparty — another process that consumes it.)
+
+The second facet: the producer was invisible to review. `build_locs.py` is not on main, so a review of the consumer — `near_overlap.py`, which reads the loc files — could not see the file that decided whether the two artifacts aligned. The alignment was decided by a file review could not see.
+
+Measured by b0 in #177's review: ~85% of rows misaligned. Consequence: every coordinate-dependent output was wrong — the exact-J calibration pairs, the shard/row of each hit. The participation rate survived because it is order-independent: a doc either has a >=0.5 neighbor or it does not, and set membership does not care which row it sits on. The misalignment measurement is b0's; the order-independence half of the reasoning was verified separately by 4c, who also recovered the pod-only producer and its comment.
+
+The fix (#177, 3b's choice): `sign_domain` now persists the locs in the same completion order it stacks the sigs — one writer for the ordering — and the rebuild path is deleted. Not "make the second path reproduce the first's order": delete the site where the order was guessed. The guard asserts the property rather than a proxy: length equality passes under any permutation, so the guard re-signs the doc at `loc[i]` and compares the signature to `sigs[i]`, 14 docs per domain, seeded.
+
+Guard criterion: where two artifacts are joined by position, the ordering must have a single writer or the join must use an explicit key — and the contract must live in code that can fail, not in a comment. A cross-process "row i to row i" convention has no owner. The producer of a consumed artifact must be on main: a file review cannot see cannot be reviewed.
+
+Cost: the coordinate-dependent half of a decontamination instrument's output — calibration and hit coordinates — was silently wrong; the order-independent half reported correctly, which is why the wrong half looked fine.
+Evidence: `datagen/build_locs.py` on the pod, 1,066 bytes, header comment and `sorted(glob)` (4c, read in container 2026-09-10; not on main — `git cat-file -e origin/main:datagen/build_locs.py` fails); `datagen/near_overlap.py` #177 diff (`sign_domain` completion-order loc persistence, the deleted rebuild path, the content guard); b0's misalignment measurement in the #177 review, recorded in the code comment; 4c's order-independence verification.
+open: no scanner flags a positional join over two files with different producers, or a comment asserting an ordering invariant. The checkable slice is mechanical — a zip/row-index join over two artifacts with different writer paths — but no check knows which files are consumed together. And no gate refuses a pod-only script that produces a consumed artifact.
+
+## R18. An unverified transfer; a corruption that defends itself by remaining valid
+
+### §297 (2026-09-10, R18)
+
+**A script ran on the pod for ~90 minutes before reaching the one line the corruption had touched — the per-domain summary — and died there, burning the first domain's GPU time. Where the corruption was born is unknowable, and that is part of the evidence.**
+
+e1's corpus scoring script (`data/p1/score_corpus.py`) finished the first domain (235 shards, ~90 minutes) and crashed at the summary line:
+
+```
+File "/work/aupai/data/p1/score_corpus.py", line 66
+    print(f"== {dom} DONE: keep doc {d[kept]/d[scored]:.4f} ...")
+NameError: name 'kept' is not defined
+```
+
+The executed bytes had `d[kept]` — a bare-name subscript where `d['kept']` was intended. (4c read the traceback in the container; the file has since been repaired and the log overwritten by the restart.)
+
+**What is verified, and what is not.** The traceback proves the pod bytes. It does NOT prove where the quotes were lost. The source bytes were never inspected before transfer — e1's judgment that transit stripped them is a judgment, not a measurement, and 4c relayed it as a conclusion without the inspection either. Two hypotheses fit the evidence: transit stripped the quotes, or the source was already `d[kept]`. The second needs no mechanism at all. Tested after the incident (44): the obvious transit shape — a heredoc through `~/bin/pod`'s argv, outer double quotes — preserves `d['kept']` byte-for-byte, both as a one-liner and as the exact crash line, which does not exclude transit but raises the source-born hypothesis's relative probability. The decisive bytes no longer exist on either side: the file is tracked in no branch (`git log --all` is empty for it, it is not on main), and the pod copy was repaired at 17:44Z. The cause is permanently unidentifiable, and that fact is evidence: the inspection that would have settled it — reading the source before transfer, or a byte-compare after — happened on neither side.
+
+**Half one — the transfer was unverified.** podput's contract is base64 plus a sha256 compare after landing (the pod_push line "verified on the pod: N file(s) sha256 match"). The argv path has no compare: the bytes that land are the bytes that run, and nothing notices if they differ from the source. This rule stands on its own — but it is NOT necessarily this incident's fix. If the source was already bad, podput's sha256 compare would have compared `d[kept]` against `d[kept]` and passed. The transfer-verification rule is worth having regardless; it just may not be the rule that would have saved this run.
+
+**Half two — the corruption defended itself by remaining valid, and this half is transport-independent.** `d[kept]` is syntactically legal Python: a subscript with a bare-name key. Parse, import, and launch all pass; only executing the line objects. The line was the per-domain summary — the last line to run in a domain's ~90-minute loop. The error's arrival time is set by where the corrupted line sits in the runtime order, and it sat at the most expensive point. The same quote loss in the loop body costs 3 seconds. This half holds under BOTH hypotheses: born in the source or born in transit, the run still takes 90 minutes to object.
+
+The guard, in coverage order: a smoke execution of the post-domain path before the full run — transport-independent, catches the corruption wherever it was born, costs a minute (this is the fix that would have saved the run under either hypothesis); byte-compare after transfer — catches every TRANSIT corruption, costs a second, podput already does it. The CLAUDE.md rule (podput, base64) existed; what it lacked was the sentence saying the argv path verifies nothing — not that it mangles bytes, it need not — and that a compare only catches what differs between the two sides, never what is wrong in both.
+
+Cost: ~90 GPU-minutes of a first-domain run, plus the debugging. The repaired run restarted from disk stats (the shard stats were persisted — the restart log shows "stats recomputed from disk (all shards skipped)"), so the loss was the recompute, not the data.
+Evidence: the traceback (4c, read in container 2026-09-10); the repaired file (pod, mtime 17:44Z) and restarted log (`runs/p1_score_corpus.log`, past the crash and into domain 2 at review time); the quote-survival test (44, two shapes, heredoc via `~/bin/pod` argv, both preserved); `git log --all -- data/p1/score_corpus.py` empty and the path absent from main (44); podput's sha256 verification line (this repo's pod_push output).
+open: the corruption's birth side is permanently unidentifiable — the decisive bytes exist nowhere. No gate refuses a pod launch of a script that arrived by a path with no byte-verification, and no gate smoke-executes a script's tail path before a multi-hour run.
+
+## R19. A false alarm that kills the instrument; silence after the alarm reads as the all-clear
+
+### §298 (2026-09-10, R19)
+
+**A scoring monitor reported SCORING ERROR on a healthy run, then killed itself — and the second half is the shape: after the false alarm there was no monitor at all.**
+
+4c ran an ad-hoc scoring monitor over e1's corpus scoring job. It packed four pod readings into one string with `tr '\n' '|'` and split them with `cut -d'|'`. The job's log line is itself `... | dom 835145/2320870 (0.360) | 334 docs/s` — the data contains the delimiter, so field 2 ("error count") read the word `dom`, non-zero, and the watch broke out. Verified against the pod the same minute (4c): 0 tracebacks, 2 processes alive, 115/298 shards. The run was healthy; the instrument was wrong, and then the instrument was gone.
+
+**The asymmetry.** A false negative leaves the monitor watching — it can still catch the next failure. A false positive that kills the instrument blinds it: the failure class the monitor exists for is now unwatched, and "no events" and "all clear" are indistinguishable to whoever reads the channel. The monitor's error signal must be unforgeable by the watched data, and its liveness must be independently observable — a dead monitor must look different from a quiet one.
+
+**The re-arm, in two stages (4c).** Stage one: `P_TAIL:`/`P_ERR:` prefixes with `sed -n 's/^P_ERR://p'` — a channel no log line can forge. That closed the unforgeable-signal half and left the liveness half open (44's reading, confirmed by 4c): the re-armed loop was `out=$(~/bin/pod ...) || true` with `if [ -n "$line" ]` gating the judgment body, so when the pod connection failed, `out` was empty and the whole body — stale counter included — was skipped. Not one missed reading: permanent blindness, silent. Dead and quiet were byte-identical in the channel — the reader of "no events" could not be reading anything else. Stage two (4c, after this incident named the gap): three consecutive empty reads now emit MONITOR BLIND ("from here, silence means nothing"), repeated every twelfth, SIGHT RESTORED on recovery, plus a HEARTBEAT every 24 ticks carrying the blind count and the last line. Dead, blind, and quiet are now three distinguishable states. The mechanism of both stages is 4c's report — the script remains ad-hoc, tracked in no branch.
+
+Cost: the run was healthy, so the direct cost was the false alarm's debugging; the deferred cost is the unwatched interval — a real scoring failure in that window would have been met with silence, and the silence would have read as "still fine".
+Evidence: 4c's write-up in `runs/controller_board.md` (2026-09-10, "My own scoring monitor reported SCORING ERROR on a healthy run, then killed itself"), including the log line, the same-minute pod verification, and the re-arm. The monitor script itself is ad-hoc — tracked in no branch and absent from the pod (`grep -l 'SCORING ERROR'` over `runs/*.sh` and `runs/*.py` on the pod: no hits; 44) — so the evidence is the board write-up, not the code.
+open: no check inspects a monitor's parsing of its watched stream; the checkable slice is a packing delimiter that also appears in the carried payload. The rule's in-repo subject is `harness.py:_arm_monitor` (25241): it satisfies the first two clauses — silence never overrides the verdict, and the observation is declared a LOG BYTES proxy, not process state (25360-25385) — but the third fails hard. `cmd_launch` prints the monitor's pid (26256) and drops it: no exp row, no artifact (485 rows of `runs/experiments.jsonl`, zero pid/monitor keys; 44), so "is this run's monitor alive" is unanswerable after the fact. SIGKILL to the monitor or a machine restart leaves the run unwatched, and "no monitor events" and "running healthy" stay byte-identical to the reader. The only backstop, `no_stale_running` (24h local / 2h pod), judges the row's age, not the instrument's liveness. The fix is small and needs no heartbeat: write `monitor_pid` into the exp row at launch, add a check asking whether a running row's monitor pid is alive (4c's finding, verified by 44; the file is de's, so the fix is handed to de, not applied here). Resolved 2026-09-10 by PR #196 (de): `exp.py monitor` writes `monitor_pid` onto the running row, `check monitor_alive` FAILs on a dead monitor past the 2h pod grace, and `cmd_launch` records the pid at arm time. The ad-hoc monitor's MONITOR BLIND/HEARTBEAT pattern remains tracked nowhere.
+
+## R2. A criterion must express the property asked — instances
+
+### §300 (2026-09-10, R2)
+
+**A spot-check of teacher agreement at the ≥3 cut point scored κ=1.000 — on a sample with zero documents at the cut point. The perfect score answers a different question than the one asked.**
+
+e1's spot check (relayed by 4c): 100 documents, high50 with teacher scores all ≥3 and low50 with teacher scores all <3, each reader binary at ≥3. Agreement 1.000, κ 1.000. The sample has zero mass near the cut: every document is trivially classifiable by construction, so κ=1.000 measures that the two readers agree on obvious cases — bucket separability — not that they agree at the boundary. Any reader that can distinguish good from bad scores 1.000 on this sample. The criterion asked (cut-point agreement) is not expressed by the population (extremes only) — R2.
+
+The cost was caught before it landed: e1 wrote the caveat into the audit themselves, and PR #187 limits the verdict row to separability. The shape is recorded because the sample design is the DEFAULT design for an agreement check — take clear positives and clear negatives — and the perfect score is exactly what makes it dangerous: a κ of 1.000 is the output that reads as strongest evidence while carrying the least information about the boundary.
+
+Cost: averted — the κ=1.000 could have been cited as cut-point validation. The residual cost is the one the shape always charges: the check that cannot fail is mistaken for the check that passed.
+Evidence: 4c's relay of e1's measurement (the high50/low50 construction and the 1.000/1.000 scores); PR #187 (e1's audit row limiting the verdict to separability).
+open: no agreement or κ check in this repo requires mass at the decision boundary; a check could flag a binary agreement sample whose classes are separated by construction (no item within ε of the cut).
+
+## R20. A threshold acts on a set; same name and value do not make two thresholds the same
+
+### §299 (2026-09-10, R20)
+
+**Two thresholds both named "jaccard 0.5" sat in the same corpus pipeline; they are not the same threshold, and the difference is invisible to a unit check.**
+
+The p1 corpus pipeline carries two near-duplication thresholds. The domain dedup that built dd09/b2v2, and the instrument that measured the near-dup participation rate (23.27%/26.21% at J≥0.5), act on char 5-gram shingles (`dedup_keep_whole.py:6,173`; `near_dedup_scale.py:82,168` — the latter states "est and exact use the same shingle, so J is J of that shingle"). The post-pass stage `_near_dedup_postpass` decides near-duplication on exact normalized WORD 3-grams (`build_corpus.py:845-857`; the docstring at :849: "The near-dup DECISION is exact Jaccard over THIS set (normalized word-3-gram)"; the threshold at :1019 is `jaccard=0.5`). Same name, same value, same unit (0-1) — different sets.
+
+The consequence is not academic. The participation-rate band is defined on char-5-gram J; the post-pass's 0.5 is on word-3-gram J. Even if the post-pass had run over the three domains, it would remove a different band than the one measured — the two 0.5s read as one decision executed twice, and they are two decisions. The unit-checking habit verifies the scale and stops; the set the metric acts on lives in the shingle function, not in the threshold's name or the config field a reader sees first.
+
+The second half: the post-pass is a default-off stage. In the build stats, a domain that ran it and a domain that never ran it differ by one field — `near_dedup: ABSENT` versus present — and `_near_write_stats` (`build_corpus.py:975-995`) rewrites the stats to `"filters": "near-dedup-postpass"` + `near_dedup: true` when it runs. 3b verified all three domains read ABSENT — the post-pass never ran (3b's answer, 2026-09-10), so there is no "same shards through two configs" case; the cost is the one the threshold half charges. Absence of a run record reads as "ran clean" unless the reader knows ABSENT means never ran.
+
+Cost: the near-dedup ruling (don't delete at J≥0.5) was made on the correct reading — the 0.9 upstream threshold retains the 0.5-0.9 band by construction — but the pipeline offered a second 0.5 that could have been cited as the same decision's enforcement. The shape's cost is the false credit it makes available.
+Evidence: `datagen/build_corpus.py:155` (char 5-gram class docstring), `:845-857` + `:849` (word-3-gram decision), `:1019` (postpass `jaccard=0.5`), `:975-995` (`_near_write_stats`); `datagen/dedup_keep_whole.py:6,173`; `datagen/near_dedup_scale.py:82,168`; the three domains' `build_corpus_stats.json` reading `near_dedup: ABSENT` (3b, 2026-09-10); PR #185 (3b's audit doc naming the post-pass as not run). Found by 3b answering 4c's question; verified by 44.
+open: no check flags same-name-same-value thresholds acting on different feature sets; no check distinguishes "stage never ran" from "stage ran clean" in build stats — the ABSENT field's meaning is prose, not a schema.
+
+## R21. A retraction is a claim about history; a value out of its instrument is a different fact
+
+### §301 (2026-09-10, R21)
+
+**A retraction stated a value had no source. The value had a source — in a different instrument's config. The comparison and the retraction each moved the same value once, in opposite directions, and both movements manufactured a fact that existed in neither.**
+
+In the near-dup discussion, 4c argued against changing the estimator by comparing its 96 perms against "the build's 128". Both numbers are in the tree: the three dedup tools are 96/12 (`near_dedup_scale.py:36-37`, `code_dedup_build.py:30-31`, `dedup_keep_whole.py:31`), and `build_corpus.py`'s MinHash is 128/16 (`:155` docstring, `:424`, `:1019`; `facts/data_scaling.json:496` config "MinHashLSH 128-perm/16-band"). But the p1 domains were built by the 96 tools (3b's build stats: `n_perm: 96`), so the comparison that mattered — estimator against the build that actually ran — was 96 against 96, consistent. The 96-vs-128 mismatch was real as numbers and manufactured as an inconsistency: 128 was quoted from a different instrument's config into a context where it had never operated. The hold-still conclusion was right for the wrong reason.
+
+Then the retraction (4c, same evening): "128 has no source; I made it up." That was false as well — 128 has a source, in `build_corpus.py` and the fact base. The retraction moved the value a second time, from the wrong context to no context, and in doing so replaced one manufactured fact with another: "I fabricated a number" reads as a cleaner self-correction than "I compared the wrong pair", and it is less true. The actual defect — a value quoted out of its instrument's context — was almost lost in both movements.
+
+The rule's two halves: a value's basis is bound to the instrument that produced it, so a value quoted into another instrument's context is a different fact and must carry its origin; and a retraction is a quotation too — "no source" is a claim about where the value came from, checked against the fact base like any other. A retraction must not be allowed to be less true than the claim it corrects.
+
+Cost: the first movement nearly argued against a measurement on a manufactured inconsistency; the second nearly recorded a fabricated-number story in place of the mis-aimed-comparison story. Neither cost landed — the ruling (don't delete at J≥0.5) stood on other grounds, and the retraction was itself retracted within the hour — but the shape is the one that charges for this: the correction that feels cleanest is the one to check hardest.
+Evidence: `facts/data_scaling.json:496`; `datagen/build_corpus.py:155,424,1019`; `datagen/near_dedup_scale.py:36-37`; `datagen/code_dedup_build.py:30-31`; `datagen/dedup_keep_whole.py:31`; 3b's build stats (`n_perm: 96`); 4c's two messages (the comparison and the retraction, and the retraction's retraction); all file:line facts verified by 44 against main.
+open: no check verifies a retraction's historical claim against the fact base; no check flags a config value quoted in a context it never operated in.
