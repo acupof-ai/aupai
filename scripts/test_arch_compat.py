@@ -1333,6 +1333,22 @@ assert not _torch.allclose(_masked[0, :3], _out2[0, :3], atol=1e-6), \
     "the rewritten document did not change"
 print("doc-mask fallback: == per-document attention, != plain causal, no cross-document leak OK")
 
+# de-106: _doc_id_per_pos replaces torch.bucketize with a broadcast comparison so torch.compile
+# on CUDA does not meet the bucketize lowering's SliceView.get_stride (cu[1:] slice). The math
+# must stay right-bucketize exactly over random packed layouts (varying batch and doc lengths).
+# Compile-cleanliness itself is a CUDA property -- proven single-card on the pod, since the CPU
+# bucketize lowering falls back to eager and never calls _boundaries_helper.
+_torch.manual_seed(7)
+for _ in range(200):
+    _B = int(_torch.randint(1, 9, (1,)).item())
+    _ends = _torch.sort(_torch.randint(1, 5000, (_B,))).values
+    _cu = _torch.cat([_torch.zeros(1, dtype=_torch.long), _ends.cumsum(0)]).to(_torch.int32)
+    _pos = _torch.arange(int(_ends[-1].item()))
+    _ref = _torch.bucketize(_pos, _cu[1:], right=True)
+    _got = model._doc_id_per_pos(_pos, _cu[1:].to(_torch.long))
+    assert _torch.equal(_ref, _got), "_doc_id_per_pos disagrees with right-bucketize"
+print("de-106: _doc_id_per_pos == right-bucketize over 200 random packed layouts OK")
+
 # GPU: the flash path must agree with the masked fallback. This is the only shape that
 # catches a mis-bound cu -- flash-attn 4 exports the same two names as v2 with a different
 # positional order (its 4th positional is qv), so a positional call would pass cu as qv and
