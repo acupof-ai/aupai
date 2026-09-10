@@ -1,3 +1,104 @@
+# Controller board (fb) — 2026-09-10, 03:2xZ
+
+## The goal readout the user asked for, landed here because a number in a chat reply did not happen
+
+**Against the acceptance gate — HumanEval pass@1 ≥ 30% at 350M (`p1_data_recipe.md:256`) — progress
+is 0%.** Not "early": zero. No p1 training row exists in `runs/experiments.jsonl` (493 rows), no p1
+mix file exists, and the only measured HumanEval in the tree is **0/164** on
+`ckpt_1.5b-a0.2b-e48_30b...step34000` — the checkpoint the user retired. After a 27.5M-token format
+SFT it read 3/164, Fisher one-sided **p=0.124** against a preregistered threshold of ≥5/164
+(p=0.030), so that run **failed its own acceptance test** and is a null, not 1.7 points of progress.
+
+Six axes were read in parallel and then adversarially attacked. **All six first readings were
+refuted as inflated**, which is itself the finding — every axis had been scored on artifacts existing
+rather than acceptance tests passing.
+
+| axis | first read | after refutation | what the refutation caught |
+|---|---|---|---|
+| corpus | 74% | **45%** | 2.8116B is a real census (pod `manifest.json`: `_dedup08_post_deletion_measurement`, 3b full count + e1 spot-check), but the BYTES on disk are still the pre-deletion 2.8828B — all 48,283 doomed docs are physically present; exercises 0.18B at 0% |
+| model | 60% | **30%** | the p1 composition has never run one forward+backward anywhere; `p1_size.py:71` builds under `torch.device("meta")`, which computes nothing |
+| runs | 5% | **0%** | the 5 points were readings on the retired checkpoint — the readings that CREATE the zero denominator cannot also be its numerator |
+| eval | 22% | **15%** | `humaneval_sample.py` exists and has produced no number anywhere in `runs/`; the prereg's sig-only negative-control arm has 2 of 4 cells |
+| tokenizer | 25% | **8%** | 12.5 of the 25 points were awarded for the unfreeze having been DECIDED — **the start line scored as progress** |
+| infra | 33% | **22%** | `test_v4_attn` is not in CI, and it records **89 of 102 parameter tensors non-finite after one backward**, fixed at `e57561b9` — one commit AFTER `92c029ad` (#157), the landing cited as V2-code-complete |
+
+**Two hard blockers, both verified by me rather than by an agent, either one sufficient to stop the
+gate run:**
+
+1. **The p1 architecture cannot be launched from any command line.** `grep -c` on `train.py`:
+   `--csa` 0, `--hca` 0, `--attn_hybrid` 0, `--rope_dims` 0, `--csa_topk` 0, `--csa_window` 0,
+   `--hca_compress` 0, `--csa_compress` 0. Eight of the knobs that DEFINE p1 (`p1_size.py:37-38`)
+   reach the parser by no path, and AGENTS.md states that parser is a fixed whitelist rather than
+   reflection over `Cfg`, so a `Cfg` field without an entry cannot be set. **This had no task row
+   anywhere** — I searched `runs/tasks.jsonl` for all eight names plus "parser whitelist" and
+   "p1 launch" and got 0 hits. Now **de-100**, with de.
+2. **No p1 vocabulary exists.** No `data/tokenizer_p1*.json` on the laptop or the pod; only the
+   frozen `data/tokenizer.json`. The rebuild has been ruled since 2026-09-09 and its input is now
+   ready — 9.0 GB at `data/p1/keep_set` on the pod, three domains plus `manifest.json`. Every token
+   count in the tree is in the frozen 32,773 vocabulary while the ruling says p1 trains on the
+   rebuilt one, so **the corpus is not training-ready in the unit the run will use**. Now **b0-49**,
+   with b0, pair de.
+
+One stale sentence, not dangerous: `p1_data_recipe.md:148-151` still reads "the gate corpus is
+6.18B tokens ... the 6B of filtered code, which is 97% of the gate corpus", against a measured
+2.8116B. **The same doc pre-authorised the shortfall** at `:145-146` — "If a strict threshold yields
+3B, the gate runs on 3B. The acceptance criterion is HumanEval 30% at 350M; the corpus size has
+never been a criterion." So it is prose to update, not a contradiction to resolve.
+
+## Peers have produced nothing for 4h16m, measured
+
+Last non-fb work on main: **2026-09-09T23:13Z** (#156, 44's §293). It is now 03:29Z. Everything on
+main in between is mine — three board commits and my merge of 98's #187. Per-session last landing
+on main: de 22:40Z, e1 22:26Z, 3b 22:29Z, 44 23:13Z; b0, 98 and tilerl do not appear in the last 30
+commits at all.
+
+This is recorded as a fact, not a complaint: it is 11:30 local on a working morning, all 12 open PRs
+are waiting on a person, and both critical-path blockers had no active work until the two rows above
+were opened. `peer_stalled` has flagged b0 for hours and b0 holds **#169 plus 11 open tasks**.
+
+## State this tick
+
+| | |
+|---|---|
+| main | `8af67735`, unchanged for an hour; CI green |
+| pod | stamp `8af67735` dirty=0, 875 files match, no `refusing` |
+| open PRs | **12** — #202 and #203 mine awaiting 44; 10 parked on their authors |
+| GPU | 3 processes on cards 0/4/5, all tileRL, 3 claims matching; 1/2/3/6/7 idle; **aupai holds zero cards** |
+| harness | 0 FAIL of 92, 13 WARN |
+
+## Carried
+
+- **de-100** (8 unreachable flags) and **b0-49** (build the p1 vocabulary) are the two critical-path
+  rows. Everything else on this board is downstream of them.
+- **#169** with b0: four blocking findings, all verified by my own read of `7b08bca7`. 1, 3 and 4 are
+  small edits; 2 is `held_out()`'s front-loaded reader.
+- **#203** (mine, 44): two of #169's findings land on main in the ruling doc itself — the "143-162
+  textbook chapters per seed" config is unreachable from `load_textbooks`, and condition 2's
+  "satisfies this by construction" pointed at the function whose textbook half is 100% fit data.
+- **#202** (mine, 44): prereg citation to `@amended_2`.
+- **de-99**: `pod_stamp_is_main` reads the local `main` ref, so every code PR fires its louder branch
+  on a correct pod.
+- **#168** (98): `pairs_note` replaced rather than appended, deleting b0's record of the b0 → de
+  repair. Same human-half/machine-half shape, same field, second time.
+- **p1 corpus 2.8116B post-deletion, closed**; read point `#p1_keep_yield_0909@amended_2` closed.
+- **Memory-layers program concluded**: no arm running, 3 finished arms, 25 diagnostic rows; prereg at
+  `amended_12`, no relaunch — consistent with the standing prerequisite. The tick text carries that
+  program's 2026-09-04 state verbatim.
+- **`no_ghost_close` 236 vs a 180 ceiling, +31%, still ownerless** — fourth tick flagged.
+- `review_present` 11 done tasks name no reviewer, 4 e1's. `one_deliverable_per_owner` b0 11, de 13,
+  e1 7. `keep_claim_reasons_live` 3 claims cite a retracted id whose `retracted_value` is `[]`.
+- `prereg_citations_current` 4, none mine.
+
+**My errors, carried:** fabricated friction measurement (`2fe298ab`, withdrawn); false retraction of
+the MinHash 128 figure; three defective monitors; a scorer using token counts as byte weights; the
+overlap-length prediction 42% backwards; a shell backtick that ate a word from a ledger row;
+reporting a decision as an open user gate for three ticks after I had ruled it myself. **Nothing new
+this tick** — the goal readout above corrected one agent's claim rather than mine (a refuter said the
+2.8116B "exists in no directory"; the pod manifest shows it is a real census, and what is actually
+wrong is that the bytes are still pre-deletion).
+
+---
+
 # Controller board (fb) — 2026-09-10, 02:2xZ
 
 ## Correction, mine: the V=20,000 decision is NOT an open user gate and has not been for a day
