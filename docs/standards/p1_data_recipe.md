@@ -188,8 +188,8 @@ Ruling 2026-09-09 (fb, reviewed by 44 without challenge). The vocabulary frozen 
 unfrozen for p1. **This invalidates nothing, because p1 has no checkpoints and that is the whole
 reason the decision is cheap today and monotonically more expensive from p1's first step.**
 
-**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, 143-162 textbook
-chapters plus the three code domains at 4M chars, 88:12):
+**No gate forced it.** Measured by b0 on the real composition (seeds 7/13/21, the whole textbook
+file plus the three code domains at 4M chars, 88:12):
 
 | gate | value | |
 |---|---|---|
@@ -213,6 +213,15 @@ the same sample:
 | code, three domains | 3.099-3.189 | 3.220-3.298 | **+3.8%** |
 | full mix 88:12 | 3.127-3.201 | 3.232-3.298 | **+3.4%** |
 
+The "143-162 textbook chapters per seed" this table was first described with is **withdrawn as a
+description of the run, not as a result**: `scripts/tokenizer_p1_real.py:77-84` `load_textbooks`
+reads every non-empty line into `rows` and calls only `rng.shuffle` -- no cap and no sampling -- so
+the chapter count is identical across seeds 7, 13 and 21 and a per-seed range is unreachable from
+that code. Either the recorded config is wrong or the tax was measured with a script that is not
+the committed one; b0 owns which, and the two need different fixes. The values in the table stand
+until that is answered, because nothing here bears on them: what varies across the seeds is the
+shuffle, and `chars/token` is a ratio over the same text either way.
+
 The +3.4% is permanent and multiplies across p1's 6-20B tokens and every later run that inherits
 the vocabulary. It is also a **lower bound**: the candidate was fitted on a proxy composition
 (3:1 prose:code) where the real one is 88:12, so a vocabulary fitted on the real thing would do
@@ -233,11 +242,22 @@ slots are provably dead on this corpus.
    The candidate was fitted on a proxy composition (`en_c4_stage2` + `code_py_starcoder` +
    `code_py_rp1t`, a 62.5M-token sample) while the tax was measured on the three *deduplicated*
    domains plus synthetic textbooks that did not exist when the candidate was fitted; seeds
-   7/13/21 are three independent evaluation samples, none of them fitting text. Held-out
-   evaluation is now a step inside `scripts/build_p1_tokenizer.py`, so the next rebuild satisfies
-   this by construction rather than by remembering. **Held-out and fit overlap at ~0.3%** --
-   reported rather than claimed as zero, and negligible against a 3.4% effect, but it belongs in
-   the fact's `uncertainty` when the number lands.
+   7/13/21 are three independent evaluation samples, none of them fitting text. **Held-out and
+   fit overlap at ~0.3%** -- reported rather than claimed as zero, and negligible against a 3.4%
+   effect, but it belongs in the fact's `uncertainty` when the number lands.
+
+   **The next rebuild does NOT yet satisfy this by construction, and this paragraph said it did.**
+   `scripts/build_p1_tokenizer.py` (PR #169, head `7b08bca7`) carries the intended step, and its
+   `held_out()` at :120 calls `textbook_texts(path, 300_000)` -- the same FRONT-LOADED reader the
+   fit calls at 30,000,000 bytes. A front-loaded read of 300KB is a strict prefix of a front-loaded
+   read of 30MB, so the held-out textbooks are 100% fit data, not ~0.3%. Its docstring at :115 says
+   "Fresh random sample, disjoint from the front-loaded fit sample"; the `rng` it constructs is used
+   only to shuffle. The code half, 88% of the mix, IS genuinely random via `_sample_random` and is
+   unaffected. **The ruling's own tax number above is not touched by this** -- that tax compares a
+   candidate fitted earlier on a proxy composition against evaluation samples it never saw, which is
+   a different pairing from this function. What was false is the forward-looking claim, and it is
+   corrected here rather than at merge time because the doc is on main and the script is not
+   (fb, verified read of the diff 2026-09-10, review row against PR #169).
 
 ## p1 has no math, and that is a decision
 
