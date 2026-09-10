@@ -152,8 +152,10 @@ def main():
                 m, g = measure(path, sub)
                 result["draws"][str(seed)][label][name] = {"metrics": m, "gates": g}
 
-    # freeze tax convention shared with build_p1_tokenizer: frozen/candidate - 1,
-    # positive = frozen spends more tokens per byte
+    # freeze tax in tokens per byte (the build_p1_tokenizer convention): candidate
+    # chars/token / frozen chars/token - 1, positive = frozen spends more tokens per
+    # byte. Do NOT ratio frozen/candidate in chars/token -- that flips the sign (the
+    # 3b-adjacent fix: the first run printed -7.9% where the tax is +8.6%).
     print(f"\n{'seed':>4} {'subset':<16}{'vocab':<16}{'chars/tok':>10}{'never_used':>12}"
           f"{'utilised':>10}{'tax':>8}")
     for seed in SEEDS:
@@ -161,7 +163,7 @@ def main():
             fr = result["draws"][str(seed)][label]["frozen_32k"]["metrics"]["chars/token"]
             for name in toks:
                 m = result["draws"][str(seed)][label][name]["metrics"]
-                tax = f"{(fr / m['chars/token'] - 1) * 100:+.1f}%"
+                tax = f"{(m['chars/token'] / fr - 1) * 100:+.1f}%"
                 print(f"{seed:>4} {label:<16}{name:<16}{m['chars/token']:>10.4f}"
                       f"{m['never used frac']:>12.4f}{m['utilised']:>10.4f}{tax:>8}")
     g0 = result["draws"]["7"]["pooled"]["ultra_v20000"]["gates"]
