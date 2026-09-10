@@ -797,6 +797,10 @@ class GatedMLA(nn.Module):
         # parameters, so a flag-off model's state_dict and parameter count are unchanged and every
         # existing checkpoint loads without a shim. Constructing it unconditionally and skipping it
         # in forward would add tensors to the checkpoint of every run that does not use it.
+        if getattr(cfg, "csa2", False) and not getattr(cfg, "csa", False):
+            raise ValueError(
+                "csa2=True needs csa=True: csa2 is the V4.1 variant of the csa arm, not a "
+                "second arm -- GatedMLA constructs the module only when csa is on")
         self.csa = CompressedSparseAttention(cfg, self.h, self.hd) if getattr(
             cfg, "csa", False) else None
         # HCA (dsv4.hybrid_attention): the other half of V4's hybrid attention. CSA and HCA are
