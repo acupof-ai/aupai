@@ -36,7 +36,7 @@ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(ROOT, "scripts"))
 
 from build_tokenizer import BYTES_PER_TOKEN_EST, CHAT_SPECIALS, domain_texts  # noqa: E402
-from tokenizer_eval import collect  # noqa: E402
+from tokenizer_eval import GATES, collect  # noqa: E402
 
 CORPUS = os.path.join(ROOT, "data", "corpus")
 TOK_FROZEN = os.path.join(ROOT, "data", "tokenizer.json")
@@ -46,19 +46,28 @@ DEFAULT_CODE_SHARES = "0.332,0.191,0.477"  # token share of the three code domai
 DEFAULT_CODE_FRAC = 0.88                   # code:textbooks = 88:12 by tokens (recipe gate corpus)
 
 
-def textbook_texts(path, max_bytes):
-    """content strings from the textbook jsonl, capped at max_bytes (front-loaded)."""
-    out, nbytes = [], 0
+def textbook_texts(path, max_bytes, skip_bytes=0):
+    """content strings from the textbook jsonl, capped at max_bytes (front-loaded).
+
+    skip_bytes: skip chapters until at least this many bytes are skipped. A held-out
+    read with skip_bytes = the fit read's budget starts at the chapter AFTER the
+    fit's front-loaded prefix (same file, same byte counts, same stopping rule), so
+    fit and held-out are disjoint by construction."""
+    out, nbytes, skipped = [], 0, 0
     for line in open(path, encoding="utf-8"):
         line = line.strip()
         if not line:
             continue
         c = json.loads(line).get("text", "")
-        if c:
-            out.append(c)
-            nbytes += len(c.encode("utf-8"))
-            if nbytes >= max_bytes:
-                break
+        if not c:
+            continue
+        if skipped < skip_bytes:
+            skipped += len(c.encode("utf-8"))
+            continue
+        out.append(c)
+        nbytes += len(c.encode("utf-8"))
+        if nbytes >= max_bytes:
+            break
     return out
 
 
@@ -111,13 +120,29 @@ def _sample_random(domain, want_bytes, rng):
     return rows
 
 
-def held_out(code_dirs, code_shares, textbooks_path, seed=17):
-    """Fresh random sample, disjoint from the front-loaded fit sample."""
+def gate_failures(label, m, g):
+    """The p1 gate set on one held-out subset: round-trip and 256 bytes are vetoes,
+    ref fertility the regression guard (threshold from tokenizer_eval.GATES). Hanzi
+    is undefined on this composition (English textbooks + code contain no hanzi)."""
+    fails = []
+    if not g["round-trip lossless"]:
+        fails.append(f"{label}: round-trip lossless FAIL")
+    if g["_bytes"] != 256:
+        fails.append(f"{label}: all-256-bytes FAIL ({g['_bytes']}/256)")
+    thr = GATES["ref fertility"][0]
+    if m["ref fertility"] > thr:
+        fails.append(f"{label}: ref fertility {m['ref fertility']:.4f} > {thr}")
+    return fails
+
+
+def held_out(code_dirs, code_shares, textbooks_path, fit_tb_budget, seed=17):
+    """Code half: random sample across shards. Textbook half: chapters after the fit
+    prefix (skip_bytes = the fit read's budget), disjoint by construction."""
     rng = random.Random(seed)
     rows = []
     for d, share in zip(code_dirs, code_shares, strict=True):
         rows += _sample_random(d, int(2_000_000 * share), rng)  # ~2M chars code held-out
-    tb = textbook_texts(textbooks_path, 300_000)            # ~0.3M chars textbooks
+    tb = textbook_texts(textbooks_path, 300_000, skip_bytes=fit_tb_budget)
     rng.shuffle(rows), rng.shuffle(tb)
     return rows, tb
 
@@ -157,26 +182,57 @@ def main():
 
     print(f"fitting V={a.target_v} on {len(texts)} docs...", flush=True)
     tok = fit_vocab(a.target_v, texts)
-    tok.save(a.out)
-    print(f"wrote {a.out}", flush=True)
+
+    # gates run on the SAVED file, so write a tmp name first; the final path appears
+    # only if every gate passes -- a vocab that drops a byte must not land at
+    # data/tokenizer_p1.json and then block every refit as "exists"
+    tmp = a.out + ".tmp"
+    tok.save(tmp)
 
     # gates + the tax, now a READING on the real composition (was an inference at proxy-fit)
-    code_ho, tb_ho = held_out(code_dirs, code_shares, a.textbooks)
-    mix_ho = code_ho + tb_ho
-    for label, rows in (("code_held_out", code_ho), ("textbooks_held_out", tb_ho), ("mix_held_out", mix_ho)):
-        _, m_new, g_new = collect(a.out, {label: rows}, None, None, False)
-        _, m_frz, g_frz = collect(TOK_FROZEN, {label: rows}, None, None, False)
-        tax = m_frz["chars/token"] / m_new["chars/token"] - 1
-        print(json.dumps({
-            "subset": label,
-            "new_chars/token": round(m_new["chars/token"], 4),
-            "frozen_chars/token": round(m_frz["chars/token"], 4),
-            "freeze_tax": f"+{100*tax:.1f}%",
-            "new_roundtrip": g_new["round-trip lossless"],
-            "new_bytes": f'{g_new["_bytes"]}/256',
-            "new_ref_fertility": round(m_new["ref fertility"], 4),
-            "hanzi": "undefined (no hanzi in p1 composition)",
-        }), flush=True)
+    code_ho, tb_ho = held_out(code_dirs, code_shares, a.textbooks, tb_budget)
+    subsets = {"code_held_out": code_ho}
+    if tb_ho:
+        subsets["textbooks_held_out"] = tb_ho
+        subsets["mix_held_out"] = code_ho + tb_ho
+    else:
+        print(
+            "NOTE: textbook held-out is empty -- the fit prefix exhausts the "
+            "textbook file; the textbook tax is not measurable on this input",
+            flush=True,
+        )
+
+    fails = []
+    try:
+        for label, rows in subsets.items():
+            _, m_new, g_new = collect(tmp, {label: rows}, None, None, False)
+            _, m_frz, _ = collect(TOK_FROZEN, {label: rows}, None, None, False)
+            fails += gate_failures(label, m_new, g_new)
+            # tax convention, shared with tokenizer_p1_real.py: candidate/frozen - 1,
+            # positive = frozen uses more tokens per byte
+            tax = m_new["chars/token"] / m_frz["chars/token"] - 1
+            print(
+                json.dumps(
+                    {
+                        "subset": label,
+                        "new_chars/token": round(m_new["chars/token"], 4),
+                        "frozen_chars/token": round(m_frz["chars/token"], 4),
+                        "freeze_tax": f"{100 * tax:+.1f}%",
+                        "new_roundtrip": g_new["round-trip lossless"],
+                        "new_bytes": f"{g_new['_bytes']}/256",
+                        "new_ref_fertility": round(m_new["ref fertility"], 4),
+                        "hanzi": "undefined (no hanzi in p1 composition)",
+                    }
+                ),
+                flush=True,
+            )
+    finally:
+        if fails:
+            os.remove(tmp)
+            sys.exit("REFUSE: gate failures, vocab not written:\n  " + "\n  ".join(fails))
+
+    os.replace(tmp, a.out)
+    print(f"wrote {a.out}", flush=True)
 
 
 if __name__ == "__main__":

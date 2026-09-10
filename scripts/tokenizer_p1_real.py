@@ -75,6 +75,9 @@ def sample_domain(domain, want_chars, rng):
 
 
 def load_textbooks(rng):
+    """ALL non-empty lines of the textbook file -- no cap, no sampling -- so the
+    chapter count is identical across seeds; the seed varies only the shuffle
+    (and the code side). The recorded fact config states this explicitly."""
     rows = []
     for line in open(TEXTBOOKS, encoding="utf-8"):
         line = line.strip()
@@ -108,7 +111,7 @@ def main():
         code = []
         for dom, share in zip(CODE_DOMAINS, CODE_SHARES, strict=True):
             code += sample_domain(dom, CODE_CHARS * share, rng)
-        mix = textbooks + sample_domain_mix(textbooks, code, tb_chars, rng)
+        mix = textbooks + sample_domain_mix(code, tb_chars, rng)
         rng.shuffle(mix)
 
         for path in TOKS.values():
@@ -148,7 +151,7 @@ def main():
             print(f"  {label:20s} {tok_name:12s} min {min(vals):.4f}  max {max(vals):.4f}", flush=True)
 
 
-def sample_domain_mix(textbooks, code, tb_chars, rng):
+def sample_domain_mix(code, tb_chars, rng):
     """Code at the recipe ratio, resampled to the mix size (code is 88%, textbooks 12%)."""
     want = tb_chars * CODE_FRAC / (1 - CODE_FRAC)
     rng.shuffle(code)
@@ -158,6 +161,12 @@ def sample_domain_mix(textbooks, code, tb_chars, rng):
         got += len(c)
         if got >= want:
             break
+    if got < want:
+        print(
+            f"WARNING: code pool {got / 1e6:.2f}M chars < wanted {want / 1e6:.2f}M; "
+            f"the mix is not {CODE_FRAC:.0%}:{1 - CODE_FRAC:.0%}",
+            flush=True,
+        )
     return out
 
 
