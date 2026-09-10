@@ -1922,3 +1922,118 @@ print(f"CSA2: finite packed+unpacked; causal at all {_T2 - 1} perturbed position
       f"mask load-bearing (t=1 output == window-only, {_dwin:.1e}); cross-doc delta 0.0, "
       f"within-doc {_within2:.2e}; backward finite on {len(list(_csa2.parameters()))} params "
       f"with indexer grad; m=1 uncompressed; csa2-alone refuses; {len(_added2)} new state_dict keys")
+
+# ── PureSWA (V4.1 Step 3, task 0e-2): CSA's window branch, alone ──────────────
+# Same perturbation discipline as the CSA cases above: a masked position must be EXACTLY
+# invisible (its softmax weight is exactly 0), and the perturbation must be visible where
+# the mask admits it, or the invariance is asserting over a dead path.
+class _CfgSwa:
+    csa_window = 8
+
+
+_swa = model.PureSWA(_CfgSwa, 4, 16).double()
+torch.manual_seed(4)
+_sq, _sk, _sv = (torch.randn(1, 20, 4, 16, dtype=torch.double) for _ in range(3))
+_sy0 = _swa(_sq, _sk, _sv)
+assert torch.isfinite(_sy0).all(), "SWA produced non-finite output on a clean input"
+
+# 1. OUTSIDE-WINDOW INVISIBILITY. Position 0 is within distance 8 only of queries 0..7;
+#    queries 8..19 must not move AT ALL.
+_sk2, _sv2 = _sk.clone(), _sv.clone()
+_sk2[:, 0] += 7.0
+_sv2[:, 0] += 7.0
+assert (_swa(_sq, _sk2, _sv2)[:, 8:] - _sy0[:, 8:]).abs().max().item() == 0.0, (
+    "SWA leaked outside its window: perturbing position 0 moved queries at distance >= 8"
+)
+assert (_swa(_sq, _sk2, _sv2)[:, :8] - _sy0[:, :8]).abs().max().item() > 1e-6, (
+    "the perturbation is invisible INSIDE the window too -- the window branch is dead"
+)
+
+# 1b. csa2_n_win TAKES PRECEDENCE over csa_window, so the pure-SWA layers and de-103's CSA2
+#     window branch share one width (ae's divergence, de's ruling 2026-09-10). With width 4,
+#     position 0 is visible only to queries 0..3.
+class _CfgSwaN(_CfgSwa):
+    csa2_n_win = 4
+
+
+_sw4 = model.PureSWA(_CfgSwaN, 4, 16).double()
+assert (_sw4(_sq, _sk2, _sv2)[:, 4:] - _sw4(_sq, _sk, _sv)[:, 4:]).abs().max().item() == 0.0, (
+    "csa2_n_win did not narrow the window: position 0 moved queries at distance >= 4"
+)
+assert (_sw4(_sq, _sk2, _sv2)[:, :4] - _sw4(_sq, _sk, _sv)[:, :4]).abs().max().item() > 1e-6, (
+    "csa2_n_win=4 made the window dead inside its own range"
+)
+
+# 2. CAUSALITY. Perturbing position t must not move outputs before t.
+_sleaks = []
+for _t in range(1, 20):
+    _sk2, _sv2 = _sk.clone(), _sv.clone()
+    _sk2[:, _t] += 7.0
+    _sv2[:, _t] += 7.0
+    _d = (_swa(_sq, _sk2, _sv2)[:, :_t] - _sy0[:, :_t]).abs().max().item()
+    if _d > 1e-12:
+        _sleaks.append((_t, _d))
+assert not _sleaks, f"SWA leaks the future: {_sleaks[:4]}"
+
+# 3. PACKED PATH: cross-document invisibility, and self-visibility inside the document.
+_scu = torch.tensor([0, 10, 20], dtype=torch.int32)
+_syc = _swa(_sq, _sk, _sv, cu=_scu)
+assert torch.isfinite(_syc).all(), "SWA produced non-finite output on doc-packed input"
+for _t in range(10):
+    _sk2, _sv2 = _sk.clone(), _sv.clone()
+    _sk2[:, _t] += 7.0
+    _sv2[:, _t] += 7.0
+    _d = (_swa(_sq, _sk2, _sv2, cu=_scu)[:, 10:] - _syc[:, 10:]).abs().max().item()
+    assert _d == 0.0, f"SWA leaked across documents: doc 0 pos {_t} moved doc 1 (delta {_d:.2e})"
+_sk2, _sv2 = _sk.clone(), _sv.clone()
+_sk2[:, 5] += 7.0
+_sv2[:, 5] += 7.0
+assert (_swa(_sq, _sk2, _sv2, cu=_scu)[:, :10] - _syc[:, :10]).abs().max().item() > 1e-6, (
+    "packed path: a perturbation is invisible inside its own document -- dead path"
+)
+
+# 4. THE MOST-MASKED ROW THE MASK ADMITS. Self-attention is always visible, so a row cannot be
+#    all-masked; the edge is a length-1 document: one visible entry, itself. It must stay finite
+#    and equal its own value (softmax over one logit is weight 1).
+_sy1 = _swa(_sq, _sk, _sv, cu=torch.tensor([0, 1, 20], dtype=torch.int32))
+assert torch.isfinite(_sy1).all(), "SWA non-finite on a length-1 document (single visible entry)"
+assert (_sy1[:, 0] - _sv[:, 0]).abs().max().item() < 1e-12, (
+    "length-1 document output != its own value -- the single visible entry got weight != 1"
+)
+
+
+# 5. PLACEMENT. n_swa_only_layers=2 puts PureSWA in the first two ATTENTION layers and leaves
+#    the rest of the interleave (and the n=0,1 CSA slots it replaces) exactly as before. The
+#    mode map composes: kind[i] is still one string per attention layer, selected here.
+class _CfgSwaPlace(_CfgPaDense):
+    layers = 6
+    attn_hybrid = True
+    attn_every = 1
+    rope_dims = 8  # lifts the zero-KDA refusal; position for an all-attention stack
+    n_swa_only_layers = 2
+
+
+_sp = HybridLM(_CfgSwaPlace)
+_sp_kinds = {}
+for _i, _b in enumerate(_sp.blocks):
+    _m = _b.mixer
+    _sp_kinds[_i] = "swa" if _m.swa is not None else "csa" if _m.csa is not None else "hca"
+assert _sp_kinds == {0: "swa", 1: "swa", 2: "csa", 3: "hca", 4: "csa", 5: "hca"}, (
+    f"n_swa_only_layers placement wrong: {_sp_kinds}"
+)
+# and n_swa_only_layers=0 reproduces the pre-V4.1 interleave byte for byte
+_CfgSwaPlace.n_swa_only_layers = 0
+_sp0 = HybridLM(_CfgSwaPlace)
+_sp0_kinds = {
+    _i: ("swa" if _b.mixer.swa is not None else "csa" if _b.mixer.csa is not None else "hca")
+    for _i, _b in enumerate(_sp0.blocks)
+}
+assert _sp0_kinds == {0: "csa", 1: "csa", 2: "csa", 3: "hca", 4: "csa", 5: "hca"}, (
+    f"n_swa_only_layers=0 changed the legacy interleave: {_sp0_kinds}"
+)
+print(
+    "PureSWA: outside-window delta 0.0 (within-window visible), causal at all 19 perturbed "
+    "positions; packed path cross-doc delta 0.0 and self-visible; length-1 doc finite and "
+    "equal to its own value; placement swa,swa,csa,hca,csa,hca with n=2 and the legacy "
+    "interleave unchanged with n=0"
+)
