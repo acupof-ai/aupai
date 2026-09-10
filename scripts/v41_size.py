@@ -28,9 +28,10 @@ MOE_EXPERTS = 48  # pivot: reuse MoEFFN as-is, 48/top-3/1-shared
 MOE_TOP_K = 3
 MOE_SHARED = 1
 MOE_EXPERT_FFN = 1536  # the knob that hits ~350M active at L=12, d=1024.
-# Consequence: MoEFFN's equal-active parity refuses unless ffn_hidden becomes
-# (top_k+shared)*expert_ffn = 6144 (or the parity check relaxes -- its dense
-# control was the V2 A/B, now abandoned). 6144 needs no code change; take it.
+# fb ruling 2026-09-10: do NOT relax MoEFFN's equal-active parity check -- set
+# ffn_hidden = (top_k+shared)*expert_ffn = 6144 so the config stays within it.
+# ffn_hidden is the parity reference only (all 12 layers are MoE), so it adds
+# no active params and the 342.9M count is unchanged.
 
 M = 8  # tokens per main-KV entry (fb's start range 4..8; see below)
 TOP_K = 64  # entries selected per query (fb's range 64..128; see below)
@@ -42,7 +43,9 @@ BYTES = 2  # bf16; FP4 KV is deferred past the gate (pivot)
 # flat-stack mode map, one entry per layer:
 #   S = pure SWA (paper: first two layers are SWA-only)
 #   F = Full     (own main KV + indexer K, fresh top-K; stores global KV)
-#   X = Reindex  (reuses the nearest preceding F's main KV, fresh top-K)
+#   X = Reindex, DEFERRED: Step 2 ships Full/Reuse only (pivot build order), so
+#       until Reindex lands the module runs X as Reuse. The slot is kept in the
+#       map so the mid-stack selection refresh has a named place, not a live mode
 #   R = Reuse    (reuses the nearest preceding F/X's main KV AND top-K)
 MODE_MAP = "S,S,F,R,R,R,X,R,R,R,R,R"
 
@@ -176,6 +179,8 @@ def main():
     )
     print(f"  csa2_m = {M}  csa2_top_k = {TOP_K}  csa2_n_win = {N_WIN}")
     print(f'  csa2_indexer_heads = {IDX_HEADS}  csa2_indexer_dim = {IDX_DIM}  csa2_modes = "{MODE_MAP}"')
+    print("  csa2_modes: X is Reindex-DEFERRED (fb ruling 2026-09-10) -- the module runs it as")
+    print("  Reuse until Step 2 ships Reindex; the slot names the mid-stack refresh point")
     print("  (csa_compress/csa_topk/csa_window belong to the old CSA class Step 1 rewrites")
     print("   and should be removed with it, not reused -- same prefix, different semantics)")
 
