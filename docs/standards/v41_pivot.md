@@ -26,7 +26,7 @@ unchanged: HumanEval pass@1 >= 30% at ~350M (docs/standards/p1_data_recipe.md:25
   pool), DSpark drafter, Engram n-gram memory, mHC kernels, head-wise Muon, the vision stack, the
   64K/1M curriculum and all 552B-scale hyperparameters.
 
-## Build order (from the 2026-09-10 gap map; see docs/standards/v41_arch_spec.md)
+## Build order
 
 - **Step 0, config on paper first** — L, CSA2 mode map, m, indexer geometry, top-k, n_win, all as
   Cfg fields so checkpoints carry them. No 552B value is copied; every number is re-chosen for
